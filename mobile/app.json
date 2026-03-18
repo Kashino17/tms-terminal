@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "TMS Terminal",
+    "slug": "tms-terminal",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#1a1a2e"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#1a1a2e"
+      },
+      "package": "com.tms.terminal"
+    },
+    "plugins": [
+      "./plugins/withCleartextTraffic",
+      "expo-secure-store"
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+node_modules/
+dist/
+.expo/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+server/certs/
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+mobile/android/app/build/
+mobile/android/.gradle/
+mobile/ios/build/
+
+# Binaries
+*.apk
+*.aab
+
+# IDE
+.idea/
+.vscode/
+
+# Secrets
+firebase-service-account.json
+firebase-debug.log
+
+# Claude Code / Superpowers
+.claude/
+.superpowers/
+mobile/.superpowers/
