@@ -138,6 +138,33 @@ switch (command) {
     break;
   }
 
+  // ── tms-terminal uninstall ──────────────────────────────────────────────
+  case 'uninstall': {
+    // Stop server if running
+    const uPid = readPid();
+    if (uPid && isRunning(uPid)) {
+      try { process.kill(uPid, 'SIGTERM'); } catch {}
+      cleanPid();
+      console.log('\x1b[32m✓\x1b[0m  Server stopped.');
+    }
+
+    // Remove config directory (~/.tms-terminal)
+    if (fs.existsSync(CONFIG_DIR)) {
+      fs.rmSync(CONFIG_DIR, { recursive: true, force: true });
+      console.log('\x1b[32m✓\x1b[0m  Config removed (~/.tms-terminal)');
+    }
+
+    // Unlink global binary
+    try {
+      execSync('npm uninstall -g tms-terminal', { stdio: 'inherit' });
+      console.log('\x1b[32m✓\x1b[0m  Global command removed.');
+    } catch {}
+
+    console.log('\x1b[32m✓\x1b[0m  TMS Terminal fully uninstalled.');
+    console.log('\x1b[90m   To also remove the source code: rm -rf ' + ROOT + '\x1b[0m');
+    break;
+  }
+
   // ── tms-terminal rebuild ────────────────────────────────────────────────
   case 'rebuild': {
     console.log('\x1b[34m⟳\x1b[0m  Rebuilding TMS Terminal...');
@@ -162,9 +189,10 @@ switch (command) {
   tms-terminal stop         Stop the running server
   tms-terminal status       Check if server is running
   tms-terminal rebuild      Recompile TypeScript
+  tms-terminal uninstall    Remove everything (config, global command)
 
 \x1b[1mInstall:\x1b[0m
-  npm install -g .          Install globally from source
+  npm install && npm link   Install globally from source
   tms-terminal setup        First-time configuration
   tms-terminal              Start serving
 `);
