@@ -16,10 +16,15 @@ const DIST_SETUP = path.join(ROOT, 'dist', 'server', 'src', 'setup.js');
 function ensureBuilt() {
   if (!fs.existsSync(DIST_INDEX)) {
     console.log('\x1b[34m⟳\x1b[0m  Building TMS Terminal...');
+    // Ensure dependencies are installed first
+    if (!fs.existsSync(path.join(ROOT, 'node_modules'))) {
+      console.log('\x1b[34m⟳\x1b[0m  Installing dependencies...');
+      execSync('npm install', { cwd: ROOT, stdio: 'inherit' });
+    }
     try {
-      execSync('npm run build', { cwd: ROOT, stdio: 'inherit' });
+      execSync('npx tsc', { cwd: ROOT, stdio: 'inherit' });
     } catch {
-      console.error('\x1b[31m✗\x1b[0m  Build failed. Run "npm install" in the server directory first.');
+      console.error('\x1b[31m✗\x1b[0m  Build failed.');
       process.exit(1);
     }
   }
