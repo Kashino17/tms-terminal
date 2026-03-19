@@ -139,9 +139,9 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
     const isWindows = /^[A-Z]:[\\\/]/i.test(dirPath) || dirPath.startsWith('\\\\');
     let cmd: string;
     if (isWindows) {
-      // Windows: use double quotes, cd /d for drive changes
+      // Windows: use double quotes (works in both cmd.exe and PowerShell)
       const escaped = dirPath.replace(/"/g, '');
-      cmd = `cd /d "${escaped}"\r`;
+      cmd = `cd "${escaped}"\r`;
     } else {
       // Unix: use single quotes, escape embedded single quotes
       const escaped = dirPath.replace(/'/g, "'\\''");
