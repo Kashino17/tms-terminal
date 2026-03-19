@@ -15,7 +15,7 @@ const BUTTONS: { label: string; seq: string; icon?: string }[] = [
   { label: 'Esc',   seq: '\x1b' },
   { label: 'Enter', seq: '\r' },
   { label: '^C',    seq: '\x03' },
-  { label: 'CLR',   seq: '\x1b[2J\x1b[H', icon: 'trash' },
+  { label: 'CLR',   seq: '\x0c', icon: 'trash' },
   { label: 'Clear', seq: '\x15', icon: 'delete' },
 ];
 
