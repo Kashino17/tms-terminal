@@ -22,6 +22,7 @@ const COLLAPSE_WIDTH = 14;
 const TOOL_GROUPS: { id: string; icon: any; color: string; label: string }[][] = [
   // AI / Workflow
   [
+    { id: 'scrollToBottom', icon: 'chevrons-down', color: colors.textMuted, label: 'Scroll Down' },
     { id: 'autoApprove', icon: 'check-circle', color: colors.accent,  label: 'Auto Approve' },
     { id: 'snippets',    icon: 'zap',          color: colors.warning, label: 'Snippets' },
   ],
