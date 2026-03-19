@@ -1,5 +1,6 @@
 import { useWindowDimensions } from 'react-native';
-import { useMemo } from 'react';
+import { createContext, useContext, useRef, useMemo, type ReactNode } from 'react';
+import React from 'react';
 
 // ── Breakpoints ─────────────────────────────────────────────────────────────
 // compact  : Fold cover screen, very narrow phones  (< 400dp)
@@ -19,32 +20,58 @@ const SCALE: Record<Breakpoint, ScaleFactors> = {
   expanded: { font: 1.3,  spacing: 1.35, icon: 1.3  },
 };
 
+// ── Pre-computed scaling functions per breakpoint (never re-created) ────────
+function makeScaler(factor: number) {
+  // Cache results for common sizes to avoid repeated Math.round calls
+  const cache = new Map<number, number>();
+  return (size: number): number => {
+    let r = cache.get(size);
+    if (r === undefined) {
+      r = Math.round(size * factor);
+      cache.set(size, r);
+    }
+    return r;
+  };
+}
+
+const SCALERS = {
+  compact: {
+    rf: makeScaler(SCALE.compact.font),
+    rs: makeScaler(SCALE.compact.spacing),
+    ri: makeScaler(SCALE.compact.icon),
+  },
+  medium: {
+    rf: makeScaler(SCALE.medium.font),
+    rs: makeScaler(SCALE.medium.spacing),
+    ri: makeScaler(SCALE.medium.icon),
+  },
+  expanded: {
+    rf: makeScaler(SCALE.expanded.font),
+    rs: makeScaler(SCALE.expanded.spacing),
+    ri: makeScaler(SCALE.expanded.icon),
+  },
+} as const;
+
+// ── Pre-computed layout values per breakpoint ───────────────────────────────
+const LAYOUT = {
+  compact:  { gridColumns: 2, listColumns: 1, panelWidth: 170, cardHeight: 82, avatarSize: 36 },
+  medium:   { gridColumns: 2, listColumns: 1, panelWidth: 214, cardHeight: 94, avatarSize: 44 },
+  expanded: { gridColumns: 3, listColumns: 2, panelWidth: 320, cardHeight: 120, avatarSize: 56 },
+} as const;
+
 export interface ResponsiveValues {
-  /** Current breakpoint */
   breakpoint: Breakpoint;
-  /** Screen width in dp */
   width: number;
-  /** Screen height in dp */
   height: number;
-  /** Is the expanded (fold inner / tablet) layout active? */
   isExpanded: boolean;
-  /** Is the compact (fold cover) layout active? */
   isCompact: boolean;
-  /** Scale a font size value */
   rf: (size: number) => number;
-  /** Scale a spacing/padding/margin value */
   rs: (size: number) => number;
-  /** Scale an icon size value */
   ri: (size: number) => number;
-  /** Number of columns for grid layouts */
   gridColumns: number;
-  /** Number of columns for list layouts (server list, dashboard) */
   listColumns: number;
-  /** ToolRail panel width */
   panelWidth: number;
-  /** Server card height */
   cardHeight: number;
-  /** Avatar size */
   avatarSize: number;
 }
 
@@ -54,31 +81,73 @@ function getBreakpoint(width: number): Breakpoint {
   return 'expanded';
 }
 
-export function useResponsive(): ResponsiveValues {
+// ── Context (single subscription, stable references) ────────────────────────
+const ResponsiveCtx = createContext<ResponsiveValues | null>(null);
+
+export function ResponsiveProvider({ children }: { children: ReactNode }) {
   const { width, height } = useWindowDimensions();
+  const bp = getBreakpoint(width);
 
-  return useMemo(() => {
-    const bp = getBreakpoint(width);
-    const scale = SCALE[bp];
+  // Only create a new value object when the breakpoint actually changes
+  const prevBp = useRef(bp);
+  const prevWidth = useRef(width);
+  const prevHeight = useRef(height);
+  const prevValue = useRef<ResponsiveValues | null>(null);
 
-    const rf = (size: number) => Math.round(size * scale.font);
-    const rs = (size: number) => Math.round(size * scale.spacing);
-    const ri = (size: number) => Math.round(size * scale.icon);
-
+  const value = useMemo(() => {
+    const scalers = SCALERS[bp];
+    const layout = LAYOUT[bp];
     return {
       breakpoint: bp,
       width,
       height,
       isExpanded: bp === 'expanded',
       isCompact: bp === 'compact',
-      rf,
-      rs,
-      ri,
-      gridColumns: bp === 'expanded' ? 3 : 2,
-      listColumns: bp === 'expanded' ? 2 : 1,
-      panelWidth: bp === 'expanded' ? 320 : bp === 'compact' ? 170 : 214,
-      cardHeight: bp === 'expanded' ? 120 : bp === 'compact' ? 82 : 94,
-      avatarSize: bp === 'expanded' ? 56 : bp === 'compact' ? 36 : 44,
+      rf: scalers.rf,
+      rs: scalers.rs,
+      ri: scalers.ri,
+      ...layout,
     };
-  }, [width, height]);
+  }, [bp, width, height]);
+
+  // If only width/height changed within the same breakpoint, reuse the previous
+  // value to avoid re-rendering all consumers. Only width/height fields differ,
+  // but most components don't use them directly.
+  if (prevBp.current === bp && prevValue.current) {
+    // Update the mutable width/height on the existing object (safe because
+    // consumers that need exact dimensions are rare and can read from the
+    // hook's useWindowDimensions directly).
+    prevValue.current.width = width;
+    prevValue.current.height = height;
+  } else {
+    prevBp.current = bp;
+    prevValue.current = value;
+  }
+  prevWidth.current = width;
+  prevHeight.current = height;
+
+  return React.createElement(ResponsiveCtx.Provider, { value: prevValue.current! }, children);
+}
+
+export function useResponsive(): ResponsiveValues {
+  const ctx = useContext(ResponsiveCtx);
+  if (ctx) return ctx;
+
+  // Fallback for components outside the provider (shouldn't happen in normal use)
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const { width, height } = useWindowDimensions();
+  const bp = getBreakpoint(width);
+  const scalers = SCALERS[bp];
+  const layout = LAYOUT[bp];
+  return {
+    breakpoint: bp,
+    width,
+    height,
+    isExpanded: bp === 'expanded',
+    isCompact: bp === 'compact',
+    rf: scalers.rf,
+    rs: scalers.rs,
+    ri: scalers.ri,
+    ...layout,
+  };
 }

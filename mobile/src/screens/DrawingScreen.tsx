@@ -42,33 +42,59 @@ function resize(){
   c.style.width=window.innerWidth+'px';
   c.style.height=window.innerHeight+'px';
   ctx.setTransform(dpr,0,0,dpr,0,0);
-  ctx.fillStyle='#FFFFFF';
-  ctx.fillRect(0,0,window.innerWidth,window.innerHeight);
+  ctx.clearRect(0,0,window.innerWidth,window.innerHeight);
 }
 resize();
-var drawing=false,color='#000000',lw=6,lastX,lastY;
+var drawing=false,color='#000000',lw=6,lastX,lastY,erasing=false;
 function pos(e){var t=e.touches?e.touches[0]:e;var r=c.getBoundingClientRect();return{x:t.clientX-r.left,y:t.clientY-r.top}}
-c.addEventListener('touchstart',function(e){
-  e.preventDefault();drawing=true;var p=pos(e);lastX=p.x;lastY=p.y;
-  ctx.beginPath();ctx.arc(p.x,p.y,lw/2,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();
-},{passive:false});
-c.addEventListener('touchmove',function(e){
-  e.preventDefault();if(!drawing)return;var p=pos(e);
-  ctx.beginPath();ctx.moveTo(lastX,lastY);ctx.lineTo(p.x,p.y);
-  ctx.strokeStyle=color;ctx.lineWidth=lw;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();
+function onDown(e){
+  e.preventDefault();e.stopPropagation();drawing=true;var p=pos(e);lastX=p.x;lastY=p.y;
+  if(erasing){
+    ctx.save();ctx.globalCompositeOperation='destination-out';
+    ctx.beginPath();ctx.arc(p.x,p.y,lw*2,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.beginPath();ctx.arc(p.x,p.y,lw/2,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();
+  }
+}
+function onMove(e){
+  e.preventDefault();e.stopPropagation();if(!drawing)return;var p=pos(e);
+  if(erasing){
+    ctx.save();ctx.globalCompositeOperation='destination-out';
+    ctx.beginPath();ctx.moveTo(lastX,lastY);ctx.lineTo(p.x,p.y);
+    ctx.lineWidth=lw*4;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();
+    ctx.restore();
+  } else {
+    ctx.beginPath();ctx.moveTo(lastX,lastY);ctx.lineTo(p.x,p.y);
+    ctx.strokeStyle=color;ctx.lineWidth=lw;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();
+  }
   lastX=p.x;lastY=p.y;
-},{passive:false});
-c.addEventListener('touchend',function(){drawing=false});
-c.addEventListener('touchcancel',function(){drawing=false});
+}
+function onUp(e){if(e)e.preventDefault();drawing=false;}
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp,{passive:false});
+c.addEventListener('touchcancel',onUp,{passive:false});
+c.addEventListener('pointerdown',onDown,{passive:false});
+c.addEventListener('pointermove',onMove,{passive:false});
+c.addEventListener('pointerup',onUp,{passive:false});
+c.addEventListener('pointercancel',onUp,{passive:false});
 function handle(msg){
-  if(msg.type==='color')color=msg.value;
+  if(msg.type==='color'){color=msg.value;erasing=false;}
   if(msg.type==='size')lw=msg.value;
+  if(msg.type==='eraser'){erasing=msg.value;}
   if(msg.type==='clear'){
-    ctx.fillStyle='#FFFFFF';
-    ctx.fillRect(0,0,window.innerWidth,window.innerHeight);
+    ctx.clearRect(0,0,c.width,c.height);
   }
   if(msg.type==='export'){
-    var data=c.toDataURL('image/png').split(',')[1];
+    // Composite: white background + drawing layer
+    var exp=document.createElement('canvas');
+    exp.width=c.width;exp.height=c.height;
+    var ectx=exp.getContext('2d');
+    ectx.fillStyle='#FFFFFF';
+    ectx.fillRect(0,0,exp.width,exp.height);
+    ectx.drawImage(c,0,0);
+    var data=exp.toDataURL('image/png').split(',')[1];
     window.ReactNativeWebView.postMessage(JSON.stringify({type:'export',data:data}));
   }
 }
@@ -109,6 +135,7 @@ export function DrawingScreen({ navigation, route }: Props) {
   const webViewRef = useRef<WebView>(null);
   const [activeColor, setActiveColor] = useState('#000000');
   const [activeSize, setActiveSize] = useState(6);
+  const [erasing, setErasing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showNameModal, setShowNameModal] = useState(false);
   const [drawingName, setDrawingName] = useState('');
@@ -123,7 +150,16 @@ export function DrawingScreen({ navigation, route }: Props) {
 
   const selectColor = useCallback((hex: string) => {
     setActiveColor(hex);
+    setErasing(false);
     sendToCanvas({ type: 'color', value: hex });
+  }, [sendToCanvas]);
+
+  const toggleEraser = useCallback(() => {
+    setErasing((prev) => {
+      const next = !prev;
+      sendToCanvas({ type: 'eraser', value: next });
+      return next;
+    });
   }, [sendToCanvas]);
 
   const selectSize = useCallback((width: number) => {
@@ -222,8 +258,15 @@ export function DrawingScreen({ navigation, route }: Props) {
           scrollEnabled={false}
           overScrollMode="never"
           bounces={false}
+          nestedScrollEnabled={false}
           javaScriptEnabled
           originWhitelist={['*']}
+          androidLayerType="hardware"
+          setSupportMultipleWindows={false}
+          onLoadEnd={() => {
+            // Re-trigger canvas resize after WebView layout is stable
+            webViewRef.current?.injectJavaScript('resize();true;');
+          }}
         />
         {saving && (
           <View style={s.savingOverlay}>
@@ -279,6 +322,16 @@ export function DrawingScreen({ navigation, route }: Props) {
         </View>
 
         <View style={s.divider} />
+
+        {/* Eraser */}
+        <TouchableOpacity
+          style={[s.sizeBtn, { width: clearBtnSize, height: clearBtnSize }, erasing && s.eraserActive]}
+          onPress={toggleEraser}
+          activeOpacity={0.7}
+          accessibilityLabel={erasing ? 'Radiergummi aus' : 'Radiergummi'}
+        >
+          <Feather name="edit-3" size={ri(18)} color={erasing ? '#F59E0B' : colors.textDim} />
+        </TouchableOpacity>
 
         {/* Clear */}
         <TouchableOpacity
@@ -394,6 +447,10 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(59,130,246,0.15)',
   },
   sizeDot: { backgroundColor: colors.text },
+  eraserActive: {
+    borderColor: '#F59E0B',
+    backgroundColor: 'rgba(245,158,11,0.15)',
+  },
   clearBtn: {
     borderRadius: 8,
     alignItems: 'center',

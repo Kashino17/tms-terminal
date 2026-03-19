@@ -36,3 +36,5 @@ firebase-debug.log
 .claude/
 .superpowers/
 mobile/.superpowers/
+mobile/android/app/tms-release.keystore
+mobile/android/app/google-services.json

@@ -7,6 +7,7 @@ import { AppNavigator } from './navigation/AppNavigator';
 import { LockScreen } from './screens/LockScreen';
 import { useLockStore } from './store/lockStore';
 import { colors } from './theme';
+import { ResponsiveProvider } from './hooks/useResponsive';
 import { registerBackgroundHandler, registerForegroundHandler } from './services/notifications.service';
 import { keywordAlertService } from './services/keywordAlert.service';
 
@@ -64,12 +65,14 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer theme={darkTheme}>
-        <StatusBar style="light" backgroundColor={colors.bg} translucent={false} />
-        <AppNavigator />
-      </NavigationContainer>
-      {isEnabled && !isUnlocked && <LockScreen />}
-    </SafeAreaProvider>
+    <ResponsiveProvider>
+      <SafeAreaProvider>
+        <NavigationContainer theme={darkTheme}>
+          <StatusBar style="light" backgroundColor={colors.bg} translucent={false} />
+          <AppNavigator />
+        </NavigationContainer>
+        {isEnabled && !isUnlocked && <LockScreen />}
+      </SafeAreaProvider>
+    </ResponsiveProvider>
   );
 }

@@ -10,7 +10,6 @@ import {
   TextStyle,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
 import { TerminalTab } from '../types/terminal.types';
 import { colors, fonts } from '../theme';
 import { AI_TOOL_COLORS } from '../constants/aiTools';
@@ -58,7 +57,7 @@ export function TerminalTabs({ tabs, onSelect, onClose, onAdd, onRename, onOpenG
                 tab.active && styles.activeTab,
                 aiColor != null && { borderColor: aiColor },
               ]}
-              onPress={() => { Haptics.selectionAsync(); onSelect(tab.id); }}
+              onPress={() => onSelect(tab.id)}
               onLongPress={() => handleLongPress(tab)}
               delayLongPress={400}
               accessibilityRole={'tab' as any}
@@ -75,7 +74,7 @@ export function TerminalTabs({ tabs, onSelect, onClose, onAdd, onRename, onOpenG
               )}
               <TouchableOpacity
                 style={[styles.closeBtn, { paddingHorizontal: rs(10) }]}
-                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onClose(tab.id); }}
+                onPress={() => onClose(tab.id)}
                 hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
                 accessibilityLabel="Close tab"
                 accessibilityRole="button"
@@ -95,7 +94,7 @@ export function TerminalTabs({ tabs, onSelect, onClose, onAdd, onRename, onOpenG
         {onOpenGrid && (
           <TouchableOpacity
             style={[styles.gridButton, { paddingHorizontal: rs(10), paddingVertical: rs(8) }]}
-            onPress={() => { Haptics.selectionAsync(); onOpenGrid(); }}
+            onPress={() => onOpenGrid()}
             accessibilityLabel="Tab overview"
             accessibilityRole="button"
           >

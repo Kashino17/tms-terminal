@@ -3,7 +3,6 @@ import { Animated, Keyboard, Platform, StyleSheet, Text, TouchableOpacity } from
 import { Feather } from '@expo/vector-icons';
 import { WebSocketService } from '../services/websocket.service';
 import { colors, fonts } from '../theme';
-import { TOOL_RAIL_WIDTH } from './ToolRail';
 import { useResponsive } from '../hooks/useResponsive';
 
 export const TOOLBAR_HEIGHT = 48;
@@ -16,6 +15,7 @@ const BUTTONS: { label: string; seq: string; icon?: string }[] = [
   { label: 'Esc',   seq: '\x1b' },
   { label: 'Enter', seq: '\r' },
   { label: '^C',    seq: '\x03' },
+  { label: 'CLR',   seq: 'clear\r', icon: 'trash' },
   { label: 'Clear', seq: '\x15', icon: 'delete' },
 ];
 
@@ -24,10 +24,9 @@ interface Props {
   wsService: WebSocketService;
   rangeActive?: boolean;
   onRangeToggle?: () => void;
-  railWidth?: Animated.Value;
 }
 
-export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onRangeToggle, railWidth }: Props) {
+export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onRangeToggle }: Props) {
   const { rf, rs, ri, isExpanded } = useResponsive();
   const bottomAnim = useRef(new Animated.Value(0)).current;
 
@@ -66,7 +65,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   const btnHeight = isExpanded ? rs(44) : rs(40);
 
   return (
-    <Animated.View style={[styles.toolbar, { bottom: bottomAnim, right: railWidth ?? TOOL_RAIL_WIDTH, height: rs(TOOLBAR_HEIGHT), paddingHorizontal: rs(6), gap: rs(4) }]} accessibilityRole={'toolbar' as any}>
+    <Animated.View style={[styles.toolbar, { bottom: bottomAnim, right: 0, height: rs(TOOLBAR_HEIGHT), paddingHorizontal: rs(6), gap: rs(4) }]} accessibilityRole={'toolbar' as any}>
       {BUTTONS.map((btn) => (
         <TouchableOpacity
           key={btn.label}
@@ -96,7 +95,7 @@ const styles = StyleSheet.create({
   toolbar: {
     position: 'absolute',
     left: 0,
-    right: TOOL_RAIL_WIDTH,
+    right: 0,
     height: TOOLBAR_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
@@ -105,7 +104,7 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     paddingHorizontal: 6,
     gap: 4,
-    zIndex: 10,
+    zIndex: 50,
   },
   btn: {
     flex: 1,

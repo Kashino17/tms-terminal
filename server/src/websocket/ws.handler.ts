@@ -39,14 +39,25 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       send(ws, { type: 'terminal:prompt_detected', sessionId, payload: { snippet } });
 
       if (persistedTokens.size === 0) { logger.warn('FCM: prompt detected but no token'); return; }
-      logger.info(`FCM: sending notification — "${snippet.slice(0, 60)}"`);
+      const isFinished = snippet.startsWith('✅');
+      const cleanBody = isFinished ? snippet.slice(1) : snippet; // Remove ✅ prefix from body
+
+      // Build title: hostname + session hint
+      const hostname = require('os').hostname().replace(/\.local$/, '');
+      const sessionNum = [...ownedSessions].indexOf(sessionId) + 1;
+      const tabLabel = sessionNum > 0 ? `Shell ${sessionNum}` : 'Terminal';
+      const title = isFinished
+        ? `✅ ${hostname} · ${tabLabel}`
+        : `⚡ ${hostname} · ${tabLabel}`;
+
+      logger.info(`FCM: sending "${title}" — "${cleanBody.slice(0, 60)}"`);
       const promises: Promise<void>[] = [];
       for (const token of persistedTokens) {
         promises.push(
           fcmService.send(
             token,
-            '⚡ Terminal waiting for input',
-            snippet,
+            title,
+            cleanBody,
             { sessionId },
           ).catch(() => { persistedTokens.delete(token); })
         );
@@ -70,7 +81,11 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         break;
 
       case 'client:register_token': {
-        deviceToken = msg.payload.token;
+        deviceToken = msg.payload?.token;
+        if (!deviceToken) {
+          logger.warn(`FCM: register_token received but token is empty/null`);
+          break;
+        }
         persistedTokens.add(deviceToken);   // survive reconnects
         // Cap at MAX_PERSISTED_TOKENS — evict oldest (first) entry
         if (persistedTokens.size > MAX_PERSISTED_TOKENS) {
@@ -78,7 +93,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           if (oldest !== undefined) persistedTokens.delete(oldest);
         }
         watcherService.setDeviceToken(deviceToken);
-        logger.info(`FCM token registered for ${ip}`);
+        logger.success(`FCM token registered for ${ip} (len=${deviceToken.length})`);
         break;
       }
 

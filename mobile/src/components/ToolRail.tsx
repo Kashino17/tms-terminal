@@ -116,7 +116,7 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
 
   const toggle = useCallback((toolId: string) => {
     if (collapsed) return; // strip is hidden — ignore taps
-    Haptics.selectionAsync();
+
     // Non-panel tools — delegate to parent
     if (onToolAction?.(toolId)) {
       if (activeRef.current) closePanel();
@@ -133,7 +133,7 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
 
   // ── Strip collapse / expand ──────────────────────────────────────────────
   const collapseStrip = useCallback(() => {
-    Haptics.selectionAsync();
+
     // Close any open panel first, then shrink the strip
     const shrink = () => {
       setCollapsed(true);
@@ -154,7 +154,7 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
   }, [closePanel, stripAnim, iconsOpacity, railWidthAnim]);
 
   const expandStrip = useCallback(() => {
-    Haptics.selectionAsync();
+
     setCollapsed(false);
     const anims: Animated.CompositeAnimation[] = [
       Animated.timing(stripAnim,    { toValue: TOOL_RAIL_WIDTH, duration: 200, useNativeDriver: false }),
@@ -213,6 +213,8 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
               serverHost={serverHost}
               serverPort={serverPort}
               serverToken={serverToken}
+              sessionId={sessionId}
+              wsService={wsService}
             />
           )}
         </Animated.View>

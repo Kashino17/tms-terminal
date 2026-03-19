@@ -1,22 +1,44 @@
-import { PermissionsAndroid, Platform } from 'react-native';
+import { PermissionsAndroid, Platform, AppState } from 'react-native';
 import messaging from '@react-native-firebase/messaging';
+import * as Notifications from 'expo-notifications';
+
+// Configure how notifications appear when app is in foreground
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+// Create a dedicated notification channel for terminal prompts (Android)
+if (Platform.OS === 'android') {
+  Notifications.setNotificationChannelAsync('terminal-prompts', {
+    name: 'Terminal Prompts',
+    description: 'Notifications when AI tools (Claude, Codex, Gemini) need input',
+    importance: Notifications.AndroidImportance.HIGH,
+    sound: 'default',
+    vibrationPattern: [0, 200],
+    enableVibrate: true,
+    showBadge: true,
+  }).catch(() => {});
+}
 
 /**
  * Request Android 13+ POST_NOTIFICATIONS runtime permission.
- * On older Android or iOS the permission is granted implicitly.
  */
 export async function requestNotificationPermission(): Promise<boolean> {
   if (Platform.OS === 'android') {
-    // Android 13 (API 33) requires POST_NOTIFICATIONS at runtime
     if (Number(Platform.Version) >= 33) {
       const result = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
       );
       return result === PermissionsAndroid.RESULTS.GRANTED;
     }
-    return true; // Android < 13: no runtime permission needed
+    return true;
   }
-  // iOS
   const status = await messaging().requestPermission();
   return (
     status === messaging.AuthorizationStatus.AUTHORIZED ||
@@ -26,7 +48,6 @@ export async function requestNotificationPermission(): Promise<boolean> {
 
 /**
  * Returns the FCM registration token for this device.
- * Registers the device with APNS/FCM first (required on iOS & Android).
  */
 export async function getFcmToken(): Promise<string | null> {
   try {
@@ -39,22 +60,34 @@ export async function getFcmToken(): Promise<string | null> {
 }
 
 /**
- * Must be called once outside any component (e.g. in App.tsx or index.js).
+ * Must be called once outside any component.
  * Handles notifications that arrive when the app is backgrounded or killed.
  */
 export function registerBackgroundHandler(): void {
   messaging().setBackgroundMessageHandler(async (_message) => {
-    // The OS displays the notification automatically from the FCM payload.
-    // No manual action needed here.
+    // OS displays the notification automatically from the FCM payload.
   });
 }
 
 /**
- * Suppress in-app popup for foreground FCM messages.
- * Notifications are handled silently via the WebSocket tab-badge system.
+ * Handle foreground FCM messages.
+ * Android does NOT show notification banners when the app is in foreground —
+ * we re-post as a local notification via expo-notifications.
  */
 export function registerForegroundHandler(): () => void {
-  return messaging().onMessage(async (_remoteMessage) => {
-    // Silently consumed — badge is set via WebSocket terminal:prompt_detected
+  return messaging().onMessage(async (remoteMessage) => {
+    const title = remoteMessage.notification?.title ?? '⚡ Terminal';
+    const body = remoteMessage.notification?.body ?? 'Waiting for input';
+
+    // Show a local notification so it appears as a heads-up banner
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        sound: 'default',
+        ...(Platform.OS === 'android' ? { channelId: 'terminal-prompts' } : {}),
+      },
+      trigger: null, // immediately
+    });
   });
 }

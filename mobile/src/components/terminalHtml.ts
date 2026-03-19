@@ -10,8 +10,9 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   #terminal-container { width: 100%; height: 100%; position: relative; }
   #terminal { width: 100%; height: 100%; }
   .xterm { padding: 4px; }
-  .xterm-viewport::-webkit-scrollbar { width: 6px; }
-  .xterm-viewport::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+  .xterm-viewport::-webkit-scrollbar { width: 4px; }
+  .xterm-viewport::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+  .xterm-viewport { -webkit-overflow-scrolling: touch; }
 
   /* Prevent native long-press context menu / callout on terminal */
   #terminal { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
@@ -45,6 +46,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-canvas@0.7.0/lib/addon-canvas.min.js"></script>
 <script>
 (function() {
 
@@ -68,12 +70,25 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       brightBlue:'#89b4fa', brightMagenta:'#f5c2e7', brightCyan:'#94e2d5',
       brightWhite:'#a6adc8'
     },
-    allowProposedApi: true, scrollback: 5000, disableStdin: false,
+    allowProposedApi: true, scrollback: 2000, disableStdin: false,
+    fastScrollModifier: 'none',
+    smoothScrollDuration: 0,
   });
   var fitAddon = new window.FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
   term.open(document.getElementById('terminal'));
+
+  // Use Canvas renderer instead of DOM — dramatically faster scrolling.
+  // Canvas renders to a single <canvas> element instead of creating
+  // hundreds of DOM nodes per visible row.
+  try {
+    var canvasAddon = new window.CanvasAddon.CanvasAddon();
+    term.loadAddon(canvasAddon);
+  } catch(e) {
+    // Fallback to DOM renderer if canvas not supported
+  }
+
   fitAddon.fit();
   term.attachCustomKeyEventHandler(function() { return false; });
 
@@ -162,7 +177,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   new ResizeObserver(function() { fitAddon.fit(); reportSize(); })
     .observe(document.getElementById('terminal'));
 
-  /* ── Pinch-to-Zoom ──────────────────────────────────── */
+  /* ── Pinch-to-Zoom (does NOT block native scroll) ──── */
   var MIN_FONT = 8, MAX_FONT = 28, baseFontSize = 14;
   var pinchStartDist = 0, pinchStartFont = 14, isPinching = false;
 
@@ -173,15 +188,16 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     return Math.sqrt(dx * dx + dy * dy);
   }
 
+  // touchstart is PASSIVE — never blocks native scroll
   document.getElementById('terminal').addEventListener('touchstart', function(e) {
     if (e.touches.length === 2) {
       isPinching = true;
       pinchStartDist = pinchDist(e);
       pinchStartFont = term.options.fontSize || baseFontSize;
-      e.preventDefault();
     }
-  }, { passive: false });
+  }, { passive: true });
 
+  // Only touchmove is non-passive, and ONLY prevents default for 2-finger pinch
   document.getElementById('terminal').addEventListener('touchmove', function(e) {
     if (!isPinching || e.touches.length !== 2) return;
     e.preventDefault();
@@ -201,6 +217,14 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       baseFontSize = term.options.fontSize || baseFontSize;
     }
   }, { passive: true });
+
+  // Track scroll position for sticky-scroll via the xterm viewport
+  var vp = document.querySelector('.xterm-viewport');
+  if (vp) {
+    vp.addEventListener('scroll', function() {
+      userScrolledUp = !isAtBottom();
+    }, { passive: true });
+  }
 
   /* ── Two-tap row-range selection ───────────────────────────────────────── */
   var selMode = false;
@@ -258,7 +282,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     sendToRN({ type: 'sel_update', text: text });
   }
 
-  term.onScroll(function() { if (selMode) refreshMarkers(); });
+  // (scroll listener for markers is combined with sticky-scroll handler above)
 
   // Tap = touchstart → touchend with little movement and short duration
   document.getElementById('terminal').addEventListener('touchstart', function(e) {
@@ -297,13 +321,17 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     for (var i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
     return (h >>> 0).toString(36);
   }
+  var lastScanLine = 0;
   function getBufferText() {
     var buf = term.buffer.active;
     var lines = [];
-    for (var i = 0; i < buf.length; i++) {
+    // Only scan NEW lines since last scan — not the entire buffer
+    var start = Math.max(0, lastScanLine);
+    for (var i = start; i < buf.length; i++) {
       var ln = buf.getLine(i);
       if (ln) lines.push(ln.translateToString(true));
     }
+    lastScanLine = buf.length;
     return lines.join('\\n');
   }
   function runSqlScan() {
@@ -332,11 +360,48 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     sqlTimer = setTimeout(function() { sqlTimer = null; runSqlScan(); }, 900);
   }
 
+  /* ── Sticky scroll ─────────────────────────────────── */
+  // Track whether the user is "pinned" to the bottom.
+  // If they scroll up, we stop auto-scrolling. If they scroll
+  // back to the bottom, we resume auto-scrolling.
+  var userScrolledUp = false;
+
+  // Check if viewport is at the bottom of the buffer
+  function isAtBottom() {
+    var buf = term.buffer.active;
+    return buf.viewportY >= buf.baseY;
+  }
+
+  // When the user scrolls, detect if they left the bottom
+  term.onScroll(function() {
+    userScrolledUp = !isAtBottom();
+    if (selMode) refreshMarkers();
+  });
+
+  // Also detect mouse/touch wheel scrolling via the viewport
+  var vp = document.querySelector('.xterm-viewport');
+  if (vp) {
+    vp.addEventListener('scroll', function() {
+      userScrolledUp = !isAtBottom();
+    }, { passive: true });
+  }
+
   /* ── Messages from RN ──────────────────────────────── */
   function handleMsg(data) {
     try {
       var msg = typeof data === 'string' ? JSON.parse(data) : data;
-      if      (msg.type === 'output') { term.write(msg.data); scheduleSqlScan(); }
+      if      (msg.type === 'output') {
+        // If user was at bottom, stay at bottom after write.
+        // If user scrolled up, don't force-scroll.
+        var wasAtBottom = !userScrolledUp;
+        term.write(msg.data, function() {
+          if (wasAtBottom) {
+            term.scrollToBottom();
+            userScrolledUp = false;
+          }
+          scheduleSqlScan();
+        });
+      }
       else if (msg.type === 'clear')  term.clear();
       else if (msg.type === 'focus')  { fitAddon.fit(); reportSize(); if (!selMode) focusShadow(); }
       else if (msg.type === 'get_all') {

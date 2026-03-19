@@ -12,7 +12,14 @@ export function getDefaultShell(): string {
   const platform = getPlatform();
 
   if (platform === 'win32') {
-    return process.env.COMSPEC || 'powershell.exe';
+    // Prefer PowerShell 7 (pwsh) > Windows PowerShell > cmd.exe
+    const pwsh = process.env.PROGRAMFILES
+      ? `${process.env.PROGRAMFILES}\\PowerShell\\7\\pwsh.exe`
+      : null;
+    try {
+      if (pwsh && require('fs').existsSync(pwsh)) return pwsh;
+    } catch { /* ignore */ }
+    return 'powershell.exe';
   }
 
   return process.env.SHELL || '/bin/zsh';
@@ -23,10 +30,11 @@ export function getShellArgs(): string[] {
 
   if (platform === 'win32') {
     const shell = getDefaultShell().toLowerCase();
-    if (shell.includes('powershell')) {
-      return ['-NoLogo'];
+    if (shell.includes('pwsh') || shell.includes('powershell')) {
+      return ['-NoLogo', '-NoExit', '-Command', '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8'];
     }
-    return [];
+    // cmd.exe — set UTF-8 codepage
+    return ['/k', 'chcp 65001 >nul'];
   }
 
   return ['-l']; // login shell on unix
@@ -44,7 +52,13 @@ export function getTermEnv(): Record<string, string> {
     COLORTERM: 'truecolor',
   };
 
-  if (platform !== 'win32') {
+  if (platform === 'win32') {
+    // Force UTF-8 for Windows programs that check these
+    env.PYTHONIOENCODING = 'utf-8';
+    env.PYTHONUTF8 = '1';
+    env.LANG = 'en_US.UTF-8';
+    // Don't set TERM on Windows — ConPTY doesn't use it
+  } else {
     env.TERM = 'xterm-256color';
   }
 

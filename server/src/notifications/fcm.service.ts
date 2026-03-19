@@ -42,7 +42,11 @@ class FcmService {
     body: string,
     data?: Record<string, string>,
   ): Promise<void> {
-    if (!this.ready || !this.admin) return;
+    if (!this.ready || !this.admin) {
+      logger.warn(`FCM: not ready (ready=${this.ready}, admin=${!!this.admin})`);
+      return;
+    }
+    logger.info(`FCM: attempting send to ${token.slice(0, 20)}... — "${body.slice(0, 60)}"`);
 
     try {
       const result = await this.admin.messaging().send({

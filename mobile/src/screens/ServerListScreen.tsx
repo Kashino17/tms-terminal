@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import { View, FlatList, Text, TouchableOpacity, Alert, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -9,6 +9,9 @@ import { ServerCard } from '../components/ServerCard';
 import { ServerProfile } from '../types/server.types';
 import { colors } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
+import { ActionSheet, ActionSheetOption } from '../components/ActionSheet';
+import { UpdateBanner } from '../components/UpdateBanner';
+import * as Clipboard from 'expo-clipboard';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 
@@ -71,20 +74,21 @@ export function ServerListScreen({ navigation }: Props) {
     });
   }, [navigation]);
 
+  const [actionSheet, setActionSheet] = useState<{
+    title?: string; subtitle?: string; options: ActionSheetOption[];
+  } | null>(null);
+
   const handleLongPress = useCallback((server: ServerProfile) => {
-    Alert.alert(
-      server.name,
-      `${server.host}:${server.port}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteServer(server.id),
-        },
+    setActionSheet({
+      title: server.name,
+      subtitle: `${server.host}:${server.port}`,
+      options: [
+        { label: 'Bearbeiten', icon: 'edit-2', onPress: () => navigation.navigate('AddServer', { server: server as any }) },
+        { label: 'Adresse kopieren', icon: 'copy', onPress: () => Clipboard.setStringAsync(`${server.host}:${server.port}`) },
+        { label: 'Server löschen', icon: 'trash-2', destructive: true, onPress: () => deleteServer(server.id) },
       ],
-    );
-  }, [deleteServer]);
+    });
+  }, [deleteServer, navigation]);
 
   const handleAvatarPress = useCallback(async (server: ServerProfile) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -131,6 +135,7 @@ export function ServerListScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
+      <UpdateBanner />
       <FlatList
         data={servers}
         key={String(responsive.listColumns)}
@@ -148,6 +153,13 @@ export function ServerListScreen({ navigation }: Props) {
           </View>
         }
       />
+      <ActionSheet
+        visible={!!actionSheet}
+        title={actionSheet?.title}
+        subtitle={actionSheet?.subtitle}
+        options={actionSheet?.options ?? []}
+        onClose={() => setActionSheet(null)}
+      />
       <TouchableOpacity
         style={[styles.fab, {
           right: rs(20),
@@ -156,10 +168,7 @@ export function ServerListScreen({ navigation }: Props) {
           height: fabSize,
           borderRadius: fabSize / 2,
         }]}
-        onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          navigation.navigate('AddServer');
-        }}
+        onPress={() => navigation.navigate('AddServer')}
         accessibilityLabel="Add server"
         accessibilityRole="button"
       >

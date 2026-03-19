@@ -241,6 +241,10 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         }
         onReadyRef.current?.(msg.cols, msg.rows);
       } else if (msg.type === 'input' && sessionId) {
+        // Mark this session as "user is typing" so auto-approve pauses
+        const { markTyping } = require('../store/autoApproveStore').useAutoApproveStore.getState();
+        markTyping(sessionId);
+
         wsService.send({
           type: 'terminal:input',
           sessionId,
@@ -290,9 +294,11 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     >
       <WebView
         ref={webViewRef}
-        source={{ html: TERMINAL_HTML }}
+        source={{ html: TERMINAL_HTML, baseUrl: 'https://cdn.jsdelivr.net/' }}
         style={styles.webView}
         onMessage={onMessage}
+        onError={() => {}}
+        onHttpError={() => {}}
         javaScriptEnabled
         domStorageEnabled
         originWhitelist={['*']}

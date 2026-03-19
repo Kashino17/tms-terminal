@@ -11,6 +11,9 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { colors, spacing } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
+import { useFavPathsStore } from '../store/favPathsStore';
+import { ActionSheet, ActionSheetOption } from './ActionSheet';
+import { WebSocketService } from '../services/websocket.service';
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp']);
 
@@ -103,11 +106,13 @@ interface Props {
   serverHost: string;
   serverPort: number;
   serverToken: string;
+  sessionId?: string;
+  wsService?: WebSocketService;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function FileBrowserPanel({ serverHost, serverPort, serverToken }: Props) {
+export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionId, wsService }: Props) {
   const responsive = useResponsive();
   const { rf, rs, ri } = responsive;
   const [currentPath, setCurrentPath] = useState('~/Desktop');
@@ -119,6 +124,35 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken }: Props)
   const [viewerLoading, setViewerLoading] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const viewerAnim = useRef(new Animated.Value(0)).current;
+  const [actionSheet, setActionSheet] = useState<{
+    title?: string; subtitle?: string; options: ActionSheetOption[];
+  } | null>(null);
+  const favPaths = useFavPathsStore((s) => s.paths);
+  const addFav = useFavPathsStore((s) => s.add);
+  const removeFav = useFavPathsStore((s) => s.remove);
+  const isFav = useFavPathsStore((s) => s.isFav);
+  const currentIsFav = isFav(resolvedPath);
+
+  const cdToPath = useCallback((dirPath: string) => {
+    if (!sessionId || !wsService) return;
+    // Detect Windows paths (C:\, D:\, \\, etc.)
+    const isWindows = /^[A-Z]:[\\\/]/i.test(dirPath) || dirPath.startsWith('\\\\');
+    let cmd: string;
+    if (isWindows) {
+      // Windows: use double quotes, cd /d for drive changes
+      const escaped = dirPath.replace(/"/g, '');
+      cmd = `cd /d "${escaped}"\r`;
+    } else {
+      // Unix: use single quotes, escape embedded single quotes
+      const escaped = dirPath.replace(/'/g, "'\\''");
+      cmd = `cd '${escaped}'\r`;
+    }
+    wsService.send({
+      type: 'terminal:input',
+      sessionId,
+      payload: { data: cmd },
+    });
+  }, [sessionId, wsService]);
 
   const BASE = `http://${serverHost}:${serverPort}`;
 
@@ -223,18 +257,22 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken }: Props)
   };
 
   const handleLongPress = (entry: FileEntry) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (entry.isDir) {
-      Clipboard.setStringAsync(entry.path);
-      Alert.alert('Copied', `Path copied:\n${entry.path}`);
-      return;
+    const options: ActionSheetOption[] = [
+      { label: 'Pfad kopieren', icon: 'copy', onPress: () => Clipboard.setStringAsync(entry.path) },
+    ];
+    if (entry.isDir && sessionId) {
+      options.push({ label: 'Im Terminal öffnen (cd)', icon: 'terminal', onPress: () => cdToPath(entry.path) });
     }
-    Alert.alert(entry.name, entry.path, [
-      { text: 'Copy Path', onPress: () => { Clipboard.setStringAsync(entry.path); } },
-      { text: 'Download', onPress: () => downloadFile(entry) },
-      { text: 'Preview', style: 'default', onPress: () => openFile(entry) },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    if (!entry.isDir) {
+      options.push(
+        { label: 'Vorschau', icon: 'eye', onPress: () => openFile(entry) },
+        { label: 'Download', icon: 'download', onPress: () => downloadFile(entry) },
+      );
+    }
+    if (!isFav(entry.path) && entry.isDir) {
+      options.push({ label: 'Zu Favoriten', icon: 'star', color: '#F59E0B', onPress: () => addFav(entry.path) });
+    }
+    setActionSheet({ title: entry.name, subtitle: entry.path, options });
   };
 
   const shareContent = async () => {
@@ -334,6 +372,29 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken }: Props)
           <Feather name="home" size={ri(14)} color={colors.textDim} />
         </TouchableOpacity>
 
+        {sessionId && (
+          <TouchableOpacity
+            onPress={() => cdToPath(resolvedPath)}
+            style={styles.headerBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="cd to this directory"
+          >
+            <Feather name="terminal" size={ri(14)} color={colors.primary} />
+          </TouchableOpacity>
+        )}
+
+        <TouchableOpacity
+          onPress={() => {
+            if (currentIsFav) removeFav(resolvedPath);
+            else addFav(resolvedPath);
+          }}
+          style={styles.headerBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel={currentIsFav ? 'Remove from favorites' : 'Add to favorites'}
+        >
+          <Feather name="star" size={ri(14)} color={currentIsFav ? '#F59E0B' : colors.textDim} />
+        </TouchableOpacity>
+
         <TouchableOpacity
           onPress={() => loadDir(currentPath)}
           style={styles.headerBtn}
@@ -343,6 +404,46 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken }: Props)
           <Feather name="refresh-cw" size={ri(13)} color={colors.textDim} />
         </TouchableOpacity>
       </View>
+
+      {/* ── Favorites ── */}
+      {favPaths.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.favBar}
+          contentContainerStyle={[styles.favBarContent, { height: rs(30), gap: rs(6) }]}
+        >
+          {favPaths.map((fav) => (
+            <TouchableOpacity
+              key={fav.path}
+              style={[
+                styles.favChip,
+                { paddingHorizontal: rs(8), paddingVertical: rs(4) },
+                resolvedPath === fav.path && styles.favChipActive,
+              ]}
+              onPress={() => {
+                Haptics.selectionAsync();
+                setHistory((h) => [...h, currentPath]);
+                loadDir(fav.path);
+              }}
+              onLongPress={() => {
+                setActionSheet({
+                  title: fav.label,
+                  subtitle: fav.path,
+                  options: [
+                    { label: 'Pfad kopieren', icon: 'copy', onPress: () => Clipboard.setStringAsync(fav.path) },
+                    { label: 'Favorit entfernen', icon: 'star', destructive: true, onPress: () => removeFav(fav.path) },
+                  ],
+                });
+              }}
+              delayLongPress={400}
+            >
+              <Feather name="star" size={ri(10)} color="#F59E0B" />
+              <Text style={[styles.favLabel, { fontSize: rf(10) }]} numberOfLines={1}>{fav.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
 
       {/* ── Breadcrumb ── */}
       <ScrollView
@@ -458,6 +559,15 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken }: Props)
           <ActivityIndicator size="small" color={colors.primary} />
         </View>
       )}
+
+      {/* Action Sheet */}
+      <ActionSheet
+        visible={!!actionSheet}
+        title={actionSheet?.title}
+        subtitle={actionSheet?.subtitle}
+        options={actionSheet?.options ?? []}
+        onClose={() => setActionSheet(null)}
+      />
     </View>
   );
 }
@@ -508,6 +618,25 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   breadcrumbActive: { color: colors.primary, fontWeight: '600' },
+
+  // ── Favorites
+  favBar: { maxHeight: 30, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
+  favBarContent: { paddingHorizontal: spacing.sm, alignItems: 'center' },
+  favChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  favChipActive: { borderColor: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.1)' },
+  favLabel: {
+    color: colors.textMuted,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    maxWidth: 100,
+  },
 
   divider: { height: 1, backgroundColor: colors.border },
 

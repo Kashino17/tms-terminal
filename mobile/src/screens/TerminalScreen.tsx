@@ -197,8 +197,9 @@ export function TerminalScreen({ navigation, route }: Props) {
         decrementRestore();
       } else if (m.type === 'terminal:prompt_detected' && m.sessionId) {
         // Auto-approve: send Enter once if enabled for this session
+        // BUT skip if user is actively typing in this session
         const autoApprove = useAutoApproveStore.getState();
-        if (autoApprove.isEnabled(m.sessionId) && !autoApprove.isRunning(m.sessionId)) {
+        if (autoApprove.isEnabled(m.sessionId) && !autoApprove.isRunning(m.sessionId) && !autoApprove.isTyping(m.sessionId)) {
           const sid = m.sessionId;
           autoApprove.setRunning(sid, true);
           wsRef.current.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
@@ -211,7 +212,7 @@ export function TerminalScreen({ navigation, route }: Props) {
       } else if (m.type === 'terminal:output' && m.sessionId && m.payload?.data) {
         // Client-side prompt detection — catches prompts regardless of server silence timer
         const autoApprove = useAutoApproveStore.getState();
-        if (autoApprove.isEnabled(m.sessionId) && !autoApprove.isRunning(m.sessionId)) {
+        if (autoApprove.isEnabled(m.sessionId) && !autoApprove.isRunning(m.sessionId) && !autoApprove.isTyping(m.sessionId)) {
           const clean = (m.payload.data as string).replace(ANSI_STRIP_RE, '');
           const tail = clean.slice(-400);
           if (CLIENT_PROMPT_PATTERNS.some((p) => p.test(tail))) {
@@ -275,11 +276,20 @@ export function TerminalScreen({ navigation, route }: Props) {
   useEffect(() => {
     if (connState !== 'connected') return;
     (async () => {
-      const granted = await requestNotificationPermission();
-      if (!granted) return;
-      const token = await getFcmToken();
-      if (!token) return;
-      wsRef.current.send({ type: 'client:register_token', payload: { token } });
+      try {
+        console.log('[FCM] Requesting notification permission...');
+        const granted = await requestNotificationPermission();
+        console.log('[FCM] Permission:', granted ? 'granted' : 'denied');
+        if (!granted) return;
+        console.log('[FCM] Getting token...');
+        const token = await getFcmToken();
+        console.log('[FCM] Token:', token ? `${token.slice(0, 20)}...` : 'null');
+        if (!token) return;
+        wsRef.current.send({ type: 'client:register_token', payload: { token } });
+        console.log('[FCM] Token sent to server');
+      } catch (err) {
+        console.warn('[FCM] Registration failed:', err);
+      }
     })();
   }, [connState]);
 
@@ -529,6 +539,13 @@ export function TerminalScreen({ navigation, route }: Props) {
           <Feather name="arrow-left" size={ri(16)} color={colors.primary} />
           <Text style={[styles.backBtnText, { fontSize: rf(15) }]}> Back</Text>
         </TouchableOpacity>
+        <View style={styles.serverInfo}>
+          <Feather name="server" size={ri(13)} color={colors.primary} />
+          <Text style={[styles.serverNameText, { fontSize: rf(15) }]} numberOfLines={1}>
+            {serverName}
+          </Text>
+          <ConnectionStatus state={connState} />
+        </View>
         <View style={[styles.statusRight, { gap: rs(6) }]}>
           <TouchableOpacity
             style={[styles.quickAction, { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) }]}
@@ -557,8 +574,6 @@ export function TerminalScreen({ navigation, route }: Props) {
           >
             <Feather name="activity" size={ri(14)} color={colors.textMuted} />
           </TouchableOpacity>
-          <View style={[styles.statusDivider, { marginHorizontal: rs(1) }]} />
-          <ConnectionStatus state={connState} />
         </View>
       </View>
       <ReconnectBanner restoreState={restoreState} />
@@ -622,7 +637,6 @@ export function TerminalScreen({ navigation, route }: Props) {
             wsService={wsRef.current}
             rangeActive={rangeActive}
             onRangeToggle={() => setRangeActive((v) => !v)}
-            railWidth={railWidthAnim}
           />
           <ToolRail
             ref={toolRailRef}
@@ -674,6 +688,18 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: '600',
   },
+  serverInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  serverNameText: {
+    color: colors.text,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
   statusRight: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -684,11 +710,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  statusDivider: {
-    width: 1,
-    height: 16,
-    backgroundColor: colors.border,
   },
   terminalArea: {
     flex: 1,
