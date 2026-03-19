@@ -35,6 +35,7 @@ const TOOL_GROUPS: { id: string; icon: any; color: string; label: string }[][] =
     { id: 'screenshots', icon: 'image',        color: colors.info,    label: 'Screenshots' },
     { id: 'notes',       icon: 'check-square', color: '#A78BFA',      label: 'Notes' },
     { id: 'watchers',    icon: 'bell',         color: colors.warning, label: 'Notifications' },
+    { id: 'scrollToBottom', icon: 'chevrons-down', color: colors.textMuted, label: 'Scroll Down' },
   ],
 ];
 

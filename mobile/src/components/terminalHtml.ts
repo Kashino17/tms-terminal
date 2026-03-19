@@ -148,14 +148,16 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   }
 
   shadowInput.addEventListener('compositionstart', function() { isComposing = true; });
-  shadowInput.addEventListener('compositionend', function(e) {
+  shadowInput.addEventListener('compositionend', function() {
     isComposing = false;
-    if (e.data) sendKey(e.data);
-    shadowInput.value = ''; prevValue = '';
+    // Don't send e.data — the input events during composition already sent each character.
+    // Just sync prevValue so nothing gets double-sent.
+    prevValue = shadowInput.value;
   });
 
   shadowInput.addEventListener('input', function() {
-    if (isComposing) return;
+    // No isComposing guard — Android keyboards use composition even for Latin text,
+    // which would delay characters until space/enter. Process every input event.
     var cur = shadowInput.value;
     if (cur.length < prevValue.length) {
       for (var i = 0; i < prevValue.length - cur.length; i++) sendKey(SEQ.bs);

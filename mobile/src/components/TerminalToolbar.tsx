@@ -24,10 +24,9 @@ interface Props {
   wsService: WebSocketService;
   rangeActive?: boolean;
   onRangeToggle?: () => void;
-  onScrollToBottom?: () => void;
 }
 
-export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onRangeToggle, onScrollToBottom }: Props) {
+export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onRangeToggle }: Props) {
   const { rf, rs, ri, isExpanded } = useResponsive();
   const bottomAnim = useRef(new Animated.Value(0)).current;
 
@@ -83,15 +82,6 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
           {btn.icon ? <Feather name={btn.icon as any} size={ri(16)} color={colors.text} /> : <Text style={[styles.btnText, { fontSize: rf(13) }]}>{btn.label}</Text>}
         </TouchableOpacity>
       ))}
-      <TouchableOpacity
-        style={[styles.btn, { height: btnHeight }]}
-        onPress={onScrollToBottom}
-        activeOpacity={0.65}
-        accessibilityLabel="Scroll to bottom"
-        accessibilityRole="button"
-      >
-        <Feather name="chevrons-down" size={ri(16)} color={colors.text} />
-      </TouchableOpacity>
       <TouchableOpacity
         style={[styles.btn, { height: btnHeight }, rangeActive && styles.btnActive]}
         onPress={onRangeToggle}

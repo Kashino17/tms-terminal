@@ -564,6 +564,10 @@ export function TerminalScreen({ navigation, route }: Props) {
 
   // ToolRail action handler — non-panel tools navigate to their own screen
   const handleToolAction = useCallback((toolId: string): boolean => {
+    if (toolId === 'scrollToBottom') {
+      handleScrollToBottom();
+      return true;
+    }
     if (toolId === 'drawing') {
       navigation.navigate('Drawing', {
         serverHost: server?.host ?? '',
@@ -715,7 +719,7 @@ export function TerminalScreen({ navigation, route }: Props) {
                 wsService={wsRef.current}
                 rangeActive={rangeActive}
                 onRangeToggle={() => setRangeActive((v) => !v)}
-                onScrollToBottom={handleScrollToBottom}
+
               />
             </>
           }
