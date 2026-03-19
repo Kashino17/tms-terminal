@@ -24,6 +24,11 @@ export interface TerminalCloseMessage {
   sessionId: string;
 }
 
+export interface TerminalClearMessage {
+  type: 'terminal:clear';
+  sessionId: string;
+}
+
 export interface TerminalReattachMessage {
   type: 'terminal:reattach';
   sessionId: string;
@@ -55,6 +60,7 @@ export type ClientMessage =
   | TerminalInputMessage
   | TerminalResizeMessage
   | TerminalCloseMessage
+  | TerminalClearMessage
   | TerminalReattachMessage
   | PingMessage
   | RegisterTokenMessage

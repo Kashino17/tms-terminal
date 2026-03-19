@@ -252,6 +252,14 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         break;
       }
 
+      case 'terminal:clear': {
+        if (!isValidSessionId(msg.sessionId)) break;
+        // Send platform-appropriate clear command
+        const clearCmd = require('os').platform() === 'win32' ? 'cls\r' : 'clear\r';
+        globalManager.write(msg.sessionId, clearCmd);
+        break;
+      }
+
       case 'terminal:close': {
         if (!isValidSessionId(msg.sessionId)) {
           send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Invalid sessionId' } });

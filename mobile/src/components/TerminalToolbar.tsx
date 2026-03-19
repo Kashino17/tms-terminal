@@ -7,7 +7,7 @@ import { useResponsive } from '../hooks/useResponsive';
 
 export const TOOLBAR_HEIGHT = 48;
 
-const BUTTONS: { label: string; seq: string; icon?: string }[] = [
+const BUTTONS: { label: string; seq: string; icon?: string; action?: string }[] = [
   { label: 'Up',    seq: '\x1b[A', icon: 'chevron-up' },
   { label: 'Down',  seq: '\x1b[B', icon: 'chevron-down' },
   { label: 'Left',  seq: '\x1b[D', icon: 'chevron-left' },
@@ -15,7 +15,7 @@ const BUTTONS: { label: string; seq: string; icon?: string }[] = [
   { label: 'Esc',   seq: '\x1b' },
   { label: 'Enter', seq: '\r' },
   { label: '^C',    seq: '\x03' },
-  { label: 'CLR',   seq: '\x0c', icon: 'trash' },
+  { label: 'CLR',   seq: '', icon: 'trash', action: 'clear' },
   { label: 'Clear', seq: '\x15', icon: 'delete' },
 ];
 
@@ -57,8 +57,12 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
     };
   }, []);
 
-  const sendKey = (seq: string) => {
+  const sendKey = (seq: string, action?: string) => {
     if (!sessionId) return;
+    if (action === 'clear') {
+      wsService.send({ type: 'terminal:clear', sessionId });
+      return;
+    }
     wsService.send({ type: 'terminal:input', sessionId, payload: { data: seq } });
   };
 
@@ -70,7 +74,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
         <TouchableOpacity
           key={btn.label}
           style={[styles.btn, { height: btnHeight }]}
-          onPress={() => sendKey(btn.seq)}
+          onPress={() => sendKey(btn.seq, btn.action)}
           activeOpacity={0.65}
           accessibilityLabel={btn.label}
           accessibilityRole="button"
