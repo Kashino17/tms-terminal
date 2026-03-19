@@ -315,7 +315,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   }, { passive: true });
 
   /* ── SQL detection (runs on xterm.js clean rendered text) ─────────────── */
-  var SQL_PLAIN_RE = /((?:SELECT|INSERT\\s+INTO?|UPDATE\\s+\\S+\\s+SET|DELETE\\s+FROM|CREATE\\s+(?:TABLE|OR\\s+REPLACE\\s+VIEW|INDEX|VIEW|DATABASE|SCHEMA)|DROP\\s+(?:TABLE|INDEX|VIEW|DATABASE)|ALTER\\s+TABLE)\\b[\\s\\S]*?;)/gim;
+  var SQL_PLAIN_RE = /((?:SELECT|INSERT\\s+INTO|UPDATE\\s+\\S+(?:\\s+\\w+)?\\s+SET|DELETE\\s+FROM|CREATE\\s+(?:TABLE|OR\\s+REPLACE\\s+VIEW|INDEX|VIEW|DATABASE|SCHEMA)|DROP\\s+(?:TABLE|INDEX|VIEW|DATABASE)|ALTER\\s+TABLE)\\b[\\s\\S]*?(?:;|(?=\\n\\s*\\n)))/gim;
   var SQL_BLOCK_RE = /\`\`\`(?:sql|postgresql|postgres|pgsql|mysql|sqlite|plpgsql)[^\\n]*\\n([\\s\\S]*?)\`\`\`/gi;
   var seenSqlHashes = new Set();
   function sqlHash(s) {
@@ -327,8 +327,8 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   function getBufferText() {
     var buf = term.buffer.active;
     var lines = [];
-    // Only scan NEW lines since last scan — not the entire buffer
-    var start = Math.max(0, lastScanLine);
+    // Overlap previous scan by 100 lines to catch multi-line SQL at boundaries
+    var start = Math.max(0, lastScanLine - 100);
     for (var i = start; i < buf.length; i++) {
       var ln = buf.getLine(i);
       if (ln) lines.push(ln.translateToString(true));
