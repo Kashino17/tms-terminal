@@ -178,6 +178,45 @@ switch (command) {
     break;
   }
 
+  // ── tms-terminal update ────────────────────────────────────────────────
+  case 'update': {
+    console.log('\x1b[34m⟳\x1b[0m  Updating TMS Terminal...');
+
+    // Stop server if running
+    const updatePid = readPid();
+    if (updatePid && isRunning(updatePid)) {
+      console.log('\x1b[34m⟳\x1b[0m  Stopping server...');
+      try { process.kill(updatePid, 'SIGTERM'); } catch {}
+      cleanPid();
+    }
+
+    try {
+      // Pull latest code
+      console.log('\x1b[34m⟳\x1b[0m  Pulling latest changes...');
+      execSync('git pull', { cwd: ROOT, stdio: 'inherit' });
+
+      // Install any new dependencies
+      console.log('\x1b[34m⟳\x1b[0m  Installing dependencies...');
+      execSync('npm install', { cwd: ROOT, stdio: 'inherit' });
+
+      // Rebuild
+      console.log('\x1b[34m⟳\x1b[0m  Rebuilding...');
+      // Remove old build to force full recompile
+      const distDir = path.join(ROOT, 'dist');
+      if (fs.existsSync(distDir)) fs.rmSync(distDir, { recursive: true, force: true });
+      execSync('npx tsc', { cwd: ROOT, stdio: 'inherit' });
+
+      // Show version from package.json
+      const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+      console.log(`\x1b[32m✓\x1b[0m  TMS Terminal updated to v${pkg.version}`);
+      console.log('\x1b[90m   Run \x1b[0mtms-terminal\x1b[90m to start the server.\x1b[0m');
+    } catch (err) {
+      console.error('\x1b[31m✗\x1b[0m  Update failed:', err.message);
+      process.exit(1);
+    }
+    break;
+  }
+
   // ── help ────────────────────────────────────────────────────────────────
   default:
     console.log(`
@@ -188,6 +227,7 @@ switch (command) {
   tms-terminal setup        Configure password & port
   tms-terminal stop         Stop the running server
   tms-terminal status       Check if server is running
+  tms-terminal update       Pull latest code, rebuild, restart
   tms-terminal rebuild      Recompile TypeScript
   tms-terminal uninstall    Remove everything (config, global command)
 
