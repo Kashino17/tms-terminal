@@ -26,7 +26,7 @@ export const config = {
   rateLimitWindow: 60 * 1000, // 1 minute
   rateLimitMax: 5,
   rateLimitBlock: 15 * 60 * 1000, // 15 minutes
-  outputBufferMs: 16,
+  outputBufferMs: 32, // batch more data per message — fewer WS frames, better for mobile
 };
 
 export function ensureConfigDir(): void {

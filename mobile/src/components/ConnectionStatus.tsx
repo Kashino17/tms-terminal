@@ -6,6 +6,7 @@ import { useResponsive } from '../hooks/useResponsive';
 
 interface Props {
   state: ConnectionState;
+  rtt?: number;
 }
 
 const STATE_CONFIG: Record<ConnectionState, { dot: string; label: string; pulse: boolean }> = {
@@ -15,7 +16,13 @@ const STATE_CONFIG: Record<ConnectionState, { dot: string; label: string; pulse:
   error:        { dot: colors.destructive, label: 'ERR',  pulse: false },
 };
 
-export function ConnectionStatus({ state }: Props) {
+function getRttColor(rtt: number): string {
+  if (rtt < 50) return colors.accent;       // green
+  if (rtt <= 150) return colors.warning;     // yellow/warning
+  return '#FF8C00';                          // orange for >150ms
+}
+
+export function ConnectionStatus({ state, rtt }: Props) {
   const { rf, rs } = useResponsive();
   const opacity = useRef(new Animated.Value(1)).current;
   const loopRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -48,10 +55,17 @@ export function ConnectionStatus({ state }: Props) {
     };
   }, [state]);
 
+  const showRtt = state === 'connected' && rtt !== undefined;
+
   return (
     <View style={[styles.pill, dynamicStyles.pill, { borderColor: config.dot + '55' }]}>
       <Animated.View style={[styles.dot, dynamicStyles.dot, { backgroundColor: config.dot, opacity }]} />
       <Text style={[styles.label, dynamicStyles.label, { color: config.dot }]}>{config.label}</Text>
+      {showRtt && (
+        <Text style={[styles.label, dynamicStyles.label, { color: getRttColor(rtt!) }]}>
+          {rtt! > 999 ? `${(rtt! / 1000).toFixed(1)}s` : `${rtt}ms`}
+        </Text>
+      )}
     </View>
   );
 }

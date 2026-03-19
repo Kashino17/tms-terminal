@@ -4,13 +4,18 @@ import { handleConnection } from './ws.handler';
 import { authenticateWebSocket } from '../auth/auth.middleware';
 import { logger } from '../utils/logger';
 
-const HEARTBEAT_INTERVAL_MS = 30_000; // 30 seconds
-const MAX_MISSED_PONGS = 2;
+const HEARTBEAT_INTERVAL_MS = 15_000; // 15 seconds — faster dead-connection detection on mobile
+const MAX_MISSED_PONGS = 3; // terminate after 3 missed pongs (45s window — tolerates packet loss on mobile)
 
 export function createWebSocketServer(server: http.Server): WebSocketServer {
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: 1_048_576, // 1 MB
+    perMessageDeflate: {
+      zlibDeflateOptions: { level: 1 }, // fastest compression, still good ratio for text
+      threshold: 128,                   // only compress messages > 128 bytes
+      concurrencyLimit: 10,
+    },
   });
 
   server.on('upgrade', (req: http.IncomingMessage, socket, head) => {
@@ -21,6 +26,7 @@ export function createWebSocketServer(server: http.Server): WebSocketServer {
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req); // required for noServer mode — registers pong handler
       const ip = req.socket.remoteAddress || 'unknown';
       handleConnection(ws, ip);
     });

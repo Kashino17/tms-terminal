@@ -107,13 +107,16 @@ export function handleAuthRequest(req: http.IncomingMessage, res: http.ServerRes
 
   let body = '';
   let bodySize = 0;
+  let rejected = false;
 
   req.on('data', (chunk: Buffer | string) => {
+    if (rejected) return;
     const chunkLen = typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
     bodySize += chunkLen;
     if (bodySize > AUTH_BODY_LIMIT) {
-      req.destroy();
+      rejected = true;
       sendJson(res, 413, { error: 'Request body too large' });
+      req.destroy();
       return;
     }
     body += chunk;
@@ -121,7 +124,7 @@ export function handleAuthRequest(req: http.IncomingMessage, res: http.ServerRes
 
   req.on('end', async () => {
     // If request was already destroyed due to body size limit, don't process
-    if (bodySize > AUTH_BODY_LIMIT) return;
+    if (rejected) return;
 
     try {
       const { password } = JSON.parse(body);

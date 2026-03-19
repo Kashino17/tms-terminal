@@ -1,5 +1,5 @@
 import { useWindowDimensions } from 'react-native';
-import { createContext, useContext, useRef, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import React from 'react';
 
 // ── Breakpoints ─────────────────────────────────────────────────────────────
@@ -88,12 +88,6 @@ export function ResponsiveProvider({ children }: { children: ReactNode }) {
   const { width, height } = useWindowDimensions();
   const bp = getBreakpoint(width);
 
-  // Only create a new value object when the breakpoint actually changes
-  const prevBp = useRef(bp);
-  const prevWidth = useRef(width);
-  const prevHeight = useRef(height);
-  const prevValue = useRef<ResponsiveValues | null>(null);
-
   const value = useMemo(() => {
     const scalers = SCALERS[bp];
     const layout = LAYOUT[bp];
@@ -110,23 +104,7 @@ export function ResponsiveProvider({ children }: { children: ReactNode }) {
     };
   }, [bp, width, height]);
 
-  // If only width/height changed within the same breakpoint, reuse the previous
-  // value to avoid re-rendering all consumers. Only width/height fields differ,
-  // but most components don't use them directly.
-  if (prevBp.current === bp && prevValue.current) {
-    // Update the mutable width/height on the existing object (safe because
-    // consumers that need exact dimensions are rare and can read from the
-    // hook's useWindowDimensions directly).
-    prevValue.current.width = width;
-    prevValue.current.height = height;
-  } else {
-    prevBp.current = bp;
-    prevValue.current = value;
-  }
-  prevWidth.current = width;
-  prevHeight.current = height;
-
-  return React.createElement(ResponsiveCtx.Provider, { value: prevValue.current! }, children);
+  return React.createElement(ResponsiveCtx.Provider, { value }, children);
 }
 
 export function useResponsive(): ResponsiveValues {

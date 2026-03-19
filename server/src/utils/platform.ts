@@ -42,7 +42,11 @@ export function getShellArgs(): string[] {
 
 const SENSITIVE_VARS = ['JWT_SECRET', 'TMS_PASSWORD', 'FIREBASE_PRIVATE_KEY'];
 
+let cachedEnv: Record<string, string> | null = null;
+
 export function getTermEnv(): Record<string, string> {
+  if (cachedEnv) return { ...cachedEnv }; // shallow copy of cached
+
   const platform = getPlatform();
   const filtered = Object.fromEntries(
     Object.entries(process.env).filter(([key, v]) => v !== undefined && !SENSITIVE_VARS.includes(key))
@@ -62,5 +66,6 @@ export function getTermEnv(): Record<string, string> {
     env.TERM = 'xterm-256color';
   }
 
-  return env;
+  cachedEnv = env;
+  return { ...cachedEnv };
 }

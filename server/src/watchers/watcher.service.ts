@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { spawn, execSync } from 'child_process';
+import { spawn, exec } from 'child_process';
 import { logger } from '../utils/logger';
 import { fcmService } from '../notifications/fcm.service';
 
@@ -155,7 +155,7 @@ class WatcherService {
       `🔔 ${typeLabel}: ${watcher.label}`,
       message,
       { watcherId: watcher.id, watcherType: watcher.type },
-    );
+    ).catch(() => {});
   }
 
   private startWatcher(watcher: WatcherConfig): void {
@@ -237,13 +237,16 @@ class WatcherService {
     const processName = watcher.config.name;
     if (!processName) return;
 
-    let wasRunning = this.isProcessRunning(processName);
+    let wasRunning = false;
+    // Initialize wasRunning asynchronously
+    this.isProcessRunning(processName).then(running => { wasRunning = running; });
     const interval = setInterval(() => {
-      const isRunning = this.isProcessRunning(processName);
-      if (wasRunning && !isRunning) {
-        this.notify(watcher, `Process '${processName}' has stopped or crashed!`);
-      }
-      wasRunning = isRunning;
+      this.isProcessRunning(processName).then(isRunning => {
+        if (wasRunning && !isRunning) {
+          this.notify(watcher, `Process '${processName}' has stopped or crashed!`);
+        }
+        wasRunning = isRunning;
+      });
     }, 5000); // Check every 5 seconds
 
     this.active.set(watcher.id, {
@@ -254,22 +257,23 @@ class WatcherService {
     logger.info(`Process watcher started: ${processName} (currently ${wasRunning ? 'running' : 'not found'})`);
   }
 
-  private isProcessRunning(name: string): boolean {
+  private isProcessRunning(name: string): Promise<boolean> {
     // Sanitize process name to prevent shell injection
     const sanitized = name.replace(/[^a-zA-Z0-9._-]/g, '');
-    if (!sanitized) return false;
+    if (!sanitized) return Promise.resolve(false);
 
-    try {
-      const result = execSync(
+    return new Promise((resolve) => {
+      exec(
         process.platform === 'win32'
           ? `tasklist /FI "IMAGENAME eq ${sanitized}*" /NH`
           : `pgrep -f "${sanitized}"`,
         { encoding: 'utf-8', timeout: 3000 },
+        (error, stdout) => {
+          if (error) { resolve(false); return; }
+          resolve(stdout.trim().length > 0);
+        },
       );
-      return result.trim().length > 0;
-    } catch {
-      return false;
-    }
+    });
   }
 
   // ── Log Keyword Watcher ────────────────────────────────────────────────────
@@ -309,6 +313,7 @@ class WatcherService {
 
     tail.stdout.on('data', (chunk: Buffer) => {
       lineBuffer += chunk.toString();
+      if (lineBuffer.length > 1_048_576) lineBuffer = '';
       const lines = lineBuffer.split('\n');
       lineBuffer = lines.pop() ?? '';
 

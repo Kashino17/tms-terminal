@@ -7,6 +7,13 @@ import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 
+// Wire up the detach feed callback so the prompt detector keeps receiving
+// data even when sessions are detached (client backgrounded/disconnected).
+// This enables server-side auto-approve and FCM push notifications.
+globalManager.detachFeedCallback = (sessionId, data) => {
+  promptDetector.feed(sessionId, data);
+};
+
 function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify(msg));
@@ -24,9 +31,16 @@ const VALID_WATCHER_TYPES = ['file', 'process', 'keyword'] as const;
 const MAX_PERSISTED_TOKENS = 10;
 const persistedTokens: Set<string> = new Set();
 
+// Server-side auto-approve state — persists across reconnects.
+// When enabled for a session, the server sends '\r' directly to the PTY on prompt detection,
+// even when the client is disconnected/backgrounded.
+const serverAutoApprove = new Map<string, boolean>();
+
 export function handleConnection(ws: WebSocket, ip: string): void {
   // Track which sessions this connection owns (for detach on disconnect)
   const ownedSessions = new Set<string>();
+  // Track attach generation per session — passed to detachSession to prevent stale detach
+  const sessionGens = new Map<string, number>();
   // Use the persisted tokens as the starting value; overwritten on register
   let deviceToken: string | null = persistedTokens.size > 0 ? [...persistedTokens][0] : null;
 
@@ -35,6 +49,14 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   /** Register a session with the prompt detector so we can notify on AI prompts. */
   const watchSession = (sessionId: string): void => {
     promptDetector.watch(sessionId, (snippet) => {
+      // Server-side auto-approve: if enabled, send Enter directly to PTY
+      // This works even when the client is backgrounded/disconnected
+      if (serverAutoApprove.get(sessionId)) {
+        logger.info(`Auto-approve: sending Enter for session ${sessionId.slice(0, 8)}`);
+        globalManager.write(sessionId, '\r');
+        return; // No WS notification or FCM push needed
+      }
+
       // Always send in-app badge notification via WebSocket
       send(ws, { type: 'terminal:prompt_detected', sessionId, payload: { snippet } });
 
@@ -72,6 +94,39 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       msg = JSON.parse(raw.toString());
     } catch {
       logger.warn(`Invalid JSON from ${ip}`);
+      return;
+    }
+
+    // Handle extension message types not in shared/protocol.ts
+    const msgType = (msg as any).type as string;
+
+    if (msgType === 'client:backgrounding') {
+      logger.info(`Client backgrounding — detaching all sessions (${ownedSessions.size} sessions)`);
+      for (const sessionId of ownedSessions) {
+        const gen = sessionGens.get(sessionId);
+        globalManager.detachSession(sessionId, gen);
+      }
+      // Do NOT close the WebSocket — the client will close it from their side
+      return;
+    }
+
+    if (msgType === 'client:set_auto_approve') {
+      const sid = (msg as any).sessionId;
+      const enabled = !!(msg as any).payload?.enabled;
+      if (typeof sid === 'string') {
+        serverAutoApprove.set(sid, enabled);
+        logger.info(`Auto-approve ${enabled ? 'enabled' : 'disabled'} for session ${sid.slice(0, 8)}`);
+      }
+      return;
+    }
+
+    if (msgType === 'client:rtt') {
+      const rtt = (msg as any).payload?.rtt;
+      if (typeof rtt === 'number' && rtt > 0 && rtt < 30000) {
+        for (const sessionId of ownedSessions) {
+          globalManager.setSessionRtt(sessionId, rtt);
+        }
+      }
       return;
     }
 
@@ -124,6 +179,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
             },
           );
           ownedSessions.add(session.id);
+          sessionGens.set(session.id, globalManager.getAttachGen(session.id));
           watchSession(session.id);
           send(ws, {
             type: 'terminal:created',
@@ -174,6 +230,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
         if (session) {
           ownedSessions.add(session.id);
+          sessionGens.set(session.id, globalManager.getAttachGen(session.id));
+          promptDetector.unwatch(session.id); // reset stale timer state before re-watching
           watchSession(session.id);
           globalManager.resize(session.id, cols, rows);
           send(ws, {
@@ -267,6 +325,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         }
 
         ownedSessions.delete(msg.sessionId);
+        sessionGens.delete(msg.sessionId);
+        serverAutoApprove.delete(msg.sessionId);
         promptDetector.unwatch(msg.sessionId);
         if (!globalManager.closeSession(msg.sessionId)) {
           send(ws, {
@@ -377,16 +437,18 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   ws.on('close', () => {
     logger.info(`Client disconnected: ${ip} — detaching ${ownedSessions.size} sessions (kept alive)`);
     for (const sessionId of ownedSessions) {
-      promptDetector.unwatch(sessionId);
-      globalManager.detachSession(sessionId);
+      // Pass the attach generation so the detach is skipped if a newer reattach already happened
+      const gen = sessionGens.get(sessionId);
+      globalManager.detachSession(sessionId, gen);
     }
     ownedSessions.clear();
+    sessionGens.clear();
   });
 
   ws.on('error', (err) => {
     logger.error(`WebSocket error from ${ip}: ${err.message}`);
     for (const sessionId of ownedSessions) {
-      promptDetector.unwatch(sessionId);
+      // Do NOT unwatch promptDetector — same rationale as ws.on('close')
       globalManager.detachSession(sessionId);
     }
     ownedSessions.clear();

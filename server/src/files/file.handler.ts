@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import * as http from 'http';
@@ -48,7 +49,7 @@ function err(res: http.ServerResponse, status: number, msg: string) {
   res.end(JSON.stringify({ error: msg }));
 }
 
-export function handleFileList(req: http.IncomingMessage, res: http.ServerResponse): void {
+export async function handleFileList(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
     const url = new URL(req.url!, 'http://localhost');
     const raw = url.searchParams.get('path') ?? '~';
@@ -57,13 +58,13 @@ export function handleFileList(req: http.IncomingMessage, res: http.ServerRespon
     if (!isWithinHome(dirPath)) return err(res, 403, 'Access denied: path is outside home directory');
     if (isDeniedPath(dirPath)) return err(res, 403, 'Access denied: sensitive path');
 
-    const dirents = fs.readdirSync(dirPath, { withFileTypes: true });
-    const entries: FileEntry[] = dirents.map((e) => {
+    const dirents = await fsp.readdir(dirPath, { withFileTypes: true });
+    const entries: FileEntry[] = await Promise.all(dirents.map(async (e) => {
       const full = path.join(dirPath, e.name);
       let size = 0, modified = 0;
-      try { const st = fs.statSync(full); size = st.size; modified = st.mtimeMs; } catch {}
-      return { name: e.name, path: full, isDir: e.isDirectory() || e.isSymbolicLink() && isDir(full), size, modified, isSymlink: e.isSymbolicLink() };
-    });
+      try { const st = await fsp.stat(full); size = st.size; modified = st.mtimeMs; } catch {}
+      return { name: e.name, path: full, isDir: e.isDirectory() || e.isSymbolicLink() && await isDirAsync(full), size, modified, isSymlink: e.isSymbolicLink() };
+    }));
 
     // Folders first, then files — each group alphabetical
     entries.sort((a, b) => {
@@ -82,7 +83,11 @@ function isDir(p: string): boolean {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
-export function handleFileRead(req: http.IncomingMessage, res: http.ServerResponse): void {
+async function isDirAsync(p: string): Promise<boolean> {
+  try { return (await fsp.stat(p)).isDirectory(); } catch { return false; }
+}
+
+export async function handleFileRead(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
     const url = new URL(req.url!, 'http://localhost');
     const raw = url.searchParams.get('path') ?? '';
@@ -93,12 +98,12 @@ export function handleFileRead(req: http.IncomingMessage, res: http.ServerRespon
     if (!isWithinHome(filePath)) return err(res, 403, 'Access denied: path is outside home directory');
     if (isDeniedPath(filePath)) return err(res, 403, 'Access denied: sensitive path');
 
-    const stat = fs.statSync(filePath);
+    const stat = await fsp.stat(filePath);
 
     if (stat.isDirectory()) return err(res, 400, 'Is a directory');
     if (stat.size > 2 * 1024 * 1024) return err(res, 400, 'File too large to preview (>2 MB)');
 
-    const buf = fs.readFileSync(filePath);
+    const buf = await fsp.readFile(filePath);
 
     // Detect binary: if >30% of first 512 bytes are non-printable, reject
     const sample = buf.slice(0, 512);
@@ -154,7 +159,12 @@ export function handleFileDownload(req: http.IncomingMessage, res: http.ServerRe
       'Content-Length': String(stat.size),
       'Cache-Control': 'max-age=300',
     });
-    fs.createReadStream(filePath).pipe(res);
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', (e) => {
+      if (!res.headersSent) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
+      else { res.destroy(); }
+    });
+    stream.pipe(res);
   } catch (e: unknown) {
     err(res, 400, e instanceof Error ? e.message : String(e));
   }

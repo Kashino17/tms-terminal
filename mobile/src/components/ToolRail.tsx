@@ -164,7 +164,7 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
       anims.push(Animated.timing(railWidthAnim, { toValue: TOOL_RAIL_WIDTH, duration: 200, useNativeDriver: false }));
     }
     Animated.parallel(anims).start();
-  }, []);
+  }, [stripAnim, iconsOpacity, railWidthAnim]);
 
   useImperativeHandle(ref, () => ({
     closePanel: () => {

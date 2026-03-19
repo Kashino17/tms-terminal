@@ -6,7 +6,7 @@ import { Feather } from '@expo/vector-icons';
 import { ToolRail, ToolRailRef, TOOL_RAIL_WIDTH } from '../components/ToolRail';
 import { TerminalTabs } from '../components/TerminalTabs';
 import { TerminalToolbar } from '../components/TerminalToolbar';
-import { TerminalView, clearViewBuffer } from '../components/TerminalView';
+import { TerminalView, TerminalViewRef, clearViewBuffer } from '../components/TerminalView';
 import { ConnectionStatus } from '../components/ConnectionStatus';
 import { ReconnectBanner, RestoreState } from '../components/ReconnectBanner';
 import { WebSocketService } from '../services/websocket.service';
@@ -99,12 +99,31 @@ export function TerminalScreen({ navigation, route }: Props) {
   const [panelOpen, setPanelOpen] = useState(false);
   const railWidthAnim = useRef(new Animated.Value(TOOL_RAIL_WIDTH)).current;
 
+  const autoApproveTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const termViewRefs = useRef<Map<string, TerminalViewRef>>(new Map());
+  const outputBuffersRef = useRef<Record<string, string>>({});
+  const lastActivityRef  = useRef<Record<string, number>>({});
   const [outputBuffers, setOutputBuffers] = useState<Record<string, string>>({});
   const [lastActivity,  setLastActivity]  = useState<Record<string, number>>({});
   const [gridVisible,   setGridVisible]   = useState(false);
   const pendingTabIdRef = useRef<string | null>(null);
   const gridTranslateY  = useRef(new Animated.Value(screenHeight)).current;
 
+
+  // Throttled sync: only copy output refs to state when grid is visible (every 500ms)
+  useEffect(() => {
+    if (!gridVisible) return;
+    // Sync immediately on open
+    setOutputBuffers({ ...outputBuffersRef.current });
+    setLastActivity({ ...lastActivityRef.current });
+    const timer = setInterval(() => {
+      setOutputBuffers({ ...outputBuffersRef.current });
+      setLastActivity({ ...lastActivityRef.current });
+    }, 500);
+    return () => clearInterval(timer);
+  }, [gridVisible]);
+
+  const [rtt, setRtt] = useState<number | undefined>(undefined);
 
   const serverTabs = tabs[serverId] || [];
 
@@ -118,6 +137,32 @@ export function TerminalScreen({ navigation, route }: Props) {
       if (restoreDismissTimer.current) clearTimeout(restoreDismissTimer.current);
     };
   }, []);
+
+  // Track whether app was backgrounded so we only reconnect when truly returning from background
+  const backgroundedRef = useRef(false);
+
+  // AppState: background/foreground handling — detach sessions on background, reconnect on active
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'background') {
+        backgroundedRef.current = true;
+        // Notify server to detach all sessions, then disconnect immediately
+        // (WebSocket send() buffers the message synchronously before close() is called)
+        wsRef.current.send({ type: 'client:backgrounding' } as any);
+        wsRef.current.disconnect();
+      } else if (nextState === 'active' && backgroundedRef.current) {
+        backgroundedRef.current = false;
+        // Reconnect WebSocket — read fresh server data from store to avoid stale closure
+        const srv = useServerStore.getState().servers.find((s) => s.id === serverId);
+        if (srv?.token) {
+          wsRef.current.connect({ host: srv.host, port: srv.port, token: srv.token });
+        }
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [serverId]);
 
   // When active tab changes, ensure its WebView is mounted
   useEffect(() => {
@@ -204,7 +249,8 @@ export function TerminalScreen({ navigation, route }: Props) {
           autoApprove.setRunning(sid, true);
           wsRef.current.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
           // Release lock after 1s — short enough not to block back-to-back prompts
-          setTimeout(() => autoApprove.setRunning(sid, false), 1000);
+          const timer1 = setTimeout(() => { autoApprove.setRunning(sid, false); autoApproveTimers.current.delete(timer1); }, 1000);
+          autoApproveTimers.current.add(timer1);
         } else {
           // Set notification badge on the tab (only if it's not the active tab)
           useTerminalStore.getState().setTabNotification(serverId, m.sessionId);
@@ -219,7 +265,8 @@ export function TerminalScreen({ navigation, route }: Props) {
             const sid = m.sessionId;
             autoApprove.setRunning(sid, true);
             wsRef.current.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
-            setTimeout(() => autoApprove.setRunning(sid, false), 1500);
+            const timer2 = setTimeout(() => { autoApprove.setRunning(sid, false); autoApproveTimers.current.delete(timer2); }, 1500);
+            autoApproveTimers.current.add(timer2);
           }
         }
 
@@ -229,16 +276,15 @@ export function TerminalScreen({ navigation, route }: Props) {
         );
         if (outputTab) {
           const sessionData = stripAnsiForPreview(m.payload.data as string);
-          setOutputBuffers((prev) => {
-            const raw = (prev[outputTab.id] ?? '') + sessionData;
-            if (raw.length <= OUTPUT_BUFFER_MAX_CHARS) {
-              return { ...prev, [outputTab.id]: raw };
-            }
+          const raw = (outputBuffersRef.current[outputTab.id] ?? '') + sessionData;
+          if (raw.length <= OUTPUT_BUFFER_MAX_CHARS) {
+            outputBuffersRef.current[outputTab.id] = raw;
+          } else {
             const trimmed = raw.slice(raw.length - OUTPUT_BUFFER_MAX_CHARS);
             const nl = trimmed.indexOf('\n');
-            return { ...prev, [outputTab.id]: nl >= 0 ? trimmed.slice(nl + 1) : trimmed };
-          });
-          setLastActivity((prev) => ({ ...prev, [outputTab.id]: Date.now() }));
+            outputBuffersRef.current[outputTab.id] = nl >= 0 ? trimmed.slice(nl + 1) : trimmed;
+          }
+          lastActivityRef.current[outputTab.id] = Date.now();
         }
       } else if (m.type === 'terminal:error' && m.sessionId && m.sessionId !== 'none') {
         // Session expired — immediately re-create if we know the dimensions
@@ -268,6 +314,8 @@ export function TerminalScreen({ navigation, route }: Props) {
 
     return () => {
       unsubscribe();
+      autoApproveTimers.current.forEach(clearTimeout);
+      autoApproveTimers.current.clear();
       ws.disconnect();
     };
   }, [serverId]);
@@ -291,6 +339,19 @@ export function TerminalScreen({ navigation, route }: Props) {
         console.warn('[FCM] Registration failed:', err);
       }
     })();
+  }, [connState]);
+
+  // Poll RTT from WebSocket service and update state for ConnectionStatus
+  useEffect(() => {
+    if (connState !== 'connected') {
+      setRtt(undefined);
+      return;
+    }
+    const rttInterval = setInterval(() => {
+      const currentRtt = wsRef.current.getRtt();
+      setRtt(prev => prev === currentRtt ? prev : currentRtt);
+    }, 5000);
+    return () => clearInterval(rttInterval);
   }, [connState]);
 
   /** Decrement the pending restore counter; auto-dismiss banner when done. */
@@ -341,6 +402,41 @@ export function TerminalScreen({ navigation, route }: Props) {
     }
   }, [connState]);
 
+  // Sync auto-approve state to server whenever it changes.
+  // This allows server-side auto-approve to work even when the app is backgrounded.
+  useEffect(() => {
+    if (connState !== 'connected') return;
+    const unsub = useAutoApproveStore.subscribe((state, prevState) => {
+      const currentTabs = useTerminalStore.getState().getTabs(serverId);
+      for (const tab of currentTabs) {
+        if (!tab.sessionId) continue;
+        const now = state.enabled[tab.sessionId] ?? false;
+        const prev = prevState.enabled[tab.sessionId] ?? false;
+        if (now !== prev) {
+          wsRef.current.send({
+            type: 'client:set_auto_approve',
+            sessionId: tab.sessionId,
+            payload: { enabled: now },
+          } as any);
+        }
+      }
+    });
+    // Sync current state on connect (auto-approve may have been enabled before reconnect)
+    const currentTabs = useTerminalStore.getState().getTabs(serverId);
+    const autoState = useAutoApproveStore.getState();
+    for (const tab of currentTabs) {
+      if (!tab.sessionId) continue;
+      if (autoState.enabled[tab.sessionId]) {
+        wsRef.current.send({
+          type: 'client:set_auto_approve',
+          sessionId: tab.sessionId,
+          payload: { enabled: true },
+        } as any);
+      }
+    }
+    return unsub;
+  }, [connState, serverId]);
+
   const createNewTab = useCallback(() => {
     const currentTabs = useTerminalStore.getState().getTabs(serverId);
     const id = Date.now().toString(36);
@@ -383,8 +479,12 @@ export function TerminalScreen({ navigation, route }: Props) {
     pendingCreateRef.current.delete(tabId);
     tabDimsRef.current.delete(tabId);
     setMountedTabs((prev) => { const s = new Set(prev); s.delete(tabId); return s; });
-    setOutputBuffers((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
-    setLastActivity((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
+    const { [tabId]: _ob, ...restOb } = outputBuffersRef.current;
+    outputBuffersRef.current = restOb;
+    setOutputBuffers(restOb);
+    const { [tabId]: _la, ...restLa } = lastActivityRef.current;
+    lastActivityRef.current = restLa;
+    setLastActivity(restLa);
     const tab = useTerminalStore.getState().getTabs(serverId).find((t) => t.id === tabId);
     if (tab?.sessionId) {
       wsRef.current.send({ type: 'terminal:close', sessionId: tab.sessionId });
@@ -437,6 +537,13 @@ export function TerminalScreen({ navigation, route }: Props) {
   const handleAiToolDetected = useCallback((tabId: string, tool: AiToolType) => {
     updateTab(serverId, tabId, { aiTool: tool });
   }, [serverId, updateTab]);
+
+  const handleScrollToBottom = useCallback(() => {
+    const activeTab = serverTabs.find((t) => t.active);
+    if (activeTab) {
+      termViewRefs.current.get(activeTab.id)?.scrollToBottom();
+    }
+  }, [serverTabs]);
 
   // Only render WebViews for tabs that have been activated at least once (lazy-mount)
   const tabsToRender = serverTabs.filter((t) => mountedTabs.has(t.id));
@@ -544,7 +651,7 @@ export function TerminalScreen({ navigation, route }: Props) {
           <Text style={[styles.serverNameText, { fontSize: rf(15) }]} numberOfLines={1}>
             {serverName}
           </Text>
-          <ConnectionStatus state={connState} />
+          <ConnectionStatus state={connState} rtt={rtt} />
         </View>
         <View style={[styles.statusRight, { gap: rs(6) }]}>
           <TouchableOpacity
@@ -593,6 +700,7 @@ export function TerminalScreen({ navigation, route }: Props) {
               {tabsToRender.map((tab) => (
                 <TerminalView
                   key={tab.id}
+                  ref={(r) => { if (r) termViewRefs.current.set(tab.id, r); else termViewRefs.current.delete(tab.id); }}
                       sessionId={tab.sessionId}
                   wsService={wsRef.current}
                   visible={tab.active}
@@ -607,6 +715,7 @@ export function TerminalScreen({ navigation, route }: Props) {
                 wsService={wsRef.current}
                 rangeActive={rangeActive}
                 onRangeToggle={() => setRangeActive((v) => !v)}
+                onScrollToBottom={handleScrollToBottom}
               />
             </>
           }
@@ -616,6 +725,7 @@ export function TerminalScreen({ navigation, route }: Props) {
           {tabsToRender.map((tab) => (
             <TerminalView
               key={tab.id}
+              ref={(r) => { if (r) termViewRefs.current.set(tab.id, r); else termViewRefs.current.delete(tab.id); }}
               sessionId={tab.sessionId}
               wsService={wsRef.current}
               visible={tab.active}
@@ -637,6 +747,7 @@ export function TerminalScreen({ navigation, route }: Props) {
             wsService={wsRef.current}
             rangeActive={rangeActive}
             onRangeToggle={() => setRangeActive((v) => !v)}
+            onScrollToBottom={handleScrollToBottom}
           />
           <ToolRail
             ref={toolRailRef}

@@ -40,7 +40,7 @@ function handleUpload(
     return;
   }
 
-  let body = '';
+  const chunks: Buffer[] = [];
   let size = 0;
   let rejected = false;
 
@@ -54,12 +54,13 @@ function handleUpload(
       req.destroy();
       return;
     }
-    body += chunk.toString();
+    chunks.push(chunk);
   });
 
   req.on('end', () => {
     if (rejected) return;
     try {
+      const body = Buffer.concat(chunks).toString('utf-8');
       const parsed = JSON.parse(body) as UploadBody;
       const { filename, data } = parsed;
 

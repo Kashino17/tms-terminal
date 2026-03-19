@@ -10,6 +10,7 @@ import { colors } from './theme';
 import { ResponsiveProvider } from './hooks/useResponsive';
 import { registerBackgroundHandler, registerForegroundHandler } from './services/notifications.service';
 import { keywordAlertService } from './services/keywordAlert.service';
+import { registerBackgroundUpdateCheck } from './services/updater.service';
 
 // Background FCM handler must be registered before any component mounts.
 try {

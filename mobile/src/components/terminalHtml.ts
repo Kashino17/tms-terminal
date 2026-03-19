@@ -343,14 +343,14 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       var s = m[1].trim();
       if (!s) continue;
       var h = sqlHash(s);
-      if (!seenSqlHashes.has(h)) { seenSqlHashes.add(h); found.push(s); }
+      if (!seenSqlHashes.has(h)) { if (seenSqlHashes.size > 2000) seenSqlHashes.clear(); seenSqlHashes.add(h); found.push(s); }
     }
     SQL_PLAIN_RE.lastIndex = 0;
     while ((m = SQL_PLAIN_RE.exec(text)) !== null) {
       var s = m[1].trim();
       if (!s || (s.length <= 30 && s.indexOf('\\n') === -1)) continue;
       var h = sqlHash(s);
-      if (!seenSqlHashes.has(h)) { seenSqlHashes.add(h); found.push(s); }
+      if (!seenSqlHashes.has(h)) { if (seenSqlHashes.size > 2000) seenSqlHashes.clear(); seenSqlHashes.add(h); found.push(s); }
     }
     if (found.length > 0) sendToRN({ type: 'sql_detected', sqls: found });
   }
@@ -377,14 +377,6 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     userScrolledUp = !isAtBottom();
     if (selMode) refreshMarkers();
   });
-
-  // Also detect mouse/touch wheel scrolling via the viewport
-  var vp = document.querySelector('.xterm-viewport');
-  if (vp) {
-    vp.addEventListener('scroll', function() {
-      userScrolledUp = !isAtBottom();
-    }, { passive: true });
-  }
 
   /* ── Messages from RN ──────────────────────────────── */
   function handleMsg(data) {
@@ -424,6 +416,10 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       else if (msg.type === 'copy_selection') {
         var txt = term.getSelection() || extractRange(Math.min(selRow1, selRow2), Math.max(selRow1, selRow2));
         sendToRN({ type: 'range_text', text: txt });
+      }
+      else if (msg.type === 'scroll_to_bottom') {
+        term.scrollToBottom();
+        userScrolledUp = false;
       }
       else if (msg.type === 'get_last_lines') {
         var cnt = msg.count || 20;

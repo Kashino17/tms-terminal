@@ -28,12 +28,13 @@ function appendViewBuffer(sessionId: string, data: string) {
 
   const existing = viewBuffers.get(sessionId) ?? '';
   const combined = existing + data;
-  viewBuffers.set(
-    sessionId,
-    combined.length > VIEW_BUFFER_MAX
-      ? combined.slice(combined.length - VIEW_BUFFER_MAX)
-      : combined,
-  );
+  if (combined.length > VIEW_BUFFER_MAX) {
+    const sliced = combined.slice(combined.length - VIEW_BUFFER_MAX);
+    const firstNl = sliced.indexOf('\n');
+    viewBuffers.set(sessionId, firstNl >= 0 ? sliced.slice(firstNl + 1) : sliced);
+  } else {
+    viewBuffers.set(sessionId, combined);
+  }
 }
 
 /** Call this when a tab/session is permanently closed (not just navigated away). */
@@ -56,6 +57,8 @@ function detectAiTool(rawData: string): AiToolType {
 export interface TerminalViewRef {
   /** Reads the last `count` lines from the xterm.js buffer. Resolves within 3 s. */
   requestLastLines: (count?: number) => Promise<string[]>;
+  /** Scrolls the terminal to the very bottom. */
+  scrollToBottom: () => void;
 }
 
 interface Props {
@@ -88,10 +91,26 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
 
   // Pending resolver for requestLastLines — fulfilled when WebView replies 'last_lines'
   const pendingLinesRef = useRef<((lines: string[]) => void) | null>(null);
+  const pendingLinesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // CDN failure recovery: if xterm.js fails to load, the WebView never sends 'ready'.
+  // Reload after 10s to retry CDN scripts.
+  const readyReceivedRef = useRef(false);
+  useEffect(() => {
+    readyReceivedRef.current = false;
+    const timer = setTimeout(() => {
+      if (!readyReceivedRef.current && webViewRef.current) {
+        webViewRef.current.reload();
+      }
+    }, 10_000);
+    return () => clearTimeout(timer);
+  }, [sessionId]);
 
   useImperativeHandle(ref, () => ({
     requestLastLines: (count = 20) =>
       new Promise<string[]>((resolve) => {
+        // Clear previous pending request
+        if (pendingLinesTimerRef.current) clearTimeout(pendingLinesTimerRef.current);
         pendingLinesRef.current = resolve;
         if (webViewRef.current) {
           const msg = JSON.stringify({ type: 'get_last_lines', count });
@@ -102,13 +121,22 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
           resolve([]);
         }
         // Fallback: resolve empty after 3 s so the caller never hangs
-        setTimeout(() => {
+        pendingLinesTimerRef.current = setTimeout(() => {
           if (pendingLinesRef.current === resolve) {
             pendingLinesRef.current = null;
             resolve([]);
           }
+          pendingLinesTimerRef.current = null;
         }, 3000);
       }),
+    scrollToBottom: () => {
+      if (webViewRef.current) {
+        const msg = JSON.stringify({ type: 'scroll_to_bottom' });
+        webViewRef.current.injectJavaScript(
+          `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
+        );
+      }
+    },
   }), []);
 
   // ── Keyboard tracking ──────────────────────────────────────────────────────
@@ -205,7 +233,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     if (visible) {
       setTimeout(() => sendToTerminal('focus'), 100);
     }
-  }, [visible]);
+  }, [visible, sendToTerminal]);
 
   // Sync range-select mode into WebView
   useEffect(() => {
@@ -233,6 +261,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
       const msg = JSON.parse(event.nativeEvent.data);
 
       if (msg.type === 'ready') {
+        readyReceivedRef.current = true;
         // Replay saved output into the fresh xterm.js instance BEFORE requesting
         // terminal:reattach, so history appears instantly and new output appends after.
         if (sessionId) {
@@ -273,6 +302,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         setSelText('');
         onRangeClose?.();
       } else if (msg.type === 'last_lines') {
+        if (pendingLinesTimerRef.current) { clearTimeout(pendingLinesTimerRef.current); pendingLinesTimerRef.current = null; }
         if (pendingLinesRef.current) {
           pendingLinesRef.current(msg.lines ?? []);
           pendingLinesRef.current = null;
