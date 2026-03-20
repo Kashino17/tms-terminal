@@ -348,15 +348,24 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   var lastScanLine = 0;
   function getBufferText() {
     var buf = term.buffer.active;
-    var lines = [];
+    var parts = [];
     // Overlap previous scan by 100 lines to catch multi-line SQL at boundaries
     var start = Math.max(0, lastScanLine - 100);
     for (var i = start; i < buf.length; i++) {
       var ln = buf.getLine(i);
-      if (ln) lines.push(ln.translateToString(true));
+      if (!ln) continue;
+      var txt = ln.translateToString(true);
+      // Wrapped lines are continuations of the previous line — join without \\n.
+      // Without this, identifiers split across rows (e.g. "pod_autom_\\nshops")
+      // produce broken SQL that fails with syntax errors on Supabase.
+      if (ln.isWrapped && parts.length > 0) {
+        parts[parts.length - 1] += txt;
+      } else {
+        parts.push(txt);
+      }
     }
     lastScanLine = buf.length;
-    return lines.join('\\n');
+    return parts.join('\\n');
   }
   function runSqlScan() {
     var text = getBufferText();
