@@ -2,6 +2,7 @@ import type WebSocket from 'ws';
 import type { ClientMessage, ServerMessage } from '../../../shared/protocol';
 import { globalManager } from '../terminal/terminal.manager';
 import { promptDetector } from '../notifications/prompt.detector';
+import { idleDetector } from '../notifications/idle.detector';
 import { fcmService } from '../notifications/fcm.service';
 import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
@@ -9,9 +10,11 @@ import { logger } from '../utils/logger';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
-// This enables server-side auto-approve and FCM push notifications.
+// This enables server-side auto-approve. The idle detector also needs activity
+// signals so idle notifications work while the client is away.
 globalManager.detachFeedCallback = (sessionId, data) => {
   promptDetector.feed(sessionId, data);
+  idleDetector.activity(sessionId);
 };
 
 function send(ws: WebSocket, msg: ServerMessage): void {
@@ -83,7 +86,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
   logger.success(`Client connected: ${ip}`);
 
-  /** Register a session with the prompt detector so we can notify on AI prompts. */
+  /** Register a session with the prompt detector for auto-approve (no FCM — idle detector handles that). */
   const watchSession = (sessionId: string): void => {
     promptDetector.watch(sessionId, (snippet) => {
       // Server-side auto-approve: if enabled, send Enter directly to PTY
@@ -101,36 +104,33 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         } else {
           logger.info(`Auto-approve: sending Enter for session ${sessionId.slice(0, 8)}`);
           globalManager.write(sessionId, '\r');
-          return; // No WS notification or FCM push needed
+          return; // No WS notification needed
         }
       }
 
-      // Always send in-app badge notification via WebSocket
+      // Send in-app badge notification via WebSocket (for auto-approve UI badge)
       const pendingFlag = (pendingInputLen.get(sessionId) ?? 0) > 0;
       send(ws, { type: 'terminal:prompt_detected', sessionId, payload: { snippet, hasPendingInput: pendingFlag } });
+    });
+  };
 
-      if (persistedTokens.size === 0) { logger.warn('FCM: prompt detected but no token'); return; }
-      const isFinished = snippet.startsWith('✅');
-      const cleanBody = isFinished ? snippet.slice(1) : snippet; // Remove ✅ prefix from body
+  /** Register a session with the idle detector for FCM push notifications. */
+  const watchSessionIdle = (sessionId: string): void => {
+    idleDetector.watch(sessionId, (idleSecs) => {
+      if (persistedTokens.size === 0) { logger.warn('Idle: notification skipped — no FCM token'); return; }
 
-      // Build title: hostname + session hint
       const hostname = require('os').hostname().replace(/\.local$/, '');
       const sessionNum = [...ownedSessions].indexOf(sessionId) + 1;
       const tabLabel = sessionNum > 0 ? `Shell ${sessionNum}` : 'Terminal';
-      const title = isFinished
-        ? `✅ ${hostname} · ${tabLabel}`
-        : `⚡ ${hostname} · ${tabLabel}`;
+      const title = `\u{1F4A4} ${hostname} \u{00B7} ${tabLabel}`;
+      const body = `Terminal seit ${idleSecs}s inaktiv`;
 
-      logger.info(`FCM: sending "${title}" — "${cleanBody.slice(0, 60)}"`);
+      logger.info(`Idle: sending FCM — "${title}" — "${body}"`);
       const promises: Promise<void>[] = [];
       for (const token of persistedTokens) {
         promises.push(
-          fcmService.send(
-            token,
-            title,
-            cleanBody,
-            { sessionId },
-          ).catch(() => { persistedTokens.delete(token); })
+          fcmService.send(token, title, body, { sessionId, type: 'idle' })
+            .catch(() => { persistedTokens.delete(token); }),
         );
       }
       void Promise.allSettled(promises);
@@ -179,6 +179,28 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
+    if (msgType === 'client:set_idle_threshold') {
+      const seconds = (msg as any).payload?.seconds;
+      if (typeof seconds === 'number' && seconds >= 0) {
+        if (seconds === 0) {
+          // Disabled — unwatch all sessions from idle detector
+          for (const sessionId of ownedSessions) {
+            idleDetector.unwatch(sessionId);
+          }
+          logger.info('Idle notifications disabled by client');
+        } else {
+          idleDetector.setDefaultThreshold(seconds * 1000);
+          // Re-arm all current sessions with the new threshold
+          for (const sessionId of ownedSessions) {
+            idleDetector.setThreshold(sessionId, seconds * 1000);
+            idleDetector.activity(sessionId); // restart timer with new threshold
+          }
+          logger.info(`Idle threshold set to ${seconds}s`);
+        }
+      }
+      return;
+    }
+
     switch (msg.type) {
       case 'ping':
         send(ws, { type: 'pong' });
@@ -220,16 +242,19 @@ export function handleConnection(ws: WebSocket, ip: string): void {
             (sessionId, data) => {
               send(ws, { type: 'terminal:output', sessionId, payload: { data } });
               promptDetector.feed(sessionId, data);
+              idleDetector.activity(sessionId);
             },
             (sessionId, exitCode) => {
               ownedSessions.delete(sessionId);
               promptDetector.unwatch(sessionId);
+              idleDetector.unwatch(sessionId);
               send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
             },
           );
           ownedSessions.add(session.id);
           sessionGens.set(session.id, globalManager.getAttachGen(session.id));
           watchSession(session.id);
+          watchSessionIdle(session.id);
           send(ws, {
             type: 'terminal:created',
             sessionId: session.id,
@@ -269,10 +294,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           (sessionId, data) => {
             send(ws, { type: 'terminal:output', sessionId, payload: { data } });
             promptDetector.feed(sessionId, data);
+            idleDetector.activity(sessionId);
           },
           (sessionId, exitCode) => {
             ownedSessions.delete(sessionId);
             promptDetector.unwatch(sessionId);
+            idleDetector.unwatch(sessionId);
             send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
           },
         );
@@ -281,7 +308,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           ownedSessions.add(session.id);
           sessionGens.set(session.id, globalManager.getAttachGen(session.id));
           promptDetector.unwatch(session.id); // reset stale timer state before re-watching
+          idleDetector.unwatch(session.id);   // reset stale idle state before re-watching
           watchSession(session.id);
+          watchSessionIdle(session.id);
           globalManager.resize(session.id, cols, rows);
           send(ws, {
             type: 'terminal:reattached',
@@ -324,6 +353,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         // Track user input for auto-approve typing pause + pending input detection
         lastUserInputAt.set(msg.sessionId, Date.now());
         trackPendingInput(msg.sessionId, data);
+        idleDetector.activity(msg.sessionId);
 
         if (!globalManager.write(msg.sessionId, data)) {
           send(ws, {
@@ -383,6 +413,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         lastUserInputAt.delete(msg.sessionId);
         pendingInputLen.delete(msg.sessionId);
         promptDetector.unwatch(msg.sessionId);
+        idleDetector.unwatch(msg.sessionId);
         if (!globalManager.closeSession(msg.sessionId)) {
           send(ws, {
             type: 'terminal:error',

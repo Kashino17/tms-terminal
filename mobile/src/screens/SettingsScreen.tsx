@@ -1,12 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Alert, Switch,
+  View, Text, StyleSheet, TouchableOpacity, Alert, Switch, Modal, Pressable,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useLockStore } from '../store/lockStore';
+import { useSettingsStore, IDLE_THRESHOLD_OPTIONS } from '../store/settingsStore';
 import { colors, fonts, fontSizes, spacing } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
 
@@ -17,6 +18,10 @@ type Props = {
 export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
+  const { idleThresholdSeconds, setIdleThreshold } = useSettingsStore();
+  const [idlePickerVisible, setIdlePickerVisible] = useState(false);
+
+  const currentIdleLabel = IDLE_THRESHOLD_OPTIONS.find((o) => o.value === idleThresholdSeconds)?.label ?? `${idleThresholdSeconds}s`;
 
   const handleLockToggle = () => {
     if (isEnabled) {
@@ -107,6 +112,60 @@ export function SettingsScreen({ navigation }: Props) {
           </View>
         </View>
 
+        {/* ── Notifications ── */}
+        <View style={[styles.section, { marginBottom: rs(28) }]}>
+          <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>Benachrichtigungen</Text>
+
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+              onPress={() => setIdlePickerVisible(true)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Benachrichtigung bei Inaktivität"
+            >
+              <View style={styles.rowLeft}>
+                <Feather name="bell" size={ri(18)} color={colors.textMuted} style={{ marginRight: rs(12) }} />
+                <View>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Inaktivitäts-Benachrichtigung</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Push wenn Terminal idle ist</Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={[styles.value, { fontSize: rf(14), marginRight: rs(4) }]}>{currentIdleLabel}</Text>
+                <Feather name="chevron-right" size={ri(16)} color={colors.textDim} />
+              </View>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Idle threshold picker modal */}
+        <Modal
+          visible={idlePickerVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setIdlePickerVisible(false)}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={() => setIdlePickerVisible(false)}>
+            <View style={[styles.modalContent, { padding: rs(8), maxWidth: isExpanded ? 400 : 320 }]}>
+              <Text style={[styles.modalTitle, { fontSize: rf(16), paddingHorizontal: rs(12), paddingVertical: rs(12) }]}>Benachrichtigung bei Inaktivität</Text>
+              {IDLE_THRESHOLD_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.modalOption, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+                  onPress={() => { setIdleThreshold(option.value); setIdlePickerVisible(false); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.modalOptionText, { fontSize: rf(15) }]}>{option.label}</Text>
+                  {idleThresholdSeconds === option.value && (
+                    <Feather name="check" size={ri(18)} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Pressable>
+        </Modal>
+
         {/* ── About ── */}
         <View style={[styles.section, { marginBottom: rs(28) }]}>
           <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>About</Text>
@@ -186,5 +245,31 @@ const styles = StyleSheet.create({
   dangerText: {
     color: colors.destructive,
     fontWeight: '500',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    width: '85%',
+  },
+  modalTitle: {
+    color: colors.text,
+    fontWeight: '700',
+  },
+  modalOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: 10,
+  },
+  modalOptionText: {
+    color: colors.text,
   },
 });

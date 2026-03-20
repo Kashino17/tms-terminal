@@ -22,6 +22,7 @@ import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../types/navigation.types';
 import { requestNotificationPermission, getFcmToken } from '../services/notifications.service';
 import { useAutoApproveStore } from '../store/autoApproveStore';
+import { useSettingsStore } from '../store/settingsStore';
 import { useBrowserTabsStore } from '../store/browserTabsStore';
 import { SplitLayout } from '../components/SplitLayout';
 import { useSplitViewStore } from '../store/splitViewStore';
@@ -299,7 +300,7 @@ export function TerminalScreen({ navigation, route }: Props) {
     };
   }, [serverId]);
 
-  // When connected: register FCM token with the server for push notifications
+  // When connected: register FCM token and send idle threshold to the server
   useEffect(() => {
     if (connState !== 'connected') return;
     (async () => {
@@ -318,6 +319,13 @@ export function TerminalScreen({ navigation, route }: Props) {
         console.warn('[FCM] Registration failed:', err);
       }
     })();
+
+    // Send idle threshold to server
+    const threshold = useSettingsStore.getState().idleThresholdSeconds;
+    if (threshold > 0) {
+      wsRef.current.send({ type: 'client:set_idle_threshold', payload: { seconds: threshold } } as any);
+      console.log(`[Idle] Threshold sent to server: ${threshold}s`);
+    }
   }, [connState]);
 
   // Poll RTT from WebSocket service and update state for ConnectionStatus

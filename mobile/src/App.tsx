@@ -8,7 +8,7 @@ import { LockScreen } from './screens/LockScreen';
 import { useLockStore } from './store/lockStore';
 import { colors } from './theme';
 import { ResponsiveProvider } from './hooks/useResponsive';
-import { registerBackgroundHandler, registerForegroundHandler } from './services/notifications.service';
+import { registerBackgroundHandler, registerForegroundHandler, registerNotificationResponseHandler } from './services/notifications.service';
 import { keywordAlertService } from './services/keywordAlert.service';
 import { registerBackgroundUpdateCheck } from './services/updater.service';
 
@@ -52,12 +52,18 @@ export default function App() {
 
   useEffect(() => {
     keywordAlertService.init().catch(() => {});
+    const cleanups: (() => void)[] = [];
     try {
-      const unsubscribe = registerForegroundHandler();
-      return unsubscribe;
+      cleanups.push(registerForegroundHandler());
     } catch {
       // Firebase not available
     }
+    try {
+      cleanups.push(registerNotificationResponseHandler());
+    } catch {
+      // expo-notifications not available
+    }
+    return () => { cleanups.forEach((fn) => fn()); };
   }, []);
 
   // Blank screen while reading AsyncStorage (~30ms) to prevent flash

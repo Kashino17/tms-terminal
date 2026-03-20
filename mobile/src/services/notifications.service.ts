@@ -13,17 +13,41 @@ Notifications.setNotificationHandler({
   }),
 });
 
-// Create a dedicated notification channel for terminal prompts (Android)
+// Create a dedicated notification channel for terminal idle alerts (Android)
 if (Platform.OS === 'android') {
   Notifications.setNotificationChannelAsync('terminal-prompts', {
-    name: 'Terminal Prompts',
-    description: 'Notifications when AI tools (Claude, Codex, Gemini) need input',
+    name: 'Terminal Idle',
+    description: 'Notifications when a terminal session has been idle',
     importance: Notifications.AndroidImportance.HIGH,
     sound: 'default',
     vibrationPattern: [0, 200],
     enableVibrate: true,
     showBadge: true,
   }).catch(() => {});
+}
+
+// ── Pending notification navigation target ──────────────────────────────────
+// When a notification is tapped, we store the sessionId here.
+// App.tsx reads and consumes it to navigate to the right terminal.
+let _pendingNotificationSessionId: string | null = null;
+
+/** Read and consume the pending navigation target (returns null if none). */
+export function consumePendingNotificationTarget(): string | null {
+  const sid = _pendingNotificationSessionId;
+  _pendingNotificationSessionId = null;
+  return sid;
+}
+
+/** Set up a listener for notification response (tap). */
+export function registerNotificationResponseHandler(): (() => void) {
+  const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+    const sessionId = data?.sessionId;
+    if (typeof sessionId === 'string') {
+      _pendingNotificationSessionId = sessionId;
+    }
+  });
+  return () => subscription.remove();
 }
 
 /**
@@ -76,8 +100,13 @@ export function registerBackgroundHandler(): void {
  */
 export function registerForegroundHandler(): () => void {
   return messaging().onMessage(async (remoteMessage) => {
-    const title = remoteMessage.notification?.title ?? '⚡ Terminal';
-    const body = remoteMessage.notification?.body ?? 'Waiting for input';
+    const title = remoteMessage.notification?.title ?? '\u{1F4A4} Terminal';
+    const body = remoteMessage.notification?.body ?? 'Terminal idle';
+
+    // Pass FCM data through to the local notification so tap-to-navigate works
+    const data: Record<string, string> = {};
+    if (remoteMessage.data?.sessionId) data.sessionId = String(remoteMessage.data.sessionId);
+    if (remoteMessage.data?.type) data.type = String(remoteMessage.data.type);
 
     // Show a local notification so it appears as a heads-up banner
     await Notifications.scheduleNotificationAsync({
@@ -85,6 +114,7 @@ export function registerForegroundHandler(): () => void {
         title,
         body,
         sound: 'default',
+        data,
         ...(Platform.OS === 'android' ? { channelId: 'terminal-prompts' } : {}),
       },
       trigger: null, // immediately
