@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, StyleSheet, useWindowDimensions } from 'react-native';
+import React, { useCallback } from 'react';
+import { StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
@@ -13,9 +13,13 @@ type Props = {
   route: RouteProp<RootStackParamList, 'Browser'>;
 };
 
-export function BrowserScreen({ route }: Props) {
+export function BrowserScreen({ navigation, route }: Props) {
   const { serverHost, serverId } = route.params;
   const responsive = useResponsive();
+
+  const handleBack = useCallback(() => {
+    navigation.goBack();
+  }, [navigation]);
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom', 'left', 'right']}>
@@ -24,6 +28,7 @@ export function BrowserScreen({ route }: Props) {
         serverId={serverId}
         screenWidth={responsive.width}
         isFullScreen
+        onBackToTerminal={handleBack}
       />
     </SafeAreaView>
   );

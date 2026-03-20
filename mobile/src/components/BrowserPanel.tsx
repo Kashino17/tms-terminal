@@ -166,9 +166,11 @@ interface Props {
   isFullScreen?: boolean;
   /** Called when the browser modal opens/closes */
   onBrowserOpenChange?: (isOpen: boolean) => void;
+  /** Called when user wants to go back to terminal (fullscreen mode) */
+  onBackToTerminal?: () => void;
 }
 
-export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullScreen = false, onBrowserOpenChange }: Props) {
+export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullScreen = false, onBrowserOpenChange, onBackToTerminal }: Props) {
   const { rf, rs, ri } = useResponsive();
   const { height: windowHeight } = useWindowDimensions();
   const CONSOLE_PEEK = useMemo(() => Math.round(windowHeight * 0.20), [windowHeight]); // 1/5 of screen
@@ -197,7 +199,8 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   const [section, setSection] = useState<PanelSection>('browser');
 
   // ── Modal (WebView) state ──
-  const [open, setOpen] = useState(false);
+  // When fullscreen (BrowserScreen), start with modal open immediately
+  const [open, setOpen] = useState(isFullScreen);
   const [loading, setLoading] = useState(false);
   const webviewRef = useRef<WebView>(null);
   const [reloadMenuOpen, setReloadMenuOpen] = useState(false);
@@ -812,12 +815,21 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
       )}
 
       {/* ══ WebView Modal ══════════════════════════════════════════════════════ */}
-      <Modal visible={open} animationType="slide" statusBarTranslucent onRequestClose={() => setOpen(false)}>
+      <Modal visible={open} animationType={isFullScreen ? 'none' : 'slide'} statusBarTranslucent onRequestClose={() => {
+        if (isFullScreen && onBackToTerminal) onBackToTerminal();
+        else setOpen(false);
+      }}>
         <SafeAreaView style={m.modal} edges={['top']}>
 
           {/* Nav bar */}
           <View style={m.navBar}>
-            <TouchableOpacity style={m.navBtn} onPress={() => setOpen(false)} activeOpacity={0.7}>
+            <TouchableOpacity style={m.navBtn} onPress={() => {
+              if (isFullScreen && onBackToTerminal) {
+                onBackToTerminal();
+              } else {
+                setOpen(false);
+              }
+            }} activeOpacity={0.7}>
               <Feather name="terminal" size={17} color={colors.primary} />
             </TouchableOpacity>
 

@@ -86,12 +86,9 @@ export function AppNavigator() {
         name="Browser"
         component={BrowserScreen}
         options={{
-          title: 'Dev Browser',
+          headerShown: false,
           animation: 'slide_from_right',
-          animationDuration: 280,
-          headerStyle: { backgroundColor: colors.surfaceAlt },
-          headerTintColor: colors.text,
-          headerTitleStyle: { fontWeight: '700' as const, fontSize: 16 },
+          animationDuration: 250,
         }}
       />
       <Stack.Screen
