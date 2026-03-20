@@ -30,6 +30,8 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     top: 0; left: 0; z-index: 100;
     border: none; outline: none; padding: 0; font-size: 16px;
     caret-color: transparent; background: transparent; color: transparent;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-appearance: none;
   }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
@@ -105,8 +107,8 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   function sendKey(seq) { sendToRN({ type: 'input', data: seq }); }
 
   /* Terminal tap → focus keyboard (not in select mode) */
-  document.getElementById('terminal').addEventListener('click', function() {
-    if (!selMode) focusShadow();
+  document.getElementById('terminal').addEventListener('click', function(e) {
+    if (!selMode) { e.preventDefault(); focusShadow(); }
   });
 
   /* ── Shadow input (soft keyboard) ─────────────────── */
@@ -115,7 +117,8 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   var isComposing = false;
 
   function focusShadow() {
-    shadowInput.focus();
+    // Use preventScroll to avoid Android WebView haptic feedback on focus
+    shadowInput.focus({ preventScroll: true });
     shadowInput.setSelectionRange(shadowInput.value.length, shadowInput.value.length);
     // Auto-scroll to bottom when keyboard opens
     term.scrollToBottom();

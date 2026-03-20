@@ -97,7 +97,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
 
       <View style={s.sep} />
 
-      {/* ── Action keys: Esc, ^C, Trash, Delete ──────── */}
+      {/* ── Action keys ──────────────────────────────── */}
       <Key label="Esc" seq={'\x1b'} />
       <Key label="^C" seq={'\x03'} accent={colors.destructive} />
       <Key label="" seq="" icon="trash" action="clear" />

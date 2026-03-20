@@ -76,11 +76,6 @@ export function ServerCard({ server, status, onPress, onLongPress, onAvatarPress
                 <Text style={[styles.avatarText, dynamicStyles.avatarText]}>{initials(server.name)}</Text>
               </View>
             )}
-            {onAvatarPress && (
-              <View style={[styles.cameraBadge, dynamicStyles.cameraBadge]}>
-                <Feather name="camera" size={ri(9)} color={colors.text} />
-              </View>
-            )}
           </View>
         </TouchableOpacity>
 

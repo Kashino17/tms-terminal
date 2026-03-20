@@ -1,14 +1,16 @@
 import React, { useRef, useState, useCallback, useMemo } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
+  View, Text, TouchableOpacity, StyleSheet, FlatList,
   LayoutAnimation, Platform, UIManager,
 } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, fonts } from '../theme';
 import { useSplitViewStore, TriMainPane } from '../store/splitViewStore';
 import { useResponsive } from '../hooks/useResponsive';
+import { CredentialOverlay } from './CredentialOverlay';
+import { FORM_DETECT_JS } from '../store/credentialStore';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -115,33 +117,152 @@ const dv = StyleSheet.create({
   },
 });
 
-// ── Browser Pane ─────────────────────────────────────────────────────────────
-function BrowserPane({ url }: { url: string }) {
+// ── Console intercept JS (injected into browser WebViews) ────────────────────
+const SPLIT_CONSOLE_JS = `
+(function(){
+  var _post = window.ReactNativeWebView && window.ReactNativeWebView.postMessage.bind(window.ReactNativeWebView);
+  if (!_post) return;
+  ['log','warn','error','info','debug'].forEach(function(level){
+    var orig = console[level];
+    console[level] = function(){
+      try {
+        var args = Array.prototype.slice.call(arguments);
+        var msg = args.map(function(a){ return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' ');
+        _post(JSON.stringify({ type: '__console__', level: level === 'debug' ? 'log' : level, message: msg }));
+      } catch(e){}
+      orig.apply(console, arguments);
+    };
+  });
+  window.onerror = function(m){ _post(JSON.stringify({ type: '__console__', level: 'error', message: String(m) })); };
+})(); true;`;
+
+type MiniLogEntry = { id: number; level: string; message: string };
+
+// ── Browser Pane with mini console ───────────────────────────────────────────
+function BrowserPane({ url, serverId }: { url: string; serverId: string }) {
+  const [logs, setLogs] = useState<MiniLogEntry[]>([]);
+  const [showConsole, setShowConsole] = useState(false);
+  const [formDetected, setFormDetected] = useState(false);
+  const logId = useRef(0);
+  const listRef = useRef<FlatList>(null);
+  const webviewRef = useRef<WebView>(null);
+
+  const handleMessage = useCallback((event: WebViewMessageEvent) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === '__console__') {
+        setLogs((prev) => {
+          const next = [...prev, { id: ++logId.current, level: data.level, message: data.message }];
+          return next.length > 200 ? next.slice(-200) : next;
+        });
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 30);
+      }
+      if (data.type === '__form_detected__') {
+        setFormDetected(true);
+      }
+    } catch {}
+  }, []);
+
+  const errorCount = useMemo(() => logs.filter((l) => l.level === 'error').length, [logs]);
+  const warnCount = useMemo(() => logs.filter((l) => l.level === 'warn').length, [logs]);
+  const hasIssues = errorCount > 0 || warnCount > 0;
+
   return (
-    <WebView
-      source={{ uri: url }}
-      style={sl.browser}
-      allowsInlineMediaPlayback
-      mixedContentMode="always"
-    />
+    <View style={sl.browser}>
+        <WebView
+          ref={webviewRef}
+          source={{ uri: url }}
+          style={{ flex: 1 }}
+          allowsInlineMediaPlayback
+          mixedContentMode="always"
+          onMessage={handleMessage}
+          injectedJavaScript={SPLIT_CONSOLE_JS + '\n' + FORM_DETECT_JS}
+        />
+
+      {/* Credential Overlay */}
+      <CredentialOverlay serverId={serverId} currentUrl={url} webviewRef={webviewRef} formDetected={formDetected} />
+
+      {/* Mini console toggle pill */}
+      <TouchableOpacity
+        style={[mc.pill, hasIssues && mc.pillAlert]}
+        onPress={() => setShowConsole((v) => !v)}
+        activeOpacity={0.7}
+      >
+        <Feather name="terminal" size={10} color={showConsole ? colors.info : colors.textDim} />
+        {errorCount > 0 && <Text style={mc.errBadge}>{errorCount}</Text>}
+        {warnCount > 0 && <Text style={mc.warnBadge}>{warnCount}</Text>}
+        <Text style={mc.logCount}>{logs.length}</Text>
+        <Feather name={showConsole ? 'chevron-down' : 'chevron-up'} size={9} color={colors.textDim} />
+      </TouchableOpacity>
+
+      {/* Mini console log list */}
+      {showConsole && (
+        <View style={mc.panel}>
+          <FlatList
+            ref={listRef}
+            data={logs}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={({ item }) => (
+              <Text
+                style={[mc.line, item.level === 'error' ? mc.lineErr : item.level === 'warn' ? mc.lineWarn : null]}
+                numberOfLines={2}
+              >
+                {item.message}
+              </Text>
+            )}
+            showsVerticalScrollIndicator={false}
+          />
+          <TouchableOpacity style={mc.clearBtn} onPress={() => setLogs([])} activeOpacity={0.7}>
+            <Feather name="trash-2" size={10} color={colors.textDim} />
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
   );
 }
+
+// ── Mini console styles ──────────────────────────────────────────────────────
+const mc = StyleSheet.create({
+  pill: {
+    position: 'absolute', bottom: 4, right: 4, flexDirection: 'row', alignItems: 'center',
+    gap: 4, backgroundColor: colors.surface + 'E0', borderRadius: 10,
+    paddingHorizontal: 8, paddingVertical: 3, borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  pillAlert: { borderColor: colors.destructive + '60' },
+  errBadge: { fontSize: 9, fontWeight: '700', color: colors.destructive },
+  warnBadge: { fontSize: 9, fontWeight: '700', color: colors.warning },
+  logCount: { fontSize: 9, color: colors.textDim, fontFamily: fonts.mono },
+  panel: {
+    position: 'absolute', bottom: 24, left: 0, right: 0, height: '35%',
+    backgroundColor: colors.bg + 'F0', borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  line: { fontSize: 9, color: colors.textMuted, fontFamily: fonts.mono, paddingHorizontal: 6, paddingVertical: 1 },
+  lineErr: { color: colors.destructive },
+  lineWarn: { color: colors.warning },
+  clearBtn: {
+    position: 'absolute', top: 4, right: 4, padding: 4, borderRadius: 6,
+    backgroundColor: colors.surface,
+  },
+});
 
 // ── Main Component ───────────────────────────────────────────────────────────
 interface Props {
   serverHost: string;
+  serverId: string;
   terminalContent: React.ReactNode;
 }
 
-export function SplitLayout({ serverHost, terminalContent }: Props) {
-  const { layout, mainPane, browserPort, browserPort2, setMainPane, cycleMain, deactivate } = useSplitViewStore();
+export function SplitLayout({ serverHost, serverId, terminalContent }: Props) {
+  const { layout, mainPane, browserPort, browserPort2, browserPath, browserPath2, setMainPane, cycleMain, deactivate } = useSplitViewStore();
   const [swapped, setSwapped] = useState(false);
 
   // Browser panes point to local dev servers running on the remote host.
-  // HTTPS is used to match the TMS server's TLS setup. If the target dev server
-  // only serves HTTP, configure a reverse proxy or change the protocol here.
-  const url1 = `http://${serverHost}:${browserPort}`;
-  const url2 = `http://${serverHost}:${browserPort2}`;
+  const pathSuffix1 = browserPath ? (browserPath.startsWith('/') ? browserPath : '/' + browserPath) : '';
+  const pathSuffix2 = browserPath2 ? (browserPath2.startsWith('/') ? browserPath2 : '/' + browserPath2) : '';
+  const url1 = `http://${serverHost}:${browserPort}${pathSuffix1}`;
+  const url2 = `http://${serverHost}:${browserPort2}${pathSuffix2}`;
 
   const handleClose = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -154,8 +275,8 @@ export function SplitLayout({ serverHost, terminalContent }: Props) {
     // Build the 3 panes
     const panes: { id: TriMainPane; label: string; icon: string; content: React.ReactNode }[] = [
       { id: 'terminal', label: 'Terminal', icon: 'terminal', content: <View style={sl.paneContent}>{terminalContent}</View> },
-      { id: 'browser1', label: `:${browserPort}`, icon: 'globe', content: <BrowserPane url={url1} /> },
-      { id: 'browser2', label: `:${browserPort2}`, icon: 'globe', content: <BrowserPane url={url2} /> },
+      { id: 'browser1', label: `:${browserPort}`, icon: 'globe', content: <BrowserPane url={url1} serverId={serverId} /> },
+      { id: 'browser2', label: `:${browserPort2}`, icon: 'globe', content: <BrowserPane url={url2} serverId={serverId} /> },
     ];
 
     const mainPaneData = panes.find((p) => p.id === mainPane) ?? panes[0];
@@ -225,7 +346,7 @@ export function SplitLayout({ serverHost, terminalContent }: Props) {
   const browserPaneEl = (
     <View style={sl.pane}>
       <PaneHeader label={`:${browserPort}`} icon="globe" isMain={false} canPromote={false} onPromote={() => {}} onClose={handleClose} />
-      <BrowserPane url={url1} />
+      <BrowserPane url={url1} serverId={serverId} />
     </View>
   );
 

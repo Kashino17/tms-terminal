@@ -2,8 +2,6 @@ import React, { useEffect, useCallback, useState } from 'react';
 import { View, FlatList, Text, TouchableOpacity, Alert, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
 import { useServerStore } from '../store/serverStore';
 import { ServerCard } from '../components/ServerCard';
 import { ServerProfile } from '../types/server.types';
@@ -90,29 +88,10 @@ export function ServerListScreen({ navigation }: Props) {
     });
   }, [deleteServer, navigation]);
 
-  const handleAvatarPress = useCallback(async (server: ServerProfile) => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission required', 'Allow photo library access to set a profile picture.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.7,
-    });
-
-    if (result.canceled || !result.assets?.[0]) return;
-
-    const src = result.assets[0].uri;
-    const dir = `${FileSystem.documentDirectory}avatars/`;
-    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-    const dest = `${dir}${server.id}.jpg`;
-    await FileSystem.copyAsync({ from: src, to: dest });
-    await updateServer(server.id, { avatar: dest });
-  }, [updateServer]);
+  // Avatar tap now opens the connection (same as card tap)
+  const handleAvatarPress = useCallback((server: ServerProfile) => {
+    handlePress(server);
+  }, [handlePress]);
 
   const renderItem = useCallback(({ item }: { item: ServerProfile }) => (
     <ServerCard

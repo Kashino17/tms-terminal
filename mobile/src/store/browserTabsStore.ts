@@ -7,6 +7,10 @@ export interface BrowserTab {
   id: string;
   port: string;
   label: string;
+  /** Optional URL path appended after port (e.g. "/login") */
+  path?: string;
+  /** Last navigated URL — persisted so the tab resumes where the user left off */
+  lastUrl?: string;
 }
 
 interface BrowserTabsState {
@@ -22,7 +26,7 @@ interface BrowserTabsState {
   addTab: (serverId: string, port?: string) => void;
   removeTab: (serverId: string, tabId: string) => void;
   setActive: (serverId: string, tabId: string) => void;
-  updateTab: (serverId: string, tabId: string, updates: Partial<Pick<BrowserTab, 'port' | 'label'>>) => void;
+  updateTab: (serverId: string, tabId: string, updates: Partial<Pick<BrowserTab, 'port' | 'label' | 'path' | 'lastUrl'>>) => void;
 }
 
 function persist(serverId: string, tabs: BrowserTab[], activeTab: string) {

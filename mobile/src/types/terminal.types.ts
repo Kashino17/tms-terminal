@@ -1,4 +1,6 @@
 export type AiToolType = 'claude' | 'codex' | 'gemini' | null;
+export type TabCategory = 'ai' | 'server' | 'shell';
+export type ServerType = 'frontend' | 'backend' | 'database' | 'server' | null;
 
 export interface TerminalTab {
   id: string;
@@ -14,4 +16,8 @@ export interface TerminalTab {
   lastCwd?: string;
   /** Last known foreground process name (e.g. "vim", "npm") when session was suspended. */
   lastProcess?: string;
+  category?: TabCategory;
+  serverType?: ServerType;
+  serverPort?: string;
+  customCategory?: boolean;
 }

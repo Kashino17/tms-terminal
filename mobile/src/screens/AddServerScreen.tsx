@@ -10,73 +10,128 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { useServerStore } from '../store/serverStore';
 import { authService } from '../services/auth.service';
 import { ServerProfile } from '../types/server.types';
 import { colors, fonts } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../types/navigation.types';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'AddServer'>;
+  route: RouteProp<RootStackParamList, 'AddServer'>;
 };
 
-export function AddServerScreen({ navigation }: Props) {
-  const { addServer } = useServerStore();
-  const [name, setName] = useState('');
-  const [host, setHost] = useState('');
-  const [port, setPort] = useState('8767');
+export function AddServerScreen({ navigation, route }: Props) {
+  const existing = (route.params as any)?.server as ServerProfile | undefined;
+  const isEdit = !!existing;
+
+  const { addServer, updateServer } = useServerStore();
+  const [name, setName] = useState(existing?.name ?? '');
+  const [host, setHost] = useState(existing?.host ?? '');
+  const [port, setPort] = useState(String(existing?.port ?? 8767));
   const [password, setPassword] = useState('');
+  const [avatar, setAvatar] = useState<string | undefined>(existing?.avatar);
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
-  const { rf, rs, isExpanded } = useResponsive();
+  const { rf, rs, ri, isExpanded } = useResponsive();
+
+  const handlePickAvatar = useCallback(async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Berechtigung nötig', 'Erlaube Zugriff auf die Fotomediathek.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.7,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    setAvatar(result.assets[0].uri);
+  }, []);
 
   const handleTest = useCallback(async () => {
     if (!host) {
-      Alert.alert('Error', 'Enter a host address');
+      Alert.alert('Fehler', 'Gib eine Host-Adresse ein');
       return;
     }
     setTesting(true);
-    const result = await authService.testConnection(host, parseInt(port, 10));
+    const r = await authService.testConnection(host, parseInt(port, 10));
     setTesting(false);
-    if (result.ok) {
-      Alert.alert('Success', `Connected! Platform: ${result.platform}`);
+    if (r.ok) {
+      Alert.alert('Verbunden', `Platform: ${r.platform}`);
     } else {
-      Alert.alert('Connection Failed', result.error);
+      Alert.alert('Verbindung fehlgeschlagen', r.error);
     }
   }, [host, port]);
 
   const handleSave = useCallback(async () => {
-    if (!name || !host || !password) {
-      Alert.alert('Error', 'All fields are required');
+    if (!name || !host) {
+      Alert.alert('Fehler', 'Name und Host sind Pflichtfelder');
+      return;
+    }
+    if (!isEdit && !password) {
+      Alert.alert('Fehler', 'Passwort ist erforderlich');
       return;
     }
 
     setLoading(true);
     try {
       const portNum = parseInt(port, 10);
-      const token = await authService.login(host, portNum, password);
 
-      const server: ServerProfile = {
-        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-        name,
-        host,
-        port: portNum,
-        token,
-        createdAt: Date.now(),
-      };
+      // Save avatar to local filesystem if it's a new pick (not already in avatars dir)
+      let savedAvatar = avatar;
+      const serverId = existing?.id ?? (Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
+      if (avatar && !avatar.includes('/avatars/')) {
+        const dir = `${FileSystem.documentDirectory}avatars/`;
+        await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+        const dest = `${dir}${serverId}.jpg`;
+        await FileSystem.copyAsync({ from: avatar, to: dest });
+        savedAvatar = dest;
+      }
 
-      await addServer(server);
+      if (isEdit) {
+        // Edit mode: update existing server
+        const updates: Partial<ServerProfile> = { name, host, port: portNum, avatar: savedAvatar };
+        if (password) {
+          // Re-authenticate if password changed
+          const token = await authService.login(host, portNum, password);
+          updates.token = token;
+        }
+        await updateServer(existing!.id, updates);
+      } else {
+        // New server: authenticate and create
+        const token = await authService.login(host, portNum, password);
+        const server: ServerProfile = {
+          id: serverId,
+          name,
+          host,
+          port: portNum,
+          token,
+          createdAt: Date.now(),
+          avatar: savedAvatar,
+        };
+        await addServer(server);
+      }
       navigation.goBack();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Connection failed';
-      Alert.alert('Error', message);
+      const message = err instanceof Error ? err.message : 'Verbindung fehlgeschlagen';
+      Alert.alert('Fehler', message);
     } finally {
       setLoading(false);
     }
-  }, [name, host, port, password, addServer, navigation]);
+  }, [name, host, port, password, avatar, isEdit, existing, addServer, updateServer, navigation]);
+
+  const avatarSize = ri(80);
 
   return (
     <KeyboardAvoidingView
@@ -90,6 +145,25 @@ export function AddServerScreen({ navigation }: Props) {
         alignSelf: isExpanded ? 'center' as const : undefined,
         width: isExpanded ? '100%' as unknown as number : undefined,
       }]}>
+        {/* Avatar picker */}
+        <TouchableOpacity
+          style={[styles.avatarWrap, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2, alignSelf: 'center', marginBottom: rs(12) }]}
+          onPress={handlePickAvatar}
+          activeOpacity={0.7}
+        >
+          {avatar ? (
+            <Image source={{ uri: avatar }} style={{ width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }} />
+          ) : (
+            <View style={[styles.avatarPlaceholder, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}>
+              <Feather name="camera" size={ri(24)} color={colors.textDim} />
+              <Text style={[styles.avatarHint, { fontSize: rf(10) }]}>Bild wählen</Text>
+            </View>
+          )}
+          <View style={[styles.avatarBadge, { width: rs(28), height: rs(28), borderRadius: rs(14) }]}>
+            <Feather name="edit-2" size={ri(12)} color={colors.text} />
+          </View>
+        </TouchableOpacity>
+
         <Text style={[styles.label, { fontSize: rf(14), marginTop: rs(12), marginBottom: rs(6) }]}>Name</Text>
         <TextInput
           style={[styles.input, { padding: rs(14), fontSize: rf(16) }]}
@@ -122,12 +196,14 @@ export function AddServerScreen({ navigation }: Props) {
           keyboardType="number-pad"
         />
 
-        <Text style={[styles.label, { fontSize: rf(14), marginTop: rs(12), marginBottom: rs(6) }]}>Password</Text>
+        <Text style={[styles.label, { fontSize: rf(14), marginTop: rs(12), marginBottom: rs(6) }]}>
+          Passwort{isEdit ? ' (leer lassen = unverändert)' : ''}
+        </Text>
         <TextInput
           style={[styles.input, { padding: rs(14), fontSize: rf(16) }]}
           value={password}
           onChangeText={setPassword}
-          placeholder="Server password"
+          placeholder={isEdit ? '••••••••' : 'Server Passwort'}
           placeholderTextColor={colors.textDim}
           secureTextEntry
         />
@@ -140,7 +216,7 @@ export function AddServerScreen({ navigation }: Props) {
           {testing ? (
             <ActivityIndicator color={colors.primary} />
           ) : (
-            <Text style={[styles.testButtonText, { fontSize: rf(16) }]}>Test Connection</Text>
+            <Text style={[styles.testButtonText, { fontSize: rf(16) }]}>Verbindung testen</Text>
           )}
         </TouchableOpacity>
 
@@ -152,7 +228,9 @@ export function AddServerScreen({ navigation }: Props) {
           {loading ? (
             <ActivityIndicator color={colors.surface} />
           ) : (
-            <Text style={[styles.saveButtonText, { fontSize: rf(16) }]}>Connect & Save</Text>
+            <Text style={[styles.saveButtonText, { fontSize: rf(16) }]}>
+              {isEdit ? 'Speichern' : 'Verbinden & Speichern'}
+            </Text>
           )}
         </TouchableOpacity>
       </ScrollView>
@@ -166,6 +244,31 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   scroll: {},
+  avatarWrap: {
+    position: 'relative',
+  },
+  avatarPlaceholder: {
+    backgroundColor: colors.surface,
+    borderWidth: 2,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  avatarHint: {
+    color: colors.textDim,
+  },
+  avatarBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.bg,
+  },
   label: {
     color: colors.textMuted,
     fontWeight: '500',

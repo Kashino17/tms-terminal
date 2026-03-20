@@ -1,113 +1,139 @@
 // Detects interactive prompts AND AI-tool-finished events in PTY output.
-// Strategy: accumulate recent output → wait for silence → run pattern check → notify + retry.
-// Also tracks when an AI tool (Claude, Codex, Gemini) was active and shell prompt returns.
+//
+// Guards against false positives:
+// - Startup grace period: ignore first STARTUP_GRACE_MS after watch()
+// - AI detection requires strong signals (not just bare keyword mentions)
+// - AI-finished requires minimum output volume since AI was detected
+// - Prompt patterns are specific (no generic "ends with ?" matching)
+// - Reduced retry count (2) to avoid notification spam
+// - AI detection expires after 10 min without resolution
 
 const ANSI_STRIP = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]/g;
 
-// Reviewed: patterns short-circuit on first match; ReDoS risk is acceptable given bounded input.
+// ── Interactive Prompt Patterns ──────────────────────────────────────────────
+// ONLY match when the terminal is genuinely waiting for user input.
+// Generic "?" at end of line is intentionally excluded — it matches help output, URLs, etc.
 const PROMPT_PATTERNS = [
-  // ── Generic y/n confirmations ──────────────────────────────────────────────
+  // Y/N confirmations (explicit bracket/paren format)
   /\[y\/n\]/i,
   /\[Y\/n\]/,
   /\[y\/N\]/,
   /\(yes\/no\)/i,
   /press enter to continue/i,
 
-  // ── Question phrases ───────────────────────────────────────────────────────
+  // Question phrases with clear intent
   /do you want (me )?to/i,
+  /would you like to/i,
   /do you want to proceed/i,
-  /would you like/i,
-  /shall i /i,
-  /continue\?/i,
-  /proceed\?/i,
-  /confirm\?/i,
-  /approve\?/i,
 
-  // ── Claude Code specific ───────────────────────────────────────────────────
+  // Action confirmations (phrase + trailing ?)
+  /continue\?\s*$/im,
+  /proceed\?\s*$/im,
+  /confirm\?\s*$/im,
+  /approve\?\s*$/im,
+
+  // ── Claude Code ──
   /allow (this action|bash|command|running|tool|edit|execution)/i,
   /dangerous command/i,
-  /apply (this )?edit/i,
+  /apply (this )?edit\?/i,
 
-  // ── Codex (OpenAI) specific ────────────────────────────────────────────────
+  // ── Codex (OpenAI) ──
   /apply (change|patch|diff)\?/i,
   /run (this )?command\?/i,
 
-  // ── Gemini CLI specific ────────────────────────────────────────────────────
+  // ── Gemini CLI ──
   /execute (this )?command/i,
   /allow execution of/i,
   /waiting for user confirmation/i,
-  /execution of:/i,
 
-  // ── inquirer-style prompt cursor (line ends with "? " then [/( )
+  // inquirer-style: "Question? ›" or "Question? [choices]"
   /\?\s*(›|\[|\()/,
-  /\?\s*$/m,
 ];
 
-// Patterns that indicate an AI tool is running
+// ── AI Tool Detection ────────────────────────────────────────────────────────
+// Strong signals ONLY. Bare keywords like "claude" or spinner chars are excluded
+// because they fire on `pip install anthropic`, Starship prompts, npm spinners, etc.
 const AI_ACTIVE_PATTERNS = [
-  /\bclaude\b/i,
-  /\bcodex\b/i,
-  /\bgemini\b/i,
-  /\banthropic\b/i,
-  /\bopenai\b/i,
-  /\bopus\b/i,
-  /\bsonnet\b/i,
-  /\bhaiku\b/i,
-  /╭─/,              // Claude Code box drawing
-  /tool_use/i,       // Claude Code tool use indicator
-  /⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏/, // Spinner characters (AI thinking)
+  // Claude Code UI
+  /╭──.*claude/i,                 // Box header with "claude"
+  /tool_use/i,                    // Tool use indicator
+  /allow (this action|bash|command|running|tool|edit|execution)/i,
+
+  // Codex UI
+  /codex\s*>\s/i,                 // Codex prompt marker
+  /apply (change|patch|diff)\?/i,
+
+  // Gemini CLI UI
+  /waiting for user confirmation/i,
+  /gemini\s*>\s/i,
+
+  // Strong contextual signals
+  /Thinking\.\.\./,              // Case-sensitive "Thinking..." (AI progress)
 ];
 
-// Shell prompt patterns — indicates the AI tool has exited and control returned to user
+// ── Shell Prompt Return ──────────────────────────────────────────────────────
+// Indicates the shell is idle. Used ONLY to detect AI-tool exit.
+// The old /[%$#>]\s*$/m matched after EVERY command — removed.
 const SHELL_PROMPT_PATTERNS = [
-  /[%$#>]\s*$/m,                             // Generic: ends with %, $, #, >
-  /\w+@[\w.-]+\s+[~\/]\S*\s*[%$#]\s*$/m,    // user@host ~/path %
-  /PS [A-Z]:\\.*>\s*$/m,                      // PowerShell: PS C:\path>
-  /[A-Z]:\\.*>\s*$/m,                         // CMD: C:\path>
-  /❯\s*$/m,                                  // Starship / custom prompts
-  /➜\s+/m,                                   // Oh-My-Zsh arrow prompt
+  /\w+@[\w.-]+[\s:~][^\n]*[%$#]\s*$/m,   // user@host:~/path$
+  /PS [A-Z]:\\.*>\s*$/m,                   // PowerShell
+  /[A-Z]:\\[^>\n]*>\s*$/m,                 // CMD
+  /❯\s*$/m,                               // Starship
+  /➜\s+\S/m,                              // Oh-My-Zsh
+  /^\$\s*$/m,                              // Bare $
 ];
 
-// Wait this long after last output before checking
-const SILENCE_MS  = 1200;
-// While a prompt is still active, re-notify every N ms (handles late enable of auto-approve)
-const RETRY_MS    = 3000;
-// Max retries per prompt occurrence to avoid infinite loops
-const MAX_RETRIES = 8;
-// Only scan the last N chars for prompt patterns (ignore historical matches)
-const SCAN_TAIL   = 400;
-const BUFFER_MAX  = 800;
+// ── Timing & Limits ──────────────────────────────────────────────────────────
+const SILENCE_MS       = 2500;   // Silence before checking (was 1200 — too fast)
+const RETRY_MS         = 5000;   // Retry interval for active prompts (was 3000)
+const MAX_RETRIES      = 2;      // Max retries per prompt (was 8!)
+const SCAN_TAIL        = 400;
+const BUFFER_MAX       = 800;
+const STARTUP_GRACE_MS = 5000;   // Ignore output for first 5s after watch()
+const MIN_AI_OUTPUT    = 1500;   // Min chars since AI detected to trigger "finished"
+const AI_EXPIRE_MS     = 10 * 60 * 1000; // AI detection expires after 10 min
 
 export class PromptDetector {
-  private buffers      = new Map<string, string>();
-  private timers       = new Map<string, NodeJS.Timeout>();
-  private retryTimers  = new Map<string, NodeJS.Timeout>();
-  private callbacks    = new Map<string, (snippet: string) => void>();
-  /** Tracks whether an AI tool was recently active in each session */
-  private aiActive     = new Map<string, boolean>();
-  /** Tracks total output length — used to detect significant output (AI was working) */
-  private outputLen    = new Map<string, number>();
+  private buffers        = new Map<string, string>();
+  private timers         = new Map<string, NodeJS.Timeout>();
+  private retryTimers    = new Map<string, NodeJS.Timeout>();
+  private callbacks      = new Map<string, (snippet: string) => void>();
+  private aiActive       = new Map<string, boolean>();
+  private aiDetectedAt   = new Map<string, number>();
+  private outputLen      = new Map<string, number>();
+  private aiOutputStart  = new Map<string, number>();
+  private watchedAt      = new Map<string, number>();
 
   watch(sessionId: string, onPrompt: (snippet: string) => void): void {
     this.callbacks.set(sessionId, onPrompt);
+    this.watchedAt.set(sessionId, Date.now());
+    // Clear stale state from previous watch
+    this.buffers.delete(sessionId);
+    this.aiActive.delete(sessionId);
+    this.aiDetectedAt.delete(sessionId);
+    this.outputLen.delete(sessionId);
+    this.aiOutputStart.delete(sessionId);
   }
 
   feed(sessionId: string, data: string): void {
-    // New output → cancel pending retry (prompt was answered or new activity started)
+    // Cancel pending retry (new output = prompt was answered or new activity)
     const retry = this.retryTimers.get(sessionId);
     if (retry) { clearTimeout(retry); this.retryTimers.delete(sessionId); }
 
-    // Track total output and AI tool activity
-    this.outputLen.set(sessionId, (this.outputLen.get(sessionId) ?? 0) + data.length);
+    // Track output volume
+    const newLen = (this.outputLen.get(sessionId) ?? 0) + data.length;
+    this.outputLen.set(sessionId, newLen);
+
+    // Detect AI tool activity (strong signals only)
     const cleanChunk = data.replace(ANSI_STRIP, '');
-    if (AI_ACTIVE_PATTERNS.some(p => p.test(cleanChunk))) {
-      if (!this.aiActive.get(sessionId)) {
-        console.log(`[PromptDetector] AI tool detected in session ${sessionId.slice(0,8)}`);
-      }
+    if (!this.aiActive.get(sessionId) && AI_ACTIVE_PATTERNS.some(p => p.test(cleanChunk))) {
+      console.log(`[PromptDetector] AI tool detected in ${sessionId.slice(0, 8)}`);
       this.aiActive.set(sessionId, true);
+      this.aiDetectedAt.set(sessionId, Date.now());
+      this.aiOutputStart.set(sessionId, newLen);
     }
 
-    // Append to rolling buffer
+    // Rolling buffer
     const prev     = this.buffers.get(sessionId) ?? '';
     const combined = prev + data;
     this.buffers.set(
@@ -121,8 +147,6 @@ export class PromptDetector {
 
     const timer = setTimeout(() => {
       this.timers.delete(sessionId);
-      const bufLen = (this.buffers.get(sessionId) ?? '').length;
-      console.log(`[PromptDetector] Silence timeout for ${sessionId.slice(0,8)}, buffer=${bufLen} chars`);
       this._check(sessionId, 0);
     }, SILENCE_MS);
     timer.unref();
@@ -133,7 +157,10 @@ export class PromptDetector {
     this.callbacks.delete(sessionId);
     this.buffers.delete(sessionId);
     this.aiActive.delete(sessionId);
+    this.aiDetectedAt.delete(sessionId);
     this.outputLen.delete(sessionId);
+    this.aiOutputStart.delete(sessionId);
+    this.watchedAt.delete(sessionId);
     const t = this.timers.get(sessionId);
     if (t) { clearTimeout(t); this.timers.delete(sessionId); }
     const r = this.retryTimers.get(sessionId);
@@ -141,71 +168,73 @@ export class PromptDetector {
   }
 
   private _check(sessionId: string, retryCount: number): void {
+    // ── Guard: startup grace period ──
+    const startedAt = this.watchedAt.get(sessionId) ?? 0;
+    if (Date.now() - startedAt < STARTUP_GRACE_MS) {
+      return; // Ignore — shell just started, MOTD/prompt output is expected
+    }
+
+    // ── Guard: expire stale AI detection ──
+    const aiDetTime = this.aiDetectedAt.get(sessionId) ?? 0;
+    if (this.aiActive.get(sessionId) && aiDetTime > 0 && Date.now() - aiDetTime > AI_EXPIRE_MS) {
+      this.aiActive.set(sessionId, false);
+      this.aiOutputStart.delete(sessionId);
+      this.aiDetectedAt.delete(sessionId);
+    }
+
     const raw   = this.buffers.get(sessionId) ?? '';
     const clean = raw.replace(ANSI_STRIP, '');
+    const tail  = clean.slice(-SCAN_TAIL);
 
-    // Only look at the tail of the buffer — ignore old prompt text from earlier interactions
-    const tail = clean.slice(-SCAN_TAIL);
-
-    // Check 1: Interactive prompt patterns (y/n, allow action, etc.)
+    // Check 1: Interactive prompt patterns
     const matched = PROMPT_PATTERNS.find((p) => p.test(tail));
 
-    // Check 2: AI tool was active and shell prompt returned (= AI finished)
-    const aiWasActive = this.aiActive.get(sessionId) ?? false;
-    const shellReturned = aiWasActive && SHELL_PROMPT_PATTERNS.some(p => p.test(tail));
+    // Check 2: AI tool finished (active + enough output + shell prompt returned)
+    const aiWasActive    = this.aiActive.get(sessionId) ?? false;
+    const outputSinceAi  = (this.outputLen.get(sessionId) ?? 0) - (this.aiOutputStart.get(sessionId) ?? 0);
+    const hasEnoughOutput = outputSinceAi >= MIN_AI_OUTPUT;
+    const shellReturned   = aiWasActive && hasEnoughOutput && SHELL_PROMPT_PATTERNS.some(p => p.test(tail));
 
-    if (!matched && !shellReturned) {
-      // Log tail for debugging
-      const lastChars = tail.slice(-120).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
-      console.log(`[PromptDetector] No match (ai=${aiWasActive}). Tail: ${lastChars}`);
-      return;
-    }
+    if (!matched && !shellReturned) return;
 
     if (shellReturned) {
-      console.log(`[PromptDetector] AI FINISHED in session ${sessionId.slice(0,8)} — shell prompt returned`);
-      // Reset AI active state — we've notified, next time needs fresh AI detection
+      console.log(`[PromptDetector] AI FINISHED in ${sessionId.slice(0, 8)} (${outputSinceAi} chars output)`);
       this.aiActive.set(sessionId, false);
       this.outputLen.set(sessionId, 0);
-    } else {
-      console.log(`[PromptDetector] PROMPT MATCH: ${matched} in session ${sessionId.slice(0,8)} (retry=${retryCount})`);
+      this.aiOutputStart.delete(sessionId);
+      this.aiDetectedAt.delete(sessionId);
+    } else if (matched) {
+      console.log(`[PromptDetector] PROMPT in ${sessionId.slice(0, 8)}: ${matched} (retry=${retryCount})`);
     }
 
-    // Extract last meaningful lines for the notification body
-    // Filter out control chars, empty lines, prompt lines, and spinner artifacts
+    // Extract meaningful snippet for notification body
     const lines = tail
       .split('\n')
       .map((l) => l.replace(/\r/g, '').trim())
       .filter((l) => {
         if (!l || l.length < 3) return false;
-        // Skip shell prompts
         if (/^[%$#>❯➜]\s*$/.test(l)) return false;
         if (/\w+@[\w.-]+.*[%$#]/.test(l)) return false;
-        // Skip xterm control sequences
-        if (/^\[>[0-9]/.test(l) || /^\?\s*$/.test(l)) return false;
-        // Skip lines that are mostly special chars
+        if (/^\[>[0-9]/.test(l)) return false;
         if (l.replace(/[─━═╭╮╰╯│┃●◆▶►⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\s]/g, '').length < 2) return false;
         return true;
       });
 
     const lastLines = lines.slice(-3).join(' ').slice(0, 150);
-    const body = lastLines || 'Task abgeschlossen';
-
-    const isAiFinished = shellReturned;
-    const snippet = isAiFinished ? `✅${body}` : body;
+    const body = lastLines || (shellReturned ? 'Task abgeschlossen' : 'Eingabe erforderlich');
+    const snippet = shellReturned ? `✅${body}` : body;
 
     this.callbacks.get(sessionId)?.(snippet);
 
-    // Only retry for interactive prompts, not for "AI finished" events
+    // Retry ONLY for interactive prompts (not AI-finished), with reduced count
     if (shellReturned) return;
-
-    // Schedule retry: re-notify every RETRY_MS so late-enabled auto-approve still fires
     if (retryCount < MAX_RETRIES) {
-      const retry = setTimeout(() => {
+      const rt = setTimeout(() => {
         this.retryTimers.delete(sessionId);
         this._check(sessionId, retryCount + 1);
       }, RETRY_MS);
-      retry.unref();
-      this.retryTimers.set(sessionId, retry);
+      rt.unref();
+      this.retryTimers.set(sessionId, rt);
     }
   }
 }

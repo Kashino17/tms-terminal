@@ -12,6 +12,10 @@ interface SplitViewState {
   browserPort: string;
   /** Second browser port (tri-split only) */
   browserPort2: string;
+  /** Optional URL path appended after port (e.g. "/login") */
+  browserPath: string;
+  /** Optional URL path for second browser (tri-split only) */
+  browserPath2: string;
 
   activate: (port?: string) => void;
   deactivate: () => void;
@@ -20,6 +24,8 @@ interface SplitViewState {
   cycleMain: () => void;
   setBrowserPort: (port: string) => void;
   setBrowserPort2: (port: string) => void;
+  setBrowserPath: (path: string) => void;
+  setBrowserPath2: (path: string) => void;
 }
 
 const TRI_CYCLE: TriMainPane[] = ['terminal', 'browser1', 'browser2'];
@@ -30,6 +36,8 @@ export const useSplitViewStore = create<SplitViewState>((set, get) => ({
   mainPane: 'terminal',
   browserPort: '3000',
   browserPort2: '5173',
+  browserPath: '',
+  browserPath2: '',
 
   activate(port) {
     set({ active: true, browserPort: port ?? get().browserPort });
@@ -53,5 +61,11 @@ export const useSplitViewStore = create<SplitViewState>((set, get) => ({
   },
   setBrowserPort2(port) {
     set({ browserPort2: port });
+  },
+  setBrowserPath(path) {
+    set({ browserPath: path });
+  },
+  setBrowserPath2(path) {
+    set({ browserPath2: path });
   },
 }));

@@ -142,30 +142,39 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
 
   // ── Keyboard tracking ──────────────────────────────────────────────────────
   useEffect(() => {
-    // On Android with adjustResize, the window already shrinks for the keyboard —
-    // bottom: TOOLBAR_HEIGHT is correct without manual offset. Only iOS needs it.
-    if (Platform.OS !== 'ios') return;
+    if (Platform.OS === 'ios') {
+      // iOS: manually offset bottom for keyboard height
+      const showSub = Keyboard.addListener('keyboardWillShow', (e) => {
+        Animated.timing(bottomAnim, {
+          toValue: TOOLBAR_HEIGHT + e.endCoordinates.height,
+          duration: e.duration > 0 ? e.duration : 220,
+          useNativeDriver: false,
+        }).start();
+      });
+      const hideSub = Keyboard.addListener('keyboardWillHide', (e) => {
+        Animated.timing(bottomAnim, {
+          toValue: TOOLBAR_HEIGHT,
+          duration: e.duration > 0 ? e.duration : 220,
+          useNativeDriver: false,
+        }).start();
+      });
+      return () => { showSub.remove(); hideSub.remove(); };
+    }
 
-    const showSub = Keyboard.addListener('keyboardWillShow', (e) => {
-      Animated.timing(bottomAnim, {
-        toValue: TOOLBAR_HEIGHT + e.endCoordinates.height,
-        duration: e.duration > 0 ? e.duration : 220,
-        useNativeDriver: false,
-      }).start();
+    // Android: adjustResize handles layout, but xterm.js needs an explicit
+    // scroll-to-bottom after the resize so the cursor stays visible.
+    const showSub = Keyboard.addListener('keyboardDidShow', () => {
+      // Short delay: let the WebView resize + xterm.js reflow finish first
+      setTimeout(() => {
+        if (webViewRef.current) {
+          const msg = JSON.stringify({ type: 'scroll_to_bottom' });
+          webViewRef.current.injectJavaScript(
+            `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
+          );
+        }
+      }, 150);
     });
-
-    const hideSub = Keyboard.addListener('keyboardWillHide', (e) => {
-      Animated.timing(bottomAnim, {
-        toValue: TOOLBAR_HEIGHT,
-        duration: e.duration > 0 ? e.duration : 220,
-        useNativeDriver: false,
-      }).start();
-    });
-
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
+    return () => { showSub.remove(); };
   }, []);
 
   const copyText = useCallback((text: string) => {

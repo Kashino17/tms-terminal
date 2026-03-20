@@ -7,6 +7,7 @@ export interface PortForward {
   id: string;
   port: string;
   label: string;
+  path?: string;
 }
 
 interface PortForwardingState {
@@ -16,7 +17,7 @@ interface PortForwardingState {
   getEntries: (serverId: string) => PortForward[];
   addEntry: (serverId: string) => void;
   removeEntry: (serverId: string, id: string) => void;
-  updateEntry: (serverId: string, id: string, updates: Partial<Pick<PortForward, 'port' | 'label'>>) => void;
+  updateEntry: (serverId: string, id: string, updates: Partial<Pick<PortForward, 'port' | 'label' | 'path'>>) => void;
 }
 
 function makeId() {

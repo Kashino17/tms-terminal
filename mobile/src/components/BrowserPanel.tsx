@@ -15,6 +15,8 @@ import { useBrowserTabsStore } from '../store/browserTabsStore';
 import { useSplitViewStore, SplitLayout, TriMainPane } from '../store/splitViewStore';
 import { usePortForwardingStore } from '../store/portForwardingStore';
 import { useResponsive } from '../hooks/useResponsive';
+import { CredentialOverlay } from './CredentialOverlay';
+import { FORM_DETECT_JS } from '../store/credentialStore';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -162,15 +164,20 @@ interface Props {
   screenWidth?: number;
   /** When true: panel header is hidden (navigator header is used instead) */
   isFullScreen?: boolean;
+  /** Called when the browser modal opens/closes */
+  onBrowserOpenChange?: (isOpen: boolean) => void;
 }
 
-export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullScreen = false }: Props) {
+export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullScreen = false, onBrowserOpenChange }: Props) {
   const { rf, rs, ri } = useResponsive();
   const { height: windowHeight } = useWindowDimensions();
+  const CONSOLE_PEEK = useMemo(() => Math.round(windowHeight * 0.20), [windowHeight]); // 1/5 of screen
   const CONSOLE_HALF = useMemo(() => Math.round(windowHeight * 0.35), [windowHeight]);
   const CONSOLE_FULL = useMemo(() => Math.round(windowHeight * 0.7), [windowHeight]);
 
   // Refs for PanResponder to avoid stale closure over computed values
+  const consolePeekRef = useRef(CONSOLE_PEEK);
+  consolePeekRef.current = CONSOLE_PEEK;
   const consoleHalfRef = useRef(CONSOLE_HALF);
   consoleHalfRef.current = CONSOLE_HALF;
   const consoleFullRef = useRef(CONSOLE_FULL);
@@ -195,6 +202,7 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   const webviewRef = useRef<WebView>(null);
   const [reloadMenuOpen, setReloadMenuOpen] = useState(false);
   const [webviewKey, setWebviewKey] = useState(0);
+  const [formDetected, setFormDetected] = useState(false);
 
   // ── Console state ──
   const [logs, setLogs] = useState<ConsoleEntry[]>([]);
@@ -217,18 +225,25 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   useEffect(() => { load(serverId); }, [serverId]);
   useEffect(() => { pfStore.load(serverId); }, [serverId]);
 
-  const activeUrl = activeTab ? `http://${serverHost}:${activeTab.port}` : '';
+  const activePath = activeTab?.path ?? '';
+  const pathSuffix = activePath ? (activePath.startsWith('/') ? activePath : '/' + activePath) : '';
+  const configuredUrl = activeTab ? `http://${serverHost}:${activeTab.port}${pathSuffix}` : '';
+  // Use persisted URL if available (resumes where user left off), otherwise configured URL
+  const activeUrl = (activeTab?.lastUrl) || configuredUrl;
 
-  // Reset console on tab switch
+  // Notify parent when browser modal opens/closes
+  useEffect(() => { onBrowserOpenChange?.(open); }, [open, onBrowserOpenChange]);
+
+  // Reset console on tab switch (but DON'T force WebView remount — key changes naturally via activeTab.id)
   const prevTabRef = useRef(activeTab?.id);
   useEffect(() => {
     if (activeTab && activeTab.id !== prevTabRef.current) {
       prevTabRef.current = activeTab.id;
-      if (open) { setLogs([]); logIdRef.current = 0; setWebviewKey((k) => k + 1); }
+      if (open) { setLogs([]); logIdRef.current = 0; setFormDetected(false); }
     }
   }, [activeTab?.id, open]);
 
-  // Reset console when modal closes
+  // Reset console UI when modal closes (but keep tab URLs and sessions intact)
   useEffect(() => {
     if (!open) {
       setLogs([]);
@@ -236,6 +251,7 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
       heightRef.current = CONSOLE_COLLAPSED;
       setFilter('all');
       logIdRef.current = 0;
+      setFormDetected(false);
     }
   }, [open]);
 
@@ -261,21 +277,29 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
 
   const handlePortChange = useCallback((port: string) => {
     if (!activeTab) return;
-    updateTab(serverId, activeTab.id, { port });
+    // Clear lastUrl so the new port/path config takes effect on next open
+    updateTab(serverId, activeTab.id, { port, lastUrl: undefined });
   }, [serverId, activeTab, updateTab]);
 
   // Open a specific port — finds/creates a tab and opens the modal
-  const openInBrowser = useCallback((port: string) => {
+  const openInBrowser = useCallback((port: string, path?: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const existing = tabs.find((t) => t.port === port);
     if (existing) {
       setActive(serverId, existing.id);
+      if (path !== undefined) updateTab(serverId, existing.id, { path, lastUrl: undefined });
     } else {
       addTab(serverId, port);
+      // Set path on the newly created tab after a tick (tab needs to exist first)
+      if (path) setTimeout(() => {
+        const newTabs = useBrowserTabsStore.getState().getTabs(serverId);
+        const last = newTabs[newTabs.length - 1];
+        if (last) updateTab(serverId, last.id, { path });
+      }, 0);
     }
     setSection('browser');
     setOpen(true);
-  }, [tabs, serverId, setActive, addTab]);
+  }, [tabs, serverId, setActive, addTab, updateTab]);
 
   // ── Console snap ──
   const snapTo = useCallback((target: number) => {
@@ -298,12 +322,13 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
     onPanResponderRelease: (_, g) => {
       const raw = heightRef.current - g.dy;
       const v = g.vy;
+      const peek = consolePeekRef.current;
       const half = consoleHalfRef.current;
       const full = consoleFullRef.current;
-      if (v < -0.5) snapTo(raw < half ? half : full);
-      else if (v > 0.5) snapTo(raw > half ? half : CONSOLE_COLLAPSED);
+      if (v < -0.5) snapTo(raw < peek ? peek : raw < half ? half : full);
+      else if (v > 0.5) snapTo(raw > half ? half : raw > peek ? peek : CONSOLE_COLLAPSED);
       else {
-        const snaps = [CONSOLE_COLLAPSED, half, full];
+        const snaps = [CONSOLE_COLLAPSED, peek, half, full];
         snapTo(snaps.reduce((p, c) => Math.abs(c - raw) < Math.abs(p - raw) ? c : p));
       }
       Haptics.selectionAsync();
@@ -320,6 +345,9 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
           return next.length > 500 ? next.slice(-500) : next;
         });
         setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 50);
+      }
+      if (data.type === '__form_detected__') {
+        setFormDetected(true);
       }
     } catch {}
   }, []);
@@ -356,8 +384,10 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
     `);
     webviewRef.current?.clearCache?.(true);
     setLogs([]); logIdRef.current = 0;
+    // Clear saved URL + force full remount so it starts fresh from configured URL
+    if (activeTab) updateTab(serverId, activeTab.id, { lastUrl: undefined });
     setWebviewKey((k) => k + 1);
-  }, []);
+  }, [activeTab, serverId, updateTab]);
 
   // ── Port Forwarding actions ──
   const handleAddPortForward = useCallback(() => {
@@ -502,8 +532,35 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
                 />
               </View>
 
+              {/* Path input with clear button */}
+              <View style={s.inputRow}>
+                <Text style={s.inputLabel}>Pfad</Text>
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                  <TextInput
+                    style={[s.input, { flex: 1 }]}
+                    value={activeTab.path ?? ''}
+                    onChangeText={(v) => updateTab(serverId, activeTab.id, { path: v })}
+                    placeholder="/login (optional)"
+                    placeholderTextColor={colors.textDim}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  {!!(activeTab.path) && (
+                    <TouchableOpacity
+                      onPress={() => updateTab(serverId, activeTab.id, { path: '' })}
+                      style={{ paddingHorizontal: 8 }}
+                      hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                    >
+                      <Feather name="x-circle" size={16} color={colors.textDim} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+
               {/* URL preview */}
-              <Text style={s.urlPreview} numberOfLines={1}>{activeUrl}</Text>
+              <Text style={s.urlPreview} numberOfLines={1}>
+                {activeTab?.lastUrl ? `↩ ${activeTab.lastUrl}` : configuredUrl}
+              </Text>
 
               {/* Open button */}
               <TouchableOpacity
@@ -561,7 +618,7 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
                 />
               </View>
 
-              {/* Row 2: port input + open button */}
+              {/* Row 2: port + path input */}
               <View style={pf.cardFooter}>
                 <View style={pf.portBadge}>
                   <Text style={pf.portColon}>:</Text>
@@ -574,12 +631,20 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
                     selectTextOnFocus
                   />
                 </View>
-                <View style={{ flex: 1 }} />
+                <TextInput
+                  style={pf.pathInput}
+                  value={entry.path ?? ''}
+                  onChangeText={(v) => pfStore.updateEntry(serverId, entry.id, { path: v })}
+                  placeholder="/pfad"
+                  placeholderTextColor={colors.textDim}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
                 <TouchableOpacity
                   style={pf.openBtn}
-                  onPress={() => openInBrowser(entry.port)}
+                  onPress={() => openInBrowser(entry.port, entry.path)}
                   activeOpacity={0.8}
-                  accessibilityLabel={`Open port ${entry.port}`}
+                  accessibilityLabel={`Open port ${entry.port}${entry.path ? entry.path : ''}`}
                 >
                   <Feather name="external-link" size={13} color={colors.bg} />
                   <Text style={pf.openBtnText}>Open</Text>
@@ -648,6 +713,15 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
             placeholderTextColor={colors.textDim}
             maxLength={5}
           />
+          <TextInput
+            style={ly.portInput}
+            value={splitStore.browserPath}
+            onChangeText={(v) => splitStore.setBrowserPath(v)}
+            placeholder="/pfad (optional)"
+            placeholderTextColor={colors.textDim}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
 
           {/* Browser 2 port (tri only) */}
           {splitStore.layout === 'tri' && (
@@ -673,6 +747,15 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
                 placeholder="Custom port 2"
                 placeholderTextColor={colors.textDim}
                 maxLength={5}
+              />
+              <TextInput
+                style={ly.portInput}
+                value={splitStore.browserPath2}
+                onChangeText={(v) => splitStore.setBrowserPath2(v)}
+                placeholder="/pfad (optional)"
+                placeholderTextColor={colors.textDim}
+                autoCapitalize="none"
+                autoCorrect={false}
               />
             </>
           )}
@@ -701,9 +784,9 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
 
           {/* URL previews */}
           <View style={ly.urlPreviewWrap}>
-            <Text style={ly.urlPreview}>{`http://${serverHost}:${splitStore.browserPort}`}</Text>
+            <Text style={ly.urlPreview}>{`http://${serverHost}:${splitStore.browserPort}${splitStore.browserPath ? (splitStore.browserPath.startsWith('/') ? splitStore.browserPath : '/' + splitStore.browserPath) : ''}`}</Text>
             {splitStore.layout === 'tri' && (
-              <Text style={ly.urlPreview}>{`http://${serverHost}:${splitStore.browserPort2}`}</Text>
+              <Text style={ly.urlPreview}>{`http://${serverHost}:${splitStore.browserPort2}${splitStore.browserPath2 ? (splitStore.browserPath2.startsWith('/') ? splitStore.browserPath2 : '/' + splitStore.browserPath2) : ''}`}</Text>
             )}
           </View>
 
@@ -735,7 +818,7 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
           {/* Nav bar */}
           <View style={m.navBar}>
             <TouchableOpacity style={m.navBtn} onPress={() => setOpen(false)} activeOpacity={0.7}>
-              <Feather name="x" size={18} color={colors.text} />
+              <Feather name="terminal" size={17} color={colors.primary} />
             </TouchableOpacity>
 
             {/* Tab strip */}
@@ -790,6 +873,14 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
               )
             }
 
+            <CredentialOverlay
+              serverId={serverId}
+              currentUrl={activeUrl}
+              webviewRef={webviewRef}
+              variant="header"
+              formDetected={formDetected}
+            />
+
             <TouchableOpacity style={m.navBtn} onPress={toggleConsole} activeOpacity={0.7}>
               <Feather name="terminal" size={16} color={isConsoleOpen ? colors.info : colors.textMuted} />
               {errorCount > 0 && !isConsoleOpen && (
@@ -800,19 +891,27 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
 
           {/* WebView + Console */}
           <View style={{ flex: 1 }}>
-            <WebView
-              key={`${activeTab?.id}-${webviewKey}`}
-              ref={webviewRef}
-              source={{ uri: activeUrl }}
-              style={m.webview}
-              onLoadStart={() => setLoading(true)}
-              onLoadEnd={() => setLoading(false)}
-              onMessage={handleMessage}
-              injectedJavaScript={CONSOLE_INTERCEPT_JS}
-              allowsInlineMediaPlayback
-              mediaPlaybackRequiresUserAction={false}
-              mixedContentMode="always"
-            />
+              <WebView
+                key={`${activeTab?.id}-${webviewKey}`}
+                ref={webviewRef}
+                source={{ uri: activeUrl }}
+                style={[m.webview, { flex: 1 }]}
+                onLoadStart={() => setLoading(true)}
+                onLoadEnd={() => setLoading(false)}
+                onMessage={handleMessage}
+                onNavigationStateChange={(navState) => {
+                  // Persist the current URL so the tab resumes here on next open
+                  if (!navState.loading && activeTab && navState.url && !navState.url.startsWith('about:')) {
+                    updateTab(serverId, activeTab.id, { lastUrl: navState.url });
+                  }
+                }}
+                injectedJavaScript={CONSOLE_INTERCEPT_JS + '\n' + FORM_DETECT_JS}
+                allowsInlineMediaPlayback
+                mediaPlaybackRequiresUserAction={false}
+                mixedContentMode="always"
+                sharedCookiesEnabled
+                thirdPartyCookiesEnabled
+              />
 
             {/* Console panel */}
             <View style={[cs.panel, { height: consoleHeight }]}>
@@ -1035,6 +1134,7 @@ const pf = StyleSheet.create({
   },
   portColon: { color: colors.info, fontSize: 12, fontFamily: fonts.mono, fontWeight: '700' },
   portInput: { color: colors.info, fontSize: 12, fontFamily: fonts.mono, fontWeight: '700', minWidth: 36, maxWidth: 52 },
+  pathInput: { flex: 1, color: colors.textMuted, fontSize: 11, fontFamily: fonts.mono, marginLeft: 6, paddingVertical: 2 },
   openBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     backgroundColor: '#F97316', borderRadius: 7,

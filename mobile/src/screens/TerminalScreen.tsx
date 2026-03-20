@@ -12,7 +12,8 @@ import { ReconnectBanner, RestoreState } from '../components/ReconnectBanner';
 import { WebSocketService } from '../services/websocket.service';
 import { useServerStore } from '../store/serverStore';
 import { useTerminalStore } from '../store/terminalStore';
-import { TerminalTab, AiToolType } from '../types/terminal.types';
+import { TerminalTab, AiToolType, TabCategory, ServerType } from '../types/terminal.types';
+import { detectServerType } from '../utils/serverDetector';
 import { ConnectionState } from '../types/websocket.types';
 import { colors } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
@@ -27,7 +28,8 @@ import { consumeDrawingResult } from './DrawingScreen';
 import { TabGridView } from '../components/TabGridView';
 import { ANSI_RE as ANSI_STRIP_RE, stripAnsi } from '../utils/stripAnsi';
 
-// Client-side prompt patterns — matches same triggers as server, runs on every output chunk
+// Client-side prompt patterns — matches same triggers as server.
+// Only SPECIFIC patterns — generic "?" at end of line is excluded (causes false positives).
 const CLIENT_PROMPT_PATTERNS = [
   /\[y\/n\]/i,
   /\[Y\/n\]/,
@@ -36,23 +38,20 @@ const CLIENT_PROMPT_PATTERNS = [
   /press enter to continue/i,
   /do you want (me )?to/i,
   /do you want to proceed/i,
-  /would you like/i,
-  /shall i /i,
-  /continue\?/i,
-  /proceed\?/i,
-  /confirm\?/i,
-  /approve\?/i,
+  /would you like to/i,
+  /continue\?\s*$/im,
+  /proceed\?\s*$/im,
+  /confirm\?\s*$/im,
+  /approve\?\s*$/im,
   /allow (this action|bash|command|running|tool|edit|execution)/i,
   /dangerous command/i,
-  /apply (this )?edit/i,
+  /apply (this )?edit\?/i,
   /apply (change|patch|diff)\?/i,
   /run (this )?command\?/i,
   /execute (this )?command/i,
   /allow execution of/i,
   /waiting for user confirmation/i,
-  /execution of:/i,
   /\?\s*(›|\[|\()/,
-  /\?\s*$/m,
 ];
 
 const OUTPUT_BUFFER_MAX_CHARS = 600;
@@ -97,6 +96,7 @@ export function TerminalScreen({ navigation, route }: Props) {
   const [rangeActive, setRangeActive] = useState(false);
   const toolRailRef = useRef<ToolRailRef>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [browserWasOpen, setBrowserWasOpen] = useState(false);
   const railWidthAnim = useRef(new Animated.Value(TOOL_RAIL_WIDTH)).current;
 
   const autoApproveTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
@@ -285,6 +285,16 @@ export function TerminalScreen({ navigation, route }: Props) {
             outputBuffersRef.current[outputTab.id] = nl >= 0 ? trimmed.slice(nl + 1) : trimmed;
           }
           lastActivityRef.current[outputTab.id] = Date.now();
+
+          // Server detection from output — skip if already AI or manually categorised
+          if (outputTab.category !== 'ai' && !outputTab.customCategory) {
+            const serverResult = detectServerType(outputTab.lastProcess, m.payload.data as string);
+            if (serverResult) {
+              const serverUpdates: Partial<TerminalTab> = { category: 'server', serverType: serverResult.type };
+              if (serverResult.port) serverUpdates.serverPort = serverResult.port;
+              useTerminalStore.getState().updateTab(serverId, outputTab.id, serverUpdates);
+            }
+          }
         }
       } else if (m.type === 'terminal:error' && m.sessionId && m.sessionId !== 'none') {
         // Session expired — immediately re-create if we know the dimensions
@@ -535,7 +545,11 @@ export function TerminalScreen({ navigation, route }: Props) {
   }, [createNewTab, closeGrid]);
 
   const handleAiToolDetected = useCallback((tabId: string, tool: AiToolType) => {
-    updateTab(serverId, tabId, { aiTool: tool });
+    updateTab(serverId, tabId, { aiTool: tool, category: 'ai' });
+  }, [serverId, updateTab]);
+
+  const handleChangeCategory = useCallback((tabId: string, category: TabCategory, serverType?: ServerType) => {
+    updateTab(serverId, tabId, { category, serverType: serverType ?? null, customCategory: true });
   }, [serverId, updateTab]);
 
   const handleScrollToBottom = useCallback(() => {
@@ -579,6 +593,7 @@ export function TerminalScreen({ navigation, route }: Props) {
       return true;
     }
     if (toolId === 'browser') {
+      setBrowserWasOpen(true);
       navigation.navigate('Browser', {
         serverHost: server?.host ?? '',
         serverId,
@@ -597,7 +612,7 @@ export function TerminalScreen({ navigation, route }: Props) {
   const splitActive = useSplitViewStore((s) => s.active);
 
   // ── Swipe between tabs ─────────────────────────────────────────────────────
-  const swipeRef = useRef({ x0: 0, y0: 0, t0: 0 });
+  const swipeRef = useRef({ x0: 0, y0: 0, t0: 0, touches: 0 });
   const tabSwipePanResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_, g) => {
@@ -606,7 +621,7 @@ export function TerminalScreen({ navigation, route }: Props) {
       return Math.abs(g.dx) > 20 || (g.dy < -20 && Math.abs(g.dy) > Math.abs(g.dx) * 2);
     },
     onPanResponderGrant: (_, g) => {
-      swipeRef.current = { x0: g.x0, y0: g.y0, t0: Date.now() };
+      swipeRef.current = { x0: g.x0, y0: g.y0, t0: Date.now(), touches: g.numberActiveTouches };
     },
     onPanResponderRelease: (_, g) => {
       const dx = g.dx;
@@ -661,13 +676,17 @@ export function TerminalScreen({ navigation, route }: Props) {
         </View>
         <View style={[styles.statusRight, { gap: rs(6) }]}>
           <TouchableOpacity
-            style={[styles.quickAction, { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) }]}
+            style={[
+              styles.quickAction,
+              { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) },
+              browserWasOpen && { backgroundColor: colors.info + '20', borderWidth: 1, borderColor: colors.info + '40' },
+            ]}
             onPress={() => handleToolAction('browser')}
             activeOpacity={0.65}
-            accessibilityLabel="Open browser"
+            accessibilityLabel={browserWasOpen ? 'Back to browser' : 'Open browser'}
             accessibilityRole="button"
           >
-            <Feather name="globe" size={ri(14)} color={colors.textMuted} />
+            <Feather name="globe" size={ri(14)} color={browserWasOpen ? colors.info : colors.textMuted} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.quickAction, { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) }]}
@@ -692,15 +711,18 @@ export function TerminalScreen({ navigation, route }: Props) {
       <ReconnectBanner restoreState={restoreState} />
       <TerminalTabs
         tabs={serverTabs}
+        connected={connState === 'connected'}
         onSelect={(id) => setActiveTab(serverId, id)}
         onClose={handleCloseTab}
         onAdd={createNewTab}
         onRename={handleRenameTab}
         onOpenGrid={openGrid}
+        onChangeCategory={handleChangeCategory}
       />
       {splitActive ? (
         <SplitLayout
           serverHost={server?.host ?? ''}
+          serverId={serverId}
           terminalContent={
             <>
               {tabsToRender.map((tab) => (

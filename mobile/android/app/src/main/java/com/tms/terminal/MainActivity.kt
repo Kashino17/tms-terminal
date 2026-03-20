@@ -2,6 +2,8 @@ package com.tms.terminal
 
 import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -17,6 +19,17 @@ class MainActivity : ReactActivity() {
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
     super.onCreate(null)
+
+    // Disable haptic/vibration feedback globally for all views in this activity.
+    // Samsung One UI adds unwanted vibration when any input field receives focus.
+    window.decorView.isHapticFeedbackEnabled = false
+    window.decorView.rootView.isHapticFeedbackEnabled = false
+  }
+
+  override fun onContentChanged() {
+    super.onContentChanged()
+    // Also disable on content root (React Native replaces content dynamically)
+    findViewById<View>(android.R.id.content)?.isHapticFeedbackEnabled = false
   }
 
   /**
