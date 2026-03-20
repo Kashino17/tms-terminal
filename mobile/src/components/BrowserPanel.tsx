@@ -200,6 +200,9 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   // ── Panel state ──
   const [section, setSection] = useState<PanelSection>('browser');
 
+  // ── Tab edit state (long-press in browser single view) ──
+  const [editingTab, setEditingTab] = useState<{ id: string; port: string; path: string } | null>(null);
+
   // ── Modal (WebView) state ──
   const [open, setOpen] = useState(openDirect);
   const [loading, setLoading] = useState(false);
@@ -848,11 +851,13 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
                     key={tab.id}
                     style={[m.tab, isActive && m.tabActive]}
                     onPress={() => handleSelectTab(tab.id)}
+                    onLongPress={() => setEditingTab({ id: tab.id, port: tab.port, path: tab.path ?? '' })}
+                    delayLongPress={400}
                     activeOpacity={0.75}
                   >
                     <View style={[m.tabFavicon, isActive && m.tabFaviconActive]} />
                     <Text style={[m.tabPort, isActive && m.tabPortActive]} numberOfLines={1}>
-                      :{tab.port}
+                      :{tab.port}{tab.path ? tab.path : ''}
                     </Text>
                     {tabs.length > 1 && (
                       <TouchableOpacity
@@ -1011,6 +1016,53 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
           </Modal>
         </SafeAreaView>
       </Modal>
+
+      {/* ══ Tab Edit Modal ═══════════════════════════════════════════════════ */}
+      <Modal visible={!!editingTab} transparent animationType="fade" onRequestClose={() => setEditingTab(null)}>
+        <Pressable style={te.overlay} onPress={() => setEditingTab(null)}>
+          <View style={te.card} onStartShouldSetResponder={() => true}>
+            <Text style={te.title}>Tab bearbeiten</Text>
+
+            <Text style={te.label}>Port</Text>
+            <TextInput
+              style={te.input}
+              value={editingTab?.port ?? ''}
+              onChangeText={(v) => setEditingTab((prev) => prev ? { ...prev, port: v.replace(/\D/g, '') } : null)}
+              keyboardType="number-pad"
+              maxLength={5}
+              selectTextOnFocus
+              placeholder="3000"
+              placeholderTextColor={colors.textDim}
+            />
+
+            <Text style={te.label}>URL-Pfad</Text>
+            <TextInput
+              style={te.input}
+              value={editingTab?.path ?? ''}
+              onChangeText={(v) => setEditingTab((prev) => prev ? { ...prev, path: v } : null)}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="/login (optional)"
+              placeholderTextColor={colors.textDim}
+            />
+
+            <View style={te.buttons}>
+              <TouchableOpacity style={te.cancelBtn} onPress={() => setEditingTab(null)} activeOpacity={0.7}>
+                <Text style={te.cancelText}>Abbrechen</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={te.saveBtn} onPress={() => {
+                if (editingTab) {
+                  updateTab(serverId, editingTab.id, { port: editingTab.port, path: editingTab.path, lastUrl: undefined });
+                  setWebviewKey((k) => k + 1); // force reload with new URL
+                }
+                setEditingTab(null);
+              }} activeOpacity={0.7}>
+                <Text style={te.saveText}>Speichern</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1018,6 +1070,20 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
 // ══════════════════════════════════════════════════════════════════════════════
 // ── Styles ───────────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
+
+// Tab edit modal styles
+const te = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  card: { width: '100%', maxWidth: 320, backgroundColor: colors.surface, borderRadius: 14, padding: 20, borderWidth: 1, borderColor: colors.border },
+  title: { color: colors.text, fontSize: 16, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
+  label: { color: colors.textMuted, fontSize: 12, fontWeight: '500', marginBottom: 6, marginTop: 10 },
+  input: { backgroundColor: colors.bg, borderRadius: 8, padding: 12, color: colors.text, fontSize: 14, fontFamily: fonts.mono, borderWidth: 1, borderColor: colors.border },
+  buttons: { flexDirection: 'row', gap: 10, marginTop: 20 },
+  cancelBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center', backgroundColor: colors.border },
+  cancelText: { color: colors.textDim, fontSize: 14, fontWeight: '500' },
+  saveBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center', backgroundColor: colors.primary },
+  saveText: { color: colors.text, fontSize: 14, fontWeight: '600' },
+});
 
 // Panel styles
 const s = StyleSheet.create({
