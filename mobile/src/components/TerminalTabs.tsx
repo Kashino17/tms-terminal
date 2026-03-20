@@ -24,13 +24,15 @@ interface Props {
   onOpenGrid?: () => void;
 }
 
+import { tabDisplayName } from '../utils/tabDisplayName';
+
 export function TerminalTabs({ tabs, onSelect, onClose, onAdd, onRename, onOpenGrid }: Props) {
   const responsive = useResponsive();
   const { rf, rs, ri } = responsive;
   const [renaming, setRenaming] = useState<{ tabId: string; value: string } | null>(null);
 
   const handleLongPress = (tab: TerminalTab) => {
-    setRenaming({ tabId: tab.id, value: tab.title });
+    setRenaming({ tabId: tab.id, value: tabDisplayName(tab) });
   };
 
   const confirmRename = () => {
@@ -62,10 +64,10 @@ export function TerminalTabs({ tabs, onSelect, onClose, onAdd, onRename, onOpenG
               delayLongPress={400}
               accessibilityRole={'tab' as any}
               accessibilityState={{ selected: tab.active }}
-              accessibilityLabel={`${tab.title}${tab.aiTool ? `, ${tab.aiTool}` : ''}`}
+              accessibilityLabel={`${tabDisplayName(tab)}${tab.aiTool ? `, ${tab.aiTool}` : ''}`}
             >
               <Text style={[styles.tabText, { fontSize: rf(13) }, tab.active && styles.activeTabText]} numberOfLines={1}>
-                {tab.title}
+                {tabDisplayName(tab)}
               </Text>
               {aiColor && tab.aiTool && (
                 <Text style={aiLabelStyle}>

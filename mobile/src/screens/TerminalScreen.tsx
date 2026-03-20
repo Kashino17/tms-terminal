@@ -495,7 +495,7 @@ export function TerminalScreen({ navigation, route }: Props) {
   }, [serverId, removeTab]);
 
   const handleRenameTab = useCallback((tabId: string, newName: string) => {
-    updateTab(serverId, tabId, { title: newName });
+    updateTab(serverId, tabId, { title: newName, customTitle: true });
   }, [serverId, updateTab]);
 
   const openGrid = useCallback(() => {

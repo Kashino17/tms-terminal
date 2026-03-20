@@ -5,6 +5,7 @@ import { TerminalTab } from '../types/terminal.types';
 import { colors, fonts } from '../theme';
 import { AI_TOOL_COLORS } from '../constants/aiTools';
 import { useResponsive } from '../hooks/useResponsive';
+import { tabDisplayName } from '../utils/tabDisplayName';
 
 export interface TabGridCardProps {
   tab: TerminalTab;
@@ -77,12 +78,12 @@ export const TabGridCard = memo(function TabGridCard({
       onPress={() => onSelect(tab.id)}
       activeOpacity={0.85}
       accessibilityRole="button"
-      accessibilityLabel={`Switch to ${tab.title}`}
+      accessibilityLabel={`Switch to ${tabDisplayName(tab)}`}
     >
       {/* Header */}
       <View style={[styles.header, dynamicStyles.header]}>
         <View style={[styles.dot, dynamicStyles.dot, { backgroundColor: dot }]} />
-        <Text style={[styles.title, dynamicStyles.title]} numberOfLines={1}>{tab.title}</Text>
+        <Text style={[styles.title, dynamicStyles.title]} numberOfLines={1}>{tabDisplayName(tab)}</Text>
         {aiColor && tab.aiTool && (
           <Text style={[styles.aiBadge, dynamicStyles.aiBadge, { color: aiColor }]}>
             {tab.aiTool.charAt(0).toUpperCase() + tab.aiTool.slice(1)}
@@ -91,7 +92,7 @@ export const TabGridCard = memo(function TabGridCard({
         <TouchableOpacity
           onPress={() => onClose(tab.id)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityLabel={`Close ${tab.title}`}
+          accessibilityLabel={`Close ${tabDisplayName(tab)}`}
           accessibilityRole="button"
         >
           <Feather name="x" size={ri(11)} color={colors.textDim} />
