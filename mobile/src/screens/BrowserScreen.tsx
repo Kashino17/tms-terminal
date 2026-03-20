@@ -14,7 +14,7 @@ type Props = {
 };
 
 export function BrowserScreen({ navigation, route }: Props) {
-  const { serverHost, serverId } = route.params;
+  const { serverHost, serverId, openDirect } = route.params;
   const responsive = useResponsive();
 
   const handleBack = useCallback(() => {
@@ -28,6 +28,7 @@ export function BrowserScreen({ navigation, route }: Props) {
         serverId={serverId}
         screenWidth={responsive.width}
         isFullScreen
+        openDirect={!!openDirect}
         onBackToTerminal={handleBack}
       />
     </SafeAreaView>

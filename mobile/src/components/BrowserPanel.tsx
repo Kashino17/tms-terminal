@@ -168,9 +168,11 @@ interface Props {
   onBrowserOpenChange?: (isOpen: boolean) => void;
   /** Called when user wants to go back to terminal (fullscreen mode) */
   onBackToTerminal?: () => void;
+  /** Open browser single view immediately on mount */
+  openDirect?: boolean;
 }
 
-export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullScreen = false, onBrowserOpenChange, onBackToTerminal }: Props) {
+export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullScreen = false, onBrowserOpenChange, onBackToTerminal, openDirect = false }: Props) {
   const { rf, rs, ri } = useResponsive();
   const { height: windowHeight } = useWindowDimensions();
   const CONSOLE_PEEK = useMemo(() => Math.round(windowHeight * 0.20), [windowHeight]); // 1/5 of screen
@@ -199,7 +201,7 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   const [section, setSection] = useState<PanelSection>('browser');
 
   // ── Modal (WebView) state ──
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(openDirect);
   const [loading, setLoading] = useState(false);
   const webviewRef = useRef<WebView>(null);
   const [reloadMenuOpen, setReloadMenuOpen] = useState(false);

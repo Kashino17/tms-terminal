@@ -675,18 +675,34 @@ export function TerminalScreen({ navigation, route }: Props) {
           <ConnectionStatus state={connState} rtt={rtt} />
         </View>
         <View style={[styles.statusRight, { gap: rs(6) }]}>
+          {browserWasOpen && (
+            <TouchableOpacity
+              style={[
+                styles.quickAction,
+                { width: quickActionSize, height: quickActionSize, borderRadius: rs(7), backgroundColor: colors.accent + '20', borderWidth: 1, borderColor: colors.accent + '40' },
+              ]}
+              onPress={() => {
+                navigation.navigate('Browser', {
+                  serverHost: server?.host ?? '',
+                  serverId,
+                  openDirect: true,
+                });
+              }}
+              activeOpacity={0.65}
+              accessibilityLabel="Back to browser view"
+              accessibilityRole="button"
+            >
+              <Feather name="globe" size={ri(14)} color={colors.accent} />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
-            style={[
-              styles.quickAction,
-              { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) },
-              browserWasOpen && { backgroundColor: colors.info + '20', borderWidth: 1, borderColor: colors.info + '40' },
-            ]}
+            style={[styles.quickAction, { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) }]}
             onPress={() => handleToolAction('browser')}
             activeOpacity={0.65}
-            accessibilityLabel={browserWasOpen ? 'Back to browser' : 'Open browser'}
+            accessibilityLabel="Open browser"
             accessibilityRole="button"
           >
-            <Feather name="globe" size={ri(14)} color={browserWasOpen ? colors.info : colors.textMuted} />
+            <Feather name="globe" size={ri(14)} color={colors.textMuted} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.quickAction, { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) }]}
