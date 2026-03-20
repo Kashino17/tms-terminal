@@ -199,8 +199,7 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   const [section, setSection] = useState<PanelSection>('browser');
 
   // ── Modal (WebView) state ──
-  // When fullscreen (BrowserScreen), start with modal open immediately
-  const [open, setOpen] = useState(isFullScreen);
+  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const webviewRef = useRef<WebView>(null);
   const [reloadMenuOpen, setReloadMenuOpen] = useState(false);
