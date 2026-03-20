@@ -150,26 +150,38 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   shadowInput.addEventListener('compositionstart', function() { isComposing = true; });
   shadowInput.addEventListener('compositionend', function() {
     isComposing = false;
-    // Don't send e.data — the input events during composition already sent each character.
-    // Just sync prevValue so nothing gets double-sent.
-    prevValue = shadowInput.value;
+    // Don't sync prevValue here — the input handler already tracks it.
+    // Syncing here caused desync on some Android keyboards where event
+    // order differs, leading to lost characters or all-spaces input.
   });
 
-  shadowInput.addEventListener('input', function() {
-    // No isComposing guard — Android keyboards use composition even for Latin text,
-    // which would delay characters until space/enter. Process every input event.
+  shadowInput.addEventListener('input', function(e) {
+    // Use InputEvent.data for non-composition text (most reliable).
+    // Fall back to diff tracking for composition and other input types.
     var cur = shadowInput.value;
+
+    // Deletion
     if (cur.length < prevValue.length) {
       for (var i = 0; i < prevValue.length - cur.length; i++) sendKey(SEQ.bs);
       prevValue = cur; return;
     }
+
+    // Non-composition: use e.data directly (exact character typed)
+    if (!isComposing && e.data && e.inputType === 'insertText') {
+      sendKey(e.data);
+      prevValue = cur;
+      if (cur.length > 300) { shadowInput.value = ''; prevValue = ''; }
+      return;
+    }
+
+    // Composition & fallback: diff-based
     var added = cur.slice(prevValue.length);
     if (added === '\\n' || added === '\\r' || added === '\\r\\n') {
       sendKey(SEQ.enter); shadowInput.value = prevValue; return;
     }
     if (added) sendKey(added);
     prevValue = cur;
-    if (cur.length > 500) { shadowInput.value = ''; prevValue = ''; }
+    if (cur.length > 300) { shadowInput.value = ''; prevValue = ''; }
   });
 
   /* ── Resize ────────────────────────────────────────── */
