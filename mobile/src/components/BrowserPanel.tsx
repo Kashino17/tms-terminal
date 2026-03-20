@@ -333,6 +333,8 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
   const [reloadMenuOpen, setReloadMenuOpen] = useState(false);
   const [webviewKey, setWebviewKey] = useState(0);
   const [formDetected, setFormDetected] = useState(false);
+  const [viewportMode, setViewportMode] = useState<'desktop' | 'mobile'>('desktop');
+  const isMobileView = viewportMode === 'mobile';
 
   // ── DevTools state ──
   const [devTab, setDevTab] = useState<DevTab>('console');
@@ -363,6 +365,8 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
   [logs, filter]);
   const networkErrorCount = useMemo(() => networkEntries.filter((e) => e.error || (e.status && e.status >= 400)).length, [networkEntries]);
   const isConsoleOpen = consoleHeight > CONSOLE_COLLAPSED;
+  // In mobile view, DevTools are always expanded (side panel)
+  const devToolsVisible = isMobileView || isConsoleOpen;
 
   // ── Load stores ──
   useEffect(() => { load(browserKey); }, [browserKey]);
@@ -1142,6 +1146,21 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
               )
             }
 
+            <TouchableOpacity
+              style={m.navBtn}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setViewportMode((v) => v === 'desktop' ? 'mobile' : 'desktop');
+              }}
+              activeOpacity={0.7}
+            >
+              <Feather
+                name={isMobileView ? 'smartphone' : 'monitor'}
+                size={15}
+                color={isMobileView ? '#F472B6' : colors.textMuted}
+              />
+            </TouchableOpacity>
+
             <CredentialOverlay
               serverId={serverId}
               currentUrl={activeUrl}
@@ -1152,41 +1171,56 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
 
             <TouchableOpacity style={m.navBtn} onPress={toggleConsole} activeOpacity={0.7}>
               <Feather name="code" size={16} color={isConsoleOpen ? colors.info : colors.textMuted} />
-              {(errorCount > 0 || networkErrorCount > 0) && !isConsoleOpen && (
+              {(errorCount > 0 || networkErrorCount > 0) && !devToolsVisible && (
                 <View style={cs.badge}><Text style={cs.badgeText}>{(errorCount + networkErrorCount) > 9 ? '9+' : errorCount + networkErrorCount}</Text></View>
               )}
             </TouchableOpacity>
           </View>
 
-          {/* WebView + Console */}
-          <View style={{ flex: 1 }}>
-              <WebView
-                key={`${activeTab?.id}-${webviewKey}`}
-                ref={webviewRef}
-                source={{ uri: activeUrl }}
-                style={[m.webview, { flex: 1 }]}
-                onLoadStart={() => setLoading(true)}
-                onLoadEnd={() => setLoading(false)}
-                onMessage={handleMessage}
-                onNavigationStateChange={(navState) => {
-                  // Persist the current URL so the tab resumes here on next open
-                  if (!navState.loading && activeTab && navState.url && !navState.url.startsWith('about:')) {
-                    updateTab(browserKey, activeTab.id, { lastUrl: navState.url });
-                  }
-                }}
-                injectedJavaScript={CONSOLE_INTERCEPT_JS + '\n' + NETWORK_INTERCEPT_JS + '\n' + FORM_DETECT_JS}
-                allowsInlineMediaPlayback
-                mediaPlaybackRequiresUserAction={false}
-                mixedContentMode="always"
-                sharedCookiesEnabled
-                thirdPartyCookiesEnabled
-              />
+          {/* WebView + DevTools — desktop: stacked, mobile: side-by-side */}
+          <View style={{ flex: 1, flexDirection: isMobileView ? 'row' : 'column' }}>
+              {/* WebView pane */}
+              <View style={isMobileView ? mv.webviewPane : { flex: 1 }}>
+                <WebView
+                  key={`${activeTab?.id}-${webviewKey}`}
+                  ref={webviewRef}
+                  source={{ uri: activeUrl }}
+                  style={[m.webview, { flex: 1 }]}
+                  onLoadStart={() => setLoading(true)}
+                  onLoadEnd={() => setLoading(false)}
+                  onMessage={handleMessage}
+                  onNavigationStateChange={(navState) => {
+                    // Persist the current URL so the tab resumes here on next open
+                    if (!navState.loading && activeTab && navState.url && !navState.url.startsWith('about:')) {
+                      updateTab(browserKey, activeTab.id, { lastUrl: navState.url });
+                    }
+                  }}
+                  injectedJavaScript={CONSOLE_INTERCEPT_JS + '\n' + NETWORK_INTERCEPT_JS + '\n' + FORM_DETECT_JS}
+                  allowsInlineMediaPlayback
+                  mediaPlaybackRequiresUserAction={false}
+                  mixedContentMode="always"
+                  sharedCookiesEnabled
+                  thirdPartyCookiesEnabled
+                />
+                {/* Mobile viewport label */}
+                {isMobileView && (
+                  <View style={mv.label}>
+                    <Feather name="smartphone" size={9} color={colors.textDim} />
+                    <Text style={mv.labelText}>375px</Text>
+                  </View>
+                )}
+              </View>
 
             {/* DevTools panel */}
-            <View style={[cs.panel, { height: consoleHeight }]}>
-              <View {...panResponder.panHandlers} style={cs.dragZone}>
-                <View style={cs.dragHandle} />
-              </View>
+            <View style={isMobileView
+              ? [cs.panel, mv.devToolsPane]
+              : [cs.panel, { height: consoleHeight }]
+            }>
+              {!isMobileView && (
+                <View {...panResponder.panHandlers} style={cs.dragZone}>
+                  <View style={cs.dragHandle} />
+                </View>
+              )}
 
               {/* ── Tab bar ── */}
               <View style={cs.headerRow}>
@@ -1194,7 +1228,7 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
                   <Feather name="code" size={11} color={colors.info} />
                   <Text style={cs.headerTitle}>DevTools</Text>
                 </TouchableOpacity>
-                {isConsoleOpen && (
+                {devToolsVisible && (
                   <View style={cs.devTabs}>
                     <TouchableOpacity style={[cs.devTab, devTab === 'console' && cs.devTabActive]} onPress={() => setDevTab('console')} activeOpacity={0.7}>
                       <Feather name="terminal" size={10} color={devTab === 'console' ? colors.info : colors.textDim} />
@@ -1215,7 +1249,7 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
               </View>
 
               {/* ── Console tab ── */}
-              {isConsoleOpen && devTab === 'console' && (
+              {devToolsVisible && devTab === 'console' && (
                 <>
                   <View style={cs.subHeaderRow}>
                     <View style={cs.filters}>
@@ -1283,7 +1317,7 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
               )}
 
               {/* ── Network tab ── */}
-              {isConsoleOpen && devTab === 'network' && (
+              {devToolsVisible && devTab === 'network' && (
                 <>
                   <View style={cs.subHeaderRow}>
                     <Text style={[cs.filterText, { color: colors.textMuted }]}>{networkEntries.length} Requests</Text>
@@ -1317,7 +1351,7 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
               )}
 
               {/* ── Storage tab ── */}
-              {isConsoleOpen && devTab === 'storage' && (
+              {devToolsVisible && devTab === 'storage' && (
                 <>
                   <View style={cs.subHeaderRow}>
                     <Text style={[cs.filterText, { color: colors.textMuted }]}>{storageItems.length} Einträge</Text>
@@ -1703,6 +1737,40 @@ const cs = StyleSheet.create({
   // Storage
   storageKey: { color: colors.info, fontSize: 10, fontFamily: fonts.mono, fontWeight: '700', minWidth: 80, maxWidth: 120 },
   storageValue: { flex: 1, color: colors.text, fontSize: 10, fontFamily: fonts.mono, lineHeight: 14 },
+});
+
+// Mobile-view styles (side-by-side layout)
+const mv = StyleSheet.create({
+  webviewPane: {
+    width: 375,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+  },
+  devToolsPane: {
+    flex: 1,
+    height: '100%' as any,
+    borderTopWidth: 0,
+    borderLeftWidth: 1,
+    borderLeftColor: colors.border,
+  },
+  label: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  labelText: {
+    color: colors.textDim,
+    fontSize: 9,
+    fontFamily: fonts.mono,
+    fontWeight: '600',
+  },
 });
 
 // Modal styles
