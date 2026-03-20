@@ -10,6 +10,7 @@ import { colors } from './theme';
 import { ResponsiveProvider } from './hooks/useResponsive';
 import { registerBackgroundHandler, registerForegroundHandler, registerNotificationResponseHandler } from './services/notifications.service';
 import { keywordAlertService } from './services/keywordAlert.service';
+import { useAutopilotStore } from './store/autopilotStore';
 import { registerBackgroundUpdateCheck } from './services/updater.service';
 
 // Background FCM handler must be registered before any component mounts.
@@ -35,9 +36,10 @@ export default function App() {
   const { ready, isEnabled, isUnlocked, lock, loadLockConfig } = useLockStore();
   const [appReady, setAppReady] = useState(false);
 
-  // Load lock config before showing anything
+  // Load lock config before showing anything + cleanup old autopilot items
   useEffect(() => {
     loadLockConfig().then(() => setAppReady(true)).catch(() => setAppReady(true));
+    useAutopilotStore.getState().cleanupOldDone();
   }, []);
 
   // Lock when app moves to background

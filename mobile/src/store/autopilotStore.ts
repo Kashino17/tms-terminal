@@ -28,6 +28,8 @@ interface AutopilotState {
   // Stats
   getPendingCount: (sessionId: string) => number;
   getDoneCount: (sessionId: string) => number;
+  /** Remove done items older than 24 hours */
+  cleanupOldDone: () => void;
 }
 
 function makeId() {
@@ -40,7 +42,13 @@ export const useAutopilotStore = create<AutopilotState>()(
       items: {},
       queueEnabled: {},
 
-      getItems: (sessionId) => get().items[sessionId] ?? [],
+      getItems: (sessionId) => {
+        const all = get().items[sessionId] ?? [];
+        // Sort: active items first (draft/optimizing/queued/running), done items at the bottom
+        const active = all.filter(i => i.status !== 'done');
+        const done = all.filter(i => i.status === 'done');
+        return [...active, ...done];
+      },
 
       addItem: (sessionId, text) => {
         const id = makeId();
@@ -95,6 +103,18 @@ export const useAutopilotStore = create<AutopilotState>()(
 
       getPendingCount: (sessionId) => (get().items[sessionId] ?? []).filter(i => i.status === 'queued').length,
       getDoneCount: (sessionId) => (get().items[sessionId] ?? []).filter(i => i.status === 'done').length,
+
+      /** Remove done items older than 24 hours across all sessions */
+      cleanupOldDone: () => {
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        set((s) => {
+          const cleaned: Record<string, AutopilotItem[]> = {};
+          for (const [sid, items] of Object.entries(s.items)) {
+            cleaned[sid] = items.filter(i => i.status !== 'done' || !i.completedAt || i.completedAt > cutoff);
+          }
+          return { items: cleaned };
+        });
+      },
     }),
     {
       name: 'tms-autopilot',
