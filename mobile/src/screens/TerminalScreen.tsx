@@ -71,7 +71,8 @@ export function TerminalScreen({ navigation, route }: Props) {
   const [rangeActive, setRangeActive] = useState(false);
   const toolRailRef = useRef<ToolRailRef>(null);
   const [panelOpen, setPanelOpen] = useState(false);
-  const [browserWasOpen, setBrowserWasOpen] = useState(false);
+  // Track which terminal tabs have opened a browser (per-tab, not global)
+  const [browserOpenTabs, setBrowserOpenTabs] = useState<Set<string>>(new Set());
   const railWidthAnim = useRef(new Animated.Value(TOOL_RAIL_WIDTH)).current;
 
   const autoApproveTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
@@ -101,6 +102,8 @@ export function TerminalScreen({ navigation, route }: Props) {
   const [rtt, setRtt] = useState<number | undefined>(undefined);
 
   const serverTabs = tabs[serverId] || [];
+  const activeTerminalTab = serverTabs.find((t) => t.active);
+  const activeTabHasBrowser = !!activeTerminalTab && browserOpenTabs.has(activeTerminalTab.id);
 
   useEffect(() => {
     navigation.setOptions({ title: serverName });
@@ -469,6 +472,7 @@ export function TerminalScreen({ navigation, route }: Props) {
       useAutoApproveStore.getState().clear(tab.sessionId);
     }
     useBrowserTabsStore.getState().clearProfile(`${serverId}:${tabId}`);
+    setBrowserOpenTabs((prev) => { const s = new Set(prev); s.delete(tabId); return s; });
     removeTab(serverId, tabId);
   }, [serverId, removeTab]);
 
@@ -563,7 +567,7 @@ export function TerminalScreen({ navigation, route }: Props) {
     if (toolId === 'browser') {
       const activeTab = useTerminalStore.getState().getTabs(serverId).find((t) => t.active);
       if (!activeTab) return false;
-      setBrowserWasOpen(true);
+      setBrowserOpenTabs((prev) => new Set(prev).add(activeTab.id));
       navigation.navigate('Browser', {
         serverHost: server?.host ?? '',
         serverId,
@@ -646,24 +650,23 @@ export function TerminalScreen({ navigation, route }: Props) {
           <ConnectionStatus state={connState} rtt={rtt} />
         </View>
         <View style={[styles.statusRight, { gap: rs(6) }]}>
-          {browserWasOpen && (
+          {activeTabHasBrowser && (
             <TouchableOpacity
               style={[
                 styles.quickAction,
-                { width: quickActionSize, height: quickActionSize, borderRadius: rs(7), backgroundColor: colors.accent + '20', borderWidth: 1, borderColor: colors.accent + '40' },
+                { width: quickActionSize, height: quickActionSize, borderRadius: rs(7), backgroundColor: colors.accent + '18', borderWidth: 1, borderColor: colors.accent + '50' },
               ]}
               onPress={() => {
-                const activeTab = useTerminalStore.getState().getTabs(serverId).find((t) => t.active);
-                if (!activeTab) return;
+                if (!activeTerminalTab) return;
                 navigation.navigate('Browser', {
                   serverHost: server?.host ?? '',
                   serverId,
-                  terminalTabId: activeTab.id,
+                  terminalTabId: activeTerminalTab.id,
                   openDirect: true,
                 });
               }}
               activeOpacity={0.65}
-              accessibilityLabel="Back to browser view"
+              accessibilityLabel="Browser für diesen Tab"
               accessibilityRole="button"
             >
               <Feather name="globe" size={ri(14)} color={colors.accent} />
