@@ -20,4 +20,6 @@ export interface TerminalTab {
   serverType?: ServerType;
   serverPort?: string;
   customCategory?: boolean;
+  /** True when a browser profile has been opened for this tab — persists across app restarts. */
+  browserOpen?: boolean;
 }

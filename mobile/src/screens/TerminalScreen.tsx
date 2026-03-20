@@ -71,8 +71,7 @@ export function TerminalScreen({ navigation, route }: Props) {
   const [rangeActive, setRangeActive] = useState(false);
   const toolRailRef = useRef<ToolRailRef>(null);
   const [panelOpen, setPanelOpen] = useState(false);
-  // Track which terminal tabs have opened a browser (per-tab, not global)
-  const [browserOpenTabs, setBrowserOpenTabs] = useState<Set<string>>(new Set());
+  // browserOpen flag is now persisted on each TerminalTab in the store
   const railWidthAnim = useRef(new Animated.Value(TOOL_RAIL_WIDTH)).current;
 
   const autoApproveTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
@@ -103,7 +102,7 @@ export function TerminalScreen({ navigation, route }: Props) {
 
   const serverTabs = tabs[serverId] || [];
   const activeTerminalTab = serverTabs.find((t) => t.active);
-  const activeTabHasBrowser = !!activeTerminalTab && browserOpenTabs.has(activeTerminalTab.id);
+  const activeTabHasBrowser = !!activeTerminalTab?.browserOpen;
 
   useEffect(() => {
     navigation.setOptions({ title: serverName });
@@ -472,7 +471,6 @@ export function TerminalScreen({ navigation, route }: Props) {
       useAutoApproveStore.getState().clear(tab.sessionId);
     }
     useBrowserTabsStore.getState().clearProfile(`${serverId}:${tabId}`);
-    setBrowserOpenTabs((prev) => { const s = new Set(prev); s.delete(tabId); return s; });
     removeTab(serverId, tabId);
   }, [serverId, removeTab]);
 
@@ -567,7 +565,7 @@ export function TerminalScreen({ navigation, route }: Props) {
     if (toolId === 'browser') {
       const activeTab = useTerminalStore.getState().getTabs(serverId).find((t) => t.active);
       if (!activeTab) return false;
-      setBrowserOpenTabs((prev) => new Set(prev).add(activeTab.id));
+      if (!activeTab.browserOpen) updateTab(serverId, activeTab.id, { browserOpen: true });
       navigation.navigate('Browser', {
         serverHost: server?.host ?? '',
         serverId,
