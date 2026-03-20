@@ -10,8 +10,7 @@
     "build": "tsc",
     "start": "node dist/server/src/index.js",
     "dev": "ts-node src/index.ts",
-    "setup": "ts-node src/setup.ts",
-    "postinstall": "npx --no-install tsc 2>/dev/null || true"
+    "setup": "ts-node src/setup.ts"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
