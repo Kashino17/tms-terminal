@@ -349,8 +349,9 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   function getBufferText() {
     var buf = term.buffer.active;
     var parts = [];
-    // Overlap previous scan by 100 lines to catch multi-line SQL at boundaries
-    var start = Math.max(0, lastScanLine - 100);
+    // No overlap — scan only new lines. The 900ms debounce ensures complete
+    // statements are in the buffer. Overlap caused re-detection of deleted SQL.
+    var start = lastScanLine;
     for (var i = start; i < buf.length; i++) {
       var ln = buf.getLine(i);
       if (!ln) continue;
