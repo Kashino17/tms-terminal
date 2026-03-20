@@ -76,49 +76,84 @@ export class AutopilotService {
   }
 
   /**
-   * Optimize To-Do items using Claude CLI.
-   * Spawns `claude -p "prompt"` in the project directory.
-   * Calls onResult for each item with the optimized prompt or error.
+   * Optimize all To-Do items in a SINGLE Claude CLI call.
+   * Claude analyzes the project once, then formulates all prompts at once.
+   * Results are parsed from JSON output and dispatched per item.
    */
   async optimizeItems(
     items: { id: string; text: string }[],
     cwd: string,
     onResult: OptimizeCallback,
   ): Promise<void> {
-    for (const item of items) {
-      try {
-        const prompt = `You are helping prepare tasks for an AI coding assistant. Analyze the current project in this directory and reformulate the following To-Do as a precise, comprehensive prompt that an AI CLI tool (like Claude Code) can execute directly. The prompt should be specific, actionable, and reference relevant files/patterns from the project where helpful. Respond ONLY with the optimized prompt text, no explanations or formatting.\n\nTo-Do: "${item.text}"`;
+    if (items.length === 0) return;
 
-        logger.info(`Autopilot: optimizing "${item.text.slice(0, 50)}..." in ${cwd}`);
+    const todoList = items.map((item, i) => `${i + 1}. [ID: ${item.id}] ${item.text}`).join('\n');
 
-        const result = await new Promise<string>((resolve, reject) => {
-          let output = '';
-          let errOutput = '';
+    const prompt = `You are helping prepare tasks for an AI coding assistant. First, analyze the current project in this directory to understand its structure, tech stack, and patterns.
 
-          const child = spawn('claude', ['-p', prompt], {
-            cwd,
-            shell: true,
-            timeout: 120_000, // 2 min timeout
-            env: { ...process.env },
-          });
+Then, reformulate EACH of the following To-Dos as a precise, comprehensive prompt that an AI CLI tool (like Claude Code) can execute directly. Each prompt should be specific, actionable, and reference relevant files/patterns from the project where helpful.
 
-          child.stdout?.on('data', (data: Buffer) => { output += data.toString(); });
-          child.stderr?.on('data', (data: Buffer) => { errOutput += data.toString(); });
+To-Dos:
+${todoList}
 
-          child.on('error', (err) => reject(err));
-          child.on('close', (code) => {
-            if (code === 0 && output.trim()) {
-              resolve(output.trim());
-            } else {
-              reject(new Error(errOutput || `claude exited with code ${code}`));
-            }
-          });
+Respond ONLY with a JSON array. Each element must have "id" (the ID from the brackets) and "prompt" (the optimized prompt text). Example:
+[{"id":"abc123","prompt":"Implement feature X by modifying src/file.ts..."},{"id":"def456","prompt":"Fix bug Y in..."}]
+
+IMPORTANT: Respond with ONLY the JSON array, no markdown fences, no explanations.`;
+
+    logger.info(`Autopilot: optimizing ${items.length} items in single call (cwd: ${cwd})`);
+
+    try {
+      const result = await new Promise<string>((resolve, reject) => {
+        let output = '';
+        let errOutput = '';
+
+        const child = spawn('claude', ['-p', prompt], {
+          cwd,
+          shell: true,
+          timeout: 180_000, // 3 min timeout for batch
+          env: { ...process.env },
         });
 
-        onResult(item.id, { prompt: result });
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn(`Autopilot: optimize failed for "${item.text.slice(0, 30)}": ${msg}`);
+        child.stdout?.on('data', (data: Buffer) => { output += data.toString(); });
+        child.stderr?.on('data', (data: Buffer) => { errOutput += data.toString(); });
+
+        child.on('error', (err) => reject(err));
+        child.on('close', (code) => {
+          if (code === 0 && output.trim()) {
+            resolve(output.trim());
+          } else {
+            reject(new Error(errOutput || `claude exited with code ${code}`));
+          }
+        });
+      });
+
+      // Parse JSON response — handle markdown fences if Claude adds them
+      let jsonStr = result;
+      const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (fenceMatch) jsonStr = fenceMatch[1].trim();
+
+      const parsed = JSON.parse(jsonStr) as Array<{ id: string; prompt: string }>;
+
+      if (!Array.isArray(parsed)) throw new Error('Response is not a JSON array');
+
+      // Dispatch results
+      const resultMap = new Map(parsed.map(p => [p.id, p.prompt]));
+      for (const item of items) {
+        const optimized = resultMap.get(item.id);
+        if (optimized) {
+          onResult(item.id, { prompt: optimized });
+        } else {
+          onResult(item.id, { error: 'No prompt returned for this item' });
+        }
+      }
+
+      logger.info(`Autopilot: optimized ${parsed.length}/${items.length} items successfully`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`Autopilot: batch optimize failed: ${msg}`);
+      // Mark all items as error
+      for (const item of items) {
         onResult(item.id, { error: msg });
       }
     }
