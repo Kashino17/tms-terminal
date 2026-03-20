@@ -347,12 +347,37 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
       var h = sqlHash(s);
       if (!seenSqlHashes.has(h)) { if (seenSqlHashes.size > 2000) seenSqlHashes.clear(); seenSqlHashes.add(h); found.push(s); }
     }
+    // Collect individual SQL matches with positions
     SQL_PLAIN_RE.lastIndex = 0;
+    var matches = [];
     while ((m = SQL_PLAIN_RE.exec(text)) !== null) {
-      var s = m[1].trim();
-      if (!s || (s.length <= 30 && s.indexOf('\\n') === -1)) continue;
-      var h = sqlHash(s);
-      if (!seenSqlHashes.has(h)) { if (seenSqlHashes.size > 2000) seenSqlHashes.clear(); seenSqlHashes.add(h); found.push(s); }
+      if (m[1].trim()) matches.push({ s: m.index, e: m.index + m[0].length });
+    }
+    // Merge consecutive SQL matches that belong to the same script.
+    // If the gap between two matches contains only whitespace and SQL comments (-- ...),
+    // they are part of the same migration script → merge into one block.
+    var i = 0;
+    while (i < matches.length) {
+      var gs = matches[i].s, ge = matches[i].e, j = i + 1;
+      while (j < matches.length) {
+        var gap = text.substring(ge, matches[j].s).replace(/--[^\\n]*/g, '').trim();
+        if (gap.length < 30) { ge = matches[j].e; j++; } else break;
+      }
+      var block;
+      if (j - i >= 2) {
+        // Multi-statement script — also capture leading SQL comments above
+        var before = text.substring(Math.max(0, gs - 500), gs);
+        var cm = before.match(/((?:--[^\\n]*\\n\\s*)+)$/);
+        block = (cm ? cm[1] : '') + text.substring(gs, ge);
+      } else {
+        block = text.substring(gs, ge);
+      }
+      block = block.trim();
+      if (block && (block.length > 30 || block.indexOf('\\n') !== -1)) {
+        var h = sqlHash(block);
+        if (!seenSqlHashes.has(h)) { if (seenSqlHashes.size > 2000) seenSqlHashes.clear(); seenSqlHashes.add(h); found.push(block); }
+      }
+      i = j;
     }
     if (found.length > 0) sendToRN({ type: 'sql_detected', sqls: found });
   }
