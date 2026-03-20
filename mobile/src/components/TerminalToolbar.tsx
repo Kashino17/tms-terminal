@@ -38,17 +38,18 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   };
 
   const h = rs(36);
-  const iconSz = ri(14);
+  const sm = ri(14);  // small icon
+  const lg = ri(18);  // large icon for prominent buttons
   const fontSz = rf(11);
 
   // Compact arrow button
   const Arrow = ({ icon, seq }: { icon: string; seq: string }) => (
     <TouchableOpacity style={[s.arrowBtn, { width: h, height: h }]} onPress={() => send(seq)} activeOpacity={0.6}>
-      <Feather name={icon as any} size={iconSz} color={colors.textMuted} />
+      <Feather name={icon as any} size={sm} color={colors.textMuted} />
     </TouchableOpacity>
   );
 
-  // Standard key button
+  // Small key button (flex: 1, for the middle keys)
   const Key = ({ label, seq, icon, action, accent }: { label: string; seq: string; icon?: string; action?: string; accent?: string }) => (
     <TouchableOpacity
       style={[s.key, { height: h }]}
@@ -57,9 +58,20 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
       accessibilityLabel={label}
     >
       {icon
-        ? <Feather name={icon as any} size={iconSz} color={accent || colors.text} />
+        ? <Feather name={icon as any} size={sm} color={accent || colors.text} />
         : <Text style={[s.keyText, { fontSize: fontSz }, accent ? { color: accent } : null]}>{label}</Text>
       }
+    </TouchableOpacity>
+  );
+
+  // Large prominent button (fixed width, bigger icon)
+  const BigBtn = ({ icon, onPress, color, active, activeColor }: { icon: string; onPress?: () => void; color: string; active?: boolean; activeColor?: string }) => (
+    <TouchableOpacity
+      style={[s.bigBtn, { height: h }, active && activeColor ? { backgroundColor: activeColor + '18', borderWidth: StyleSheet.hairlineWidth, borderColor: activeColor } : null]}
+      onPress={onPress}
+      activeOpacity={0.6}
+    >
+      <Feather name={icon as any} size={lg} color={active && activeColor ? activeColor : color} />
     </TouchableOpacity>
   );
 
@@ -71,10 +83,9 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
         onPress={() => setArrowsOpen((v) => !v)}
         activeOpacity={0.6}
       >
-        <Feather name="navigation" size={iconSz} color={arrowsOpen ? colors.primary : colors.textDim} />
+        <Feather name="navigation" size={sm} color={arrowsOpen ? colors.primary : colors.textDim} />
       </TouchableOpacity>
 
-      {/* ── Arrow keys (collapsible) ─────────────────── */}
       {arrowsOpen && (
         <View style={s.arrowGroup}>
           <Arrow icon="chevron-up" seq={'\x1b[A'} />
@@ -84,32 +95,20 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
         </View>
       )}
 
-      {/* ── Separator ────────────────────────────────── */}
       <View style={s.sep} />
 
-      {/* ── Action keys ──────────────────────────────── */}
+      {/* ── Action keys: Esc, ^C, Trash, Delete ──────── */}
       <Key label="Esc" seq={'\x1b'} />
-      <Key label="↵" seq={'\r'} />
       <Key label="^C" seq={'\x03'} accent={colors.destructive} />
       <Key label="" seq="" icon="trash" action="clear" />
       <Key label="" seq={'\x15'} icon="delete" />
 
-      {/* ── Separator ────────────────────────────────── */}
       <View style={s.sep} />
 
-      {/* ── Utilities ────────────────────────────────── */}
-      <TouchableOpacity style={[s.utilBtn, { height: h }]} onPress={onScrollToBottom} activeOpacity={0.6} accessibilityLabel="Scroll to bottom">
-        <Feather name="chevrons-down" size={iconSz} color={colors.info} />
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[s.utilBtn, { height: h }, rangeActive && s.utilActive]}
-        onPress={onRangeToggle}
-        activeOpacity={0.6}
-        accessibilityLabel="Range select"
-      >
-        <Feather name="scissors" size={ri(13)} color={rangeActive ? colors.accent : colors.textDim} />
-      </TouchableOpacity>
+      {/* ── Prominent buttons: Scissors, Scroll, Enter ─ */}
+      <BigBtn icon="scissors" onPress={onRangeToggle} color={colors.textDim} active={rangeActive} activeColor={colors.accent} />
+      <BigBtn icon="chevrons-down" onPress={onScrollToBottom} color={colors.info} />
+      <BigBtn icon="corner-down-left" onPress={() => send('\r')} color={colors.text} />
     </Animated.View>
   );
 }
@@ -129,8 +128,6 @@ const s = StyleSheet.create({
     gap: 3,
     zIndex: 50,
   },
-
-  // ── D-Pad ──────────────────────────────────────────
   dpadToggle: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -152,8 +149,6 @@ const s = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: colors.surface,
   },
-
-  // ── Keys ───────────────────────────────────────────
   key: {
     flex: 1,
     alignItems: 'center',
@@ -168,22 +163,13 @@ const s = StyleSheet.create({
     fontFamily: fonts.mono,
     letterSpacing: 0.3,
   },
-
-  // ── Utilities ──────────────────────────────────────
-  utilBtn: {
-    width: 36,
+  bigBtn: {
+    width: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 8,
     backgroundColor: colors.surface,
   },
-  utilActive: {
-    backgroundColor: 'rgba(34,197,94,0.12)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.accent,
-  },
-
-  // ── Separator ──────────────────────────────────────
   sep: {
     width: StyleSheet.hairlineWidth,
     height: 20,
