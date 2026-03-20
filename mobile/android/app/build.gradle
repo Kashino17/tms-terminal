@@ -88,8 +88,8 @@ android {
         applicationId 'com.tms.terminal'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10114
-        versionName "1.1.14"
+        versionCode 10116
+        versionName "1.1.16"
 
         buildConfigField("boolean", "REACT_NATIVE_UNSTABLE_USE_RUNTIME_SCHEDULER_ALWAYS", (findProperty("reactNative.unstable_useRuntimeSchedulerAlways") ?: true).toString())
     }
@@ -110,6 +110,7 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            applicationIdSuffix ".dev"  // com.tms.terminal.dev — coexists with release app
         }
         release {
             signingConfig signingConfigs.release
