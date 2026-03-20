@@ -117,6 +117,9 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   function focusShadow() {
     shadowInput.focus();
     shadowInput.setSelectionRange(shadowInput.value.length, shadowInput.value.length);
+    // Auto-scroll to bottom when keyboard opens
+    term.scrollToBottom();
+    userScrolledUp = false;
   }
 
   /* Physical keyboard (emulator / Bluetooth) */
@@ -161,7 +164,11 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
 
     // Deletion (including when value is already empty — Samsung Fold unfolded)
     if (it.indexOf('delete') === 0 || cur.length < prevValue.length) {
-      sendKey(SEQ.bs);
+      // Send correct number of backspaces (1 for empty field, diff otherwise)
+      var del = Math.max(1, prevValue.length - cur.length);
+      var bs = '';
+      for (var i = 0; i < del; i++) bs += SEQ.bs;
+      sendKey(bs);
       shadowInput.value = ''; prevValue = '';
       return;
     }
