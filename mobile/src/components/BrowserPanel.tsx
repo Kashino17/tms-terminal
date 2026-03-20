@@ -538,6 +538,17 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setNetworkEntries([]);
   }, []);
 
+  const copyNetwork = useCallback(async () => {
+    if (!networkEntries.length) return;
+    const text = networkEntries.map((e) => {
+      const status = e.error ? 'ERR' : String(e.status ?? '...');
+      const dur = e.duration != null ? `${e.duration}ms` : '';
+      return `${e.method} ${status} ${e.url} ${dur}`;
+    }).join('\n');
+    await Clipboard.setStringAsync(text);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [networkEntries]);
+
   const fetchStorage = useCallback(() => {
     if (!webviewRef.current) return;
     setStorageLoading(true);
@@ -566,6 +577,19 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
         } catch(e) {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: '__storage__', items: [] }));
         }
+      })(); true;
+    `;
+    webviewRef.current.injectJavaScript(js);
+  }, []);
+
+  const clearStorage = useCallback(() => {
+    if (!webviewRef.current) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const js = `
+      (function() {
+        try { localStorage.clear(); sessionStorage.clear(); } catch(e) {}
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: '__storage__', items: [] }));
+        true;
       })(); true;
     `;
     webviewRef.current.injectJavaScript(js);
@@ -1265,6 +1289,9 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
                     <Text style={[cs.filterText, { color: colors.textMuted }]}>{networkEntries.length} Requests</Text>
                     {networkEntries.length > 0 && (
                       <View style={cs.actions}>
+                        <TouchableOpacity style={cs.actionBtn} onPress={copyNetwork} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                          <Feather name="copy" size={13} color={colors.textDim} />
+                        </TouchableOpacity>
                         <TouchableOpacity style={cs.actionBtn} onPress={clearNetwork} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
                           <Feather name="trash-2" size={13} color={colors.textDim} />
                         </TouchableOpacity>
@@ -1298,6 +1325,11 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
                       <TouchableOpacity style={cs.actionBtn} onPress={fetchStorage} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
                         <Feather name="refresh-cw" size={13} color={storageLoading ? colors.info : colors.textDim} />
                       </TouchableOpacity>
+                      {storageItems.length > 0 && (
+                        <TouchableOpacity style={cs.actionBtn} onPress={clearStorage} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                          <Feather name="trash-2" size={13} color={colors.textDim} />
+                        </TouchableOpacity>
+                      )}
                     </View>
                   </View>
                   <FlatList
