@@ -721,7 +721,7 @@ export function TerminalScreen({ navigation, route }: Props) {
                 wsService={wsRef.current}
                 rangeActive={rangeActive}
                 onRangeToggle={() => setRangeActive((v) => !v)}
-
+                onScrollToBottom={handleScrollToBottom}
               />
             </>
           }
