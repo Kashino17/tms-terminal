@@ -150,14 +150,17 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   shadowInput.addEventListener('compositionstart', function() { isComposing = true; });
   shadowInput.addEventListener('compositionend', function() {
     isComposing = false;
-    // Don't sync prevValue here — the input handler already tracks it.
-    // Syncing here caused desync on some Android keyboards where event
-    // order differs, leading to lost characters or all-spaces input.
+    // Clear the input after each word to prevent value accumulation.
+    // Android keyboards glitch when the hidden input grows too long,
+    // causing characters to become spaces. Clearing after each word
+    // keeps the value at ~20 chars max.
+    // Use setTimeout so the final input event (space) processes first.
+    setTimeout(function() {
+      if (!isComposing) { shadowInput.value = ''; prevValue = ''; }
+    }, 50);
   });
 
   shadowInput.addEventListener('input', function(e) {
-    // Use InputEvent.data for non-composition text (most reliable).
-    // Fall back to diff tracking for composition and other input types.
     var cur = shadowInput.value;
 
     // Deletion
@@ -170,18 +173,18 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     if (!isComposing && e.data && e.inputType === 'insertText') {
       sendKey(e.data);
       prevValue = cur;
-      if (cur.length > 300) { shadowInput.value = ''; prevValue = ''; }
       return;
     }
 
     // Composition & fallback: diff-based
     var added = cur.slice(prevValue.length);
     if (added === '\\n' || added === '\\r' || added === '\\r\\n') {
-      sendKey(SEQ.enter); shadowInput.value = prevValue; return;
+      sendKey(SEQ.enter); shadowInput.value = ''; prevValue = ''; return;
     }
     if (added) sendKey(added);
     prevValue = cur;
-    if (cur.length > 300) { shadowInput.value = ''; prevValue = ''; }
+    // Safety net for keyboards that never fire compositionend
+    if (cur.length > 100) { shadowInput.value = ''; prevValue = ''; }
   });
 
   /* ── Resize ────────────────────────────────────────── */
