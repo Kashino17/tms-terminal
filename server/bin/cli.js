@@ -210,17 +210,15 @@ switch (command) {
       const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
       console.log(`\x1b[32m✓\x1b[0m  TMS Terminal updated to v${pkg.version}`);
 
-      // Auto-start server after update
+      // Re-exec using the UPDATED cli.js (git pull may have changed it)
+      // This ensures the start logic uses the latest code
       console.log('\x1b[34m⟳\x1b[0m  Starting server...');
-      const child = spawn('node', [DIST_INDEX], {
+      const updatedCli = path.join(ROOT, 'bin', 'cli.js');
+      const child = spawn('node', [updatedCli, 'start'], {
         stdio: 'inherit',
         cwd: ROOT,
       });
-      writePid(child.pid);
-      child.on('exit', (code) => {
-        cleanPid();
-        process.exit(code ?? 0);
-      });
+      child.on('exit', (code) => process.exit(code ?? 0));
       process.on('SIGINT', () => child.kill('SIGINT'));
       process.on('SIGTERM', () => child.kill('SIGTERM'));
     } catch (err) {

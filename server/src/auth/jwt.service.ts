@@ -17,10 +17,10 @@ function getSecret(): string {
 }
 
 export function generateToken(): string {
+  // Token never expires — the app stores it permanently
   return jwt.sign(
     { iat: Math.floor(Date.now() / 1000) },
     getSecret(),
-    { expiresIn: config.jwtExpiry } as jwt.SignOptions,
   );
 }
 
