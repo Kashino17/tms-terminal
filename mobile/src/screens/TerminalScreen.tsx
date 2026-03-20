@@ -22,37 +22,12 @@ import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../types/navigation.types';
 import { requestNotificationPermission, getFcmToken } from '../services/notifications.service';
 import { useAutoApproveStore } from '../store/autoApproveStore';
+import { useBrowserTabsStore } from '../store/browserTabsStore';
 import { SplitLayout } from '../components/SplitLayout';
 import { useSplitViewStore } from '../store/splitViewStore';
 import { consumeDrawingResult } from './DrawingScreen';
 import { TabGridView } from '../components/TabGridView';
-import { ANSI_RE as ANSI_STRIP_RE, stripAnsi } from '../utils/stripAnsi';
-
-// Client-side prompt patterns — matches same triggers as server.
-// Only SPECIFIC patterns — generic "?" at end of line is excluded (causes false positives).
-const CLIENT_PROMPT_PATTERNS = [
-  /\[y\/n\]/i,
-  /\[Y\/n\]/,
-  /\[y\/N\]/,
-  /\(yes\/no\)/i,
-  /press enter to continue/i,
-  /do you want (me )?to/i,
-  /do you want to proceed/i,
-  /would you like to/i,
-  /continue\?\s*$/im,
-  /proceed\?\s*$/im,
-  /confirm\?\s*$/im,
-  /approve\?\s*$/im,
-  /allow (this action|bash|command|running|tool|edit|execution)/i,
-  /dangerous command/i,
-  /apply (this )?edit\?/i,
-  /apply (change|patch|diff)\?/i,
-  /run (this )?command\?/i,
-  /execute (this )?command/i,
-  /allow execution of/i,
-  /waiting for user confirmation/i,
-  /\?\s*(›|\[|\()/,
-];
+import { stripAnsi } from '../utils/stripAnsi';
 
 const OUTPUT_BUFFER_MAX_CHARS = 600;
 
@@ -242,9 +217,10 @@ export function TerminalScreen({ navigation, route }: Props) {
         decrementRestore();
       } else if (m.type === 'terminal:prompt_detected' && m.sessionId) {
         // Auto-approve: send Enter once if enabled for this session
-        // BUT skip if user is actively typing in this session
+        // BUT skip if user is actively typing or has unsent text on the line
         const autoApprove = useAutoApproveStore.getState();
-        if (autoApprove.isEnabled(m.sessionId) && !autoApprove.isRunning(m.sessionId) && !autoApprove.isTyping(m.sessionId)) {
+        const hasPendingInput = !!(m.payload as any)?.hasPendingInput;
+        if (autoApprove.isEnabled(m.sessionId) && !autoApprove.isRunning(m.sessionId) && !autoApprove.isTyping(m.sessionId) && !hasPendingInput) {
           const sid = m.sessionId;
           autoApprove.setRunning(sid, true);
           wsRef.current.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
@@ -256,19 +232,10 @@ export function TerminalScreen({ navigation, route }: Props) {
           useTerminalStore.getState().setTabNotification(serverId, m.sessionId);
         }
       } else if (m.type === 'terminal:output' && m.sessionId && m.payload?.data) {
-        // Client-side prompt detection — catches prompts regardless of server silence timer
-        const autoApprove = useAutoApproveStore.getState();
-        if (autoApprove.isEnabled(m.sessionId) && !autoApprove.isRunning(m.sessionId) && !autoApprove.isTyping(m.sessionId)) {
-          const clean = (m.payload.data as string).replace(ANSI_STRIP_RE, '');
-          const tail = clean.slice(-400);
-          if (CLIENT_PROMPT_PATTERNS.some((p) => p.test(tail))) {
-            const sid = m.sessionId;
-            autoApprove.setRunning(sid, true);
-            wsRef.current.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
-            const timer2 = setTimeout(() => { autoApprove.setRunning(sid, false); autoApproveTimers.current.delete(timer2); }, 1500);
-            autoApproveTimers.current.add(timer2);
-          }
-        }
+        // NOTE: Client-side instant prompt detection was removed — it fired immediately on every
+        // output chunk without any silence delay, causing premature Enter while the user was typing.
+        // Auto-approve now relies solely on the server's prompt detector (2.5s silence timer +
+        // typing pause check) which sends terminal:prompt_detected when ready.
 
         // Output buffer for tab grid live preview
         const outputTab = useTerminalStore.getState().getTabs(serverId).find(
@@ -501,6 +468,7 @@ export function TerminalScreen({ navigation, route }: Props) {
       clearViewBuffer(tab.sessionId);
       useAutoApproveStore.getState().clear(tab.sessionId);
     }
+    useBrowserTabsStore.getState().clearProfile(`${serverId}:${tabId}`);
     removeTab(serverId, tabId);
   }, [serverId, removeTab]);
 
@@ -593,10 +561,13 @@ export function TerminalScreen({ navigation, route }: Props) {
       return true;
     }
     if (toolId === 'browser') {
+      const activeTab = useTerminalStore.getState().getTabs(serverId).find((t) => t.active);
+      if (!activeTab) return false;
       setBrowserWasOpen(true);
       navigation.navigate('Browser', {
         serverHost: server?.host ?? '',
         serverId,
+        terminalTabId: activeTab.id,
       });
       return true;
     }
@@ -682,9 +653,12 @@ export function TerminalScreen({ navigation, route }: Props) {
                 { width: quickActionSize, height: quickActionSize, borderRadius: rs(7), backgroundColor: colors.accent + '20', borderWidth: 1, borderColor: colors.accent + '40' },
               ]}
               onPress={() => {
+                const activeTab = useTerminalStore.getState().getTabs(serverId).find((t) => t.active);
+                if (!activeTab) return;
                 navigation.navigate('Browser', {
                   serverHost: server?.host ?? '',
                   serverId,
+                  terminalTabId: activeTab.id,
                   openDirect: true,
                 });
               }}

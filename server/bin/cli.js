@@ -209,7 +209,20 @@ switch (command) {
       // Show version from package.json
       const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
       console.log(`\x1b[32m✓\x1b[0m  TMS Terminal updated to v${pkg.version}`);
-      console.log('\x1b[90m   Run \x1b[0mtms-terminal\x1b[90m to start the server.\x1b[0m');
+
+      // Auto-start server after update
+      console.log('\x1b[34m⟳\x1b[0m  Starting server...');
+      const child = spawn('node', [DIST_INDEX], {
+        stdio: 'inherit',
+        cwd: ROOT,
+      });
+      writePid(child.pid);
+      child.on('exit', (code) => {
+        cleanPid();
+        process.exit(code ?? 0);
+      });
+      process.on('SIGINT', () => child.kill('SIGINT'));
+      process.on('SIGTERM', () => child.kill('SIGTERM'));
     } catch (err) {
       console.error('\x1b[31m✗\x1b[0m  Update failed:', err.message);
       process.exit(1);

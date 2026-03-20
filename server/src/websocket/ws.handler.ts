@@ -36,6 +36,43 @@ const persistedTokens: Set<string> = new Set();
 // even when the client is disconnected/backgrounded.
 const serverAutoApprove = new Map<string, boolean>();
 
+// Track last user input per session — auto-approve pauses while user is typing.
+// Updated on every terminal:input message from the client.
+const lastUserInputAt = new Map<string, number>();
+const TYPING_PAUSE_MS = 3500;
+
+// Track how many characters the user has on the current input line.
+// Auto-approve is blocked if pendingInputLen > 0 (user has unsent text).
+const pendingInputLen = new Map<string, number>();
+
+/** Update pending input tracking from raw terminal input data */
+function trackPendingInput(sessionId: string, data: string): void {
+  let len = pendingInputLen.get(sessionId) ?? 0;
+  for (let i = 0; i < data.length; i++) {
+    const c = data.charCodeAt(i);
+    if (c === 0x0D || c === 0x0A) {        // Enter — line submitted
+      len = 0;
+    } else if (c === 0x03 || c === 0x15) { // Ctrl+C / Ctrl+U — line cancelled/cleared
+      len = 0;
+    } else if (c === 0x7F || c === 0x08) { // Backspace / BS
+      len = Math.max(0, len - 1);
+    } else if (c === 0x1B) {               // Escape sequence (arrow keys etc.) — skip
+      if (i + 1 < data.length) {
+        const next = data.charCodeAt(i + 1);
+        if (next === 0x5B || next === 0x4F) { // CSI [ or SS3 O
+          i += 2;
+          while (i < data.length && data.charCodeAt(i) >= 0x20 && data.charCodeAt(i) <= 0x3F) i++;
+        } else {
+          i++; // Alt+key
+        }
+      }
+    } else if (c >= 0x20) {               // Printable character
+      len++;
+    }
+  }
+  pendingInputLen.set(sessionId, len);
+}
+
 export function handleConnection(ws: WebSocket, ip: string): void {
   // Track which sessions this connection owns (for detach on disconnect)
   const ownedSessions = new Set<string>();
@@ -52,13 +89,25 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       // Server-side auto-approve: if enabled, send Enter directly to PTY
       // This works even when the client is backgrounded/disconnected
       if (serverAutoApprove.get(sessionId)) {
-        logger.info(`Auto-approve: sending Enter for session ${sessionId.slice(0, 8)}`);
-        globalManager.write(sessionId, '\r');
-        return; // No WS notification or FCM push needed
+        const hasPending = (pendingInputLen.get(sessionId) ?? 0) > 0;
+        const isTyping = (Date.now() - (lastUserInputAt.get(sessionId) ?? 0)) < TYPING_PAUSE_MS;
+
+        if (hasPending) {
+          logger.info(`Auto-approve: BLOCKED for session ${sessionId.slice(0, 8)} (unsent text on line)`);
+          // Fall through — notify client with hasPendingInput flag
+        } else if (isTyping) {
+          logger.info(`Auto-approve: PAUSED for session ${sessionId.slice(0, 8)} (user typing)`);
+          // Fall through to send prompt notification to client instead
+        } else {
+          logger.info(`Auto-approve: sending Enter for session ${sessionId.slice(0, 8)}`);
+          globalManager.write(sessionId, '\r');
+          return; // No WS notification or FCM push needed
+        }
       }
 
       // Always send in-app badge notification via WebSocket
-      send(ws, { type: 'terminal:prompt_detected', sessionId, payload: { snippet } });
+      const pendingFlag = (pendingInputLen.get(sessionId) ?? 0) > 0;
+      send(ws, { type: 'terminal:prompt_detected', sessionId, payload: { snippet, hasPendingInput: pendingFlag } });
 
       if (persistedTokens.size === 0) { logger.warn('FCM: prompt detected but no token'); return; }
       const isFinished = snippet.startsWith('✅');
@@ -272,6 +321,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           break;
         }
 
+        // Track user input for auto-approve typing pause + pending input detection
+        lastUserInputAt.set(msg.sessionId, Date.now());
+        trackPendingInput(msg.sessionId, data);
+
         if (!globalManager.write(msg.sessionId, data)) {
           send(ws, {
             type: 'terminal:error',
@@ -327,6 +380,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         ownedSessions.delete(msg.sessionId);
         sessionGens.delete(msg.sessionId);
         serverAutoApprove.delete(msg.sessionId);
+        lastUserInputAt.delete(msg.sessionId);
+        pendingInputLen.delete(msg.sessionId);
         promptDetector.unwatch(msg.sessionId);
         if (!globalManager.closeSession(msg.sessionId)) {
           send(ws, {

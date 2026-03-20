@@ -14,7 +14,7 @@ type Props = {
 };
 
 export function BrowserScreen({ navigation, route }: Props) {
-  const { serverHost, serverId, openDirect } = route.params;
+  const { serverHost, serverId, terminalTabId, openDirect } = route.params;
   const responsive = useResponsive();
 
   const handleBack = useCallback(() => {
@@ -26,6 +26,7 @@ export function BrowserScreen({ navigation, route }: Props) {
       <BrowserPanel
         serverHost={serverHost}
         serverId={serverId}
+        terminalTabId={terminalTabId}
         screenWidth={responsive.width}
         isFullScreen
         openDirect={!!openDirect}

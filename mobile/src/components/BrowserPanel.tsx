@@ -24,8 +24,9 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type PanelSection = 'browser' | 'ports' | 'layout';
-type LogLevel = 'log' | 'info' | 'warn' | 'error';
+type LogLevel = 'log' | 'info' | 'warn' | 'error' | 'input' | 'result';
 type FilterMode = 'all' | 'error' | 'warn';
+type DevTab = 'console' | 'network' | 'storage';
 
 interface ConsoleEntry {
   id: number;
@@ -34,16 +35,37 @@ interface ConsoleEntry {
   timestamp: number;
 }
 
+interface NetworkEntry {
+  id: number;
+  method: string;
+  url: string;
+  status?: number;
+  duration?: number;
+  size?: number;
+  contentType?: string;
+  error?: string;
+  pending: boolean;
+  timestamp: number;
+}
+
+interface StorageItem {
+  key: string;
+  value: string;
+  source: 'localStorage' | 'sessionStorage' | 'cookie';
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 const CONSOLE_COLLAPSED = 36;
 const QUICK_PORTS = ['3000', '4200', '5173', '8080'];
 const LAYOUT_QUICK_PORTS = ['3000', '5173', '8080'];
 
 const LOG_CFG: Record<LogLevel, { color: string; icon: string }> = {
-  log:   { color: colors.text,        icon: 'chevron-right' },
-  info:  { color: colors.info,        icon: 'info' },
-  warn:  { color: colors.warning,     icon: 'alert-triangle' },
-  error: { color: colors.destructive, icon: 'alert-circle' },
+  log:    { color: colors.text,        icon: 'chevron-right' },
+  info:   { color: colors.info,        icon: 'info' },
+  warn:   { color: colors.warning,     icon: 'alert-triangle' },
+  error:  { color: colors.destructive, icon: 'alert-circle' },
+  input:  { color: colors.info,        icon: 'chevrons-right' },
+  result: { color: '#a78bfa',          icon: 'corner-down-right' },
 };
 
 // Colors for sections
@@ -107,6 +129,61 @@ const CONSOLE_INTERCEPT_JS = `
 })();
 `;
 
+// ── Network intercept JS ─────────────────────────────────────────────────────
+const NETWORK_INTERCEPT_JS = `
+(function() {
+  var _id = 0;
+  var _post = function(obj) {
+    try { window.ReactNativeWebView.postMessage(JSON.stringify(obj)); } catch(e) {}
+  };
+  // Intercept fetch
+  var _origFetch = window.fetch;
+  window.fetch = function(input, opts) {
+    var id = ++_id;
+    var method = (opts && opts.method) || 'GET';
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    _post({ type: '__network__', event: 'start', id: id, method: method.toUpperCase(), url: url });
+    var start = Date.now();
+    return _origFetch.apply(this, arguments).then(function(resp) {
+      var ct = ''; try { ct = resp.headers.get('content-type') || ''; } catch(e) {}
+      resp.clone().text().then(function(body) {
+        _post({ type: '__network__', event: 'end', id: id, status: resp.status, duration: Date.now() - start, size: body.length, contentType: ct });
+      }).catch(function() {
+        _post({ type: '__network__', event: 'end', id: id, status: resp.status, duration: Date.now() - start, size: 0, contentType: ct });
+      });
+      return resp;
+    }).catch(function(err) {
+      _post({ type: '__network__', event: 'error', id: id, error: err.message || String(err), duration: Date.now() - start });
+      throw err;
+    });
+  };
+  // Intercept XHR
+  var _origOpen = XMLHttpRequest.prototype.open;
+  var _origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method, url) {
+    this.__nid = ++_id;
+    this.__nm = (method || 'GET').toUpperCase();
+    this.__nu = url;
+    return _origOpen.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function() {
+    var self = this;
+    var start = Date.now();
+    _post({ type: '__network__', event: 'start', id: self.__nid, method: self.__nm, url: self.__nu });
+    self.addEventListener('loadend', function() {
+      var ct = ''; try { ct = self.getResponseHeader('content-type') || ''; } catch(e) {}
+      if (self.status > 0) {
+        _post({ type: '__network__', event: 'end', id: self.__nid, status: self.status, duration: Date.now() - start, size: (self.responseText || '').length, contentType: ct });
+      } else {
+        _post({ type: '__network__', event: 'error', id: self.__nid, error: 'Network error', duration: Date.now() - start });
+      }
+    });
+    return _origSend.apply(this, arguments);
+  };
+  true;
+})();
+`;
+
 // ── ConsoleRow ────────────────────────────────────────────────────────────────
 const ConsoleRow = React.memo(function ConsoleRow({ entry }: { entry: ConsoleEntry }) {
   const cfg = LOG_CFG[entry.level];
@@ -117,6 +194,47 @@ const ConsoleRow = React.memo(function ConsoleRow({ entry }: { entry: ConsoleEnt
       <Feather name={cfg.icon as any} size={11} color={cfg.color} style={cs.rowIcon} />
       <Text style={cs.rowTime}>{ts}</Text>
       <Text style={[cs.rowMsg, { color: cfg.color }]} numberOfLines={6}>{entry.message}</Text>
+    </View>
+  );
+});
+
+// ── NetworkRow ────────────────────────────────────────────────────────────────
+function statusColor(s?: number): string {
+  if (!s) return colors.textDim;
+  if (s < 300) return '#22c55e';
+  if (s < 400) return colors.info;
+  if (s < 500) return colors.warning;
+  return colors.destructive;
+}
+function formatBytes(n?: number): string {
+  if (n == null) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+const NetworkRow = React.memo(function NetworkRow({ entry }: { entry: NetworkEntry }) {
+  const urlPath = (() => { try { const u = new URL(entry.url); return u.pathname + u.search; } catch { return entry.url; } })();
+  return (
+    <View style={[cs.row, !!entry.error && cs.rowError]}>
+      <Text style={[cs.netMethod, { color: entry.method === 'GET' ? colors.info : '#F97316' }]}>{entry.method}</Text>
+      <Text style={cs.netStatus}>
+        {entry.pending ? <ActivityIndicator size={8} color={colors.textDim} /> :
+          entry.error ? <Text style={{ color: colors.destructive, fontSize: 10, fontFamily: fonts.mono }}>ERR</Text> :
+          <Text style={{ color: statusColor(entry.status), fontSize: 10, fontFamily: fonts.mono }}>{entry.status}</Text>}
+      </Text>
+      <Text style={cs.rowMsg} numberOfLines={1}>{urlPath}</Text>
+      {entry.duration != null && <Text style={cs.netDuration}>{entry.duration}ms</Text>}
+      {entry.size != null && entry.size > 0 && <Text style={cs.netSize}>{formatBytes(entry.size)}</Text>}
+    </View>
+  );
+});
+
+// ── StorageRow ────────────────────────────────────────────────────────────────
+const StorageRow = React.memo(function StorageRow({ item }: { item: StorageItem }) {
+  return (
+    <View style={cs.row}>
+      <Text style={[cs.storageKey, item.source === 'cookie' && { color: '#F97316' }]} numberOfLines={1}>{item.key}</Text>
+      <Text style={cs.storageValue} numberOfLines={2}>{item.value}</Text>
     </View>
   );
 });
@@ -161,6 +279,8 @@ const pd = StyleSheet.create({
 interface Props {
   serverHost: string;
   serverId: string;
+  /** Terminal tab that owns this browser profile */
+  terminalTabId: string;
   screenWidth?: number;
   /** When true: panel header is hidden (navigator header is used instead) */
   isFullScreen?: boolean;
@@ -172,7 +292,7 @@ interface Props {
   openDirect?: boolean;
 }
 
-export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullScreen = false, onBrowserOpenChange, onBackToTerminal, openDirect = false }: Props) {
+export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth = 375, isFullScreen = false, onBrowserOpenChange, onBackToTerminal, openDirect = false }: Props) {
   const { rf, rs, ri } = useResponsive();
   const { height: windowHeight } = useWindowDimensions();
   const CONSOLE_PEEK = useMemo(() => Math.round(windowHeight * 0.20), [windowHeight]); // 1/5 of screen
@@ -187,10 +307,13 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   const consoleFullRef = useRef(CONSOLE_FULL);
   consoleFullRef.current = CONSOLE_FULL;
 
+  // ── Browser profile key: unique per server + terminal tab ──
+  const browserKey = `${serverId}:${terminalTabId}`;
+
   // ── Store hooks ──
   const { load, getTabs, getActive, addTab, removeTab, setActive, updateTab } = useBrowserTabsStore();
-  const tabs = useBrowserTabsStore((s) => s.getTabs(serverId));
-  const activeTab = useBrowserTabsStore((s) => s.getActive(serverId));
+  const tabs = useBrowserTabsStore((s) => s.getTabs(browserKey));
+  const activeTab = useBrowserTabsStore((s) => s.getActive(browserKey));
 
   const splitStore = useSplitViewStore();
 
@@ -211,13 +334,25 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   const [webviewKey, setWebviewKey] = useState(0);
   const [formDetected, setFormDetected] = useState(false);
 
-  // ── Console state ──
+  // ── DevTools state ──
+  const [devTab, setDevTab] = useState<DevTab>('console');
   const [logs, setLogs] = useState<ConsoleEntry[]>([]);
   const [consoleHeight, setConsoleHeight] = useState(CONSOLE_COLLAPSED);
   const [filter, setFilter] = useState<FilterMode>('all');
+  const [consoleCmd, setConsoleCmd] = useState('');
+  const cmdInputRef = useRef<TextInput>(null);
   const logIdRef  = useRef(0);
   const listRef   = useRef<FlatList>(null);
+  const netListRef = useRef<FlatList>(null);
   const heightRef = useRef(CONSOLE_COLLAPSED);
+
+  // Network
+  const [networkEntries, setNetworkEntries] = useState<NetworkEntry[]>([]);
+  const netIdRef = useRef(0);
+
+  // Storage
+  const [storageItems, setStorageItems] = useState<StorageItem[]>([]);
+  const [storageLoading, setStorageLoading] = useState(false);
 
   const errorCount = useMemo(() => logs.filter((l) => l.level === 'error').length, [logs]);
   const warnCount  = useMemo(() => logs.filter((l) => l.level === 'warn').length, [logs]);
@@ -226,10 +361,11 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
     : filter === 'error' ? logs.filter((l) => l.level === 'error')
     : logs.filter((l) => l.level === 'warn'),
   [logs, filter]);
+  const networkErrorCount = useMemo(() => networkEntries.filter((e) => e.error || (e.status && e.status >= 400)).length, [networkEntries]);
   const isConsoleOpen = consoleHeight > CONSOLE_COLLAPSED;
 
   // ── Load stores ──
-  useEffect(() => { load(serverId); }, [serverId]);
+  useEffect(() => { load(browserKey); }, [browserKey]);
   useEffect(() => { pfStore.load(serverId); }, [serverId]);
 
   const activePath = activeTab?.path ?? '';
@@ -246,7 +382,7 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   useEffect(() => {
     if (activeTab && activeTab.id !== prevTabRef.current) {
       prevTabRef.current = activeTab.id;
-      if (open) { setLogs([]); logIdRef.current = 0; setFormDetected(false); }
+      if (open) { setLogs([]); setNetworkEntries([]); logIdRef.current = 0; setFormDetected(false); }
     }
   }, [activeTab?.id, open]);
 
@@ -254,9 +390,12 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   useEffect(() => {
     if (!open) {
       setLogs([]);
+      setNetworkEntries([]);
+      setStorageItems([]);
       setConsoleHeight(CONSOLE_COLLAPSED);
       heightRef.current = CONSOLE_COLLAPSED;
       setFilter('all');
+      setDevTab('console');
       logIdRef.current = 0;
       setFormDetected(false);
     }
@@ -266,47 +405,47 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
   const handleAddTab = useCallback(() => {
     LayoutAnimation.configureNext(LayoutAnimation.create(200, LayoutAnimation.Types.easeOut, LayoutAnimation.Properties.opacity));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    addTab(serverId);
-  }, [serverId, addTab]);
+    addTab(browserKey);
+  }, [browserKey, addTab]);
 
   const handleRemoveTab = useCallback((tabId: string) => {
     if (tabs.length <= 1) return;
     LayoutAnimation.configureNext(LayoutAnimation.create(180, LayoutAnimation.Types.easeIn, LayoutAnimation.Properties.opacity));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    removeTab(serverId, tabId);
-  }, [serverId, tabs.length, removeTab]);
+    removeTab(browserKey, tabId);
+  }, [browserKey, tabs.length, removeTab]);
 
   const handleSelectTab = useCallback((tabId: string) => {
     if (tabId === activeTab?.id) return;
     Haptics.selectionAsync();
-    setActive(serverId, tabId);
-  }, [serverId, activeTab?.id, setActive]);
+    setActive(browserKey, tabId);
+  }, [browserKey, activeTab?.id, setActive]);
 
   const handlePortChange = useCallback((port: string) => {
     if (!activeTab) return;
     // Clear lastUrl so the new port/path config takes effect on next open
-    updateTab(serverId, activeTab.id, { port, lastUrl: undefined });
-  }, [serverId, activeTab, updateTab]);
+    updateTab(browserKey, activeTab.id, { port, lastUrl: undefined });
+  }, [browserKey, activeTab, updateTab]);
 
   // Open a specific port — finds/creates a tab and opens the modal
   const openInBrowser = useCallback((port: string, path?: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const existing = tabs.find((t) => t.port === port);
     if (existing) {
-      setActive(serverId, existing.id);
-      if (path !== undefined) updateTab(serverId, existing.id, { path, lastUrl: undefined });
+      setActive(browserKey, existing.id);
+      if (path !== undefined) updateTab(browserKey, existing.id, { path, lastUrl: undefined });
     } else {
-      addTab(serverId, port);
+      addTab(browserKey, port);
       // Set path on the newly created tab after a tick (tab needs to exist first)
       if (path) setTimeout(() => {
-        const newTabs = useBrowserTabsStore.getState().getTabs(serverId);
+        const newTabs = useBrowserTabsStore.getState().getTabs(browserKey);
         const last = newTabs[newTabs.length - 1];
-        if (last) updateTab(serverId, last.id, { path });
+        if (last) updateTab(browserKey, last.id, { path });
       }, 0);
     }
     setSection('browser');
     setOpen(true);
-  }, [tabs, serverId, setActive, addTab, updateTab]);
+  }, [tabs, browserKey, setActive, addTab, updateTab]);
 
   // ── Console snap ──
   const snapTo = useCallback((target: number) => {
@@ -353,6 +492,28 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
         });
         setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 50);
       }
+      if (data.type === '__network__') {
+        if (data.event === 'start') {
+          setNetworkEntries((prev) => {
+            const entry: NetworkEntry = { id: data.id, method: data.method, url: data.url, pending: true, timestamp: Date.now() };
+            const next = [...prev, entry];
+            return next.length > 200 ? next.slice(-200) : next;
+          });
+          setTimeout(() => netListRef.current?.scrollToEnd({ animated: false }), 50);
+        } else if (data.event === 'end') {
+          setNetworkEntries((prev) => prev.map((e) =>
+            e.id === data.id ? { ...e, pending: false, status: data.status, duration: data.duration, size: data.size, contentType: data.contentType } : e,
+          ));
+        } else if (data.event === 'error') {
+          setNetworkEntries((prev) => prev.map((e) =>
+            e.id === data.id ? { ...e, pending: false, error: data.error, duration: data.duration } : e,
+          ));
+        }
+      }
+      if (data.type === '__storage__') {
+        setStorageItems(data.items || []);
+        setStorageLoading(false);
+      }
       if (data.type === '__form_detected__') {
         setFormDetected(true);
       }
@@ -373,6 +534,72 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   }, [logs]);
 
+  const clearNetwork = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setNetworkEntries([]);
+  }, []);
+
+  const fetchStorage = useCallback(() => {
+    if (!webviewRef.current) return;
+    setStorageLoading(true);
+    const js = `
+      (function() {
+        try {
+          var items = [];
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            items.push({ key: k, value: localStorage.getItem(k) || '', source: 'localStorage' });
+          }
+          for (var i = 0; i < sessionStorage.length; i++) {
+            var k = sessionStorage.key(i);
+            items.push({ key: k, value: sessionStorage.getItem(k) || '', source: 'sessionStorage' });
+          }
+          var cookies = document.cookie;
+          if (cookies) {
+            cookies.split(';').forEach(function(c) {
+              var parts = c.trim().split('=');
+              var k = parts[0] || '';
+              var v = parts.slice(1).join('=');
+              if (k) items.push({ key: k, value: v, source: 'cookie' });
+            });
+          }
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: '__storage__', items: items }));
+        } catch(e) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: '__storage__', items: [] }));
+        }
+      })(); true;
+    `;
+    webviewRef.current.injectJavaScript(js);
+  }, []);
+
+  const executeConsoleCmd = useCallback(() => {
+    const cmd = consoleCmd.trim();
+    if (!cmd || !webviewRef.current) return;
+    // Log the input
+    setLogs((prev) => {
+      const next = [...prev, { id: ++logIdRef.current, level: 'input' as LogLevel, message: cmd, timestamp: Date.now() }];
+      return next.length > 500 ? next.slice(-500) : next;
+    });
+    // Inject eval into WebView — result is sent back via __console__ protocol
+    const js = `
+      (function() {
+        try {
+          var __r = eval(${JSON.stringify(cmd)});
+          var __s = (typeof __r === 'object' && __r !== null) ? JSON.stringify(__r, null, 2) : String(__r);
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: '__console__', level: 'result', message: __s
+          }));
+        } catch(__e) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: '__console__', level: 'error', message: __e.message || String(__e)
+          }));
+        }
+      })(); true;
+    `;
+    webviewRef.current.injectJavaScript(js);
+    setConsoleCmd('');
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 80);
+  }, [consoleCmd]);
+
   // ── Reload actions ──
   const handleNormalReload = useCallback(() => { setReloadMenuOpen(false); webviewRef.current?.reload(); }, []);
   const handleHardReload = useCallback(() => {
@@ -392,9 +619,9 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
     webviewRef.current?.clearCache?.(true);
     setLogs([]); logIdRef.current = 0;
     // Clear saved URL + force full remount so it starts fresh from configured URL
-    if (activeTab) updateTab(serverId, activeTab.id, { lastUrl: undefined });
+    if (activeTab) updateTab(browserKey, activeTab.id, { lastUrl: undefined });
     setWebviewKey((k) => k + 1);
-  }, [activeTab, serverId, updateTab]);
+  }, [activeTab, browserKey, updateTab]);
 
   // ── Port Forwarding actions ──
   const handleAddPortForward = useCallback(() => {
@@ -546,7 +773,7 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
                   <TextInput
                     style={[s.input, { flex: 1 }]}
                     value={activeTab.path ?? ''}
-                    onChangeText={(v) => updateTab(serverId, activeTab.id, { path: v })}
+                    onChangeText={(v) => updateTab(browserKey, activeTab.id, { path: v })}
                     placeholder="/login (optional)"
                     placeholderTextColor={colors.textDim}
                     autoCapitalize="none"
@@ -554,7 +781,7 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
                   />
                   {!!(activeTab.path) && (
                     <TouchableOpacity
-                      onPress={() => updateTab(serverId, activeTab.id, { path: '' })}
+                      onPress={() => updateTab(browserKey, activeTab.id, { path: '' })}
                       style={{ paddingHorizontal: 8 }}
                       hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
                     >
@@ -900,9 +1127,9 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
             />
 
             <TouchableOpacity style={m.navBtn} onPress={toggleConsole} activeOpacity={0.7}>
-              <Feather name="terminal" size={16} color={isConsoleOpen ? colors.info : colors.textMuted} />
-              {errorCount > 0 && !isConsoleOpen && (
-                <View style={cs.badge}><Text style={cs.badgeText}>{errorCount > 9 ? '9+' : errorCount}</Text></View>
+              <Feather name="code" size={16} color={isConsoleOpen ? colors.info : colors.textMuted} />
+              {(errorCount > 0 || networkErrorCount > 0) && !isConsoleOpen && (
+                <View style={cs.badge}><Text style={cs.badgeText}>{(errorCount + networkErrorCount) > 9 ? '9+' : errorCount + networkErrorCount}</Text></View>
               )}
             </TouchableOpacity>
           </View>
@@ -920,10 +1147,10 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
                 onNavigationStateChange={(navState) => {
                   // Persist the current URL so the tab resumes here on next open
                   if (!navState.loading && activeTab && navState.url && !navState.url.startsWith('about:')) {
-                    updateTab(serverId, activeTab.id, { lastUrl: navState.url });
+                    updateTab(browserKey, activeTab.id, { lastUrl: navState.url });
                   }
                 }}
-                injectedJavaScript={CONSOLE_INTERCEPT_JS + '\n' + FORM_DETECT_JS}
+                injectedJavaScript={CONSOLE_INTERCEPT_JS + '\n' + NETWORK_INTERCEPT_JS + '\n' + FORM_DETECT_JS}
                 allowsInlineMediaPlayback
                 mediaPlaybackRequiresUserAction={false}
                 mixedContentMode="always"
@@ -931,59 +1158,167 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
                 thirdPartyCookiesEnabled
               />
 
-            {/* Console panel */}
+            {/* DevTools panel */}
             <View style={[cs.panel, { height: consoleHeight }]}>
               <View {...panResponder.panHandlers} style={cs.dragZone}>
                 <View style={cs.dragHandle} />
               </View>
+
+              {/* ── Tab bar ── */}
               <View style={cs.headerRow}>
                 <TouchableOpacity style={cs.headerToggle} onPress={toggleConsole} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8 }}>
-                  <Feather name="terminal" size={12} color={colors.info} />
-                  <Text style={cs.headerTitle}>Console</Text>
-                  {logs.length > 0 && <Text style={cs.headerCount}>{logs.length}</Text>}
+                  <Feather name="code" size={11} color={colors.info} />
+                  <Text style={cs.headerTitle}>DevTools</Text>
                 </TouchableOpacity>
                 {isConsoleOpen && (
-                  <View style={cs.filters}>
-                    <TouchableOpacity style={[cs.filterTab, filter === 'all' && cs.filterTabActive]} onPress={() => setFilter('all')} activeOpacity={0.7}>
-                      <Text style={[cs.filterText, filter === 'all' && cs.filterTextActive]}>All</Text>
+                  <View style={cs.devTabs}>
+                    <TouchableOpacity style={[cs.devTab, devTab === 'console' && cs.devTabActive]} onPress={() => setDevTab('console')} activeOpacity={0.7}>
+                      <Feather name="terminal" size={10} color={devTab === 'console' ? colors.info : colors.textDim} />
+                      <Text style={[cs.devTabText, devTab === 'console' && cs.devTabTextActive]}>Console</Text>
+                      {errorCount > 0 && <View style={cs.devTabDot} />}
                     </TouchableOpacity>
-                    <TouchableOpacity style={[cs.filterTab, filter === 'error' && cs.filterTabError]} onPress={() => setFilter('error')} activeOpacity={0.7}>
-                      <Feather name="alert-circle" size={10} color={filter === 'error' ? colors.destructive : colors.textDim} />
-                      {errorCount > 0 && <Text style={[cs.filterText, filter === 'error' && { color: colors.destructive }]}>{errorCount}</Text>}
+                    <TouchableOpacity style={[cs.devTab, devTab === 'network' && cs.devTabActive]} onPress={() => setDevTab('network')} activeOpacity={0.7}>
+                      <Feather name="wifi" size={10} color={devTab === 'network' ? '#F97316' : colors.textDim} />
+                      <Text style={[cs.devTabText, devTab === 'network' && { color: '#F97316' }]}>Network</Text>
+                      {networkErrorCount > 0 && <View style={[cs.devTabDot, { backgroundColor: colors.destructive }]} />}
                     </TouchableOpacity>
-                    <TouchableOpacity style={[cs.filterTab, filter === 'warn' && cs.filterTabWarn]} onPress={() => setFilter('warn')} activeOpacity={0.7}>
-                      <Feather name="alert-triangle" size={10} color={filter === 'warn' ? colors.warning : colors.textDim} />
-                      {warnCount > 0 && <Text style={[cs.filterText, filter === 'warn' && { color: colors.warning }]}>{warnCount}</Text>}
-                    </TouchableOpacity>
-                  </View>
-                )}
-                {isConsoleOpen && logs.length > 0 && (
-                  <View style={cs.actions}>
-                    <TouchableOpacity style={cs.actionBtn} onPress={copyAllLogs} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
-                      <Feather name="copy" size={13} color={colors.textDim} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={cs.actionBtn} onPress={clearLogs} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
-                      <Feather name="trash-2" size={13} color={colors.textDim} />
+                    <TouchableOpacity style={[cs.devTab, devTab === 'storage' && cs.devTabActive]} onPress={() => { setDevTab('storage'); fetchStorage(); }} activeOpacity={0.7}>
+                      <Feather name="database" size={10} color={devTab === 'storage' ? '#a78bfa' : colors.textDim} />
+                      <Text style={[cs.devTabText, devTab === 'storage' && { color: '#a78bfa' }]}>Storage</Text>
                     </TouchableOpacity>
                   </View>
                 )}
               </View>
-              {isConsoleOpen && (
-                <FlatList
-                  ref={listRef}
-                  data={filteredLogs}
-                  keyExtractor={(i) => String(i.id)}
-                  style={cs.list}
-                  contentContainerStyle={cs.listContent}
-                  renderItem={({ item }) => <ConsoleRow entry={item} />}
-                  keyboardShouldPersistTaps="handled"
-                  ListEmptyComponent={
-                    <View style={cs.empty}>
-                      <Feather name="terminal" size={24} color={colors.border} />
-                      <Text style={cs.emptyText}>No console output</Text>
+
+              {/* ── Console tab ── */}
+              {isConsoleOpen && devTab === 'console' && (
+                <>
+                  <View style={cs.subHeaderRow}>
+                    <View style={cs.filters}>
+                      <TouchableOpacity style={[cs.filterTab, filter === 'all' && cs.filterTabActive]} onPress={() => setFilter('all')} activeOpacity={0.7}>
+                        <Text style={[cs.filterText, filter === 'all' && cs.filterTextActive]}>All</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[cs.filterTab, filter === 'error' && cs.filterTabError]} onPress={() => setFilter('error')} activeOpacity={0.7}>
+                        <Feather name="alert-circle" size={10} color={filter === 'error' ? colors.destructive : colors.textDim} />
+                        {errorCount > 0 && <Text style={[cs.filterText, filter === 'error' && { color: colors.destructive }]}>{errorCount}</Text>}
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[cs.filterTab, filter === 'warn' && cs.filterTabWarn]} onPress={() => setFilter('warn')} activeOpacity={0.7}>
+                        <Feather name="alert-triangle" size={10} color={filter === 'warn' ? colors.warning : colors.textDim} />
+                        {warnCount > 0 && <Text style={[cs.filterText, filter === 'warn' && { color: colors.warning }]}>{warnCount}</Text>}
+                      </TouchableOpacity>
                     </View>
-                  }
-                />
+                    {logs.length > 0 && (
+                      <View style={cs.actions}>
+                        <TouchableOpacity style={cs.actionBtn} onPress={copyAllLogs} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                          <Feather name="copy" size={13} color={colors.textDim} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={cs.actionBtn} onPress={clearLogs} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                          <Feather name="trash-2" size={13} color={colors.textDim} />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                  <FlatList
+                    ref={listRef}
+                    data={filteredLogs}
+                    keyExtractor={(i) => String(i.id)}
+                    style={cs.list}
+                    contentContainerStyle={cs.listContent}
+                    renderItem={({ item }) => <ConsoleRow entry={item} />}
+                    keyboardShouldPersistTaps="handled"
+                    ListEmptyComponent={
+                      <View style={cs.empty}>
+                        <Feather name="terminal" size={24} color={colors.border} />
+                        <Text style={cs.emptyText}>No console output</Text>
+                      </View>
+                    }
+                  />
+                  <View style={cs.cmdRow}>
+                    <Feather name="chevrons-right" size={12} color={colors.info} style={{ marginTop: 2 }} />
+                    <TextInput
+                      ref={cmdInputRef}
+                      style={cs.cmdInput}
+                      value={consoleCmd}
+                      onChangeText={setConsoleCmd}
+                      onSubmitEditing={executeConsoleCmd}
+                      placeholder="JavaScript ausführen…"
+                      placeholderTextColor={colors.textDim}
+                      returnKeyType="send"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      blurOnSubmit={false}
+                    />
+                    {consoleCmd.length > 0 && (
+                      <TouchableOpacity onPress={executeConsoleCmd} activeOpacity={0.7} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                        <Feather name="play" size={14} color={colors.info} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </>
+              )}
+
+              {/* ── Network tab ── */}
+              {isConsoleOpen && devTab === 'network' && (
+                <>
+                  <View style={cs.subHeaderRow}>
+                    <Text style={[cs.filterText, { color: colors.textMuted }]}>{networkEntries.length} Requests</Text>
+                    {networkEntries.length > 0 && (
+                      <View style={cs.actions}>
+                        <TouchableOpacity style={cs.actionBtn} onPress={clearNetwork} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                          <Feather name="trash-2" size={13} color={colors.textDim} />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                  <FlatList
+                    ref={netListRef}
+                    data={networkEntries}
+                    keyExtractor={(i) => String(i.id)}
+                    style={cs.list}
+                    contentContainerStyle={cs.listContent}
+                    renderItem={({ item }) => <NetworkRow entry={item} />}
+                    keyboardShouldPersistTaps="handled"
+                    ListEmptyComponent={
+                      <View style={cs.empty}>
+                        <Feather name="wifi" size={24} color={colors.border} />
+                        <Text style={cs.emptyText}>Keine Netzwerk-Requests</Text>
+                      </View>
+                    }
+                  />
+                </>
+              )}
+
+              {/* ── Storage tab ── */}
+              {isConsoleOpen && devTab === 'storage' && (
+                <>
+                  <View style={cs.subHeaderRow}>
+                    <Text style={[cs.filterText, { color: colors.textMuted }]}>{storageItems.length} Einträge</Text>
+                    <View style={cs.actions}>
+                      <TouchableOpacity style={cs.actionBtn} onPress={fetchStorage} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                        <Feather name="refresh-cw" size={13} color={storageLoading ? colors.info : colors.textDim} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <FlatList
+                    data={storageItems}
+                    keyExtractor={(item, idx) => `${item.source}-${item.key}-${idx}`}
+                    style={cs.list}
+                    contentContainerStyle={cs.listContent}
+                    renderItem={({ item }) => <StorageRow item={item} />}
+                    keyboardShouldPersistTaps="handled"
+                    ListEmptyComponent={
+                      storageLoading ? (
+                        <View style={cs.empty}><ActivityIndicator size="small" color={colors.textDim} /></View>
+                      ) : (
+                        <View style={cs.empty}>
+                          <Feather name="database" size={24} color={colors.border} />
+                          <Text style={cs.emptyText}>Kein Storage-Inhalt</Text>
+                        </View>
+                      )
+                    }
+                  />
+                </>
               )}
             </View>
           </View>
@@ -1052,7 +1387,7 @@ export function BrowserPanel({ serverHost, serverId, screenWidth = 375, isFullSc
               </TouchableOpacity>
               <TouchableOpacity style={te.saveBtn} onPress={() => {
                 if (editingTab) {
-                  updateTab(serverId, editingTab.id, { port: editingTab.port, path: editingTab.path, lastUrl: undefined });
+                  updateTab(browserKey, editingTab.id, { port: editingTab.port, path: editingTab.path, lastUrl: undefined });
                   setWebviewKey((k) => k + 1); // force reload with new URL
                 }
                 setEditingTab(null);
@@ -1318,6 +1653,24 @@ const cs = StyleSheet.create({
   badgeText: { color: '#fff', fontSize: 9, fontWeight: '800', fontFamily: fonts.mono },
   empty: { alignItems: 'center', paddingTop: 24, gap: 8 },
   emptyText: { color: colors.textDim, fontSize: 11, fontFamily: fonts.mono },
+  cmdRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingVertical: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(51,65,85,0.5)', backgroundColor: colors.surfaceAlt },
+  cmdInput: { flex: 1, color: colors.text, fontSize: 11, fontFamily: fonts.mono, padding: 0, height: 22 },
+  // DevTools tabs
+  devTabs: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 2, marginLeft: 6 },
+  devTab: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
+  devTabActive: { backgroundColor: 'rgba(59,130,246,0.10)' },
+  devTabText: { color: colors.textDim, fontSize: 10, fontWeight: '600', fontFamily: fonts.mono },
+  devTabTextActive: { color: colors.info },
+  devTabDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.destructive },
+  subHeaderRow: { flexDirection: 'row', alignItems: 'center', height: 24, paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(51,65,85,0.3)' },
+  // Network
+  netMethod: { fontSize: 9, fontWeight: '800', fontFamily: fonts.mono, width: 32, letterSpacing: 0.3 },
+  netStatus: { width: 26, alignItems: 'center' },
+  netDuration: { color: colors.textDim, fontSize: 9, fontFamily: fonts.mono, minWidth: 36, textAlign: 'right' },
+  netSize: { color: colors.textDim, fontSize: 9, fontFamily: fonts.mono, minWidth: 40, textAlign: 'right' },
+  // Storage
+  storageKey: { color: colors.info, fontSize: 10, fontFamily: fonts.mono, fontWeight: '700', minWidth: 80, maxWidth: 120 },
+  storageValue: { flex: 1, color: colors.text, fontSize: 10, fontFamily: fonts.mono, lineHeight: 14 },
 });
 
 // Modal styles

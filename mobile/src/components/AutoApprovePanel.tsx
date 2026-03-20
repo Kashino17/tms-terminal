@@ -7,6 +7,7 @@ import { useTerminalStore } from '../store/terminalStore';
 import { colors, fonts } from '../theme';
 import { AI_TOOL_COLORS } from '../constants/aiTools';
 import { useResponsive } from '../hooks/useResponsive';
+import { tabDisplayName } from '../utils/tabDisplayName';
 
 interface Props {
   serverId: string;
@@ -53,12 +54,12 @@ export function AutoApprovePanel({ serverId }: Props) {
                 activeOpacity={0.75}
                 accessibilityRole={'switch' as any}
                 accessibilityState={{ checked: isOn }}
-                accessibilityLabel={tab.title + ' auto approve'}
+                accessibilityLabel={tabDisplayName(tab) + ' auto approve'}
               >
                 {/* Left: name + AI tool badge */}
                 <View style={s.rowLeft}>
                   <Text style={[s.tabName, isOn && s.tabNameOn]} numberOfLines={1}>
-                    {tab.title}
+                    {tabDisplayName(tab)}
                   </Text>
                   {tab.aiTool && (
                     <View style={[s.aiBadge, { backgroundColor: aiColor + '22', borderColor: aiColor + '55' }]}>

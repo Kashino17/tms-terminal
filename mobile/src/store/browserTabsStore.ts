@@ -14,19 +14,21 @@ export interface BrowserTab {
 }
 
 interface BrowserTabsState {
-  /** Tabs keyed by serverId */
+  /** Tabs keyed by profileKey (serverId:terminalTabId) */
   tabs: Record<string, BrowserTab[]>;
-  /** Active tab id keyed by serverId */
+  /** Active tab id keyed by profileKey */
   activeTab: Record<string, string>;
   loaded: Record<string, boolean>;
 
-  load: (serverId: string) => Promise<void>;
-  getTabs: (serverId: string) => BrowserTab[];
-  getActive: (serverId: string) => BrowserTab | undefined;
-  addTab: (serverId: string, port?: string) => void;
-  removeTab: (serverId: string, tabId: string) => void;
-  setActive: (serverId: string, tabId: string) => void;
-  updateTab: (serverId: string, tabId: string, updates: Partial<Pick<BrowserTab, 'port' | 'label' | 'path' | 'lastUrl'>>) => void;
+  load: (profileKey: string) => Promise<void>;
+  getTabs: (profileKey: string) => BrowserTab[];
+  getActive: (profileKey: string) => BrowserTab | undefined;
+  addTab: (profileKey: string, port?: string) => void;
+  removeTab: (profileKey: string, tabId: string) => void;
+  setActive: (profileKey: string, tabId: string) => void;
+  updateTab: (profileKey: string, tabId: string, updates: Partial<Pick<BrowserTab, 'port' | 'label' | 'path' | 'lastUrl'>>) => void;
+  /** Remove all browser data for a profile (call when terminal tab is closed) */
+  clearProfile: (profileKey: string) => void;
 }
 
 function persist(serverId: string, tabs: BrowserTab[], activeTab: string) {
@@ -137,5 +139,14 @@ export const useBrowserTabsStore = create<BrowserTabsState>((set, get) => ({
     );
     set({ tabs: { ...state.tabs, [serverId]: newTabs } });
     persist(serverId, newTabs, state.activeTab[serverId] || '');
+  },
+
+  clearProfile(profileKey) {
+    const state = get();
+    const { [profileKey]: _t, ...restTabs } = state.tabs;
+    const { [profileKey]: _a, ...restActive } = state.activeTab;
+    const { [profileKey]: _l, ...restLoaded } = state.loaded;
+    set({ tabs: restTabs, activeTab: restActive, loaded: restLoaded });
+    AsyncStorage.removeItem(`${STORAGE_KEY}:${profileKey}`).catch(() => {});
   },
 }));

@@ -114,7 +114,7 @@ export interface TerminalReattachedMessage {
 export interface TerminalPromptDetectedMessage {
   type: 'terminal:prompt_detected';
   sessionId: string;
-  payload: { snippet: string };
+  payload: { snippet: string; hasPendingInput?: boolean };
 }
 
 export interface PongMessage {
