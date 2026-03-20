@@ -150,11 +150,6 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   shadowInput.addEventListener('compositionstart', function() { isComposing = true; });
   shadowInput.addEventListener('compositionend', function() {
     isComposing = false;
-    // Clear the input after each word to prevent value accumulation.
-    // Android keyboards glitch when the hidden input grows too long,
-    // causing characters to become spaces. Clearing after each word
-    // keeps the value at ~20 chars max.
-    // Use setTimeout so the final input event (space) processes first.
     setTimeout(function() {
       if (!isComposing) { shadowInput.value = ''; prevValue = ''; }
     }, 50);
@@ -162,29 +157,34 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
 
   shadowInput.addEventListener('input', function(e) {
     var cur = shadowInput.value;
+    var it = e.inputType || '';
 
-    // Deletion
-    if (cur.length < prevValue.length) {
-      for (var i = 0; i < prevValue.length - cur.length; i++) sendKey(SEQ.bs);
-      prevValue = cur; return;
-    }
-
-    // Non-composition: use e.data directly (exact character typed)
-    if (!isComposing && e.data && e.inputType === 'insertText') {
-      sendKey(e.data);
-      prevValue = cur;
+    // Deletion (including when value is already empty — Samsung Fold unfolded)
+    if (it.indexOf('delete') === 0 || cur.length < prevValue.length) {
+      sendKey(SEQ.bs);
+      shadowInput.value = ''; prevValue = '';
       return;
     }
 
-    // Composition & fallback: diff-based
+    // Non-composition: use e.data and clear immediately.
+    // Clearing after every char prevents value accumulation that causes
+    // Samsung keyboard to desync on the Fold 7 unfolded screen.
+    if (!isComposing && e.data) {
+      sendKey(e.data);
+      shadowInput.value = ''; prevValue = '';
+      return;
+    }
+
+    // Composition: diff-based (can't clear during composition —
+    // keyboard needs the value for prediction/autocorrect)
     var added = cur.slice(prevValue.length);
     if (added === '\\n' || added === '\\r' || added === '\\r\\n') {
       sendKey(SEQ.enter); shadowInput.value = ''; prevValue = ''; return;
     }
     if (added) sendKey(added);
     prevValue = cur;
-    // Safety net for keyboards that never fire compositionend
-    if (cur.length > 100) { shadowInput.value = ''; prevValue = ''; }
+    // Safety net: clear if value grows too long during composition
+    if (cur.length > 50) { shadowInput.value = ''; prevValue = ''; }
   });
 
   /* ── Resize ────────────────────────────────────────── */
