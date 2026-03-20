@@ -10,6 +10,7 @@ import { colors, fonts } from '../theme';
 import type { AiToolType } from '../types/terminal.types';
 import { useSQLStore } from '../store/sqlStore';
 import { keywordAlertService } from '../services/keywordAlert.service';
+import * as Clipboard from 'expo-clipboard';
 
 // ── View-buffer ─────────────────────────────────────────────────────────────
 // Lives at module level so it survives component unmounts (navigation away / back).
@@ -167,25 +168,9 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     };
   }, []);
 
-  // Injects a hidden textarea into the WebView and uses execCommand('copy')
-  // to write text to the system clipboard without requiring a native package.
   const copyText = useCallback((text: string) => {
-    if (!webViewRef.current || !text) return;
-    const escaped = JSON.stringify(text);
-    webViewRef.current.injectJavaScript(`
-      (function(){
-        try {
-          var ta = document.createElement('textarea');
-          ta.value = ${escaped};
-          ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
-          document.body.appendChild(ta);
-          ta.focus(); ta.select();
-          document.execCommand('copy');
-          document.body.removeChild(ta);
-        } catch(e) {}
-      })();
-      true;
-    `);
+    if (!text) return;
+    Clipboard.setStringAsync(text);
   }, []);
 
   const dismissSelection = useCallback(() => {

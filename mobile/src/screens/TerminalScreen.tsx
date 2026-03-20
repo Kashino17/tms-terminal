@@ -539,11 +539,13 @@ export function TerminalScreen({ navigation, route }: Props) {
   }, [serverId, updateTab]);
 
   const handleScrollToBottom = useCallback(() => {
-    const activeTab = serverTabs.find((t) => t.active);
+    // Read directly from store to avoid stale closure over serverTabs
+    const tabs = useTerminalStore.getState().getTabs(serverId);
+    const activeTab = tabs.find((t) => t.active);
     if (activeTab) {
       termViewRefs.current.get(activeTab.id)?.scrollToBottom();
     }
-  }, [serverTabs]);
+  }, [serverId]);
 
   // Only render WebViews for tabs that have been activated at least once (lazy-mount)
   const tabsToRender = serverTabs.filter((t) => mountedTabs.has(t.id));
