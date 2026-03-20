@@ -22,6 +22,7 @@ import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../types/navigation.types';
 import { requestNotificationPermission, getFcmToken } from '../services/notifications.service';
 import { useAutoApproveStore } from '../store/autoApproveStore';
+import { useAutopilotStore } from '../store/autopilotStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { useBrowserTabsStore } from '../store/browserTabsStore';
 import { SplitLayout } from '../components/SplitLayout';
@@ -266,6 +267,18 @@ export function TerminalScreen({ navigation, route }: Props) {
             }
           }
         }
+      } else if (m.type === 'autopilot:optimized' && m.sessionId) {
+        const { id, optimizedPrompt } = (m as any).payload;
+        useAutopilotStore.getState().updateItem(m.sessionId, id, { optimizedPrompt, status: 'queued' });
+      } else if (m.type === 'autopilot:optimize_error' && m.sessionId) {
+        const { id, error } = (m as any).payload;
+        useAutopilotStore.getState().updateItem(m.sessionId, id, { status: 'error', error });
+      } else if (m.type === 'autopilot:prompt_sent' && m.sessionId) {
+        const { id } = (m as any).payload;
+        useAutopilotStore.getState().updateItem(m.sessionId, id, { status: 'running' });
+      } else if (m.type === 'autopilot:prompt_done' && m.sessionId) {
+        const { id } = (m as any).payload;
+        useAutopilotStore.getState().updateItem(m.sessionId, id, { status: 'done', completedAt: Date.now() });
       } else if (m.type === 'terminal:error' && m.sessionId && m.sessionId !== 'none') {
         // Session expired — immediately re-create if we know the dimensions
         const deadTab = useTerminalStore.getState().getTabs(serverId).find(

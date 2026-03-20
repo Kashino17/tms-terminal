@@ -8,7 +8,7 @@ import { SnippetsPanel } from './SnippetsPanel';
 import { ScreenshotPanel } from './ScreenshotPanel';
 import { SQLPanel } from './SQLPanel';
 import { AutoApprovePanel } from './AutoApprovePanel';
-import { NotesPanel } from './NotesPanel';
+import { AutopilotPanel } from './AutopilotPanel';
 import { WatchersPanel } from './WatchersPanel';
 import { FileBrowserPanel } from './FileBrowserPanel';
 import { WebSocketService } from '../services/websocket.service';
@@ -33,7 +33,7 @@ const TOOL_GROUPS: { id: string; icon: any; color: string; label: string }[][] =
   // Capture, Notes & Alerts
   [
     { id: 'screenshots', icon: 'image',        color: colors.info,    label: 'Screenshots' },
-    { id: 'notes',       icon: 'check-square', color: '#A78BFA',      label: 'Notes' },
+    { id: 'autopilot',   icon: 'play-circle',  color: '#A78BFA',      label: 'Autopilot' },
     { id: 'watchers',    icon: 'bell',         color: colors.warning, label: 'Notifications' },
   ],
 ];
@@ -202,8 +202,8 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
           {active === 'autoApprove' && (
             <AutoApprovePanel serverId={serverId} />
           )}
-          {active === 'notes' && (
-            <NotesPanel serverId={serverId} />
+          {active === 'autopilot' && (
+            <AutopilotPanel sessionId={sessionId} wsService={wsService} serverId={serverId} />
           )}
           {active === 'watchers' && (
             <WatchersPanel serverId={serverId} wsService={wsService} />

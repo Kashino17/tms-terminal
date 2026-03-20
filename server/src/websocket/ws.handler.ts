@@ -7,6 +7,7 @@ import { fcmService } from '../notifications/fcm.service';
 import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
+import { autopilotService } from '../autopilot/autopilot.service';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -47,6 +48,11 @@ const TYPING_PAUSE_MS = 3500;
 // Track how many characters the user has on the current input line.
 // Auto-approve is blocked if pendingInputLen > 0 (user has unsent text).
 const pendingInputLen = new Map<string, number>();
+
+// ── Autopilot state ──────────────────────────────────────────────────
+const aiSessions = new Set<string>(); // sessions where AI tool was detected
+const autopilotTimers = new Map<string, NodeJS.Timeout>();
+const AUTOPILOT_IDLE_MS = 60_000; // 1 minute idle before sending next prompt
 
 /** Update pending input tracking from raw terminal input data */
 function trackPendingInput(sessionId: string, data: string): void {
@@ -137,6 +143,35 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     });
   };
 
+  /** Reset the autopilot idle timer for a session. Fires after AUTOPILOT_IDLE_MS of inactivity. */
+  const resetAutopilotTimer = (sessionId: string): void => {
+    const existing = autopilotTimers.get(sessionId);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      autopilotTimers.delete(sessionId);
+      if (!aiSessions.has(sessionId)) return;
+      if (!autopilotService.isEnabled(sessionId)) return;
+
+      // If there's a running item, mark it done (terminal went idle = prompt finished)
+      autopilotService.markCurrentDone(sessionId);
+
+      // Try next prompt
+      const result = autopilotService.tryDequeuePrompt(sessionId);
+      if (result) {
+        globalManager.write(sessionId, result.prompt + '\r');
+      }
+    }, AUTOPILOT_IDLE_MS);
+    timer.unref();
+    autopilotTimers.set(sessionId, timer);
+  };
+
+  // Set up autopilot callbacks for WebSocket notifications
+  autopilotService.setCallbacks(
+    (sid, itemId) => send(ws, { type: 'autopilot:prompt_sent', sessionId: sid, payload: { id: itemId } } as any),
+    (sid, itemId) => send(ws, { type: 'autopilot:prompt_done', sessionId: sid, payload: { id: itemId } } as any),
+  );
+
   ws.on('message', (raw: Buffer) => {
     let msg: ClientMessage;
     try {
@@ -164,6 +199,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       const enabled = !!(msg as any).payload?.enabled;
       if (typeof sid === 'string') {
         serverAutoApprove.set(sid, enabled);
+        // Track AI sessions for autopilot — auto-approve is only used on AI terminals
+        if (enabled) aiSessions.add(sid);
+        else aiSessions.delete(sid);
         logger.info(`Auto-approve ${enabled ? 'enabled' : 'disabled'} for session ${sid.slice(0, 8)}`);
       }
       return;
@@ -197,6 +235,79 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           }
           logger.info(`Idle threshold set to ${seconds}s`);
         }
+      }
+      return;
+    }
+
+    // ── Autopilot message handlers ───────────────────────────────────
+    if (msgType === 'autopilot:optimize') {
+      const { items, cwd } = (msg as any).payload ?? {};
+      const sessionId = (msg as any).sessionId;
+      if (!Array.isArray(items) || !cwd || !sessionId) return;
+
+      // Mark items as optimizing
+      for (const item of items) {
+        autopilotService.updateItem(sessionId, item.id, { status: 'optimizing' });
+      }
+
+      // Run optimization (async, results sent back one by one)
+      autopilotService.optimizeItems(items, cwd, (id, result) => {
+        if (result.prompt) {
+          autopilotService.updateItem(sessionId, id, {
+            optimizedPrompt: result.prompt,
+            status: 'queued',
+          });
+          send(ws, { type: 'autopilot:optimized', sessionId, payload: { id, optimizedPrompt: result.prompt } } as any);
+        } else {
+          autopilotService.updateItem(sessionId, id, { status: 'error', error: result.error });
+          send(ws, { type: 'autopilot:optimize_error', sessionId, payload: { id, error: result.error } } as any);
+        }
+      });
+      return;
+    }
+
+    if (msgType === 'autopilot:add_item') {
+      const sessionId = (msg as any).sessionId;
+      const item = (msg as any).payload;
+      if (sessionId && item?.id && item?.text) {
+        autopilotService.addItem(sessionId, { id: item.id, text: item.text, status: 'draft' });
+      }
+      return;
+    }
+
+    if (msgType === 'autopilot:remove_item') {
+      const sessionId = (msg as any).sessionId;
+      const itemId = (msg as any).payload?.id;
+      if (sessionId && itemId) {
+        autopilotService.removeItem(sessionId, itemId);
+      }
+      return;
+    }
+
+    if (msgType === 'autopilot:update_item') {
+      const sessionId = (msg as any).sessionId;
+      const { id, ...updates } = (msg as any).payload ?? {};
+      if (sessionId && id) {
+        autopilotService.updateItem(sessionId, id, updates);
+      }
+      return;
+    }
+
+    if (msgType === 'autopilot:reorder') {
+      const sessionId = (msg as any).sessionId;
+      const itemIds = (msg as any).payload?.itemIds;
+      if (sessionId && Array.isArray(itemIds)) {
+        autopilotService.reorderQueue(sessionId, itemIds);
+      }
+      return;
+    }
+
+    if (msgType === 'autopilot:queue_toggle') {
+      const sessionId = (msg as any).sessionId;
+      const enabled = !!(msg as any).payload?.enabled;
+      if (sessionId) {
+        autopilotService.setEnabled(sessionId, enabled);
+        logger.info(`Autopilot queue ${enabled ? 'enabled' : 'disabled'} for ${sessionId.slice(0, 8)}`);
       }
       return;
     }
@@ -243,11 +354,16 @@ export function handleConnection(ws: WebSocket, ip: string): void {
               send(ws, { type: 'terminal:output', sessionId, payload: { data } });
               promptDetector.feed(sessionId, data);
               idleDetector.activity(sessionId);
+              resetAutopilotTimer(sessionId);
             },
             (sessionId, exitCode) => {
               ownedSessions.delete(sessionId);
               promptDetector.unwatch(sessionId);
               idleDetector.unwatch(sessionId);
+              aiSessions.delete(sessionId);
+              autopilotService.clearSession(sessionId);
+              const apTimer = autopilotTimers.get(sessionId);
+              if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sessionId); }
               send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
             },
           );
@@ -295,11 +411,16 @@ export function handleConnection(ws: WebSocket, ip: string): void {
             send(ws, { type: 'terminal:output', sessionId, payload: { data } });
             promptDetector.feed(sessionId, data);
             idleDetector.activity(sessionId);
+            resetAutopilotTimer(sessionId);
           },
           (sessionId, exitCode) => {
             ownedSessions.delete(sessionId);
             promptDetector.unwatch(sessionId);
             idleDetector.unwatch(sessionId);
+            aiSessions.delete(sessionId);
+            autopilotService.clearSession(sessionId);
+            const apTimer = autopilotTimers.get(sessionId);
+            if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sessionId); }
             send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
           },
         );
@@ -354,6 +475,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         lastUserInputAt.set(msg.sessionId, Date.now());
         trackPendingInput(msg.sessionId, data);
         idleDetector.activity(msg.sessionId);
+        resetAutopilotTimer(msg.sessionId);
 
         if (!globalManager.write(msg.sessionId, data)) {
           send(ws, {
@@ -414,6 +536,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         pendingInputLen.delete(msg.sessionId);
         promptDetector.unwatch(msg.sessionId);
         idleDetector.unwatch(msg.sessionId);
+        aiSessions.delete(msg.sessionId);
+        autopilotService.clearSession(msg.sessionId);
+        const apTimer = autopilotTimers.get(msg.sessionId);
+        if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(msg.sessionId); }
         if (!globalManager.closeSession(msg.sessionId)) {
           send(ws, {
             type: 'terminal:error',
