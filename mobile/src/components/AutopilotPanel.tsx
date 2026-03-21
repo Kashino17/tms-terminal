@@ -133,6 +133,8 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
   const [positionPickerItem, setPositionPickerItem] = useState<AutopilotItem | null>(null);
   const [savePromptItem, setSavePromptItem] = useState<AutopilotItem | null>(null);
   const [savePromptTitle, setSavePromptTitle] = useState('');
+  const [editQueueItem, setEditQueueItem] = useState<AutopilotItem | null>(null);
+  const [editQueueText, setEditQueueText] = useState('');
   const [libraryExpanded, setLibraryExpanded] = useState(false);
   const [newPromptMode, setNewPromptMode] = useState(false);
   const [newPromptTitle, setNewPromptTitle] = useState('');
@@ -323,6 +325,46 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
     setSavePromptTitle('');
   }, [savePromptItem, savePromptTitle, store]);
 
+  const handleEditQueueItem = useCallback((item: AutopilotItem) => {
+    setEditQueueItem(item);
+    setEditQueueText(item.text);
+  }, []);
+
+  const handleConfirmEditQueueItem = useCallback(() => {
+    if (!editQueueItem || !editQueueText.trim() || !sessionId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const newText = editQueueText.trim();
+    store.updateItem(sessionId, editQueueItem.id, { text: newText });
+    wsService.send({
+      type: 'autopilot:update_item',
+      sessionId,
+      payload: { id: editQueueItem.id, text: newText },
+    });
+    setEditQueueItem(null);
+    setEditQueueText('');
+  }, [editQueueItem, editQueueText, sessionId, store, wsService]);
+
+  const handleReoptimize = useCallback((itemId: string) => {
+    if (!sessionId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const item = useAutopilotStore.getState().getItems(sessionId).find(i => i.id === itemId);
+    if (!item) return;
+
+    // Reset to optimizing
+    store.updateItem(sessionId, itemId, { status: 'optimizing', error: undefined, optimizedPrompt: undefined });
+
+    // Get lastCwd from the terminal tab
+    const tabs = useTerminalStore.getState().getTabs(serverId);
+    const activeTab = tabs.find(t => t.sessionId === sessionId);
+    const lastCwd = activeTab?.lastCwd;
+
+    wsService.send({
+      type: 'autopilot:optimize',
+      sessionId,
+      payload: { items: [{ id: itemId, text: item.text }], cwd: lastCwd },
+    });
+  }, [sessionId, store, wsService, serverId]);
+
   const handleAddSavedToQueue = useCallback((savedPromptId: string) => {
     if (!sessionId) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -406,6 +448,23 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
       });
     }
 
+    if (s === 'error') {
+      opts.push({
+        label: 'Neu optimieren',
+        icon: 'refresh-cw',
+        onPress: () => handleReoptimize(actionSheetItem.id),
+      });
+    }
+
+    const canEdit = s === 'draft' || s === 'queued' || s === 'error';
+    if (canEdit) {
+      opts.push({
+        label: 'Bearbeiten',
+        icon: 'edit-2',
+        onPress: () => handleEditQueueItem(actionSheetItem),
+      });
+    }
+
     opts.push({
       label: 'Prompt speichern',
       icon: 'bookmark',
@@ -422,7 +481,7 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
     }
 
     return opts;
-  }, [actionSheetItem, activeItemCount, handleMoveToTop, handleMoveUp, handleMoveDown, handleMoveToBottom, handleQueueDirectly, handleSavePrompt, handleRemove]);
+  }, [actionSheetItem, activeItemCount, handleMoveToTop, handleMoveUp, handleMoveDown, handleMoveToBottom, handleQueueDirectly, handleReoptimize, handleEditQueueItem, handleSavePrompt, handleRemove]);
 
   if (!sessionId) {
     return (
@@ -803,6 +862,50 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
                 onPress={handleConfirmSavePrompt}
                 activeOpacity={0.7}
                 disabled={!savePromptTitle.trim()}
+              >
+                <Text style={modalStyles.confirmText}>Speichern</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Edit Queue Item Modal */}
+      <Modal
+        visible={!!editQueueItem}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditQueueItem(null)}
+      >
+        <TouchableOpacity
+          style={modalStyles.overlay}
+          activeOpacity={1}
+          onPress={() => setEditQueueItem(null)}
+        >
+          <View style={modalStyles.container} onStartShouldSetResponder={() => true}>
+            <Text style={modalStyles.title}>Prompt bearbeiten</Text>
+            <TextInput
+              style={[modalStyles.input, { maxHeight: 120 }]}
+              value={editQueueText}
+              onChangeText={setEditQueueText}
+              placeholder="Prompt-Text..."
+              placeholderTextColor={colors.textDim}
+              multiline
+              autoFocus
+            />
+            <View style={modalStyles.btnRow}>
+              <TouchableOpacity
+                style={modalStyles.cancelBtn}
+                onPress={() => setEditQueueItem(null)}
+                activeOpacity={0.7}
+              >
+                <Text style={modalStyles.cancelText}>Abbrechen</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[modalStyles.confirmBtn, !editQueueText.trim() && { opacity: 0.4 }]}
+                onPress={handleConfirmEditQueueItem}
+                activeOpacity={0.7}
+                disabled={!editQueueText.trim()}
               >
                 <Text style={modalStyles.confirmText}>Speichern</Text>
               </TouchableOpacity>
