@@ -34,13 +34,14 @@ const STATUS_COLOR: Record<AutopilotItem['status'], string> = {
 // ── Item Row ──────────────────────────────────────────────────────────────────
 interface RowProps {
   item: AutopilotItem;
+  position: number | null;  // null for done items
   optimizeMode: boolean;
   selected: boolean;
   onToggleSelect: (id: string) => void;
   onLongPress: (item: AutopilotItem) => void;
 }
 
-function AutopilotRow({ item, optimizeMode, selected, onToggleSelect, onLongPress }: RowProps) {
+function AutopilotRow({ item, position, optimizeMode, selected, onToggleSelect, onLongPress }: RowProps) {
   const [expanded, setExpanded] = useState(false);
   const iconColor = STATUS_COLOR[item.status];
   const iconName = STATUS_ICON[item.status] as keyof typeof Feather.glyphMap;
@@ -71,6 +72,11 @@ function AutopilotRow({ item, optimizeMode, selected, onToggleSelect, onLongPres
         >
           {selected && <Feather name="check" size={12} color={colors.bg} />}
         </TouchableOpacity>
+      )}
+
+      {/* Position number */}
+      {position !== null && !optimizeMode && (
+        <Text style={rowStyles.positionLabel}>{position}</Text>
       )}
 
       {/* Status icon */}
@@ -127,6 +133,15 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
 
   const draftItems = useMemo(() => items.filter(i => i.status === 'draft'), [items]);
   const hasDrafts = draftItems.length > 0;
+
+  const positionMap = useMemo(() => {
+    const map = new Map<string, number>();
+    let pos = 1;
+    for (const item of items) {
+      if (item.status !== 'done') map.set(item.id, pos++);
+    }
+    return map;
+  }, [items]);
 
   // Reset optimize mode when no drafts remain
   useEffect(() => {
@@ -371,6 +386,7 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
         renderItem={({ item }) => (
           <AutopilotRow
             item={item}
+            position={positionMap.get(item.id) ?? null}
             optimizeMode={optimizeMode}
             selected={selectedIds.has(item.id)}
             onToggleSelect={handleToggleSelect}
@@ -441,6 +457,14 @@ const rowStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 1,
+  },
+  positionLabel: {
+    width: 18,
+    textAlign: 'center',
+    color: colors.textDim,
+    fontSize: 10,
+    fontFamily: fonts.mono,
+    marginTop: 3,
   },
   content: {
     flex: 1,
