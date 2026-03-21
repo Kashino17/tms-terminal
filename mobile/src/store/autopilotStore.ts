@@ -21,6 +21,10 @@ interface AutopilotState {
   removeItem: (sessionId: string, itemId: string) => void;
   updateItem: (sessionId: string, itemId: string, updates: Partial<AutopilotItem>) => void;
   reorderItems: (sessionId: string, itemIds: string[]) => void;
+  queueDirectly: (sessionId: string, itemId: string) => void;
+  moveToTop: (sessionId: string, itemId: string) => void;
+  moveToBottom: (sessionId: string, itemId: string) => void;
+  moveToPosition: (sessionId: string, itemId: string, targetPosition: number) => void;
   setQueueEnabled: (sessionId: string, enabled: boolean) => void;
   isQueueEnabled: (sessionId: string) => boolean;
   clearSession: (sessionId: string) => void;
@@ -85,6 +89,55 @@ export const useAutopilotStore = create<AutopilotState>()(
           if (!itemIds.includes(item.id)) ordered.push(item);
         }
         set((s) => ({ items: { ...s.items, [sessionId]: ordered } }));
+      },
+
+      queueDirectly: (sessionId, itemId) => {
+        const items = get().items[sessionId] ?? [];
+        const item = items.find(i => i.id === itemId);
+        if (!item) return;
+        set((s) => ({
+          items: {
+            ...s.items,
+            [sessionId]: (s.items[sessionId] ?? []).map(i =>
+              i.id === itemId ? { ...i, status: 'queued' as const, optimizedPrompt: i.text } : i
+            ),
+          },
+        }));
+      },
+
+      moveToTop: (sessionId, itemId) => {
+        const all = get().items[sessionId] ?? [];
+        const active = all.filter(i => i.status !== 'done');
+        const done = all.filter(i => i.status === 'done');
+        const idx = active.findIndex(i => i.id === itemId);
+        if (idx <= 0) return;
+        const [item] = active.splice(idx, 1);
+        active.unshift(item);
+        set((s) => ({ items: { ...s.items, [sessionId]: [...active, ...done] } }));
+      },
+
+      moveToBottom: (sessionId, itemId) => {
+        const all = get().items[sessionId] ?? [];
+        const active = all.filter(i => i.status !== 'done');
+        const done = all.filter(i => i.status === 'done');
+        const idx = active.findIndex(i => i.id === itemId);
+        if (idx < 0 || idx === active.length - 1) return;
+        const [item] = active.splice(idx, 1);
+        active.push(item);
+        set((s) => ({ items: { ...s.items, [sessionId]: [...active, ...done] } }));
+      },
+
+      moveToPosition: (sessionId, itemId, targetPosition) => {
+        const all = get().items[sessionId] ?? [];
+        const active = all.filter(i => i.status !== 'done');
+        const done = all.filter(i => i.status === 'done');
+        const idx = active.findIndex(i => i.id === itemId);
+        if (idx < 0) return;
+        const targetIdx = Math.max(0, Math.min(targetPosition - 1, active.length - 1));
+        if (idx === targetIdx) return;
+        const [item] = active.splice(idx, 1);
+        active.splice(targetIdx, 0, item);
+        set((s) => ({ items: { ...s.items, [sessionId]: [...active, ...done] } }));
       },
 
       setQueueEnabled: (sessionId, enabled) => {
