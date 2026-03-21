@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet,
-  Switch, ActivityIndicator,
+  Switch, ActivityIndicator, Modal, ScrollView,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -130,6 +130,9 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
   const [optimizeMode, setOptimizeMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [actionSheetItem, setActionSheetItem] = useState<AutopilotItem | null>(null);
+  const [positionPickerItem, setPositionPickerItem] = useState<AutopilotItem | null>(null);
+  const [savePromptItem, setSavePromptItem] = useState<AutopilotItem | null>(null);
+  const [savePromptTitle, setSavePromptTitle] = useState('');
 
   const draftItems = useMemo(() => items.filter(i => i.status === 'draft'), [items]);
   const hasDrafts = draftItems.length > 0;
@@ -237,46 +240,132 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
 
   const handleMoveUp = useCallback((itemId: string) => {
     if (!sessionId) return;
-    const currentItems = useAutopilotStore.getState().getItems(sessionId);
-    const idx = currentItems.findIndex(i => i.id === itemId);
+    const allItems = useAutopilotStore.getState().getItems(sessionId);
+    const active = allItems.filter(i => i.status !== 'done');
+    const idx = active.findIndex(i => i.id === itemId);
     if (idx <= 0) return;
-    const ids = currentItems.map(i => i.id);
-    [ids[idx - 1], ids[idx]] = [ids[idx], ids[idx - 1]];
-    store.reorderItems(sessionId, ids);
-  }, [sessionId, store]);
+    [active[idx - 1], active[idx]] = [active[idx], active[idx - 1]];
+    const done = allItems.filter(i => i.status === 'done');
+    const newIds = [...active, ...done].map(i => i.id);
+    store.reorderItems(sessionId, newIds);
+    wsService.send({ type: 'autopilot:reorder', sessionId, payload: { itemIds: newIds } });
+  }, [sessionId, store, wsService]);
 
   const handleMoveDown = useCallback((itemId: string) => {
     if (!sessionId) return;
-    const currentItems = useAutopilotStore.getState().getItems(sessionId);
-    const idx = currentItems.findIndex(i => i.id === itemId);
-    if (idx < 0 || idx >= currentItems.length - 1) return;
-    const ids = currentItems.map(i => i.id);
-    [ids[idx], ids[idx + 1]] = [ids[idx + 1], ids[idx]];
-    store.reorderItems(sessionId, ids);
-  }, [sessionId, store]);
+    const allItems = useAutopilotStore.getState().getItems(sessionId);
+    const active = allItems.filter(i => i.status !== 'done');
+    const idx = active.findIndex(i => i.id === itemId);
+    if (idx < 0 || idx >= active.length - 1) return;
+    [active[idx], active[idx + 1]] = [active[idx + 1], active[idx]];
+    const done = allItems.filter(i => i.status === 'done');
+    const newIds = [...active, ...done].map(i => i.id);
+    store.reorderItems(sessionId, newIds);
+    wsService.send({ type: 'autopilot:reorder', sessionId, payload: { itemIds: newIds } });
+  }, [sessionId, store, wsService]);
+
+  const handleMoveToTop = useCallback((itemId: string) => {
+    if (!sessionId) return;
+    store.moveToTop(sessionId, itemId);
+    const newIds = useAutopilotStore.getState().getItems(sessionId).map(i => i.id);
+    wsService.send({ type: 'autopilot:reorder', sessionId, payload: { itemIds: newIds } });
+  }, [sessionId, store, wsService]);
+
+  const handleMoveToBottom = useCallback((itemId: string) => {
+    if (!sessionId) return;
+    store.moveToBottom(sessionId, itemId);
+    const newIds = useAutopilotStore.getState().getItems(sessionId).map(i => i.id);
+    wsService.send({ type: 'autopilot:reorder', sessionId, payload: { itemIds: newIds } });
+  }, [sessionId, store, wsService]);
+
+  const handleMoveToPosition = useCallback((itemId: string, position: number) => {
+    if (!sessionId) return;
+    store.moveToPosition(sessionId, itemId, position);
+    const newIds = useAutopilotStore.getState().getItems(sessionId).map(i => i.id);
+    wsService.send({ type: 'autopilot:reorder', sessionId, payload: { itemIds: newIds } });
+  }, [sessionId, store, wsService]);
+
+  const handleQueueDirectly = useCallback((itemId: string) => {
+    if (!sessionId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    store.queueDirectly(sessionId, itemId);
+    const item = useAutopilotStore.getState().getItems(sessionId).find(i => i.id === itemId);
+    if (item) {
+      wsService.send({
+        type: 'autopilot:update_item',
+        sessionId,
+        payload: { id: itemId, status: 'queued', optimizedPrompt: item.text },
+      });
+    }
+  }, [sessionId, store, wsService]);
+
+  const handleSavePrompt = useCallback((item: AutopilotItem) => {
+    setSavePromptItem(item);
+    setSavePromptTitle('');
+  }, []);
+
+  const handleConfirmSavePrompt = useCallback(() => {
+    if (!savePromptItem || !savePromptTitle.trim()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const text = savePromptItem.optimizedPrompt || savePromptItem.text;
+    store.addSavedPrompt(savePromptTitle.trim(), text);
+    setSavePromptItem(null);
+    setSavePromptTitle('');
+  }, [savePromptItem, savePromptTitle, store]);
 
   // ── ActionSheet options ─────────────────────────────────────────────────────
+  const activeItemCount = useMemo(() => items.filter(i => i.status !== 'done').length, [items]);
+
   const actionSheetOptions: ActionSheetOption[] = useMemo(() => {
     if (!actionSheetItem) return [];
-    return [
-      {
-        label: 'Nach oben',
-        icon: 'arrow-up',
-        onPress: () => handleMoveUp(actionSheetItem.id),
-      },
-      {
-        label: 'Nach unten',
-        icon: 'arrow-down',
-        onPress: () => handleMoveDown(actionSheetItem.id),
-      },
-      {
+    const s = actionSheetItem.status;
+    const canReorder = s !== 'running' && s !== 'done';
+    const canQueueDirectly = s === 'draft' || s === 'error';
+    const canDelete = s !== 'running';
+
+    const opts: ActionSheetOption[] = [];
+
+    if (canReorder) {
+      opts.push(
+        { label: 'Ganz nach oben', icon: 'chevrons-up', onPress: () => handleMoveToTop(actionSheetItem.id) },
+        { label: 'Nach oben', icon: 'arrow-up', onPress: () => handleMoveUp(actionSheetItem.id) },
+        { label: 'Nach unten', icon: 'arrow-down', onPress: () => handleMoveDown(actionSheetItem.id) },
+        { label: 'Ganz nach unten', icon: 'chevrons-down', onPress: () => handleMoveToBottom(actionSheetItem.id) },
+      );
+      if (activeItemCount > 2) {
+        opts.push({
+          label: 'Position waehlen...',
+          icon: 'hash',
+          onPress: () => setPositionPickerItem(actionSheetItem),
+        });
+      }
+    }
+
+    if (canQueueDirectly) {
+      opts.push({
+        label: 'Direkt in Queue',
+        icon: 'fast-forward',
+        onPress: () => handleQueueDirectly(actionSheetItem.id),
+      });
+    }
+
+    opts.push({
+      label: 'Prompt speichern',
+      icon: 'bookmark',
+      onPress: () => handleSavePrompt(actionSheetItem),
+    });
+
+    if (canDelete) {
+      opts.push({
         label: 'Loeschen',
         icon: 'trash-2',
         destructive: true,
         onPress: () => handleRemove(actionSheetItem.id),
-      },
-    ];
-  }, [actionSheetItem, handleMoveUp, handleMoveDown, handleRemove]);
+      });
+    }
+
+    return opts;
+  }, [actionSheetItem, activeItemCount, handleMoveToTop, handleMoveUp, handleMoveDown, handleMoveToBottom, handleQueueDirectly, handleSavePrompt, handleRemove]);
 
   if (!sessionId) {
     return (
@@ -419,6 +508,104 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
         options={actionSheetOptions}
         onClose={() => setActionSheetItem(null)}
       />
+
+      {/* Position Picker Modal */}
+      <Modal
+        visible={!!positionPickerItem}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPositionPickerItem(null)}
+      >
+        <TouchableOpacity
+          style={modalStyles.overlay}
+          activeOpacity={1}
+          onPress={() => setPositionPickerItem(null)}
+        >
+          <View style={modalStyles.container} onStartShouldSetResponder={() => true}>
+            <Text style={modalStyles.title}>Position waehlen</Text>
+            <ScrollView style={modalStyles.scrollArea} contentContainerStyle={modalStyles.scrollContent}>
+              {Array.from({ length: activeItemCount }, (_, i) => {
+                const pos = i + 1;
+                const currentPos = positionPickerItem
+                  ? items.filter(it => it.status !== 'done').findIndex(it => it.id === positionPickerItem.id) + 1
+                  : -1;
+                const isCurrent = pos === currentPos;
+                return (
+                  <TouchableOpacity
+                    key={pos}
+                    style={[modalStyles.positionBtn, isCurrent && modalStyles.positionBtnCurrent]}
+                    onPress={() => {
+                      if (positionPickerItem && !isCurrent) {
+                        handleMoveToPosition(positionPickerItem.id, pos);
+                      }
+                      setPositionPickerItem(null);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[modalStyles.positionText, isCurrent && modalStyles.positionTextCurrent]}>
+                      {pos}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <TouchableOpacity
+              style={modalStyles.cancelBtn}
+              onPress={() => setPositionPickerItem(null)}
+              activeOpacity={0.7}
+            >
+              <Text style={modalStyles.cancelText}>Abbrechen</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Save Prompt Modal */}
+      <Modal
+        visible={!!savePromptItem}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSavePromptItem(null)}
+      >
+        <TouchableOpacity
+          style={modalStyles.overlay}
+          activeOpacity={1}
+          onPress={() => setSavePromptItem(null)}
+        >
+          <View style={modalStyles.container} onStartShouldSetResponder={() => true}>
+            <Text style={modalStyles.title}>Prompt speichern</Text>
+            <TextInput
+              style={modalStyles.input}
+              value={savePromptTitle}
+              onChangeText={setSavePromptTitle}
+              placeholder="Titel eingeben..."
+              placeholderTextColor={colors.textDim}
+              autoFocus
+            />
+            <Text style={modalStyles.previewLabel}>Prompt:</Text>
+            <Text style={modalStyles.previewText} numberOfLines={4}>
+              {savePromptItem?.optimizedPrompt || savePromptItem?.text}
+            </Text>
+            <View style={modalStyles.btnRow}>
+              <TouchableOpacity
+                style={modalStyles.cancelBtn}
+                onPress={() => setSavePromptItem(null)}
+                activeOpacity={0.7}
+              >
+                <Text style={modalStyles.cancelText}>Abbrechen</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[modalStyles.confirmBtn, !savePromptTitle.trim() && { opacity: 0.4 }]}
+                onPress={handleConfirmSavePrompt}
+                activeOpacity={0.7}
+                disabled={!savePromptTitle.trim()}
+              >
+                <Text style={modalStyles.confirmText}>Speichern</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -668,5 +855,115 @@ const panelStyles = StyleSheet.create({
     fontSize: 9,
     textAlign: 'center',
     letterSpacing: 0.2,
+  },
+});
+
+const modalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  container: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 16,
+    width: '80%',
+    maxHeight: '60%',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  title: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  scrollArea: {
+    maxHeight: 250,
+  },
+  scrollContent: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  positionBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  positionBtnCurrent: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '20',
+  },
+  positionText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: fonts.mono,
+  },
+  positionTextCurrent: {
+    color: colors.primary,
+  },
+  cancelBtn: {
+    marginTop: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+    backgroundColor: colors.border,
+    borderRadius: 8,
+  },
+  cancelText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  input: {
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 8,
+    color: colors.text,
+    fontSize: 12,
+    fontFamily: fonts.mono,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  previewLabel: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  previewText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontFamily: fonts.mono,
+    lineHeight: 16,
+    marginBottom: 12,
+  },
+  btnRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  confirmBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    backgroundColor: '#A78BFA',
+    borderRadius: 8,
+  },
+  confirmText: {
+    color: colors.bg,
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
