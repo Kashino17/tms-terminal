@@ -159,7 +159,11 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       // Try next prompt
       const result = autopilotService.tryDequeuePrompt(sessionId);
       if (result) {
-        globalManager.write(sessionId, result.prompt + '\r');
+        // Write prompt text first, then send Enter separately after a short delay.
+        // If sent together, the terminal treats it as a paste block and doesn't execute.
+        const flatPrompt = result.prompt.replace(/[\r\n]+/g, ' ').trim();
+        globalManager.write(sessionId, flatPrompt);
+        setTimeout(() => globalManager.write(sessionId, '\r'), 200);
       }
     }, AUTOPILOT_IDLE_MS);
     timer.unref();
@@ -191,6 +195,17 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         globalManager.detachSession(sessionId, gen);
       }
       // Do NOT close the WebSocket — the client will close it from their side
+      return;
+    }
+
+    if (msgType === 'client:set_ai_session') {
+      const sid = (msg as any).sessionId;
+      const hasAi = !!(msg as any).payload?.hasAi;
+      if (typeof sid === 'string') {
+        if (hasAi) aiSessions.add(sid);
+        else aiSessions.delete(sid);
+        logger.info(`AI session ${hasAi ? 'registered' : 'unregistered'}: ${sid.slice(0, 8)}`);
+      }
       return;
     }
 
@@ -270,7 +285,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       const sessionId = (msg as any).sessionId;
       const item = (msg as any).payload;
       if (sessionId && item?.id && item?.text) {
-        autopilotService.addItem(sessionId, { id: item.id, text: item.text, status: 'draft' });
+        autopilotService.addItem(sessionId, {
+          id: item.id,
+          text: item.text,
+          status: item.status ?? 'draft',
+          optimizedPrompt: item.optimizedPrompt,
+        });
       }
       return;
     }
@@ -443,6 +463,18 @@ export function handleConnection(ws: WebSocket, ip: string): void {
               processName: session.processName,
             },
           });
+
+          // Sync autopilot queue status — items may have been optimized while client was away
+          const queue = autopilotService.getQueue(session.id);
+          for (const item of queue) {
+            if (item.status === 'queued' && item.optimizedPrompt) {
+              send(ws, { type: 'autopilot:optimized', sessionId: session.id, payload: { id: item.id, optimizedPrompt: item.optimizedPrompt } } as any);
+            } else if (item.status === 'done') {
+              send(ws, { type: 'autopilot:prompt_done', sessionId: session.id, payload: { id: item.id } } as any);
+            } else if (item.status === 'error' && item.error) {
+              send(ws, { type: 'autopilot:optimize_error', sessionId: session.id, payload: { id: item.id, error: item.error } } as any);
+            }
+          }
         } else {
           send(ws, {
             type: 'terminal:error',
