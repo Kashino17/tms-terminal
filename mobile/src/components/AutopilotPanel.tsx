@@ -6,7 +6,7 @@ import {
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, fonts } from '../theme';
-import { useAutopilotStore, AutopilotItem } from '../store/autopilotStore';
+import { useAutopilotStore, AutopilotItem, SavedPrompt } from '../store/autopilotStore';
 import { useTerminalStore } from '../store/terminalStore';
 import { useResponsive } from '../hooks/useResponsive';
 import { ActionSheet, ActionSheetOption } from './ActionSheet';
@@ -133,6 +133,16 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
   const [positionPickerItem, setPositionPickerItem] = useState<AutopilotItem | null>(null);
   const [savePromptItem, setSavePromptItem] = useState<AutopilotItem | null>(null);
   const [savePromptTitle, setSavePromptTitle] = useState('');
+  const [libraryExpanded, setLibraryExpanded] = useState(false);
+  const [newPromptMode, setNewPromptMode] = useState(false);
+  const [newPromptTitle, setNewPromptTitle] = useState('');
+  const [newPromptText, setNewPromptText] = useState('');
+  const [editingPrompt, setEditingPrompt] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editText, setEditText] = useState('');
+  const [libraryActionSheetItem, setLibraryActionSheetItem] = useState<SavedPrompt | null>(null);
+
+  const savedPrompts = useAutopilotStore((s) => s.savedPrompts);
 
   const draftItems = useMemo(() => items.filter(i => i.status === 'draft'), [items]);
   const hasDrafts = draftItems.length > 0;
@@ -312,6 +322,53 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
     setSavePromptItem(null);
     setSavePromptTitle('');
   }, [savePromptItem, savePromptTitle, store]);
+
+  const handleAddSavedToQueue = useCallback((savedPromptId: string) => {
+    if (!sessionId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const id = store.addSavedToQueue(sessionId, savedPromptId);
+    if (id) {
+      const saved = useAutopilotStore.getState().savedPrompts.find(p => p.id === savedPromptId);
+      if (saved) {
+        wsService.send({
+          type: 'autopilot:add_item',
+          sessionId,
+          payload: { id, text: saved.text, status: 'queued', optimizedPrompt: saved.text },
+        });
+      }
+    }
+  }, [sessionId, store, wsService]);
+
+  const handleAddNewSavedPrompt = useCallback(() => {
+    if (!newPromptTitle.trim() || !newPromptText.trim()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    store.addSavedPrompt(newPromptTitle.trim(), newPromptText.trim());
+    setNewPromptTitle('');
+    setNewPromptText('');
+    setNewPromptMode(false);
+  }, [newPromptTitle, newPromptText, store]);
+
+  const handleEditSavedPrompt = useCallback((prompt: SavedPrompt) => {
+    setEditingPrompt(prompt.id);
+    setEditTitle(prompt.title);
+    setEditText(prompt.text);
+    setLibraryActionSheetItem(null);
+  }, []);
+
+  const handleConfirmEditSavedPrompt = useCallback(() => {
+    if (!editingPrompt || !editTitle.trim() || !editText.trim()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    store.updateSavedPrompt(editingPrompt, { title: editTitle.trim(), text: editText.trim() });
+    setEditingPrompt(null);
+    setEditTitle('');
+    setEditText('');
+  }, [editingPrompt, editTitle, editText, store]);
+
+  const handleDeleteSavedPrompt = useCallback((id: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    store.removeSavedPrompt(id);
+    setLibraryActionSheetItem(null);
+  }, [store]);
 
   // ── ActionSheet options ─────────────────────────────────────────────────────
   const activeItemCount = useMemo(() => items.filter(i => i.status !== 'done').length, [items]);
@@ -500,6 +557,153 @@ export function AutopilotPanel({ sessionId, wsService, serverId }: Props) {
           </Text>
         </View>
       )}
+
+      {/* Prompt Library */}
+      <View style={panelStyles.divider} />
+      <TouchableOpacity
+        style={libraryStyles.header}
+        onPress={() => setLibraryExpanded(v => !v)}
+        activeOpacity={0.7}
+      >
+        <Feather name="bookmark" size={13} color={colors.textDim} />
+        <Text style={libraryStyles.headerText}>Gespeicherte Prompts</Text>
+        {savedPrompts.length > 0 && (
+          <View style={[panelStyles.badge, { minWidth: 16, height: 16, borderRadius: 8 }]}>
+            <Text style={[panelStyles.badgeText, { fontSize: 9 }]}>{savedPrompts.length}</Text>
+          </View>
+        )}
+        <View style={{ flex: 1 }} />
+        <Feather name={libraryExpanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textDim} />
+      </TouchableOpacity>
+
+      {libraryExpanded && (
+        <View style={libraryStyles.content}>
+          {savedPrompts.map((sp) => (
+            <TouchableOpacity
+              key={sp.id}
+              style={libraryStyles.row}
+              onLongPress={() => setLibraryActionSheetItem(sp)}
+              activeOpacity={0.7}
+              delayLongPress={400}
+            >
+              {editingPrompt === sp.id ? (
+                <View style={libraryStyles.editForm}>
+                  <TextInput
+                    style={modalStyles.input}
+                    value={editTitle}
+                    onChangeText={setEditTitle}
+                    placeholder="Titel..."
+                    placeholderTextColor={colors.textDim}
+                    autoFocus
+                  />
+                  <TextInput
+                    style={[modalStyles.input, { maxHeight: 80 }]}
+                    value={editText}
+                    onChangeText={setEditText}
+                    placeholder="Prompt..."
+                    placeholderTextColor={colors.textDim}
+                    multiline
+                  />
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    <TouchableOpacity
+                      style={[modalStyles.cancelBtn, { flex: 1, marginTop: 0 }]}
+                      onPress={() => setEditingPrompt(null)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={modalStyles.cancelText}>Abbrechen</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[modalStyles.confirmBtn, (!editTitle.trim() || !editText.trim()) && { opacity: 0.4 }]}
+                      onPress={handleConfirmEditSavedPrompt}
+                      activeOpacity={0.7}
+                      disabled={!editTitle.trim() || !editText.trim()}
+                    >
+                      <Text style={modalStyles.confirmText}>Speichern</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <View style={libraryStyles.rowContent}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={libraryStyles.rowTitle}>{sp.title}</Text>
+                    <Text style={libraryStyles.rowPreview} numberOfLines={1}>{sp.text}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={libraryStyles.queueBtn}
+                    onPress={() => handleAddSavedToQueue(sp.id)}
+                    activeOpacity={0.7}
+                    disabled={!sessionId}
+                  >
+                    <Text style={[libraryStyles.queueBtnText, !sessionId && { opacity: 0.4 }]}>In Queue</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </TouchableOpacity>
+          ))}
+
+          {savedPrompts.length === 0 && !newPromptMode && (
+            <Text style={libraryStyles.emptyText}>Keine gespeicherten Prompts</Text>
+          )}
+
+          {newPromptMode ? (
+            <View style={libraryStyles.newForm}>
+              <TextInput
+                style={modalStyles.input}
+                value={newPromptTitle}
+                onChangeText={setNewPromptTitle}
+                placeholder="Titel..."
+                placeholderTextColor={colors.textDim}
+                autoFocus
+              />
+              <TextInput
+                style={[modalStyles.input, { maxHeight: 80 }]}
+                value={newPromptText}
+                onChangeText={setNewPromptText}
+                placeholder="Prompt-Text..."
+                placeholderTextColor={colors.textDim}
+                multiline
+              />
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                <TouchableOpacity
+                  style={[modalStyles.cancelBtn, { flex: 1, marginTop: 0 }]}
+                  onPress={() => { setNewPromptMode(false); setNewPromptTitle(''); setNewPromptText(''); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={modalStyles.cancelText}>Abbrechen</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[modalStyles.confirmBtn, (!newPromptTitle.trim() || !newPromptText.trim()) && { opacity: 0.4 }]}
+                  onPress={handleAddNewSavedPrompt}
+                  activeOpacity={0.7}
+                  disabled={!newPromptTitle.trim() || !newPromptText.trim()}
+                >
+                  <Text style={modalStyles.confirmText}>Speichern</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={libraryStyles.addBtn}
+              onPress={() => setNewPromptMode(true)}
+              activeOpacity={0.7}
+            >
+              <Feather name="plus" size={12} color={colors.primary} />
+              <Text style={libraryStyles.addBtnText}>Neuen Prompt speichern</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      {/* Library ActionSheet */}
+      <ActionSheet
+        visible={!!libraryActionSheetItem}
+        title={libraryActionSheetItem?.title}
+        options={libraryActionSheetItem ? [
+          { label: 'Bearbeiten', icon: 'edit-2', onPress: () => handleEditSavedPrompt(libraryActionSheetItem!) },
+          { label: 'Loeschen', icon: 'trash-2', destructive: true, onPress: () => handleDeleteSavedPrompt(libraryActionSheetItem!.id) },
+        ] : []}
+        onClose={() => setLibraryActionSheetItem(null)}
+      />
 
       {/* ActionSheet for long-press */}
       <ActionSheet
@@ -965,5 +1169,84 @@ const modalStyles = StyleSheet.create({
     color: colors.bg,
     fontSize: 12,
     fontWeight: '700',
+  },
+});
+
+const libraryStyles = StyleSheet.create({
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  headerText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  content: {
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+  },
+  row: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(51,65,85,0.3)',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  rowContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  rowTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  rowPreview: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontFamily: fonts.mono,
+  },
+  queueBtn: {
+    backgroundColor: colors.primary + '20',
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: colors.primary + '40',
+  },
+  queueBtnText: {
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  emptyText: {
+    color: colors.textDim,
+    fontSize: 11,
+    textAlign: 'center',
+    paddingVertical: 12,
+  },
+  newForm: {
+    marginTop: 8,
+    gap: 6,
+  },
+  editForm: {
+    gap: 6,
+  },
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    justifyContent: 'center',
+  },
+  addBtnText: {
+    color: colors.primary,
+    fontSize: 11,
+    fontWeight: '600',
   },
 });
