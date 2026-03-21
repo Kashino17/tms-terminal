@@ -12,6 +12,13 @@ export interface AutopilotItem {
   completedAt?: number;
 }
 
+export interface SavedPrompt {
+  id: string;
+  title: string;
+  text: string;
+  createdAt: number;
+}
+
 interface AutopilotState {
   items: Record<string, AutopilotItem[]>; // keyed by sessionId
   queueEnabled: Record<string, boolean>;
@@ -34,6 +41,12 @@ interface AutopilotState {
   getDoneCount: (sessionId: string) => number;
   /** Remove done items older than 24 hours */
   cleanupOldDone: () => void;
+
+  savedPrompts: SavedPrompt[];
+  addSavedPrompt: (title: string, text: string) => void;
+  updateSavedPrompt: (id: string, updates: Partial<Pick<SavedPrompt, 'title' | 'text'>>) => void;
+  removeSavedPrompt: (id: string) => void;
+  addSavedToQueue: (sessionId: string, savedPromptId: string) => string | null;
 }
 
 function makeId() {
@@ -45,6 +58,7 @@ export const useAutopilotStore = create<AutopilotState>()(
     (set, get) => ({
       items: {},
       queueEnabled: {},
+      savedPrompts: [],
 
       getItems: (sessionId) => {
         const all = get().items[sessionId] ?? [];
@@ -167,6 +181,38 @@ export const useAutopilotStore = create<AutopilotState>()(
           }
           return { items: cleaned };
         });
+      },
+
+      addSavedPrompt: (title, text) => {
+        const prompt: SavedPrompt = { id: makeId(), title, text, createdAt: Date.now() };
+        set((s) => ({ savedPrompts: [...s.savedPrompts, prompt] }));
+      },
+
+      updateSavedPrompt: (id, updates) => {
+        set((s) => ({
+          savedPrompts: s.savedPrompts.map(p => p.id === id ? { ...p, ...updates } : p),
+        }));
+      },
+
+      removeSavedPrompt: (id) => {
+        set((s) => ({ savedPrompts: s.savedPrompts.filter(p => p.id !== id) }));
+      },
+
+      addSavedToQueue: (sessionId, savedPromptId) => {
+        const saved = get().savedPrompts.find(p => p.id === savedPromptId);
+        if (!saved) return null;
+        const id = makeId();
+        const item: AutopilotItem = {
+          id,
+          text: saved.text,
+          optimizedPrompt: saved.text,
+          status: 'queued',
+          createdAt: Date.now(),
+        };
+        set((s) => ({
+          items: { ...s.items, [sessionId]: [...(s.items[sessionId] ?? []), item] },
+        }));
+        return id;
       },
     }),
     {
