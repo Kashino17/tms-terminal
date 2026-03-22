@@ -13,6 +13,47 @@ const DIST_INDEX = path.join(ROOT, 'dist', 'server', 'src', 'index.js');
 const DIST_SETUP = path.join(ROOT, 'dist', 'server', 'src', 'setup.js');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+function getPort() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'config.json'), 'utf8'));
+    return cfg.port || 8767;
+  } catch { return 8767; }
+}
+
+/** Kill whatever is listening on the server port (PID file OR lsof fallback). */
+function stopExisting() {
+  // 1. Try PID file
+  const pid = readPid();
+  if (pid && isRunning(pid)) {
+    try { process.kill(pid, 'SIGTERM'); } catch {}
+    cleanPid();
+  }
+
+  // 2. Fallback: kill whatever holds the port (handles orphaned processes)
+  const port = getPort();
+  try {
+    const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' }).trim();
+    if (pids) {
+      pids.split('\n').forEach((p) => {
+        const n = parseInt(p, 10);
+        if (n > 0) try { process.kill(n, 'SIGTERM'); } catch {}
+      });
+    }
+  } catch {} // lsof not found or no process — fine
+
+  // 3. Wait up to 2s for the port to be released
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    try {
+      execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' });
+      // Still occupied — wait a bit
+      execSync('sleep 0.2');
+    } catch {
+      break; // Port is free
+    }
+  }
+}
+
 function ensureBuilt() {
   if (!fs.existsSync(DIST_INDEX)) {
     console.log('\x1b[34m⟳\x1b[0m  Building TMS Terminal...');
@@ -80,11 +121,8 @@ switch (command) {
 
   // ── tms-terminal (start) ────────────────────────────────────────────────
   case 'start': {
-    const existingPid = readPid();
-    if (existingPid && isRunning(existingPid)) {
-      console.log(`\x1b[33m⚠\x1b[0m  TMS Terminal is already running (PID ${existingPid}).`);
-      process.exit(1);
-    }
+    // Kill anything still holding the port (stale PID, orphaned process, etc.)
+    stopExisting();
 
     ensureBuilt();
 
@@ -108,21 +146,8 @@ switch (command) {
 
   // ── tms-terminal stop ───────────────────────────────────────────────────
   case 'stop': {
-    const pid = readPid();
-    if (!pid || !isRunning(pid)) {
-      console.log('\x1b[90mTMS Terminal is not running.\x1b[0m');
-      cleanPid();
-      process.exit(0);
-    }
-
-    try {
-      process.kill(pid, 'SIGTERM');
-      console.log(`\x1b[32m✓\x1b[0m  TMS Terminal stopped (PID ${pid}).`);
-      cleanPid();
-    } catch (err) {
-      console.error('\x1b[31m✗\x1b[0m  Failed to stop:', err.message);
-      process.exit(1);
-    }
+    stopExisting();
+    console.log('\x1b[32m✓\x1b[0m  TMS Terminal stopped.');
     break;
   }
 
@@ -182,13 +207,9 @@ switch (command) {
   case 'update': {
     console.log('\x1b[34m⟳\x1b[0m  Updating TMS Terminal...');
 
-    // Stop server if running
-    const updatePid = readPid();
-    if (updatePid && isRunning(updatePid)) {
-      console.log('\x1b[34m⟳\x1b[0m  Stopping server...');
-      try { process.kill(updatePid, 'SIGTERM'); } catch {}
-      cleanPid();
-    }
+    // Stop server — PID file + port fallback
+    console.log('\x1b[34m⟳\x1b[0m  Stopping server...');
+    stopExisting();
 
     try {
       // Pull latest code
