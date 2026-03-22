@@ -421,7 +421,7 @@ export function TerminalScreen({ navigation, route }: Props) {
         }
       }
     });
-    // Sync current state on connect (auto-approve may have been enabled before reconnect)
+    // Sync current state on connect (auto-approve + AI sessions may have been set before reconnect)
     const currentTabs = useTerminalStore.getState().getTabs(serverId);
     const autoState = useAutoApproveStore.getState();
     for (const tab of currentTabs) {
@@ -431,6 +431,14 @@ export function TerminalScreen({ navigation, route }: Props) {
           type: 'client:set_auto_approve',
           sessionId: tab.sessionId,
           payload: { enabled: true },
+        } as any);
+      }
+      // Sync AI tool detection so autopilot knows which sessions have AI
+      if (tab.aiTool) {
+        wsRef.current.send({
+          type: 'client:set_ai_session',
+          sessionId: tab.sessionId,
+          payload: { hasAi: true },
         } as any);
       }
     }
@@ -537,6 +545,11 @@ export function TerminalScreen({ navigation, route }: Props) {
 
   const handleAiToolDetected = useCallback((tabId: string, tool: AiToolType) => {
     updateTab(serverId, tabId, { aiTool: tool, category: 'ai' });
+    // Inform server that this session has an AI tool (for autopilot auto-dequeue)
+    const tab = useTerminalStore.getState().getTabs(serverId).find((t) => t.id === tabId);
+    if (tab?.sessionId) {
+      wsRef.current.send({ type: 'client:set_ai_session', sessionId: tab.sessionId, payload: { hasAi: !!tool } } as any);
+    }
   }, [serverId, updateTab]);
 
   const handleChangeCategory = useCallback((tabId: string, category: TabCategory, serverType?: ServerType) => {

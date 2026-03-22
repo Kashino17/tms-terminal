@@ -48,6 +48,12 @@ const PROMPT_PATTERNS = [
 
   // inquirer-style: "Question? ›" or "Question? [choices]"
   /\?\s*(›|\[|\()/,
+
+  // ── TUI patterns (ANSI stripping removes spaces in Claude Code's rendered output) ──
+  /Esc\s*to\s*cancel/i,
+  /Esctocancel/i,
+  /1\.?\s*Yes/,
+  /allowalledits/i,
 ];
 
 // ── AI Tool Detection ────────────────────────────────────────────────────────
@@ -106,13 +112,12 @@ export class PromptDetector {
 
   watch(sessionId: string, onPrompt: (snippet: string) => void): void {
     this.callbacks.set(sessionId, onPrompt);
-    this.watchedAt.set(sessionId, Date.now());
-    // Clear stale state from previous watch
-    this.buffers.delete(sessionId);
-    this.aiActive.delete(sessionId);
-    this.aiDetectedAt.delete(sessionId);
-    this.outputLen.delete(sessionId);
-    this.aiOutputStart.delete(sessionId);
+    // Only set watchedAt on first watch (not on re-watch/reattach)
+    // This preserves the buffer and AI state across reconnects
+    if (!this.watchedAt.has(sessionId)) {
+      this.watchedAt.set(sessionId, Date.now());
+    }
+    // Do NOT clear buffers/AI state — they may contain valid data from detached period
   }
 
   feed(sessionId: string, data: string): void {
@@ -147,6 +152,8 @@ export class PromptDetector {
 
     const timer = setTimeout(() => {
       this.timers.delete(sessionId);
+      const bufLen = (this.buffers.get(sessionId) ?? '').length;
+      console.log(`[PromptDetector] Silence timeout for ${sessionId.slice(0,8)}, buf=${bufLen}, hasCallback=${this.callbacks.has(sessionId)}`);
       this._check(sessionId, 0);
     }, SILENCE_MS);
     timer.unref();
@@ -195,7 +202,10 @@ export class PromptDetector {
     const hasEnoughOutput = outputSinceAi >= MIN_AI_OUTPUT;
     const shellReturned   = aiWasActive && hasEnoughOutput && SHELL_PROMPT_PATTERNS.some(p => p.test(tail));
 
-    if (!matched && !shellReturned) return;
+    if (!matched && !shellReturned) {
+      console.log(`[PromptDetector] No match for ${sessionId.slice(0,8)}. Tail: ${tail.slice(-80).replace(/\n/g, '\\n')}`);
+      return;
+    }
 
     if (shellReturned) {
       console.log(`[PromptDetector] AI FINISHED in ${sessionId.slice(0, 8)} (${outputSinceAi} chars output)`);
