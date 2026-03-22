@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { clearSavedCookies } from '../hooks/useCookieIsolation';
 
 const STORAGE_KEY = 'tms:browser-tabs';
 
@@ -27,7 +28,7 @@ interface BrowserTabsState {
   removeTab: (profileKey: string, tabId: string) => void;
   setActive: (profileKey: string, tabId: string) => void;
   updateTab: (profileKey: string, tabId: string, updates: Partial<Pick<BrowserTab, 'port' | 'label' | 'path' | 'lastUrl'>>) => void;
-  /** Remove all browser data for a profile (call when terminal tab is closed) */
+  /** Remove all browser data for a server profile (call when disconnecting from server) */
   clearProfile: (profileKey: string) => void;
 }
 
@@ -148,5 +149,9 @@ export const useBrowserTabsStore = create<BrowserTabsState>((set, get) => ({
     const { [profileKey]: _l, ...restLoaded } = state.loaded;
     set({ tabs: restTabs, activeTab: restActive, loaded: restLoaded });
     AsyncStorage.removeItem(`${STORAGE_KEY}:${profileKey}`).catch(() => {});
+    // Also clear saved cookies for this terminal (main + split panes)
+    clearSavedCookies(profileKey);
+    clearSavedCookies(`${profileKey}:split1`);
+    clearSavedCookies(`${profileKey}:split2`);
   },
 }));

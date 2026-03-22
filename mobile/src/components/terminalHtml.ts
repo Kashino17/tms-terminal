@@ -161,13 +161,35 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     }, 50);
   });
 
+  // beforeinput fires EVEN when the field is empty — catches backspace
+  // that the 'input' event misses on Android when value is ''.
+  var deleteHandledByBeforeInput = false;
+  shadowInput.addEventListener('beforeinput', function(e) {
+    var it = e.inputType || '';
+    if (it === 'deleteContentBackward') {
+      e.preventDefault();
+      sendKey(SEQ.bs);
+      shadowInput.value = ''; prevValue = '';
+      deleteHandledByBeforeInput = true;
+    } else if (it === 'deleteContentForward') {
+      e.preventDefault();
+      sendKey('\\x1b[3~');
+      shadowInput.value = ''; prevValue = '';
+      deleteHandledByBeforeInput = true;
+    } else {
+      deleteHandledByBeforeInput = false;
+    }
+  });
+
   shadowInput.addEventListener('input', function(e) {
+    // Skip if beforeinput already handled this delete
+    if (deleteHandledByBeforeInput) { deleteHandledByBeforeInput = false; return; }
+
     var cur = shadowInput.value;
     var it = e.inputType || '';
 
-    // Deletion (including when value is already empty — Samsung Fold unfolded)
+    // Fallback deletion (in case beforeinput didn't fire)
     if (it.indexOf('delete') === 0 || cur.length < prevValue.length) {
-      // Send correct number of backspaces (1 for empty field, diff otherwise)
       var del = Math.max(1, prevValue.length - cur.length);
       var bs = '';
       for (var i = 0; i < del; i++) bs += SEQ.bs;

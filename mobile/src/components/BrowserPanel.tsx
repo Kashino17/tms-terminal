@@ -17,6 +17,7 @@ import { usePortForwardingStore } from '../store/portForwardingStore';
 import { useResponsive } from '../hooks/useResponsive';
 import { CredentialOverlay } from './CredentialOverlay';
 import { FORM_DETECT_JS } from '../store/credentialStore';
+import { useCookieIsolation } from '../hooks/useCookieIsolation';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -307,8 +308,8 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
   const consoleFullRef = useRef(CONSOLE_FULL);
   consoleFullRef.current = CONSOLE_FULL;
 
-  // ── Browser profile key: unique per server + terminal tab ──
-  const browserKey = `${serverId}:${terminalTabId}`;
+  // ── Browser profile key: shared across all terminals on the same server ──
+  const browserKey = serverId;
 
   // ── Store hooks ──
   const { load, getTabs, getActive, addTab, removeTab, setActive, updateTab } = useBrowserTabsStore();
@@ -328,6 +329,9 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
 
   // ── Modal (WebView) state ──
   const [open, setOpen] = useState(openDirect);
+
+  // ── Cookie isolation: save/restore cookies per terminal ──
+  useCookieIsolation(browserKey, open);
   const [loading, setLoading] = useState(false);
   const webviewRef = useRef<WebView>(null);
   const [reloadMenuOpen, setReloadMenuOpen] = useState(false);
@@ -1199,8 +1203,6 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
                   allowsInlineMediaPlayback
                   mediaPlaybackRequiresUserAction={false}
                   mixedContentMode="always"
-                  sharedCookiesEnabled
-                  thirdPartyCookiesEnabled
                 />
                 {/* Mobile viewport label */}
                 {isMobileView && (

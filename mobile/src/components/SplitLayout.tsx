@@ -11,6 +11,7 @@ import { useSplitViewStore, TriMainPane } from '../store/splitViewStore';
 import { useResponsive } from '../hooks/useResponsive';
 import { CredentialOverlay } from './CredentialOverlay';
 import { FORM_DETECT_JS } from '../store/credentialStore';
+import { useCookieIsolation } from '../hooks/useCookieIsolation';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -139,7 +140,8 @@ const SPLIT_CONSOLE_JS = `
 type MiniLogEntry = { id: number; level: string; message: string };
 
 // ── Browser Pane with mini console ───────────────────────────────────────────
-function BrowserPane({ url, serverId }: { url: string; serverId: string }) {
+function BrowserPane({ url, serverId, browserKey }: { url: string; serverId: string; browserKey: string }) {
+  useCookieIsolation(browserKey, true);
   const [logs, setLogs] = useState<MiniLogEntry[]>([]);
   const [showConsole, setShowConsole] = useState(false);
   const [formDetected, setFormDetected] = useState(false);
@@ -251,10 +253,11 @@ const mc = StyleSheet.create({
 interface Props {
   serverHost: string;
   serverId: string;
+  terminalTabId: string;
   terminalContent: React.ReactNode;
 }
 
-export function SplitLayout({ serverHost, serverId, terminalContent }: Props) {
+export function SplitLayout({ serverHost, serverId, terminalTabId, terminalContent }: Props) {
   const { layout, mainPane, browserPort, browserPort2, browserPath, browserPath2, setMainPane, cycleMain, deactivate } = useSplitViewStore();
   const [swapped, setSwapped] = useState(false);
 
@@ -263,6 +266,10 @@ export function SplitLayout({ serverHost, serverId, terminalContent }: Props) {
   const pathSuffix2 = browserPath2 ? (browserPath2.startsWith('/') ? browserPath2 : '/' + browserPath2) : '';
   const url1 = `http://${serverHost}:${browserPort}${pathSuffix1}`;
   const url2 = `http://${serverHost}:${browserPort2}${pathSuffix2}`;
+
+  // Cookie isolation keys — one per split browser pane, shared across terminals
+  const browserKey1 = `${serverId}:split1`;
+  const browserKey2 = `${serverId}:split2`;
 
   const handleClose = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -275,8 +282,8 @@ export function SplitLayout({ serverHost, serverId, terminalContent }: Props) {
     // Build the 3 panes
     const panes: { id: TriMainPane; label: string; icon: string; content: React.ReactNode }[] = [
       { id: 'terminal', label: 'Terminal', icon: 'terminal', content: <View style={sl.paneContent}>{terminalContent}</View> },
-      { id: 'browser1', label: `:${browserPort}`, icon: 'globe', content: <BrowserPane url={url1} serverId={serverId} /> },
-      { id: 'browser2', label: `:${browserPort2}`, icon: 'globe', content: <BrowserPane url={url2} serverId={serverId} /> },
+      { id: 'browser1', label: `:${browserPort}`, icon: 'globe', content: <BrowserPane url={url1} serverId={serverId} browserKey={browserKey1} /> },
+      { id: 'browser2', label: `:${browserPort2}`, icon: 'globe', content: <BrowserPane url={url2} serverId={serverId} browserKey={browserKey2} /> },
     ];
 
     const mainPaneData = panes.find((p) => p.id === mainPane) ?? panes[0];
@@ -346,7 +353,7 @@ export function SplitLayout({ serverHost, serverId, terminalContent }: Props) {
   const browserPaneEl = (
     <View style={sl.pane}>
       <PaneHeader label={`:${browserPort}`} icon="globe" isMain={false} canPromote={false} onPromote={() => {}} onClose={handleClose} />
-      <BrowserPane url={url1} serverId={serverId} />
+      <BrowserPane url={url1} serverId={serverId} browserKey={browserKey1} />
     </View>
   );
 

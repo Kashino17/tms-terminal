@@ -43,7 +43,7 @@ const serverAutoApprove = new Map<string, boolean>();
 // Track last user input per session — auto-approve pauses while user is typing.
 // Updated on every terminal:input message from the client.
 const lastUserInputAt = new Map<string, number>();
-const TYPING_PAUSE_MS = 3500;
+const TYPING_PAUSE_MS = 2000;
 
 // Track how many characters the user has on the current input line.
 // Auto-approve is blocked if pendingInputLen > 0 (user has unsent text).

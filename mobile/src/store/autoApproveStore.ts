@@ -35,7 +35,7 @@ interface AutoApproveState {
 }
 
 /** How long (ms) to pause auto-approve after the user's last keystroke in a session */
-const TYPING_PAUSE_MS = 3000;
+const TYPING_PAUSE_MS = 2000;
 
 export const useAutoApproveStore = create<AutoApproveState>()(
   persist(

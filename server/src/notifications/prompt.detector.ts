@@ -1,11 +1,11 @@
 // Detects interactive prompts AND AI-tool-finished events in PTY output.
 //
+// Tuned for aggressive auto-approve with fast response times.
 // Guards against false positives:
 // - Startup grace period: ignore first STARTUP_GRACE_MS after watch()
 // - AI detection requires strong signals (not just bare keyword mentions)
 // - AI-finished requires minimum output volume since AI was detected
-// - Prompt patterns are specific (no generic "ends with ?" matching)
-// - Reduced retry count (2) to avoid notification spam
+// - Prompt patterns are broad but specific (no generic "ends with ?" matching)
 // - AI detection expires after 10 min without resolution
 
 const ANSI_STRIP = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]/g;
@@ -19,23 +19,34 @@ const PROMPT_PATTERNS = [
   /\[Y\/n\]/,
   /\[y\/N\]/,
   /\(yes\/no\)/i,
+  /\(y\/n\)/i,
   /press enter to continue/i,
+  /enter to continue/i,
+  /hit enter/i,
 
   // Question phrases with clear intent
   /do you want (me )?to/i,
   /would you like to/i,
   /do you want to proceed/i,
+  /are you sure/i,
+  /type yes to continue/i,
+  /is this ok\??/i,
 
   // Action confirmations (phrase + trailing ?)
   /continue\?\s*$/im,
   /proceed\?\s*$/im,
   /confirm\?\s*$/im,
   /approve\?\s*$/im,
+  /overwrite\?\s*$/im,
+  /replace\?\s*$/im,
+  /install\?\s*$/im,
 
   // ── Claude Code ──
   /allow (this action|bash|command|running|tool|edit|execution)/i,
   /dangerous command/i,
   /apply (this )?edit\?/i,
+  /Yes,?\s*allow/i,
+  /Allow\s*once/i,
 
   // ── Codex (OpenAI) ──
   /apply (change|patch|diff)\?/i,
@@ -45,6 +56,20 @@ const PROMPT_PATTERNS = [
   /execute (this )?command/i,
   /allow execution of/i,
   /waiting for user confirmation/i,
+
+  // ── npm / yarn / pnpm ──
+  /ok to proceed/i,
+  /install anyway\?/i,
+  /need to install/i,
+
+  // ── pip ──
+  /would you like to install/i,
+
+  // ── git ──
+  /are you sure you want to/i,
+
+  // ── docker ──
+  /are you sure you want to remove/i,
 
   // inquirer-style: "Question? ›" or "Question? [choices]"
   /\?\s*(›|\[|\()/,
@@ -90,13 +115,13 @@ const SHELL_PROMPT_PATTERNS = [
 ];
 
 // ── Timing & Limits ──────────────────────────────────────────────────────────
-const SILENCE_MS       = 2500;   // Silence before checking (was 1200 — too fast)
-const RETRY_MS         = 5000;   // Retry interval for active prompts (was 3000)
-const MAX_RETRIES      = 2;      // Max retries per prompt (was 8!)
-const SCAN_TAIL        = 400;
-const BUFFER_MAX       = 800;
+const SILENCE_MS       = 1500;   // Silence before checking — fast detection
+const RETRY_MS         = 3000;   // Retry interval for active prompts
+const MAX_RETRIES      = 4;      // Retries per prompt — more persistent
+const SCAN_TAIL        = 600;
+const BUFFER_MAX       = 1200;
 const STARTUP_GRACE_MS = 5000;   // Ignore output for first 5s after watch()
-const MIN_AI_OUTPUT    = 1500;   // Min chars since AI detected to trigger "finished"
+const MIN_AI_OUTPUT    = 800;    // Min chars since AI detected to trigger "finished"
 const AI_EXPIRE_MS     = 10 * 60 * 1000; // AI detection expires after 10 min
 
 export class PromptDetector {

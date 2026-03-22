@@ -228,8 +228,8 @@ export function TerminalScreen({ navigation, route }: Props) {
           const sid = m.sessionId;
           autoApprove.setRunning(sid, true);
           wsRef.current.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
-          // Release lock after 1s — short enough not to block back-to-back prompts
-          const timer1 = setTimeout(() => { autoApprove.setRunning(sid, false); autoApproveTimers.current.delete(timer1); }, 1000);
+          // Release lock after 500ms — fast enough for back-to-back prompts
+          const timer1 = setTimeout(() => { autoApprove.setRunning(sid, false); autoApproveTimers.current.delete(timer1); }, 500);
           autoApproveTimers.current.add(timer1);
         } else {
           // Set notification badge on the tab (only if it's not the active tab)
@@ -499,7 +499,7 @@ export function TerminalScreen({ navigation, route }: Props) {
       clearViewBuffer(tab.sessionId);
       useAutoApproveStore.getState().clear(tab.sessionId);
     }
-    useBrowserTabsStore.getState().clearProfile(`${serverId}:${tabId}`);
+    // Browser tabs are shared per server — don't clear on individual terminal close
     removeTab(serverId, tabId);
   }, [serverId, removeTab]);
 
@@ -643,18 +643,26 @@ export function TerminalScreen({ navigation, route }: Props) {
         return;
       }
 
-      // Horizontal swipe → switch tabs
+      // Horizontal swipe → switch tabs (within same level)
       if (Math.abs(dx) < 50) return;
       const currentTabs = useTerminalStore.getState().getTabs(serverId);
-      const activeIdx = currentTabs.findIndex((t) => t.active);
-      if (activeIdx === -1) return;
+      const activeTab = currentTabs.find((t) => t.active);
+      if (!activeTab) return;
 
-      if (dx < -50 && activeIdx < currentTabs.length - 1) {
+      // Level 1: ai + shell, Level 2: server
+      const isServer = activeTab.category === 'server';
+      const sameLevelTabs = currentTabs.filter((t) =>
+        isServer ? t.category === 'server' : t.category !== 'server',
+      );
+      const levelIdx = sameLevelTabs.findIndex((t) => t.id === activeTab.id);
+      if (levelIdx === -1) return;
+
+      if (dx < -50 && levelIdx < sameLevelTabs.length - 1) {
         Haptics.selectionAsync();
-        setActiveTab(serverId, currentTabs[activeIdx + 1].id);
-      } else if (dx > 50 && activeIdx > 0) {
+        setActiveTab(serverId, sameLevelTabs[levelIdx + 1].id);
+      } else if (dx > 50 && levelIdx > 0) {
         Haptics.selectionAsync();
-        setActiveTab(serverId, currentTabs[activeIdx - 1].id);
+        setActiveTab(serverId, sameLevelTabs[levelIdx - 1].id);
       }
     },
   }), [serverId, setActiveTab, openGrid]);
@@ -748,6 +756,7 @@ export function TerminalScreen({ navigation, route }: Props) {
         <SplitLayout
           serverHost={server?.host ?? ''}
           serverId={serverId}
+          terminalTabId={activeTerminalTab?.id ?? ''}
           terminalContent={
             <>
               {tabsToRender.map((tab) => (
