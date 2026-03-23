@@ -60,7 +60,7 @@ function main(): void {
   const server = http.createServer((req, res) => {
     if (req.url?.startsWith('/auth/')) {
       handleAuthRequest(req, res);
-    } else if (req.url === '/upload/screenshot') {
+    } else if (req.url === '/upload/screenshot' || req.url === '/upload/media') {
       handleUploadRequest(req, res);
     } else if (req.url === '/upload/drawing') {
       handleDrawingUpload(req, res);
