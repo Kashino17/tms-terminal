@@ -1,4 +1,8 @@
-export const TERMINAL_HTML = `<!DOCTYPE html>
+import { XTERM_CSS, XTERM_XTERM, XTERM_FIT, XTERM_WEBLINKS, XTERM_CANVAS } from '../assets/xtermBundle';
+
+// Build HTML with xterm.js scripts inlined (no CDN dependency).
+// Library scripts are injected via string concatenation to avoid template literal escaping issues.
+const TERMINAL_HTML = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -34,7 +38,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     -webkit-appearance: none;
   }
 </style>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>` + XTERM_CSS + `</style>
 </head>
 <body>
 
@@ -45,10 +49,10 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     autocapitalize="none" spellcheck="false" inputmode="text"/>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-canvas@0.7.0/lib/addon-canvas.min.js"></script>
+<script>` + XTERM_XTERM + `<\/script>
+<script>` + XTERM_FIT + `<\/script>
+<script>` + XTERM_WEBLINKS + `<\/script>
+<script>` + XTERM_CANVAS + `<\/script>
 <script>
 (function() {
 
@@ -648,3 +652,5 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
 </script>
 </body>
 </html>`;
+
+export { TERMINAL_HTML };

@@ -106,18 +106,8 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   const pendingLinesRef = useRef<((lines: string[]) => void) | null>(null);
   const pendingLinesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // CDN failure recovery: if xterm.js fails to load, the WebView never sends 'ready'.
-  // Reload after 10s to retry CDN scripts.
+  // Track whether xterm.js sent 'ready' (used by theme application + view-buffer replay)
   const readyReceivedRef = useRef(false);
-  useEffect(() => {
-    readyReceivedRef.current = false;
-    const timer = setTimeout(() => {
-      if (!readyReceivedRef.current && webViewRef.current) {
-        webViewRef.current.reload();
-      }
-    }, 10_000);
-    return () => clearTimeout(timer);
-  }, [sessionId]);
 
   useImperativeHandle(ref, () => ({
     requestLastLines: (count = 20) =>
@@ -421,7 +411,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     >
       <WebView
         ref={webViewRef}
-        source={{ html: TERMINAL_HTML, baseUrl: 'https://cdn.jsdelivr.net/' }}
+        source={{ html: TERMINAL_HTML }}
         style={styles.webView}
         onMessage={onMessage}
         onError={() => {}}
