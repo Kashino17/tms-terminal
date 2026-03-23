@@ -42,6 +42,7 @@ const TOOL_GROUPS: { id: string; icon: any; color: string; label: string }[][] =
 
 export interface ToolRailRef {
   closePanel: () => void;
+  openFileBrowser: (path: string) => void;
 }
 
 interface Props {
@@ -66,6 +67,7 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
 
   const [active, setActive]       = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [fileBrowserPath, setFileBrowserPath] = useState<string | null>(null);
   const panelAnim    = useRef(new Animated.Value(0)).current;
   const panelOpacity = useRef(new Animated.Value(0)).current;
   const panelSlide   = useRef(new Animated.Value(20)).current;
@@ -172,7 +174,17 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
     closePanel: () => {
       if (activeRef.current) closePanel();
     },
-  }), [closePanel]);
+    openFileBrowser: (path: string) => {
+      setFileBrowserPath(path);
+      if (activeRef.current !== 'files') {
+        if (activeRef.current) {
+          closePanel(() => openPanel('files'));
+        } else {
+          openPanel('files');
+        }
+      }
+    },
+  }), [closePanel, openPanel]);
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
@@ -220,6 +232,7 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
               serverToken={serverToken}
               sessionId={sessionId}
               wsService={wsService}
+              initialPath={fileBrowserPath}
             />
           )}
         </Animated.View>

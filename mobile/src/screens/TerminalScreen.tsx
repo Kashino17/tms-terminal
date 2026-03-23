@@ -595,6 +595,11 @@ export function TerminalScreen({ navigation, route }: Props) {
     return unsubscribe;
   }, [navigation, serverId]);
 
+  // Path link clicked in terminal — open file browser at that path
+  const handlePathClicked = useCallback((path: string) => {
+    toolRailRef.current?.openFileBrowser(path);
+  }, []);
+
   // ToolRail action handler — non-panel tools navigate to their own screen
   const handleToolAction = useCallback((toolId: string): boolean => {
     if (toolId === 'scrollToBottom') {
@@ -783,6 +788,7 @@ export function TerminalScreen({ navigation, route }: Props) {
                   onAiToolDetected={(tool) => handleAiToolDetected(tab.id, tool)}
                   rangeActive={tab.active && rangeActive}
                   onRangeClose={() => setRangeActive(false)}
+                  onPathClicked={handlePathClicked}
                 />
               ))}
               <TerminalToolbar
@@ -809,6 +815,7 @@ export function TerminalScreen({ navigation, route }: Props) {
               rangeActive={tab.active && rangeActive}
               onRangeClose={() => setRangeActive(false)}
               railWidth={railWidthAnim}
+              onPathClicked={handlePathClicked}
             />
           ))}
           {panelOpen && (

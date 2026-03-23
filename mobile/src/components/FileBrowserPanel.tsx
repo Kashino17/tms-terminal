@@ -212,11 +212,12 @@ interface Props {
   serverToken: string;
   sessionId?: string;
   wsService?: WebSocketService;
+  initialPath?: string | null;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionId, wsService }: Props) {
+export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionId, wsService, initialPath }: Props) {
   const responsive = useResponsive();
   const { rf, rs, ri } = responsive;
   const [currentPath, setCurrentPath] = useState('~/Desktop');
@@ -290,6 +291,16 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
   }, [BASE, serverToken]);
 
   useEffect(() => { loadDir('~/Desktop'); }, [loadDir]);
+
+  // Navigate to a specific path when triggered via terminal path link
+  useEffect(() => {
+    if (initialPath) {
+      // If it looks like a file (has extension), navigate to parent directory
+      const isFile = /\.[a-zA-Z0-9]+$/.test(initialPath);
+      const dirPath = isFile ? initialPath.replace(/\/[^/]+$/, '') : initialPath;
+      loadDir(dirPath);
+    }
+  }, [initialPath]);
 
   // Viewer slide animation
   const openViewer = (v: Viewer) => {

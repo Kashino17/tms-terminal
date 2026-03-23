@@ -81,6 +81,43 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
   term.open(document.getElementById('terminal'));
 
+  /* ── Smart Path Links (underlined, clickable) ───────────────── */
+  term.registerLinkProvider({
+    provideLinks: function(lineNumber, callback) {
+      var line = term.buffer.active.getLine(lineNumber - 1);
+      if (!line) { callback(undefined); return; }
+      var text = line.translateToString(true);
+
+      var patterns = [
+        /(\/(?:Users|home|tmp|etc|var|opt|usr|mnt|root)[^\s:,;'")\]]+)/g,
+        /(~\/[^\s:,;'")\]]+)/g,
+        /((?:\.\/|\.\.\/)[^\s:,;'")\]]+)/g,
+      ];
+
+      var links = [];
+      for (var p = 0; p < patterns.length; p++) {
+        var re = patterns[p];
+        var match;
+        while ((match = re.exec(text)) !== null) {
+          var startX = match.index;
+          var path = match[1];
+          // Remove trailing punctuation
+          path = path.replace(/[.,;:!?)}\]]+$/, '');
+          (function(linkPath, sx) {
+            links.push({
+              range: { start: { x: sx + 1, y: lineNumber }, end: { x: sx + linkPath.length, y: lineNumber } },
+              text: linkPath,
+              activate: function() {
+                sendToRN({ type: 'path_link_clicked', data: linkPath });
+              }
+            });
+          })(path, startX);
+        }
+      }
+      callback(links.length > 0 ? links : undefined);
+    }
+  });
+
   // Use Canvas renderer instead of DOM — dramatically faster scrolling.
   // Canvas renders to a single <canvas> element instead of creating
   // hundreds of DOM nodes per visible row.
@@ -558,6 +595,12 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
         var lines = [];
         for (var i = 0; i < buf.length; i++) lines.push(buf.getLine(i).translateToString(true));
         sendToRN({ type: 'all_text', text: lines.join('\\n').trimEnd() });
+      }
+      else if (msg.type === 'get_cursor_line') {
+        var buf = term.buffer.active;
+        var cy = buf.cursorY + buf.viewportY;
+        var ln = buf.getLine(cy);
+        sendToRN({ type: 'cursor_line', text: ln ? ln.translateToString(true) : '' });
       }
       else if (msg.type === 'clear_selection') { term.clearSelection(); }
       else if (msg.type === 'enter_select_mode') {

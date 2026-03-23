@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useEffect, useState, useImperativeHandle, forwardRef } from 'react';
-import { Animated, Keyboard, Platform, StyleSheet, View, Text, TouchableOpacity } from 'react-native';
+import { Animated, FlatList, Keyboard, Platform, StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { WebSocketService } from '../services/websocket.service';
@@ -12,6 +12,7 @@ import { useSQLStore } from '../store/sqlStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { getThemeById } from '../constants/terminalThemes';
 import { keywordAlertService } from '../services/keywordAlert.service';
+import { searchCommands, type CommandSuggestion } from '../constants/commandSuggestions';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 
@@ -74,10 +75,11 @@ interface Props {
   rangeActive?: boolean;
   onRangeClose?: () => void;
   railWidth?: Animated.Value;
+  onPathClicked?: (path: string) => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, Props>(function TerminalView(
-  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth }: Props,
+  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked }: Props,
   ref,
 ) {
   const webViewRef  = useRef<WebView>(null);
@@ -93,6 +95,12 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   const lastAiToolRef = useRef<AiToolType>(null);
   const onAiToolDetectedRef = useRef(onAiToolDetected);
   onAiToolDetectedRef.current = onAiToolDetected;
+  const onPathClickedRef = useRef(onPathClicked);
+  onPathClickedRef.current = onPathClicked;
+
+  // ── ?? Command Suggest ────────────────────────────────────────────────────
+  const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
+  const lastInputCharRef = useRef('');
 
   // Pending resolver for requestLastLines — fulfilled when WebView replies 'last_lines'
   const pendingLinesRef = useRef<((lines: string[]) => void) | null>(null);
@@ -282,15 +290,53 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         }
         onReadyRef.current?.(msg.cols, msg.rows);
       } else if (msg.type === 'input' && sessionId) {
-        // Mark this session as "user is typing" so auto-approve pauses
-        const { markTyping } = require('../store/autoApproveStore').useAutoApproveStore.getState();
-        markTyping(sessionId);
+        const data: string = msg.data ?? '';
 
-        wsService.send({
-          type: 'terminal:input',
-          sessionId,
-          payload: { data: msg.data },
-        });
+        // ── ?? Command Suggest interception ───────────────────────────────
+        // When the user types two consecutive '?' characters, we intercept
+        // them, erase the first '?' (already sent to the shell), and request
+        // the current cursor line from xterm.js to use as a search query.
+        if (data === '?' && lastInputCharRef.current === '?') {
+          lastInputCharRef.current = '';
+          // Send backspace to erase the first '?' that was already sent
+          wsService.send({
+            type: 'terminal:input',
+            sessionId,
+            payload: { data: '\x7f' },
+          });
+          // Request the current cursor line text from xterm.js
+          if (webViewRef.current) {
+            const getLineMsg = JSON.stringify({ type: 'get_cursor_line' });
+            webViewRef.current.injectJavaScript(
+              `window.postMessage(${JSON.stringify(getLineMsg)}, '*'); true;`,
+            );
+          }
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        } else {
+          lastInputCharRef.current = data;
+
+          // Mark this session as "user is typing" so auto-approve pauses
+          const { markTyping } = require('../store/autoApproveStore').useAutoApproveStore.getState();
+          markTyping(sessionId);
+
+          wsService.send({
+            type: 'terminal:input',
+            sessionId,
+            payload: { data },
+          });
+        }
+      } else if (msg.type === 'cursor_line') {
+        // Response from xterm.js with the current cursor line text
+        const lineText: string = msg.text ?? '';
+        // Strip shell prompt prefix (e.g. "user@host:~$ ") to get only the typed command text
+        const stripped = lineText.replace(/^.*?[$#%>]\s*/, '').trim();
+        if (stripped) {
+          const results = searchCommands(stripped);
+          setSuggestions(results);
+        } else {
+          // No query text — show nothing
+          setSuggestions([]);
+        }
       } else if (msg.type === 'resize' && sessionId && msg.cols > 0 && msg.rows > 0) {
         wsService.send({
           type: 'terminal:resize',
@@ -325,11 +371,44 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
           Clipboard.setStringAsync(path);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
+      } else if (msg.type === 'path_link_clicked') {
+        const clickedPath = msg.data;
+        if (clickedPath && onPathClickedRef.current) {
+          onPathClickedRef.current(clickedPath);
+        }
       }
     } catch {
       // ignore
     }
   }, [sessionId, wsService, sendToTerminal, copyText, onRangeClose]);
+
+  // ── ?? Suggestion handlers ──────────────────────────────────────────────────
+  const dismissSuggestions = useCallback(() => {
+    setSuggestions([]);
+  }, []);
+
+  const pickSuggestion = useCallback((cmd: string) => {
+    if (!sessionId) return;
+    // Type the command into the terminal by sending it as input
+    wsService.send({
+      type: 'terminal:input',
+      sessionId,
+      payload: { data: cmd },
+    });
+    setSuggestions([]);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  }, [sessionId, wsService]);
+
+  const renderSuggestionItem = useCallback(({ item }: { item: CommandSuggestion }) => (
+    <TouchableOpacity
+      style={styles.suggestItem}
+      onPress={() => pickSuggestion(item.command)}
+      activeOpacity={0.6}
+    >
+      <Text style={styles.suggestCmd} numberOfLines={1}>{item.command}</Text>
+      <Text style={styles.suggestDesc} numberOfLines={1}>{item.description}</Text>
+    </TouchableOpacity>
+  ), [pickSuggestion]);
 
   return (
     <Animated.View
@@ -441,6 +520,27 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
           >
             <Feather name="x" size={14} color={colors.primary} />
           </TouchableOpacity>
+        </View>
+      )}
+      {visible && suggestions.length > 0 && (
+        <View style={styles.suggestOverlay}>
+          <View style={styles.suggestHeader}>
+            <Text style={styles.suggestTitle}>Vorschläge</Text>
+            <TouchableOpacity
+              style={styles.suggestDismiss}
+              onPress={dismissSuggestions}
+              activeOpacity={0.7}
+            >
+              <Feather name="x" size={14} color={colors.textDim} />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={suggestions}
+            keyExtractor={(item, idx) => `${item.command}-${idx}`}
+            renderItem={renderSuggestionItem}
+            keyboardShouldPersistTaps="handled"
+            style={styles.suggestList}
+          />
         </View>
       )}
     </Animated.View>
@@ -578,5 +678,63 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // ── ?? Suggestion overlay ────────────────────────────────────────────────
+  suggestOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: 260,
+    backgroundColor: colors.surface,
+    borderTopWidth: 1.5,
+    borderTopColor: colors.primary,
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
+    zIndex: 25,
+    overflow: 'hidden',
+  },
+  suggestHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  suggestTitle: {
+    color: colors.primary,
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: fonts.mono,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  suggestDismiss: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  suggestList: {
+    flexGrow: 0,
+  },
+  suggestItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  suggestCmd: {
+    color: colors.accent,
+    fontSize: 13,
+    fontFamily: fonts.mono,
+    fontWeight: '600',
+  },
+  suggestDesc: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
   },
 });
