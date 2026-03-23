@@ -3,6 +3,8 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import * as http from 'http';
+import { execSync } from 'child_process';
+import { getPlatform } from '../utils/platform';
 
 export interface FileEntry {
   name: string;
@@ -168,4 +170,190 @@ export function handleFileDownload(req: http.IncomingMessage, res: http.ServerRe
   } catch (e: unknown) {
     err(res, 400, e instanceof Error ? e.message : String(e));
   }
+}
+
+// ── Helpers for POST endpoints ────────────────────────────────────────
+
+function parseJsonBody(req: http.IncomingMessage, maxSize: number = 1024 * 1024): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maxSize) { req.destroy(); reject(new Error('Body too large')); return; }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+      catch { reject(new Error('Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+/** Return a non-conflicting target path by appending (2), (3), etc. */
+function resolveConflict(targetPath: string): string {
+  if (!fs.existsSync(targetPath)) return targetPath;
+  const dir = path.dirname(targetPath);
+  const ext = path.extname(targetPath);
+  const base = path.basename(targetPath, ext);
+  let i = 2;
+  while (true) {
+    const candidate = path.join(dir, `${base} (${i})${ext}`);
+    if (!fs.existsSync(candidate)) return candidate;
+    i++;
+  }
+}
+
+// ── POST /files/mkdir ─────────────────────────────────────────────────
+
+export async function handleMkdir(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseJsonBody(req);
+    const raw: string = body?.path;
+    if (!raw) return err(res, 400, 'path required');
+
+    const resolvedPath = resolvePath(raw);
+
+    if (!isWithinHome(resolvedPath)) return err(res, 403, 'Access denied: path is outside home directory');
+    if (isDeniedPath(resolvedPath)) return err(res, 403, 'Access denied: sensitive path');
+
+    if (fs.existsSync(resolvedPath)) {
+      const stat = fs.statSync(resolvedPath);
+      if (stat.isDirectory()) return err(res, 409, 'Directory already exists');
+      return err(res, 409, 'A file with that name already exists');
+    }
+
+    fs.mkdirSync(resolvedPath, { recursive: true });
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, path: resolvedPath }));
+  } catch (e: unknown) {
+    err(res, 400, e instanceof Error ? e.message : String(e));
+  }
+}
+
+// ── POST /files/move ──────────────────────────────────────────────────
+
+export async function handleMove(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseJsonBody(req);
+    const sources: string[] = body?.sources;
+    const destination: string = body?.destination;
+
+    if (!Array.isArray(sources) || sources.length === 0) return err(res, 400, 'sources array required');
+    if (!destination) return err(res, 400, 'destination required');
+
+    const resolvedDest = resolvePath(destination);
+    if (!isWithinHome(resolvedDest)) return err(res, 403, 'Access denied: destination is outside home directory');
+    if (isDeniedPath(resolvedDest)) return err(res, 403, 'Access denied: sensitive destination path');
+
+    if (!fs.existsSync(resolvedDest) || !fs.statSync(resolvedDest).isDirectory()) {
+      return err(res, 400, 'Destination must be an existing directory');
+    }
+
+    let moved = 0;
+    for (const raw of sources) {
+      const resolvedSrc = resolvePath(raw);
+      if (!isWithinHome(resolvedSrc)) return err(res, 403, `Access denied: source "${raw}" is outside home directory`);
+      if (isDeniedPath(resolvedSrc)) return err(res, 403, `Access denied: sensitive source path "${raw}"`);
+      if (!fs.existsSync(resolvedSrc)) return err(res, 400, `Source not found: ${raw}`);
+
+      const basename = path.basename(resolvedSrc);
+      let target = path.join(resolvedDest, basename);
+      target = resolveConflict(target);
+
+      fs.renameSync(resolvedSrc, target);
+      moved++;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, moved }));
+  } catch (e: unknown) {
+    err(res, 400, e instanceof Error ? e.message : String(e));
+  }
+}
+
+// ── POST /files/trash ─────────────────────────────────────────────────
+
+export async function handleTrash(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseJsonBody(req);
+    const paths: string[] = body?.paths;
+
+    if (!Array.isArray(paths) || paths.length === 0) return err(res, 400, 'paths array required');
+
+    const platform = getPlatform();
+    let trashed = 0;
+
+    for (const raw of paths) {
+      const resolved = resolvePath(raw);
+      if (!isWithinHome(resolved)) return err(res, 403, `Access denied: path "${raw}" is outside home directory`);
+      if (isDeniedPath(resolved)) return err(res, 403, `Access denied: sensitive path "${raw}"`);
+      if (!fs.existsSync(resolved)) return err(res, 400, `Path not found: ${raw}`);
+
+      if (platform === 'darwin') {
+        trashMacOS(resolved);
+      } else if (platform === 'win32') {
+        trashWindows(resolved);
+      } else {
+        trashLinux(resolved);
+      }
+      trashed++;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, trashed }));
+  } catch (e: unknown) {
+    err(res, 400, e instanceof Error ? e.message : String(e));
+  }
+}
+
+function trashMacOS(filePath: string): void {
+  const trashDir = path.join(os.homedir(), '.Trash');
+  const basename = path.basename(filePath);
+  const ext = path.extname(filePath);
+  const name = path.basename(filePath, ext);
+  let target = path.join(trashDir, basename);
+
+  if (fs.existsSync(target)) {
+    // Append timestamp to avoid conflicts
+    const ts = Date.now();
+    target = path.join(trashDir, `${name} ${ts}${ext}`);
+  }
+
+  fs.renameSync(filePath, target);
+}
+
+function trashWindows(filePath: string): void {
+  const escapedPath = filePath.replace(/'/g, "''");
+  execSync(
+    `powershell -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escapedPath}', 'OnlyErrorDialogs', 'SendToRecycleBin')"`,
+    { timeout: 10000 }
+  );
+}
+
+function trashLinux(filePath: string): void {
+  const trashFilesDir = path.join(os.homedir(), '.local', 'share', 'Trash', 'files');
+  const trashInfoDir = path.join(os.homedir(), '.local', 'share', 'Trash', 'info');
+  fs.mkdirSync(trashFilesDir, { recursive: true });
+  fs.mkdirSync(trashInfoDir, { recursive: true });
+
+  const basename = path.basename(filePath);
+  const ext = path.extname(filePath);
+  const name = path.basename(filePath, ext);
+  let trashName = basename;
+
+  if (fs.existsSync(path.join(trashFilesDir, trashName))) {
+    const ts = Date.now();
+    trashName = `${name} ${ts}${ext}`;
+  }
+
+  // Write .trashinfo metadata
+  const now = new Date();
+  const deletionDate = now.toISOString().replace(/\.\d{3}Z$/, '');
+  const trashInfo = `[Trash Info]\nPath=${filePath}\nDeletionDate=${deletionDate}\n`;
+  fs.writeFileSync(path.join(trashInfoDir, `${trashName}.trashinfo`), trashInfo);
+
+  fs.renameSync(filePath, path.join(trashFilesDir, trashName));
 }
