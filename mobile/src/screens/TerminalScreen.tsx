@@ -484,23 +484,36 @@ export function TerminalScreen({ navigation, route }: Props) {
   }, [serverId]);
 
   const handleCloseTab = useCallback((tabId: string) => {
-    pendingCreateRef.current.delete(tabId);
-    tabDimsRef.current.delete(tabId);
-    setMountedTabs((prev) => { const s = new Set(prev); s.delete(tabId); return s; });
-    const { [tabId]: _ob, ...restOb } = outputBuffersRef.current;
-    outputBuffersRef.current = restOb;
-    setOutputBuffers(restOb);
-    const { [tabId]: _la, ...restLa } = lastActivityRef.current;
-    lastActivityRef.current = restLa;
-    setLastActivity(restLa);
-    const tab = useTerminalStore.getState().getTabs(serverId).find((t) => t.id === tabId);
-    if (tab?.sessionId) {
-      wsRef.current.send({ type: 'terminal:close', sessionId: tab.sessionId });
-      clearViewBuffer(tab.sessionId);
-      useAutoApproveStore.getState().clear(tab.sessionId);
-    }
-    // Browser tabs are shared per server — don't clear on individual terminal close
-    removeTab(serverId, tabId);
+    Alert.alert(
+      'Terminal schließen',
+      'Möchtest du dieses Terminal wirklich schließen?',
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Schließen',
+          style: 'destructive',
+          onPress: () => {
+            pendingCreateRef.current.delete(tabId);
+            tabDimsRef.current.delete(tabId);
+            setMountedTabs((prev) => { const s = new Set(prev); s.delete(tabId); return s; });
+            const { [tabId]: _ob, ...restOb } = outputBuffersRef.current;
+            outputBuffersRef.current = restOb;
+            setOutputBuffers(restOb);
+            const { [tabId]: _la, ...restLa } = lastActivityRef.current;
+            lastActivityRef.current = restLa;
+            setLastActivity(restLa);
+            const tab = useTerminalStore.getState().getTabs(serverId).find((t) => t.id === tabId);
+            if (tab?.sessionId) {
+              wsRef.current.send({ type: 'terminal:close', sessionId: tab.sessionId });
+              clearViewBuffer(tab.sessionId);
+              useAutoApproveStore.getState().clear(tab.sessionId);
+            }
+            // Browser tabs are shared per server — don't clear on individual terminal close
+            removeTab(serverId, tabId);
+          },
+        },
+      ],
+    );
   }, [serverId, removeTab]);
 
   const handleRenameTab = useCallback((tabId: string, newName: string) => {
