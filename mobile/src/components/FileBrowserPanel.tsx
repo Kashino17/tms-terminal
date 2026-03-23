@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   View, Text, TouchableOpacity, FlatList, ScrollView,
   StyleSheet, ActivityIndicator, Share, Animated,
-  TouchableHighlight, Platform, Alert, Image,
+  TouchableHighlight, Platform, Alert, Image, TextInput,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -133,6 +133,16 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
   const isFav = useFavPathsStore((s) => s.isFav);
   const currentIsFav = isFav(resolvedPath);
 
+  // ── Create Folder state ──
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+
+  // ── Bulk Selection state ──
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [moveMode, setMoveMode] = useState(false);
+  const [moveSources, setMoveSources] = useState<string[]>([]);
+
   const cdToPath = useCallback((dirPath: string) => {
     if (!sessionId || !wsService) return;
     // Detect Windows paths (C:\, D:\, \\, etc.)
@@ -188,6 +198,10 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
   };
 
   const navigate = (entry: FileEntry) => {
+    if (selectMode) {
+      toggleSelected(entry.path);
+      return;
+    }
     if (!entry.isDir) return;
     Haptics.selectionAsync();
     setHistory((h) => [...h, currentPath]);
@@ -213,6 +227,10 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
   const isImage = (name: string) => IMAGE_EXTS.has(name.split('.').pop()?.toLowerCase() ?? '');
 
   const openFile = async (entry: FileEntry) => {
+    if (selectMode) {
+      toggleSelected(entry.path);
+      return;
+    }
     Haptics.selectionAsync();
 
     // Image preview — token in URL is required because RN Image source.uri
@@ -283,6 +301,130 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
     } catch {}
   };
 
+  // ── Create Folder ──────────────────────────────────────────────────────────
+  const confirmCreateFolder = async () => {
+    const trimmed = newFolderName.trim();
+    if (!trimmed) return;
+    try {
+      const r = await fetch(`${BASE}/files/mkdir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serverToken}` },
+        body: JSON.stringify({ path: `${resolvedPath}/${trimmed}` }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${r.status}`);
+      }
+      setCreatingFolder(false);
+      setNewFolderName('');
+      loadDir(currentPath);
+    } catch (e: unknown) {
+      Alert.alert('Fehler', e instanceof Error ? e.message : 'Ordner konnte nicht erstellt werden');
+    }
+  };
+
+  const cancelCreateFolder = () => {
+    setCreatingFolder(false);
+    setNewFolderName('');
+  };
+
+  // ── Bulk Selection ────────────────────────────────────────────────────────
+  const toggleSelectMode = () => {
+    Haptics.selectionAsync();
+    if (selectMode) {
+      // Exit select mode — clear everything
+      setSelectMode(false);
+      setSelected(new Set());
+      setMoveMode(false);
+      setMoveSources([]);
+    } else {
+      setSelectMode(true);
+      setSelected(new Set());
+    }
+  };
+
+  const toggleSelected = (path: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelected(new Set(entries.map((e) => e.path)));
+  };
+
+  const startMove = () => {
+    if (selected.size === 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setMoveSources([...selected]);
+    setMoveMode(true);
+    // Exit select mode UI but keep sources
+    setSelectMode(false);
+    setSelected(new Set());
+  };
+
+  const confirmMove = async () => {
+    if (moveSources.length === 0) return;
+    try {
+      const r = await fetch(`${BASE}/files/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serverToken}` },
+        body: JSON.stringify({ sources: moveSources, destination: resolvedPath }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${r.status}`);
+      }
+      setMoveMode(false);
+      setMoveSources([]);
+      loadDir(currentPath);
+    } catch (e: unknown) {
+      Alert.alert('Fehler', e instanceof Error ? e.message : 'Verschieben fehlgeschlagen');
+    }
+  };
+
+  const cancelMove = () => {
+    setMoveMode(false);
+    setMoveSources([]);
+  };
+
+  const trashSelected = () => {
+    if (selected.size === 0) return;
+    const count = selected.size;
+    Alert.alert(
+      'Papierkorb',
+      `${count} ${count === 1 ? 'Datei' : 'Dateien'} in den Papierkorb verschieben?`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Löschen',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const r = await fetch(`${BASE}/files/trash`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serverToken}` },
+                body: JSON.stringify({ paths: [...selected] }),
+              });
+              if (!r.ok) {
+                const data = await r.json().catch(() => ({}));
+                throw new Error(data.error ?? `HTTP ${r.status}`);
+              }
+              setSelectMode(false);
+              setSelected(new Set());
+              loadDir(currentPath);
+            } catch (e: unknown) {
+              Alert.alert('Fehler', e instanceof Error ? e.message : 'Löschen fehlgeschlagen');
+            }
+          },
+        },
+      ],
+    );
+  };
+
   // Breadcrumb segments from resolvedPath
   const breadcrumbs = useMemo(() => {
     if (!resolvedPath) return [];
@@ -303,12 +445,13 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
 
   const renderEntry = useCallback(({ item }: { item: FileEntry }) => {
     const { color, icon } = getType(item.name, item.isDir);
+    const isSelected = selectMode && selected.has(item.path);
     return (
       <TouchableHighlight
-        onPress={() => item.isDir ? navigate(item) : openFile(item)}
-        onLongPress={() => handleLongPress(item)}
+        onPress={() => selectMode ? toggleSelected(item.path) : (item.isDir ? navigate(item) : openFile(item))}
+        onLongPress={() => !selectMode && handleLongPress(item)}
         underlayColor={colors.surface}
-        style={{ height: scaledRowH, justifyContent: 'center' }}
+        style={{ height: scaledRowH, justifyContent: 'center', backgroundColor: isSelected ? 'rgba(59,130,246,0.08)' : 'transparent' }}
         delayLongPress={400}
         delayPressIn={100}
         accessibilityLabel={`${item.isDir ? 'Folder' : 'File'}: ${item.name}`}
@@ -316,6 +459,14 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
       >
         <View style={[styles.rowInner, { height: scaledRowH }]}>
           <View style={[styles.typeBar, { backgroundColor: color, height: scaledRowH }]} />
+          {selectMode && (
+            <Feather
+              name={isSelected ? 'check-square' : 'square'}
+              size={ri(13)}
+              color={isSelected ? colors.primary : colors.textDim}
+              style={{ marginRight: 6 }}
+            />
+          )}
           <Feather name={icon} size={ri(13)} color={color} style={styles.rowIcon} />
           <Text style={[styles.rowName, { fontSize: rf(12) }]} numberOfLines={1} ellipsizeMode="middle">
             {item.name}
@@ -323,11 +474,11 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
           <Text style={[styles.rowMeta, { fontSize: rf(10) }]}>
             {item.isDir ? '' : fmtSize(item.size)}
           </Text>
-          {item.isDir && <Feather name="chevron-right" size={ri(11)} color={colors.textDim} />}
+          {item.isDir && !selectMode && <Feather name="chevron-right" size={ri(11)} color={colors.textDim} />}
         </View>
       </TouchableHighlight>
     );
-  }, [navigate, openFile, handleLongPress, rf, rs, ri, scaledRowH]);
+  }, [navigate, openFile, handleLongPress, rf, rs, ri, scaledRowH, selectMode, selected]);
 
   const viewerTranslateY = viewerAnim.interpolate({
     inputRange: [0, 1], outputRange: [400, 0],
@@ -396,6 +547,24 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
         </TouchableOpacity>
 
         <TouchableOpacity
+          onPress={() => { setCreatingFolder(true); setNewFolderName(''); }}
+          style={styles.headerBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Neuer Ordner"
+        >
+          <Feather name="folder-plus" size={ri(14)} color={colors.textDim} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={toggleSelectMode}
+          style={styles.headerBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel={selectMode ? 'Auswahl beenden' : 'Auswählen'}
+        >
+          <Feather name="check-square" size={ri(14)} color={selectMode ? colors.primary : colors.textDim} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
           onPress={() => loadDir(currentPath)}
           style={styles.headerBtn}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -404,6 +573,31 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
           <Feather name="refresh-cw" size={ri(13)} color={colors.textDim} />
         </TouchableOpacity>
       </View>
+
+      {/* ── Select Mode header bar ── */}
+      {selectMode && (
+        <View style={[styles.selectBar, { height: rs(32) }]}>
+          <Text style={[styles.selectBarText, { fontSize: rf(11) }]}>
+            {selected.size > 0 ? `${selected.size} ausgewählt` : 'Dateien auswählen'}
+          </Text>
+          <TouchableOpacity onPress={selectAll} style={styles.selectBarBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Text style={[styles.selectBarBtnText, { fontSize: rf(10) }]}>Alle</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ── Move mode indicator ── */}
+      {moveMode && (
+        <View style={[styles.moveBanner, { height: rs(32) }]}>
+          <Feather name="folder" size={ri(12)} color="#F59E0B" />
+          <Text style={[styles.moveBannerText, { fontSize: rf(10) }]}>
+            {moveSources.length} {moveSources.length === 1 ? 'Datei' : 'Dateien'} verschieben — Zielordner öffnen
+          </Text>
+          <TouchableOpacity onPress={cancelMove} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Feather name="x" size={ri(13)} color={colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* ── Favorites ── */}
       {favPaths.length > 0 && (
@@ -467,6 +661,29 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
 
       <View style={styles.divider} />
 
+      {/* ── Create Folder inline row ── */}
+      {creatingFolder && (
+        <View style={[styles.createFolderRow, { height: rs(40) }]}>
+          <Feather name="folder-plus" size={ri(14)} color="#F59E0B" style={{ marginRight: 6 }} />
+          <TextInput
+            style={[styles.createFolderInput, { fontSize: rf(12), height: rs(28) }]}
+            value={newFolderName}
+            onChangeText={setNewFolderName}
+            placeholder="Ordnername…"
+            placeholderTextColor={colors.textDim}
+            autoFocus
+            onSubmitEditing={confirmCreateFolder}
+            returnKeyType="done"
+          />
+          <TouchableOpacity onPress={confirmCreateFolder} style={styles.createFolderBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Feather name="check" size={ri(14)} color={colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={cancelCreateFolder} style={styles.createFolderBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Feather name="x" size={ri(14)} color={colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* ── File list ── */}
       {loading ? (
         <View style={styles.center}>
@@ -483,7 +700,7 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
       ) : entries.length === 0 ? (
         <View style={styles.center}>
           <Feather name="folder" size={24} color={colors.textDim} />
-          <Text style={styles.emptyText}>Empty directory</Text>
+          <Text style={styles.emptyText}>Leerer Ordner</Text>
         </View>
       ) : (
         <FlatList
@@ -493,8 +710,32 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
           style={styles.list}
           showsVerticalScrollIndicator={false}
           initialNumToRender={30}
-          getItemLayout={(_, index) => ({ length: scaledRowH, offset: scaledRowH * index, index })}
+          getItemLayout={!creatingFolder ? ((_, index) => ({ length: scaledRowH, offset: scaledRowH * index, index })) : undefined}
         />
+      )}
+
+      {/* ── Selection Action Bar ── */}
+      {selectMode && selected.size > 0 && (
+        <View style={[styles.actionBar, { height: rs(48) }]}>
+          <TouchableOpacity style={styles.actionBarBtn} onPress={startMove} activeOpacity={0.7}>
+            <Feather name="folder" size={ri(15)} color={colors.primary} />
+            <Text style={[styles.actionBarBtnText, { fontSize: rf(11) }]}>Verschieben</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.actionBarBtn, styles.actionBarBtnDestructive]} onPress={trashSelected} activeOpacity={0.7}>
+            <Feather name="trash-2" size={ri(15)} color={colors.destructive} />
+            <Text style={[styles.actionBarBtnTextDestructive, { fontSize: rf(11) }]}>Papierkorb</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ── Move Target Bar ── */}
+      {moveMode && (
+        <View style={[styles.actionBar, { height: rs(48) }]}>
+          <TouchableOpacity style={styles.moveHereBtn} onPress={confirmMove} activeOpacity={0.7}>
+            <Feather name="download" size={ri(15)} color="#fff" />
+            <Text style={[styles.moveHereBtnText, { fontSize: rf(12) }]}>Hierhin verschieben</Text>
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* ── Text Viewer overlay ── */}
@@ -732,5 +973,126 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: 12, padding: 10,
     borderWidth: 1, borderColor: colors.border,
+  },
+
+  // ── Create Folder
+  createFolderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  createFolderInput: {
+    flex: 1,
+    color: colors.text,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    backgroundColor: colors.bg,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 8,
+    paddingVertical: 0,
+  },
+  createFolderBtn: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+  },
+
+  // ── Selection bar
+  selectBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    backgroundColor: 'rgba(59,130,246,0.08)',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  selectBarText: {
+    flex: 1,
+    color: colors.primary,
+    fontWeight: '600',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  selectBarBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: colors.primary,
+  },
+  selectBarBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+
+  // ── Move banner
+  moveBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    backgroundColor: 'rgba(245,158,11,0.1)',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: 6,
+  },
+  moveBannerText: {
+    flex: 1,
+    color: '#F59E0B',
+    fontWeight: '500',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+
+  // ── Action bar (bottom)
+  actionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-evenly',
+    paddingHorizontal: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+    gap: 8,
+  },
+  actionBarBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  actionBarBtnDestructive: {
+    borderColor: colors.destructive,
+    backgroundColor: 'rgba(239,68,68,0.06)',
+  },
+  actionBarBtnText: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  actionBarBtnTextDestructive: {
+    color: colors.destructive,
+    fontWeight: '600',
+  },
+  moveHereBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: colors.primary,
+  },
+  moveHereBtnText: {
+    color: '#fff',
+    fontWeight: '700',
   },
 });
