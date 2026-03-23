@@ -11,6 +11,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
 import { WebSocketService } from '../services/websocket.service';
 import { colors, fonts } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
@@ -27,6 +28,15 @@ type UploadState = 'idle' | 'picking' | 'uploading' | 'done' | 'error';
 
 const MAX_GALLERY_SELECTION = 12;
 
+const MAX_VIDEO_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+
+const ALLOWED_VIDEO_MIMES = new Set([
+  'video/mp4',
+  'video/quicktime',
+  'video/3gpp',
+  'video/webm',
+]);
+
 export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, serverToken }: Props) {
   const { rf, rs, ri } = useResponsive();
   const [uploadState, setUploadState] = useState<UploadState>('idle');
@@ -35,7 +45,10 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [pathCopied, setPathCopied] = useState(false);
+  const [previewIsVideo, setPreviewIsVideo] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const [videoProgress, setVideoProgress] = useState<{ loaded: number; total: number } | null>(null);
 
   const lastPath = uploadedPaths.length > 0 ? uploadedPaths[uploadedPaths.length - 1] : null;
 
@@ -48,10 +61,101 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
     setPreviewUri(null);
     setErrorMsg('');
     setPathCopied(false);
+    setPreviewIsVideo(false);
   }, []);
 
+  const validateVideo = useCallback((asset: ImagePicker.ImagePickerAsset): string | null => {
+    if (asset.duration && asset.duration > MAX_VIDEO_DURATION_MS) {
+      const mins = Math.round(asset.duration / 60000);
+      return `Video zu lang (${mins} Min, max 5 Min)`;
+    }
+    if (asset.mimeType && !ALLOWED_VIDEO_MIMES.has(asset.mimeType)) {
+      return `Format nicht unterstützt: ${asset.mimeType}`;
+    }
+    return null;
+  }, []);
+
+  const uploadVideoMultipart = useCallback(async (asset: ImagePicker.ImagePickerAsset): Promise<string | null> => {
+    const filename = asset.fileName ?? `video_${Date.now()}.mp4`;
+    const uploadUrl = `http://${serverHost}:${serverPort}/upload/media`;
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhrRef.current = xhr;
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          setVideoProgress({ loaded: e.loaded, total: e.total });
+        }
+      };
+
+      xhr.onload = () => {
+        xhrRef.current = null;
+        setVideoProgress(null);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const json = JSON.parse(xhr.responseText) as { path: string };
+            resolve(json.path);
+          } catch {
+            reject(new Error('Invalid server response'));
+          }
+        } else {
+          reject(new Error(`Server error ${xhr.status}`));
+        }
+      };
+
+      xhr.onerror = () => {
+        xhrRef.current = null;
+        setVideoProgress(null);
+        reject(new Error('Upload fehlgeschlagen'));
+      };
+
+      xhr.ontimeout = () => {
+        xhrRef.current = null;
+        setVideoProgress(null);
+        reject(new Error('Upload Timeout'));
+      };
+
+      xhr.onabort = () => {
+        xhrRef.current = null;
+        setVideoProgress(null);
+        reject(new Error('Upload abgebrochen'));
+      };
+
+      xhr.open('POST', uploadUrl);
+      xhr.timeout = 300000; // 5 minutes
+      xhr.setRequestHeader('Authorization', `Bearer ${serverToken}`);
+
+      const formData = new FormData();
+      formData.append('file', {
+        uri: asset.uri,
+        type: asset.mimeType ?? 'video/mp4',
+        name: filename,
+      } as any);
+
+      xhr.send(formData);
+    });
+  }, [serverHost, serverPort, serverToken]);
+
+  const cancelUpload = useCallback(() => {
+    if (xhrRef.current) {
+      xhrRef.current.abort();
+      xhrRef.current = null;
+    }
+    setVideoProgress(null);
+    reset();
+  }, [reset]);
+
   const uploadSingle = useCallback(async (asset: ImagePicker.ImagePickerAsset): Promise<string | null> => {
-    if (!asset.base64) return null;
+    // Camera assets may have base64, gallery assets won't (we removed base64:true)
+    let base64Data = asset.base64;
+    if (!base64Data) {
+      base64Data = await FileSystem.readAsStringAsync(asset.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+    }
+    if (!base64Data) return null;
+
     const filename = asset.fileName ?? `screenshot_${Date.now()}.jpg`;
     const uploadUrl = `http://${serverHost}:${serverPort}/upload/screenshot`;
 
@@ -63,7 +167,7 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
       },
       body: JSON.stringify({
         filename,
-        data: asset.base64,
+        data: base64Data,
         mimeType: asset.mimeType ?? 'image/jpeg',
       }),
     });
@@ -76,39 +180,66 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
     setUploadState('uploading');
     setUploadProgress({ current: 0, total: assets.length });
 
+    // Capture sessionId now — user may switch tabs during long video uploads
+    const capturedSessionId = sessionId;
+
+    // Validate videos upfront
+    for (const asset of assets) {
+      if (asset.type === 'video') {
+        const err = validateVideo(asset);
+        if (err) {
+          setUploadState('error');
+          setErrorMsg(err);
+          return;
+        }
+      }
+    }
+
     const paths: string[] = [];
     const errors: string[] = [];
 
     for (let i = 0; i < assets.length; i++) {
+      const asset = assets[i];
+      const isVideo = asset.type === 'video';
+      const label = isVideo ? 'Video' : 'Bild';
       try {
-        const path = await uploadSingle(assets[i]);
+        const path = isVideo
+          ? await uploadVideoMultipart(asset)
+          : await uploadSingle(asset);
         if (path) {
           paths.push(path);
-          if (sessionId) {
-            wsService.send({ type: 'terminal:input', sessionId, payload: { data: path } });
+          if (capturedSessionId) {
+            wsService.send({ type: 'terminal:input', sessionId: capturedSessionId, payload: { data: path } });
           }
         } else {
-          errors.push(`Bild ${i + 1}: keine Daten`);
+          errors.push(`${label} ${i + 1}: keine Daten`);
         }
       } catch (err: unknown) {
-        errors.push(`Bild ${i + 1}: ${err instanceof Error ? err.message : 'Fehler'}`);
+        // Aborted uploads — stop entirely
+        if (err instanceof Error && err.message === 'Upload abgebrochen') {
+          return; // cancelUpload already reset state
+        }
+        errors.push(`${label} ${i + 1}: ${err instanceof Error ? err.message : 'Fehler'}`);
       }
       setUploadProgress({ current: i + 1, total: assets.length });
     }
 
     setUploadedPaths(paths);
-    if (assets.length > 0) setPreviewUri(assets[0].uri);
+    if (assets.length > 0) {
+      setPreviewUri(assets[0].uri);
+      setPreviewIsVideo(assets[0].type === 'video');
+    }
 
     if (paths.length === 0) {
       setUploadState('error');
-      setErrorMsg(errors.join('\n') || 'Kein Bild konnte hochgeladen werden');
+      setErrorMsg(errors.join('\n') || 'Keine Datei konnte hochgeladen werden');
     } else if (errors.length > 0) {
       setUploadState('done');
       setErrorMsg(`${errors.length} fehlgeschlagen`);
     } else {
       setUploadState('done');
     }
-  }, [sessionId, wsService, uploadSingle]);
+  }, [sessionId, wsService, uploadSingle, uploadVideoMultipart, validateVideo]);
 
   const pickFromGallery = useCallback(async () => {
     setUploadState('picking');
@@ -121,11 +252,10 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
         allowsMultipleSelection: true,
         selectionLimit: MAX_GALLERY_SELECTION,
         quality: 1,
-        base64: true,
       });
       if (result.canceled || !result.assets?.length) {
         setUploadState('idle');
@@ -149,6 +279,7 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 1,
         base64: true,
       });
@@ -175,15 +306,15 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
     <View style={s.container}>
       {/* Header */}
       <View style={[s.header, { paddingHorizontal: rs(12), paddingVertical: rs(10), gap: rs(7) }]}>
-        <Feather name="image" size={ri(14)} color={colors.info} />
-        <Text style={[s.title, { fontSize: rf(13) }]}>Screenshots</Text>
+        <Feather name="film" size={ri(14)} color={colors.info} />
+        <Text style={[s.title, { fontSize: rf(13) }]}>Medien</Text>
       </View>
       <View style={s.divider} />
 
       {/* Idle — pick buttons */}
       {uploadState === 'idle' && (
         <View style={s.body}>
-          <Text style={[s.hint, { fontSize: rf(11) }]}>Bild hochladen → Pfad ins Terminal</Text>
+          <Text style={[s.hint, { fontSize: rf(11) }]}>Bild oder Video hochladen → Pfad ins Terminal</Text>
 
           {/* Gallery button */}
           <TouchableOpacity
@@ -196,7 +327,7 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
             <Feather name="image" size={ri(22)} color={colors.info} />
             <View>
               <Text style={[s.primaryBtnLabel, { fontSize: rf(13) }]}>Galerie</Text>
-              <Text style={[s.primaryBtnSub, { fontSize: rf(10) }]}>Bis zu {MAX_GALLERY_SELECTION} Bilder</Text>
+              <Text style={[s.primaryBtnSub, { fontSize: rf(10) }]}>Bilder & Videos (max 5 Min)</Text>
             </View>
           </TouchableOpacity>
 
@@ -230,10 +361,18 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
           <Text style={s.loadingText}>
             {uploadState === 'picking'
               ? 'Galerie öffnet…'
-              : uploadProgress.total > 1
-                ? `${uploadProgress.current}/${uploadProgress.total} hochgeladen…`
-                : 'Wird hochgeladen…'}
+              : videoProgress
+                ? `${(videoProgress.loaded / (1024 * 1024)).toFixed(0)} MB / ${(videoProgress.total / (1024 * 1024)).toFixed(0)} MB`
+                : uploadProgress.total > 1
+                  ? `${uploadProgress.current}/${uploadProgress.total} hochgeladen…`
+                  : 'Wird hochgeladen…'}
           </Text>
+          {uploadState === 'uploading' && videoProgress && (
+            <TouchableOpacity style={s.cancelBtn} onPress={cancelUpload} activeOpacity={0.75}>
+              <Feather name="x" size={14} color={colors.destructive} />
+              <Text style={s.cancelTxt}>Abbrechen</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -247,6 +386,11 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
               <View style={s.thumbBadge}>
                 <Feather name="check" size={12} color={colors.bg} />
               </View>
+              {previewIsVideo && (
+                <View style={s.playOverlay}>
+                  <Feather name="play" size={24} color="#fff" />
+                </View>
+              )}
               {uploadedPaths.length > 1 && (
                 <View style={s.thumbCount}>
                   <Text style={s.thumbCountTxt}>{uploadedPaths.length}</Text>
@@ -258,7 +402,7 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
           <Text style={s.successLabel}>
             {uploadedPaths.length === 1
               ? 'Hochgeladen & verlinkt'
-              : `${uploadedPaths.length} Bilder hochgeladen`}
+              : `${uploadedPaths.length} Dateien hochgeladen`}
           </Text>
           {errorMsg ? <Text style={s.partialError}>{errorMsg}</Text> : null}
 
@@ -556,6 +700,33 @@ const s = StyleSheet.create({
   retryTxt: {
     color: colors.text,
     fontSize: 12,
+    fontWeight: '600',
+  },
+  playOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  cancelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(239,68,68,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.25)',
+    borderRadius: 8,
+  },
+  cancelTxt: {
+    color: colors.destructive,
+    fontSize: 11,
     fontWeight: '600',
   },
 });
