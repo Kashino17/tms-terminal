@@ -11,6 +11,7 @@ import { AutoApprovePanel } from './AutoApprovePanel';
 import { AutopilotPanel } from './AutopilotPanel';
 import { WatchersPanel } from './WatchersPanel';
 import { FileBrowserPanel } from './FileBrowserPanel';
+import { PortForwardingPanel } from './PortForwardingPanel';
 import { WebSocketService } from '../services/websocket.service';
 import { useSQLStore } from '../store/sqlStore';
 
@@ -29,6 +30,7 @@ const TOOL_GROUPS: { id: string; icon: any; color: string; label: string }[][] =
   [
     { id: 'files', icon: 'folder',   color: '#F59E0B',      label: 'Files' },
     { id: 'sql',   icon: 'database', color: colors.primary, label: 'SQL' },
+    { id: 'ports', icon: 'share-2',  color: '#10B981',      label: 'Ports' },
   ],
   // Capture, Notes & Alerts
   [
@@ -207,6 +209,9 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
           )}
           {active === 'watchers' && (
             <WatchersPanel serverId={serverId} wsService={wsService} />
+          )}
+          {active === 'ports' && (
+            <PortForwardingPanel serverId={serverId} />
           )}
           {active === 'files' && (
             <FileBrowserPanel
