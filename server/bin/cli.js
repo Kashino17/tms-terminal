@@ -207,45 +207,66 @@ switch (command) {
   case 'update': {
     console.log('\x1b[34m⟳\x1b[0m  Updating TMS Terminal...');
 
-    // Stop server — PID file + port fallback
-    console.log('\x1b[34m⟳\x1b[0m  Stopping server...');
-    stopExisting();
+    // Write a self-contained update script that survives server/PTY death.
+    // This is critical for remote updates (e.g., from the mobile app's terminal):
+    // when the server stops, the PTY dies, but the detached script keeps running.
+    const UPDATE_LOG = path.join(CONFIG_DIR, 'update.log');
+    const UPDATE_SCRIPT = path.join(CONFIG_DIR, 'update.sh');
+    const CLI_PATH = path.join(ROOT, 'bin', 'cli.js');
 
-    try {
-      // Pull latest code
-      console.log('\x1b[34m⟳\x1b[0m  Pulling latest changes...');
-      execSync('git pull', { cwd: ROOT, stdio: 'inherit' });
+    ensureConfigDir();
 
-      // Install any new dependencies
-      console.log('\x1b[34m⟳\x1b[0m  Installing dependencies...');
-      execSync('npm install', { cwd: ROOT, stdio: 'inherit' });
+    const script = `#!/bin/bash
+exec > "${UPDATE_LOG}" 2>&1
+echo "[$(date)] Update started"
 
-      // Rebuild
-      console.log('\x1b[34m⟳\x1b[0m  Rebuilding...');
-      // Remove old build to force full recompile
-      const distDir = path.join(ROOT, 'dist');
-      if (fs.existsSync(distDir)) fs.rmSync(distDir, { recursive: true, force: true });
-      execSync('npx tsc', { cwd: ROOT, stdio: 'inherit' });
+cd "${ROOT}" || exit 1
 
-      // Show version from package.json
-      const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-      console.log(`\x1b[32m✓\x1b[0m  TMS Terminal updated to v${pkg.version}`);
+# 1. Stop server (kill by PID + port fallback)
+echo "[$(date)] Stopping server..."
+node "${CLI_PATH}" stop 2>/dev/null || true
+sleep 1
 
-      // Re-exec using the UPDATED cli.js (git pull may have changed it)
-      // This ensures the start logic uses the latest code
-      console.log('\x1b[34m⟳\x1b[0m  Starting server...');
-      const updatedCli = path.join(ROOT, 'bin', 'cli.js');
-      const child = spawn('node', [updatedCli, 'start'], {
-        stdio: 'inherit',
-        cwd: ROOT,
-      });
-      child.on('exit', (code) => process.exit(code ?? 0));
-      process.on('SIGINT', () => child.kill('SIGINT'));
-      process.on('SIGTERM', () => child.kill('SIGTERM'));
-    } catch (err) {
-      console.error('\x1b[31m✗\x1b[0m  Update failed:', err.message);
-      process.exit(1);
-    }
+# 2. Pull latest code
+echo "[$(date)] Pulling latest changes..."
+git pull || { echo "FAILED: git pull"; exit 1; }
+
+# 3. Install dependencies
+echo "[$(date)] Installing dependencies..."
+npm install --no-audit --no-fund || { echo "FAILED: npm install"; exit 1; }
+
+# 4. Rebuild
+echo "[$(date)] Rebuilding..."
+rm -rf "${path.join(ROOT, 'dist')}"
+npx tsc || { echo "FAILED: tsc build"; exit 1; }
+
+# 5. Read new version
+VERSION=$(node -e "console.log(require('./package.json').version)" 2>/dev/null || echo "?")
+echo "[$(date)] Updated to v$VERSION"
+
+# 6. Start server (detached)
+echo "[$(date)] Starting server..."
+nohup node "${CLI_PATH}" start >> "${UPDATE_LOG}" 2>&1 &
+echo "[$(date)] Server started (PID $!)"
+echo "[$(date)] Update complete"
+`;
+
+    fs.writeFileSync(UPDATE_SCRIPT, script, { mode: 0o755 });
+
+    console.log('\x1b[34m⟳\x1b[0m  Update wird im Hintergrund ausgeführt...');
+    console.log('\x1b[34m⟳\x1b[0m  Der Server startet automatisch neu.');
+    console.log(`\x1b[90m   Log: ${UPDATE_LOG}\x1b[0m`);
+
+    // Spawn fully detached — survives PTY death, server stop, everything
+    const child = spawn('bash', [UPDATE_SCRIPT], {
+      detached: true,
+      stdio: 'ignore',
+      cwd: ROOT,
+    });
+    child.unref();
+
+    // Give the user a moment to read the message, then exit
+    setTimeout(() => process.exit(0), 500);
     break;
   }
 
