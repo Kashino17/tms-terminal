@@ -9,6 +9,7 @@ import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { WebView } from 'react-native-webview';
 import { colors, spacing } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
 import { useFavPathsStore } from '../store/favPathsStore';
@@ -83,6 +84,109 @@ function fmtDate(ms: number): string {
   }
   return d.getFullYear().toString();
 }
+
+// ── Markdown helpers ──────────────────────────────────────────────────────────
+
+const isMarkdown = (name: string) => /\.md$/i.test(name);
+
+function simpleMarkdownToHtml(md: string): string {
+  let html = md
+    // Escape HTML entities
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    // Code blocks (``` ... ```)
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // Headers
+    .replace(/^######\s+(.+)$/gm, '<h6>$1</h6>')
+    .replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>')
+    .replace(/^####\s+(.+)$/gm, '<h4>$1</h4>')
+    .replace(/^###\s+(.+)$/gm, '<h3>$1</h3>')
+    .replace(/^##\s+(.+)$/gm, '<h2>$1</h2>')
+    .replace(/^#\s+(.+)$/gm, '<h1>$1</h1>')
+    // Bold + italic
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // Blockquote
+    .replace(/^&gt;\s+(.+)$/gm, '<blockquote>$1</blockquote>')
+    // Horizontal rule
+    .replace(/^---+$/gm, '<hr>')
+    // Unordered list
+    .replace(/^[\-\*]\s+(.+)$/gm, '<li>$1</li>')
+    // Images (before links to avoid conflict)
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">')
+    // Links
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    // Line breaks → paragraphs
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>');
+
+  // Wrap loose <li> in <ul>
+  html = html.replace(/((?:<li>.*?<\/li>\s*(?:<br>)?)+)/g, '<ul>$1</ul>');
+
+  return '<p>' + html + '</p>';
+}
+
+const markdownHtml = (content: string) => `
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #e2e8f0;
+    background: #0f172a;
+    padding: 16px;
+    word-wrap: break-word;
+  }
+  h1 { font-size: 22px; font-weight: 700; margin: 16px 0 8px; color: #f8fafc; border-bottom: 1px solid #334155; padding-bottom: 6px; }
+  h2 { font-size: 18px; font-weight: 700; margin: 14px 0 6px; color: #f8fafc; }
+  h3 { font-size: 16px; font-weight: 600; margin: 12px 0 4px; color: #f8fafc; }
+  h4, h5, h6 { font-size: 14px; font-weight: 600; margin: 10px 0 4px; color: #cbd5e1; }
+  p { margin: 8px 0; }
+  a { color: #60a5fa; text-decoration: none; }
+  code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    background: #1e293b;
+    padding: 2px 5px;
+    border-radius: 4px;
+    color: #f472b6;
+  }
+  pre {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 12px;
+    margin: 8px 0;
+    overflow-x: auto;
+  }
+  pre code { background: none; padding: 0; color: #e2e8f0; }
+  blockquote {
+    border-left: 3px solid #3b82f6;
+    padding-left: 12px;
+    margin: 8px 0;
+    color: #94a3b8;
+  }
+  ul, ol { padding-left: 20px; margin: 8px 0; }
+  li { margin: 4px 0; }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  th, td { border: 1px solid #334155; padding: 6px 10px; text-align: left; }
+  th { background: #1e293b; font-weight: 600; color: #f8fafc; }
+  hr { border: none; border-top: 1px solid #334155; margin: 16px 0; }
+  img { max-width: 100%; border-radius: 8px; }
+  strong { color: #f8fafc; }
+  em { color: #cbd5e1; }
+</style>
+</head>
+<body>${simpleMarkdownToHtml(content)}</body>
+</html>
+`;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -778,6 +882,20 @@ export function FileBrowserPanel({ serverHost, serverPort, serverToken, sessionI
                   <Text style={styles.downloadBtnText}>Download</Text>
                 </TouchableOpacity>
               </ScrollView>
+            </>
+          ) : isMarkdown(viewer.name) ? (
+            <>
+              {/* Markdown preview */}
+              <View style={styles.viewerMeta}>
+                <Text style={styles.viewerMetaText}>{viewer.lines} lines · {fmtSize(viewer.content.length)} · Markdown</Text>
+              </View>
+              <View style={styles.viewerDivider} />
+              <WebView
+                source={{ html: markdownHtml(viewer.content) }}
+                style={{ flex: 1, backgroundColor: '#0f172a' }}
+                scrollEnabled={true}
+                showsVerticalScrollIndicator={true}
+              />
             </>
           ) : (
             <>
