@@ -9,6 +9,8 @@ import { TOOL_RAIL_WIDTH } from './ToolRail';
 import { colors, fonts } from '../theme';
 import type { AiToolType } from '../types/terminal.types';
 import { useSQLStore } from '../store/sqlStore';
+import { useSettingsStore } from '../store/settingsStore';
+import { getThemeById } from '../constants/terminalThemes';
 import { keywordAlertService } from '../services/keywordAlert.service';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -83,6 +85,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   const [selText,   setSelText]   = useState('');
   const [tapStep,   setTapStep]   = useState(1); // 1=tap start  2=tap end  0=done
   const addSQLEntry = useSQLStore((state) => state.addEntry);
+  const terminalTheme = useSettingsStore((state) => state.terminalTheme);
   // Starts at TOOLBAR_HEIGHT, grows by keyboard height when keyboard opens.
   // Drives the container's bottom edge so xterm.js always stays above the keyboard.
   const bottomAnim  = useRef(new Animated.Value(TOOLBAR_HEIGHT)).current;
@@ -178,6 +181,15 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     return () => { showSub.remove(); };
   }, []);
 
+  // Apply theme changes live (user changes theme in settings while terminal is open)
+  useEffect(() => {
+    if (!readyReceivedRef.current) return;
+    const theme = getThemeById(terminalTheme);
+    webViewRef.current?.injectJavaScript(
+      `term.options.theme = ${JSON.stringify(theme.colors)}; true;`,
+    );
+  }, [terminalTheme]);
+
   const copyText = useCallback((text: string) => {
     if (!text) return;
     Clipboard.setStringAsync(text);
@@ -257,6 +269,11 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
 
       if (msg.type === 'ready') {
         readyReceivedRef.current = true;
+        // Apply saved terminal theme
+        const theme = getThemeById(useSettingsStore.getState().terminalTheme);
+        webViewRef.current?.injectJavaScript(
+          `term.options.theme = ${JSON.stringify(theme.colors)}; true;`,
+        );
         // Replay saved output into the fresh xterm.js instance BEFORE requesting
         // terminal:reattach, so history appears instantly and new output appends after.
         if (sessionId) {

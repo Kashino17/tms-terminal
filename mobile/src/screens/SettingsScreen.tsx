@@ -8,6 +8,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useLockStore } from '../store/lockStore';
 import { useSettingsStore, IDLE_THRESHOLD_OPTIONS } from '../store/settingsStore';
+import { TERMINAL_THEMES, getThemeById } from '../constants/terminalThemes';
 import { colors, fonts, fontSizes, spacing } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
 
@@ -18,10 +19,12 @@ type Props = {
 export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
-  const { idleThresholdSeconds, setIdleThreshold } = useSettingsStore();
+  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme } = useSettingsStore();
   const [idlePickerVisible, setIdlePickerVisible] = useState(false);
+  const [themePickerVisible, setThemePickerVisible] = useState(false);
 
   const currentIdleLabel = IDLE_THRESHOLD_OPTIONS.find((o) => o.value === idleThresholdSeconds)?.label ?? `${idleThresholdSeconds}s`;
+  const currentThemeName = getThemeById(terminalTheme).name;
 
   const handleLockToggle = () => {
     if (isEnabled) {
@@ -166,6 +169,66 @@ export function SettingsScreen({ navigation }: Props) {
           </Pressable>
         </Modal>
 
+        {/* ── Terminal ── */}
+        <View style={[styles.section, { marginBottom: rs(28) }]}>
+          <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>Terminal</Text>
+
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+              onPress={() => setThemePickerVisible(true)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Terminal-Theme"
+            >
+              <View style={styles.rowLeft}>
+                <Feather name="droplet" size={ri(18)} color={colors.textMuted} style={{ marginRight: rs(12) }} />
+                <View>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Terminal-Theme</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Farbschema des Terminals</Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={[styles.value, { fontSize: rf(14), marginRight: rs(4) }]}>{currentThemeName}</Text>
+                <Feather name="chevron-right" size={ri(16)} color={colors.textDim} />
+              </View>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Theme picker modal */}
+        <Modal
+          visible={themePickerVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setThemePickerVisible(false)}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={() => setThemePickerVisible(false)}>
+            <View style={[styles.modalContent, { padding: rs(8), maxWidth: isExpanded ? 400 : 320 }]}>
+              <Text style={[styles.modalTitle, { fontSize: rf(16), paddingHorizontal: rs(12), paddingVertical: rs(12) }]}>Terminal-Theme</Text>
+              {TERMINAL_THEMES.map((theme) => (
+                <TouchableOpacity
+                  key={theme.id}
+                  style={[styles.modalOption, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+                  onPress={() => { setTerminalTheme(theme.id); setThemePickerVisible(false); }}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                    <View style={[styles.themePreview, { backgroundColor: theme.colors.background, borderColor: colors.border }]}>
+                      <Text style={{ color: theme.colors.green, fontSize: rf(8), fontFamily: fonts.mono }}>$</Text>
+                      <Text style={{ color: theme.colors.foreground, fontSize: rf(8), fontFamily: fonts.mono }}> ~</Text>
+                    </View>
+                    <Text style={[styles.modalOptionText, { fontSize: rf(15) }]}>{theme.name}</Text>
+                  </View>
+                  {terminalTheme === theme.id && (
+                    <Feather name="check" size={ri(18)} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Pressable>
+        </Modal>
+
         {/* ── About ── */}
         <View style={[styles.section, { marginBottom: rs(28) }]}>
           <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>About</Text>
@@ -271,5 +334,16 @@ const styles = StyleSheet.create({
   },
   modalOptionText: {
     color: colors.text,
+  },
+  themePreview: {
+    width: 32,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1,
+    marginRight: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
   },
 });

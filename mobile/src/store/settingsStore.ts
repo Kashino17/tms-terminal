@@ -6,6 +6,9 @@ interface SettingsState {
   /** Idle threshold in seconds. 0 = notifications disabled. Default: 30. */
   idleThresholdSeconds: number;
   setIdleThreshold: (seconds: number) => void;
+  /** Terminal color theme id. Default: 'default'. */
+  terminalTheme: string;
+  setTerminalTheme: (id: string) => void;
 }
 
 export const IDLE_THRESHOLD_OPTIONS = [
@@ -23,6 +26,10 @@ export const useSettingsStore = create<SettingsState>()(
       idleThresholdSeconds: 30,
       setIdleThreshold(seconds: number) {
         set({ idleThresholdSeconds: seconds });
+      },
+      terminalTheme: 'default',
+      setTerminalTheme(id: string) {
+        set({ terminalTheme: id });
       },
     }),
     {
