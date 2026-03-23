@@ -11,6 +11,7 @@ import type { AiToolType } from '../types/terminal.types';
 import { useSQLStore } from '../store/sqlStore';
 import { keywordAlertService } from '../services/keywordAlert.service';
 import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 
 // ── View-buffer ─────────────────────────────────────────────────────────────
 // Lives at module level so it survives component unmounts (navigation away / back).
@@ -300,6 +301,12 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         if (pendingLinesRef.current) {
           pendingLinesRef.current(msg.lines ?? []);
           pendingLinesRef.current = null;
+        }
+      } else if (msg.type === 'path_tapped') {
+        const path = msg.data;
+        if (path) {
+          Clipboard.setStringAsync(path);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
       }
     } catch {

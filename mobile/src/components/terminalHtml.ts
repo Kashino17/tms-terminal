@@ -408,6 +408,32 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     }
   }, { passive: true });
 
+  /* ── Tap-to-copy paths & URLs ─────────────────────────────────────────── */
+  var pathTapX0 = 0, pathTapY0 = 0, pathTapT0 = 0;
+  var pathRegex = /((?:https?:\\/\\/[^\\s]+)|(?:~\\/[^\\s:,;'"\\)\\]]+)|(?:\\/(?:Users|home|tmp|etc|var|opt|usr|mnt)[^\\s:,;'"\\)\\]]+)|(?:(?:\\.\\/|\\.\\.\\/)[^\\s:,;'"\\)\\]]+)|(?:(?:[a-zA-Z0-9_-]+\\/){2,}[a-zA-Z0-9_.-]+))/;
+
+  termEl.addEventListener('touchstart', function(e) {
+    if (selMode || isPinching || e.touches.length !== 1) return;
+    var t = e.touches[0];
+    pathTapX0 = t.clientX; pathTapY0 = t.clientY; pathTapT0 = Date.now();
+  }, { passive: true });
+
+  termEl.addEventListener('touchend', function(e) {
+    if (selMode || isPinching) return;
+    var t = e.changedTouches[0];
+    if (!t) return;
+    if (Math.abs(t.clientX - pathTapX0) > 15 || Math.abs(t.clientY - pathTapY0) > 15) return;
+    if (Date.now() - pathTapT0 > 600) return;
+    var row = getRowFromY(pathTapY0);
+    var line = term.buffer.active.getLine(row);
+    if (!line) return;
+    var text = line.translateToString(true);
+    var m = text.match(pathRegex);
+    if (m && m[1]) {
+      sendToRN({ type: 'path_tapped', data: m[1] });
+    }
+  }, { passive: true });
+
   /* ── SQL detection (runs on xterm.js clean rendered text) ─────────────── */
   var SQL_PLAIN_RE = /((?:(?:^|\\n)\\s*SELECT|INSERT\\s+INTO|UPDATE\\s+\\S+(?:\\s+\\w+)?\\s+SET|DELETE\\s+FROM|CREATE\\s+(?:TABLE|OR\\s+REPLACE\\s+VIEW|INDEX|VIEW|DATABASE|SCHEMA|POLICY)|DROP\\s+(?:TABLE|INDEX|VIEW|DATABASE)|ALTER\\s+TABLE)\\b[\\s\\S]*?(?:;|(?=\\n\\s*\\n)))/gim;
   var SQL_BLOCK_RE = /\`\`\`(?:sql|postgresql|postgres|pgsql|mysql|sqlite|plpgsql)[^\\n]*\\n([\\s\\S]*?)\`\`\`/gi;
