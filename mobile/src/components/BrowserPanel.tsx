@@ -339,6 +339,8 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
   const [formDetected, setFormDetected] = useState(false);
   const [viewportMode, setViewportMode] = useState<'desktop' | 'mobile'>('desktop');
   const isMobileView = viewportMode === 'mobile';
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
 
   // ── DevTools state ──
   const [devTab, setDevTab] = useState<DevTab>('console');
@@ -1096,6 +1098,28 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
               <Feather name="terminal" size={17} color={colors.primary} />
             </TouchableOpacity>
 
+            {/* Back / Forward */}
+            <TouchableOpacity
+              onPress={() => webviewRef.current?.goBack()}
+              disabled={!canGoBack}
+              style={m.navBtn}
+              activeOpacity={0.7}
+              accessibilityLabel="Zurück"
+              accessibilityRole="button"
+            >
+              <Feather name="chevron-left" size={18} color={canGoBack ? colors.text : colors.textDim} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => webviewRef.current?.goForward()}
+              disabled={!canGoForward}
+              style={m.navBtn}
+              activeOpacity={0.7}
+              accessibilityLabel="Vorwärts"
+              accessibilityRole="button"
+            >
+              <Feather name="chevron-right" size={18} color={canGoForward ? colors.text : colors.textDim} />
+            </TouchableOpacity>
+
             {/* Tab strip */}
             <ScrollView
               horizontal
@@ -1194,6 +1218,8 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
                   onLoadEnd={() => setLoading(false)}
                   onMessage={handleMessage}
                   onNavigationStateChange={(navState) => {
+                    setCanGoBack(navState.canGoBack);
+                    setCanGoForward(navState.canGoForward);
                     // Persist the current URL so the tab resumes here on next open
                     if (!navState.loading && activeTab && navState.url && !navState.url.startsWith('about:')) {
                       updateTab(browserKey, activeTab.id, { lastUrl: navState.url });
