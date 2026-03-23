@@ -275,6 +275,53 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
     }, { passive: true });
   }
 
+  /* ── Scroll Acceleration (momentum swipes) ────────────────────────────── */
+  var scrollMultiplier = 1;
+  var lastSwipeEnd = 0;
+  var swipeDecayTimer = 0;
+  var swipeY0 = 0;
+  var swipeActive = false;
+  var SWIPE_WINDOW = 400;    // ms — swipes within this window build momentum
+  var MAX_MULTIPLIER = 8;    // cap
+  var DECAY_DELAY = 600;     // ms — reset multiplier after this idle time
+
+  var termEl = document.getElementById('terminal');
+  termEl.addEventListener('touchstart', function(e) {
+    if (e.touches.length !== 1 || isPinching || selMode) return;
+    swipeY0 = e.touches[0].clientY;
+    swipeActive = true;
+  }, { passive: true });
+
+  termEl.addEventListener('touchend', function(e) {
+    if (!swipeActive || isPinching) return;
+    swipeActive = false;
+    var dy = swipeY0 - (e.changedTouches[0] ? e.changedTouches[0].clientY : swipeY0);
+    var absDy = Math.abs(dy);
+    if (absDy < 20) return; // not a real swipe
+
+    var now = Date.now();
+    // Build momentum if swipes are rapid
+    if (now - lastSwipeEnd < SWIPE_WINDOW) {
+      scrollMultiplier = Math.min(scrollMultiplier + 1, MAX_MULTIPLIER);
+    } else {
+      scrollMultiplier = 1;
+    }
+    lastSwipeEnd = now;
+
+    // Apply extra scroll lines (multiplier - 1 because xterm already scrolled 1x natively)
+    if (scrollMultiplier > 1) {
+      var extraLines = Math.round(absDy / 12) * (scrollMultiplier - 1);
+      var direction = dy > 0 ? -1 : 1; // dy>0 = swipe up = scroll up (negative)
+      term.scrollLines(direction * extraLines);
+    }
+
+    // Reset multiplier after idle period
+    clearTimeout(swipeDecayTimer);
+    swipeDecayTimer = setTimeout(function() {
+      scrollMultiplier = 1;
+    }, DECAY_DELAY);
+  }, { passive: true });
+
   /* ── Two-tap row-range selection ───────────────────────────────────────── */
   var selMode = false;
   var tapStep = 0;      // 0=off  1=waiting start  2=waiting end
