@@ -1,4 +1,4 @@
-import { XTERM_CSS, XTERM_XTERM, XTERM_FIT, XTERM_WEBLINKS, XTERM_CANVAS } from '../assets/xtermBundle';
+import { XTERM_CSS, XTERM_XTERM, XTERM_FIT, XTERM_WEBLINKS } from '../assets/xtermBundle';
 
 // Build HTML with xterm.js scripts inlined (no CDN dependency).
 // Library scripts are injected via string concatenation to avoid template literal escaping issues.
@@ -52,7 +52,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 <script>` + XTERM_XTERM + `<\/script>
 <script>` + XTERM_FIT + `<\/script>
 <script>` + XTERM_WEBLINKS + `<\/script>
-<script>` + XTERM_CANVAS + `<\/script>
 <script>
 (function() {
 
@@ -121,16 +120,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       callback(links.length > 0 ? links : undefined);
     }
   });
-
-  // Use Canvas renderer instead of DOM — dramatically faster scrolling.
-  // Canvas renders to a single <canvas> element instead of creating
-  // hundreds of DOM nodes per visible row.
-  try {
-    var canvasAddon = new window.CanvasAddon.CanvasAddon();
-    term.loadAddon(canvasAddon);
-  } catch(e) {
-    // Fallback to DOM renderer if canvas not supported
-  }
 
   fitAddon.fit();
   term.attachCustomKeyEventHandler(function() { return false; });
