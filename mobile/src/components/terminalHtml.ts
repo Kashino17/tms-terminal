@@ -103,9 +103,9 @@ document.getElementById('dbg').textContent='4/5 libs loaded, init...';
       var text = line.translateToString(true);
 
       var patterns = [
-        /(\/(?:Users|home|tmp|etc|var|opt|usr|mnt|root)[^\s:,;'")\]]+)/g,
-        /(~\/[^\s:,;'")\]]+)/g,
-        /((?:\.\/|\.\.\/)[^\s:,;'")\]]+)/g,
+        /(\\/(?:Users|home|tmp|etc|var|opt|usr|mnt|root)[^\\s:,;'"\\)\\]]+)/g,
+        /(~\\/[^\\s:,;'"\\)\\]]+)/g,
+        /((?:\\.\\//|\\.\\.\\/)[^\\s:,;'"\\)\\]]+)/g,
       ];
 
       var links = [];
@@ -116,7 +116,7 @@ document.getElementById('dbg').textContent='4/5 libs loaded, init...';
           var startX = match.index;
           var path = match[1];
           // Remove trailing punctuation
-          path = path.replace(/[.,;:!?)}\]]+$/, '');
+          path = path.replace(/[.,;:!?)\\}\\]]+$/, '');
           (function(linkPath, sx) {
             links.push({
               range: { start: { x: sx + 1, y: lineNumber }, end: { x: sx + linkPath.length, y: lineNumber } },
