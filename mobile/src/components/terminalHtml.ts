@@ -105,7 +105,7 @@ document.getElementById('dbg').textContent='4/5 libs loaded, init...';
       var patterns = [
         /(\\/(?:Users|home|tmp|etc|var|opt|usr|mnt|root)[^\\s:,;'"\\)\\]]+)/g,
         /(~\\/[^\\s:,;'"\\)\\]]+)/g,
-        /((?:\\.\\//|\\.\\.\\/)[^\\s:,;'"\\)\\]]+)/g,
+        /((?:\\.\\/|\\.\\.\\/)[^\\s:,;'"\\)\\]]+)/g,
       ];
 
       var links = [];
