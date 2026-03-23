@@ -42,6 +42,11 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 </head>
 <body>
 
+<div id="dbg" style="position:fixed;top:0;left:0;right:0;z-index:999;background:#ef4444;color:#fff;font:bold 16px monospace;padding:8px 12px;">
+  1/5 HTML loaded
+</div>
+<script>window.onerror=function(m,s,l){document.getElementById('dbg').textContent='ERROR: '+m+' (line '+l+')';document.getElementById('dbg').style.background='#dc2626';};<\/script>
+
 <div id="terminal-container">
   <div id="terminal"></div>
   <input id="shadow-input" type="text"
@@ -49,10 +54,13 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     autocapitalize="none" spellcheck="false" inputmode="text"/>
 </div>
 
+<script>document.getElementById('dbg').textContent='2/5 xterm.js loading...';<\/script>
 <script>` + XTERM_XTERM + `<\/script>
+<script>document.getElementById('dbg').textContent='3/5 xterm='+typeof window.Terminal+' fit=loading...';<\/script>
 <script>` + XTERM_FIT + `<\/script>
 <script>` + XTERM_WEBLINKS + `<\/script>
 <script>
+document.getElementById('dbg').textContent='4/5 libs loaded, init...';
 (function() {
 
   var SEQ = {
@@ -79,10 +87,13 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     fastScrollModifier: 'none',
     smoothScrollDuration: 0,
   });
+  document.getElementById('dbg').textContent='4/5 Terminal created, opening...';
   var fitAddon = new window.FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
   term.open(document.getElementById('terminal'));
+  document.getElementById('dbg').textContent='5/5 READY cols='+term.cols+' rows='+term.rows;
+  setTimeout(function(){ document.getElementById('dbg').style.display='none'; }, 5000);
 
   /* ── Smart Path Links (underlined, clickable) ───────────────── */
   term.registerLinkProvider({
