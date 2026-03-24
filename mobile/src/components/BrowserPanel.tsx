@@ -341,6 +341,9 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
   const isMobileView = viewportMode === 'mobile';
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
+  const [showUrlBar, setShowUrlBar] = useState(false);
+  const [urlBarText, setUrlBarText] = useState('');
+  const [currentDisplayUrl, setCurrentDisplayUrl] = useState('');
 
   // ── DevTools state ──
   const [devTab, setDevTab] = useState<DevTab>('console');
@@ -1177,6 +1180,23 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
             <TouchableOpacity
               style={m.navBtn}
               onPress={() => {
+                setShowUrlBar((v) => {
+                  if (!v) setUrlBarText(currentDisplayUrl || activeUrl);
+                  return !v;
+                });
+              }}
+              activeOpacity={0.7}
+            >
+              <Feather
+                name="link"
+                size={15}
+                color={showUrlBar ? colors.primary : colors.textMuted}
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={m.navBtn}
+              onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 setViewportMode((v) => v === 'desktop' ? 'mobile' : 'desktop');
               }}
@@ -1205,6 +1225,39 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
             </TouchableOpacity>
           </View>
 
+          {/* URL address bar (toggleable) */}
+          {showUrlBar && (
+            <View style={m.urlBar}>
+              <TextInput
+                style={m.urlBarInput}
+                value={urlBarText}
+                onChangeText={setUrlBarText}
+                onFocus={() => setUrlBarText(currentDisplayUrl || activeUrl)}
+                onSubmitEditing={() => {
+                  let url = urlBarText.trim();
+                  if (!url) return;
+                  if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'http://' + url;
+                  if (activeTab) updateTab(browserKey, activeTab.id, { lastUrl: url });
+                  setWebviewKey((k) => k + 1);
+                }}
+                placeholder="URL eingeben..."
+                placeholderTextColor={colors.textDim}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                returnKeyType="go"
+                selectTextOnFocus
+              />
+              <TouchableOpacity
+                style={m.urlBarClose}
+                onPress={() => setShowUrlBar(false)}
+                activeOpacity={0.7}
+              >
+                <Feather name="x" size={14} color={colors.textDim} />
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* WebView + DevTools — desktop: stacked, mobile: side-by-side */}
           <View style={{ flex: 1, flexDirection: isMobileView ? 'row' : 'column' }}>
               {/* WebView pane */}
@@ -1220,6 +1273,7 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
                   onNavigationStateChange={(navState) => {
                     setCanGoBack(navState.canGoBack);
                     setCanGoForward(navState.canGoForward);
+                    if (navState.url) setCurrentDisplayUrl(navState.url);
                     // Persist the current URL so the tab resumes here on next open
                     if (!navState.loading && activeTab && navState.url && !navState.url.startsWith('about:')) {
                       updateTab(browserKey, activeTab.id, { lastUrl: navState.url });
@@ -1810,6 +1864,17 @@ const m = StyleSheet.create({
     borderBottomColor: colors.border, paddingHorizontal: 2,
   },
   navBtn: { width: 38, height: 44, alignItems: 'center', justifyContent: 'center' },
+  urlBar: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: colors.bg, borderBottomWidth: 1,
+    borderBottomColor: colors.border, paddingHorizontal: 8, paddingVertical: 4,
+  },
+  urlBarInput: {
+    flex: 1, color: colors.text, fontSize: 12, fontFamily: fonts.mono,
+    backgroundColor: colors.surfaceAlt, borderRadius: 6, paddingHorizontal: 10,
+    paddingVertical: 6, borderWidth: 1, borderColor: colors.border,
+  },
+  urlBarClose: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   tabStrip: { flex: 1 },
   tabStripContent: { alignItems: 'center', gap: 3, paddingHorizontal: 3 },
 

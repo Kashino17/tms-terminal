@@ -4,19 +4,36 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const STORAGE_KEY = 'tms:credentials';
 
 // ── Types ────────────────────────────────────────────────────────────────────
-export type FieldType = 'username' | 'password' | 'email' | 'phone' | 'address' | 'name' | 'custom';
+export type FieldType =
+  | 'username' | 'password' | 'email' | 'phone'
+  | 'firstName' | 'lastName' | 'company'
+  | 'street' | 'zip' | 'city' | 'country'
+  | 'address' | 'name'
+  | 'custom';
 
 export const FIELD_DEFS: Record<FieldType, { label: string; icon: string }> = {
-  username: { label: 'Benutzername', icon: 'user' },
-  password: { label: 'Passwort',     icon: 'lock' },
-  email:    { label: 'E-Mail',       icon: 'mail' },
-  phone:    { label: 'Telefon',      icon: 'phone' },
-  address:  { label: 'Adresse',      icon: 'map-pin' },
-  name:     { label: 'Name',         icon: 'type' },
-  custom:   { label: 'Custom',       icon: 'edit-3' },
+  username:  { label: 'Benutzername', icon: 'user' },
+  password:  { label: 'Passwort',     icon: 'lock' },
+  email:     { label: 'E-Mail',       icon: 'mail' },
+  phone:     { label: 'Telefon',      icon: 'phone' },
+  firstName: { label: 'Vorname',      icon: 'user' },
+  lastName:  { label: 'Nachname',     icon: 'user' },
+  company:   { label: 'Firma',        icon: 'briefcase' },
+  street:    { label: 'Straße',       icon: 'map-pin' },
+  zip:       { label: 'PLZ',          icon: 'hash' },
+  city:      { label: 'Stadt',        icon: 'home' },
+  country:   { label: 'Land',         icon: 'globe' },
+  address:   { label: 'Adresse',      icon: 'map-pin' },
+  name:      { label: 'Name (voll)',  icon: 'type' },
+  custom:    { label: 'Custom',       icon: 'edit-3' },
 };
 
-export const FIELD_TYPE_LIST: FieldType[] = ['username', 'password', 'email', 'phone', 'address', 'name', 'custom'];
+export const FIELD_TYPE_LIST: FieldType[] = [
+  'username', 'password', 'email', 'phone',
+  'firstName', 'lastName', 'company',
+  'street', 'zip', 'city', 'country',
+  'address', 'name', 'custom',
+];
 
 export interface CredentialField {
   id: string;
@@ -51,13 +68,67 @@ export function matchesUrl(pattern: string, url: string): boolean {
 
 // ── Autofill JS builder ──────────────────────────────────────────────────────
 const SELECTORS: Record<FieldType, string[]> = {
-  email:    ['input[type="email"]', 'input[name*="email"]', 'input[id*="email"]', 'input[autocomplete="email"]'],
-  password: ['input[type="password"]'],
-  username: ['input[name*="user"]', 'input[id*="user"]', 'input[name*="login"]', 'input[autocomplete="username"]'],
-  phone:    ['input[type="tel"]', 'input[name*="phone"]', 'input[name*="tel"]', 'input[autocomplete="tel"]'],
-  name:     ['input[name*="name"]:not([type="email"]):not([type="password"])', 'input[autocomplete="name"]'],
-  address:  ['input[name*="address"]', 'input[id*="address"]', 'textarea[name*="address"]'],
-  custom:   [],
+  email:     ['input[type="email"]', 'input[name*="email" i]', 'input[id*="email" i]', 'input[autocomplete="email"]'],
+  password:  ['input[type="password"]'],
+  username:  ['input[name*="user" i]', 'input[id*="user" i]', 'input[name*="login" i]', 'input[autocomplete="username"]'],
+  phone:     ['input[type="tel"]', 'input[name*="phone" i]', 'input[name*="tel" i]', 'input[id*="phone" i]', 'input[autocomplete="tel"]'],
+  firstName: [
+    'input[autocomplete="given-name"]', 'input[autocomplete="first-name"]',
+    'input[name*="first" i][name*="name" i]', 'input[name*="vorname" i]',
+    'input[id*="first" i][id*="name" i]', 'input[id*="vorname" i]',
+    'input[name="firstName"]', 'input[name="fname"]', 'input[name="first_name"]',
+    'input[placeholder*="Vorname" i]', 'input[placeholder*="First" i]',
+  ],
+  lastName: [
+    'input[autocomplete="family-name"]', 'input[autocomplete="last-name"]',
+    'input[name*="last" i][name*="name" i]', 'input[name*="nachname" i]', 'input[name*="surname" i]',
+    'input[id*="last" i][id*="name" i]', 'input[id*="nachname" i]',
+    'input[name="lastName"]', 'input[name="lname"]', 'input[name="last_name"]',
+    'input[placeholder*="Nachname" i]', 'input[placeholder*="Last" i]',
+  ],
+  company: [
+    'input[autocomplete="organization"]',
+    'input[name*="company" i]', 'input[name*="firma" i]', 'input[name*="organization" i]', 'input[name*="organisation" i]',
+    'input[id*="company" i]', 'input[id*="firma" i]',
+    'input[placeholder*="Firma" i]', 'input[placeholder*="Company" i]', 'input[placeholder*="Unternehmen" i]',
+  ],
+  street: [
+    'input[autocomplete="street-address"]', 'input[autocomplete="address-line1"]',
+    'input[name*="street" i]', 'input[name*="strasse" i]', 'input[name*="straße" i]', 'input[name*="address1" i]', 'input[name*="address_line" i]',
+    'input[id*="street" i]', 'input[id*="strasse" i]',
+    'input[placeholder*="Straße" i]', 'input[placeholder*="Street" i]', 'input[placeholder*="Adresse" i]',
+  ],
+  zip: [
+    'input[autocomplete="postal-code"]',
+    'input[name*="zip" i]', 'input[name*="postal" i]', 'input[name*="plz" i]', 'input[name*="postcode" i]',
+    'input[id*="zip" i]', 'input[id*="postal" i]', 'input[id*="plz" i]',
+    'input[placeholder*="PLZ" i]', 'input[placeholder*="Postleitzahl" i]', 'input[placeholder*="ZIP" i]',
+    'input[inputmode="numeric"][maxlength="5"]',
+  ],
+  city: [
+    'input[autocomplete="address-level2"]',
+    'input[name*="city" i]', 'input[name*="stadt" i]', 'input[name*="ort" i]', 'input[name*="town" i]',
+    'input[id*="city" i]', 'input[id*="stadt" i]', 'input[id*="ort" i]',
+    'input[placeholder*="Stadt" i]', 'input[placeholder*="City" i]', 'input[placeholder*="Ort" i]',
+  ],
+  country: [
+    'input[autocomplete="country-name"]', 'input[autocomplete="country"]', 'select[autocomplete="country"]',
+    'input[name*="country" i]', 'input[name*="land" i]:not([name*="bundesland" i])',
+    'select[name*="country" i]', 'select[name*="land" i]:not([name*="bundesland" i])',
+    'input[id*="country" i]', 'select[id*="country" i]',
+    'input[placeholder*="Land" i]', 'input[placeholder*="Country" i]',
+  ],
+  name:      [
+    'input[autocomplete="name"]', 'input[autocomplete="cc-name"]',
+    'input[name="name"]', 'input[name*="fullname" i]', 'input[name*="full_name" i]',
+    'input[id="name"]',
+  ],
+  address:   [
+    'input[autocomplete="street-address"]',
+    'input[name*="address" i]:not([name*="email" i])', 'input[id*="address" i]:not([id*="email" i])',
+    'textarea[name*="address" i]',
+  ],
+  custom:    [],
 };
 
 export function buildAutofillJS(fields: CredentialField[]): string {
@@ -82,6 +153,7 @@ export function buildAutofillJS(fields: CredentialField[]): string {
   return `(function(){
 function fill(ss,v){for(var i=0;i<ss.length;i++){var els=document.querySelectorAll(ss[i]);
 for(var j=0;j<els.length;j++){var el=els[j];
+if(el.tagName==='SELECT'){el.value=v;el.dispatchEvent(new Event('change',{bubbles:true}));continue}
 var p=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
 var d=Object.getOwnPropertyDescriptor(p,'value');
 if(d&&d.set){d.set.call(el,v)}else{el.value=v}
@@ -103,10 +175,16 @@ export const FORM_DETECT_JS = `
     if (_sent) return;
     var f = [];
     if (document.querySelector('input[type="password"]')) f.push('password');
-    if (document.querySelector('input[type="email"],input[name*="email"],input[id*="email"]')) f.push('email');
-    if (document.querySelector('input[type="tel"],input[name*="phone"],input[name*="tel"]')) f.push('phone');
-    if (document.querySelector('input[name*="user"],input[id*="user"],input[name*="login"]')) f.push('username');
-    if (document.querySelector('input[name*="address"],textarea[name*="address"]')) f.push('address');
+    if (document.querySelector('input[type="email"],input[name*="email" i],input[id*="email" i]')) f.push('email');
+    if (document.querySelector('input[type="tel"],input[name*="phone" i],input[name*="tel" i]')) f.push('phone');
+    if (document.querySelector('input[name*="user" i],input[id*="user" i],input[name*="login" i]')) f.push('username');
+    if (document.querySelector('input[autocomplete="given-name"],input[name*="vorname" i],input[name*="first" i]')) f.push('firstName');
+    if (document.querySelector('input[autocomplete="family-name"],input[name*="nachname" i],input[name*="last" i]')) f.push('lastName');
+    if (document.querySelector('input[name*="company" i],input[name*="firma" i],input[autocomplete="organization"]')) f.push('company');
+    if (document.querySelector('input[name*="street" i],input[name*="strasse" i],input[autocomplete="street-address"]')) f.push('street');
+    if (document.querySelector('input[name*="zip" i],input[name*="plz" i],input[name*="postal" i],input[autocomplete="postal-code"]')) f.push('zip');
+    if (document.querySelector('input[name*="city" i],input[name*="stadt" i],input[name*="ort" i],input[autocomplete="address-level2"]')) f.push('city');
+    if (document.querySelector('input[name*="address" i],textarea[name*="address" i]')) f.push('address');
     if (f.length > 0) {
       _sent = true;
       _post(JSON.stringify({ type: '__form_detected__', fields: f }));
