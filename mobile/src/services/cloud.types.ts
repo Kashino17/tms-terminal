@@ -60,7 +60,7 @@ export interface CronJob {
 }
 
 export interface CloudProvider {
-  validateToken(token: string): Promise<boolean>;
+  validateToken(): Promise<boolean>;
   listOwners(): Promise<Owner[]>;
   listProjects(ownerId: string, cursor?: string): Promise<PaginatedResult<Project>>;
   listDeployments(projectId: string, cursor?: string): Promise<PaginatedResult<Deployment>>;

@@ -54,6 +54,7 @@ export async function checkWatchedDeployments(): Promise<void> {
                   type: 'cloud_deploy',
                   platform: watch.platform,
                   projectId: watch.projectId,
+                  projectName: watch.projectName,
                 },
               },
               trigger: null,

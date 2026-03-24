@@ -18,15 +18,17 @@ import { useCloudProjectsStore } from '../store/cloudProjectsStore';
 import { colors } from '../theme';
 import { PROJECT_STATUS_COLORS } from '../services/cloud.types';
 import type { CloudProvider, Project, Owner } from '../services/cloud.types';
+import { TokenExpiredError } from '../services/cloud.types';
 import type { CloudPlatform } from '../store/cloudAuthStore';
 
 interface Props {
   platform: CloudPlatform;
   service: CloudProvider;
   onSelectProject: (project: Project) => void;
+  onTokenExpired?: () => void;
 }
 
-export function CloudProjectList({ platform, service, onSelectProject }: Props) {
+export function CloudProjectList({ platform, service, onSelectProject, onTokenExpired }: Props) {
   const { rf, rs, ri, isCompact } = useResponsive();
 
   const activeOwnerId = useCloudAuthStore((s) => s.activeOwnerId[platform]);
@@ -60,7 +62,10 @@ export function CloudProjectList({ platform, service, onSelectProject }: Props) 
           setActiveOwnerId(platform, o[0].id);
         }
       })
-      .catch(() => setError('Accounts konnten nicht geladen werden'));
+      .catch((e) => {
+        if (e instanceof TokenExpiredError) { onTokenExpired?.(); return; }
+        setError('Accounts konnten nicht geladen werden');
+      });
   }, [service]);
 
   // Load projects when owner changes or cache is stale
@@ -83,11 +88,12 @@ export function CloudProjectList({ platform, service, onSelectProject }: Props) 
         fetchedAt: Date.now(),
       });
     } catch (e: any) {
+      if (e instanceof TokenExpiredError) { onTokenExpired?.(); return; }
       setError(e.message ?? 'Fehler beim Laden der Projekte');
     } finally {
       setLoading(false);
     }
-  }, [activeOwnerId, service, platform]);
+  }, [activeOwnerId, service, platform, onTokenExpired]);
 
   const loadMore = useCallback(async () => {
     if (!activeOwnerId || !cursor || loadingMore) return;
@@ -96,11 +102,12 @@ export function CloudProjectList({ platform, service, onSelectProject }: Props) 
       const result = await service.listProjects(activeOwnerId, cursor);
       appendProjects(platform, activeOwnerId, result.items, result.cursor);
     } catch (e: any) {
+      if (e instanceof TokenExpiredError) { onTokenExpired?.(); return; }
       setError(e.message ?? 'Fehler beim Nachladen');
     } finally {
       setLoadingMore(false);
     }
-  }, [activeOwnerId, cursor, service, platform, loadingMore]);
+  }, [activeOwnerId, cursor, service, platform, loadingMore, onTokenExpired]);
 
   // Cycle to next owner on press (simple MVP switcher)
   const cycleOwner = useCallback(() => {

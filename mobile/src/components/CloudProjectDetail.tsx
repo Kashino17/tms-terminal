@@ -15,7 +15,7 @@ import * as Haptics from 'expo-haptics';
 import { useResponsive } from '../hooks/useResponsive';
 import { useCloudWatchStore, type WatchedDeployment } from '../store/cloudWatchStore';
 import { colors, fonts } from '../theme';
-import { DEPLOYMENT_STATUS_COLORS } from '../services/cloud.types';
+import { DEPLOYMENT_STATUS_COLORS, TokenExpiredError } from '../services/cloud.types';
 import { CloudEnvSheet } from './CloudEnvSheet';
 import type { CloudProvider, Project, Deployment, LogEntry, EnvVar, CronJob } from '../services/cloud.types';
 import type { CloudPlatform } from '../store/cloudAuthStore';
@@ -29,6 +29,7 @@ interface Props {
   service: CloudProvider;
   project: Project;
   onBack: () => void;
+  onTokenExpired?: () => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -53,9 +54,10 @@ interface DeploysTabProps {
   refreshKey: number;
   addWatch: (deploy: WatchedDeployment) => void;
   projectName: string;
+  onTokenExpired?: () => void;
 }
 
-function DeploysTab({ service, projectId, platform, refreshKey, addWatch, projectName }: DeploysTabProps) {
+function DeploysTab({ service, projectId, platform, refreshKey, addWatch, projectName, onTokenExpired }: DeploysTabProps) {
   const { rf, rs, ri } = useResponsive();
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,13 +81,14 @@ function DeploysTab({ service, projectId, platform, refreshKey, addWatch, projec
       setCursor(result.cursor);
       setHasMore(!!result.cursor);
     } catch (err: unknown) {
+      if (err instanceof TokenExpiredError) { onTokenExpired?.(); return; }
       const message = err instanceof Error ? err.message : 'Unbekannter Fehler';
       Alert.alert('Fehler', message);
     } finally {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [service, projectId, cursor]);
+  }, [service, projectId, cursor, onTokenExpired]);
 
   useEffect(() => {
     load(true);
@@ -693,7 +696,7 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'actions', label: '⚡',       icon: 'zap' },
 ];
 
-export function CloudProjectDetail({ platform, service, project, onBack }: Props) {
+export function CloudProjectDetail({ platform, service, project, onBack, onTokenExpired }: Props) {
   const { rf, rs, ri, isCompact } = useResponsive();
   const { addWatch } = useCloudWatchStore();
 
@@ -722,6 +725,7 @@ export function CloudProjectDetail({ platform, service, project, onBack }: Props
             refreshKey={refreshKey}
             addWatch={addWatch}
             projectName={project.name}
+            onTokenExpired={onTokenExpired}
           />
         );
       case 'env':

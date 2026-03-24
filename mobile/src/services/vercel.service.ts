@@ -100,6 +100,12 @@ export function createVercelService(token: string): CloudProvider {
       const params = new URLSearchParams({ limit: '20' });
       if (cursor) params.set('until', cursor);
       // Use cached personal user ID from listOwners() to determine owner type
+      // If _personalUserId hasn't been cached yet, fetch it
+      if (_personalUserId === null) {
+        const userRes = await get('/v2/user');
+        const user = await userRes.json();
+        _personalUserId = user.user.id;
+      }
       const isPersonal = ownerId === _personalUserId;
       const teamParam = isPersonal ? '' : `&teamId=${ownerId}`;
       const res = await get(`/v9/projects?${params}${teamParam}`);

@@ -45,7 +45,7 @@ export function CloudSetup({ platform, onConnected }: Props) {
       const service = platform === 'render'
         ? createRenderService(tokenInput.trim())
         : createVercelService(tokenInput.trim());
-      const valid = await service.validateToken(tokenInput.trim());
+      const valid = await service.validateToken();
       if (valid) {
         setToken(platform, tokenInput.trim());
         onConnected();
