@@ -8,6 +8,8 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useLockStore } from '../store/lockStore';
 import { useSettingsStore, IDLE_THRESHOLD_OPTIONS } from '../store/settingsStore';
+import { useCloudAuthStore } from '../store/cloudAuthStore';
+import { useCloudProjectsStore } from '../store/cloudProjectsStore';
 import { TERMINAL_THEMES, getThemeById } from '../constants/terminalThemes';
 import { colors, fonts, fontSizes, spacing } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
@@ -20,11 +22,31 @@ export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
   const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme } = useSettingsStore();
+  const { tokens, notificationsEnabled, pollingIntervalMs, setNotificationsEnabled, setPollingIntervalMs, clearPlatform } = useCloudAuthStore();
+  const { clearCache } = useCloudProjectsStore();
   const [idlePickerVisible, setIdlePickerVisible] = useState(false);
   const [themePickerVisible, setThemePickerVisible] = useState(false);
+  const [pollingPickerVisible, setPollingPickerVisible] = useState(false);
 
   const currentIdleLabel = IDLE_THRESHOLD_OPTIONS.find((o) => o.value === idleThresholdSeconds)?.label ?? `${idleThresholdSeconds}s`;
   const currentThemeName = getThemeById(terminalTheme).name;
+
+  const POLLING_OPTIONS = [
+    { label: '1 Min', value: 60_000 },
+    { label: '2 Min', value: 120_000 },
+    { label: '5 Min', value: 300_000 },
+  ];
+  const currentPollingLabel = POLLING_OPTIONS.find((o) => o.value === pollingIntervalMs)?.label ?? '2 Min';
+
+  const maskToken = (token: string | null) => {
+    if (!token) return null;
+    return token.slice(0, 8) + '…';
+  };
+
+  const handleDisconnectPlatform = (platform: 'render' | 'vercel') => {
+    clearPlatform(platform);
+    clearCache(platform);
+  };
 
   const handleLockToggle = () => {
     if (isEnabled) {
@@ -221,6 +243,138 @@ export function SettingsScreen({ navigation }: Props) {
                     <Text style={[styles.modalOptionText, { fontSize: rf(15) }]}>{theme.name}</Text>
                   </View>
                   {terminalTheme === theme.id && (
+                    <Feather name="check" size={ri(18)} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Pressable>
+        </Modal>
+
+        {/* ── Cloud ── */}
+        <View style={[styles.section, { marginBottom: rs(28) }]}>
+          <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>Cloud</Text>
+
+          <View style={styles.card}>
+            {/* Render row */}
+            <View style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}>
+              <View style={styles.rowLeft}>
+                <Feather name="box" size={ri(18)} color="#4353FF" style={{ marginRight: rs(12) }} />
+                <View>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Render</Text>
+                  {tokens.render ? (
+                    <Text style={[styles.rowSub, { fontSize: rf(11) }]}>{maskToken(tokens.render)} · Verbunden</Text>
+                  ) : (
+                    <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Nicht verbunden</Text>
+                  )}
+                </View>
+              </View>
+              {tokens.render && (
+                <TouchableOpacity
+                  onPress={() => handleDisconnectPlatform('render')}
+                  activeOpacity={0.7}
+                  style={{ paddingHorizontal: rs(10), paddingVertical: rs(6), backgroundColor: colors.border, borderRadius: 8 }}
+                >
+                  <Text style={{ color: colors.textMuted, fontSize: rf(13), fontWeight: '500' }}>Trennen</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
+
+            {/* Vercel row */}
+            <View style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}>
+              <View style={styles.rowLeft}>
+                <Feather name="triangle" size={ri(18)} color="#FFFFFF" style={{ marginRight: rs(12) }} />
+                <View>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Vercel</Text>
+                  {tokens.vercel ? (
+                    <Text style={[styles.rowSub, { fontSize: rf(11) }]}>{maskToken(tokens.vercel)} · Verbunden</Text>
+                  ) : (
+                    <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Nicht verbunden</Text>
+                  )}
+                </View>
+              </View>
+              {tokens.vercel && (
+                <TouchableOpacity
+                  onPress={() => handleDisconnectPlatform('vercel')}
+                  activeOpacity={0.7}
+                  style={{ paddingHorizontal: rs(10), paddingVertical: rs(6), backgroundColor: colors.border, borderRadius: 8 }}
+                >
+                  <Text style={{ color: colors.textMuted, fontSize: rf(13), fontWeight: '500' }}>Trennen</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
+
+            {/* Deploy-Alerts toggle */}
+            <TouchableOpacity
+              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+              onPress={() => setNotificationsEnabled(!notificationsEnabled)}
+              activeOpacity={0.7}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: notificationsEnabled }}
+            >
+              <View style={styles.rowLeft}>
+                <Feather name="bell" size={ri(18)} color={colors.textMuted} style={{ marginRight: rs(12) }} />
+                <View>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Deploy-Alerts</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Push bei Deploy-Ereignissen</Text>
+                </View>
+              </View>
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={setNotificationsEnabled}
+                trackColor={{ false: colors.border, true: colors.primary + '88' }}
+                thumbColor={notificationsEnabled ? colors.primary : colors.textDim}
+              />
+            </TouchableOpacity>
+
+            <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
+
+            {/* Polling-Intervall selector */}
+            <TouchableOpacity
+              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+              onPress={() => setPollingPickerVisible(true)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Polling-Intervall"
+            >
+              <View style={styles.rowLeft}>
+                <Feather name="refresh-cw" size={ri(18)} color={colors.textMuted} style={{ marginRight: rs(12) }} />
+                <View>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Polling-Intervall</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Abfrageintervall für Deploys</Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={[styles.value, { fontSize: rf(14), marginRight: rs(4) }]}>{currentPollingLabel}</Text>
+                <Feather name="chevron-right" size={ri(16)} color={colors.textDim} />
+              </View>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Polling interval picker modal */}
+        <Modal
+          visible={pollingPickerVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setPollingPickerVisible(false)}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={() => setPollingPickerVisible(false)}>
+            <View style={[styles.modalContent, { padding: rs(8), maxWidth: isExpanded ? 400 : 320 }]}>
+              <Text style={[styles.modalTitle, { fontSize: rf(16), paddingHorizontal: rs(12), paddingVertical: rs(12) }]}>Polling-Intervall</Text>
+              {POLLING_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.modalOption, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+                  onPress={() => { setPollingIntervalMs(option.value); setPollingPickerVisible(false); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.modalOptionText, { fontSize: rf(15) }]}>{option.label}</Text>
+                  {pollingIntervalMs === option.value && (
                     <Feather name="check" size={ri(18)} color={colors.primary} />
                   )}
                 </TouchableOpacity>
