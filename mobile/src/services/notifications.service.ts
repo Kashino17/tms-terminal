@@ -38,6 +38,18 @@ export function consumePendingNotificationTarget(): string | null {
   return sid;
 }
 
+// ── Pending cloud deploy navigation target ───────────────────────────────────
+// When a cloud_deploy notification is tapped, we store the target here.
+// App.tsx reads and consumes it to navigate to the right cloud project.
+let _pendingCloudTarget: { platform: 'render' | 'vercel'; projectId: string } | null = null;
+
+/** Read and consume the pending cloud navigation target (returns null if none). */
+export function consumePendingCloudTarget(): { platform: 'render' | 'vercel'; projectId: string } | null {
+  const target = _pendingCloudTarget;
+  _pendingCloudTarget = null;
+  return target;
+}
+
 /** Set up a listener for notification response (tap). */
 export function registerNotificationResponseHandler(): (() => void) {
   const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -45,6 +57,12 @@ export function registerNotificationResponseHandler(): (() => void) {
     const sessionId = data?.sessionId;
     if (typeof sessionId === 'string') {
       _pendingNotificationSessionId = sessionId;
+    }
+    if (data?.type === 'cloud_deploy') {
+      _pendingCloudTarget = {
+        platform: data.platform as 'render' | 'vercel',
+        projectId: data.projectId as string,
+      };
     }
   });
   return () => subscription.remove();
