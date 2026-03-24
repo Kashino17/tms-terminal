@@ -101,6 +101,8 @@ export function TerminalScreen({ navigation, route }: Props) {
   }, [gridVisible]);
 
   const [rtt, setRtt] = useState<number | undefined>(undefined);
+  const [quality, setQuality] = useState<import('../services/websocket.service').ConnectionQuality>('good');
+  const [jitter, setJitter] = useState<number>(0);
 
   const serverTabs = tabs[serverId] || [];
   const activeTerminalTab = serverTabs.find((t) => t.active);
@@ -350,6 +352,8 @@ export function TerminalScreen({ navigation, route }: Props) {
     const rttInterval = setInterval(() => {
       const currentRtt = wsRef.current.getRtt();
       setRtt(prev => prev === currentRtt ? prev : currentRtt);
+      setQuality(wsRef.current.getQuality());
+      setJitter(wsRef.current.getJitter());
     }, 5000);
     return () => clearInterval(rttInterval);
   }, [connState]);
@@ -705,7 +709,7 @@ export function TerminalScreen({ navigation, route }: Props) {
           <Text style={[styles.serverNameText, { fontSize: rf(15) }]} numberOfLines={1}>
             {serverName}
           </Text>
-          <ConnectionStatus state={connState} rtt={rtt} />
+          <ConnectionStatus state={connState} rtt={rtt} quality={quality} jitter={jitter} />
         </View>
         <View style={[styles.statusRight, { gap: rs(6) }]}>
           {activeTabHasBrowser && (

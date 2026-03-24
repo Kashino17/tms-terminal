@@ -6,10 +6,24 @@ type StateHandler = (state: ConnectionState) => void;
 
 const RECONNECT_BASE = 500;   // 500ms initial delay (faster recovery on mobile)
 const RECONNECT_MAX = 5000;   // cap at 5s (was 30s) — backoff: 500ms, 1s, 2s, 4s, 5s
-const PING_INTERVAL = 12000;  // 12s — inside server's 15s heartbeat window
+const PING_INTERVAL_NORMAL = 12000;  // 12s — inside server's 15s heartbeat window
+const PING_INTERVAL_FAST = 6000;     // 6s — adaptive: used when RTT is unstable
 const WATCHDOG_TIMEOUT = 30000; // 30s — 15s margin over server's 15s heartbeat
 const RTT_REPORT_INTERVAL = 5; // send RTT to server every 5 pings
 const MAX_RECONNECT_ATTEMPTS = 60; // ~5 min at max backoff — stop reconnecting after this
+
+// RTT quality thresholds
+const RTT_GOOD = 80;          // <80ms = good (green)
+const RTT_FAIR = 200;         // <200ms = fair (yellow)
+const RTT_POOR = 500;         // <500ms = poor (orange), >=500ms = bad (red)
+const RTT_STALE_THRESHOLD = 800; // if smoothed RTT exceeds this, force reconnect
+
+// EMA smoothing factor: lower = smoother (less reactive to spikes)
+const EMA_ALPHA = 0.3;
+// Jitter EMA smoothing factor
+const JITTER_ALPHA = 0.2;
+
+export type ConnectionQuality = 'good' | 'fair' | 'poor' | 'bad';
 
 export class WebSocketService {
   private ws: WebSocket | null = null;
@@ -25,8 +39,13 @@ export class WebSocketService {
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   // RTT tracking
   private pingSentAt: number | null = null;
-  private _rtt: number | undefined = undefined;
+  private _rawRtt: number | undefined = undefined;     // last raw sample
+  private _smoothedRtt: number | undefined = undefined; // EMA-smoothed RTT
+  private _jitter: number = 0;                          // EMA-smoothed jitter
+  private _quality: ConnectionQuality = 'good';
   private pingCount = 0;
+  private currentPingInterval = PING_INTERVAL_NORMAL;
+  private consecutivePoorCount = 0;                     // track sustained poor RTT
   // Auth failure detection: track quick closes (connection dying within 2s of open)
   private connectTime = 0;
   private quickCloseCount = 0;
@@ -36,9 +55,24 @@ export class WebSocketService {
     return this._state;
   }
 
-  /** Current round-trip time in ms (undefined if not yet measured) */
+  /** Smoothed round-trip time in ms (EMA-filtered, undefined if not yet measured) */
   getRtt(): number | undefined {
-    return this._rtt;
+    return this._smoothedRtt !== undefined ? Math.round(this._smoothedRtt) : undefined;
+  }
+
+  /** Raw (unsmoothed) last RTT sample */
+  getRawRtt(): number | undefined {
+    return this._rawRtt;
+  }
+
+  /** Current jitter estimate in ms (EMA of absolute RTT differences) */
+  getJitter(): number {
+    return Math.round(this._jitter);
+  }
+
+  /** Connection quality based on smoothed RTT + jitter */
+  getQuality(): ConnectionQuality {
+    return this._quality;
   }
 
   private setState(state: ConnectionState): void {
@@ -82,6 +116,7 @@ export class WebSocketService {
       this.reconnectAttempts = 0;
       this.quickCloseCount = 0;
       this.hasConnectedOnce = true;
+      this.consecutivePoorCount = 0;
       this.setState('connected');
       this.startPing();
       this.resetWatchdog();
@@ -93,8 +128,9 @@ export class WebSocketService {
         const data = JSON.parse(event.data as string);
         // RTT: measure on pong responses
         if ((data as { type?: string }).type === 'pong' && this.pingSentAt !== null) {
-          this._rtt = Date.now() - this.pingSentAt;
+          const rawRtt = Date.now() - this.pingSentAt;
           this.pingSentAt = null;
+          this.updateRttMetrics(rawRtt);
         }
         this.listeners.forEach((l) => l(data));
       } catch {
@@ -181,17 +217,82 @@ export class WebSocketService {
     this.reconnectAttempts = 0;
   }
 
+  // ── RTT metrics: EMA smoothing, jitter, quality, adaptive ping ──
+
+  private updateRttMetrics(rawRtt: number): void {
+    this._rawRtt = rawRtt;
+
+    // EMA-smoothed RTT: smooth out spikes while staying responsive
+    if (this._smoothedRtt === undefined) {
+      this._smoothedRtt = rawRtt;
+    } else {
+      this._smoothedRtt = EMA_ALPHA * rawRtt + (1 - EMA_ALPHA) * this._smoothedRtt;
+    }
+
+    // Jitter: EMA of absolute difference between raw and smoothed
+    const diff = Math.abs(rawRtt - this._smoothedRtt);
+    this._jitter = JITTER_ALPHA * diff + (1 - JITTER_ALPHA) * this._jitter;
+
+    // Connection quality from smoothed RTT
+    const rtt = this._smoothedRtt;
+    if (rtt < RTT_GOOD) {
+      this._quality = 'good';
+      this.consecutivePoorCount = 0;
+    } else if (rtt < RTT_FAIR) {
+      this._quality = 'fair';
+      this.consecutivePoorCount = 0;
+    } else if (rtt < RTT_POOR) {
+      this._quality = 'poor';
+      this.consecutivePoorCount++;
+    } else {
+      this._quality = 'bad';
+      this.consecutivePoorCount++;
+    }
+
+    // Adaptive ping: switch to fast interval when unstable, normal when stable
+    const shouldBeFast = this._quality === 'poor' || this._quality === 'bad' || this._jitter > 80;
+    const targetInterval = shouldBeFast ? PING_INTERVAL_FAST : PING_INTERVAL_NORMAL;
+    if (targetInterval !== this.currentPingInterval) {
+      this.currentPingInterval = targetInterval;
+      this.restartPingWithInterval(targetInterval);
+    }
+
+    // Stale connection: if smoothed RTT stays above threshold for 5 consecutive pings, reconnect
+    if (this.consecutivePoorCount >= 5 && this._smoothedRtt > RTT_STALE_THRESHOLD) {
+      console.warn(`[WS] Sustained poor RTT (${Math.round(this._smoothedRtt)}ms) — reconnecting`);
+      this.consecutivePoorCount = 0;
+      this._smoothedRtt = undefined;
+      this._jitter = 0;
+      this.reconnectAttempts = 0;
+      this.doConnect();
+    }
+  }
+
   private startPing(): void {
     this.pingCount = 0;
+    this.currentPingInterval = PING_INTERVAL_NORMAL;
     this.pingTimer = setInterval(() => {
-      this.pingSentAt = Date.now();
-      this.send({ type: 'ping' });
-      this.pingCount++;
-      // Report RTT to server every RTT_REPORT_INTERVAL pings
-      if (this.pingCount % RTT_REPORT_INTERVAL === 0 && this._rtt !== undefined) {
-        this.send({ type: 'client:rtt', payload: { rtt: this._rtt } } as any);
-      }
-    }, PING_INTERVAL);
+      this.doPing();
+    }, this.currentPingInterval);
+  }
+
+  private doPing(): void {
+    this.pingSentAt = Date.now();
+    this.send({ type: 'ping' });
+    this.pingCount++;
+    // Report smoothed RTT to server every RTT_REPORT_INTERVAL pings
+    if (this.pingCount % RTT_REPORT_INTERVAL === 0 && this._smoothedRtt !== undefined) {
+      this.send({ type: 'client:rtt', payload: { rtt: Math.round(this._smoothedRtt) } } as any);
+    }
+  }
+
+  private restartPingWithInterval(intervalMs: number): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+    }
+    this.pingTimer = setInterval(() => {
+      this.doPing();
+    }, intervalMs);
   }
 
   private stopPing(): void {
@@ -239,6 +340,11 @@ export class WebSocketService {
           this._state = 'disconnected';
         }
         // Network type changed (wifi↔cellular) — proactively reconnect
+        // Reset RTT metrics since network characteristics change
+        this._smoothedRtt = undefined;
+        this._jitter = 0;
+        this._quality = 'good';
+        this.consecutivePoorCount = 0;
         this.reconnectAttempts = 0;
         this.doConnect();
       }
