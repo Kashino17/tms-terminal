@@ -12,6 +12,8 @@ import { AutopilotPanel } from './AutopilotPanel';
 import { WatchersPanel } from './WatchersPanel';
 import { FileBrowserPanel } from './FileBrowserPanel';
 import { PortForwardingPanel } from './PortForwardingPanel';
+import { RenderPanel } from './RenderPanel';
+import { VercelPanel } from './VercelPanel';
 import { WebSocketService } from '../services/websocket.service';
 import { useSQLStore } from '../store/sqlStore';
 
@@ -37,6 +39,11 @@ const TOOL_GROUPS: { id: string; icon: any; color: string; label: string }[][] =
     { id: 'screenshots', icon: 'film',        color: colors.info,    label: 'Medien' },
     { id: 'autopilot',   icon: 'play-circle',  color: '#A78BFA',      label: 'Autopilot' },
     { id: 'watchers',    icon: 'bell',         color: colors.warning, label: 'Notifications' },
+  ],
+  // Cloud
+  [
+    { id: 'render', icon: 'box',      color: '#4353FF', label: 'Render' },
+    { id: 'vercel', icon: 'triangle', color: '#FFFFFF',  label: 'Vercel' },
   ],
 ];
 
@@ -235,6 +242,8 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
               initialPath={fileBrowserPath}
             />
           )}
+          {active === 'render' && <RenderPanel />}
+          {active === 'vercel' && <VercelPanel />}
         </Animated.View>
       </Animated.View>
 
