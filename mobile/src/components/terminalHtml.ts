@@ -78,45 +78,49 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     allowProposedApi: true, scrollback: 2000, disableStdin: false,
     fastScrollModifier: 'none',
     smoothScrollDuration: 0,
+    scrollSensitivity: 3,
+    fastScrollSensitivity: 10,
   });
   var fitAddon = new window.FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
   term.open(document.getElementById('terminal'));
   /* ── Smart Path Links (underlined, clickable) ───────────────── */
+  // Combined regex (single pass instead of 3 separate patterns)
+  var PATH_RE = /((?:\\/(?:Users|home|tmp|etc|var|opt|usr|mnt|root)[^\\s:,;'"\\)\\]]+)|(?:~\\/[^\\s:,;'"\\)\\]]+)|(?:(?:\\.\\/|\\.\\.\\/)[^\\s:,;'"\\)\\]]+))/g;
+  // Cache link results per line to avoid re-computing during scroll
+  var linkCache = {};
+  var linkCacheSize = 0;
   term.registerLinkProvider({
     provideLinks: function(lineNumber, callback) {
+      // Return cached result if available
+      var cacheKey = lineNumber + ':' + term.buffer.active.viewportY;
+      if (linkCache[cacheKey] !== undefined) { callback(linkCache[cacheKey]); return; }
+
       var line = term.buffer.active.getLine(lineNumber - 1);
       if (!line) { callback(undefined); return; }
       var text = line.translateToString(true);
 
-      var patterns = [
-        /(\\/(?:Users|home|tmp|etc|var|opt|usr|mnt|root)[^\\s:,;'"\\)\\]]+)/g,
-        /(~\\/[^\\s:,;'"\\)\\]]+)/g,
-        /((?:\\.\\/|\\.\\.\\/)[^\\s:,;'"\\)\\]]+)/g,
-      ];
-
       var links = [];
-      for (var p = 0; p < patterns.length; p++) {
-        var re = patterns[p];
-        var match;
-        while ((match = re.exec(text)) !== null) {
-          var startX = match.index;
-          var path = match[1];
-          // Remove trailing punctuation
-          path = path.replace(/[.,;:!?)\\}\\]]+$/, '');
-          (function(linkPath, sx) {
-            links.push({
-              range: { start: { x: sx + 1, y: lineNumber }, end: { x: sx + linkPath.length, y: lineNumber } },
-              text: linkPath,
-              activate: function() {
-                sendToRN({ type: 'path_link_clicked', data: linkPath });
-              }
-            });
-          })(path, startX);
-        }
+      var match;
+      PATH_RE.lastIndex = 0;
+      while ((match = PATH_RE.exec(text)) !== null) {
+        var startX = match.index;
+        var path = match[1].replace(/[.,;:!?)\\}\\]]+$/, '');
+        (function(linkPath, sx) {
+          links.push({
+            range: { start: { x: sx + 1, y: lineNumber }, end: { x: sx + linkPath.length, y: lineNumber } },
+            text: linkPath,
+            activate: function() { sendToRN({ type: 'path_link_clicked', data: linkPath }); }
+          });
+        })(path, startX);
       }
-      callback(links.length > 0 ? links : undefined);
+      var result = links.length > 0 ? links : undefined;
+      // Cache with eviction at 500 entries
+      if (linkCacheSize > 500) { linkCache = {}; linkCacheSize = 0; }
+      linkCache[cacheKey] = result;
+      linkCacheSize++;
+      callback(result);
     }
   });
 
@@ -310,9 +314,9 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   var swipeDecayTimer = 0;
   var swipeY0 = 0;
   var swipeActive = false;
-  var SWIPE_WINDOW = 400;    // ms — swipes within this window build momentum
-  var MAX_MULTIPLIER = 8;    // cap
-  var DECAY_DELAY = 600;     // ms — reset multiplier after this idle time
+  var SWIPE_WINDOW = 500;    // ms — swipes within this window build momentum
+  var MAX_MULTIPLIER = 16;   // cap (was 8 — doubled for faster scrolling)
+  var DECAY_DELAY = 800;     // ms — reset multiplier after this idle time
 
   var termEl = document.getElementById('terminal');
   termEl.addEventListener('touchstart', function(e) {
@@ -329,20 +333,19 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     if (absDy < 20) return; // not a real swipe
 
     var now = Date.now();
-    // Build momentum if swipes are rapid
+    // Build momentum if swipes are rapid — ramp up by 2 per swipe for faster acceleration
     if (now - lastSwipeEnd < SWIPE_WINDOW) {
-      scrollMultiplier = Math.min(scrollMultiplier + 1, MAX_MULTIPLIER);
+      scrollMultiplier = Math.min(scrollMultiplier + 2, MAX_MULTIPLIER);
     } else {
       scrollMultiplier = 1;
     }
     lastSwipeEnd = now;
 
-    // Apply extra scroll lines (multiplier - 1 because xterm already scrolled 1x natively)
-    if (scrollMultiplier > 1) {
-      var extraLines = Math.round(absDy / 12) * (scrollMultiplier - 1);
-      var direction = dy > 0 ? -1 : 1; // dy>0 = swipe up = scroll up (negative)
-      term.scrollLines(direction * extraLines);
-    }
+    // Apply extra scroll lines — always boost by at least 2x base
+    var baseLines = Math.round(absDy / 10);
+    var extraLines = baseLines * Math.max(1, scrollMultiplier - 1);
+    var direction = dy > 0 ? -1 : 1; // dy>0 = swipe up = scroll up (negative)
+    term.scrollLines(direction * extraLines);
 
     // Reset multiplier after idle period
     clearTimeout(swipeDecayTimer);
