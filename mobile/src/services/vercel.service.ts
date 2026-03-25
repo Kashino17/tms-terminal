@@ -199,12 +199,13 @@ export function createVercelService(token: string): CloudProvider {
     },
 
     async listEnvVars(projectId) {
-      const res = await get(`/v9/projects/${projectId}/env`);
+      // decrypt=true returns actual values instead of encrypted ciphertext blobs
+      const res = await get(`/v9/projects/${projectId}/env?decrypt=true`);
       const data = await res.json();
       return (data.envs ?? []).map((e: any) => ({
         id: e.id,
         key: e.key,
-        value: e.value ?? '••••••',
+        value: e.value ?? '',
         scope: e.target ?? ['production', 'preview', 'development'],
       }));
     },
@@ -222,6 +223,7 @@ export function createVercelService(token: string): CloudProvider {
       await patch(`/v10/projects/${projectId}/env/${envId}`, {
         value: env.value,
         target: env.scope,
+        type: 'encrypted',
       });
     },
 
