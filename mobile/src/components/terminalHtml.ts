@@ -78,8 +78,8 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     allowProposedApi: true, scrollback: 2000, disableStdin: false,
     fastScrollModifier: 'none',
     smoothScrollDuration: 0,
-    scrollSensitivity: 3,
-    fastScrollSensitivity: 10,
+    scrollSensitivity: 2,
+    fastScrollSensitivity: 8,
   });
   var fitAddon = new window.FitAddon.FitAddon();
   term.loadAddon(fitAddon);
@@ -341,11 +341,18 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     }
     lastSwipeEnd = now;
 
-    // Apply extra scroll lines — always boost by at least 2x base
-    var baseLines = Math.round(absDy / 10);
-    var extraLines = baseLines * Math.max(1, scrollMultiplier - 1);
-    var direction = dy > 0 ? -1 : 1; // dy>0 = swipe up = scroll up (negative)
-    term.scrollLines(direction * extraLines);
+    // Apply extra scroll lines when momentum builds
+    if (scrollMultiplier > 1) {
+      var baseLines = Math.round(absDy / 12);
+      var extraLines = baseLines * (scrollMultiplier - 1);
+      var direction = dy > 0 ? -1 : 1; // dy>0 = swipe up = scroll up (negative)
+      // Preserve userScrolledUp state — don't let our own scrollLines() reset it
+      var wasScrolledUp = userScrolledUp;
+      term.scrollLines(direction * extraLines);
+      // If user was scrolling up, keep them scrolled up (don't snap to bottom)
+      if (direction === -1) userScrolledUp = true;
+      else userScrolledUp = wasScrolledUp;
+    }
 
     // Reset multiplier after idle period
     clearTimeout(swipeDecayTimer);
