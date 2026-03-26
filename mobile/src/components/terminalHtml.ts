@@ -223,46 +223,29 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   shadowInput.addEventListener('compositionstart', function() { isComposing = true; });
   shadowInput.addEventListener('compositionend', function() {
     isComposing = false;
-    setTimeout(function() {
-      if (!isComposing) { shadowInput.value = ''; prevValue = ''; }
-    }, 50);
   });
 
-  // beforeinput fires EVEN when the field is empty — catches backspace
-  // that the 'input' event misses on Android when value is ''.
+  // ── Diff-based input ──────────────────────────────────────────────────
+  // We do NOT clear the field after every character.  Keeping the value
+  // in sync with the keyboard's internal state prevents Samsung Keyboard
+  // from firing spurious deleteContentBackward + insertReplacementText
+  // events that erase already-displayed terminal output.
+  //
+  // All input — normal typing, composition, prediction commit — is
+  // handled uniformly by comparing the current value to prevValue.
+
+  // beforeinput: only needed for backspace/delete when the field is
+  // already empty (Android's input event won't fire in that case).
   var deleteHandledByBeforeInput = false;
   shadowInput.addEventListener('beforeinput', function(e) {
     var it = e.inputType || '';
-    if (it === 'deleteContentBackward') {
+    if (it === 'deleteContentBackward' && shadowInput.value.length === 0) {
       e.preventDefault();
-      // Only send backspace when the field actually has content.
-      // Samsung keyboards fire deleteContentBackward during prediction
-      // commit (e.g. pressing space) even after we cleared the field —
-      // sending a backspace would erase already-displayed terminal output.
-      if (shadowInput.value.length > 0) {
-        sendKey(SEQ.bs);
-      }
-      shadowInput.value = ''; prevValue = '';
+      sendKey(SEQ.bs);
       deleteHandledByBeforeInput = true;
-    } else if (it === 'deleteContentForward') {
+    } else if (it === 'deleteContentForward' && shadowInput.value.length === 0) {
       e.preventDefault();
-      if (shadowInput.value.length > 0) {
-        sendKey('\\x1b[3~');
-      }
-      shadowInput.value = ''; prevValue = '';
-      deleteHandledByBeforeInput = true;
-    } else if (it === 'insertReplacementText') {
-      // Samsung keyboard prediction commit: the keyboard replaces its
-      // internal "composed" word with the final text + trigger char
-      // (space, punctuation).  Since we already sent each character
-      // individually and cleared the field, only forward the trailing
-      // trigger character to avoid re-sending the entire word.
-      e.preventDefault();
-      var repl = e.data || '';
-      if (repl.length > 0) {
-        sendKey(repl.charAt(repl.length - 1));
-      }
-      shadowInput.value = ''; prevValue = '';
+      sendKey('\\x1b[3~');
       deleteHandledByBeforeInput = true;
     } else {
       deleteHandledByBeforeInput = false;
@@ -270,41 +253,31 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   });
 
   shadowInput.addEventListener('input', function(e) {
-    // Skip if beforeinput already handled this delete
     if (deleteHandledByBeforeInput) { deleteHandledByBeforeInput = false; return; }
 
     var cur = shadowInput.value;
-    var it = e.inputType || '';
 
-    // Fallback deletion (in case beforeinput didn't fire)
-    if (it.indexOf('delete') === 0 || cur.length < prevValue.length) {
-      var del = Math.max(1, prevValue.length - cur.length);
+    // Deletion: field got shorter → send backspaces for the difference
+    if (cur.length < prevValue.length) {
+      var del = prevValue.length - cur.length;
       var bs = '';
       for (var i = 0; i < del; i++) bs += SEQ.bs;
       sendKey(bs);
-      shadowInput.value = ''; prevValue = '';
+      prevValue = cur;
       return;
     }
 
-    // Non-composition: use e.data and clear immediately.
-    // Clearing after every char prevents value accumulation that causes
-    // Samsung keyboard to desync on the Fold 7 unfolded screen.
-    if (!isComposing && e.data) {
-      sendKey(e.data);
-      shadowInput.value = ''; prevValue = '';
-      return;
-    }
-
-    // Composition: diff-based (can't clear during composition —
-    // keyboard needs the value for prediction/autocorrect)
+    // Insertion (normal typing, prediction commit, composition):
+    // send only the new characters appended since last event.
     var added = cur.slice(prevValue.length);
     if (added === '\\n' || added === '\\r' || added === '\\r\\n') {
       sendKey(SEQ.enter); shadowInput.value = ''; prevValue = ''; return;
     }
     if (added) sendKey(added);
     prevValue = cur;
-    // Safety net: clear if value grows too long during composition
-    if (cur.length > 50) { shadowInput.value = ''; prevValue = ''; }
+
+    // Safety net: clear if value grows very long to prevent memory issues
+    if (cur.length > 120) { shadowInput.value = ''; prevValue = ''; }
   });
 
   /* ── Resize ────────────────────────────────────────── */
@@ -364,58 +337,12 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     }, { passive: true });
   }
 
-  /* ── Scroll Acceleration (momentum swipes) ────────────────────────────── */
-  var scrollMultiplier = 1;
-  var lastSwipeEnd = 0;
-  var swipeDecayTimer = 0;
-  var swipeY0 = 0;
-  var swipeActive = false;
-  var SWIPE_WINDOW = 500;    // ms — swipes within this window build momentum
-  var MAX_MULTIPLIER = 16;   // cap (was 8 — doubled for faster scrolling)
-  var DECAY_DELAY = 800;     // ms — reset multiplier after this idle time
+  // Scroll acceleration removed — xterm.js native scrollSensitivity (2) and
+  // fastScrollSensitivity (8) handle momentum scrolling.  The custom multiplier
+  // (up to 16×) was additive and caused the viewport to shoot to the top
+  // on fast swipes.
 
   var termEl = document.getElementById('terminal');
-  termEl.addEventListener('touchstart', function(e) {
-    if (e.touches.length !== 1 || isPinching || selMode) return;
-    swipeY0 = e.touches[0].clientY;
-    swipeActive = true;
-  }, { passive: true });
-
-  termEl.addEventListener('touchend', function(e) {
-    if (!swipeActive || isPinching) return;
-    swipeActive = false;
-    var dy = swipeY0 - (e.changedTouches[0] ? e.changedTouches[0].clientY : swipeY0);
-    var absDy = Math.abs(dy);
-    if (absDy < 20) return; // not a real swipe
-
-    var now = Date.now();
-    // Build momentum if swipes are rapid — ramp up by 2 per swipe for faster acceleration
-    if (now - lastSwipeEnd < SWIPE_WINDOW) {
-      scrollMultiplier = Math.min(scrollMultiplier + 2, MAX_MULTIPLIER);
-    } else {
-      scrollMultiplier = 1;
-    }
-    lastSwipeEnd = now;
-
-    // Apply extra scroll lines when momentum builds
-    if (scrollMultiplier > 1) {
-      var baseLines = Math.round(absDy / 12);
-      var extraLines = baseLines * (scrollMultiplier - 1);
-      var direction = dy > 0 ? -1 : 1; // dy>0 = swipe up = scroll up (negative)
-      // Preserve userScrolledUp state — don't let our own scrollLines() reset it
-      var wasScrolledUp = userScrolledUp;
-      term.scrollLines(direction * extraLines);
-      // If user was scrolling up, keep them scrolled up (don't snap to bottom)
-      if (direction === -1) userScrolledUp = true;
-      else userScrolledUp = wasScrolledUp;
-    }
-
-    // Reset multiplier after idle period
-    clearTimeout(swipeDecayTimer);
-    swipeDecayTimer = setTimeout(function() {
-      scrollMultiplier = 1;
-    }, DECAY_DELAY);
-  }, { passive: true });
 
   /* ── Two-tap row-range selection ───────────────────────────────────────── */
   var selMode = false;
