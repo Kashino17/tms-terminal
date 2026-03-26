@@ -221,21 +221,24 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     return null;
   }
 
-  shadowInput.addEventListener('compositionstart', function() { isComposing = true; });
-  shadowInput.addEventListener('compositionend', function() {
-    isComposing = false;
-  });
-
-  // ── Deferred backspace system ──────────────────────────────────────────
-  // Samsung prediction cleanup fires deleteContentBackward × N followed by
-  // an insertion (insertText/insertReplacementText).  If we send backspaces
-  // immediately, the word on the terminal is erased before Samsung re-types
-  // it — causing the "word deleted on space" bug.
+  // ── preventDefault-based input ──────────────────────────────────────
+  // By calling preventDefault() on ALL beforeinput events, the field
+  // value NEVER changes.  Samsung Keyboard therefore cannot track field
+  // content and cannot fire spurious deleteContentBackward events that
+  // erase terminal output when it commits a prediction.
   //
-  // Fix: defer backspaces for 40 ms.  If an insertion follows (prediction
-  // commit), cancel the backspaces and only send the trigger char (space).
-  // If no insertion follows within 40 ms, it was a real user backspace —
-  // flush normally.
+  // Each character is extracted from e.data and sent directly.
+  // Composition (CJK / Samsung prediction bar) is handled separately:
+  //   - beforeinput is NOT prevented during composition (spec says
+  //     insertCompositionText is not cancelable)
+  //   - the input event diffs against compBuf
+  //   - compositionend clears the field
+  //
+  // Deferred backspace (200ms) still protects against Samsung phantom
+  // deletes that come from its internal buffer tracking.
+
+  var compBuf = '';
+  var ignoreDeletesUntil = 0;
   var pendingBs = 0;
   var pendingBsTimer = null;
 
@@ -250,77 +253,89 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     pendingBs = 0;
   }
 
-  // beforeinput: backspace/delete on empty field + Enter fallback for
-  // soft keyboards that don't fire keydown for Enter.
-  var handledByBeforeInput = false;
+  shadowInput.addEventListener('compositionstart', function() {
+    isComposing = true;
+    compBuf = '';
+  });
+  shadowInput.addEventListener('compositionend', function() {
+    isComposing = false;
+    compBuf = '';
+    shadowInput.value = '';
+    prevValue = '';
+    // Samsung fires deleteContentBackward cleanup after compositionend.
+    // Ignore deletes for 150ms so they don't erase terminal output.
+    ignoreDeletesUntil = Date.now() + 150;
+  });
+
   shadowInput.addEventListener('beforeinput', function(e) {
     var it = e.inputType || '';
-    if (it === 'deleteContentBackward' && shadowInput.value.length === 0) {
-      e.preventDefault();
-      flushPendingBs();
-      sendKey(SEQ.bs);
-      handledByBeforeInput = true;
-    } else if (it === 'deleteContentForward' && shadowInput.value.length === 0) {
-      e.preventDefault();
-      flushPendingBs();
+
+    // During composition, let the browser handle field updates.
+    // We pick up changes in the input event via compBuf diff.
+    if (isComposing) return;
+
+    e.preventDefault();
+
+    if (it === 'insertText') {
+      if (pendingBs > 0) {
+        // Insertion after deferred deletes → Samsung prediction commit.
+        // Cancel backspaces, send only the typed character.
+        cancelPendingBs();
+      }
+      if (e.data) sendKey(e.data);
+    } else if (it === 'insertReplacementText') {
+      cancelPendingBs();
+      // Samsung prediction: chars already sent individually.
+      // Only send the trailing trigger character (space/punctuation).
+      var d = e.data || '';
+      if (d.length > 0) sendKey(d.charAt(d.length - 1));
+    } else if (it === 'deleteContentBackward') {
+      if (Date.now() < ignoreDeletesUntil) return; // post-composition cleanup
+      // Defer: might be Samsung phantom delete from its internal buffer.
+      // If an insertion follows within 200ms, the backspaces get cancelled.
+      pendingBs++;
+      if (pendingBsTimer) clearTimeout(pendingBsTimer);
+      pendingBsTimer = setTimeout(flushPendingBs, 200);
+    } else if (it === 'deleteContentForward') {
+      if (Date.now() < ignoreDeletesUntil) return;
       sendKey('\\x1b[3~');
-      handledByBeforeInput = true;
     } else if (it === 'insertLineBreak' || it === 'insertParagraph') {
-      e.preventDefault();
       cancelPendingBs();
       isComposing = false;
       sendKey(SEQ.enter);
-      shadowInput.value = ''; prevValue = '';
-      handledByBeforeInput = true;
-    } else {
-      handledByBeforeInput = false;
+    } else if (it === 'insertFromPaste') {
+      cancelPendingBs();
+      var txt = e.data;
+      if (!txt && e.dataTransfer) txt = e.dataTransfer.getData('text/plain');
+      if (txt) sendKey(txt);
     }
   });
 
+  // input event: fires for composition (where we didn't preventDefault)
+  // or as fallback if beforeinput wasn't supported for some inputType.
   shadowInput.addEventListener('input', function(e) {
-    if (handledByBeforeInput) { handledByBeforeInput = false; return; }
-
     var cur = shadowInput.value;
 
-    // ── Prefix match: field was appended — send the new characters
-    if (cur.length >= prevValue.length && cur.slice(0, prevValue.length) === prevValue) {
-      var added = cur.slice(prevValue.length);
-      if (added === '\\n' || added === '\\r' || added === '\\r\\n') {
-        cancelPendingBs();
-        sendKey(SEQ.enter); shadowInput.value = ''; prevValue = ''; return;
+    if (isComposing) {
+      // Diff against composition buffer
+      if (cur.length > compBuf.length) {
+        sendKey(cur.slice(compBuf.length));
+      } else if (cur.length < compBuf.length) {
+        var del = compBuf.length - cur.length;
+        for (var i = 0; i < del; i++) sendKey(SEQ.bs);
       }
-      // If backspaces are pending and an insertion follows, it's Samsung
-      // prediction cleanup (delete word → re-insert word + trigger).
-      // Cancel the backspaces and only send the trigger character.
-      if (pendingBs > 0 && added) {
-        cancelPendingBs();
-        var last = added.charAt(added.length - 1);
-        sendKey(last);
-        prevValue = cur;
-      } else {
-        if (added) sendKey(added);
-        prevValue = cur;
-      }
-    }
-    // ── Pure deletion: defer backspaces (might be Samsung prediction cleanup)
-    else if (cur.length < prevValue.length && cur === prevValue.slice(0, cur.length)) {
-      var del = prevValue.length - cur.length;
-      pendingBs += del;
-      if (pendingBsTimer) clearTimeout(pendingBsTimer);
-      pendingBsTimer = setTimeout(flushPendingBs, 40);
-      prevValue = cur;
-    }
-    // ── Mismatch: Samsung prediction reset
-    else {
-      cancelPendingBs();
-      if (cur) sendKey(cur);
-      prevValue = cur;
+      compBuf = cur;
+      return;
     }
 
-    // Clear on word boundary or when field gets long
-    if (cur.length > 20 || (!isComposing && cur.indexOf(' ') !== -1)) {
-      shadowInput.value = ''; prevValue = '';
+    // Non-composition fallback (beforeinput should have handled it,
+    // but some inputTypes or browsers might not support preventDefault).
+    if (e.data) {
+      if (pendingBs > 0) cancelPendingBs();
+      sendKey(e.data);
     }
+    shadowInput.value = '';
+    prevValue = '';
   });
 
   /* ── Resize ────────────────────────────────────────── */
