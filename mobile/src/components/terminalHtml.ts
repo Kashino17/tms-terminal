@@ -306,10 +306,11 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   }, { passive: true });
 
   // Track scroll position for sticky-scroll via the xterm viewport
+  // Only update when user is actively touching (same gate as term.onScroll)
   var vp = document.querySelector('.xterm-viewport');
   if (vp) {
     vp.addEventListener('scroll', function() {
-      userScrolledUp = !isAtBottom();
+      if (userIsTouching) userScrolledUp = !isAtBottom();
     }, { passive: true });
   }
 
@@ -566,6 +567,7 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   // If they scroll up, we stop auto-scrolling. If they scroll
   // back to the bottom, we resume auto-scrolling.
   var userScrolledUp = false;
+  var userIsTouching = false; // true while finger is on screen
 
   // Check if viewport is at the bottom of the buffer
   function isAtBottom() {
@@ -573,11 +575,24 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     return buf.viewportY >= buf.baseY;
   }
 
-  // When the user scrolls, detect if they left the bottom
+  // Only track scroll direction changes caused by USER touch interaction.
+  // Internal scrolls (from term.write, term.scrollToBottom, momentum) must not
+  // flip userScrolledUp — otherwise the terminal snaps to bottom mid-read.
   term.onScroll(function() {
-    userScrolledUp = !isAtBottom();
+    if (userIsTouching) {
+      userScrolledUp = !isAtBottom();
+    }
     if (selMode) refreshMarkers();
   });
+
+  // Track touch lifecycle — userIsTouching gates the onScroll handler above
+  document.getElementById('terminal').addEventListener('touchstart', function() {
+    userIsTouching = true;
+  }, { passive: true });
+  document.getElementById('terminal').addEventListener('touchend', function() {
+    // Small delay so the final inertia scroll events still count as user-initiated
+    setTimeout(function() { userIsTouching = false; }, 300);
+  }, { passive: true });
 
   /* ── Messages from RN ──────────────────────────────── */
   function handleMsg(data) {
@@ -590,7 +605,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         term.write(msg.data, function() {
           if (wasAtBottom) {
             term.scrollToBottom();
-            userScrolledUp = false;
           }
           scheduleSqlScan();
         });
