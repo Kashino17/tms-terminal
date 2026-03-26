@@ -144,6 +144,23 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   }
   function sendKey(seq) { sendToRN({ type: 'input', data: seq }); }
 
+  /* ── Debug overlay ──────────────────────────────────── */
+  var dbgEl = document.createElement('div');
+  dbgEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;' +
+    'background:rgba(0,0,0,0.88);color:#0f0;font:9px/12px monospace;' +
+    'padding:4px 6px;max-height:35vh;overflow-y:auto;pointer-events:none;' +
+    'white-space:pre-wrap;word-break:break-all;';
+  document.body.appendChild(dbgEl);
+  var dbgLines = [];
+  function dbg(tag, detail) {
+    var t = (Date.now() % 100000).toString().slice(-5);
+    var line = t + ' ' + tag + ' ' + detail;
+    dbgLines.push(line);
+    if (dbgLines.length > 40) dbgLines.shift();
+    dbgEl.textContent = dbgLines.join('\\n');
+    dbgEl.scrollTop = dbgEl.scrollHeight;
+  }
+
   /* Terminal tap → focus keyboard (not in select mode) */
   // Use touchstart/touchend to detect a genuine stationary tap (not a scroll).
   // The native 'click' event fires even after small scrolls on mobile,
@@ -262,7 +279,10 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   });
   shadowInput.addEventListener('compositionend', function() {
     isComposing = false;
-    // Keep pendingBs alive — insertReplacementText after compositionend will cancel them.
+    // Cancel ALL pending backspaces from composition — they were Samsung
+    // prediction cleanup, not real user backspaces.  The chars are still
+    // on the terminal; erasing them would be the "word deleted" bug.
+    cancelPendingBs();
     compBuf = '';
     pendingDeletedChars = '';
     shadowInput.value = '';
@@ -272,6 +292,19 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 
   shadowInput.addEventListener('beforeinput', function(e) {
     var it = e.inputType || '';
+
+    // Enter must ALWAYS work — even during composition.
+    // Samsung keeps isComposing=true while prediction bar is active,
+    // which would block Enter if we checked isComposing first.
+    if (it === 'insertLineBreak' || it === 'insertParagraph') {
+      e.preventDefault();
+      cancelPendingBs();
+      isComposing = false;
+      compBuf = '';
+      sendKey(SEQ.enter);
+      shadowInput.value = ''; prevValue = '';
+      return;
+    }
 
     // During composition, let the browser handle field updates.
     // We pick up changes in the input event via compBuf diff.
@@ -294,10 +327,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     } else if (it === 'deleteContentForward') {
       if (Date.now() < ignoreDeletesUntil) return;
       sendKey('\\x1b[3~');
-    } else if (it === 'insertLineBreak' || it === 'insertParagraph') {
-      cancelPendingBs();
-      isComposing = false;
-      sendKey(SEQ.enter);
     } else if (it === 'insertFromPaste') {
       cancelPendingBs();
       var txt = e.data;
@@ -342,7 +371,9 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       // If we send them immediately, the word gets erased from the terminal.
       else if (cur.length < compBuf.length) {
         var deleted = compBuf.slice(cur.length);
-        pendingDeletedChars += deleted;
+        // PREPEND: deletions happen from the end, so 'hello' → 'o','l','l','e','h'
+        // Prepending reconstructs the original order: 'hello'
+        pendingDeletedChars = deleted + pendingDeletedChars;
         pendingBs += deleted.length;
         if (pendingBsTimer) clearTimeout(pendingBsTimer);
         pendingBsTimer = setTimeout(flushPendingBs, 500);
