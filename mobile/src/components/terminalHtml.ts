@@ -185,6 +185,15 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 
   /* Physical keyboard (emulator / Bluetooth) */
   document.addEventListener('keydown', function(e) {
+    // Always allow Enter, even during composition — Samsung keyboards
+    // keep isComposing=true while the prediction bar is active, which
+    // would block Enter and prevent command submission.
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (isComposing) { isComposing = false; shadowInput.value = ''; prevValue = ''; }
+      sendKey(SEQ.enter);
+      return;
+    }
     if (isComposing) return;
     var s = physicalKey(e);
     if (s) { e.preventDefault(); sendKey(s); }
@@ -226,12 +235,33 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     var it = e.inputType || '';
     if (it === 'deleteContentBackward') {
       e.preventDefault();
-      sendKey(SEQ.bs);
+      // Only send backspace when the field actually has content.
+      // Samsung keyboards fire deleteContentBackward during prediction
+      // commit (e.g. pressing space) even after we cleared the field —
+      // sending a backspace would erase already-displayed terminal output.
+      if (shadowInput.value.length > 0) {
+        sendKey(SEQ.bs);
+      }
       shadowInput.value = ''; prevValue = '';
       deleteHandledByBeforeInput = true;
     } else if (it === 'deleteContentForward') {
       e.preventDefault();
-      sendKey('\\x1b[3~');
+      if (shadowInput.value.length > 0) {
+        sendKey('\\x1b[3~');
+      }
+      shadowInput.value = ''; prevValue = '';
+      deleteHandledByBeforeInput = true;
+    } else if (it === 'insertReplacementText') {
+      // Samsung keyboard prediction commit: the keyboard replaces its
+      // internal "composed" word with the final text + trigger char
+      // (space, punctuation).  Since we already sent each character
+      // individually and cleared the field, only forward the trailing
+      // trigger character to avoid re-sending the entire word.
+      e.preventDefault();
+      var repl = e.data || '';
+      if (repl.length > 0) {
+        sendKey(repl.charAt(repl.length - 1));
+      }
       shadowInput.value = ''; prevValue = '';
       deleteHandledByBeforeInput = true;
     } else {
@@ -619,11 +649,12 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     try {
       var msg = typeof data === 'string' ? JSON.parse(data) : data;
       if      (msg.type === 'output') {
-        // If user was at bottom, stay at bottom after write.
-        // If user scrolled up, don't force-scroll.
-        var wasAtBottom = !userScrolledUp;
         term.write(msg.data, function() {
-          if (wasAtBottom) {
+          // Live-check: only auto-scroll if user hasn't scrolled up.
+          // Previous snapshot approach (wasAtBottom captured before write)
+          // caused stale closures to yank viewport to bottom when the user
+          // scrolled up while queued writes were pending.
+          if (!userScrolledUp) {
             term.scrollToBottom();
           }
           scheduleSqlScan();

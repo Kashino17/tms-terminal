@@ -169,7 +169,10 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
       // Short delay: let the WebView resize + xterm.js reflow finish first
       setTimeout(() => {
         if (webViewRef.current) {
-          const msg = JSON.stringify({ type: 'scroll_to_bottom' });
+          // Send 'focus' instead of 'scroll_to_bottom' so the terminal
+          // respects userScrolledUp — if the user is reading scrollback,
+          // opening the keyboard shouldn't yank the viewport to the bottom.
+          const msg = JSON.stringify({ type: 'focus' });
           webViewRef.current.injectJavaScript(
             `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
           );
