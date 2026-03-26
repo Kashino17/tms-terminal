@@ -241,16 +241,19 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   var ignoreDeletesUntil = 0;
   var pendingBs = 0;
   var pendingBsTimer = null;
+  var pendingDeletedChars = '';  // tracks WHAT was deleted during composition
 
   function flushPendingBs() {
     for (var i = 0; i < pendingBs; i++) sendKey(SEQ.bs);
     pendingBs = 0;
+    pendingDeletedChars = '';
     pendingBsTimer = null;
   }
 
   function cancelPendingBs() {
     if (pendingBsTimer) { clearTimeout(pendingBsTimer); pendingBsTimer = null; }
     pendingBs = 0;
+    pendingDeletedChars = '';
   }
 
   shadowInput.addEventListener('compositionstart', function() {
@@ -259,11 +262,11 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   });
   shadowInput.addEventListener('compositionend', function() {
     isComposing = false;
+    // Keep pendingBs alive — insertReplacementText after compositionend will cancel them.
     compBuf = '';
+    pendingDeletedChars = '';
     shadowInput.value = '';
     prevValue = '';
-    // Samsung fires deleteContentBackward cleanup after compositionend.
-    // Ignore deletes for 150ms so they don't erase terminal output.
     ignoreDeletesUntil = Date.now() + 150;
   });
 
@@ -277,22 +280,14 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     e.preventDefault();
 
     if (it === 'insertText') {
-      if (pendingBs > 0) {
-        // Insertion after deferred deletes → Samsung prediction commit.
-        // Cancel backspaces, send only the typed character.
-        cancelPendingBs();
-      }
+      if (pendingBs > 0) cancelPendingBs();
       if (e.data) sendKey(e.data);
     } else if (it === 'insertReplacementText') {
       cancelPendingBs();
-      // Samsung prediction: chars already sent individually.
-      // Only send the trailing trigger character (space/punctuation).
       var d = e.data || '';
       if (d.length > 0) sendKey(d.charAt(d.length - 1));
     } else if (it === 'deleteContentBackward') {
-      if (Date.now() < ignoreDeletesUntil) return; // post-composition cleanup
-      // Defer: might be Samsung phantom delete from its internal buffer.
-      // If an insertion follows within 200ms, the backspaces get cancelled.
+      if (Date.now() < ignoreDeletesUntil) return;
       pendingBs++;
       if (pendingBsTimer) clearTimeout(pendingBsTimer);
       pendingBsTimer = setTimeout(flushPendingBs, 200);
@@ -317,19 +312,46 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     var cur = shadowInput.value;
 
     if (isComposing) {
-      // Diff against composition buffer
+      // ── Composition insertion ─────────────────────────────────
       if (cur.length > compBuf.length) {
-        sendKey(cur.slice(compBuf.length));
-      } else if (cur.length < compBuf.length) {
-        var del = compBuf.length - cur.length;
-        for (var i = 0; i < del; i++) sendKey(SEQ.bs);
+        var added = cur.slice(compBuf.length);
+        if (pendingBs > 0) {
+          // Insertion while backspaces are pending.
+          // Check if Samsung is restoring what it deleted (prediction cleanup)
+          // or if the user typed something new after a real backspace.
+          if (added.length >= pendingBs && added.indexOf(pendingDeletedChars) === 0) {
+            // Samsung restoration: added starts with the deleted chars.
+            // Cancel backspaces (chars are still on terminal).
+            // Only send truly new chars after the restored part.
+            var extra = added.slice(pendingDeletedChars.length);
+            cancelPendingBs();
+            if (extra) sendKey(extra);
+          } else {
+            // User typed new chars after a real backspace.
+            // Flush the pending backspaces first, then send the new chars.
+            flushPendingBs();
+            sendKey(added);
+          }
+        } else {
+          sendKey(added);
+        }
+      }
+      // ── Composition deletion ──────────────────────────────────
+      // DEFER backspaces: Samsung prediction cleanup fires deleteContentBackward
+      // × N during composition before the insertion that re-types the word.
+      // If we send them immediately, the word gets erased from the terminal.
+      else if (cur.length < compBuf.length) {
+        var deleted = compBuf.slice(cur.length);
+        pendingDeletedChars += deleted;
+        pendingBs += deleted.length;
+        if (pendingBsTimer) clearTimeout(pendingBsTimer);
+        pendingBsTimer = setTimeout(flushPendingBs, 500);
       }
       compBuf = cur;
       return;
     }
 
-    // Non-composition fallback (beforeinput should have handled it,
-    // but some inputTypes or browsers might not support preventDefault).
+    // Non-composition fallback
     if (e.data) {
       if (pendingBs > 0) cancelPendingBs();
       sendKey(e.data);
