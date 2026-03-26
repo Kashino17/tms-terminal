@@ -225,14 +225,11 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     isComposing = false;
   });
 
-  // ── Diff-based input ──────────────────────────────────────────────────
-  // We do NOT clear the field after every character.  Keeping the value
-  // in sync with the keyboard's internal state prevents Samsung Keyboard
-  // from firing spurious deleteContentBackward + insertReplacementText
-  // events that erase already-displayed terminal output.
-  //
-  // All input — normal typing, composition, prediction commit — is
-  // handled uniformly by comparing the current value to prevValue.
+  // ── Diff-based input with word-boundary reset ──────────────────────────
+  // Value accumulates within a word so Samsung Keyboard stays in sync.
+  // After each space (word boundary) or when the value exceeds 20 chars,
+  // we clear the field.  This prevents Samsung's prediction buffer from
+  // overflowing and emitting only spaces after a certain length.
 
   // beforeinput: only needed for backspace/delete when the field is
   // already empty (Android's input event won't fire in that case).
@@ -257,27 +254,36 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 
     var cur = shadowInput.value;
 
-    // Deletion: field got shorter → send backspaces for the difference
-    if (cur.length < prevValue.length) {
-      var del = prevValue.length - cur.length;
-      var bs = '';
-      for (var i = 0; i < del; i++) bs += SEQ.bs;
-      sendKey(bs);
+    // ── Prefix match: field was appended — send the new characters
+    if (cur.length >= prevValue.length && cur.slice(0, prevValue.length) === prevValue) {
+      var added = cur.slice(prevValue.length);
+      if (added === '\\n' || added === '\\r' || added === '\\r\\n') {
+        sendKey(SEQ.enter); shadowInput.value = ''; prevValue = ''; return;
+      }
+      if (added) sendKey(added);
       prevValue = cur;
-      return;
+    }
+    // ── Pure deletion: field got shorter, remaining text still matches
+    else if (cur.length < prevValue.length && cur === prevValue.slice(0, cur.length)) {
+      var del = prevValue.length - cur.length;
+      for (var i = 0; i < del; i++) sendKey(SEQ.bs);
+      prevValue = cur;
+    }
+    // ── Mismatch: Samsung prediction reset the field (composition
+    // boundary, buffer overflow, or autocorrect).  Don't erase terminal
+    // output (no backspaces) — just send the new content so the user's
+    // fresh input isn't lost, then resync prevValue.
+    else {
+      if (cur) sendKey(cur);
+      prevValue = cur;
     }
 
-    // Insertion (normal typing, prediction commit, composition):
-    // send only the new characters appended since last event.
-    var added = cur.slice(prevValue.length);
-    if (added === '\\n' || added === '\\r' || added === '\\r\\n') {
-      sendKey(SEQ.enter); shadowInput.value = ''; prevValue = ''; return;
+    // Clear on word boundary (space) or when field gets long.
+    // Gives Samsung a clean slate for the next word's prediction and
+    // prevents the buffer-length issue that turns all input into spaces.
+    if (cur.length > 20 || (!isComposing && cur.indexOf(' ') !== -1)) {
+      shadowInput.value = ''; prevValue = '';
     }
-    if (added) sendKey(added);
-    prevValue = cur;
-
-    // Safety net: clear if value grows very long to prevent memory issues
-    if (cur.length > 120) { shadowInput.value = ''; prevValue = ''; }
   });
 
   /* ── Resize ────────────────────────────────────────── */
