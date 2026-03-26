@@ -202,10 +202,16 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 
   /* Physical keyboard (emulator / Bluetooth) */
   document.addEventListener('keydown', function(e) {
+    // Refocus shadowInput if it lost focus — without focus, no input events fire
+    if (document.activeElement !== shadowInput && !selMode) {
+      dbg('KD', 'REFOCUS (was ' + (document.activeElement ? document.activeElement.id || document.activeElement.tagName : 'null') + ')');
+      shadowInput.focus({ preventScroll: true });
+    }
     dbg('KD', 'key="' + e.key + '" kc=' + e.keyCode + ' comp=' + isComposing);
     if (e.key === 'Enter' || e.keyCode === 13) {
       e.preventDefault();
       cancelPendingBs();
+      skipChars = 0;
       if (isComposing) { isComposing = false; }
       shadowInput.value = ''; prevValue = '';
       sendKey(SEQ.enter);
@@ -238,150 +244,143 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     return null;
   }
 
-  // ── preventDefault-based input ──────────────────────────────────────
-  // By calling preventDefault() on ALL beforeinput events, the field
-  // value NEVER changes.  Samsung Keyboard therefore cannot track field
-  // content and cannot fire spurious deleteContentBackward events that
-  // erase terminal output when it commits a prediction.
+  // ── Diff-based input (NO preventDefault) ────────────────────────────
+  // CRITICAL: Do NOT call preventDefault() on regular beforeinput events.
+  // Samsung IME detects blocked input and STOPS firing beforeinput/input
+  // events entirely — only keydown(Unidentified,229) continues to fire,
+  // making all input completely non-functional.
   //
-  // Each character is extracted from e.data and sent directly.
-  // Composition (CJK / Samsung prediction bar) is handled separately:
-  //   - beforeinput is NOT prevented during composition (spec says
-  //     insertCompositionText is not cancelable)
-  //   - the input event diffs against compBuf
-  //   - compositionend clears the field
-  //
-  // Deferred backspace (200ms) still protects against Samsung phantom
-  // deletes that come from its internal buffer tracking.
+  // Instead: let the browser handle field updates naturally, then diff
+  // cur vs prevValue in the input handler.  Deferred backspaces (200ms)
+  // protect against Samsung prediction cleanup.  The field is cleared
+  // after each space or at 20 chars to prevent Samsung buffer overflow.
 
-  var compBuf = '';
-  var ignoreDeletesUntil = 0;
   var pendingBs = 0;
   var pendingBsTimer = null;
-  var pendingDeletedChars = '';  // tracks WHAT was deleted during composition
+  var skipChars = 0;  // chars to skip after cancelling Samsung prediction backspaces
 
   function flushPendingBs() {
-    dbg('FLUSH', 'sending ' + pendingBs + ' backspaces');
+    dbg('FLUSH', 'sending ' + pendingBs + ' bs');
     for (var i = 0; i < pendingBs; i++) sendKey(SEQ.bs);
     pendingBs = 0;
-    pendingDeletedChars = '';
     pendingBsTimer = null;
   }
 
   function cancelPendingBs() {
     if (pendingBsTimer) { clearTimeout(pendingBsTimer); pendingBsTimer = null; }
     pendingBs = 0;
-    pendingDeletedChars = '';
   }
 
   shadowInput.addEventListener('compositionstart', function() {
-    dbg('COMP', 'START  val="' + shadowInput.value + '"');
+    dbg('COMP', 'START');
     isComposing = true;
-    compBuf = '';
   });
   shadowInput.addEventListener('compositionend', function() {
-    dbg('COMP', 'END    val="' + shadowInput.value + '" pBs=' + pendingBs);
+    dbg('COMP', 'END pBs=' + pendingBs);
     isComposing = false;
-    cancelPendingBs();
-    compBuf = '';
-    pendingDeletedChars = '';
-    shadowInput.value = '';
-    prevValue = '';
-    ignoreDeletesUntil = Date.now() + 150;
   });
 
+  // beforeinput: ONLY prevent for Enter and empty-field backspace.
+  // Everything else passes through to let Samsung IME work normally.
   shadowInput.addEventListener('beforeinput', function(e) {
     var it = e.inputType || '';
-    var d = e.data || '';
-    dbg('BI', it + ' d="' + d.slice(0,20) + '" comp=' + isComposing + ' val="' + shadowInput.value.slice(0,20) + '" pBs=' + pendingBs);
-
+    dbg('BI', it + ' d="' + (e.data||'').slice(0,15) + '" val="' + shadowInput.value.slice(0,15) + '"');
     if (it === 'insertLineBreak' || it === 'insertParagraph') {
       e.preventDefault();
       cancelPendingBs();
+      skipChars = 0;
       isComposing = false;
-      compBuf = '';
-      sendKey(SEQ.enter);
       shadowInput.value = ''; prevValue = '';
+      sendKey(SEQ.enter);
       dbg('>>','ENTER');
-      return;
-    }
-
-    if (isComposing) { dbg('BI','skip(composing)'); return; }
-
-    e.preventDefault();
-
-    if (it === 'insertText') {
-      if (pendingBs > 0) { dbg('>>','cancelBs(' + pendingBs + ')'); cancelPendingBs(); }
-      if (e.data) { dbg('>>','send "' + e.data + '"'); sendKey(e.data); }
-    } else if (it === 'insertReplacementText') {
-      dbg('>>','cancelBs(' + pendingBs + ') repl="' + d.slice(0,20) + '" sendLast="' + (d.length > 0 ? d.charAt(d.length - 1) : '') + '"');
-      cancelPendingBs();
-      if (d.length > 0) sendKey(d.charAt(d.length - 1));
-    } else if (it === 'deleteContentBackward') {
-      if (Date.now() < ignoreDeletesUntil) { dbg('>>','ignoreDel(post-comp)'); return; }
-      pendingBs++;
-      if (pendingBsTimer) clearTimeout(pendingBsTimer);
-      pendingBsTimer = setTimeout(flushPendingBs, 200);
-      dbg('>>','deferBs(' + pendingBs + ')');
-    } else if (it === 'deleteContentForward') {
-      if (Date.now() < ignoreDeletesUntil) return;
+    } else if (it === 'deleteContentBackward' && shadowInput.value.length === 0) {
+      e.preventDefault();
+      sendKey(SEQ.bs);
+      dbg('>>','bs(empty)');
+    } else if (it === 'deleteContentForward' && shadowInput.value.length === 0) {
+      e.preventDefault();
       sendKey('\\x1b[3~');
-    } else if (it === 'insertFromPaste') {
-      cancelPendingBs();
-      var txt = e.data;
-      if (!txt && e.dataTransfer) txt = e.dataTransfer.getData('text/plain');
-      if (txt) sendKey(txt);
-      dbg('>>','paste len=' + (txt ? txt.length : 0));
     }
+    // All other events: DO NOT prevent — Samsung IME needs them
   });
 
-  // input event: fires for composition (where we didn't preventDefault)
-  // or as fallback if beforeinput wasn't supported for some inputType.
+  // input: diff-based with deferred backspace
   shadowInput.addEventListener('input', function(e) {
     var cur = shadowInput.value;
-    var it = e.inputType || '';
-    dbg('IN', it + ' d="' + (e.data||'').slice(0,20) + '" comp=' + isComposing + ' val="' + cur.slice(0,20) + '" cb="' + compBuf.slice(0,20) + '" pBs=' + pendingBs);
+    dbg('IN', (e.inputType||'?') + ' val="' + cur.slice(0,15) + '" pv="' + prevValue.slice(0,15) + '" pBs=' + pendingBs + ' skip=' + skipChars);
 
-    if (isComposing) {
-      if (cur.length > compBuf.length) {
-        var added = cur.slice(compBuf.length);
-        if (pendingBs > 0) {
-          if (added.length >= pendingBs && added.indexOf(pendingDeletedChars) === 0) {
-            var extra = added.slice(pendingDeletedChars.length);
-            dbg('>>','RESTORE cancelBs(' + pendingBs + ') extra="' + extra + '"');
-            cancelPendingBs();
-            if (extra) sendKey(extra);
-          } else {
-            dbg('>>','NEWCHAR flushBs(' + pendingBs + ') added="' + added + '"');
-            flushPendingBs();
-            sendKey(added);
-          }
-        } else {
-          dbg('>>','send "' + added + '"');
-          sendKey(added);
-        }
-      } else if (cur.length < compBuf.length) {
-        var deleted = compBuf.slice(cur.length);
-        pendingDeletedChars = deleted + pendingDeletedChars;
-        pendingBs += deleted.length;
-        if (pendingBsTimer) clearTimeout(pendingBsTimer);
-        pendingBsTimer = setTimeout(flushPendingBs, 500);
-        dbg('>>','deferCompBs(' + pendingBs + ') del="' + deleted + '" pDC="' + pendingDeletedChars.slice(0,20) + '"');
-      } else {
-        dbg('>>','nochange');
-      }
-      compBuf = cur;
+    // ── Deletion: defer backspaces (Samsung prediction fires deletes
+    //    before re-inserting the word + trigger)
+    if (cur.length < prevValue.length) {
+      var del = prevValue.length - cur.length;
+      pendingBs += del;
+      if (pendingBsTimer) clearTimeout(pendingBsTimer);
+      pendingBsTimer = setTimeout(flushPendingBs, 200);
+      prevValue = cur;
+      dbg('>>','defer ' + del + ' bs (total=' + pendingBs + ')');
       return;
     }
 
-    // Non-composition fallback
-    dbg('>>','fallback d="' + (e.data||'') + '"');
-    if (e.data) {
-      if (pendingBs > 0) cancelPendingBs();
-      sendKey(e.data);
+    // ── Insertion
+    var added = cur.slice(prevValue.length);
+
+    // Skip chars from Samsung restoring what it deleted
+    if (skipChars > 0 && added) {
+      if (added.length <= skipChars) {
+        skipChars -= added.length;
+        dbg('>>','skip ' + added.length + ' (remaining=' + skipChars + ')');
+      } else {
+        var toSend = added.slice(skipChars);
+        dbg('>>','skip ' + skipChars + ' send "' + toSend + '"');
+        skipChars = 0;
+        sendKey(toSend);
+      }
+      prevValue = cur;
+      if (cur.length > 20 || cur.indexOf(' ') !== -1) {
+        shadowInput.value = ''; prevValue = ''; skipChars = 0;
+      }
+      return;
     }
-    shadowInput.value = '';
-    prevValue = '';
+
+    // Insertion while backspaces are pending
+    if (pendingBs > 0 && added) {
+      if (pendingBs >= 3) {
+        // Samsung prediction cleanup (deleted 3+ chars then re-inserted).
+        // Cancel backspaces, skip the restored chars, send only new ones.
+        dbg('>>','SAMSUNG cancel ' + pendingBs + ' bs, skip restore');
+        skipChars = pendingBs;
+        cancelPendingBs();
+        if (added.length <= skipChars) {
+          skipChars -= added.length;
+        } else {
+          sendKey(added.slice(skipChars));
+          skipChars = 0;
+        }
+      } else {
+        // 1-2 pending backspaces + insertion = real user backspace + typing.
+        // Flush the backspaces, send the new chars.
+        dbg('>>','real bs(' + pendingBs + ') + send "' + added + '"');
+        flushPendingBs();
+        sendKey(added);
+      }
+      prevValue = cur;
+      if (cur.length > 20 || cur.indexOf(' ') !== -1) {
+        shadowInput.value = ''; prevValue = ''; skipChars = 0;
+      }
+      return;
+    }
+
+    // Normal insertion (no pending backspaces)
+    if (added) {
+      dbg('>>','send "' + added + '"');
+      sendKey(added);
+    }
+    prevValue = cur;
+
+    // Clear on word boundary or length to prevent Samsung buffer overflow
+    if (cur.length > 20 || cur.indexOf(' ') !== -1) {
+      shadowInput.value = ''; prevValue = ''; skipChars = 0;
+    }
   });
 
   /* ── Resize ────────────────────────────────────────── */
