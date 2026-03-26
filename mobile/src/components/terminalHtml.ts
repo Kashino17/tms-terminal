@@ -144,23 +144,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   }
   function sendKey(seq) { sendToRN({ type: 'input', data: seq }); }
 
-  /* ── Debug overlay ──────────────────────────────────── */
-  var dbgEl = document.createElement('div');
-  dbgEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;' +
-    'background:rgba(0,0,0,0.88);color:#0f0;font:9px/12px monospace;' +
-    'padding:4px 6px;max-height:35vh;overflow-y:auto;pointer-events:none;' +
-    'white-space:pre-wrap;word-break:break-all;';
-  document.body.appendChild(dbgEl);
-  var dbgLines = [];
-  function dbg(tag, detail) {
-    var t = (Date.now() % 100000).toString().slice(-5);
-    var line = t + ' ' + tag + ' ' + detail;
-    dbgLines.push(line);
-    if (dbgLines.length > 40) dbgLines.shift();
-    dbgEl.textContent = dbgLines.join('\\n');
-    dbgEl.scrollTop = dbgEl.scrollHeight;
-  }
-
   /* Terminal tap → focus keyboard (not in select mode) */
   // Use touchstart/touchend to detect a genuine stationary tap (not a scroll).
   // The native 'click' event fires even after small scrolls on mobile,
@@ -204,10 +187,8 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   document.addEventListener('keydown', function(e) {
     // Refocus shadowInput if it lost focus — without focus, no input events fire
     if (document.activeElement !== shadowInput && !selMode) {
-      dbg('KD', 'REFOCUS (was ' + (document.activeElement ? document.activeElement.id || document.activeElement.tagName : 'null') + ')');
       shadowInput.focus({ preventScroll: true });
     }
-    dbg('KD', 'key="' + e.key + '" kc=' + e.keyCode + ' comp=' + isComposing);
     if (e.key === 'Enter' || e.keyCode === 13) {
       e.preventDefault();
       cancelPendingBs();
@@ -215,7 +196,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       if (isComposing) { isComposing = false; }
       shadowInput.value = ''; prevValue = '';
       sendKey(SEQ.enter);
-      dbg('>>','ENTER via keydown');
       return;
     }
     if (isComposing) return;
@@ -260,7 +240,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   var skipChars = 0;  // chars to skip after cancelling Samsung prediction backspaces
 
   function flushPendingBs() {
-    dbg('FLUSH', 'sending ' + pendingBs + ' bs');
     for (var i = 0; i < pendingBs; i++) sendKey(SEQ.bs);
     pendingBs = 0;
     pendingBsTimer = null;
@@ -272,11 +251,9 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   }
 
   shadowInput.addEventListener('compositionstart', function() {
-    dbg('COMP', 'START');
     isComposing = true;
   });
   shadowInput.addEventListener('compositionend', function() {
-    dbg('COMP', 'END pBs=' + pendingBs);
     isComposing = false;
   });
 
@@ -284,7 +261,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   // Everything else passes through to let Samsung IME work normally.
   shadowInput.addEventListener('beforeinput', function(e) {
     var it = e.inputType || '';
-    dbg('BI', it + ' d="' + (e.data||'').slice(0,15) + '" val="' + shadowInput.value.slice(0,15) + '"');
     if (it === 'insertLineBreak' || it === 'insertParagraph') {
       e.preventDefault();
       cancelPendingBs();
@@ -292,11 +268,9 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       isComposing = false;
       shadowInput.value = ''; prevValue = '';
       sendKey(SEQ.enter);
-      dbg('>>','ENTER');
     } else if (it === 'deleteContentBackward' && shadowInput.value.length === 0) {
       e.preventDefault();
       sendKey(SEQ.bs);
-      dbg('>>','bs(empty)');
     } else if (it === 'deleteContentForward' && shadowInput.value.length === 0) {
       e.preventDefault();
       sendKey('\\x1b[3~');
@@ -307,7 +281,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   // input: diff-based with deferred backspace
   shadowInput.addEventListener('input', function(e) {
     var cur = shadowInput.value;
-    dbg('IN', (e.inputType||'?') + ' val="' + cur.slice(0,15) + '" pv="' + prevValue.slice(0,15) + '" pBs=' + pendingBs + ' skip=' + skipChars);
 
     // ── Deletion: defer backspaces (Samsung prediction fires deletes
     //    before re-inserting the word + trigger)
@@ -317,7 +290,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       if (pendingBsTimer) clearTimeout(pendingBsTimer);
       pendingBsTimer = setTimeout(flushPendingBs, 200);
       prevValue = cur;
-      dbg('>>','defer ' + del + ' bs (total=' + pendingBs + ')');
       return;
     }
 
@@ -328,10 +300,8 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     if (skipChars > 0 && added) {
       if (added.length <= skipChars) {
         skipChars -= added.length;
-        dbg('>>','skip ' + added.length + ' (remaining=' + skipChars + ')');
       } else {
         var toSend = added.slice(skipChars);
-        dbg('>>','skip ' + skipChars + ' send "' + toSend + '"');
         skipChars = 0;
         sendKey(toSend);
       }
@@ -347,7 +317,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       if (pendingBs >= 3) {
         // Samsung prediction cleanup (deleted 3+ chars then re-inserted).
         // Cancel backspaces, skip the restored chars, send only new ones.
-        dbg('>>','SAMSUNG cancel ' + pendingBs + ' bs, skip restore');
         skipChars = pendingBs;
         cancelPendingBs();
         if (added.length <= skipChars) {
@@ -359,7 +328,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       } else {
         // 1-2 pending backspaces + insertion = real user backspace + typing.
         // Flush the backspaces, send the new chars.
-        dbg('>>','real bs(' + pendingBs + ') + send "' + added + '"');
         flushPendingBs();
         sendKey(added);
       }
@@ -372,7 +340,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 
     // Normal insertion (no pending backspaces)
     if (added) {
-      dbg('>>','send "' + added + '"');
       sendKey(added);
     }
     prevValue = cur;
