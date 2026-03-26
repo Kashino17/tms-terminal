@@ -202,14 +202,14 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 
   /* Physical keyboard (emulator / Bluetooth) */
   document.addEventListener('keydown', function(e) {
-    // Always allow Enter — also check keyCode because Samsung soft keyboard
-    // sometimes fires e.key='Unidentified' instead of 'Enter'.
+    dbg('KD', 'key="' + e.key + '" kc=' + e.keyCode + ' comp=' + isComposing);
     if (e.key === 'Enter' || e.keyCode === 13) {
       e.preventDefault();
       cancelPendingBs();
       if (isComposing) { isComposing = false; }
       shadowInput.value = ''; prevValue = '';
       sendKey(SEQ.enter);
+      dbg('>>','ENTER via keydown');
       return;
     }
     if (isComposing) return;
@@ -261,6 +261,7 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   var pendingDeletedChars = '';  // tracks WHAT was deleted during composition
 
   function flushPendingBs() {
+    dbg('FLUSH', 'sending ' + pendingBs + ' backspaces');
     for (var i = 0; i < pendingBs; i++) sendKey(SEQ.bs);
     pendingBs = 0;
     pendingDeletedChars = '';
@@ -274,14 +275,13 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   }
 
   shadowInput.addEventListener('compositionstart', function() {
+    dbg('COMP', 'START  val="' + shadowInput.value + '"');
     isComposing = true;
     compBuf = '';
   });
   shadowInput.addEventListener('compositionend', function() {
+    dbg('COMP', 'END    val="' + shadowInput.value + '" pBs=' + pendingBs);
     isComposing = false;
-    // Cancel ALL pending backspaces from composition — they were Samsung
-    // prediction cleanup, not real user backspaces.  The chars are still
-    // on the terminal; erasing them would be the "word deleted" bug.
     cancelPendingBs();
     compBuf = '';
     pendingDeletedChars = '';
@@ -292,10 +292,9 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 
   shadowInput.addEventListener('beforeinput', function(e) {
     var it = e.inputType || '';
+    var d = e.data || '';
+    dbg('BI', it + ' d="' + d.slice(0,20) + '" comp=' + isComposing + ' val="' + shadowInput.value.slice(0,20) + '" pBs=' + pendingBs);
 
-    // Enter must ALWAYS work — even during composition.
-    // Samsung keeps isComposing=true while prediction bar is active,
-    // which would block Enter if we checked isComposing first.
     if (it === 'insertLineBreak' || it === 'insertParagraph') {
       e.preventDefault();
       cancelPendingBs();
@@ -303,27 +302,27 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       compBuf = '';
       sendKey(SEQ.enter);
       shadowInput.value = ''; prevValue = '';
+      dbg('>>','ENTER');
       return;
     }
 
-    // During composition, let the browser handle field updates.
-    // We pick up changes in the input event via compBuf diff.
-    if (isComposing) return;
+    if (isComposing) { dbg('BI','skip(composing)'); return; }
 
     e.preventDefault();
 
     if (it === 'insertText') {
-      if (pendingBs > 0) cancelPendingBs();
-      if (e.data) sendKey(e.data);
+      if (pendingBs > 0) { dbg('>>','cancelBs(' + pendingBs + ')'); cancelPendingBs(); }
+      if (e.data) { dbg('>>','send "' + e.data + '"'); sendKey(e.data); }
     } else if (it === 'insertReplacementText') {
+      dbg('>>','cancelBs(' + pendingBs + ') repl="' + d.slice(0,20) + '" sendLast="' + (d.length > 0 ? d.charAt(d.length - 1) : '') + '"');
       cancelPendingBs();
-      var d = e.data || '';
       if (d.length > 0) sendKey(d.charAt(d.length - 1));
     } else if (it === 'deleteContentBackward') {
-      if (Date.now() < ignoreDeletesUntil) return;
+      if (Date.now() < ignoreDeletesUntil) { dbg('>>','ignoreDel(post-comp)'); return; }
       pendingBs++;
       if (pendingBsTimer) clearTimeout(pendingBsTimer);
       pendingBsTimer = setTimeout(flushPendingBs, 200);
+      dbg('>>','deferBs(' + pendingBs + ')');
     } else if (it === 'deleteContentForward') {
       if (Date.now() < ignoreDeletesUntil) return;
       sendKey('\\x1b[3~');
@@ -332,6 +331,7 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       var txt = e.data;
       if (!txt && e.dataTransfer) txt = e.dataTransfer.getData('text/plain');
       if (txt) sendKey(txt);
+      dbg('>>','paste len=' + (txt ? txt.length : 0));
     }
   });
 
@@ -339,50 +339,43 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   // or as fallback if beforeinput wasn't supported for some inputType.
   shadowInput.addEventListener('input', function(e) {
     var cur = shadowInput.value;
+    var it = e.inputType || '';
+    dbg('IN', it + ' d="' + (e.data||'').slice(0,20) + '" comp=' + isComposing + ' val="' + cur.slice(0,20) + '" cb="' + compBuf.slice(0,20) + '" pBs=' + pendingBs);
 
     if (isComposing) {
-      // ── Composition insertion ─────────────────────────────────
       if (cur.length > compBuf.length) {
         var added = cur.slice(compBuf.length);
         if (pendingBs > 0) {
-          // Insertion while backspaces are pending.
-          // Check if Samsung is restoring what it deleted (prediction cleanup)
-          // or if the user typed something new after a real backspace.
           if (added.length >= pendingBs && added.indexOf(pendingDeletedChars) === 0) {
-            // Samsung restoration: added starts with the deleted chars.
-            // Cancel backspaces (chars are still on terminal).
-            // Only send truly new chars after the restored part.
             var extra = added.slice(pendingDeletedChars.length);
+            dbg('>>','RESTORE cancelBs(' + pendingBs + ') extra="' + extra + '"');
             cancelPendingBs();
             if (extra) sendKey(extra);
           } else {
-            // User typed new chars after a real backspace.
-            // Flush the pending backspaces first, then send the new chars.
+            dbg('>>','NEWCHAR flushBs(' + pendingBs + ') added="' + added + '"');
             flushPendingBs();
             sendKey(added);
           }
         } else {
+          dbg('>>','send "' + added + '"');
           sendKey(added);
         }
-      }
-      // ── Composition deletion ──────────────────────────────────
-      // DEFER backspaces: Samsung prediction cleanup fires deleteContentBackward
-      // × N during composition before the insertion that re-types the word.
-      // If we send them immediately, the word gets erased from the terminal.
-      else if (cur.length < compBuf.length) {
+      } else if (cur.length < compBuf.length) {
         var deleted = compBuf.slice(cur.length);
-        // PREPEND: deletions happen from the end, so 'hello' → 'o','l','l','e','h'
-        // Prepending reconstructs the original order: 'hello'
         pendingDeletedChars = deleted + pendingDeletedChars;
         pendingBs += deleted.length;
         if (pendingBsTimer) clearTimeout(pendingBsTimer);
         pendingBsTimer = setTimeout(flushPendingBs, 500);
+        dbg('>>','deferCompBs(' + pendingBs + ') del="' + deleted + '" pDC="' + pendingDeletedChars.slice(0,20) + '"');
+      } else {
+        dbg('>>','nochange');
       }
       compBuf = cur;
       return;
     }
 
     // Non-composition fallback
+    dbg('>>','fallback d="' + (e.data||'') + '"');
     if (e.data) {
       if (pendingBs > 0) cancelPendingBs();
       sendKey(e.data);
