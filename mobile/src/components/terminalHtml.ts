@@ -1,4 +1,4 @@
-import { XTERM_CSS, XTERM_XTERM, XTERM_FIT, XTERM_WEBLINKS } from '../assets/xtermBundle';
+import { XTERM_CSS, XTERM_XTERM, XTERM_FIT, XTERM_WEBLINKS, XTERM_CANVAS } from '../assets/xtermBundle';
 
 // Build HTML with xterm.js scripts inlined (no CDN dependency).
 // Library scripts are injected via string concatenation to avoid template literal escaping issues.
@@ -52,6 +52,7 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 <script>` + XTERM_XTERM + `<\/script>
 <script>` + XTERM_FIT + `<\/script>
 <script>` + XTERM_WEBLINKS + `<\/script>
+<script>` + XTERM_CANVAS + `<\/script>
 <script>
 (function() {
 
@@ -85,6 +86,10 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   term.loadAddon(fitAddon);
   term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
   term.open(document.getElementById('terminal'));
+  // Canvas renderer — draws on <canvas> instead of DOM elements, dramatically faster scrolling
+  if (window.CanvasAddon) {
+    try { term.loadAddon(new window.CanvasAddon.CanvasAddon()); } catch(e) {}
+  }
   /* ── Smart Path Links (underlined, clickable) ───────────────── */
   // Combined regex (single pass instead of 3 separate patterns)
   var PATH_RE = /((?:\\/(?:Users|home|tmp|etc|var|opt|usr|mnt|root)[^\\s:,;'"\\)\\]]+)|(?:~\\/[^\\s:,;'"\\)\\]]+)|(?:(?:\\.\\/|\\.\\.\\/)[^\\s:,;'"\\)\\]]+))/g;
