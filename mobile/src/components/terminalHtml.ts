@@ -145,9 +145,26 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   function sendKey(seq) { sendToRN({ type: 'input', data: seq }); }
 
   /* Terminal tap → focus keyboard (not in select mode) */
-  document.getElementById('terminal').addEventListener('click', function(e) {
-    if (!selMode) { e.preventDefault(); focusShadow(); }
-  });
+  // Use touchstart/touchend to detect a genuine stationary tap (not a scroll).
+  // The native 'click' event fires even after small scrolls on mobile,
+  // which was causing focusShadow() → scrollToBottom() during scroll attempts.
+  var tapFocusX = 0, tapFocusY = 0, tapFocusT = 0;
+  document.getElementById('terminal').addEventListener('touchstart', function(e) {
+    if (e.touches.length === 1) {
+      tapFocusX = e.touches[0].clientX;
+      tapFocusY = e.touches[0].clientY;
+      tapFocusT = Date.now();
+    }
+  }, { passive: true });
+  document.getElementById('terminal').addEventListener('touchend', function(e) {
+    if (selMode || isPinching) return;
+    var t = e.changedTouches[0];
+    if (!t) return;
+    // Only count as tap if finger barely moved and was brief
+    if (Math.abs(t.clientX - tapFocusX) > 10 || Math.abs(t.clientY - tapFocusY) > 10) return;
+    if (Date.now() - tapFocusT > 400) return;
+    focusShadow();
+  }, { passive: true });
 
   /* ── Shadow input (soft keyboard) ─────────────────── */
   var shadowInput = document.getElementById('shadow-input');
@@ -158,9 +175,12 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     // Use preventScroll to avoid Android WebView haptic feedback on focus
     shadowInput.focus({ preventScroll: true });
     shadowInput.setSelectionRange(shadowInput.value.length, shadowInput.value.length);
-    // Auto-scroll to bottom when keyboard opens
-    term.scrollToBottom();
-    userScrolledUp = false;
+    // Only scroll to bottom if user hasn't scrolled up — otherwise
+    // tapping to focus the keyboard would yank the viewport away
+    // from what they're reading in scrollback.
+    if (!userScrolledUp) {
+      term.scrollToBottom();
+    }
   }
 
   /* Physical keyboard (emulator / Bluetooth) */
@@ -610,7 +630,7 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         });
       }
       else if (msg.type === 'clear')  term.clear();
-      else if (msg.type === 'focus')  { fitAddon.fit(); reportSize(); if (!selMode) focusShadow(); }
+      else if (msg.type === 'focus')  { fitAddon.fit(); reportSize(); if (!selMode && !userScrolledUp) focusShadow(); }
       else if (msg.type === 'get_all') {
         var buf = term.buffer.active;
         var lines = [];
