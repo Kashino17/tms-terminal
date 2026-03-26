@@ -185,12 +185,13 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 
   /* Physical keyboard (emulator / Bluetooth) */
   document.addEventListener('keydown', function(e) {
-    // Always allow Enter, even during composition — Samsung keyboards
-    // keep isComposing=true while the prediction bar is active, which
-    // would block Enter and prevent command submission.
-    if (e.key === 'Enter') {
+    // Always allow Enter — also check keyCode because Samsung soft keyboard
+    // sometimes fires e.key='Unidentified' instead of 'Enter'.
+    if (e.key === 'Enter' || e.keyCode === 13) {
       e.preventDefault();
-      if (isComposing) { isComposing = false; shadowInput.value = ''; prevValue = ''; }
+      cancelPendingBs();
+      if (isComposing) { isComposing = false; }
+      shadowInput.value = ''; prevValue = '';
       sendKey(SEQ.enter);
       return;
     }
@@ -225,32 +226,59 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     isComposing = false;
   });
 
-  // ── Diff-based input with word-boundary reset ──────────────────────────
-  // Value accumulates within a word so Samsung Keyboard stays in sync.
-  // After each space (word boundary) or when the value exceeds 20 chars,
-  // we clear the field.  This prevents Samsung's prediction buffer from
-  // overflowing and emitting only spaces after a certain length.
+  // ── Deferred backspace system ──────────────────────────────────────────
+  // Samsung prediction cleanup fires deleteContentBackward × N followed by
+  // an insertion (insertText/insertReplacementText).  If we send backspaces
+  // immediately, the word on the terminal is erased before Samsung re-types
+  // it — causing the "word deleted on space" bug.
+  //
+  // Fix: defer backspaces for 40 ms.  If an insertion follows (prediction
+  // commit), cancel the backspaces and only send the trigger char (space).
+  // If no insertion follows within 40 ms, it was a real user backspace —
+  // flush normally.
+  var pendingBs = 0;
+  var pendingBsTimer = null;
 
-  // beforeinput: only needed for backspace/delete when the field is
-  // already empty (Android's input event won't fire in that case).
-  var deleteHandledByBeforeInput = false;
+  function flushPendingBs() {
+    for (var i = 0; i < pendingBs; i++) sendKey(SEQ.bs);
+    pendingBs = 0;
+    pendingBsTimer = null;
+  }
+
+  function cancelPendingBs() {
+    if (pendingBsTimer) { clearTimeout(pendingBsTimer); pendingBsTimer = null; }
+    pendingBs = 0;
+  }
+
+  // beforeinput: backspace/delete on empty field + Enter fallback for
+  // soft keyboards that don't fire keydown for Enter.
+  var handledByBeforeInput = false;
   shadowInput.addEventListener('beforeinput', function(e) {
     var it = e.inputType || '';
     if (it === 'deleteContentBackward' && shadowInput.value.length === 0) {
       e.preventDefault();
+      flushPendingBs();
       sendKey(SEQ.bs);
-      deleteHandledByBeforeInput = true;
+      handledByBeforeInput = true;
     } else if (it === 'deleteContentForward' && shadowInput.value.length === 0) {
       e.preventDefault();
+      flushPendingBs();
       sendKey('\\x1b[3~');
-      deleteHandledByBeforeInput = true;
+      handledByBeforeInput = true;
+    } else if (it === 'insertLineBreak' || it === 'insertParagraph') {
+      e.preventDefault();
+      cancelPendingBs();
+      isComposing = false;
+      sendKey(SEQ.enter);
+      shadowInput.value = ''; prevValue = '';
+      handledByBeforeInput = true;
     } else {
-      deleteHandledByBeforeInput = false;
+      handledByBeforeInput = false;
     }
   });
 
   shadowInput.addEventListener('input', function(e) {
-    if (deleteHandledByBeforeInput) { deleteHandledByBeforeInput = false; return; }
+    if (handledByBeforeInput) { handledByBeforeInput = false; return; }
 
     var cur = shadowInput.value;
 
@@ -258,29 +286,38 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     if (cur.length >= prevValue.length && cur.slice(0, prevValue.length) === prevValue) {
       var added = cur.slice(prevValue.length);
       if (added === '\\n' || added === '\\r' || added === '\\r\\n') {
+        cancelPendingBs();
         sendKey(SEQ.enter); shadowInput.value = ''; prevValue = ''; return;
       }
-      if (added) sendKey(added);
-      prevValue = cur;
+      // If backspaces are pending and an insertion follows, it's Samsung
+      // prediction cleanup (delete word → re-insert word + trigger).
+      // Cancel the backspaces and only send the trigger character.
+      if (pendingBs > 0 && added) {
+        cancelPendingBs();
+        var last = added.charAt(added.length - 1);
+        sendKey(last);
+        prevValue = cur;
+      } else {
+        if (added) sendKey(added);
+        prevValue = cur;
+      }
     }
-    // ── Pure deletion: field got shorter, remaining text still matches
+    // ── Pure deletion: defer backspaces (might be Samsung prediction cleanup)
     else if (cur.length < prevValue.length && cur === prevValue.slice(0, cur.length)) {
       var del = prevValue.length - cur.length;
-      for (var i = 0; i < del; i++) sendKey(SEQ.bs);
+      pendingBs += del;
+      if (pendingBsTimer) clearTimeout(pendingBsTimer);
+      pendingBsTimer = setTimeout(flushPendingBs, 40);
       prevValue = cur;
     }
-    // ── Mismatch: Samsung prediction reset the field (composition
-    // boundary, buffer overflow, or autocorrect).  Don't erase terminal
-    // output (no backspaces) — just send the new content so the user's
-    // fresh input isn't lost, then resync prevValue.
+    // ── Mismatch: Samsung prediction reset
     else {
+      cancelPendingBs();
       if (cur) sendKey(cur);
       prevValue = cur;
     }
 
-    // Clear on word boundary (space) or when field gets long.
-    // Gives Samsung a clean slate for the next word's prediction and
-    // prevents the buffer-length issue that turns all input into spaces.
+    // Clear on word boundary or when field gets long
     if (cur.length > 20 || (!isComposing && cur.indexOf(' ') !== -1)) {
       shadowInput.value = ''; prevValue = '';
     }
