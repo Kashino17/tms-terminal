@@ -241,6 +241,10 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   useEffect(() => {
     if (visible) {
       setTimeout(() => sendToTerminal('focus'), 100);
+    } else {
+      // Blur shadow input in the old tab so the OS keyboard disconnects
+      // from it — prevents keystrokes leaking into the wrong session.
+      sendToTerminal('blur');
     }
   }, [visible, sendToTerminal]);
 

@@ -654,7 +654,21 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         });
       }
       else if (msg.type === 'clear')  term.clear();
-      else if (msg.type === 'focus')  { fitAddon.fit(); reportSize(); if (!selMode && !userScrolledUp) focusShadow(); }
+      else if (msg.type === 'focus')  {
+        fitAddon.fit(); reportSize();
+        // Sync prevValue with the actual shadow input content to prevent
+        // phantom deletions when the diff sees a stale prevValue.
+        prevValue = shadowInput.value;
+        cancelPendingBs();
+        if (!selMode && !userScrolledUp) focusShadow();
+      }
+      else if (msg.type === 'blur')   {
+        // Release keyboard focus so keystrokes stop going to this tab
+        shadowInput.blur();
+        // Reset input state to prevent stale diffs when re-focused
+        shadowInput.value = ''; prevValue = '';
+        cancelPendingBs();
+      }
       else if (msg.type === 'get_all') {
         var buf = term.buffer.active;
         var lines = [];
