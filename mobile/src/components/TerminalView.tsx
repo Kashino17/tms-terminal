@@ -10,6 +10,7 @@ import { colors, fonts } from '../theme';
 import type { AiToolType } from '../types/terminal.types';
 import { useSQLStore } from '../store/sqlStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { useAutoApproveStore } from '../store/autoApproveStore';
 import { getThemeById } from '../constants/terminalThemes';
 import { keywordAlertService } from '../services/keywordAlert.service';
 import { searchCommands, type CommandSuggestion } from '../constants/commandSuggestions';
@@ -309,8 +310,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
           lastInputCharRef.current = data;
 
           // Mark this session as "user is typing" so auto-approve pauses
-          const { markTyping } = require('../store/autoApproveStore').useAutoApproveStore.getState();
-          markTyping(sessionId);
+          useAutoApproveStore.getState().markTyping(sessionId);
 
           wsService.send({
             type: 'terminal:input',

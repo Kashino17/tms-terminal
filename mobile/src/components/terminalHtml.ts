@@ -45,8 +45,8 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 <div id="terminal-container">
   <div id="terminal"></div>
   <input id="shadow-input" type="text"
-    autocomplete="off" autocorrect="off"
-    autocapitalize="none" spellcheck="false" inputmode="text"/>
+    autocomplete="off"
+    autocapitalize="none" inputmode="text"/>
 </div>
 
 <script>` + XTERM_XTERM + `<\/script>
@@ -192,7 +192,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     if (e.key === 'Enter' || e.keyCode === 13) {
       e.preventDefault();
       cancelPendingBs();
-      skipChars = 0;
       if (isComposing) { isComposing = false; }
       shadowInput.value = ''; prevValue = '';
       sendKey(SEQ.enter);
@@ -230,24 +229,30 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   // events entirely — only keydown(Unidentified,229) continues to fire,
   // making all input completely non-functional.
   //
-  // Instead: let the browser handle field updates naturally, then diff
-  // cur vs prevValue in the input handler.  Deferred backspaces (200ms)
-  // protect against Samsung prediction cleanup.  The field is cleared
-  // after each space or at 20 chars to prevent Samsung buffer overflow.
+  // Instead: let the browser handle field updates naturally, then use a
+  // common-prefix diff (prevValue vs cur) to detect insertions, deletions,
+  // AND replacements (autocorrect).  Deferred backspaces (50ms) protect
+  // against Samsung prediction cleanup.  Field cleared at 60 chars.
 
   var pendingBs = 0;
   var pendingBsTimer = null;
-  var skipChars = 0;  // chars to skip after cancelling Samsung prediction backspaces
+  var pendingDeletedStr = '';
 
   function flushPendingBs() {
-    for (var i = 0; i < pendingBs; i++) sendKey(SEQ.bs);
+    if (pendingBs > 0) {
+      var bs = '';
+      for (var i = 0; i < pendingBs; i++) bs += SEQ.bs;
+      sendKey(bs);
+    }
     pendingBs = 0;
+    pendingDeletedStr = '';
     pendingBsTimer = null;
   }
 
   function cancelPendingBs() {
     if (pendingBsTimer) { clearTimeout(pendingBsTimer); pendingBsTimer = null; }
     pendingBs = 0;
+    pendingDeletedStr = '';
   }
 
   shadowInput.addEventListener('compositionstart', function() {
@@ -257,14 +262,13 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     isComposing = false;
   });
 
-  // beforeinput: ONLY prevent for Enter and empty-field backspace.
+  // beforeinput: ONLY prevent for Enter and empty-field backspace/delete.
   // Everything else passes through to let Samsung IME work normally.
   shadowInput.addEventListener('beforeinput', function(e) {
     var it = e.inputType || '';
     if (it === 'insertLineBreak' || it === 'insertParagraph') {
       e.preventDefault();
       cancelPendingBs();
-      skipChars = 0;
       isComposing = false;
       shadowInput.value = ''; prevValue = '';
       sendKey(SEQ.enter);
@@ -278,75 +282,67 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     // All other events: DO NOT prevent — Samsung IME needs them
   });
 
-  // input: diff-based with deferred backspace
-  shadowInput.addEventListener('input', function(e) {
+  // ── Full-diff input handler ────────────────────────────────────────────
+  // Uses common-prefix diff to handle insertions, deletions, AND
+  // replacements (Samsung autocorrect).  Multi-char deletions are deferred
+  // briefly (50 ms) so Samsung prediction cleanup (delete then re-insert
+  // same text) can be optimised to only send the truly new characters.
+  // Autocorrect replacements (different text) flush immediately.
+  shadowInput.addEventListener('input', function() {
     var cur = shadowInput.value;
+    if (cur === prevValue) return;
 
-    // ── Deletion: defer backspaces (Samsung prediction fires deletes
-    //    before re-inserting the word + trigger)
-    if (cur.length < prevValue.length) {
-      var del = prevValue.length - cur.length;
-      pendingBs += del;
+    // Full diff: find common prefix via charCode comparison
+    var cp = 0;
+    var minLen = Math.min(prevValue.length, cur.length);
+    while (cp < minLen && prevValue.charCodeAt(cp) === cur.charCodeAt(cp)) cp++;
+
+    var deleted  = prevValue.slice(cp);
+    var inserted = cur.slice(cp);
+
+    // ── Pure deletion ────────────────────────────────────────────────
+    if (inserted.length === 0 && deleted.length > 0) {
+      pendingDeletedStr = deleted + pendingDeletedStr;
+      pendingBs += deleted.length;
       if (pendingBsTimer) clearTimeout(pendingBsTimer);
-      pendingBsTimer = setTimeout(flushPendingBs, 200);
+      pendingBsTimer = setTimeout(flushPendingBs, 50);
       prevValue = cur;
       return;
     }
 
-    // ── Insertion
-    var added = cur.slice(prevValue.length);
+    // ── Insertion or replacement ─────────────────────────────────────
+    var payload = '';
 
-    // Skip chars from Samsung restoring what it deleted
-    if (skipChars > 0 && added) {
-      if (added.length <= skipChars) {
-        skipChars -= added.length;
-      } else {
-        var toSend = added.slice(skipChars);
-        skipChars = 0;
-        sendKey(toSend);
-      }
-      prevValue = cur;
-      if (cur.length > 20 || cur.indexOf(' ') !== -1) {
-        shadowInput.value = ''; prevValue = ''; skipChars = 0;
-      }
-      return;
-    }
-
-    // Insertion while backspaces are pending
-    if (pendingBs > 0 && added) {
-      if (pendingBs >= 3) {
-        // Samsung prediction cleanup (deleted 3+ chars then re-inserted).
-        // Cancel backspaces, skip the restored chars, send only new ones.
-        skipChars = pendingBs;
+    if (pendingBs > 0) {
+      if (pendingBs >= 3 && inserted.length >= pendingDeletedStr.length
+          && inserted.slice(0, pendingDeletedStr.length) === pendingDeletedStr) {
+        // Samsung prediction: reinserted text starts with deleted text.
+        // Cancel deferred backspaces, send only the truly new characters.
+        var trulyNew = inserted.slice(pendingDeletedStr.length);
         cancelPendingBs();
-        if (added.length <= skipChars) {
-          skipChars -= added.length;
-        } else {
-          sendKey(added.slice(skipChars));
-          skipChars = 0;
-        }
+        for (var i = 0; i < deleted.length; i++) payload += SEQ.bs;
+        payload += trulyNew;
       } else {
-        // 1-2 pending backspaces + insertion = real user backspace + typing.
-        // Flush the backspaces, send the new chars.
-        flushPendingBs();
-        sendKey(added);
+        // Autocorrect or real editing: combine pending + current diff
+        var totalBs = pendingBs + deleted.length;
+        if (pendingBsTimer) { clearTimeout(pendingBsTimer); pendingBsTimer = null; }
+        pendingBs = 0; pendingDeletedStr = '';
+        for (var i = 0; i < totalBs; i++) payload += SEQ.bs;
+        payload += inserted;
       }
-      prevValue = cur;
-      if (cur.length > 20 || cur.indexOf(' ') !== -1) {
-        shadowInput.value = ''; prevValue = ''; skipChars = 0;
-      }
-      return;
+    } else {
+      // No pending backspaces: apply full diff directly
+      for (var i = 0; i < deleted.length; i++) payload += SEQ.bs;
+      payload += inserted;
     }
 
-    // Normal insertion (no pending backspaces)
-    if (added) {
-      sendKey(added);
-    }
+    if (payload) sendKey(payload);
     prevValue = cur;
 
-    // Clear on word boundary or length to prevent Samsung buffer overflow
-    if (cur.length > 20 || cur.indexOf(' ') !== -1) {
-      shadowInput.value = ''; prevValue = ''; skipChars = 0;
+    // Clear field periodically to prevent Samsung buffer overflow.
+    // Don't clear on space — autocorrect needs word context.
+    if (cur.length > 60) {
+      shadowInput.value = ''; prevValue = ''; cancelPendingBs();
     }
   });
 
