@@ -175,6 +175,10 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     // Use preventScroll to avoid Android WebView haptic feedback on focus
     shadowInput.focus({ preventScroll: true });
     shadowInput.setSelectionRange(shadowInput.value.length, shadowInput.value.length);
+    // Sync prevValue — Samsung IME may have silently changed the value.
+    // Without this, the next diff sees stale prevValue → phantom deletions.
+    prevValue = shadowInput.value;
+    cancelPendingBs();
     // Only scroll to bottom if user hasn't scrolled up — otherwise
     // tapping to focus the keyboard would yank the viewport away
     // from what they're reading in scrollback.
@@ -212,8 +216,14 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     if (e.key === 'ArrowRight') return SEQ.right;
     if (e.key === 'ArrowLeft')  return SEQ.left;
     if (e.key === 'Enter')      return SEQ.enter;
-    if (e.key === 'Backspace')  return SEQ.bs;
-    if (e.key === 'Delete')     return '\\x1b[3~';
+    // NOTE: Backspace deliberately NOT handled here.
+    // Samsung soft keyboard sometimes sends real keydown Backspace events
+    // (keyCode 8, not 229). If we handle it here AND the browser also
+    // processes it (changing shadowInput), the diff handler fires too →
+    // DOUBLE backspace on every press → "stuck delete" effect.
+    // Backspace is handled exclusively by:
+    //  - diff handler (input event, when field has text)
+    //  - beforeinput handler (when field is empty)
     if (e.key === 'Tab')        return SEQ.tab;
     if (e.key === 'Escape')     return SEQ.esc;
     if (e.key === 'Home')       return SEQ.home;
@@ -251,6 +261,14 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     pendingBs = 0;
     pendingDeletedStr = '';
     pendingBsTimer = null;
+    // Safety net for Samsung word suggestions: Samsung may delete the old
+    // word (triggering pendingBs) then silently insert the replacement
+    // WITHOUT firing an 'input' event.  Check shortly after flush.
+    setTimeout(function() {
+      if (shadowInput.value !== prevValue) {
+        shadowInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, 30);
   }
 
   function cancelPendingBs() {
