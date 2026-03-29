@@ -197,7 +197,11 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       sendKey(SEQ.enter);
       return;
     }
-    if (isComposing) return;
+    // Skip IME-processed events (keyCode 229 = "handled by IME").
+    // Samsung sometimes sends e.key='Backspace' with keyCode 229 —
+    // physicalKey would catch it and send a backspace, but the input
+    // handler ALSO processes the deletion via diff → double backspace.
+    if (isComposing || e.isComposing || e.keyCode === 229) return;
     var s = physicalKey(e);
     if (s) { e.preventDefault(); sendKey(s); }
   });
@@ -260,6 +264,16 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   });
   shadowInput.addEventListener('compositionend', function() {
     isComposing = false;
+    // Samsung word suggestions may change the value during compositionend
+    // without firing a separate 'input' event.  The deletion half fires
+    // (pendingBs accumulates) but the insertion half is silent — result:
+    // word gets deleted but replacement never arrives.
+    // Fix: check after a short delay if the value diverged from prevValue.
+    setTimeout(function() {
+      if (shadowInput.value !== prevValue) {
+        shadowInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, 30);
   });
 
   // beforeinput: ONLY prevent for Enter and empty-field backspace/delete.
