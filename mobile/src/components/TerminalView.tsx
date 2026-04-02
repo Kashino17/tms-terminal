@@ -65,6 +65,8 @@ export interface TerminalViewRef {
   requestLastLines: (count?: number) => Promise<string[]>;
   /** Scrolls the terminal to the very bottom. */
   scrollToBottom: () => void;
+  /** Injects text into the shadow input as if the user typed it. */
+  injectText: (text: string) => void;
 }
 
 interface Props {
@@ -136,6 +138,14 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     scrollToBottom: () => {
       if (webViewRef.current) {
         const msg = JSON.stringify({ type: 'scroll_to_bottom' });
+        webViewRef.current.injectJavaScript(
+          `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
+        );
+      }
+    },
+    injectText: (text: string) => {
+      if (webViewRef.current && text) {
+        const msg = JSON.stringify({ type: 'inject_text', data: text });
         webViewRef.current.injectJavaScript(
           `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
         );

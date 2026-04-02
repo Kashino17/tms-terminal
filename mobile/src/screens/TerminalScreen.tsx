@@ -801,6 +801,10 @@ export function TerminalScreen({ navigation, route }: Props) {
                 rangeActive={rangeActive}
                 onRangeToggle={() => setRangeActive((v) => !v)}
                 onScrollToBottom={handleScrollToBottom}
+                onTranscription={(text) => {
+                  const activeTab = serverTabs.find((t) => t.active);
+                  if (activeTab) termViewRefs.current.get(activeTab.id)?.injectText(text);
+                }}
               />
             </>
           }
@@ -834,6 +838,10 @@ export function TerminalScreen({ navigation, route }: Props) {
             rangeActive={rangeActive}
             onRangeToggle={() => setRangeActive((v) => !v)}
             onScrollToBottom={handleScrollToBottom}
+            onTranscription={(text) => {
+              const activeTab = serverTabs.find((t) => t.active);
+              if (activeTab) termViewRefs.current.get(activeTab.id)?.injectText(text);
+            }}
           />
           <ToolRail
             ref={toolRailRef}

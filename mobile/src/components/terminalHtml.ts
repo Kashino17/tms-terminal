@@ -744,6 +744,12 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         }
         sendToRN({ type: 'last_lines', lines: ls });
       }
+      else if (msg.type === 'inject_text' && msg.data) {
+        var shadow = document.getElementById('shadow-input');
+        shadow.value = msg.data;
+        prevValue = '';
+        shadow.dispatchEvent(new Event('input', { bubbles: true }));
+      }
     } catch(e) {}
   }
   /* Block native long-press context menu (Android "Paste" popup) */
