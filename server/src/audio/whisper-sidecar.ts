@@ -9,7 +9,10 @@ interface PendingRequest {
 }
 
 const TRANSCRIBE_TIMEOUT_MS = 30_000;
-const SIDECAR_SCRIPT = path.resolve(__dirname, '..', '..', 'audio', 'whisper_sidecar.py');
+const SIDECAR_DIR = path.resolve(__dirname, '..', '..', 'audio');
+const SIDECAR_SCRIPT = path.join(SIDECAR_DIR, 'whisper_sidecar.py');
+// Prefer the venv Python (where whisper+torch are installed) over system python3
+const VENV_PYTHON = path.join(SIDECAR_DIR, '.venv', 'bin', 'python3');
 
 let sidecar: ChildProcess | null = null;
 let buffer = '';
@@ -24,7 +27,11 @@ function ensureRunning(): Promise<void> {
   startPromise = new Promise<void>((resolve, reject) => {
     logger.info('[whisper] Starting sidecar...');
 
-    const child = spawn('python3', [SIDECAR_SCRIPT], {
+    const fs = require('fs');
+    const pythonBin = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
+    logger.info(`[whisper] Using Python: ${pythonBin}`);
+
+    const child = spawn(pythonBin, [SIDECAR_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

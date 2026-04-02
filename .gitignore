@@ -15,6 +15,9 @@ server/certs/
 .DS_Store
 Thumbs.db
 
+# Python venv (Whisper sidecar)
+.venv/
+
 # Build
 mobile/android/app/build/
 mobile/android/.gradle/
