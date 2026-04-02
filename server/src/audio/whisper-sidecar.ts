@@ -9,7 +9,22 @@ interface PendingRequest {
 }
 
 const TRANSCRIBE_TIMEOUT_MS = 30_000;
-const SIDECAR_DIR = path.resolve(__dirname, '..', '..', 'audio');
+
+// Find the server root (directory containing package.json) by walking up from __dirname.
+// Works for both compiled (dist/server/src/audio/) and dev (src/audio/) contexts.
+function findServerRoot(): string {
+  let dir = __dirname;
+  for (let i = 0; i < 10; i++) {
+    if (require('fs').existsSync(path.join(dir, 'package.json'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return path.resolve(__dirname, '..', '..');
+}
+
+const SERVER_ROOT = findServerRoot();
+const SIDECAR_DIR = path.join(SERVER_ROOT, 'audio');
 const SIDECAR_SCRIPT = path.join(SIDECAR_DIR, 'whisper_sidecar.py');
 // Prefer the venv Python (where whisper+torch are installed) over system python3
 const VENV_PYTHON = path.join(SIDECAR_DIR, '.venv', 'bin', 'python3');
