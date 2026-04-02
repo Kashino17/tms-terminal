@@ -55,6 +55,13 @@ export interface WatcherTestMessage   { type: 'watcher:test';   payload: { id: s
 export interface SystemSnapshotMessage { type: 'system:snapshot'; }
 export interface SystemKillMessage     { type: 'system:kill'; payload: { pid: number; signal?: string }; }
 
+// ── Audio messages (Client → Server) ──────────────────────────
+export interface AudioTranscribeMessage {
+  type: 'audio:transcribe';
+  sessionId: string;
+  payload: { audio: string; format: 'wav' };
+}
+
 export type ClientMessage =
   | TerminalCreateMessage
   | TerminalInputMessage
@@ -70,7 +77,8 @@ export type ClientMessage =
   | WatcherDeleteMessage
   | WatcherTestMessage
   | SystemSnapshotMessage
-  | SystemKillMessage;
+  | SystemKillMessage
+  | AudioTranscribeMessage;
 
 // ── Server → Client ──────────────────────────────────────────────
 
@@ -153,6 +161,19 @@ export interface SystemKillResultMessage {
   payload: { pid: number; success: boolean; message?: string };
 }
 
+// ── Audio responses (Server → Client) ──────────────────────────
+export interface AudioTranscriptionMessage {
+  type: 'audio:transcription';
+  sessionId: string;
+  payload: { text: string };
+}
+
+export interface AudioErrorMessage {
+  type: 'audio:error';
+  sessionId: string;
+  payload: { message: string };
+}
+
 // ── System snapshot response (Server → Client) ──────────────────
 export interface SystemSnapshotResponseMessage {
   type: 'system:snapshot';
@@ -190,4 +211,6 @@ export type ServerMessage =
   | WatcherDeletedMessage
   | WatcherTestResultMessage
   | SystemSnapshotResponseMessage
-  | SystemKillResultMessage;
+  | SystemKillResultMessage
+  | AudioTranscriptionMessage
+  | AudioErrorMessage;
