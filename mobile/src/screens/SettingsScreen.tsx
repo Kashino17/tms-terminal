@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Alert, Switch, Modal, Pressable,
+  View, Text, StyleSheet, TouchableOpacity, Alert, Switch, Modal, Pressable, ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
@@ -13,6 +13,7 @@ import { useCloudProjectsStore } from '../store/cloudProjectsStore';
 import { TERMINAL_THEMES, getThemeById } from '../constants/terminalThemes';
 import { colors, fonts, fontSizes, spacing } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
+import { getCurrentVersion, checkForPreviousVersion, downloadAndInstall, formatSize } from '../services/updater.service';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Settings'>;
@@ -27,6 +28,12 @@ export function SettingsScreen({ navigation }: Props) {
   const [idlePickerVisible, setIdlePickerVisible] = useState(false);
   const [themePickerVisible, setThemePickerVisible] = useState(false);
   const [pollingPickerVisible, setPollingPickerVisible] = useState(false);
+  const [prevVersion, setPrevVersion] = useState<{ version: string; downloadUrl: string; size: number } | null>(null);
+  const [prevVersionLoading, setPrevVersionLoading] = useState(true);
+
+  useEffect(() => {
+    checkForPreviousVersion().then(setPrevVersion).catch(() => {}).finally(() => setPrevVersionLoading(false));
+  }, []);
 
   const currentIdleLabel = IDLE_THRESHOLD_OPTIONS.find((o) => o.value === idleThresholdSeconds)?.label ?? `${idleThresholdSeconds}s`;
   const currentThemeName = getThemeById(terminalTheme).name;
@@ -383,14 +390,59 @@ export function SettingsScreen({ navigation }: Props) {
           </Pressable>
         </Modal>
 
-        {/* ── About ── */}
+        {/* ── Version ── */}
         <View style={[styles.section, { marginBottom: rs(28) }]}>
-          <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>About</Text>
+          <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>Version</Text>
           <View style={styles.card}>
             <View style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}>
-              <Text style={[styles.label, { fontSize: rf(16) }]}>Version</Text>
-              <Text style={[styles.value, { fontSize: rf(16) }]}>1.0.0</Text>
+              <View style={styles.rowLeft}>
+                <Feather name="info" size={ri(18)} color={colors.textMuted} style={{ marginRight: rs(12) }} />
+                <Text style={[styles.label, { fontSize: rf(16) }]}>Aktuell</Text>
+              </View>
+              <Text style={[styles.value, { fontSize: rf(16) }]}>v{getCurrentVersion()}</Text>
             </View>
+
+            <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
+
+            <TouchableOpacity
+              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14), opacity: prevVersion ? 1 : 0.4 }]}
+              onPress={() => {
+                if (!prevVersion) return;
+                Alert.alert(
+                  'Version wiederherstellen',
+                  `Wirklich auf ${prevVersion.version} zuruecksetzen?\n\nDie APK (${formatSize(prevVersion.size)}) wird heruntergeladen und installiert.`,
+                  [
+                    { text: 'Abbrechen', style: 'cancel' },
+                    {
+                      text: 'Wiederherstellen',
+                      onPress: () => downloadAndInstall(prevVersion.downloadUrl),
+                    },
+                  ],
+                );
+              }}
+              activeOpacity={prevVersion ? 0.7 : 1}
+              disabled={!prevVersion && !prevVersionLoading}
+            >
+              <View style={styles.rowLeft}>
+                <Feather name="rotate-ccw" size={ri(18)} color={prevVersion ? colors.warning : colors.textDim} style={{ marginRight: rs(12) }} />
+                <View>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Vorherige Version</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>
+                    {prevVersionLoading
+                      ? 'Wird geladen...'
+                      : prevVersion
+                        ? `${prevVersion.version} · ${formatSize(prevVersion.size)}`
+                        : 'Keine vorherige Version verfuegbar'}
+                  </Text>
+                </View>
+              </View>
+              {prevVersionLoading
+                ? <ActivityIndicator size="small" color={colors.textDim} />
+                : prevVersion
+                  ? <Feather name="download" size={ri(16)} color={colors.textDim} />
+                  : null
+              }
+            </TouchableOpacity>
           </View>
         </View>
 

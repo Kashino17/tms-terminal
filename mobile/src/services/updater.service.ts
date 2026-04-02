@@ -78,6 +78,55 @@ export async function checkForUpdate(): Promise<{
 }
 
 /**
+ * Check for the previous version (one version back from current).
+ * Fetches all releases, finds the highest version below the current one.
+ */
+export async function checkForPreviousVersion(): Promise<{
+  version: string;
+  downloadUrl: string;
+  size: number;
+} | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    const res = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=10`,
+      {
+        headers: { Accept: 'application/vnd.github.v3+json' },
+        signal: controller.signal,
+      },
+    );
+    clearTimeout(timeout);
+
+    if (!res.ok) return null;
+
+    const releases: GitHubRelease[] = await res.json();
+    const currentVersion = getCurrentVersion();
+
+    // Sort descending by semver, find the first one below current
+    const sorted = releases
+      .filter((r) => {
+        const apk = r.assets.find((a) => a.name.endsWith('.apk'));
+        return apk && compareSemver(r.tag_name, currentVersion) < 0;
+      })
+      .sort((a, b) => compareSemver(b.tag_name, a.tag_name));
+
+    const prev = sorted[0];
+    if (!prev) return null;
+
+    const apk = prev.assets.find((a) => a.name.endsWith('.apk'))!;
+    return {
+      version: prev.tag_name,
+      downloadUrl: apk.browser_download_url,
+      size: apk.size,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Open the APK download URL directly in the browser.
  * Android will download the APK and prompt to install it.
  */
