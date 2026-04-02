@@ -9,6 +9,9 @@ interface SettingsState {
   /** Terminal color theme id. Default: 'default'. */
   terminalTheme: string;
   setTerminalTheme: (id: string) => void;
+  /** Whether the microphone button is shown in the toolbar. Default: true. */
+  audioInputEnabled: boolean;
+  setAudioInputEnabled: (enabled: boolean) => void;
 }
 
 export const IDLE_THRESHOLD_OPTIONS = [
@@ -30,6 +33,10 @@ export const useSettingsStore = create<SettingsState>()(
       terminalTheme: 'default',
       setTerminalTheme(id: string) {
         set({ terminalTheme: id });
+      },
+      audioInputEnabled: true,
+      setAudioInputEnabled(enabled: boolean) {
+        set({ audioInputEnabled: enabled });
       },
     }),
     {
