@@ -8,6 +8,7 @@ import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 import { autopilotService } from '../autopilot/autopilot.service';
+import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -329,6 +330,34 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         autopilotService.setEnabled(sessionId, enabled);
         logger.info(`Autopilot queue ${enabled ? 'enabled' : 'disabled'} for ${sessionId.slice(0, 8)}`);
       }
+      return;
+    }
+
+    if (msgType === 'audio:transcribe') {
+      const sessionId = (msg as any).sessionId;
+      const audio = (msg as any).payload?.audio;
+      const format = (msg as any).payload?.format;
+
+      if (!isValidSessionId(sessionId)) {
+        send(ws, { type: 'audio:error', sessionId: 'none', payload: { message: 'Invalid sessionId' } } as any);
+        return;
+      }
+      if (typeof audio !== 'string' || audio.length === 0) {
+        send(ws, { type: 'audio:error', sessionId, payload: { message: 'Keine Audiodaten empfangen' } } as any);
+        return;
+      }
+      if (format !== 'wav') {
+        send(ws, { type: 'audio:error', sessionId, payload: { message: 'Nur WAV-Format unterstuetzt' } } as any);
+        return;
+      }
+
+      whisperTranscribe(audio).then((text) => {
+        send(ws, { type: 'audio:transcription', sessionId, payload: { text } } as any);
+      }).catch((err) => {
+        const message = err instanceof Error ? err.message : 'Transkription fehlgeschlagen';
+        logger.warn(`[whisper] Transcription failed: ${message}`);
+        send(ws, { type: 'audio:error', sessionId, payload: { message } } as any);
+      });
       return;
     }
 

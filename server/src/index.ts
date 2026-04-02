@@ -11,6 +11,7 @@ import { getPlatform, getDefaultShell } from './utils/platform';
 import { fcmService } from './notifications/fcm.service';
 import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
+import { shutdown as shutdownWhisper } from './audio/whisper-sidecar';
 
 // ── Global error handlers ────────────────────────────────────────────
 process.on('unhandledRejection', (reason) => {
@@ -110,6 +111,7 @@ function main(): void {
     forceExit.unref();
     logger.info('Shutting down...');
     watcherService.shutdown();
+    shutdownWhisper();
 
     // Close all terminal sessions
     globalManager.closeAllSessions();
