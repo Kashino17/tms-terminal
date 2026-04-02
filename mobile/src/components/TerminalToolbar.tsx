@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Animated, Keyboard, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 import { WebSocketService } from '../services/websocket.service';
 import { colors, fonts } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
+import { useSettingsStore } from '../store/settingsStore';
 
 export const TOOLBAR_HEIGHT = 44;
 
@@ -13,12 +16,20 @@ interface Props {
   rangeActive?: boolean;
   onRangeToggle?: () => void;
   onScrollToBottom?: () => void;
+  onTranscription?: (text: string) => void;
+  onTranscriptionError?: (message: string) => void;
 }
 
-export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onRangeToggle, onScrollToBottom }: Props) {
+export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onRangeToggle, onScrollToBottom, onTranscription, onTranscriptionError }: Props) {
   const { rf, rs, ri } = useResponsive();
   const bottomAnim = useRef(new Animated.Value(0)).current;
   const [arrowsOpen, setArrowsOpen] = useState(false);
+  const audioInputEnabled = useSettingsStore((s) => s.audioInputEnabled);
+  const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
@@ -31,10 +42,127 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
     return () => { showSub.remove(); hideSub.remove(); };
   }, []);
 
+  useEffect(() => {
+    if (micState === 'recording') {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 0.5, duration: 600, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+        ]),
+      );
+      loop.start();
+      return () => loop.stop();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [micState]);
+
+  useEffect(() => {
+    return wsService.addMessageListener((msg: unknown) => {
+      const m = msg as { type: string; sessionId?: string; payload?: any };
+      if (m.sessionId !== sessionId) return;
+      if (m.type === 'audio:transcription') {
+        setMicState('idle');
+        onTranscription?.(m.payload?.text ?? '');
+      } else if (m.type === 'audio:error') {
+        setMicState('idle');
+        onTranscriptionError?.(m.payload?.message ?? 'Transkription fehlgeschlagen');
+      }
+    });
+  }, [wsService, sessionId, onTranscription, onTranscriptionError]);
+
+  useEffect(() => {
+    return () => {
+      if (recordingRef.current) {
+        recordingRef.current.stopAndUnloadAsync().catch(() => {});
+        recordingRef.current = null;
+      }
+      if (durationTimerRef.current) {
+        clearInterval(durationTimerRef.current);
+        durationTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const send = (seq: string, action?: string) => {
     if (!sessionId) return;
     if (action === 'clear') { wsService.send({ type: 'terminal:clear', sessionId }); return; }
     wsService.send({ type: 'terminal:input', sessionId, payload: { data: seq } });
+  };
+
+  const handleMicPress = async () => {
+    if (micState === 'processing') return;
+
+    if (micState === 'recording') {
+      // Stop recording and send
+      if (durationTimerRef.current) { clearInterval(durationTimerRef.current); durationTimerRef.current = null; }
+      setMicState('processing');
+      try {
+        const recording = recordingRef.current;
+        if (!recording) { setMicState('idle'); return; }
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        recordingRef.current = null;
+        if (!uri || !sessionId) { setMicState('idle'); return; }
+
+        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+
+        wsService.send({
+          type: 'audio:transcribe',
+          sessionId,
+          payload: { audio: base64, format: 'wav' },
+        });
+      } catch (err) {
+        console.warn('[mic] Error stopping recording:', err);
+        setMicState('idle');
+      }
+      return;
+    }
+
+    // Start recording
+    try {
+      const { granted } = await Audio.requestPermissionsAsync();
+      if (!granted) { console.warn('[mic] Permission denied'); return; }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const { recording } = await Audio.Recording.createAsync({
+        android: {
+          extension: '.wav',
+          outputFormat: 3,
+          audioEncoder: 1,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 256000,
+        },
+        ios: {
+          extension: '.wav',
+          audioQuality: 96,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 256000,
+          linearPCMBitDepth: 16,
+          linearPCMIsBigEndian: false,
+          linearPCMIsFloat: false,
+          outputFormat: 'lpcm',
+        },
+        web: {},
+      });
+
+      recordingRef.current = recording;
+      setRecordingDuration(0);
+      setMicState('recording');
+      durationTimerRef.current = setInterval(() => {
+        setRecordingDuration((d) => d + 1);
+      }, 1000);
+    } catch (err) {
+      console.warn('[mic] Error starting recording:', err);
+      setMicState('idle');
+    }
   };
 
   const h = rs(36);
@@ -109,6 +237,35 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
       <BigBtn icon="scissors" onPress={onRangeToggle} color={colors.textDim} active={rangeActive} activeColor={colors.accent} />
       <BigBtn icon="chevrons-down" onPress={onScrollToBottom} color={colors.info} />
       <BigBtn icon="corner-down-left" onPress={() => send('\r')} color={colors.text} />
+
+      {audioInputEnabled && (
+        <>
+          <View style={s.sep} />
+          <Animated.View style={{ opacity: micState === 'recording' ? pulseAnim : 1 }}>
+            <TouchableOpacity
+              style={[
+                s.bigBtn,
+                { height: h },
+                micState === 'recording' && { backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: StyleSheet.hairlineWidth, borderColor: '#ef4444' },
+                micState === 'processing' && { opacity: 0.5 },
+              ]}
+              onPress={handleMicPress}
+              activeOpacity={0.6}
+              disabled={micState === 'processing'}
+            >
+              {micState === 'processing'
+                ? <Feather name="loader" size={lg} color={colors.textDim} />
+                : <Feather name="mic" size={lg} color={micState === 'recording' ? '#ef4444' : colors.textDim} />
+              }
+            </TouchableOpacity>
+          </Animated.View>
+          {micState === 'recording' && (
+            <Text style={[s.keyText, { fontSize: fontSz, color: '#ef4444', minWidth: 28, textAlign: 'center' }]}>
+              {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
+            </Text>
+          )}
+        </>
+      )}
     </Animated.View>
   );
 }
