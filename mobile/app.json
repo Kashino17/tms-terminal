@@ -18,7 +18,13 @@
     },
     "plugins": [
       "./plugins/withCleartextTraffic",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "TMS Terminal benoetigt Zugriff auf das Mikrofon fuer Spracheingabe."
+        }
+      ]
     ]
   }
 }
