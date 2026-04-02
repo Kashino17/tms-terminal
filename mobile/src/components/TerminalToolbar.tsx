@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Animated, Keyboard, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Animated, Keyboard, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
@@ -26,6 +26,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   const [arrowsOpen, setArrowsOpen] = useState(false);
   const audioInputEnabled = useSettingsStore((s) => s.audioInputEnabled);
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
+  const [micError, setMicError] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -43,7 +44,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   }, []);
 
   useEffect(() => {
-    if (micState === 'recording') {
+    if (micState === 'recording' || micState === 'processing') {
       const loop = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 0.5, duration: 600, useNativeDriver: true }),
@@ -63,10 +64,14 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
       if (m.sessionId !== sessionId) return;
       if (m.type === 'audio:transcription') {
         setMicState('idle');
+        setMicError(null);
         onTranscription?.(m.payload?.text ?? '');
       } else if (m.type === 'audio:error') {
         setMicState('idle');
-        onTranscriptionError?.(m.payload?.message ?? 'Transkription fehlgeschlagen');
+        const errMsg = m.payload?.message ?? 'Transkription fehlgeschlagen';
+        setMicError(errMsg);
+        setTimeout(() => setMicError(null), 4000);
+        onTranscriptionError?.(errMsg);
       }
     });
   }, [wsService, sessionId, onTranscription, onTranscriptionError]);
@@ -238,31 +243,41 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
       <BigBtn icon="chevrons-down" onPress={onScrollToBottom} color={colors.info} />
       <BigBtn icon="corner-down-left" onPress={() => send('\r')} color={colors.text} />
 
-      {audioInputEnabled && (
+      {audioInputEnabled && micError && micState === 'idle' && (
+        <View style={[s.errorBar, { height: h }]}>
+          <Feather name="alert-circle" size={sm} color={colors.destructive} />
+          <Text style={[s.keyText, { fontSize: fontSz, color: colors.destructive, flex: 1 }]} numberOfLines={1}>{micError}</Text>
+        </View>
+      )}
+      {audioInputEnabled && !micError && (
         <>
           <View style={s.sep} />
-          <Animated.View style={{ opacity: micState === 'recording' ? pulseAnim : 1 }}>
-            <TouchableOpacity
-              style={[
-                s.bigBtn,
-                { height: h },
-                micState === 'recording' && { backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: StyleSheet.hairlineWidth, borderColor: '#ef4444' },
-                micState === 'processing' && { opacity: 0.5 },
-              ]}
-              onPress={handleMicPress}
-              activeOpacity={0.6}
-              disabled={micState === 'processing'}
-            >
-              {micState === 'processing'
-                ? <Feather name="loader" size={lg} color={colors.textDim} />
-                : <Feather name="mic" size={lg} color={micState === 'recording' ? '#ef4444' : colors.textDim} />
-              }
-            </TouchableOpacity>
-          </Animated.View>
-          {micState === 'recording' && (
-            <Text style={[s.keyText, { fontSize: fontSz, color: '#ef4444', minWidth: 28, textAlign: 'center' }]}>
-              {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
-            </Text>
+          {micState === 'processing' ? (
+            <Animated.View style={[s.processingBar, { height: h, opacity: pulseAnim }]}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={[s.keyText, { fontSize: fontSz, color: colors.primary }]}>Transkribiert…</Text>
+            </Animated.View>
+          ) : (
+            <>
+              <Animated.View style={{ opacity: micState === 'recording' ? pulseAnim : 1 }}>
+                <TouchableOpacity
+                  style={[
+                    s.bigBtn,
+                    { height: h },
+                    micState === 'recording' && { backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: StyleSheet.hairlineWidth, borderColor: '#ef4444' },
+                  ]}
+                  onPress={handleMicPress}
+                  activeOpacity={0.6}
+                >
+                  <Feather name="mic" size={lg} color={micState === 'recording' ? '#ef4444' : colors.textDim} />
+                </TouchableOpacity>
+              </Animated.View>
+              {micState === 'recording' && (
+                <Text style={[s.keyText, { fontSize: fontSz, color: '#ef4444', minWidth: 28, textAlign: 'center' }]}>
+                  {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
+                </Text>
+              )}
+            </>
           )}
         </>
       )}
@@ -326,6 +341,27 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 8,
     backgroundColor: colors.surface,
+  },
+  errorBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(239,68,68,0.1)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.destructive,
+    flex: 1,
+  },
+  processingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(59,130,246,0.12)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.primary,
   },
   sep: {
     width: StyleSheet.hairlineWidth,
