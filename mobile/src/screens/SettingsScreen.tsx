@@ -22,7 +22,7 @@ type Props = {
 export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
-  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme } = useSettingsStore();
+  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode } = useSettingsStore();
   const { tokens, notificationsEnabled, pollingIntervalMs, setNotificationsEnabled, setPollingIntervalMs, clearPlatform } = useCloudAuthStore();
   const { clearCache } = useCloudProjectsStore();
   const [idlePickerVisible, setIdlePickerVisible] = useState(false);
@@ -221,6 +221,28 @@ export function SettingsScreen({ navigation }: Props) {
                 <Text style={[styles.value, { fontSize: rf(14), marginRight: rs(4) }]}>{currentThemeName}</Text>
                 <Feather name="chevron-right" size={ri(16)} color={colors.textDim} />
               </View>
+            </TouchableOpacity>
+            <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
+            <TouchableOpacity
+              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+              onPress={() => setExternalKeyboardMode(!externalKeyboardMode)}
+              activeOpacity={0.7}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: externalKeyboardMode }}
+            >
+              <View style={styles.rowLeft}>
+                <Feather name="hard-drive" size={ri(18)} color={colors.textMuted} style={{ marginRight: rs(12) }} />
+                <View>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Externe Tastatur</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Virtuelle Tastatur im Terminal deaktivieren</Text>
+                </View>
+              </View>
+              <Switch
+                value={externalKeyboardMode}
+                onValueChange={setExternalKeyboardMode}
+                trackColor={{ false: colors.border, true: colors.primary + '88' }}
+                thumbColor={externalKeyboardMode ? colors.primary : colors.textDim}
+              />
             </TouchableOpacity>
           </View>
         </View>
