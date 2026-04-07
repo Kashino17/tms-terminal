@@ -6,7 +6,7 @@
  */
 import React, { useCallback, useRef, useState } from 'react';
 import {
-  Animated, StyleSheet, Text,
+  Animated, ScrollView, StyleSheet, Text,
   TouchableOpacity, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -50,7 +50,7 @@ export function PinSetupScreen({ navigation, route }: Props) {
   const mode: Mode = (route.params?.mode as Mode) ?? 'setup';
   const insets = useSafeAreaInsets();
   const { enable, disable, changePin, verifyPin } = useLockStore();
-  const { rf, rs, ri, isExpanded } = useResponsive();
+  const { rf, rs, ri, isExpanded, isLandscape } = useResponsive();
 
   const [stage,    setStage]    = useState(0);   // 0 = first entry, 1 = confirm
   const [pin,      setPin]      = useState('');
@@ -120,18 +120,24 @@ export function PinSetupScreen({ navigation, route }: Props) {
   }, [pin, stage, firstPin, mode, verifyPin, enable, disable, changePin, navigation, shake]);
 
   const dotSize = ri(14);
-  const keyHeight = ri(60);
+  const keyHeight = isLandscape ? ri(42) : ri(60);
 
   return (
-    <View style={[styles.container, {
-      paddingTop: insets.top + rs(16),
-      paddingHorizontal: rs(24),
-      maxWidth: isExpanded ? 400 : undefined,
-      alignSelf: isExpanded ? 'center' as const : undefined,
-      width: isExpanded ? '100%' as unknown as number : undefined,
-    }]}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.scrollContent, {
+        paddingTop: insets.top + (isLandscape ? rs(8) : rs(16)),
+        paddingHorizontal: rs(24),
+        maxWidth: isExpanded ? 400 : undefined,
+        alignSelf: isExpanded ? 'center' as const : undefined,
+        width: isExpanded ? '100%' as unknown as number : undefined,
+      }]}
+      bounces={false}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+    >
       {/* ── Header ── */}
-      <View style={[styles.header, { marginBottom: rs(40) }]}>
+      <View style={[styles.header, { marginBottom: isLandscape ? rs(12) : rs(40) }]}>
         <Text style={[styles.title, { fontSize: rf(22), marginBottom: rs(8) }]}>{title}</Text>
         <Text style={[styles.subtitle, { fontSize: rf(13) }]}>{subtitle}</Text>
       </View>
@@ -189,7 +195,7 @@ export function PinSetupScreen({ navigation, route }: Props) {
       </View>
 
       <View style={{ height: insets.bottom + rs(16) }} />
-    </View>
+    </ScrollView>
   );
 }
 
@@ -197,7 +203,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  scrollContent: {
+    flexGrow: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   header: {
     alignItems: 'center',
@@ -245,7 +255,6 @@ const styles = StyleSheet.create({
   },
   numpad: {
     width: '100%',
-    flex: 1,
     justifyContent: 'center',
   },
   numRow: {

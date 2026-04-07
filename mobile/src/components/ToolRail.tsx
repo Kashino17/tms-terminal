@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useImperativeHandle, forwardRef, useMemo } from 'react';
-import { Animated, Easing, View, TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { Animated, Easing, View, TouchableOpacity, Text, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors, spacing } from '../theme';
@@ -16,35 +16,63 @@ import { RenderPanel } from './RenderPanel';
 import { VercelPanel } from './VercelPanel';
 import { WebSocketService } from '../services/websocket.service';
 import { useSQLStore } from '../store/sqlStore';
+import { TOOLBAR_HEIGHT } from './TerminalToolbar';
+
+// Enable LayoutAnimation on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 export const TOOL_RAIL_WIDTH = 48;
 const PANEL_WIDTH = 214;
 const COLLAPSE_WIDTH = 14;
 
-// Grouped tool definitions — each sub-array is a visual group separated by a hairline
-const TOOL_GROUPS: { id: string; icon: any; color: string; label: string }[][] = [
+type ToolItem = { id: string; icon: any; color: string; label: string };
+
+// Standalone items — always visible, grouped by separator
+const STANDALONE_GROUPS: ToolItem[][] = [
   // AI / Workflow
   [
     { id: 'autoApprove', icon: 'check-circle', color: colors.accent,  label: 'Auto Approve' },
     { id: 'snippets',    icon: 'zap',          color: colors.warning, label: 'Snippets' },
   ],
-  // Files & Data
+  // Files & Media
   [
-    { id: 'files', icon: 'folder',   color: '#F59E0B',      label: 'Files' },
-    { id: 'sql',   icon: 'database', color: colors.primary, label: 'SQL' },
-    { id: 'ports', icon: 'share-2',  color: '#10B981',      label: 'Ports' },
+    { id: 'files',       icon: 'folder', color: '#F59E0B',   label: 'Files' },
+    { id: 'screenshots', icon: 'film',   color: colors.info, label: 'Medien' },
   ],
-  // Capture, Notes & Alerts
-  [
-    { id: 'screenshots', icon: 'film',        color: colors.info,    label: 'Medien' },
-    { id: 'autopilot',   icon: 'play-circle',  color: '#A78BFA',      label: 'Autopilot' },
-    { id: 'watchers',    icon: 'bell',         color: colors.warning, label: 'Notifications' },
-  ],
-  // Cloud
-  [
-    { id: 'render', icon: 'box',      color: '#4353FF', label: 'Render' },
-    { id: 'vercel', icon: 'triangle', color: '#FFFFFF',  label: 'Vercel' },
-  ],
+];
+
+// Collapsible groups — parent icon toggles children visibility
+const COLLAPSIBLE_GROUPS: {
+  groupId: string;
+  icon: any;
+  color: string;
+  label: string;
+  items: ToolItem[];
+}[] = [
+  {
+    groupId: 'monitoring',
+    icon: 'activity',
+    color: '#A78BFA',
+    label: 'Monitoring',
+    items: [
+      { id: 'autopilot', icon: 'play-circle', color: '#A78BFA',      label: 'Autopilot' },
+      { id: 'watchers',  icon: 'bell',        color: colors.warning, label: 'Notifications' },
+      { id: 'ports',     icon: 'share-2',     color: '#10B981',      label: 'Ports' },
+    ],
+  },
+  {
+    groupId: 'cloud',
+    icon: 'cloud',
+    color: colors.primary,
+    label: 'Cloud & Daten',
+    items: [
+      { id: 'sql',    icon: 'database', color: colors.primary, label: 'SQL' },
+      { id: 'render', icon: 'box',      color: '#4353FF',      label: 'Render' },
+      { id: 'vercel', icon: 'triangle', color: '#FFFFFF',      label: 'Vercel' },
+    ],
+  },
 ];
 
 export interface ToolRailRef {
@@ -75,6 +103,7 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
   const [active, setActive]       = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [fileBrowserPath, setFileBrowserPath] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const panelAnim    = useRef(new Animated.Value(0)).current;
   const panelOpacity = useRef(new Animated.Value(0)).current;
   const panelSlide   = useRef(new Animated.Value(20)).current;
@@ -141,6 +170,34 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
       openPanel(toolId);
     }
   }, [collapsed, onToolAction, openPanel, closePanel]);
+
+  // ── Collapsible group toggle ─────────────────────────────────────────────
+  const expandedGroupsRef = useRef(expandedGroups);
+  expandedGroupsRef.current = expandedGroups;
+
+  const toggleGroup = useCallback((groupId: string) => {
+    const group = COLLAPSIBLE_GROUPS.find(g => g.groupId === groupId);
+    const isCollapsing = expandedGroupsRef.current.has(groupId);
+
+    // Close panel if active tool belongs to this group and we're collapsing
+    if (group && isCollapsing && activeRef.current) {
+      if (group.items.some(item => item.id === activeRef.current)) closePanel();
+    }
+
+    LayoutAnimation.configureNext({
+      duration: 200,
+      create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+      update: { type: LayoutAnimation.Types.easeInEaseOut },
+      delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+    });
+
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  }, [closePanel]);
 
   // ── Strip collapse / expand ──────────────────────────────────────────────
   const collapseStrip = useCallback(() => {
@@ -263,38 +320,102 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
 
         {/* Tool icons — fade out when collapsed */}
         <Animated.View style={[styles.iconsContainer, { opacity: iconsOpacity }]} pointerEvents={collapsed ? 'none' : 'auto'}>
-          {TOOL_GROUPS.map((group, gi) => (
-            <React.Fragment key={gi}>
+          {/* ── Standalone groups ── */}
+          {STANDALONE_GROUPS.map((group, gi) => (
+            <React.Fragment key={`s${gi}`}>
               {gi > 0 && <View style={styles.separator} />}
-              {group.map((tool) => {
-                const isSqlBadge = tool.id === 'sql' && sqlCount > 0 && active !== 'sql';
-                return (
-                  <TouchableOpacity
-                    key={tool.id}
-                    style={styles.toolBtn}
-                    onPress={() => toggle(tool.id)}
-                    activeOpacity={0.7}
-                    accessibilityLabel={tool.label}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active === tool.id }}
-                  >
-                    {active === tool.id && (
-                      <View style={[styles.activeGlow, { backgroundColor: tool.color + '22' }]} />
-                    )}
-                    <Feather name={tool.icon} size={ri(18)} color={active === tool.id ? tool.color : colors.textDim} />
-                    {active === tool.id && (
-                      <View style={[styles.activeDot, { backgroundColor: tool.color }]} />
-                    )}
-                    {isSqlBadge && (
-                      <View style={[styles.badge, { minWidth: rs(16), height: rs(16), borderRadius: rs(8) }]}>
-                        <Text style={[styles.badgeText, { fontSize: rf(10) }]}>{sqlCount > 9 ? '9+' : String(sqlCount)}</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+              {group.map((tool) => (
+                <TouchableOpacity
+                  key={tool.id}
+                  style={styles.toolBtn}
+                  onPress={() => toggle(tool.id)}
+                  activeOpacity={0.7}
+                  accessibilityLabel={tool.label}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active === tool.id }}
+                >
+                  {active === tool.id && (
+                    <View style={[styles.activeGlow, { backgroundColor: tool.color + '22' }]} />
+                  )}
+                  <Feather name={tool.icon} size={ri(18)} color={active === tool.id ? tool.color : colors.textDim} />
+                  {active === tool.id && (
+                    <View style={[styles.activeDot, { backgroundColor: tool.color }]} />
+                  )}
+                </TouchableOpacity>
+              ))}
             </React.Fragment>
           ))}
+
+          {/* ── Collapsible groups ── */}
+          {COLLAPSIBLE_GROUPS.map((group) => {
+            const isExpanded = expandedGroups.has(group.groupId);
+            const hasActiveChild = group.items.some(item => item.id === active);
+            const showParentBadge = group.groupId === 'cloud' && !isExpanded && sqlCount > 0 && active !== 'sql';
+
+            return (
+              <React.Fragment key={group.groupId}>
+                <View style={styles.separator} />
+                {/* Parent toggle icon */}
+                <TouchableOpacity
+                  style={styles.toolBtn}
+                  onPress={() => toggleGroup(group.groupId)}
+                  activeOpacity={0.7}
+                  accessibilityLabel={`${group.label} ${isExpanded ? 'zuklappen' : 'aufklappen'}`}
+                  accessibilityRole="button"
+                >
+                  {(isExpanded || hasActiveChild) && (
+                    <View style={[styles.activeGlow, { backgroundColor: group.color + '18' }]} />
+                  )}
+                  <Feather
+                    name={group.icon}
+                    size={ri(18)}
+                    color={isExpanded || hasActiveChild ? group.color : colors.textDim}
+                  />
+                  <View style={styles.chevronIndicator}>
+                    <Feather
+                      name={isExpanded ? 'chevron-down' : 'chevron-right'}
+                      size={8}
+                      color={isExpanded || hasActiveChild ? group.color : colors.textDim}
+                    />
+                  </View>
+                  {showParentBadge && (
+                    <View style={[styles.badge, { minWidth: rs(16), height: rs(16), borderRadius: rs(8) }]}>
+                      <Text style={[styles.badgeText, { fontSize: rf(10) }]}>{sqlCount > 9 ? '9+' : String(sqlCount)}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                {/* Child items — visible when expanded */}
+                {isExpanded && group.items.map((tool) => {
+                  const isSqlBadge = tool.id === 'sql' && sqlCount > 0 && active !== 'sql';
+                  return (
+                    <TouchableOpacity
+                      key={tool.id}
+                      style={styles.childToolBtn}
+                      onPress={() => toggle(tool.id)}
+                      activeOpacity={0.7}
+                      accessibilityLabel={tool.label}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active === tool.id }}
+                    >
+                      {active === tool.id && (
+                        <View style={[styles.childActiveGlow, { backgroundColor: tool.color + '22' }]} />
+                      )}
+                      <Feather name={tool.icon} size={ri(15)} color={active === tool.id ? tool.color : colors.textDim} />
+                      {active === tool.id && (
+                        <View style={[styles.activeDot, { backgroundColor: tool.color }]} />
+                      )}
+                      {isSqlBadge && (
+                        <View style={[styles.badge, { minWidth: rs(14), height: rs(14), borderRadius: rs(7) }]}>
+                          <Text style={[styles.badgeText, { fontSize: rf(9) }]}>{sqlCount > 9 ? '9+' : String(sqlCount)}</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </React.Fragment>
+            );
+          })}
         </Animated.View>
       </Animated.View>
     </View>
@@ -306,7 +427,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     right: 0,
-    bottom: 0,
+    bottom: TOOLBAR_HEIGHT,
     flexDirection: 'row',
     alignItems: 'stretch',
     zIndex: 5, // above TerminalView (zIndex:1), below TerminalToolbar (zIndex:10)
@@ -364,6 +485,27 @@ const styles = StyleSheet.create({
     width: 4,
     height: 4,
     borderRadius: 2,
+  },
+  childToolBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  childActiveGlow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 10,
+  },
+  chevronIndicator: {
+    position: 'absolute',
+    bottom: 2,
+    right: 4,
   },
   badge: {
     position: 'absolute',

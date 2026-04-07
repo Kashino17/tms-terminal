@@ -3,7 +3,7 @@
     "name": "TMS Terminal",
     "slug": "tms-terminal",
     "version": "1.11.22",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {

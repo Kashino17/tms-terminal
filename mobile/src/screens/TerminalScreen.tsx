@@ -524,6 +524,14 @@ export function TerminalScreen({ navigation, route }: Props) {
     updateTab(serverId, tabId, { title: newName, customTitle: true });
   }, [serverId, updateTab]);
 
+  // Keep gridTranslateY in sync when screen dimensions change (fold/unfold, rotation)
+  // so the grid doesn't get stuck offscreen or at the wrong offset.
+  useEffect(() => {
+    if (!gridVisible) {
+      gridTranslateY.setValue(screenHeight);
+    }
+  }, [screenHeight, gridVisible, gridTranslateY]);
+
   const openGrid = useCallback(() => {
     setGridVisible(true);
     gridTranslateY.setValue(screenHeightRef.current);

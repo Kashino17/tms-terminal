@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated, StyleSheet, Text,
+  Animated, ScrollView, StyleSheet, Text,
   TouchableOpacity, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,7 +23,7 @@ const ROWS = [
 export function LockScreen() {
   const insets = useSafeAreaInsets();
   const { unlock, verifyPin } = useLockStore();
-  const { rf, rs, ri, isExpanded } = useResponsive();
+  const { rf, rs, ri, isExpanded, isLandscape } = useResponsive();
 
   const [pin,          setPin]          = useState('');
   const [error,        setError]        = useState('');
@@ -123,22 +123,30 @@ export function LockScreen() {
   const bioLabel = bioType === 'face' ? 'Use Face ID' : 'Use Touch ID';
 
   const dotSize = ri(14);
-  const keyHeight = ri(62);
-  const iconRingSize = ri(68);
-  const bioButtonSize = ri(84);
+  const keyHeight = isLandscape ? ri(44) : ri(62);
+  const iconRingSize = isLandscape ? ri(48) : ri(68);
+  const bioButtonSize = isLandscape ? ri(60) : ri(84);
 
   return (
     <Animated.View style={[styles.overlay, { opacity: fadeAnim }]}>
+    <ScrollView
+      contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + (isLandscape ? rs(12) : rs(32)) }]}
+      bounces={false}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+    >
       {/* ── Header ── */}
-      <View style={[styles.top, { paddingTop: insets.top + rs(32), marginBottom: rs(40) }]}>
-        <View style={[styles.iconRing, {
-          width: iconRingSize,
-          height: iconRingSize,
-          borderRadius: iconRingSize / 2,
-          marginBottom: rs(16),
-        }]}>
-          <Feather name="terminal" size={ri(30)} color={colors.primary} />
-        </View>
+      <View style={[styles.top, { marginBottom: isLandscape ? rs(12) : rs(40) }]}>
+        {!isLandscape && (
+          <View style={[styles.iconRing, {
+            width: iconRingSize,
+            height: iconRingSize,
+            borderRadius: iconRingSize / 2,
+            marginBottom: rs(16),
+          }]}>
+            <Feather name="terminal" size={ri(30)} color={colors.primary} />
+          </View>
+        )}
         <Text style={[styles.appName, { fontSize: rf(22), marginBottom: rs(6) }]}>TMS Terminal</Text>
         <Text style={[styles.subtitle, { fontSize: rf(13) }]}>
           {mode === 'bio' ? 'Verify your identity' : 'Enter your PIN'}
@@ -226,6 +234,7 @@ export function LockScreen() {
           </TouchableOpacity>
         ) : null}
       </View>
+    </ScrollView>
     </Animated.View>
   );
 }
@@ -236,7 +245,11 @@ const styles = StyleSheet.create({
     top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: colors.bg,
     zIndex: 9999,
+  },
+  scrollContent: {
+    flexGrow: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   top: {
     alignItems: 'center',
@@ -277,10 +290,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   bioArea: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 14,
+    paddingVertical: 24,
   },
   bioButton: {
     backgroundColor: colors.surface,
@@ -293,7 +306,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
   },
   numpad: {
-    flex: 1,
     justifyContent: 'center',
   },
   numRow: {
