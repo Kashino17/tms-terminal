@@ -115,6 +115,15 @@ export function ServerListScreen({ navigation }: Props) {
   return (
     <View style={styles.container}>
       <UpdateBanner />
+      <TouchableOpacity
+        style={[styles.settingsBtn, { top: rs(12), right: rs(16) }]}
+        onPress={() => navigation.navigate('Settings')}
+        activeOpacity={0.7}
+        accessibilityLabel="Einstellungen"
+        accessibilityRole="button"
+      >
+        <Feather name="settings" size={ri(22)} color={colors.textMuted} />
+      </TouchableOpacity>
       <FlatList
         data={servers}
         key={String(responsive.listColumns)}
@@ -185,5 +194,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
+  },
+  settingsBtn: {
+    position: 'absolute',
+    zIndex: 10,
+    padding: 8,
   },
 });
