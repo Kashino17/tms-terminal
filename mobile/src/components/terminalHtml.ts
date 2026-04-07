@@ -163,13 +163,14 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     // Only count as tap if finger barely moved and was brief
     if (Math.abs(t.clientX - tapFocusX) > 10 || Math.abs(t.clientY - tapFocusY) > 10) return;
     if (Date.now() - tapFocusT > 400) return;
-    focusShadow();
+    if (!externalKbMode) focusShadow();
   }, { passive: true });
 
   /* ── Shadow input (soft keyboard) ─────────────────── */
   var shadowInput = document.getElementById('shadow-input');
   var prevValue   = '';
   var isComposing = false;
+  var externalKbMode = false;
 
   function focusShadow() {
     // Use preventScroll to avoid Android WebView haptic feedback on focus
@@ -189,6 +190,27 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 
   /* Physical keyboard (emulator / Bluetooth) */
   document.addEventListener('keydown', function(e) {
+    if (externalKbMode) {
+      // External keyboard mode: handle ALL input via keydown.
+      // Shadow input stays unfocused → Android never shows soft keyboard.
+      if (e.key === 'Enter' || e.keyCode === 13) {
+        e.preventDefault(); sendKey(SEQ.enter); return;
+      }
+      if (e.key === 'Backspace') {
+        e.preventDefault(); sendKey(SEQ.bs); return;
+      }
+      if (e.key === 'Delete') {
+        e.preventDefault(); sendKey('\\x1b[3~'); return;
+      }
+      var s = physicalKey(e);
+      if (s) { e.preventDefault(); sendKey(s); return; }
+      // Regular character input (letters, numbers, symbols)
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault(); sendKey(e.key); return;
+      }
+      return;
+    }
+    // ── Normal mode (soft keyboard via shadow input) ──
     // Refocus shadowInput if it lost focus — without focus, no input events fire
     if (document.activeElement !== shadowInput && !selMode) {
       shadowInput.focus({ preventScroll: true });
@@ -692,7 +714,7 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         // phantom deletions when the diff sees a stale prevValue.
         prevValue = shadowInput.value;
         cancelPendingBs();
-        if (!selMode && !userScrolledUp) focusShadow();
+        if (!selMode && !userScrolledUp && !externalKbMode) focusShadow();
       }
       else if (msg.type === 'blur')   {
         // Release keyboard focus so keystrokes stop going to this tab
@@ -751,10 +773,11 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         shadow.dispatchEvent(new Event('input', { bubbles: true }));
       }
       else if (msg.type === 'setExternalKeyboardMode') {
-        shadowInput.setAttribute('inputmode', msg.enabled ? 'none' : 'text');
+        externalKbMode = msg.enabled;
         if (msg.enabled) {
           shadowInput.blur();
-          setTimeout(function() { shadowInput.focus({ preventScroll: true }); }, 50);
+        } else {
+          focusShadow();
         }
       }
     } catch(e) {}
