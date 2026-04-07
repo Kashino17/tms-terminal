@@ -750,6 +750,13 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         prevValue = '';
         shadow.dispatchEvent(new Event('input', { bubbles: true }));
       }
+      else if (msg.type === 'setExternalKeyboardMode') {
+        shadowInput.setAttribute('inputmode', msg.enabled ? 'none' : 'text');
+        if (msg.enabled) {
+          shadowInput.blur();
+          setTimeout(function() { shadowInput.focus({ preventScroll: true }); }, 50);
+        }
+      }
     } catch(e) {}
   }
   /* Block native long-press context menu (Android "Paste" popup) */
