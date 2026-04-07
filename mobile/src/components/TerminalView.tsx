@@ -204,7 +204,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     if (!readyReceivedRef.current) return;
     const theme = getThemeById(terminalTheme);
     webViewRef.current?.injectJavaScript(
-      `term.options.theme = ${JSON.stringify(theme.colors)}; true;`,
+      `term.options.theme = ${JSON.stringify(theme.colors)}; term.refresh(0, term.rows - 1); true;`,
     );
   }, [terminalTheme]);
 
@@ -303,7 +303,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         // Apply saved terminal theme
         const theme = getThemeById(useSettingsStore.getState().terminalTheme);
         webViewRef.current?.injectJavaScript(
-          `term.options.theme = ${JSON.stringify(theme.colors)}; true;`,
+          `term.options.theme = ${JSON.stringify(theme.colors)}; term.refresh(0, term.rows - 1); true;`,
         );
         // Apply external keyboard mode
         const ekMode = useSettingsStore.getState().externalKeyboardMode;
