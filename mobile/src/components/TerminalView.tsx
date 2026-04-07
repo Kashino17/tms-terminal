@@ -91,6 +91,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   const [tapStep,   setTapStep]   = useState(1); // 1=tap start  2=tap end  0=done
   const addSQLEntry = useSQLStore((state) => state.addEntry);
   const terminalTheme = useSettingsStore((state) => state.terminalTheme);
+  const externalKeyboardMode = useSettingsStore((state) => state.externalKeyboardMode);
   // Starts at TOOLBAR_HEIGHT, grows by keyboard height when keyboard opens.
   // Drives the container's bottom edge so xterm.js always stays above the keyboard.
   const bottomAnim  = useRef(new Animated.Value(TOOLBAR_HEIGHT)).current;
@@ -177,6 +178,8 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     // Android: adjustResize handles layout, but xterm.js needs an explicit
     // scroll-to-bottom after the resize so the cursor stays visible.
     const showSub = Keyboard.addListener('keyboardDidShow', () => {
+      // Skip focus when external keyboard mode is active — soft keyboard shouldn't appear
+      if (useSettingsStore.getState().externalKeyboardMode) return;
       // Short delay: let the WebView resize + xterm.js reflow finish first
       setTimeout(() => {
         if (webViewRef.current) {
@@ -201,6 +204,15 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
       `term.options.theme = ${JSON.stringify(theme.colors)}; true;`,
     );
   }, [terminalTheme]);
+
+  // Sync external keyboard mode into WebView
+  useEffect(() => {
+    if (!readyReceivedRef.current) return;
+    const msg = JSON.stringify({ type: 'setExternalKeyboardMode', enabled: externalKeyboardMode });
+    webViewRef.current?.injectJavaScript(
+      `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
+    );
+  }, [externalKeyboardMode]);
 
   const copyText = useCallback((text: string) => {
     if (!text) return;
@@ -290,6 +302,13 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         webViewRef.current?.injectJavaScript(
           `term.options.theme = ${JSON.stringify(theme.colors)}; true;`,
         );
+        // Apply external keyboard mode
+        const ekMode = useSettingsStore.getState().externalKeyboardMode;
+        if (ekMode) {
+          webViewRef.current?.injectJavaScript(
+            `window.postMessage(${JSON.stringify(JSON.stringify({ type: 'setExternalKeyboardMode', enabled: true }))}, '*'); true;`,
+          );
+        }
         // Replay saved output into the fresh xterm.js instance BEFORE requesting
         // terminal:reattach, so history appears instantly and new output appends after.
         if (sessionId) {
