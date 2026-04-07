@@ -203,8 +203,9 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   useEffect(() => {
     if (!readyReceivedRef.current) return;
     const theme = getThemeById(terminalTheme);
+    const msg = JSON.stringify({ type: 'setTheme', theme: theme.colors });
     webViewRef.current?.injectJavaScript(
-      `term.options.theme = ${JSON.stringify(theme.colors)}; term.refresh(0, term.rows - 1); true;`,
+      `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
     );
   }, [terminalTheme]);
 
@@ -302,8 +303,9 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         readyReceivedRef.current = true;
         // Apply saved terminal theme
         const theme = getThemeById(useSettingsStore.getState().terminalTheme);
+        const themeMsg = JSON.stringify({ type: 'setTheme', theme: theme.colors });
         webViewRef.current?.injectJavaScript(
-          `term.options.theme = ${JSON.stringify(theme.colors)}; term.refresh(0, term.rows - 1); true;`,
+          `window.postMessage(${JSON.stringify(themeMsg)}, '*'); true;`,
         );
         // Apply external keyboard mode
         const ekMode = useSettingsStore.getState().externalKeyboardMode;

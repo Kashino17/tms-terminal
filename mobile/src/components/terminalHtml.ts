@@ -772,6 +772,10 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         prevValue = '';
         shadow.dispatchEvent(new Event('input', { bubbles: true }));
       }
+      else if (msg.type === 'setTheme' && msg.theme) {
+        term.options.theme = msg.theme;
+        term.refresh(0, term.rows - 1);
+      }
       else if (msg.type === 'setExternalKeyboardMode') {
         externalKbMode = msg.enabled;
         // xterm.js creates its own hidden textarea (.xterm-helper-textarea)
