@@ -776,7 +776,9 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         externalKbMode = msg.enabled;
         if (msg.enabled) {
           shadowInput.blur();
+          shadowInput.disabled = true;
         } else {
+          shadowInput.disabled = false;
           focusShadow();
         }
       }
