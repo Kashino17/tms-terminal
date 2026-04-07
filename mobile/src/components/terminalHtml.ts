@@ -774,13 +774,18 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       }
       else if (msg.type === 'setExternalKeyboardMode') {
         externalKbMode = msg.enabled;
+        // xterm.js creates its own hidden textarea (.xterm-helper-textarea)
+        // that Android detects and focuses, triggering the soft keyboard.
+        var xtermTa = document.querySelector('.xterm-helper-textarea');
         if (msg.enabled) {
           shadowInput.blur();
           shadowInput.disabled = true;
           shadowInput.style.display = 'none';
+          if (xtermTa) { xtermTa.disabled = true; xtermTa.style.display = 'none'; }
         } else {
           shadowInput.style.display = '';
           shadowInput.disabled = false;
+          if (xtermTa) { xtermTa.style.display = ''; xtermTa.disabled = false; }
           focusShadow();
         }
       }
