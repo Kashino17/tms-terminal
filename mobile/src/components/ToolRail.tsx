@@ -251,7 +251,7 @@ export const ToolRail = forwardRef<ToolRailRef, Props>(function ToolRail(
   }), [closePanel, openPanel]);
 
   return (
-    <View style={styles.wrapper} pointerEvents="box-none">
+    <View style={[styles.wrapper, { bottom: rs(TOOLBAR_HEIGHT) }]} pointerEvents="box-none">
       {/* Sliding panel — grows leftward from the strip */}
       <Animated.View style={[styles.panel, { width: panelAnim }]}>
         <Animated.View style={[styles.panelInner, {
@@ -427,7 +427,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     right: 0,
-    bottom: TOOLBAR_HEIGHT,
+    // bottom set dynamically via rs(TOOLBAR_HEIGHT) to match responsive toolbar height
     flexDirection: 'row',
     alignItems: 'stretch',
     zIndex: 5, // above TerminalView (zIndex:1), below TerminalToolbar (zIndex:10)
