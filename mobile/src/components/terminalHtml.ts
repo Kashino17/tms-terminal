@@ -777,7 +777,9 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         if (msg.enabled) {
           shadowInput.blur();
           shadowInput.disabled = true;
+          shadowInput.style.display = 'none';
         } else {
+          shadowInput.style.display = '';
           shadowInput.disabled = false;
           focusShadow();
         }

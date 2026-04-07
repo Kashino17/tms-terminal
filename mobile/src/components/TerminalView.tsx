@@ -178,8 +178,11 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     // Android: adjustResize handles layout, but xterm.js needs an explicit
     // scroll-to-bottom after the resize so the cursor stays visible.
     const showSub = Keyboard.addListener('keyboardDidShow', () => {
-      // Skip focus when external keyboard mode is active — soft keyboard shouldn't appear
-      if (useSettingsStore.getState().externalKeyboardMode) return;
+      // Force-dismiss keyboard when external keyboard mode is active
+      if (useSettingsStore.getState().externalKeyboardMode) {
+        Keyboard.dismiss();
+        return;
+      }
       // Short delay: let the WebView resize + xterm.js reflow finish first
       setTimeout(() => {
         if (webViewRef.current) {
