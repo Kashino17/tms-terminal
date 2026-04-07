@@ -12,6 +12,9 @@ interface SettingsState {
   /** Whether the microphone button is shown in the toolbar. Default: true. */
   audioInputEnabled: boolean;
   setAudioInputEnabled: (enabled: boolean) => void;
+  /** Whether virtual keyboard is suppressed in terminal (for external keyboards). Default: false. */
+  externalKeyboardMode: boolean;
+  setExternalKeyboardMode: (enabled: boolean) => void;
 }
 
 export const IDLE_THRESHOLD_OPTIONS = [
@@ -37,6 +40,10 @@ export const useSettingsStore = create<SettingsState>()(
       audioInputEnabled: true,
       setAudioInputEnabled(enabled: boolean) {
         set({ audioInputEnabled: enabled });
+      },
+      externalKeyboardMode: false,
+      setExternalKeyboardMode(enabled: boolean) {
+        set({ externalKeyboardMode: enabled });
       },
     }),
     {
