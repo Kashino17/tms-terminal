@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AppNavigator } from './navigation/AppNavigator';
 import { LockScreen } from './screens/LockScreen';
 import { useLockStore } from './store/lockStore';
+import { useSettingsStore } from './store/settingsStore';
 import { colors } from './theme';
 import { ResponsiveProvider } from './hooks/useResponsive';
 import { registerBackgroundHandler, registerForegroundHandler, registerNotificationResponseHandler } from './services/notifications.service';
@@ -42,10 +43,15 @@ export default function App() {
     useAutopilotStore.getState().cleanupOldDone();
   }, []);
 
-  // Lock when app moves to background
+  // Lock when app moves to background (respects grace period)
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'background' && isEnabled) {
+        const grace = useSettingsStore.getState().lockGraceSeconds;
+        const lastUnlock = useLockStore.getState().lastUnlockTime;
+        if (grace > 0 && lastUnlock > 0 && Date.now() - lastUnlock < grace * 1000) {
+          return; // within grace period — don't lock
+        }
         lock();
       }
     });

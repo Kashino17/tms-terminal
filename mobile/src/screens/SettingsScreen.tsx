@@ -7,7 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useLockStore } from '../store/lockStore';
-import { useSettingsStore, IDLE_THRESHOLD_OPTIONS } from '../store/settingsStore';
+import { useSettingsStore, IDLE_THRESHOLD_OPTIONS, LOCK_GRACE_OPTIONS } from '../store/settingsStore';
 import { useCloudAuthStore } from '../store/cloudAuthStore';
 import { useCloudProjectsStore } from '../store/cloudProjectsStore';
 import { TERMINAL_THEMES, getThemeById } from '../constants/terminalThemes';
@@ -22,12 +22,13 @@ type Props = {
 export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
-  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode } = useSettingsStore();
+  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, lockGraceSeconds, setLockGrace } = useSettingsStore();
   const { tokens, notificationsEnabled, pollingIntervalMs, setNotificationsEnabled, setPollingIntervalMs, clearPlatform } = useCloudAuthStore();
   const { clearCache } = useCloudProjectsStore();
   const [idlePickerVisible, setIdlePickerVisible] = useState(false);
   const [themePickerVisible, setThemePickerVisible] = useState(false);
   const [pollingPickerVisible, setPollingPickerVisible] = useState(false);
+  const [gracePickerVisible, setGracePickerVisible] = useState(false);
   const [prevVersion, setPrevVersion] = useState<{ version: string; downloadUrl: string; size: number } | null>(null);
   const [prevVersionLoading, setPrevVersionLoading] = useState(true);
 
@@ -139,6 +140,29 @@ export function SettingsScreen({ navigation }: Props) {
                   </View>
                   <Feather name="chevron-right" size={ri(16)} color={colors.textDim} />
                 </TouchableOpacity>
+
+                <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
+                <TouchableOpacity
+                  style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+                  onPress={() => setGracePickerVisible(true)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Entsperrt bleiben"
+                >
+                  <View style={styles.rowLeft}>
+                    <Feather name="clock" size={ri(18)} color={colors.textMuted} style={{ marginRight: rs(12) }} />
+                    <View>
+                      <Text style={[styles.label, { fontSize: rf(16) }]}>Entsperrt bleiben</Text>
+                      <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Keine erneute Abfrage innerhalb der Zeit</Text>
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={[styles.value, { fontSize: rf(14), marginRight: rs(4) }]}>
+                      {LOCK_GRACE_OPTIONS.find((o) => o.value === lockGraceSeconds)?.label ?? 'Immer sperren'}
+                    </Text>
+                    <Feather name="chevron-right" size={ri(16)} color={colors.textDim} />
+                  </View>
+                </TouchableOpacity>
               </>
             )}
           </View>
@@ -190,6 +214,33 @@ export function SettingsScreen({ navigation }: Props) {
                 >
                   <Text style={[styles.modalOptionText, { fontSize: rf(15) }]}>{option.label}</Text>
                   {idleThresholdSeconds === option.value && (
+                    <Feather name="check" size={ri(18)} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Pressable>
+        </Modal>
+
+        {/* Lock grace period picker modal */}
+        <Modal
+          visible={gracePickerVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setGracePickerVisible(false)}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={() => setGracePickerVisible(false)}>
+            <View style={[styles.modalContent, { padding: rs(8), maxWidth: isExpanded ? 400 : 320 }]}>
+              <Text style={[styles.modalTitle, { fontSize: rf(16), paddingHorizontal: rs(12), paddingVertical: rs(12) }]}>Entsperrt bleiben</Text>
+              {LOCK_GRACE_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.modalOption, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+                  onPress={() => { setLockGrace(option.value); setGracePickerVisible(false); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.modalOptionText, { fontSize: rf(15) }]}>{option.label}</Text>
+                  {lockGraceSeconds === option.value && (
                     <Feather name="check" size={ri(18)} color={colors.primary} />
                   )}
                 </TouchableOpacity>
