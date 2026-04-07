@@ -2,8 +2,10 @@ package com.tms.terminal
 
 import android.os.Build
 import android.os.Bundle
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.HorizontalScrollView
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -51,6 +53,42 @@ class MainActivity : ReactActivity() {
               mainComponentName,
               fabricEnabled
           ){})
+  }
+
+  // ── Mouse wheel → horizontal scroll ────────────────────────────────────
+  // Android's HorizontalScrollView ignores AXIS_VSCROLL from the mouse wheel.
+  // We intercept it here and convert it to a horizontal scrollBy.
+  override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+    if (event.action == MotionEvent.ACTION_SCROLL) {
+      val vScroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+      if (vScroll != 0f) {
+        val target = findHorizontalScrollViewAt(
+          window.decorView, event.rawX.toInt(), event.rawY.toInt()
+        )
+        if (target != null) {
+          target.scrollBy((-vScroll * 120).toInt(), 0)
+          return true
+        }
+      }
+    }
+    return super.dispatchGenericMotionEvent(event)
+  }
+
+  private fun findHorizontalScrollViewAt(view: View, x: Int, y: Int): HorizontalScrollView? {
+    if (view is HorizontalScrollView) {
+      val loc = IntArray(2)
+      view.getLocationOnScreen(loc)
+      if (x in loc[0]..(loc[0] + view.width) && y in loc[1]..(loc[1] + view.height)) {
+        return view
+      }
+    }
+    if (view is ViewGroup) {
+      for (i in view.childCount - 1 downTo 0) {
+        val result = findHorizontalScrollViewAt(view.getChildAt(i), x, y)
+        if (result != null) return result
+      }
+    }
+    return null
   }
 
   /**
