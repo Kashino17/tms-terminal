@@ -1,6 +1,12 @@
 import { AiProviderRegistry, ChatMessage, ProviderConfig } from './ai-provider';
 import { globalManager } from '../terminal/terminal.manager';
 import { logger } from '../utils/logger';
+import {
+  loadMemory, saveMemory, ManagerMemory,
+  parseMemoryUpdate, applyMemoryUpdate, stripMemoryTags,
+  buildMemoryContext, MEMORY_UPDATE_INSTRUCTION, MAX_RECENT_CHAT,
+  buildDistillationPrompt, finalizeDistillation,
+} from './manager.memory';
 
 const ANSI_STRIP = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]/g;
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
@@ -235,6 +241,7 @@ export class ManagerService {
   private pollTimer: NodeJS.Timeout | null = null;
   private enabled = false;
   private personality: PersonalityConfig = { ...DEFAULT_PERSONALITY };
+  private memory: ManagerMemory;
 
   private onSummary: SummaryCallback | null = null;
   private onResponse: ResponseCallback | null = null;
@@ -243,6 +250,8 @@ export class ManagerService {
 
   constructor(providerConfig: ProviderConfig) {
     this.registry = new AiProviderRegistry(providerConfig);
+    this.memory = loadMemory();
+    logger.info(`Manager: memory loaded (${this.memory.stats.totalSessions} sessions, ${this.memory.insights.length} insights)`);
   }
 
   setPersonality(config: Partial<PersonalityConfig>): void {
@@ -448,9 +457,14 @@ export class ManagerService {
 
     this.chatHistory.push({ role: 'user', content: text }); // store clean version
 
+    this.memory = loadMemory();
+    const isOnboarding = onboarding || this.memory.stats.totalSessions === 0;
+    const basePrompt = isOnboarding ? ONBOARDING_PROMPT : buildSystemPrompt(this.personality);
+    const memoryContext = buildMemoryContext(this.memory);
+    const systemPrompt = `${basePrompt}\n\n${memoryContext}\n\n${MEMORY_UPDATE_INSTRUCTION}`;
+
     try {
       const provider = this.registry.getActive();
-      const systemPrompt = onboarding ? ONBOARDING_PROMPT : buildSystemPrompt(this.personality);
       const reply = await provider.chat(
         [...this.chatHistory, { role: 'user', content: onboarding ? text : userMessage }],
         systemPrompt,
@@ -460,9 +474,32 @@ export class ManagerService {
       const parsedConfig = parsePersonalityConfig(reply);
       if (parsedConfig) {
         this.personality = parsedConfig;
+        this.memory.personality = {
+          ...this.memory.personality,
+          agentName: parsedConfig.agentName,
+          tone: parsedConfig.tone,
+          detail: parsedConfig.detail,
+          emojis: parsedConfig.emojis,
+          proactive: parsedConfig.proactive,
+        };
         this.onPersonalityConfigured?.(parsedConfig);
         logger.info(`Manager: onboarding complete — name="${parsedConfig.agentName}", tone=${parsedConfig.tone}`);
       }
+
+      // Parse memory updates from reply
+      const memUpdate = parseMemoryUpdate(reply);
+      if (memUpdate) {
+        applyMemoryUpdate(this.memory, memUpdate);
+        logger.info(`Manager: memory updated — ${memUpdate.learnedFacts.length} facts, ${memUpdate.insights.length} insights`);
+      }
+
+      this.memory.recentChat.push({ role: 'user', text, timestamp: Date.now() });
+      this.memory.stats.totalMessages += 2;
+      this.memory.stats.lastInteraction = new Date().toISOString().slice(0, 10);
+      if (!this.memory.stats.firstInteraction) {
+        this.memory.stats.firstInteraction = this.memory.stats.lastInteraction;
+      }
+      saveMemory(this.memory);
 
       // Parse actions from reply
       const actions = this.parseActions(reply);
@@ -472,16 +509,24 @@ export class ManagerService {
         this.executeAction(action);
       }
 
-      // Clean reply — remove action tags and personality config block for display
-      const cleanReply = reply
-        .replace(/\[WRITE_TO:[^\]]+\][^[]*\[\/WRITE_TO\]/g, '')
-        .replace(/\[SEND_ENTER:[^\]]+\]/g, '')
-        .replace(/\[PERSONALITY_CONFIG\][\s\S]*?\[\/PERSONALITY_CONFIG\]/g, '')
-        .trim();
+      // Clean reply — remove action tags, personality config, and memory tags for display
+      const cleanReply = stripMemoryTags(
+        reply
+          .replace(/\[WRITE_TO:[^\]]+\][^[]*\[\/WRITE_TO\]/g, '')
+          .replace(/\[SEND_ENTER:[^\]]+\]/g, '')
+          .replace(/\[PERSONALITY_CONFIG\][\s\S]*?\[\/PERSONALITY_CONFIG\]/g, '')
+      );
 
       this.chatHistory.push({ role: 'assistant', content: cleanReply });
       if (this.chatHistory.length > 50) {
         this.chatHistory = this.chatHistory.slice(-40);
+      }
+
+      this.memory.recentChat.push({ role: 'assistant', text: cleanReply.slice(0, 2000), timestamp: Date.now() });
+      saveMemory(this.memory);
+
+      if (this.memory.recentChat.length > MAX_RECENT_CHAT) {
+        this.distill().catch(err => logger.warn(`Manager: auto-distill failed — ${err}`));
       }
 
       this.onResponse?.({ text: cleanReply, actions });
@@ -489,6 +534,33 @@ export class ManagerService {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`Manager: chat failed — ${msg}`);
       this.onError?.(`Fehler: ${msg}`);
+    }
+  }
+
+  // ── Distillation ──────────────────────────────────────────────────────────
+
+  async distill(): Promise<void> {
+    if (this.memory.recentChat.length === 0) return;
+    logger.info(`Manager: distilling ${this.memory.recentChat.length} messages...`);
+    try {
+      const provider = this.registry.getActive();
+      const prompt = buildDistillationPrompt(this.memory.recentChat);
+      const reply = await provider.chat(
+        [{ role: 'user', content: prompt }],
+        'Du bist ein Gedächtnis-Assistent. Extrahiere die wichtigsten Erkenntnisse aus dem Chat-Verlauf.',
+      );
+      const update = parseMemoryUpdate(reply);
+      if (update) {
+        applyMemoryUpdate(this.memory, update);
+        logger.info(`Manager: distilled — ${update.insights.length} insights, ${update.learnedFacts.length} facts`);
+      }
+      finalizeDistillation(this.memory);
+      saveMemory(this.memory);
+      logger.info('Manager: distillation complete, recentChat cleared');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`Manager: distillation failed — ${msg}`);
+      saveMemory(this.memory);
     }
   }
 
