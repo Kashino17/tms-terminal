@@ -63,3 +63,28 @@ cd mobile
 ## Language
 - UI strings are in **German** (user preference)
 - Code comments and variable names in **English**
+
+## Memory System
+Das Projekt hat ein persistentes Gedächtnis in `memory/`. **Lies diese Dateien bei jeder Session.**
+
+### Bei Session-Start
+Lies alle Dateien in `memory/` bevor du mit der Arbeit beginnst:
+- `memory/user.md` — Wer der User ist, Arbeitsstil, Präferenzen
+- `memory/personality.md` — Wie du kommunizieren sollst
+- `memory/project-state.md` — Aktueller Stand, aktive Arbeit, offene Punkte
+- `memory/decisions.md` — Getroffene Entscheidungen und Begründungen
+- `memory/journal.md` — Chronologisches Session-Protokoll
+
+### Bei Session-Ende
+Aktualisiere die relevanten Memory-Dateien bevor die Session endet:
+- `memory/project-state.md` — **immer** aktualisieren (aktueller Stand, Version, offene Punkte)
+- `memory/journal.md` — **immer** neuen Eintrag anhängen (Datum + was gemacht wurde)
+- `memory/user.md` — nur wenn du etwas Neues über den User gelernt hast
+- `memory/personality.md` — nur wenn sich Kommunikationsstil-Erkenntnisse ergeben
+- `memory/decisions.md` — nur wenn wichtige Entscheidungen getroffen wurden
+
+### Regeln
+- Schreibstil: Knapp, stichpunktartig, auf Deutsch
+- Keine Übertreibung: Nur relevante Dinge festhalten, nicht jede Kleinigkeit
+- journal.md: Max 100 Einträge, danach älteste 50 in `memory/archive/` zusammenfassen
+- Commit-Message für Memory-Updates: `memory: update session journal` o.ä.
