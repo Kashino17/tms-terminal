@@ -77,9 +77,9 @@ export function createEmptyMemory(): ManagerMemory {
     },
     personality: {
       agentName: 'Manager',
-      tone: 'professional',
+      tone: 'chill',
       detail: 'balanced',
-      emojis: false,
+      emojis: true,
       proactive: true,
       traits: [],
       sharedHistory: [],
