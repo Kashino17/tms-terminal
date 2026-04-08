@@ -1,5 +1,5 @@
 import React from 'react';
-import { TouchableOpacity } from 'react-native';
+import { View, TouchableOpacity } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Feather } from '@expo/vector-icons';
 import { ServerListScreen } from '../screens/ServerListScreen';
@@ -11,6 +11,7 @@ import { DashboardScreen } from '../screens/DashboardScreen';
 import { PinSetupScreen } from '../screens/PinSetupScreen';
 import { BrowserScreen } from '../screens/BrowserScreen';
 import { ProcessMonitorScreen } from '../screens/ProcessMonitorScreen';
+import { ManagerChatScreen } from '../screens/ManagerChatScreen';
 import { colors } from '../theme';
 import type { RootStackParamList } from '../types/navigation.types';
 
@@ -32,14 +33,24 @@ export function AppNavigator() {
         options={({ navigation }) => ({
           title: 'TMS Terminal',
           headerRight: () => (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('Dashboard')}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityLabel="Server Dashboard"
-              accessibilityRole="button"
-            >
-              <Feather name="grid" size={20} color={colors.text} />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('Settings')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Einstellungen"
+                accessibilityRole="button"
+              >
+                <Feather name="settings" size={20} color={colors.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('Dashboard')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Server Dashboard"
+                accessibilityRole="button"
+              >
+                <Feather name="grid" size={20} color={colors.text} />
+              </TouchableOpacity>
+            </View>
           ),
         })}
       />
@@ -101,6 +112,15 @@ export function AppNavigator() {
           headerStyle: { backgroundColor: colors.bg },
           headerTintColor: colors.text,
           headerTitleStyle: { fontWeight: '700' as const, fontSize: 16 },
+        }}
+      />
+      <Stack.Screen
+        name="ManagerChat"
+        component={ManagerChatScreen}
+        options={{
+          headerShown: false,
+          animation: 'slide_from_right',
+          animationDuration: 280,
         }}
       />
     </Stack.Navigator>

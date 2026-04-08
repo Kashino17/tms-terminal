@@ -11,4 +11,5 @@ export type RootStackParamList = {
   Browser: { serverHost: string; serverId: string; terminalTabId: string; openDirect?: boolean };
   Dashboard: undefined;
   Processes: { wsService: WebSocketService };
+  ManagerChat: { wsService: WebSocketService; serverId: string; serverHost: string; serverPort: number; serverToken: string };
 };

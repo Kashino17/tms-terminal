@@ -79,10 +79,12 @@ interface Props {
   onRangeClose?: () => void;
   railWidth?: Animated.Value;
   onPathClicked?: (path: string) => void;
+  /** When true the virtual keyboard is suppressed (e.g. tool panel open). */
+  panelOpen?: boolean;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, Props>(function TerminalView(
-  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked }: Props,
+  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false }: Props,
   ref,
 ) {
   const webViewRef  = useRef<WebView>(null);
@@ -101,6 +103,8 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   onAiToolDetectedRef.current = onAiToolDetected;
   const onPathClickedRef = useRef(onPathClicked);
   onPathClickedRef.current = onPathClicked;
+  const panelOpenRef = useRef(panelOpen);
+  panelOpenRef.current = panelOpen;
 
   // ── ?? Command Suggest ────────────────────────────────────────────────────
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
@@ -180,6 +184,11 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     const showSub = Keyboard.addListener('keyboardDidShow', () => {
       // Force-dismiss keyboard when external keyboard mode is active
       if (useSettingsStore.getState().externalKeyboardMode) {
+        Keyboard.dismiss();
+        return;
+      }
+      // Suppress keyboard while a tool panel is open
+      if (panelOpenRef.current) {
         Keyboard.dismiss();
         return;
       }
@@ -265,14 +274,25 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   }, [sessionId, wsService, sendToTerminal]);
 
   useEffect(() => {
-    if (visible) {
+    if (visible && !panelOpen) {
       setTimeout(() => sendToTerminal('focus'), 100);
     } else {
       // Blur shadow input in the old tab so the OS keyboard disconnects
       // from it — prevents keystrokes leaking into the wrong session.
       sendToTerminal('blur');
     }
-  }, [visible, sendToTerminal]);
+  }, [visible, panelOpen, sendToTerminal]);
+
+  // Suppress keyboard while a tool panel is open
+  useEffect(() => {
+    if (!visible) return;
+    if (panelOpen) {
+      sendToTerminal('blur');
+      Keyboard.dismiss();
+    } else {
+      setTimeout(() => sendToTerminal('focus'), 100);
+    }
+  }, [panelOpen, visible, sendToTerminal]);
 
   // Sync range-select mode into WebView
   useEffect(() => {

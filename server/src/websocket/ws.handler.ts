@@ -9,6 +9,8 @@ import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 import { autopilotService } from '../autopilot/autopilot.service';
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
+import { ManagerService } from '../manager/manager.service';
+import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -49,6 +51,9 @@ const TYPING_PAUSE_MS = 2000;
 // Track how many characters the user has on the current input line.
 // Auto-approve is blocked if pendingInputLen > 0 (user has unsent text).
 const pendingInputLen = new Map<string, number>();
+
+// ── Manager Agent ────────────────────────────────────────────────────
+const managerService = new ManagerService(loadManagerConfig());
 
 // ── Autopilot state ──────────────────────────────────────────────────
 const aiSessions = new Set<string>(); // sessions where AI tool was detected
@@ -333,6 +338,72 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
+    // ── Manager Agent message handlers ────────────────────────────────
+    if (msgType === 'manager:toggle') {
+      const enabled = !!(msg as any).payload?.enabled;
+      if (enabled) {
+        managerService.setCallbacks(
+          (summary) => send(ws, { type: 'manager:summary', payload: summary } as any),
+          (response) => send(ws, { type: 'manager:response', payload: response } as any),
+          (error) => send(ws, { type: 'manager:error', payload: { message: error } } as any),
+        );
+        managerService.start();
+      } else {
+        managerService.stop();
+      }
+      send(ws, { type: 'manager:status', payload: { enabled } } as any);
+      // Also send provider list on toggle
+      send(ws, { type: 'manager:providers', payload: managerService.getProviders() } as any);
+      return;
+    }
+
+    if (msgType === 'manager:chat') {
+      const text = (msg as any).payload?.text;
+      const targetSessionId = (msg as any).payload?.targetSessionId;
+      if (typeof text === 'string' && text.length > 0) {
+        managerService.handleChat(text, targetSessionId).catch((err) => {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          send(ws, { type: 'manager:error', payload: { message: errMsg } } as any);
+        });
+      }
+      return;
+    }
+
+    if (msgType === 'manager:poll') {
+      managerService.poll().catch((err) => {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        send(ws, { type: 'manager:error', payload: { message: errMsg } } as any);
+      });
+      return;
+    }
+
+    if (msgType === 'manager:set_provider') {
+      const providerId = (msg as any).payload?.providerId;
+      if (typeof providerId === 'string') {
+        try {
+          managerService.setProvider(providerId);
+          send(ws, { type: 'manager:providers', payload: managerService.getProviders() } as any);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          send(ws, { type: 'manager:error', payload: { message: errMsg } } as any);
+        }
+      }
+      return;
+    }
+
+    if (msgType === 'manager:set_api_key') {
+      const { providerId, apiKey } = (msg as any).payload ?? {};
+      if (typeof providerId === 'string' && typeof apiKey === 'string') {
+        const updates: Record<string, string> = {};
+        if (providerId === 'kimi') updates.kimiApiKey = apiKey;
+        else if (providerId === 'glm') updates.glmApiKey = apiKey;
+        managerService.updateProviderConfig(updates);
+        saveManagerConfig(updates);
+        send(ws, { type: 'manager:providers', payload: managerService.getProviders() } as any);
+      }
+      return;
+    }
+
     if (msgType === 'audio:transcribe') {
       const sessionId = (msg as any).sessionId;
       const audio = (msg as any).payload?.audio;
@@ -404,6 +475,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
               promptDetector.feed(sessionId, data);
               idleDetector.activity(sessionId);
               resetAutopilotTimer(sessionId);
+              managerService.feedOutput(sessionId, data);
             },
             (sessionId, exitCode) => {
               ownedSessions.delete(sessionId);
@@ -420,6 +492,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           sessionGens.set(session.id, globalManager.getAttachGen(session.id));
           watchSession(session.id);
           watchSessionIdle(session.id);
+          // Register session with manager — label will be "Shell N"
+          const shellNum = ownedSessions.size;
+          managerService.setSessionLabel(session.id, `Shell ${shellNum}`);
           send(ws, {
             type: 'terminal:created',
             sessionId: session.id,
@@ -461,6 +536,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
             promptDetector.feed(sessionId, data);
             idleDetector.activity(sessionId);
             resetAutopilotTimer(sessionId);
+            managerService.feedOutput(sessionId, data);
           },
           (sessionId, exitCode) => {
             ownedSessions.delete(sessionId);
@@ -599,6 +675,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         idleDetector.unwatch(msg.sessionId);
         aiSessions.delete(msg.sessionId);
         autopilotService.clearSession(msg.sessionId);
+        managerService.clearSession(msg.sessionId);
         const apTimer = autopilotTimers.get(msg.sessionId);
         if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(msg.sessionId); }
         if (!globalManager.closeSession(msg.sessionId)) {

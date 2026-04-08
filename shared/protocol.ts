@@ -62,6 +62,27 @@ export interface AudioTranscribeMessage {
   payload: { audio: string; format: 'wav' };
 }
 
+// ── Manager messages (Client → Server) ────────────────────────────
+export interface ManagerChatMessage {
+  type: 'manager:chat';
+  payload: { text: string; targetSessionId?: string };
+}
+export interface ManagerToggleMessage {
+  type: 'manager:toggle';
+  payload: { enabled: boolean };
+}
+export interface ManagerSetProviderMessage {
+  type: 'manager:set_provider';
+  payload: { providerId: string };
+}
+export interface ManagerPollMessage {
+  type: 'manager:poll';
+}
+export interface ManagerSetApiKeyMessage {
+  type: 'manager:set_api_key';
+  payload: { providerId: string; apiKey: string };
+}
+
 export type ClientMessage =
   | TerminalCreateMessage
   | TerminalInputMessage
@@ -78,7 +99,12 @@ export type ClientMessage =
   | WatcherTestMessage
   | SystemSnapshotMessage
   | SystemKillMessage
-  | AudioTranscribeMessage;
+  | AudioTranscribeMessage
+  | ManagerChatMessage
+  | ManagerToggleMessage
+  | ManagerSetProviderMessage
+  | ManagerPollMessage
+  | ManagerSetApiKeyMessage;
 
 // ── Server → Client ──────────────────────────────────────────────
 
@@ -197,6 +223,38 @@ export interface SystemSnapshotResponseMessage {
   };
 }
 
+// ── Manager responses (Server → Client) ──────────────────────────
+export interface ManagerSummaryMessage {
+  type: 'manager:summary';
+  payload: {
+    text: string;
+    sessions: Array<{ sessionId: string; label: string; hasActivity: boolean }>;
+    timestamp: number;
+  };
+}
+export interface ManagerResponseMessage {
+  type: 'manager:response';
+  payload: {
+    text: string;
+    actions?: Array<{ type: string; sessionId: string; detail: string }>;
+  };
+}
+export interface ManagerProvidersMessage {
+  type: 'manager:providers';
+  payload: {
+    providers: Array<{ id: string; name: string; configured: boolean }>;
+    active: string;
+  };
+}
+export interface ManagerErrorMessage {
+  type: 'manager:error';
+  payload: { message: string };
+}
+export interface ManagerStatusMessage {
+  type: 'manager:status';
+  payload: { enabled: boolean };
+}
+
 export type ServerMessage =
   | TerminalCreatedMessage
   | TerminalOutputMessage
@@ -213,4 +271,9 @@ export type ServerMessage =
   | SystemSnapshotResponseMessage
   | SystemKillResultMessage
   | AudioTranscriptionMessage
-  | AudioErrorMessage;
+  | AudioErrorMessage
+  | ManagerSummaryMessage
+  | ManagerResponseMessage
+  | ManagerProvidersMessage
+  | ManagerErrorMessage
+  | ManagerStatusMessage;

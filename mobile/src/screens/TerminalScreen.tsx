@@ -27,6 +27,7 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useBrowserTabsStore } from '../store/browserTabsStore';
 import { SplitLayout } from '../components/SplitLayout';
 import { useSplitViewStore } from '../store/splitViewStore';
+import { useManagerStore } from '../store/managerStore';
 import { consumeDrawingResult } from './DrawingScreen';
 import { TabGridView } from '../components/TabGridView';
 import { stripAnsi } from '../utils/stripAnsi';
@@ -341,6 +342,15 @@ export function TerminalScreen({ navigation, route }: Props) {
       wsRef.current.send({ type: 'client:set_idle_threshold', payload: { seconds: threshold } } as any);
       console.log(`[Idle] Threshold sent to server: ${threshold}s`);
     }
+
+    // Sync manager API keys to server
+    const { apiKeys: keys } = useManagerStore.getState();
+    if (keys.kimi) {
+      wsRef.current.send({ type: 'manager:set_api_key', payload: { providerId: 'kimi', apiKey: keys.kimi } } as any);
+    }
+    if (keys.glm) {
+      wsRef.current.send({ type: 'manager:set_api_key', payload: { providerId: 'glm', apiKey: keys.glm } } as any);
+    }
   }, [connState]);
 
   // Poll RTT from WebSocket service and update state for ConnectionStatus
@@ -643,6 +653,16 @@ export function TerminalScreen({ navigation, route }: Props) {
       });
       return true;
     }
+    if (toolId === 'manager') {
+      navigation.navigate('ManagerChat', {
+        wsService: wsRef.current,
+        serverId,
+        serverHost: server?.host ?? '',
+        serverPort: server?.port ?? 8767,
+        serverToken: server?.token ?? '',
+      });
+      return true;
+    }
     return false;
   }, [navigation, server, serverId]);
 
@@ -769,6 +789,15 @@ export function TerminalScreen({ navigation, route }: Props) {
           >
             <Feather name="activity" size={ri(14)} color={colors.textMuted} />
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.quickAction, { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) }]}
+            onPress={() => handleToolAction('manager')}
+            activeOpacity={0.65}
+            accessibilityLabel="Manager Agent"
+            accessibilityRole="button"
+          >
+            <Feather name="cpu" size={ri(14)} color={colors.textMuted} />
+          </TouchableOpacity>
         </View>
       </View>
       <ReconnectBanner restoreState={restoreState} />
@@ -801,6 +830,7 @@ export function TerminalScreen({ navigation, route }: Props) {
                   rangeActive={tab.active && rangeActive}
                   onRangeClose={() => setRangeActive(false)}
                   onPathClicked={handlePathClicked}
+                  panelOpen={panelOpen}
                 />
               ))}
               <TerminalToolbar
@@ -832,6 +862,7 @@ export function TerminalScreen({ navigation, route }: Props) {
               onRangeClose={() => setRangeActive(false)}
               railWidth={railWidthAnim}
               onPathClicked={handlePathClicked}
+              panelOpen={panelOpen}
             />
           ))}
           {panelOpen && (
