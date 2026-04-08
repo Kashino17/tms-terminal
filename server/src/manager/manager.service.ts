@@ -388,14 +388,24 @@ export class ManagerService {
     const prompt = `${contextBlock}\n\nFasse die Terminal-Aktivität zusammen. Was wurde gemacht? Welche Terminals sind aktiv und womit? Gibt es Fehler oder wartende Prompts?`;
 
     try {
+      this.memory = loadMemory();
       const provider = this.registry.getActive();
-      const systemPrompt = buildSystemPrompt(this.personality);
+      const basePrompt = buildSystemPrompt(this.personality);
+      const memoryContext = buildMemoryContext(this.memory);
+      const systemPrompt = `${basePrompt}\n\n${memoryContext}\n\n${MEMORY_UPDATE_INSTRUCTION}`;
       logger.info(`Manager: summarizing ${activeContexts.length} sessions via ${provider.name}`);
 
       const reply = await provider.chat(
         [{ role: 'user', content: prompt }],
         systemPrompt,
       );
+
+      // Parse memory updates from summary
+      const memUpdate = parseMemoryUpdate(reply);
+      if (memUpdate) {
+        applyMemoryUpdate(this.memory, memUpdate);
+        saveMemory(this.memory);
+      }
 
       // Mark as summarized and clear buffers
       const now = Date.now();
@@ -407,18 +417,17 @@ export class ManagerService {
 
       for (const s of activeContexts) {
         this.lastSummaryAt.set(s.sessionId, now);
-        this.outputBuffers.set(s.sessionId, ''); // clear after summary
+        this.outputBuffers.set(s.sessionId, '');
       }
 
       // Add to chat history
-      this.chatHistory.push({ role: 'assistant', content: reply });
-      // Cap chat history
+      this.chatHistory.push({ role: 'assistant', content: stripMemoryTags(reply) });
       if (this.chatHistory.length > 50) {
         this.chatHistory = this.chatHistory.slice(-40);
       }
 
       const summary: ManagerSummary = {
-        text: reply,
+        text: stripMemoryTags(reply),
         sessions: sessionInfo,
         timestamp: now,
       };

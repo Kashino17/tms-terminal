@@ -797,12 +797,18 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   ws.on('close', () => {
     logger.info(`Client disconnected: ${ip} — detaching ${ownedSessions.size} sessions (kept alive)`);
     for (const sessionId of ownedSessions) {
-      // Pass the attach generation so the detach is skipped if a newer reattach already happened
       const gen = sessionGens.get(sessionId);
       globalManager.detachSession(sessionId, gen);
     }
     ownedSessions.clear();
     sessionGens.clear();
+
+    // Distill manager memory on disconnect (session end)
+    if (managerService.isEnabled()) {
+      managerService.distill().catch(err => {
+        logger.warn(`Manager: disconnect distill failed — ${err instanceof Error ? err.message : err}`);
+      });
+    }
   });
 
   ws.on('error', (err) => {
