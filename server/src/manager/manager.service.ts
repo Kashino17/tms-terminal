@@ -445,8 +445,7 @@ export class ManagerService {
 
   async handleChat(text: string, targetSessionId?: string, onboarding?: boolean): Promise<void> {
     if (!this.enabled) {
-      this.onError?.('Manager ist nicht aktiv');
-      return;
+      throw new Error('Manager ist nicht aktiv — bitte zuerst aktivieren (grüner Punkt)');
     }
 
     // Build structured context
