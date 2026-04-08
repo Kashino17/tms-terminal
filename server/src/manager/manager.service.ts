@@ -30,43 +30,171 @@ type SummaryCallback = (summary: ManagerSummary) => void;
 type ResponseCallback = (response: ManagerResponse) => void;
 type ErrorCallback = (error: string) => void;
 
-// ── System Prompt ───────────────────────────────────────────────────────────
+// ── Personality Types ────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `Du bist der TMS Terminal Manager — ein hilfreicher Assistent, der mehrere Terminal-Sessions überwacht.
+interface PersonalityConfig {
+  agentName: string;
+  tone: string;
+  detail: string;
+  emojis: boolean;
+  proactive: boolean;
+  customInstruction: string;
+}
 
-Deine Aufgaben:
-1. Fasse Terminal-Aktivitäten verständlich zusammen (auf Deutsch)
-2. Beantworte Fragen des Nutzers zu den Terminals
-3. Führe Anweisungen aus, wenn der Nutzer es wünscht
+const DEFAULT_PERSONALITY: PersonalityConfig = {
+  agentName: 'Manager',
+  tone: 'chill',
+  detail: 'balanced',
+  emojis: true,
+  proactive: true,
+  customInstruction: '',
+};
 
-Wenn der Nutzer möchte, dass du in ein Terminal schreibst, antworte mit einer Aktion im Format:
+// ── Terminal Context Analysis ────────────────────────────────────────────────
+
+interface TerminalContext {
+  sessionId: string;
+  label: string;
+  cwd?: string;
+  process?: string;
+  project?: string;
+  tool?: string;
+  status: 'idle' | 'active' | 'ai_running' | 'building' | 'error';
+  recentOutput: string;
+}
+
+function analyzeTerminalOutput(raw: string): Pick<TerminalContext, 'project' | 'tool' | 'status'> {
+  const lower = raw.toLowerCase();
+  const last2k = raw.slice(-2000);
+
+  // Detect active tool
+  let tool: string | undefined;
+  if (/claude|anthropic/i.test(last2k)) tool = 'Claude';
+  else if (/codex|openai/i.test(last2k)) tool = 'Codex';
+  else if (/gemini|google/i.test(last2k)) tool = 'Gemini';
+  else if (/cursor/i.test(last2k)) tool = 'Cursor';
+  else if (/npm run|yarn |pnpm |bun run/i.test(last2k)) tool = 'npm/build';
+  else if (/docker|compose/i.test(last2k)) tool = 'Docker';
+  else if (/git (push|pull|commit|merge|rebase)/i.test(last2k)) tool = 'Git';
+  else if (/pytest|jest|vitest|mocha/i.test(last2k)) tool = 'Tests';
+  else if (/python |pip /i.test(last2k)) tool = 'Python';
+
+  // Detect project type from output
+  let project: string | undefined;
+  const packageMatch = last2k.match(/(?:name|project)["']?\s*[:=]\s*["']([^"']+)/);
+  if (packageMatch) project = packageMatch[1];
+  else if (/next\.js|nextjs|next dev/i.test(last2k)) project = 'Next.js App';
+  else if (/react-native|expo/i.test(last2k)) project = 'React Native';
+  else if (/flask|django|fastapi/i.test(last2k)) project = 'Python Backend';
+  else if (/vite|webpack/i.test(last2k)) project = 'Frontend Build';
+
+  // Detect status
+  let status: TerminalContext['status'] = 'idle';
+  if (/error|Error|ERR!|FAIL|failed|exception/i.test(last2k.slice(-500))) status = 'error';
+  else if (tool === 'Claude' || tool === 'Codex' || tool === 'Gemini' || tool === 'Cursor') status = 'ai_running';
+  else if (/compiling|building|bundling|downloading/i.test(last2k.slice(-300))) status = 'building';
+  else if (raw.length > 100) status = 'active';
+
+  return { project, tool, status };
+}
+
+const STATUS_EMOJI: Record<TerminalContext['status'], string> = {
+  idle: '💤', active: '🟢', ai_running: '🤖', building: '🔨', error: '🔴',
+};
+
+const STATUS_LABEL: Record<TerminalContext['status'], string> = {
+  idle: 'Idle', active: 'Aktiv', ai_running: 'AI läuft', building: 'Baut', error: 'Fehler',
+};
+
+// ── Dynamic System Prompt ───────────────────────────────────────────────────
+
+function buildSystemPrompt(p: PersonalityConfig): string {
+  const toneMap: Record<string, string> = {
+    chill: 'locker, entspannt, wie ein guter Kumpel der sich mit Tech auskennt. Du redest natürlich, nutzt Umgangssprache wenn passend.',
+    professional: 'professionell und klar. Strukturierte Antworten, sachlich aber nicht steif.',
+    technical: 'technisch präzise, mit Fachbegriffen. Du gehst direkt auf den Punkt, keine Floskeln.',
+    friendly: 'warm und freundlich, ermutigend. Du feierst Fortschritte und hilfst geduldig bei Problemen.',
+    minimal: 'extrem kurz und knapp. Nur das Nötigste, keine Erklärungen wenn nicht gefragt.',
+  };
+
+  const detailMap: Record<string, string> = {
+    brief: 'Antworte in 1-3 Sätzen. Kein Smalltalk, nur Substanz.',
+    balanced: 'Antworte in angemessener Länge — genug Detail um hilfreich zu sein, aber nicht ausufernd.',
+    detailed: 'Gib ausführliche Antworten mit Kontext, Erklärungen und Vorschlägen.',
+  };
+
+  let prompt = `Du bist "${p.agentName}" — der persönliche Terminal-Manager des Nutzers.
+
+## Deine Identität
+Du bist kein generischer Chatbot. Du hast einen eigenen Charakter und bist ein echtes Teammitglied.
+Du überwachst alle Terminal-Sessions, verstehst was in jedem Terminal passiert und hilfst dem Nutzer, den Überblick zu behalten.
+Antworte IMMER auf Deutsch.
+
+## Dein Kommunikationsstil
+${toneMap[p.tone] ?? toneMap.chill}
+${detailMap[p.detail] ?? detailMap.balanced}
+${p.emojis ? 'Verwende Emojis um deine Nachrichten aufzulockern — aber übertreib es nicht.' : 'Verwende KEINE Emojis.'}
+
+## Deine Fähigkeiten
+Du kannst:
+1. **Terminal-Output lesen und verstehen** — Du siehst den Output aller Sessions und verstehst den Kontext (welches Projekt, welches Tool, welcher Prozess)
+2. **Zusammenfassen** — Du fasst zusammen was passiert ist, aber intelligent: nicht nur "es gab Output", sondern WAS gemacht wurde
+3. **Befehle ausführen** — Du kannst in jedes Terminal schreiben und Enter drücken
+4. **Probleme erkennen** — Du erkennst Fehler, hängende Prozesse, wartende Prompts
+5. **Kontext verstehen** — Du weißt welches Projekt in welchem Terminal läuft und was der Nutzer dort macht
+
+## Kontext-Analyse
+Wenn du Terminal-Output analysierst, achte auf:
+- Welches Tool läuft (Claude, npm, git, docker, pytest, etc.)
+- Welches Projekt (package.json name, framework indicators)
+- Status (Fehler? Erfolgreich? Wartet auf Input? Build läuft?)
+- Was der Nutzer wahrscheinlich als nächstes braucht
+
+${p.proactive ? `## Proaktives Verhalten
+Mache eigenständig Vorschläge:
+- Wenn ein Build fehlschlägt, schlage Fixes vor
+- Wenn ein Terminal lange idle ist, erwähne es
+- Wenn du Patterns erkennst (z.B. gleicher Fehler in mehreren Terminals), weise darauf hin
+- Wenn ein AI-Agent in einem Terminal auf Input wartet, informiere den Nutzer` : ''}
+
+## Terminal-Aktionen
+Wenn der Nutzer möchte, dass du in ein Terminal schreibst:
 [WRITE_TO:<sessionId>]<command>[/WRITE_TO]
-
-Beispiel: [WRITE_TO:abc123]npm run build[/WRITE_TO]
-
-Wenn du Enter drücken sollst nach dem Schreiben, füge hinzu:
 [SEND_ENTER:<sessionId>]
 
-Halte deine Zusammenfassungen kurz und prägnant. Verwende Terminal-Labels (z.B. "Shell 1") statt roher Session-IDs.`;
+Verwende IMMER die Terminal-Labels (z.B. "Shell 1"), nicht die rohen Session-IDs.
+Erkläre dem Nutzer WAS du tust und WARUM, bevor du eine Aktion ausführst.`;
+
+  if (p.customInstruction) {
+    prompt += `\n\n## Zusätzliche Anweisung vom Nutzer\n${p.customInstruction}`;
+  }
+
+  return prompt;
+}
 
 // ── Manager Service ─────────────────────────────────────────────────────────
 
 export class ManagerService {
   private registry: AiProviderRegistry;
   private outputBuffers = new Map<string, string>();
-  private lastSummaryAt = new Map<string, number>(); // per-session timestamp
-  private sessionLabels = new Map<string, string>(); // sessionId -> "Shell 1"
+  private lastSummaryAt = new Map<string, number>();
+  private sessionLabels = new Map<string, string>();
   private chatHistory: ChatMessage[] = [];
   private pollTimer: NodeJS.Timeout | null = null;
   private enabled = false;
+  private personality: PersonalityConfig = { ...DEFAULT_PERSONALITY };
 
-  // Callbacks wired by ws.handler
   private onSummary: SummaryCallback | null = null;
   private onResponse: ResponseCallback | null = null;
   private onError: ErrorCallback | null = null;
 
   constructor(providerConfig: ProviderConfig) {
     this.registry = new AiProviderRegistry(providerConfig);
+  }
+
+  setPersonality(config: Partial<PersonalityConfig>): void {
+    this.personality = { ...this.personality, ...config };
+    logger.info(`Manager: personality updated — name="${this.personality.agentName}", tone=${this.personality.tone}`);
   }
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
@@ -137,55 +265,79 @@ export class ManagerService {
 
   // ── Periodic Summarization ────────────────────────────────────────────────
 
+  /** Build structured context for all active sessions. */
+  private buildTerminalContexts(): TerminalContext[] {
+    const contexts: TerminalContext[] = [];
+    for (const [sessionId, buffer] of this.outputBuffers) {
+      const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
+      const analysis = analyzeTerminalOutput(buffer);
+      const session = globalManager.getSession?.(sessionId);
+
+      contexts.push({
+        sessionId,
+        label,
+        cwd: session?.cwd,
+        process: session?.processName,
+        ...analysis,
+        recentOutput: buffer.length > MAX_CONTEXT_PER_SESSION
+          ? '...' + buffer.slice(-MAX_CONTEXT_PER_SESSION)
+          : buffer,
+      });
+    }
+    return contexts;
+  }
+
+  /** Format terminal contexts into a structured overview for the AI. */
+  private formatContextBlock(contexts: TerminalContext[]): string {
+    let block = '## Terminal-Übersicht\n\n';
+    for (const ctx of contexts) {
+      const emoji = STATUS_EMOJI[ctx.status];
+      const statusLabel = STATUS_LABEL[ctx.status];
+      block += `### ${emoji} ${ctx.label} — ${statusLabel}\n`;
+      if (ctx.cwd) block += `📁 ${ctx.cwd}\n`;
+      if (ctx.process) block += `⚡ Prozess: ${ctx.process}\n`;
+      if (ctx.tool) block += `🔧 Tool: ${ctx.tool}\n`;
+      if (ctx.project) block += `📦 Projekt: ${ctx.project}\n`;
+      block += `\n\`\`\`\n${ctx.recentOutput.slice(-3000)}\n\`\`\`\n\n`;
+    }
+    return block;
+  }
+
   /** Trigger a summary now (also called by the 15-min timer). */
   async poll(): Promise<void> {
     if (!this.enabled) return;
 
-    const sessionsWithActivity: Array<{ sessionId: string; label: string; output: string }> = [];
+    const contexts = this.buildTerminalContexts();
+    const activeContexts = contexts.filter(c => c.recentOutput.length > 0);
 
-    for (const [sessionId, buffer] of this.outputBuffers) {
-      const lastSummary = this.lastSummaryAt.get(sessionId) ?? 0;
-      // Only include sessions with new output since last summary
-      if (buffer.length > 0) {
-        const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
-        // Truncate to MAX_CONTEXT_PER_SESSION for the AI
-        const output = buffer.length > MAX_CONTEXT_PER_SESSION
-          ? '...' + buffer.slice(-MAX_CONTEXT_PER_SESSION)
-          : buffer;
-        sessionsWithActivity.push({ sessionId, label, output });
-      }
-    }
-
-    if (sessionsWithActivity.length === 0) {
+    if (activeContexts.length === 0) {
       logger.info('Manager: no activity since last poll — skipping');
       return;
     }
 
-    // Build prompt
-    let prompt = 'Hier ist die Terminal-Aktivität der letzten 15 Minuten:\n\n';
-    for (const s of sessionsWithActivity) {
-      prompt += `── ${s.label} (${s.sessionId.slice(0, 8)}) ──\n${s.output}\n\n`;
-    }
-    prompt += 'Fasse die Aktivität kurz und verständlich zusammen. Was wurde gemacht? Gibt es offene Fragen oder wartende Prompts?';
+    const contextBlock = this.formatContextBlock(activeContexts);
+
+    const prompt = `${contextBlock}\n\nFasse die Terminal-Aktivität zusammen. Was wurde gemacht? Welche Terminals sind aktiv und womit? Gibt es Fehler oder wartende Prompts?`;
 
     try {
       const provider = this.registry.getActive();
-      logger.info(`Manager: summarizing ${sessionsWithActivity.length} sessions via ${provider.name}`);
+      const systemPrompt = buildSystemPrompt(this.personality);
+      logger.info(`Manager: summarizing ${activeContexts.length} sessions via ${provider.name}`);
 
       const reply = await provider.chat(
         [{ role: 'user', content: prompt }],
-        SYSTEM_PROMPT,
+        systemPrompt,
       );
 
       // Mark as summarized and clear buffers
       const now = Date.now();
-      const sessionInfo = sessionsWithActivity.map(s => ({
+      const sessionInfo = activeContexts.map(s => ({
         sessionId: s.sessionId,
         label: s.label,
         hasActivity: true,
       }));
 
-      for (const s of sessionsWithActivity) {
+      for (const s of activeContexts) {
         this.lastSummaryAt.set(s.sessionId, now);
         this.outputBuffers.set(s.sessionId, ''); // clear after summary
       }
@@ -220,42 +372,29 @@ export class ManagerService {
       return;
     }
 
-    // Build context: include recent output from target session (or all)
-    let context = '';
+    // Build structured context
+    const contexts = this.buildTerminalContexts();
+    let contextBlock: string;
+
     if (targetSessionId) {
-      const buffer = this.outputBuffers.get(targetSessionId);
-      const label = this.sessionLabels.get(targetSessionId) ?? targetSessionId.slice(0, 8);
-      if (buffer) {
-        const snippet = buffer.length > MAX_CONTEXT_PER_SESSION
-          ? '...' + buffer.slice(-MAX_CONTEXT_PER_SESSION)
-          : buffer;
-        context = `\n\nAktueller Output von ${label} (${targetSessionId.slice(0, 8)}):\n${snippet}`;
-      }
+      const targetCtx = contexts.find(c => c.sessionId === targetSessionId);
+      contextBlock = targetCtx
+        ? this.formatContextBlock([targetCtx])
+        : `(Terminal ${targetSessionId.slice(0, 8)} hat keinen Output)`;
     } else {
-      // Include brief context from all sessions
-      for (const [sid, buffer] of this.outputBuffers) {
-        if (!buffer) continue;
-        const label = this.sessionLabels.get(sid) ?? sid.slice(0, 8);
-        const snippet = buffer.length > 2000 ? '...' + buffer.slice(-2000) : buffer;
-        context += `\n── ${label} ──\n${snippet}\n`;
-      }
+      contextBlock = this.formatContextBlock(contexts);
     }
 
-    // Add available sessions list
-    const sessionList = [...this.sessionLabels.entries()]
-      .map(([id, label]) => `${label} (${id.slice(0, 8)})`)
-      .join(', ');
-    const sessionsInfo = sessionList ? `\n\nVerfügbare Terminals: ${sessionList}` : '';
-
-    const userMessage = text + context + sessionsInfo;
+    const userMessage = `${text}\n\n---\n${contextBlock}`;
 
     this.chatHistory.push({ role: 'user', content: text }); // store clean version
 
     try {
       const provider = this.registry.getActive();
+      const systemPrompt = buildSystemPrompt(this.personality);
       const reply = await provider.chat(
         [...this.chatHistory, { role: 'user', content: userMessage }],
-        SYSTEM_PROMPT,
+        systemPrompt,
       );
 
       // Parse actions from reply

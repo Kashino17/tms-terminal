@@ -391,6 +391,14 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
+    if (msgType === 'manager:set_personality') {
+      const payload = (msg as any).payload;
+      if (payload && typeof payload === 'object') {
+        managerService.setPersonality(payload);
+      }
+      return;
+    }
+
     if (msgType === 'manager:set_api_key') {
       const { providerId, apiKey } = (msg as any).payload ?? {};
       if (typeof providerId === 'string' && typeof apiKey === 'string') {

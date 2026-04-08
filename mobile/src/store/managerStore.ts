@@ -28,6 +28,49 @@ export interface ApiKeys {
   glm: string;
 }
 
+// ── Personality ─────────────────────────────────────────────────────────────
+
+export type PersonalityTone = 'chill' | 'professional' | 'technical' | 'friendly' | 'minimal';
+export type PersonalityDetail = 'brief' | 'balanced' | 'detailed';
+
+export interface PersonalityConfig {
+  /** Display name the agent uses for itself. */
+  agentName: string;
+  /** Communication tone. */
+  tone: PersonalityTone;
+  /** How much detail in responses. */
+  detail: PersonalityDetail;
+  /** Use emojis in responses. */
+  emojis: boolean;
+  /** Proactively suggest improvements / flag issues. */
+  proactive: boolean;
+  /** Custom instruction from the user (free text). */
+  customInstruction: string;
+}
+
+export const DEFAULT_PERSONALITY: PersonalityConfig = {
+  agentName: 'Manager',
+  tone: 'chill',
+  detail: 'balanced',
+  emojis: true,
+  proactive: true,
+  customInstruction: '',
+};
+
+export const TONE_LABELS: Record<PersonalityTone, string> = {
+  chill: 'Chill & locker',
+  professional: 'Professionell',
+  technical: 'Technisch & präzise',
+  friendly: 'Freundlich & warm',
+  minimal: 'Minimalistisch',
+};
+
+export const DETAIL_LABELS: Record<PersonalityDetail, string> = {
+  brief: 'Kurz & knapp',
+  balanced: 'Ausgewogen',
+  detailed: 'Ausführlich',
+};
+
 interface ManagerState {
   enabled: boolean;
   messages: ManagerMessage[];
@@ -37,6 +80,10 @@ interface ManagerState {
   loading: boolean;
   /** API keys for external providers. */
   apiKeys: ApiKeys;
+  /** Agent personality config. */
+  personality: PersonalityConfig;
+  /** Whether onboarding has been completed. */
+  onboarded: boolean;
 
   // Actions
   setEnabled: (enabled: boolean) => void;
@@ -49,6 +96,8 @@ interface ManagerState {
   setLoading: (loading: boolean) => void;
   clearMessages: () => void;
   setApiKey: (provider: 'kimi' | 'glm', key: string) => void;
+  setPersonality: (updates: Partial<PersonalityConfig>) => void;
+  setOnboarded: (done: boolean) => void;
 }
 
 function makeId() {
@@ -66,6 +115,8 @@ export const useManagerStore = create<ManagerState>()(
       providers: [],
       loading: false,
       apiKeys: { kimi: '', glm: '' },
+      personality: { ...DEFAULT_PERSONALITY },
+      onboarded: false,
 
       setEnabled: (enabled) => set({ enabled }),
 
@@ -117,15 +168,23 @@ export const useManagerStore = create<ManagerState>()(
       setApiKey: (provider, key) => set((s) => ({
         apiKeys: { ...s.apiKeys, [provider]: key },
       })),
+
+      setPersonality: (updates) => set((s) => ({
+        personality: { ...s.personality, ...updates },
+      })),
+
+      setOnboarded: (done) => set({ onboarded: done }),
     }),
     {
       name: 'tms-manager',
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         enabled: state.enabled,
-        messages: state.messages.slice(-50), // persist only last 50 messages
+        messages: state.messages.slice(-50),
         activeProvider: state.activeProvider,
         apiKeys: state.apiKeys,
+        personality: state.personality,
+        onboarded: state.onboarded,
       }),
     },
   ),
