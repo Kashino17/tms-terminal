@@ -22,11 +22,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../types/navigation.types';
 import type { WebSocketService } from '../services/websocket.service';
-import {
-  useManagerStore, ManagerMessage,
-  PersonalityTone, PersonalityDetail, PersonalityConfig,
-  TONE_LABELS, DETAIL_LABELS, DEFAULT_PERSONALITY,
-} from '../store/managerStore';
+import { useManagerStore, ManagerMessage } from '../store/managerStore';
 import { useTerminalStore } from '../store/terminalStore';
 import { colors, spacing, fontSizes } from '../theme';
 
@@ -67,197 +63,6 @@ function TypingIndicator() {
           <Animated.View key={i} style={[styles.typingDot, { opacity: dot }]} />
         ))}
       </View>
-    </View>
-  );
-}
-
-// ── Onboarding ──────────────────────────────────────────────────────────────
-
-type OnboardingStep = 'welcome' | 'name' | 'tone' | 'detail' | 'extras' | 'done';
-
-function OnboardingFlow({ onComplete }: { onComplete: (config: PersonalityConfig) => void }) {
-  const [step, setStep] = useState<OnboardingStep>('welcome');
-  const [config, setConfig] = useState<PersonalityConfig>({ ...DEFAULT_PERSONALITY });
-  const [nameInput, setNameInput] = useState(config.agentName);
-  const [customInput, setCustomInput] = useState('');
-  const fadeAnim = useRef(new Animated.Value(1)).current;
-
-  const nextStep = useCallback((next: OnboardingStep) => {
-    Animated.timing(fadeAnim, { toValue: 0, duration: 150, useNativeDriver: true }).start(() => {
-      setStep(next);
-      Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-    });
-  }, [fadeAnim]);
-
-  const toneOptions: { key: PersonalityTone; emoji: string }[] = [
-    { key: 'chill', emoji: '😎' },
-    { key: 'professional', emoji: '💼' },
-    { key: 'technical', emoji: '⚙️' },
-    { key: 'friendly', emoji: '🤗' },
-    { key: 'minimal', emoji: '◽' },
-  ];
-
-  const detailOptions: { key: PersonalityDetail; emoji: string }[] = [
-    { key: 'brief', emoji: '⚡' },
-    { key: 'balanced', emoji: '⚖️' },
-    { key: 'detailed', emoji: '📋' },
-  ];
-
-  return (
-    <View style={styles.onboardingContainer}>
-      <Animated.View style={[styles.onboardingCard, { opacity: fadeAnim }]}>
-        {step === 'welcome' && (
-          <>
-            <Text style={styles.onboardingEmoji}>🤖</Text>
-            <Text style={styles.onboardingTitle}>Hey! Lass uns deinen Agent einrichten.</Text>
-            <Text style={styles.onboardingDesc}>
-              Ich bin dein Manager Agent — ich überwache deine Terminals, fasse zusammen was passiert und helfe dir, alles im Griff zu behalten.
-              {'\n\n'}Bevor es losgeht, lass mich wissen, wie ich sein soll.
-            </Text>
-            <TouchableOpacity style={styles.onboardingBtn} onPress={() => nextStep('name')}>
-              <Text style={styles.onboardingBtnText}>Los geht's</Text>
-            </TouchableOpacity>
-          </>
-        )}
-
-        {step === 'name' && (
-          <>
-            <Text style={styles.onboardingEmoji}>✏️</Text>
-            <Text style={styles.onboardingTitle}>Wie soll ich heißen?</Text>
-            <Text style={styles.onboardingDesc}>Gib mir einen Namen — das wird in der Header-Leiste und meinen Nachrichten angezeigt.</Text>
-            <TextInput
-              style={styles.onboardingInput}
-              value={nameInput}
-              onChangeText={setNameInput}
-              placeholder="z.B. Atlas, Nexus, Boss..."
-              placeholderTextColor={colors.textDim}
-              maxLength={20}
-              autoFocus
-            />
-            <TouchableOpacity
-              style={styles.onboardingBtn}
-              onPress={() => { setConfig(c => ({ ...c, agentName: nameInput.trim() || 'Manager' })); nextStep('tone'); }}
-            >
-              <Text style={styles.onboardingBtnText}>Weiter</Text>
-            </TouchableOpacity>
-          </>
-        )}
-
-        {step === 'tone' && (
-          <>
-            <Text style={styles.onboardingEmoji}>🎭</Text>
-            <Text style={styles.onboardingTitle}>Welcher Vibe?</Text>
-            <Text style={styles.onboardingDesc}>Wie soll ich mit dir reden?</Text>
-            <View style={styles.onboardingOptions}>
-              {toneOptions.map(({ key, emoji }) => (
-                <TouchableOpacity
-                  key={key}
-                  style={[styles.onboardingChip, config.tone === key && styles.onboardingChipActive]}
-                  onPress={() => setConfig(c => ({ ...c, tone: key }))}
-                >
-                  <Text style={styles.onboardingChipEmoji}>{emoji}</Text>
-                  <Text style={[styles.onboardingChipText, config.tone === key && styles.onboardingChipTextActive]}>
-                    {TONE_LABELS[key]}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <TouchableOpacity style={styles.onboardingBtn} onPress={() => nextStep('detail')}>
-              <Text style={styles.onboardingBtnText}>Weiter</Text>
-            </TouchableOpacity>
-          </>
-        )}
-
-        {step === 'detail' && (
-          <>
-            <Text style={styles.onboardingEmoji}>📏</Text>
-            <Text style={styles.onboardingTitle}>Wie ausführlich?</Text>
-            <Text style={styles.onboardingDesc}>Soll ich mich kurzfassen oder ins Detail gehen?</Text>
-            <View style={styles.onboardingOptions}>
-              {detailOptions.map(({ key, emoji }) => (
-                <TouchableOpacity
-                  key={key}
-                  style={[styles.onboardingChip, config.detail === key && styles.onboardingChipActive]}
-                  onPress={() => setConfig(c => ({ ...c, detail: key }))}
-                >
-                  <Text style={styles.onboardingChipEmoji}>{emoji}</Text>
-                  <Text style={[styles.onboardingChipText, config.detail === key && styles.onboardingChipTextActive]}>
-                    {DETAIL_LABELS[key]}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <TouchableOpacity style={styles.onboardingBtn} onPress={() => nextStep('extras')}>
-              <Text style={styles.onboardingBtnText}>Weiter</Text>
-            </TouchableOpacity>
-          </>
-        )}
-
-        {step === 'extras' && (
-          <>
-            <Text style={styles.onboardingEmoji}>⚡</Text>
-            <Text style={styles.onboardingTitle}>Feintuning</Text>
-            <View style={styles.onboardingToggleRow}>
-              <Text style={styles.onboardingToggleLabel}>Emojis verwenden</Text>
-              <TouchableOpacity
-                style={[styles.onboardingToggle, config.emojis && styles.onboardingToggleOn]}
-                onPress={() => setConfig(c => ({ ...c, emojis: !c.emojis }))}
-              >
-                <Text style={styles.onboardingToggleText}>{config.emojis ? 'Ja' : 'Nein'}</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.onboardingToggleRow}>
-              <Text style={styles.onboardingToggleLabel}>Proaktiv Vorschläge machen</Text>
-              <TouchableOpacity
-                style={[styles.onboardingToggle, config.proactive && styles.onboardingToggleOn]}
-                onPress={() => setConfig(c => ({ ...c, proactive: !c.proactive }))}
-              >
-                <Text style={styles.onboardingToggleText}>{config.proactive ? 'Ja' : 'Nein'}</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={[styles.onboardingDesc, { marginTop: spacing.md }]}>
-              Noch was, das ich wissen sollte? (optional)
-            </Text>
-            <TextInput
-              style={[styles.onboardingInput, { minHeight: 60, textAlignVertical: 'top' }]}
-              value={customInput}
-              onChangeText={setCustomInput}
-              placeholder="z.B. 'Ich arbeite hauptsächlich mit Python' oder 'Sei direkt, kein Smalltalk'"
-              placeholderTextColor={colors.textDim}
-              multiline
-              maxLength={500}
-            />
-            <TouchableOpacity
-              style={styles.onboardingBtn}
-              onPress={() => {
-                setConfig(c => ({ ...c, customInstruction: customInput.trim() }));
-                nextStep('done');
-              }}
-            >
-              <Text style={styles.onboardingBtnText}>Fertig</Text>
-            </TouchableOpacity>
-          </>
-        )}
-
-        {step === 'done' && (
-          <>
-            <Text style={styles.onboardingEmoji}>✅</Text>
-            <Text style={styles.onboardingTitle}>{config.agentName} ist bereit!</Text>
-            <Text style={styles.onboardingDesc}>
-              {TONE_LABELS[config.tone]} · {DETAIL_LABELS[config.detail]}
-              {config.emojis ? ' · Mit Emojis' : ''}
-              {config.proactive ? ' · Proaktiv' : ''}
-              {config.customInstruction ? `\n\n"${config.customInstruction}"` : ''}
-            </Text>
-            <TouchableOpacity
-              style={styles.onboardingBtn}
-              onPress={() => onComplete({ ...config, customInstruction: customInput.trim() })}
-            >
-              <Text style={styles.onboardingBtnText}>Chat starten</Text>
-            </TouchableOpacity>
-          </>
-        )}
-      </Animated.View>
     </View>
   );
 }
@@ -306,6 +111,12 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         case 'manager:status':
           setEnabled(msg.payload.enabled);
           break;
+        case 'manager:personality_configured':
+          if (msg.payload) {
+            setPersonality(msg.payload);
+            setOnboarded(true);
+          }
+          break;
       }
     };
 
@@ -336,7 +147,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     setLoading(true);
     wsService.send({
       type: 'manager:chat',
-      payload: { text: fullText, targetSessionId: targetSession ?? undefined },
+      payload: { text: fullText, targetSessionId: targetSession ?? undefined, onboarding: !onboarded },
     });
     setInput('');
     setAttachments([]);
@@ -480,28 +291,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
   const activeProviderName = providers.find((p) => p.id === activeProvider)?.name ?? activeProvider;
 
-  // ── Onboarding Completion ──────────────────────────────────────────────────
-
-  const handleOnboardingComplete = useCallback((config: PersonalityConfig) => {
-    setPersonality(config);
-    setOnboarded(true);
-    // Send personality to server so the system prompt gets it
-    wsService.send({
-      type: 'manager:set_personality' as any,
-      payload: config,
-    });
-  }, [wsService, setPersonality, setOnboarded]);
-
   // ── Render ────────────────────────────────────────────────────────────────
-
-  // Onboarding gate
-  if (!onboarded) {
-    return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <OnboardingFlow onComplete={handleOnboardingComplete} />
-      </View>
-    );
-  }
 
   return (
     <KeyboardAvoidingView
@@ -1039,115 +829,4 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
 
-  // Onboarding
-  onboardingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
-  },
-  onboardingCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 20,
-    padding: spacing.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  onboardingEmoji: {
-    fontSize: 40,
-    textAlign: 'center',
-    marginBottom: spacing.md,
-  },
-  onboardingTitle: {
-    color: colors.text,
-    fontSize: fontSizes.lg,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: spacing.sm,
-  },
-  onboardingDesc: {
-    color: colors.textMuted,
-    fontSize: fontSizes.sm,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: spacing.lg,
-  },
-  onboardingInput: {
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 12,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    color: colors.text,
-    fontSize: fontSizes.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.lg,
-  },
-  onboardingBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-  },
-  onboardingBtnText: {
-    color: '#fff',
-    fontSize: fontSizes.md,
-    fontWeight: '700',
-  },
-  onboardingOptions: {
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  onboardingChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 12,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
-  },
-  onboardingChipActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary + '15',
-  },
-  onboardingChipEmoji: {
-    fontSize: 18,
-    marginRight: spacing.md,
-  },
-  onboardingChipText: {
-    color: colors.textMuted,
-    fontSize: fontSizes.sm,
-    fontWeight: '500',
-  },
-  onboardingChipTextActive: {
-    color: colors.text,
-  },
-  onboardingToggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  onboardingToggleLabel: {
-    color: colors.text,
-    fontSize: fontSizes.sm,
-    flex: 1,
-  },
-  onboardingToggle: {
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 8,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    minWidth: 50,
-    alignItems: 'center',
-  },
-  onboardingToggleOn: {
-    backgroundColor: colors.primary + '30',
-  },
-  onboardingToggleText: {
-    color: colors.text,
-    fontSize: fontSizes.xs,
-    fontWeight: '600',
-  },
 });

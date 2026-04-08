@@ -172,6 +172,58 @@ Erkläre dem Nutzer WAS du tust und WARUM, bevor du eine Aktion ausführst.`;
   return prompt;
 }
 
+// ── Onboarding Prompt ───────────────────────────────────────────────────────
+
+const ONBOARDING_PROMPT = `Du bist ein neuer Terminal-Manager Agent. Das hier ist dein ERSTES Gespräch mit dem Nutzer.
+
+## Deine Aufgabe
+Lerne den Nutzer kennen — natürlich und locker, wie ein echtes Kennenlernen. KEIN Formular, KEINE Checkliste.
+
+## So läuft das Gespräch
+1. Stell dich kurz vor — du bist der neue Manager Agent, du überwachst Terminals, fasst zusammen, hilfst beim Multitasking
+2. Frag den Nutzer wie er so drauf ist — locker? professionell? technisch?
+3. Frag was er hauptsächlich macht (welche Projekte, welche Tools)
+4. Frag ob du einen bestimmten Namen haben sollst
+5. Finde natürlich raus: soll es knapp oder ausführlich sein? Emojis ja/nein?
+
+Lass das Gespräch natürlich fließen — nicht alles auf einmal fragen. Reagiere auf das was der Nutzer sagt.
+
+## WICHTIG: Wenn du genug weißt
+Sobald du genug Infos hast (nach 2-4 Nachrichten), schließe deine Antwort mit einem CONFIG-Block ab.
+Der Nutzer sieht diesen Block NICHT — er wird vom System geparst.
+
+Format (MUSS am Ende deiner Nachricht stehen):
+[PERSONALITY_CONFIG]
+agentName: <dein Name>
+tone: <chill|professional|technical|friendly|minimal>
+detail: <brief|balanced|detailed>
+emojis: <true|false>
+proactive: <true|false>
+customInstruction: <was du über den Nutzer gelernt hast, in einem Satz>
+[/PERSONALITY_CONFIG]
+
+Antworte auf Deutsch. Sei authentisch — kein Chatbot-Gelaber.`;
+
+function parsePersonalityConfig(text: string): PersonalityConfig | null {
+  const match = text.match(/\[PERSONALITY_CONFIG\]([\s\S]*?)\[\/PERSONALITY_CONFIG\]/);
+  if (!match) return null;
+
+  const block = match[1];
+  const get = (key: string, fallback: string) => {
+    const m = block.match(new RegExp(`${key}:\\s*(.+)`));
+    return m ? m[1].trim() : fallback;
+  };
+
+  return {
+    agentName: get('agentName', 'Manager'),
+    tone: get('tone', 'chill') as PersonalityConfig['tone'],
+    detail: get('detail', 'balanced') as PersonalityConfig['detail'],
+    emojis: get('emojis', 'true') === 'true',
+    proactive: get('proactive', 'true') === 'true',
+    customInstruction: get('customInstruction', ''),
+  };
+}
+
 // ── Manager Service ─────────────────────────────────────────────────────────
 
 export class ManagerService {
@@ -187,6 +239,7 @@ export class ManagerService {
   private onSummary: SummaryCallback | null = null;
   private onResponse: ResponseCallback | null = null;
   private onError: ErrorCallback | null = null;
+  private onPersonalityConfigured: ((config: PersonalityConfig) => void) | null = null;
 
   constructor(providerConfig: ProviderConfig) {
     this.registry = new AiProviderRegistry(providerConfig);
@@ -199,10 +252,16 @@ export class ManagerService {
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
 
-  setCallbacks(onSummary: SummaryCallback, onResponse: ResponseCallback, onError: ErrorCallback): void {
+  setCallbacks(
+    onSummary: SummaryCallback,
+    onResponse: ResponseCallback,
+    onError: ErrorCallback,
+    onPersonalityConfigured?: (config: PersonalityConfig) => void,
+  ): void {
     this.onSummary = onSummary;
     this.onResponse = onResponse;
     this.onError = onError;
+    if (onPersonalityConfigured) this.onPersonalityConfigured = onPersonalityConfigured;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -366,7 +425,7 @@ export class ManagerService {
 
   // ── User Chat ─────────────────────────────────────────────────────────────
 
-  async handleChat(text: string, targetSessionId?: string): Promise<void> {
+  async handleChat(text: string, targetSessionId?: string, onboarding?: boolean): Promise<void> {
     if (!this.enabled) {
       this.onError?.('Manager ist nicht aktiv');
       return;
@@ -391,11 +450,19 @@ export class ManagerService {
 
     try {
       const provider = this.registry.getActive();
-      const systemPrompt = buildSystemPrompt(this.personality);
+      const systemPrompt = onboarding ? ONBOARDING_PROMPT : buildSystemPrompt(this.personality);
       const reply = await provider.chat(
-        [...this.chatHistory, { role: 'user', content: userMessage }],
+        [...this.chatHistory, { role: 'user', content: onboarding ? text : userMessage }],
         systemPrompt,
       );
+
+      // Check for personality config (onboarding completion)
+      const parsedConfig = parsePersonalityConfig(reply);
+      if (parsedConfig) {
+        this.personality = parsedConfig;
+        this.onPersonalityConfigured?.(parsedConfig);
+        logger.info(`Manager: onboarding complete — name="${parsedConfig.agentName}", tone=${parsedConfig.tone}`);
+      }
 
       // Parse actions from reply
       const actions = this.parseActions(reply);
@@ -405,10 +472,11 @@ export class ManagerService {
         this.executeAction(action);
       }
 
-      // Clean reply — remove action tags for display
+      // Clean reply — remove action tags and personality config block for display
       const cleanReply = reply
         .replace(/\[WRITE_TO:[^\]]+\][^[]*\[\/WRITE_TO\]/g, '')
         .replace(/\[SEND_ENTER:[^\]]+\]/g, '')
+        .replace(/\[PERSONALITY_CONFIG\][\s\S]*?\[\/PERSONALITY_CONFIG\]/g, '')
         .trim();
 
       this.chatHistory.push({ role: 'assistant', content: cleanReply });
