@@ -28,6 +28,28 @@ import type { WebSocketService } from '../services/websocket.service';
 import { useManagerStore, ManagerMessage } from '../store/managerStore';
 import { useTerminalStore } from '../store/terminalStore';
 import { colors, spacing, fontSizes } from '../theme';
+import Markdown from 'react-native-markdown-display';
+
+// ── Markdown Styles ──────────────────────────────────────────────────────────
+
+const mdStyles = {
+  body: { color: '#F8FAFC', fontSize: 13, lineHeight: 20 },
+  heading1: { color: '#F8FAFC', fontSize: 17, fontWeight: '700' as const, marginBottom: 4 },
+  heading2: { color: '#F8FAFC', fontSize: 15, fontWeight: '700' as const, marginBottom: 4 },
+  heading3: { color: '#F8FAFC', fontSize: 13, fontWeight: '700' as const, marginBottom: 2 },
+  strong: { color: '#F8FAFC', fontWeight: '700' as const },
+  em: { color: '#94A3B8', fontStyle: 'italic' as const },
+  bullet_list: { marginVertical: 4 },
+  ordered_list: { marginVertical: 4 },
+  list_item: { marginVertical: 1 },
+  code_inline: { backgroundColor: '#243044', color: '#06B6D4', fontFamily: 'monospace', fontSize: 11, paddingHorizontal: 4, borderRadius: 3 },
+  fence: { backgroundColor: '#243044', padding: 8, borderRadius: 8, marginVertical: 4 },
+  code_block: { color: '#F8FAFC', fontFamily: 'monospace', fontSize: 11 },
+  link: { color: '#3B82F6' },
+  blockquote: { borderLeftColor: '#3B82F6', borderLeftWidth: 3, paddingLeft: 8, marginVertical: 4 },
+  hr: { backgroundColor: '#334155' },
+  paragraph: { marginVertical: 2 },
+};
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -286,9 +308,13 @@ export function ManagerChatScreen({ navigation, route }: Props) {
             </View>
           )}
 
-          <Text style={[styles.messageText, isSystem && styles.messageTextSystem]}>
-            {item.text}
-          </Text>
+          {isUser || isSystem ? (
+            <Text style={[styles.messageText, isSystem && styles.messageTextSystem]}>
+              {item.text}
+            </Text>
+          ) : (
+            <Markdown style={mdStyles}>{item.text}</Markdown>
+          )}
 
           {/* Actions */}
           {item.actions && item.actions.length > 0 && (
