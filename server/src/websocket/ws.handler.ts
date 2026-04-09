@@ -414,6 +414,22 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
+    if (msgType === 'manager:memory_read') {
+      const mem = require('../manager/manager.memory');
+      send(ws, { type: 'manager:memory_data', payload: { memory: mem.loadMemory() } } as any);
+      return;
+    }
+
+    if (msgType === 'manager:memory_write') {
+      const { section, data } = (msg as any).payload ?? {};
+      if (typeof section === 'string' && data !== undefined) {
+        const mem = require('../manager/manager.memory');
+        mem.updateMemorySection(section, data);
+        send(ws, { type: 'manager:memory_data', payload: { memory: mem.loadMemory() } } as any);
+      }
+      return;
+    }
+
     if (msgType === 'audio:transcribe') {
       const sessionId = (msg as any).sessionId;
       const audio = (msg as any).payload?.audio;

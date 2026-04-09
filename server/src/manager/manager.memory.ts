@@ -240,6 +240,21 @@ export function stripMemoryTags(text: string): string {
   return text.replace(/\[MEMORY_UPDATE\][\s\S]*?\[\/MEMORY_UPDATE\]/g, '').trim();
 }
 
+export function updateMemorySection(section: string, data: unknown): void {
+  const memory = loadMemory();
+  if (section === 'user' && typeof data === 'object' && data) {
+    memory.user = { ...memory.user, ...(data as Partial<MemoryUser>) };
+  } else if (section === 'personality' && typeof data === 'object' && data) {
+    memory.personality = { ...memory.personality, ...(data as Partial<MemoryPersonality>) };
+  } else if (section === 'projects' && Array.isArray(data)) {
+    memory.projects = data as MemoryProject[];
+  } else if (section === 'insights' && Array.isArray(data)) {
+    memory.insights = data as MemoryInsight[];
+  }
+  enforceLimits(memory);
+  saveMemory(memory);
+}
+
 // ---------------------------------------------------------------------------
 // Task 3: Memory Context Block Builder
 // ---------------------------------------------------------------------------

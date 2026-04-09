@@ -82,6 +82,13 @@ export interface ManagerSetApiKeyMessage {
   type: 'manager:set_api_key';
   payload: { providerId: string; apiKey: string };
 }
+export interface ManagerMemoryReadMessage {
+  type: 'manager:memory_read';
+}
+export interface ManagerMemoryWriteMessage {
+  type: 'manager:memory_write';
+  payload: { section: string; data: unknown };
+}
 
 export type ClientMessage =
   | TerminalCreateMessage
@@ -104,7 +111,9 @@ export type ClientMessage =
   | ManagerToggleMessage
   | ManagerSetProviderMessage
   | ManagerPollMessage
-  | ManagerSetApiKeyMessage;
+  | ManagerSetApiKeyMessage
+  | ManagerMemoryReadMessage
+  | ManagerMemoryWriteMessage;
 
 // ── Server → Client ──────────────────────────────────────────────
 
@@ -254,6 +263,10 @@ export interface ManagerStatusMessage {
   type: 'manager:status';
   payload: { enabled: boolean };
 }
+export interface ManagerMemoryDataMessage {
+  type: 'manager:memory_data';
+  payload: { memory: unknown };
+}
 
 export type ServerMessage =
   | TerminalCreatedMessage
@@ -276,4 +289,5 @@ export type ServerMessage =
   | ManagerResponseMessage
   | ManagerProvidersMessage
   | ManagerErrorMessage
-  | ManagerStatusMessage;
+  | ManagerStatusMessage
+  | ManagerMemoryDataMessage;
