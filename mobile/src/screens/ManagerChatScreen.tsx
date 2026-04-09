@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   Easing,
   FlatList,
@@ -14,6 +15,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -76,7 +79,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const {
     enabled, messages, activeProvider, providers, loading,
     setEnabled, addMessage, addSummary, addResponse, addError,
-    setProviders, setLoading, clearMessages,
+    setProviders, setLoading, clearMessages, deleteMessage,
     personality, onboarded, setPersonality, setOnboarded,
   } = useManagerStore();
 
@@ -226,6 +229,31 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     }
   }, [messages.length]);
 
+  // ── Long-Press Message Actions ────────────────────────────────────────────
+
+  const handleMessageLongPress = useCallback((msg: ManagerMessage) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      msg.role === 'user' ? 'Deine Nachricht' : 'Agent-Nachricht',
+      undefined,
+      [
+        {
+          text: 'Kopieren',
+          onPress: () => {
+            Clipboard.setStringAsync(msg.text);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          },
+        },
+        {
+          text: 'Löschen',
+          style: 'destructive',
+          onPress: () => deleteMessage(msg.id),
+        },
+        { text: 'Abbrechen', style: 'cancel' },
+      ],
+    );
+  }, [deleteMessage]);
+
   // ── Render Message ────────────────────────────────────────────────────────
 
   const renderMessage = useCallback(({ item }: { item: ManagerMessage }) => {
@@ -233,7 +261,11 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     const isSystem = item.role === 'system';
 
     return (
-      <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
+      <Pressable
+        style={[styles.messageRow, isUser && styles.messageRowUser]}
+        onLongPress={() => handleMessageLongPress(item)}
+        delayLongPress={400}
+      >
         <View
           style={[
             styles.messageBubble,
@@ -283,9 +315,9 @@ export function ManagerChatScreen({ navigation, route }: Props) {
             {new Date(item.timestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
           </Text>
         </View>
-      </View>
+      </Pressable>
     );
-  }, []);
+  }, [handleMessageLongPress]);
 
   // ── Active Provider Label ─────────────────────────────────────────────────
 

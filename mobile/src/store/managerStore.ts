@@ -95,6 +95,7 @@ interface ManagerState {
   setActiveProvider: (id: string) => void;
   setLoading: (loading: boolean) => void;
   clearMessages: () => void;
+  deleteMessage: (id: string) => void;
   setApiKey: (provider: 'kimi' | 'glm', key: string) => void;
   setPersonality: (updates: Partial<PersonalityConfig>) => void;
   setOnboarded: (done: boolean) => void;
@@ -164,6 +165,10 @@ export const useManagerStore = create<ManagerState>()(
       setLoading: (loading) => set({ loading }),
 
       clearMessages: () => set({ messages: [] }),
+
+      deleteMessage: (id) => set((s) => ({
+        messages: s.messages.filter(m => m.id !== id),
+      })),
 
       setApiKey: (provider, key) => set((s) => ({
         apiKeys: { ...s.apiKeys, [provider]: key },
