@@ -315,6 +315,17 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         </View>
 
         <View style={styles.headerRight}>
+          {messages.length > 0 && (
+            <TouchableOpacity
+              onPress={() => {
+                clearMessages();
+                setLoading(false);
+              }}
+              hitSlop={8}
+            >
+              <Feather name="trash-2" size={16} color={colors.textDim} />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity onPress={handlePoll} disabled={!enabled || loading} hitSlop={8}>
             <Feather name="refresh-cw" size={18} color={enabled ? colors.textMuted : colors.textDim} />
           </TouchableOpacity>
