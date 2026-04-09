@@ -100,6 +100,7 @@ export function ServerListScreen({ navigation }: Props) {
       onPress={() => handlePress(item)}
       onLongPress={() => handleLongPress(item)}
       onAvatarPress={() => handleAvatarPress(item)}
+      onManagerPress={() => handlePress(item)}
     />
   ), [statuses, handlePress, handleLongPress, handleAvatarPress]);
 

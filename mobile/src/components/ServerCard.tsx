@@ -30,9 +30,10 @@ interface Props {
   onPress: () => void;
   onLongPress: () => void;
   onAvatarPress?: () => void;
+  onManagerPress?: () => void;
 }
 
-export function ServerCard({ server, status, onPress, onLongPress, onAvatarPress }: Props) {
+export function ServerCard({ server, status, onPress, onLongPress, onAvatarPress, onManagerPress }: Props) {
   const responsive = useResponsive();
   const { rf, rs, ri } = responsive;
   const avatarSz = responsive.avatarSize;
@@ -89,6 +90,16 @@ export function ServerCard({ server, status, onPress, onLongPress, onAvatarPress
 
         <Feather name="chevron-right" size={ri(16)} color={colors.textDim} />
       </View>
+      {onManagerPress && (
+        <TouchableOpacity
+          style={[styles.managerBtn, { width: rs(28), height: rs(28), borderRadius: rs(14) }]}
+          onPress={onManagerPress}
+          hitSlop={6}
+          accessibilityLabel="Manager Agent"
+        >
+          <Feather name="cpu" size={ri(13)} color={colors.textMuted} />
+        </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 }
@@ -157,5 +168,15 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 14,
     fontFamily: fonts.mono,
+  },
+  managerBtn: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    backgroundColor: '#243044',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
   },
 });
