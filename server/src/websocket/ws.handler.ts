@@ -359,6 +359,16 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
 
     if (msgType === 'manager:chat') {
+      // Ensure callbacks are set on every chat (survives server restarts + reconnects)
+      managerService.setCallbacks(
+        (summary) => send(ws, { type: 'manager:summary', payload: summary } as any),
+        (response) => send(ws, { type: 'manager:response', payload: response } as any),
+        (error) => send(ws, { type: 'manager:error', payload: { message: error } } as any),
+        (config) => send(ws, { type: 'manager:personality_configured', payload: config } as any),
+      );
+      // Auto-start if not running (client thinks it's enabled but server restarted)
+      if (!managerService.isEnabled()) managerService.start();
+
       const text = (msg as any).payload?.text;
       const targetSessionId = (msg as any).payload?.targetSessionId;
       const onboarding = !!(msg as any).payload?.onboarding;
