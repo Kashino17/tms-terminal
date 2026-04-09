@@ -12,6 +12,7 @@ import { PinSetupScreen } from '../screens/PinSetupScreen';
 import { BrowserScreen } from '../screens/BrowserScreen';
 import { ProcessMonitorScreen } from '../screens/ProcessMonitorScreen';
 import { ManagerChatScreen } from '../screens/ManagerChatScreen';
+import { ManagerMemoryScreen } from '../screens/ManagerMemoryScreen';
 import { colors } from '../theme';
 import type { RootStackParamList } from '../types/navigation.types';
 
@@ -122,6 +123,11 @@ export function AppNavigator() {
           animation: 'slide_from_right',
           animationDuration: 280,
         }}
+      />
+      <Stack.Screen
+        name="ManagerMemory"
+        component={ManagerMemoryScreen}
+        options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 280 }}
       />
     </Stack.Navigator>
   );

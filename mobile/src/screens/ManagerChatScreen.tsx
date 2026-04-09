@@ -479,6 +479,12 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         </View>
 
         <View style={styles.headerRight}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('ManagerMemory', { wsService, serverId })}
+            hitSlop={8}
+          >
+            <Feather name="database" size={16} color={colors.textMuted} />
+          </TouchableOpacity>
           {messages.length > 0 && (
             <TouchableOpacity
               onPress={() => {

@@ -12,4 +12,5 @@ export type RootStackParamList = {
   Dashboard: undefined;
   Processes: { wsService: WebSocketService };
   ManagerChat: { wsService: WebSocketService; serverId: string; serverHost: string; serverPort: number; serverToken: string };
+  ManagerMemory: { wsService: WebSocketService; serverId: string };
 };
