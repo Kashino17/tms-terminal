@@ -57,11 +57,17 @@ export interface MemoryStats {
   totalMessages: number;
 }
 
+export interface MemoryJournalEntry {
+  date: string;
+  text: string;
+}
+
 export interface ManagerMemory {
   user: MemoryUser;
   personality: MemoryPersonality;
   projects: MemoryProject[];
   insights: MemoryInsight[];
+  journal: MemoryJournalEntry[];
   recentChat: MemoryChatEntry[];
   stats: MemoryStats;
 }
@@ -86,6 +92,7 @@ export function createEmptyMemory(): ManagerMemory {
     },
     projects: [],
     insights: [],
+    journal: [],
     recentChat: [],
     stats: {
       totalSessions: 0,
@@ -106,6 +113,7 @@ export function loadMemory(): ManagerMemory {
         personality: { ...empty.personality, ...parsed.personality },
         projects: parsed.projects ?? empty.projects,
         insights: parsed.insights ?? empty.insights,
+        journal: parsed.journal ?? empty.journal,
         recentChat: parsed.recentChat ?? empty.recentChat,
         stats: { ...empty.stats, ...parsed.stats },
       };
@@ -149,6 +157,10 @@ export function enforceLimits(memory: ManagerMemory): void {
   if (memory.projects.length > MAX_PROJECTS) {
     memory.projects = memory.projects.slice(-MAX_PROJECTS);
   }
+  // Journal: max 100 entries
+  if (memory.journal.length > 100) {
+    memory.journal = memory.journal.slice(-100);
+  }
 }
 
 export interface MemoryUpdate {
@@ -156,6 +168,7 @@ export interface MemoryUpdate {
   traits: string[];
   projects: MemoryProject[];
   insights: string[];
+  journalEntries: string[];
 }
 
 export function parseMemoryUpdate(text: string): MemoryUpdate | null {
@@ -163,7 +176,7 @@ export function parseMemoryUpdate(text: string): MemoryUpdate | null {
   if (!match) return null;
 
   const block = match[1];
-  const update: MemoryUpdate = { learnedFacts: [], traits: [], projects: [], insights: [] };
+  const update: MemoryUpdate = { learnedFacts: [], traits: [], projects: [], insights: [], journalEntries: [] };
 
   for (const raw of block.split('\n')) {
     const line = raw.trim();
@@ -189,6 +202,9 @@ export function parseMemoryUpdate(text: string): MemoryUpdate | null {
     } else if (line.startsWith('insight:')) {
       const insight = line.slice('insight:'.length).trim();
       if (insight) update.insights.push(insight);
+    } else if (line.startsWith('journal:')) {
+      const entry = line.slice('journal:'.length).trim();
+      if (entry) update.journalEntries.push(entry);
     }
   }
 
@@ -196,7 +212,8 @@ export function parseMemoryUpdate(text: string): MemoryUpdate | null {
     update.learnedFacts.length > 0 ||
     update.traits.length > 0 ||
     update.projects.length > 0 ||
-    update.insights.length > 0;
+    update.insights.length > 0 ||
+    update.journalEntries.length > 0;
 
   return hasEntries ? update : null;
 }
@@ -233,6 +250,10 @@ export function applyMemoryUpdate(memory: ManagerMemory, update: MemoryUpdate): 
     memory.insights.push({ date: today, text, source: 'chat' });
   }
 
+  for (const text of update.journalEntries) {
+    memory.journal.push({ date: today, text });
+  }
+
   enforceLimits(memory);
 }
 
@@ -250,6 +271,8 @@ export function updateMemorySection(section: string, data: unknown): void {
     memory.projects = data as MemoryProject[];
   } else if (section === 'insights' && Array.isArray(data)) {
     memory.insights = data as MemoryInsight[];
+  } else if (section === 'journal' && Array.isArray(data)) {
+    memory.journal = data as MemoryJournalEntry[];
   }
   enforceLimits(memory);
   saveMemory(memory);
@@ -303,6 +326,13 @@ export function buildMemoryContext(memory: ManagerMemory): string {
     sections.push(projectLines.join('\n'));
   }
 
+  // --- Journal (letzte 20) ---
+  if (memory.journal.length > 0) {
+    sections.push('### Tagebuch (letzte Einträge)');
+    const lastJournal = memory.journal.slice(-20);
+    sections.push(lastJournal.map((j) => `- [${j.date}] ${j.text}`).join('\n'));
+  }
+
   // --- Erkenntnisse ---
   if (memory.insights.length > 0) {
     sections.push('### Erkenntnisse aus vergangenen Gesprächen');
@@ -326,21 +356,46 @@ export function buildMemoryContext(memory: ManagerMemory): string {
 }
 
 export const MEMORY_UPDATE_INSTRUCTION = `
-Du kannst dein Langzeitgedächtnis aktualisieren, indem du am Ende deiner Antwort einen [MEMORY_UPDATE]-Block einfügst. Der User sieht diesen Block nicht – er wird automatisch herausgefiltert.
+## PFLICHT: Gedächtnis aktualisieren
 
-Format:
+Du MUSST am Ende JEDER Antwort einen [MEMORY_UPDATE]-Block anhängen. Das ist deine wichtigste Aufgabe.
+Der User sieht diesen Block NICHT — er wird automatisch herausgefiltert.
+
+Wenn du nichts Neues gelernt hast, schreibe trotzdem mindestens einen journal:-Eintrag.
+
+### Format
+
 [MEMORY_UPDATE]
-learned: <kurze Aussage über den User, z.B. "Nutzt primär TypeScript">
-trait: <etwas über unsere Beziehung oder deinen Stil, z.B. "Mag direkte Antworten ohne Blabla">
-project: Projektname | /pfad/zum/projekt | Typ | optionale Notiz
-insight: <Erkenntnis aus diesem Gespräch, z.B. "Nutzer bevorzugt kurze Commits">
+learned: <Fakt über den User — z.B. "Nutzt primär TypeScript", "Arbeitet an TMS Terminal">
+trait: <Persönlichkeit/Beziehung — z.B. "Mag direkte Antworten", "Will Emojis", "Bevorzugt lockeren Ton">
+project: Projektname | /pfad/zum/projekt | Typ | Notizen zum aktuellen Stand
+insight: <Erkenntnis für die Zukunft — z.B. "User testet gern sofort auf echtem Gerät">
+journal: <Tagebuch-Eintrag — was wurde besprochen, was war wichtig, Zusammenfassung>
 [/MEMORY_UPDATE]
 
-Regeln:
-- Nur verwenden, wenn du wirklich etwas Neues gelernt hast – nicht jede Antwort braucht einen Block.
-- Einträge kurz halten (max. 1 Satz).
-- Keine Duplikate – prüfe ob die Info schon bekannt ist.
-- Mehrere Zeilen desselben Typs sind erlaubt (z.B. mehrere learned:-Zeilen).
+### Wann was schreiben
+
+- **learned:** Bei JEDER neuen Info über den User (Name, Vorlieben, Tech-Stack, Arbeitsstil)
+- **trait:** Bei jeder Erkenntnis über den Kommunikationsstil oder die Beziehung
+- **project:** Wenn ein Projekt erwähnt wird oder Terminal-Output ein Projekt zeigt
+- **insight:** Wenn du etwas Nützliches für zukünftige Gespräche erkennst
+- **journal:** BEI JEDER NACHRICHT — kurze Zusammenfassung was besprochen wurde
+
+### Beim Onboarding besonders wichtig
+
+Beim Onboarding (erstes Gespräch) MUSST du ALLES festhalten:
+- Wie der User angesprochen werden will
+- Welchen Namen du bekommen hast
+- Ob Emojis gewünscht sind
+- Ob es locker oder professionell sein soll
+- Welche Projekte der User hat
+- Was der User hauptsächlich macht
+
+### Regeln
+- Einträge kurz (max. 1 Satz pro Zeile)
+- Mehrere Zeilen desselben Typs sind erlaubt
+- Keine exakten Duplikate — aber Updates/Vertiefungen sind erwünscht
+- journal: ist IMMER Pflicht, auch wenn sonst nichts Neues ist
 `.trim();
 
 // ---------------------------------------------------------------------------
