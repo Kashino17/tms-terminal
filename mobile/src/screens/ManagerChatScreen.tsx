@@ -122,12 +122,16 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const tabs = useTerminalStore((s) => s.tabs[serverId] ?? []);
   const [input, setInput] = useState('');
   const [targetSession, setTargetSession] = useState<string | null>(null);
-  const [showProviderPicker, setShowProviderPicker] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [editName, setEditName] = useState(personality.agentName);
   const [attachments, setAttachments] = useState<Array<{ uri: string; path?: string }>>([]);
   const [uploading, setUploading] = useState(false);
   const listRef = useRef<FlatList<ManagerMessage>>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
+  const [connQuality, setConnQuality] = useState<string>('good');
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const recordingRef = useRef<Audio.Recording | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -178,6 +182,21 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     return unsub;
   }, [wsService, addSummary, addResponse, addError, setProviders, setEnabled]);
 
+  // ── Connection Quality ────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setConnQuality((wsService as any).getQuality?.() ?? 'good');
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [wsService]);
+
+  // ── Filtered Messages ─────────────────────────────────────────────────────
+
+  const filteredMessages = searchQuery
+    ? messages.filter(m => m.text.toLowerCase().includes(searchQuery.toLowerCase()))
+    : messages;
+
   // ── Toggle Manager ────────────────────────────────────────────────────────
 
   const handleToggle = useCallback(() => {
@@ -190,6 +209,54 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text && attachments.length === 0) return;
+
+    // Slash commands
+    if (text.startsWith('/')) {
+      const cmd = text.toLowerCase().split(' ')[0];
+      if (cmd === '/reset') {
+        Alert.alert(
+          'Agent zurücksetzen',
+          'Memory und Persönlichkeit werden gelöscht. Der Agent startet komplett neu mit dem Onboarding.',
+          [
+            { text: 'Abbrechen', style: 'cancel' },
+            {
+              text: 'Zurücksetzen',
+              style: 'destructive',
+              onPress: () => {
+                // Reset memory on server
+                wsService.send({ type: 'manager:memory_write', payload: { section: 'user', data: { name: '', role: '', techStack: [], preferences: [], learnedFacts: [] } } } as any);
+                wsService.send({ type: 'manager:memory_write', payload: { section: 'personality', data: { agentName: 'Manager', tone: 'chill', detail: 'balanced', emojis: true, proactive: true, traits: [], sharedHistory: [] } } } as any);
+                wsService.send({ type: 'manager:memory_write', payload: { section: 'projects', data: [] } } as any);
+                wsService.send({ type: 'manager:memory_write', payload: { section: 'insights', data: [] } } as any);
+                // Reset local state
+                clearMessages();
+                setPersonality({ agentName: 'Manager', tone: 'chill', detail: 'balanced', emojis: true, proactive: true, customInstruction: '' });
+                setOnboarded(false);
+                setInput('');
+                addMessage({ role: 'system', text: 'Agent wurde zurückgesetzt. Schreib "Hi" um das Onboarding zu starten.' });
+              },
+            },
+          ],
+        );
+        setInput('');
+        return;
+      }
+      if (cmd === '/help') {
+        addMessage({ role: 'system', text: 'Verfügbare Befehle:\n/reset — Agent-Memory komplett löschen und Onboarding neu starten\n/help — Diese Hilfe anzeigen\n/clear — Chat-Verlauf leeren\n/memory — Memory-Viewer öffnen' });
+        setInput('');
+        return;
+      }
+      if (cmd === '/clear') {
+        clearMessages();
+        setInput('');
+        return;
+      }
+      if (cmd === '/memory') {
+        navigation.navigate('ManagerMemory', { wsService, serverId });
+        setInput('');
+        return;
+      }
+    }
 
     // Build message text including attachment references
     const attachmentPaths = attachments.filter(a => a.path).map(a => a.path!);
@@ -206,7 +273,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     setInput('');
     setAttachments([]);
     Keyboard.dismiss();
-  }, [input, attachments, targetSession, wsService, addMessage, setLoading]);
+  }, [input, attachments, targetSession, wsService, addMessage, setLoading, clearMessages, setPersonality, setOnboarded, navigation, serverId]);
 
   // ── Manual Poll ───────────────────────────────────────────────────────────
 
@@ -314,7 +381,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
   const handleProviderSwitch = useCallback((id: string) => {
     wsService.send({ type: 'manager:set_provider', payload: { providerId: id } });
-    setShowProviderPicker(false);
+    setShowSettings(false);
   }, [wsService]);
 
   // ── Scroll to Bottom ──────────────────────────────────────────────────────
@@ -370,12 +437,11 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
   // ── Render Message ────────────────────────────────────────────────────────
 
-  const renderMessage = useCallback(({ item }: { item: ManagerMessage }) => {
+  const renderMessage = useCallback(({ item, index }: { item: ManagerMessage; index: number }) => {
     const isUser = item.role === 'user';
     const isSystem = item.role === 'system';
 
-    const msgIndex = messages.indexOf(item);
-    const prevMsg = msgIndex > 0 ? messages[msgIndex - 1] : null;
+    const prevMsg = index > 0 ? filteredMessages[index - 1] : null;
     const showDateSep = !prevMsg || formatDateSeparator(item.timestamp) !== formatDateSeparator(prevMsg.timestamp);
     const dateSep = showDateSep ? formatDateSeparator(item.timestamp) : null;
 
@@ -449,7 +515,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         </Pressable>
       </>
     );
-  }, [handleMessageLongPress, messages]);
+  }, [handleMessageLongPress, filteredMessages]);
 
   // ── Active Provider Label ─────────────────────────────────────────────────
 
@@ -471,7 +537,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle}>{personality.agentName}</Text>
-          <Pressable onPress={() => setShowProviderPicker((v) => !v)}>
+          <Pressable onPress={() => setShowSettings((v) => !v)}>
             <Text style={styles.headerSubtitle}>
               {activeProviderName} <Feather name="chevron-down" size={12} color={colors.textMuted} />
             </Text>
@@ -479,6 +545,9 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         </View>
 
         <View style={styles.headerRight}>
+          <TouchableOpacity onPress={() => setSearchMode(v => !v)} hitSlop={8}>
+            <Feather name="search" size={16} color={searchMode ? colors.primary : colors.textDim} />
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={() => navigation.navigate('ManagerMemory', { wsService, serverId })}
             hitSlop={8}
@@ -500,14 +569,35 @@ export function ManagerChatScreen({ navigation, route }: Props) {
             <Feather name="refresh-cw" size={18} color={enabled ? colors.textMuted : colors.textDim} />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleToggle} hitSlop={8}>
-            <View style={[styles.toggleDot, enabled && styles.toggleDotActive]} />
+            <View style={[
+              styles.toggleDot,
+              enabled && connQuality === 'good' && styles.toggleDotActive,
+              enabled && connQuality === 'fair' && { backgroundColor: '#F59E0B' },
+              enabled && (connQuality === 'poor' || connQuality === 'bad') && { backgroundColor: '#EF4444' },
+            ]} />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Provider Picker */}
-      {showProviderPicker && (
-        <View style={styles.providerPicker}>
+      {/* Settings Panel */}
+      {showSettings && (
+        <View style={styles.settingsPanel}>
+          <View style={styles.settingsRow}>
+            <Text style={styles.settingsLabel}>Name</Text>
+            <TextInput
+              style={styles.settingsInput}
+              value={editName}
+              onChangeText={setEditName}
+              onEndEditing={() => {
+                if (editName.trim() && editName !== personality.agentName) {
+                  setPersonality({ agentName: editName.trim() });
+                  wsService.send({ type: 'manager:set_personality' as any, payload: { agentName: editName.trim() } });
+                }
+              }}
+              maxLength={20}
+            />
+          </View>
+          <Text style={[styles.settingsLabel, { marginTop: 8 }]}>AI Provider</Text>
           {providers.map((p) => (
             <TouchableOpacity
               key={p.id}
@@ -515,14 +605,31 @@ export function ManagerChatScreen({ navigation, route }: Props) {
               onPress={() => handleProviderSwitch(p.id)}
               disabled={!p.configured}
             >
-              <Text style={[styles.providerText, !p.configured && styles.providerTextDisabled]}>
-                {p.name}
-              </Text>
-              {!p.configured && (
-                <Text style={styles.providerHint}>Nicht konfiguriert</Text>
-              )}
+              <Text style={[styles.providerText, !p.configured && styles.providerTextDisabled]}>{p.name}</Text>
+              {p.id === activeProvider && <Feather name="check" size={14} color={colors.primary} />}
             </TouchableOpacity>
           ))}
+        </View>
+      )}
+
+      {/* Search Bar */}
+      {searchMode && (
+        <View style={styles.searchBar}>
+          <Feather name="search" size={14} color={colors.textDim} />
+          <TextInput
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Nachrichten durchsuchen..."
+            placeholderTextColor={colors.textDim}
+            autoFocus
+          />
+          {searchQuery.length > 0 && (
+            <Text style={styles.searchCount}>{filteredMessages.length}</Text>
+          )}
+          <TouchableOpacity onPress={() => { setSearchMode(false); setSearchQuery(''); }}>
+            <Feather name="x" size={16} color={colors.textMuted} />
+          </TouchableOpacity>
         </View>
       )}
 
@@ -539,13 +646,13 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       {/* Message List */}
       <FlatList
         ref={listRef}
-        data={messages}
+        data={filteredMessages}
         keyExtractor={(item) => item.id}
         renderItem={renderMessage}
         style={styles.messageList}
         contentContainerStyle={[
           styles.messageListContent,
-          messages.length === 0 && styles.messageListEmpty,
+          filteredMessages.length === 0 && styles.messageListEmpty,
         ]}
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
@@ -743,14 +850,58 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
   },
 
-  // Provider Picker
-  providerPicker: {
+  // Settings Panel
+  settingsPanel: {
     backgroundColor: colors.surface,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    gap: spacing.xs,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  settingsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  settingsLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  settingsInput: {
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    color: colors.text,
+    fontSize: 13,
+    flex: 1,
+    marginLeft: 12,
+  },
+
+  // Search Bar
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  searchInput: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+  },
+  searchCount: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
   },
   providerOption: {
     paddingVertical: spacing.sm,
