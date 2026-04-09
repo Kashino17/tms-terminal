@@ -21,6 +21,7 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
+import { Audio } from 'expo-av';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../types/navigation.types';
@@ -112,13 +113,17 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const [attachments, setAttachments] = useState<Array<{ uri: string; path?: string }>>([]);
   const [uploading, setUploading] = useState(false);
   const listRef = useRef<FlatList<ManagerMessage>>(null);
+  const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── WS Message Listener ─────────────────────────────────────────────────
 
   useEffect(() => {
     const handler = (data: unknown) => {
       const msg = data as { type: string; payload?: any };
-      if (!msg.type?.startsWith('manager:')) return;
+      if (!msg.type?.startsWith('manager:') && !msg.type?.startsWith('audio:')) return;
 
       switch (msg.type) {
         case 'manager:summary':
@@ -141,6 +146,16 @@ export function ManagerChatScreen({ navigation, route }: Props) {
             setPersonality(msg.payload);
             setOnboarded(true);
           }
+          break;
+        case 'audio:transcription':
+          if (msg.payload?.text) {
+            setInput((prev) => prev + (prev ? ' ' : '') + msg.payload.text);
+          }
+          setMicState('idle');
+          break;
+        case 'audio:error':
+          addError(msg.payload?.message ?? 'Transkription fehlgeschlagen');
+          setMicState('idle');
           break;
       }
     };
@@ -235,6 +250,51 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const removeAttachment = useCallback((idx: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
   }, []);
+
+  // ── Mic / Audio Transcription ─────────────────────────────────────────────
+
+  const handleMicPress = useCallback(async () => {
+    if (micState === 'recording') {
+      try {
+        if (durationTimerRef.current) { clearInterval(durationTimerRef.current); durationTimerRef.current = null; }
+        const recording = recordingRef.current;
+        if (!recording) return;
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        recordingRef.current = null;
+        setMicState('processing');
+        setRecordingDuration(0);
+        if (!uri) return;
+        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+        const activeTab = tabs.find(t => t.sessionId);
+        wsService.send({
+          type: 'audio:transcribe',
+          sessionId: activeTab?.sessionId ?? 'manager',
+          payload: { audio: base64, format: 'wav' },
+        } as any);
+      } catch {
+        setMicState('idle');
+      }
+    } else {
+      try {
+        const { granted } = await Audio.requestPermissionsAsync();
+        if (!granted) return;
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+        const { recording } = await Audio.Recording.createAsync({
+          android: { extension: '.wav', outputFormat: 3, audioEncoder: 1, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000 },
+          ios: { extension: '.wav', audioQuality: 96, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
+          web: {},
+        });
+        recordingRef.current = recording;
+        setMicState('recording');
+        setRecordingDuration(0);
+        durationTimerRef.current = setInterval(() => setRecordingDuration(d => d + 1), 1000);
+      } catch {
+        setMicState('idle');
+      }
+    }
+  }, [micState, wsService, tabs]);
 
   // ── Provider Switch ───────────────────────────────────────────────────────
 
@@ -521,6 +581,28 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         >
           <Feather name="image" size={20} color={enabled ? colors.textMuted : colors.textDim} />
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.attachButton}
+          onPress={handleMicPress}
+          disabled={!enabled}
+          hitSlop={8}
+        >
+          <Feather
+            name={micState === 'recording' ? 'square' : 'mic'}
+            size={20}
+            color={micState === 'recording' ? '#EF4444' : enabled ? colors.textMuted : colors.textDim}
+          />
+        </TouchableOpacity>
+        {micState === 'recording' && (
+          <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '600', minWidth: 35 }}>
+            {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
+          </Text>
+        )}
+        {micState === 'processing' && (
+          <Text style={{ color: colors.textMuted, fontSize: 11, fontStyle: 'italic' }}>
+            Transkribiert...
+          </Text>
+        )}
         <TextInput
           style={styles.textInput}
           value={input}
