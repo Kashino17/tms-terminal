@@ -52,6 +52,19 @@ const mdStyles = {
   paragraph: { marginVertical: 2 },
 };
 
+// ── Date Separator Helper ────────────────────────────────────────────────────
+
+function formatDateSeparator(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = (today.getTime() - msgDay.getTime()) / 86400000;
+  if (diff === 0) return 'Heute';
+  if (diff === 1) return 'Gestern';
+  return d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 type Props = {
@@ -113,6 +126,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const [attachments, setAttachments] = useState<Array<{ uri: string; path?: string }>>([]);
   const [uploading, setUploading] = useState(false);
   const listRef = useRef<FlatList<ManagerMessage>>(null);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
   const recordingRef = useRef<Audio.Recording | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -311,6 +325,24 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     }
   }, [messages.length]);
 
+  const handleScroll = useCallback((e: any) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const distFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
+    setShowScrollBtn(distFromBottom > 200);
+  }, []);
+
+  // ── Retry ─────────────────────────────────────────────────────────────────
+
+  const handleRetry = useCallback(() => {
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+    if (!lastUserMsg) return;
+    setLoading(true);
+    wsService.send({
+      type: 'manager:chat',
+      payload: { text: lastUserMsg.text, targetSessionId: lastUserMsg.targetSessionId, onboarding: !onboarded },
+    });
+  }, [messages, wsService, onboarded, setLoading]);
+
   // ── Long-Press Message Actions ────────────────────────────────────────────
 
   const handleMessageLongPress = useCallback((msg: ManagerMessage) => {
@@ -342,68 +374,82 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     const isUser = item.role === 'user';
     const isSystem = item.role === 'system';
 
+    const msgIndex = messages.indexOf(item);
+    const prevMsg = msgIndex > 0 ? messages[msgIndex - 1] : null;
+    const showDateSep = !prevMsg || formatDateSeparator(item.timestamp) !== formatDateSeparator(prevMsg.timestamp);
+    const dateSep = showDateSep ? formatDateSeparator(item.timestamp) : null;
+
     return (
-      <Pressable
-        style={[styles.messageRow, isUser && styles.messageRowUser]}
-        onLongPress={() => handleMessageLongPress(item)}
-        delayLongPress={400}
-      >
-        <View
-          style={[
-            styles.messageBubble,
-            isUser ? styles.bubbleUser : isSystem ? styles.bubbleSystem : styles.bubbleAssistant,
-          ]}
+      <>
+        {dateSep && (
+          <View style={styles.dateSeparator}>
+            <View style={styles.dateSepLine} />
+            <Text style={styles.dateSepText}>{dateSep}</Text>
+            <View style={styles.dateSepLine} />
+          </View>
+        )}
+        <Pressable
+          style={[styles.messageRow, isUser && styles.messageRowUser]}
+          onLongPress={() => handleMessageLongPress(item)}
+          delayLongPress={400}
         >
-          {/* Session chips */}
-          {item.sessions && item.sessions.length > 0 && (
-            <View style={styles.sessionChips}>
-              {item.sessions.map((s) => (
-                <View
-                  key={s.sessionId}
-                  style={[styles.sessionChip, s.hasActivity && styles.sessionChipActive]}
-                >
-                  <Text style={styles.sessionChipText}>{s.label}</Text>
-                </View>
-              ))}
-            </View>
-          )}
+          <View
+            style={[
+              styles.messageBubble,
+              isUser ? styles.bubbleUser : isSystem ? styles.bubbleSystem : styles.bubbleAssistant,
+            ]}
+          >
+            {/* Session chips */}
+            {item.sessions && item.sessions.length > 0 && (
+              <View style={styles.sessionChips}>
+                {item.sessions.map((s) => (
+                  <View
+                    key={s.sessionId}
+                    style={[styles.sessionChip, s.hasActivity && styles.sessionChipActive]}
+                  >
+                    <Text style={styles.sessionChipText}>{s.label}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
 
-          {isUser || isSystem ? (
-            <Text style={[styles.messageText, isSystem && styles.messageTextSystem]}>
-              {item.text}
+            {isUser || isSystem ? (
+              <Text style={[styles.messageText, isSystem && styles.messageTextSystem]}>
+                {item.text}
+              </Text>
+            ) : (
+              <Markdown style={mdStyles}>{item.text}</Markdown>
+            )}
+
+            {/* Actions */}
+            {item.actions && item.actions.length > 0 && (
+              <View style={styles.actions}>
+                {item.actions.map((a, i) => (
+                  <View key={i} style={styles.actionRow}>
+                    <Feather
+                      name={a.type === 'write_to_terminal' ? 'terminal' : 'corner-down-left'}
+                      size={12}
+                      color={colors.accent}
+                    />
+                    <Text style={styles.actionText}>
+                      {a.type === 'write_to_terminal'
+                        ? `→ ${a.detail.slice(0, 60)}`
+                        : 'Enter gesendet'}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Timestamp */}
+            <Text style={styles.timestamp}>
+              {new Date(item.timestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
             </Text>
-          ) : (
-            <Markdown style={mdStyles}>{item.text}</Markdown>
-          )}
-
-          {/* Actions */}
-          {item.actions && item.actions.length > 0 && (
-            <View style={styles.actions}>
-              {item.actions.map((a, i) => (
-                <View key={i} style={styles.actionRow}>
-                  <Feather
-                    name={a.type === 'write_to_terminal' ? 'terminal' : 'corner-down-left'}
-                    size={12}
-                    color={colors.accent}
-                  />
-                  <Text style={styles.actionText}>
-                    {a.type === 'write_to_terminal'
-                      ? `→ ${a.detail.slice(0, 60)}`
-                      : 'Enter gesendet'}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* Timestamp */}
-          <Text style={styles.timestamp}>
-            {new Date(item.timestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
-          </Text>
-        </View>
-      </Pressable>
+          </View>
+        </Pressable>
+      </>
     );
-  }, [handleMessageLongPress]);
+  }, [handleMessageLongPress, messages]);
 
   // ── Active Provider Label ─────────────────────────────────────────────────
 
@@ -496,6 +542,8 @@ export function ManagerChatScreen({ navigation, route }: Props) {
           messages.length === 0 && styles.messageListEmpty,
         ]}
         showsVerticalScrollIndicator={false}
+        onScroll={handleScroll}
+        scrollEventThrottle={100}
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <View style={styles.emptyIcon}>
@@ -511,8 +559,24 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         }
       />
 
+      {showScrollBtn && (
+        <TouchableOpacity
+          style={styles.scrollToBottomBtn}
+          onPress={() => listRef.current?.scrollToEnd({ animated: true })}
+        >
+          <Feather name="chevron-down" size={18} color={colors.text} />
+        </TouchableOpacity>
+      )}
+
       {/* Typing indicator */}
       {loading && <TypingIndicator />}
+
+      {messages.length > 0 && messages[messages.length - 1].role === 'system' && !loading && (
+        <TouchableOpacity style={styles.retryBtn} onPress={handleRetry}>
+          <Feather name="refresh-cw" size={14} color={colors.primary} />
+          <Text style={{ color: colors.primary, fontSize: 11, marginLeft: 4 }}>Erneut versuchen</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Terminal Selector */}
       {tabs.length > 0 && (
@@ -978,6 +1042,50 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.4,
+  },
+
+  // Scroll-to-bottom button
+  scrollToBottomBtn: {
+    position: 'absolute',
+    right: 12,
+    bottom: 180,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Retry button
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    marginLeft: 12,
+    marginBottom: 4,
+  },
+
+  // Date separators
+  dateSeparator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 12,
+    gap: 8,
+  },
+  dateSepLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+  },
+  dateSepText: {
+    color: colors.textDim,
+    fontSize: 11,
+    fontWeight: '500',
   },
 
 });
