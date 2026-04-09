@@ -75,9 +75,9 @@ class ClaudeProvider implements AiProvider {
 
 // ── Kimi K2.5 Provider (OpenAI-compatible API) ─────────────────────────────
 
-// Model IDs: verify via GET https://api.moonshot.cn/v1/models with your API key.
-// The fallback 'kimi-k2-0711' is K2. Update to K2.5 ID once available.
-const KIMI_MODEL = 'kimi-k2-0711';
+// Kimi API: https://platform.kimi.ai/docs/guide/kimi-k2-5-quickstart
+// API keys: https://platform.kimi.ai/console/api-keys
+const KIMI_MODEL = 'kimi-k2.5';
 
 class KimiProvider implements AiProvider {
   id = 'kimi';
@@ -101,7 +101,7 @@ class KimiProvider implements AiProvider {
       ...messages.map(m => ({ role: m.role, content: m.content })),
     ];
 
-    const res = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+    const res = await fetch('https://api.moonshot.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
