@@ -75,13 +75,14 @@ class ClaudeProvider implements AiProvider {
 
 // ── Kimi K2.5 Provider (OpenAI-compatible API) ─────────────────────────────
 
-// Kimi API: https://platform.kimi.ai/docs/guide/kimi-k2-5-quickstart
-// API keys: https://platform.kimi.ai/console/api-keys
-const KIMI_MODEL = 'kimi-k2.5';
+// Kimi Code API (kimi.com/code) — NOT the same as Moonshot Open Platform
+// sk-kimi-* keys only work on api.kimi.com/coding/v1, not on api.moonshot.ai
+const KIMI_ENDPOINT = 'https://api.kimi.com/coding/v1/chat/completions';
+const KIMI_MODEL = 'kimi-for-coding';
 
 class KimiProvider implements AiProvider {
   id = 'kimi';
-  name = 'Kimi K2.5';
+  name = 'Kimi Code';
   private getApiKey: () => string | undefined;
 
   constructor(getApiKey: () => string | undefined) {
@@ -101,7 +102,7 @@ class KimiProvider implements AiProvider {
       ...messages.map(m => ({ role: m.role, content: m.content })),
     ];
 
-    const res = await fetch('https://api.moonshot.ai/v1/chat/completions', {
+    const res = await fetch(KIMI_ENDPOINT, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
