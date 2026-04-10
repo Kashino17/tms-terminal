@@ -7,6 +7,7 @@ import {
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -26,7 +27,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../types/navigation.types';
 import type { WebSocketService } from '../services/websocket.service';
-import { useManagerStore, ManagerMessage } from '../store/managerStore';
+import { useManagerStore, ManagerMessage, PhaseInfo } from '../store/managerStore';
 import { useTerminalStore } from '../store/terminalStore';
 import { colors, spacing, fontSizes } from '../theme';
 import Markdown from 'react-native-markdown-display';
@@ -72,37 +73,107 @@ type Props = {
   route: RouteProp<RootStackParamList, 'ManagerChat'>;
 };
 
-// ── Typing Indicator ────────────────────────────────────────────────────────
+// ── Phase Labels ───────────────────────────────────────────────────────────
 
-function TypingIndicator() {
-  const dot1 = useRef(new Animated.Value(0.3)).current;
-  const dot2 = useRef(new Animated.Value(0.3)).current;
-  const dot3 = useRef(new Animated.Value(0.3)).current;
+const PHASE_LABELS: Record<string, string> = {
+  analyzing_terminals: 'Analysiere Terminals...',
+  building_context: 'Bereite Kontext vor...',
+  calling_ai: 'Sende an AI...',
+  streaming: 'Schreibt...',
+  executing_actions: 'Führe Befehle aus...',
+};
+
+// ── Thinking Bubble ────────────────────────────────────────────────────────
+
+function ThinkingBubble({ phase, streamingText }: { phase: string; streamingText: string }) {
+  const pulse = useRef(new Animated.Value(0.4)).current;
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef(Date.now());
 
   useEffect(() => {
-    const animate = (dot: Animated.Value, delay: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(dot, { toValue: 1, duration: 300, easing: Easing.ease, useNativeDriver: true }),
-          Animated.timing(dot, { toValue: 0.3, duration: 300, easing: Easing.ease, useNativeDriver: true }),
-        ]),
-      );
-    const a1 = animate(dot1, 0);
-    const a2 = animate(dot2, 150);
-    const a3 = animate(dot3, 300);
-    a1.start(); a2.start(); a3.start();
-    return () => { a1.stop(); a2.stop(); a3.stop(); };
-  }, [dot1, dot2, dot3]);
+    startRef.current = Date.now();
+    setElapsed(0);
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setElapsed((Date.now() - startRef.current) / 1000);
+    }, 100);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 600, easing: Easing.ease, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.4, duration: 600, easing: Easing.ease, useNativeDriver: true }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [pulse]);
+
+  const isStreaming = phase === 'streaming' && streamingText.length > 0;
+  const label = PHASE_LABELS[phase] ?? phase;
 
   return (
-    <View style={styles.typingRow}>
-      <View style={styles.typingBubble}>
-        {[dot1, dot2, dot3].map((dot, i) => (
-          <Animated.View key={i} style={[styles.typingDot, { opacity: dot }]} />
-        ))}
+    <View style={styles.thinkingRow}>
+      <View style={styles.thinkingBubble}>
+        {!isStreaming && (
+          <View style={styles.thinkingHeader}>
+            <Animated.View style={[styles.thinkingDot, { opacity: pulse }]} />
+            <Text style={styles.thinkingPhase}>{label}</Text>
+            <Text style={styles.thinkingTimer}>{elapsed.toFixed(1)}s</Text>
+          </View>
+        )}
+        {isStreaming && (
+          <>
+            <View style={styles.thinkingHeader}>
+              <Animated.View style={[styles.thinkingDot, { opacity: pulse }]} />
+              <Text style={styles.thinkingTimer}>{elapsed.toFixed(1)}s</Text>
+            </View>
+            <Markdown style={mdStyles}>{streamingText}</Markdown>
+          </>
+        )}
       </View>
     </View>
+  );
+}
+
+// ── Phase Popup ────────────────────────────────────────────────────────────
+
+function PhasePopup({
+  phases,
+  provider,
+  visible,
+  onClose,
+}: {
+  phases: PhaseInfo[];
+  provider: string;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const totalDuration = phases.reduce((sum, p) => sum + p.duration, 0);
+
+  return (
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.popupOverlay} onPress={onClose}>
+        <View style={styles.popupContent}>
+          <Text style={styles.popupTitle}>Verarbeitungsdetails</Text>
+          {phases.map((p, i) => (
+            <View key={i} style={styles.popupRow}>
+              <Text style={styles.popupPhase}>{p.label}</Text>
+              <Text style={styles.popupDuration}>{(p.duration / 1000).toFixed(1)}s</Text>
+            </View>
+          ))}
+          <View style={[styles.popupRow, styles.popupTotal]}>
+            <Text style={styles.popupTotalLabel}>Gesamt</Text>
+            <Text style={styles.popupTotalDuration}>{(totalDuration / 1000).toFixed(1)}s</Text>
+          </View>
+          <Text style={styles.popupProvider}>Provider: {provider}</Text>
+        </View>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -117,6 +188,8 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     setEnabled, addMessage, addSummary, addResponse, addError,
     setProviders, setLoading, clearMessages, deleteMessage,
     personality, onboarded, setPersonality, setOnboarded,
+    thinking, streamingText, lastPhases,
+    setThinking, appendStreamChunk, finishStream,
   } = useManagerStore();
 
   const tabs = useTerminalStore((s) => s.tabs[serverId] ?? []);
@@ -135,6 +208,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const recordingRef = useRef<Audio.Recording | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [phasePopupVisible, setPhasePopupVisible] = useState(false);
 
   // ── WS Message Listener ─────────────────────────────────────────────────
 
@@ -165,6 +239,15 @@ export function ManagerChatScreen({ navigation, route }: Props) {
             setOnboarded(true);
           }
           break;
+        case 'manager:thinking':
+          setThinking(msg.payload.phase, msg.payload.detail, msg.payload.elapsed);
+          break;
+        case 'manager:stream_chunk':
+          appendStreamChunk(msg.payload.token);
+          break;
+        case 'manager:stream_end':
+          finishStream(msg.payload.text, msg.payload.actions, msg.payload.phases);
+          break;
         case 'audio:transcription':
           if (msg.payload?.text) {
             setInput((prev) => prev + (prev ? ' ' : '') + msg.payload.text);
@@ -180,7 +263,8 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
     const unsub = wsService.addMessageListener(handler);
     return unsub;
-  }, [wsService, addSummary, addResponse, addError, setProviders, setEnabled]);
+  }, [wsService, addSummary, addResponse, addError, setProviders, setEnabled,
+      setThinking, appendStreamChunk, finishStream]);
 
   // ── Connection Quality ────────────────────────────────────────────────────
 
@@ -465,6 +549,19 @@ export function ManagerChatScreen({ navigation, route }: Props) {
               isUser ? styles.bubbleUser : isSystem ? styles.bubbleSystem : styles.bubbleAssistant,
             ]}
           >
+            {/* Phase duration chip (last response only) */}
+            {!isUser && !isSystem && lastPhases && index === filteredMessages.length - 1 && (
+              <TouchableOpacity
+                style={styles.phaseChip}
+                onPress={() => setPhasePopupVisible(true)}
+              >
+                <Feather name="clock" size={10} color={colors.textMuted} />
+                <Text style={styles.phaseChipText}>
+                  {(lastPhases.reduce((s, p) => s + p.duration, 0) / 1000).toFixed(1)}s
+                </Text>
+              </TouchableOpacity>
+            )}
+
             {/* Session chips */}
             {item.sessions && item.sessions.length > 0 && (
               <View style={styles.sessionChips}>
@@ -681,8 +778,8 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         </TouchableOpacity>
       )}
 
-      {/* Typing indicator */}
-      {loading && <TypingIndicator />}
+      {/* Thinking / Streaming indicator */}
+      {thinking && <ThinkingBubble phase={thinking.phase} streamingText={streamingText} />}
 
       {messages.length > 0 && messages[messages.length - 1].role === 'system' && !loading && (
         <TouchableOpacity style={styles.retryBtn} onPress={handleRetry}>
@@ -799,6 +896,16 @@ export function ManagerChatScreen({ navigation, route }: Props) {
           <Feather name="send" size={18} color={(input.trim() || attachments.length > 0) && enabled ? colors.primary : colors.textDim} />
         </TouchableOpacity>
       </View>
+
+      {/* Phase details popup */}
+      {lastPhases && (
+        <PhasePopup
+          phases={lastPhases}
+          provider={activeProviderName}
+          visible={phasePopupVisible}
+          onClose={() => setPhasePopupVisible(false)}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -981,26 +1088,116 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
-  // Typing Indicator
-  typingRow: {
+  // Thinking Bubble
+  thinkingRow: {
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.xs,
   },
-  typingBubble: {
-    flexDirection: 'row',
+  thinkingBubble: {
     backgroundColor: colors.surface,
     borderRadius: 14,
     borderTopLeftRadius: 4,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 2,
     alignSelf: 'flex-start',
-    gap: 4,
+    maxWidth: '85%',
   },
-  typingDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: colors.textMuted,
+  thinkingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  thinkingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.primary,
+  },
+  thinkingPhase: {
+    color: colors.textMuted,
+    fontSize: fontSizes.sm,
+    flex: 1,
+  },
+  thinkingTimer: {
+    color: colors.textDim,
+    fontSize: fontSizes.xs,
+    fontFamily: 'monospace',
+  },
+
+  // Phase Chip
+  phaseChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginBottom: 4,
+  },
+  phaseChipText: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontFamily: 'monospace',
+  },
+
+  // Phase Popup
+  popupOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  popupContent: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: spacing.lg,
+    width: '80%',
+    maxWidth: 320,
+  },
+  popupTitle: {
+    color: colors.text,
+    fontSize: fontSizes.md,
+    fontWeight: '700',
+    marginBottom: spacing.md,
+  },
+  popupRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  popupPhase: {
+    color: colors.textMuted,
+    fontSize: fontSizes.sm,
+  },
+  popupDuration: {
+    color: colors.text,
+    fontSize: fontSizes.sm,
+    fontFamily: 'monospace',
+  },
+  popupTotal: {
+    borderBottomWidth: 0,
+    marginTop: 4,
+  },
+  popupTotalLabel: {
+    color: colors.text,
+    fontSize: fontSizes.sm,
+    fontWeight: '700',
+  },
+  popupTotalDuration: {
+    color: colors.primary,
+    fontSize: fontSizes.sm,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
+  popupProvider: {
+    color: colors.textDim,
+    fontSize: fontSizes.xs,
+    marginTop: spacing.sm,
+    textAlign: 'center',
   },
   messageRow: {
     flexDirection: 'row',
