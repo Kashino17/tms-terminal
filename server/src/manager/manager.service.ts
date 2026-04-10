@@ -291,7 +291,7 @@ function parsePersonalityConfig(text: string): PersonalityConfig | null {
 
 export class ManagerService {
   private registry: AiProviderRegistry;
-  private outputBuffers = new Map<string, string>();
+  private outputBuffers = new Map<string, { data: string; lastUpdated: number }>();
   private lastSummaryAt = new Map<string, number>();
   private sessionLabels = new Map<string, string>();
   private chatHistory: ChatMessage[] = [];
@@ -380,17 +380,21 @@ export class ManagerService {
     const clean = data.replace(ANSI_STRIP, '');
     if (!clean.trim()) return;
 
-    const existing = this.outputBuffers.get(sessionId) ?? '';
-    const combined = existing + clean;
+    const existing = this.outputBuffers.get(sessionId);
+    const existingData = existing?.data ?? '';
+    const combined = existingData + clean;
 
     // Cap buffer size — keep tail
+    let finalData: string;
     if (combined.length > OUTPUT_BUFFER_MAX) {
       const sliced = combined.slice(combined.length - OUTPUT_BUFFER_MAX);
       const firstNl = sliced.indexOf('\n');
-      this.outputBuffers.set(sessionId, firstNl >= 0 ? sliced.slice(firstNl + 1) : sliced);
+      finalData = firstNl >= 0 ? sliced.slice(firstNl + 1) : sliced;
     } else {
-      this.outputBuffers.set(sessionId, combined);
+      finalData = combined;
     }
+
+    this.outputBuffers.set(sessionId, { data: finalData, lastUpdated: Date.now() });
   }
 
   /** Register a session label (e.g. "Shell 1") for human-readable summaries. */
@@ -410,20 +414,27 @@ export class ManagerService {
   /** Build structured context for all active sessions. */
   private buildTerminalContexts(): TerminalContext[] {
     const contexts: TerminalContext[] = [];
-    for (const [sessionId, buffer] of this.outputBuffers) {
+    const now = Date.now();
+    for (const [sessionId, buf] of this.outputBuffers) {
       const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
-      const analysis = analyzeTerminalOutput(buffer);
+      const isStale = (now - buf.lastUpdated) > 60_000;
+      const analysis = analyzeTerminalOutput(buf.data);
       const session = globalManager.getSession?.(sessionId);
+
+      // Override status to idle if buffer is stale
+      const status = isStale ? 'idle' : analysis.status;
 
       contexts.push({
         sessionId,
         label,
         cwd: session?.cwd,
         process: session?.processName,
-        ...analysis,
-        recentOutput: buffer.length > MAX_CONTEXT_PER_SESSION
-          ? '...' + buffer.slice(-MAX_CONTEXT_PER_SESSION)
-          : buffer,
+        project: analysis.project,
+        tool: analysis.tool,
+        status,
+        recentOutput: buf.data.length > MAX_CONTEXT_PER_SESSION
+          ? '...' + buf.data.slice(-MAX_CONTEXT_PER_SESSION)
+          : buf.data,
       });
     }
     return contexts;
@@ -432,10 +443,14 @@ export class ManagerService {
   /** Format terminal contexts into a structured overview for the AI. */
   private formatContextBlock(contexts: TerminalContext[]): string {
     let block = '## Terminal-Übersicht\n\n';
+    const now = Date.now();
     for (const ctx of contexts) {
       const emoji = STATUS_EMOJI[ctx.status];
       const statusLabel = STATUS_LABEL[ctx.status];
-      block += `### ${emoji} ${ctx.label} — ${statusLabel}\n`;
+      const buf = this.outputBuffers.get(ctx.sessionId);
+      const staleSecs = buf ? Math.round((now - buf.lastUpdated) / 1000) : 0;
+      const staleNote = staleSecs > 60 ? ` ⏳ Letzter Output vor ${staleSecs}s — wahrscheinlich idle` : '';
+      block += `### ${emoji} ${ctx.label} — ${statusLabel}${staleNote}\n`;
       if (ctx.cwd) block += `📁 ${ctx.cwd}\n`;
       if (ctx.process) block += `⚡ Prozess: ${ctx.process}\n`;
       if (ctx.tool) block += `🔧 Tool: ${ctx.tool}\n`;
@@ -491,7 +506,7 @@ export class ManagerService {
 
       for (const s of activeContexts) {
         this.lastSummaryAt.set(s.sessionId, now);
-        this.outputBuffers.set(s.sessionId, '');
+        this.outputBuffers.set(s.sessionId, { data: '', lastUpdated: Date.now() });
       }
 
       // Add to chat history
