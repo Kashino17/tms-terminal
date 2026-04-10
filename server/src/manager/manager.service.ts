@@ -1,5 +1,6 @@
 import { AiProviderRegistry, ChatMessage, ProviderConfig, ToolDefinition, StreamResult } from './ai-provider';
 import { globalManager } from '../terminal/terminal.manager';
+import { readProcessCwd } from '../terminal/cwd.utils';
 import { logger } from '../utils/logger';
 import type { PhaseInfo } from '../../../shared/protocol';
 import {
@@ -409,6 +410,32 @@ export class ManagerService {
     this.sessionLabels.delete(sessionId);
   }
 
+  /** Refresh session labels with current CWD from all active PTY processes. */
+  async refreshLabels(): Promise<void> {
+    for (const [sessionId, label] of this.sessionLabels) {
+      const session = globalManager.getSession?.(sessionId);
+      if (!session) continue;
+      const shellMatch = label.match(/^Shell (\d+)/);
+      if (!shellMatch) continue;
+      const shellNum = parseInt(shellMatch[1]);
+      try {
+        const cwd = await readProcessCwd(session.pty.pid);
+        if (cwd) {
+          const folder = cwd.split('/').filter(Boolean).pop() ?? '';
+          if (folder) {
+            const newLabel = `Shell ${shellNum} · ${folder}`;
+            if (newLabel !== label) {
+              this.sessionLabels.set(sessionId, newLabel);
+              logger.info(`Manager: label updated — ${label} → ${newLabel}`);
+            }
+          }
+        }
+      } catch {
+        // process may have exited
+      }
+    }
+  }
+
   // ── Periodic Summarization ────────────────────────────────────────────────
 
   /** Build structured context for all active sessions. */
@@ -587,6 +614,9 @@ export class ManagerService {
       throw new Error('Manager ist nicht aktiv — bitte zuerst aktivieren (grüner Punkt)');
     }
 
+
+    // Refresh labels with current CWD before processing
+    await this.refreshLabels();
 
     const startTime = Date.now();
     const phases: PhaseInfo[] = [];
