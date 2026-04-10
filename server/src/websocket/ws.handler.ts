@@ -347,6 +347,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           (response) => send(ws, { type: 'manager:response', payload: response } as any),
           (error) => send(ws, { type: 'manager:error', payload: { message: error } } as any),
           (config) => send(ws, { type: 'manager:personality_configured', payload: config } as any),
+          (phase, detail, elapsed) => send(ws, { type: 'manager:thinking', payload: { phase, detail, elapsed } } as any),
+          (token) => send(ws, { type: 'manager:stream_chunk', payload: { token } } as any),
+          (text, actions, phases) => send(ws, { type: 'manager:stream_end', payload: { text, actions, phases } } as any),
         );
         managerService.start();
       } else {
@@ -365,6 +368,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         (response) => send(ws, { type: 'manager:response', payload: response } as any),
         (error) => send(ws, { type: 'manager:error', payload: { message: error } } as any),
         (config) => send(ws, { type: 'manager:personality_configured', payload: config } as any),
+        (phase, detail, elapsed) => send(ws, { type: 'manager:thinking', payload: { phase, detail, elapsed } } as any),
+        (token) => send(ws, { type: 'manager:stream_chunk', payload: { token } } as any),
+        (text, actions, phases) => send(ws, { type: 'manager:stream_end', payload: { text, actions, phases } } as any),
       );
       // Auto-start if not running (client thinks it's enabled but server restarted)
       if (!managerService.isEnabled()) managerService.start();
