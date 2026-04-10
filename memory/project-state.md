@@ -1,34 +1,27 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-04-08_
+_Zuletzt aktualisiert: 2026-04-10_
 
 ## Aktuelle Version
-- **App:** v1.12.2
-- **Server:** muss nach v1.12.2 noch aktualisiert werden (git pull + npm run build + Neustart)
+- **App:** v1.15.0 (auf GitHub Released, Auto-Update aktiv)
+- **Server:** v1.15.0 (via `tms-terminal update` aktualisiert)
 
 ## Zuletzt abgeschlossene Features
-- **Manager Agent** (v1.12.0) — AI-Chat-Hub der alle Terminals überwacht
-  - 3 AI Provider: Claude CLI, Kimi K2.5, GLM 5.0 Turbo
-  - 15-Min Polling + manuelle Zusammenfassungen
-  - Terminal-Selector-Chips, Provider-Picker
-  - Image Attachments im Chat
-  - API-Key Verwaltung in Settings
-- **Personality System** (v1.12.1) — Intelligente Terminal-Analyse, dynamischer System-Prompt
-- **Conversational Onboarding** (v1.12.2) — Natürlicher Chat statt Wizard
-- **Memory System** (in Arbeit) — Persistentes Gedächtnis über Sessions hinweg
+- **Activity Indicator + Token Streaming** (v1.14.0) — ThinkingBubble mit Phasen, Live-Timer, Token-Streaming, Phase-Popup
+- **Native Tool Calling für GLM-5-Turbo** (v1.15.0) — `write_to_terminal` + `send_enter` als native Function Tools
+- **Claude CLI entfernt** (v1.14.0) — nur noch GLM (Default) + Kimi als Provider
+- **Stale Buffer Detection** (v1.15.0) — Terminal-Output älter als 60s wird als idle markiert
 
 ## Aktive Arbeit
-- Memory-System implementieren (diese Session)
-- Manager Agent braucht noch Server-Update auf dem Produktiv-Server
+- Shell-Naming: Terminals heißen intern "Shell 1/2/3" aber haben in der App andere Tab-Namen (Verzeichnisnamen). Die AI und der User sollen die echten Namen kennen.
+- Tool Calling funktioniert, aber Shell-Label-Zuordnung muss verbessert werden
 
 ## Bekannte Offene Punkte
-- Kimi K2.5 und GLM 5.0 Model-IDs müssen verifiziert werden (nach Knowledge-Cutoff)
-  - Workaround: `/v1/models` Endpoint mit eigenem API Key abfragen
-- Manager Agent Personality wird auf dem Server nur im RAM gehalten, nicht persistiert
-  - Client schickt sie beim Connect, aber bei Server-Neustart ohne Client = verloren
-- `git push` hängt manchmal — Fix: `GIT_TERMINAL_PROMPT=0` oder `gh auth setup-git`
+- Terminal-Namen (Tab-Titel = Verzeichnisname) werden nicht an den Manager Agent weitergegeben → AI sagt "Shell 1" statt "ayysir" oder "TMS Terminal"
+- Shell-Badges fehlen in der Terminal-UI — User kann "Shell 1/2/3" nicht den echten Terminals zuordnen
+- Kimi K2.5 Model-ID muss verifiziert werden
+- `git push` hängt manchmal — Fix: `GIT_TERMINAL_PROMPT=0`
 
 ## Nächste geplante Schritte
-- Memory-System testen und verfeinern
-- Manager Agent auf dem Server deployen und testen
-- UI-Polish des Chat-Screens (ggf. mit frontend-design Skill)
+- Shell-Naming Feature: echte Terminal-Namen statt "Shell 1/2/3" + Badges in der Terminal-UI
+- Manager Agent UI-Polish

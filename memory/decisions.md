@@ -20,6 +20,14 @@
 
 - **2026-04-08 · Terminal Context Analysis server-seitig** — Output wird vor dem Senden an die AI analysiert: Tool-Erkennung (Claude, npm, Docker, etc.), Projekt-Typ, Status (idle/active/error). AI bekommt strukturierten Kontext statt rohem Output.
 
+- **2026-04-10 · Claude CLI Provider entfernt** — Nur noch GLM-5-Turbo (Default) und Kimi Code. Claude CLI war unzuverlässig für Tool-Ausführung und hatte keinen Streaming-Support.
+
+- **2026-04-10 · Native Tool Calling statt Custom-Tags** — GLM-5-Turbo bekommt `write_to_terminal` und `send_enter` als OpenAI-kompatible Function Definitions via `tools` API-Parameter. 0.67% Fehlerrate vs >50% mit Custom-Tags im Prompt. Memory-Tags bleiben als Text (Hybrid).
+
+- **2026-04-10 · Regex Command-Parser entfernt** — `tryExecuteCommand()` fing normalen Text ab (z.B. Wort "Agent" in Anführungszeichen → als Befehl interpretiert). Komplett gelöscht. Alle Befehle laufen jetzt über GLM's native Tool Calling.
+
+- **2026-04-10 · Tools immer an GLM senden** — Kein Onboarding-Guard. GLM bekommt `tools` + `tool_choice: 'auto'` bei jeder Nachricht und entscheidet selbst wann es Tools nutzt. ONBOARDING_PROMPT erwähnt keine Tool-Namen → kein Halluzinations-Risiko.
+
 ## Memory System
 
 - **2026-04-08 · Git-basiertes Memory statt Datenbank** — 5 Markdown-Dateien in `memory/`, Git-getrackt. Einfach, portabel, keine extra Infrastruktur. CLAUDE.md enthält Anweisungen zum Lesen/Schreiben.

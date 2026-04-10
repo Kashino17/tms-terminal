@@ -1,5 +1,37 @@
 # Session-Tagebuch
 
+## 2026-04-10 — Activity Indicator, Streaming, Native Tool Calling
+
+### Was wurde gemacht
+- **v1.14.0:** ThinkingBubble mit Phasen-Anzeige (analyzing → building → calling → streaming → executing), Live-Timer, Token-Streaming via WebSocket, Phase-Popup mit Dauer pro Phase
+- **v1.14.0:** Claude CLI Provider komplett entfernt, GLM als Default, nur noch GLM + Kimi
+- **v1.15.0:** Native Tool Calling für GLM-5-Turbo — `write_to_terminal` + `send_enter` als Function Tools statt Custom-Tags
+- **v1.15.0:** Model ID `glm-4-plus` → `glm-5-turbo`
+- **v1.15.0:** Stale Output Buffer Detection (>60s ohne neues Output → idle)
+- Regex-basierten Command-Parser (`tryExecuteCommand`) komplett entfernt — war Hauptursache für falsche Tool-Ausführungen
+- System-Prompt gekürzt: 26 Zeilen Tag-Doku → 6 Zeilen Tool-Referenz
+- 2 GitHub Releases erstellt und deployed
+
+### Was lief gut
+- Streaming-Architektur (WebSocket-basiert) sauber implementiert
+- GLM-5-Turbo Recherche hat gezeigt, dass natives Tool Calling die richtige Lösung ist (0.67% Fehlerrate)
+- Subagent-Driven Development für 13+ Tasks effizient durchgeführt
+
+### Was war schwierig
+- 4+ Stunden Debugging weil `tryExecuteCommand` Regex-Parser Text wie "Agent" in normalen Sätzen abfing
+- Stale-Build-Problem: Fix war im TypeScript-Source aber `dist/` nie neu gebaut
+- Onboarding-Guard für Tools war zu restriktiv — GLM konnte nach Onboarding keine Tools nutzen
+- Mehrere Iterationen nötig bis Tool Calling korrekt funktionierte
+
+### Entscheidungen
+- Regex-Command-Parser entfernt zugunsten von nativem Tool Calling
+- Tools werden IMMER an GLM gesendet (kein Onboarding-Guard), GLM entscheidet autonom
+- `tool_choice: 'auto'` immer gesetzt
+- Memory-Tags bleiben als Text (Hybrid-Ansatz), nur Terminal-Actions als native Tools
+
+### Offene Fragen
+- Shell-Labels "Shell 1/2/3" vs echte Terminal-Namen — nächstes Feature
+
 ## 2026-04-08 — Manager Agent + Memory System
 
 ### Was wurde gemacht
