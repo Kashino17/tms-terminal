@@ -77,6 +77,7 @@ export interface ManagerSetProviderMessage {
 }
 export interface ManagerPollMessage {
   type: 'manager:poll';
+  payload?: { targetSessionId?: string };
 }
 export interface ManagerSetApiKeyMessage {
   type: 'manager:set_api_key';

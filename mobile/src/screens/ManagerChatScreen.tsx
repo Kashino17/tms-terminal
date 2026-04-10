@@ -74,6 +74,16 @@ type Props = {
   route: RouteProp<RootStackParamList, 'ManagerChat'>;
 };
 
+// ── Slash Commands ─────────────────────────────────────────────────────────
+
+const SLASH_COMMANDS = [
+  { cmd: '/sm', label: 'Zusammenfassung', desc: 'Terminal-Summary' },
+  { cmd: '/reset', label: 'Zurücksetzen', desc: 'Agent neu starten' },
+  { cmd: '/clear', label: 'Chat leeren', desc: 'Verlauf löschen' },
+  { cmd: '/memory', label: 'Memory', desc: 'Memory-Viewer öffnen' },
+  { cmd: '/help', label: 'Hilfe', desc: 'Befehle anzeigen' },
+];
+
 // ── Phase Labels ───────────────────────────────────────────────────────────
 
 const PHASE_LABELS: Record<string, string> = {
@@ -338,7 +348,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         return;
       }
       if (cmd === '/help') {
-        addMessage({ role: 'system', text: 'Verfügbare Befehle:\n/reset — Agent-Memory komplett löschen und Onboarding neu starten\n/help — Diese Hilfe anzeigen\n/clear — Chat-Verlauf leeren\n/memory — Memory-Viewer öffnen' });
+        addMessage({ role: 'system', text: 'Verfügbare Befehle:\n/sm — Terminal-Zusammenfassung\n/reset — Agent zurücksetzen\n/clear — Chat leeren\n/memory — Memory-Viewer\n/help — Diese Hilfe' });
         setInput('');
         return;
       }
@@ -349,6 +359,12 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       }
       if (cmd === '/memory') {
         navigation.navigate('ManagerMemory', { wsService, serverId });
+        setInput('');
+        return;
+      }
+      if (cmd === '/sm') {
+        setLoading(true);
+        wsService.send({ type: 'manager:poll', payload: { targetSessionId: targetSession ?? undefined } } as any);
         setInput('');
         return;
       }
@@ -799,6 +815,46 @@ export function ManagerChatScreen({ navigation, route }: Props) {
           <Text style={{ color: colors.primary, fontSize: 11, marginLeft: 4 }}>Erneut versuchen</Text>
         </TouchableOpacity>
       )}
+
+      {/* Slash Command Picker */}
+      {input.startsWith('/') && (() => {
+        const filtered = SLASH_COMMANDS.filter(c =>
+          c.cmd.startsWith(input.toLowerCase().split(' ')[0])
+        );
+        if (filtered.length === 0) return null;
+        return (
+          <View style={styles.slashPicker}>
+            {filtered.map(c => (
+              <TouchableOpacity
+                key={c.cmd}
+                style={styles.slashPickerItem}
+                onPress={() => {
+                  setInput('');
+                  // Execute command directly
+                  if (c.cmd === '/sm') {
+                    setLoading(true);
+                    wsService.send({ type: 'manager:poll', payload: { targetSessionId: targetSession ?? undefined } } as any);
+                  } else if (c.cmd === '/reset') {
+                    setInput('/reset');
+                    setTimeout(() => handleSend(), 0);
+                    return;
+                  } else if (c.cmd === '/clear') {
+                    clearMessages();
+                  } else if (c.cmd === '/memory') {
+                    navigation.navigate('ManagerMemory', { wsService, serverId });
+                  } else if (c.cmd === '/help') {
+                    addMessage({ role: 'system', text: 'Verfügbare Befehle:\n/sm — Terminal-Zusammenfassung\n/reset — Agent zurücksetzen\n/clear — Chat leeren\n/memory — Memory-Viewer\n/help — Diese Hilfe' });
+                  }
+                  Keyboard.dismiss();
+                }}
+              >
+                <Text style={styles.slashPickerCmd}>{c.cmd}</Text>
+                <Text style={styles.slashPickerDesc}>{c.desc}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        );
+      })()}
 
       {/* Terminal Selector */}
       {tabs.length > 0 && (
@@ -1299,6 +1355,32 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: fontSizes.xs,
     fontStyle: 'italic',
+  },
+
+  // Slash Command Picker
+  slashPicker: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingVertical: 4,
+  },
+  slashPickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    gap: spacing.sm,
+  },
+  slashPickerCmd: {
+    color: colors.primary,
+    fontSize: fontSizes.sm,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+    minWidth: 60,
+  },
+  slashPickerDesc: {
+    color: colors.textMuted,
+    fontSize: fontSizes.sm,
   },
 
   // Terminal Selector

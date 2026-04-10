@@ -388,7 +388,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
 
     if (msgType === 'manager:poll') {
-      managerService.poll().catch((err) => {
+      const pollTarget = (msg as any).payload?.targetSessionId;
+      managerService.poll(pollTarget).catch((err) => {
         const errMsg = err instanceof Error ? err.message : String(err);
         send(ws, { type: 'manager:error', payload: { message: errMsg } } as any);
       });

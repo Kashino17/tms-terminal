@@ -461,10 +461,13 @@ export class ManagerService {
   }
 
   /** Trigger a summary now (also called by the 15-min timer). */
-  async poll(): Promise<void> {
+  async poll(targetSessionId?: string): Promise<void> {
     if (!this.enabled) return;
 
-    const contexts = this.buildTerminalContexts();
+    const allContexts = this.buildTerminalContexts();
+    const contexts = targetSessionId
+      ? allContexts.filter(c => c.sessionId === targetSessionId)
+      : allContexts;
     const activeContexts = contexts.filter(c => c.recentOutput.length > 0);
 
     if (activeContexts.length === 0) {
