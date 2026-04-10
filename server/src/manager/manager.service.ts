@@ -266,7 +266,15 @@ export class ManagerService {
   constructor(providerConfig: ProviderConfig) {
     this.registry = new AiProviderRegistry(providerConfig);
     this.memory = loadMemory();
-    logger.info(`Manager: memory loaded (${this.memory.stats.totalSessions} sessions, ${this.memory.insights.length} insights)`);
+    // Sync personality from memory (survives server restarts)
+    if (this.memory.personality.agentName !== 'Manager') {
+      this.personality.agentName = this.memory.personality.agentName;
+      this.personality.tone = this.memory.personality.tone as any;
+      this.personality.detail = this.memory.personality.detail as any;
+      this.personality.emojis = this.memory.personality.emojis;
+      this.personality.proactive = this.memory.personality.proactive;
+    }
+    logger.info(`Manager: memory loaded (${this.memory.stats.totalSessions} sessions, ${this.memory.insights.length} insights, agent="${this.memory.personality.agentName}")`);
   }
 
   setPersonality(config: Partial<PersonalityConfig>): void {
@@ -512,6 +520,24 @@ export class ManagerService {
       // Parse memory updates from reply
       const memUpdate = parseMemoryUpdate(reply);
       if (memUpdate) {
+        // Auto-detect agent name from learned facts if no CONFIG block was sent
+        if (!parsedConfig && isOnboarding) {
+          for (const fact of memUpdate.learnedFacts) {
+            const nameMatch = fact.match(/agent\s+(?:heißt|name|nennt?\s+sich)\s+["']?(\w+)/i)
+              ?? fact.match(/(?:nenn|heiß)\w*\s+(?:dich|mich|sich)\s+["']?(\w+)/i);
+            if (nameMatch) {
+              const name = nameMatch[1];
+              this.memory.personality.agentName = name;
+              this.personality.agentName = name;
+              this.onPersonalityConfigured?.({
+                ...this.personality,
+                agentName: name,
+              });
+              logger.info(`Manager: auto-detected agent name from memory: "${name}"`);
+              break;
+            }
+          }
+        }
         applyMemoryUpdate(this.memory, memUpdate);
         logger.info(`Manager: memory updated — ${memUpdate.learnedFacts.length} facts, ${memUpdate.insights.length} insights`);
       }
