@@ -11,7 +11,6 @@ import { autopilotService } from '../autopilot/autopilot.service';
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
-import { readProcessCwd } from '../terminal/cwd.utils';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -55,14 +54,6 @@ const pendingInputLen = new Map<string, number>();
 
 // ── Manager Agent ────────────────────────────────────────────────────
 const managerService = new ManagerService(loadManagerConfig());
-
-/** Build a manager label like "Shell 1 · ayysir" from shell number + CWD. */
-function buildShellLabel(shellNum: number, cwd?: string): string {
-  const base = `Shell ${shellNum}`;
-  if (!cwd) return base;
-  const folder = cwd.split('/').filter(Boolean).pop() ?? '';
-  return folder ? `${base} · ${folder}` : base;
-}
 
 // ── Autopilot state ──────────────────────────────────────────────────
 const aiSessions = new Set<string>(); // sessions where AI tool was detected
@@ -439,6 +430,19 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
+    if (msgType === 'manager:sync_labels') {
+      const labels = (msg as any).payload?.labels as Array<{ sessionId: string; name: string }> | undefined;
+      if (Array.isArray(labels)) {
+        for (const { sessionId, name } of labels) {
+          if (typeof sessionId === 'string' && typeof name === 'string') {
+            managerService.setSessionLabel(sessionId, name);
+          }
+        }
+        logger.info(`Manager: synced ${labels.length} labels from client`);
+      }
+      return;
+    }
+
     if (msgType === 'manager:memory_read') {
       const mem = require('../manager/manager.memory');
       send(ws, { type: 'manager:memory_data', payload: { memory: mem.loadMemory() } } as any);
@@ -543,15 +547,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           sessionGens.set(session.id, globalManager.getAttachGen(session.id));
           watchSession(session.id);
           watchSessionIdle(session.id);
-          // Register session with manager — label will be "Shell N · folderName"
+          // Register session with manager — initial label, client will sync real names
           const shellNum = ownedSessions.size;
-          managerService.setSessionLabel(session.id, buildShellLabel(shellNum, session.cwd));
-          // Async: read CWD after shell has spawned and update label
-          setTimeout(() => {
-            readProcessCwd(session.pty.pid).then((cwd) => {
-              if (cwd) managerService.setSessionLabel(session.id, buildShellLabel(shellNum, cwd));
-            }).catch(() => {});
-          }, 500);
+          managerService.setSessionLabel(session.id, `Shell ${shellNum}`);
           send(ws, {
             type: 'terminal:created',
             sessionId: session.id,
@@ -614,12 +612,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           idleDetector.unwatch(session.id);   // reset stale idle state before re-watching
           watchSession(session.id);
           watchSessionIdle(session.id);
-          // Update session label with CWD folder name on reattach
-          const existing = managerService.getSessionList().find(s => s.sessionId === session.id);
-          const shellNum = existing
-            ? parseInt(existing.label.match(/Shell (\d+)/)?.[1] ?? String(ownedSessions.size))
-            : ownedSessions.size;
-          managerService.setSessionLabel(session.id, buildShellLabel(shellNum, session.cwd));
+          // Set initial label — client will sync real names via manager:sync_labels
+          if (!managerService.getSessionList().find(s => s.sessionId === session.id)) {
+            managerService.setSessionLabel(session.id, `Shell ${ownedSessions.size}`);
+          }
           globalManager.resize(session.id, cols, rows);
           send(ws, {
             type: 'terminal:reattached',

@@ -267,6 +267,17 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   }, [wsService, addSummary, addResponse, addError, setProviders, setEnabled,
       setThinking, appendStreamChunk, finishStream]);
 
+  // ── Sync terminal labels to Manager Agent ────────────────────────────────
+
+  useEffect(() => {
+    if (tabs.length === 0) return;
+    const labels = tabs.map((tab, idx) => ({
+      sessionId: tab.sessionId ?? '',
+      name: `Shell ${idx + 1} · ${tabDisplayName(tab)}`,
+    })).filter(l => l.sessionId);
+    wsService.send({ type: 'manager:sync_labels', payload: { labels } } as any);
+  }, [tabs, wsService]);
+
   // ── Connection Quality ────────────────────────────────────────────────────
 
   useEffect(() => {
