@@ -11,6 +11,7 @@ import { autopilotService } from '../autopilot/autopilot.service';
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
+import { readProcessCwd } from '../terminal/cwd.utils';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -545,6 +546,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           // Register session with manager — label will be "Shell N · folderName"
           const shellNum = ownedSessions.size;
           managerService.setSessionLabel(session.id, buildShellLabel(shellNum, session.cwd));
+          // Async: read CWD after shell has spawned and update label
+          setTimeout(() => {
+            readProcessCwd(session.pty.pid).then((cwd) => {
+              if (cwd) managerService.setSessionLabel(session.id, buildShellLabel(shellNum, cwd));
+            }).catch(() => {});
+          }, 500);
           send(ws, {
             type: 'terminal:created',
             sessionId: session.id,
