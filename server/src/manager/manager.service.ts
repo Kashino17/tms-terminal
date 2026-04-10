@@ -548,8 +548,10 @@ export class ManagerService {
 
   /** Convert native tool calls to ManagerActions. */
   private toolCallsToActions(toolCalls: Array<{ name: string; arguments: Record<string, string> }>): ManagerAction[] {
+    logger.info(`Manager: processing ${toolCalls.length} tool calls, known labels: ${[...this.sessionLabels.entries()].map(([id, l]) => `${l}=${id.slice(0, 8)}`).join(', ') || 'none'}`);
     const actions: ManagerAction[] = [];
     for (const tc of toolCalls) {
+      logger.info(`Manager: tool call: ${tc.name}(${JSON.stringify(tc.arguments)})`);
       const label = tc.arguments.session_label;
       const sessionId = label ? this.resolveLabel(label) : null;
       if (!sessionId) {
@@ -841,8 +843,12 @@ export class ManagerService {
     switch (action.type) {
       case 'write_to_terminal': {
         const label = this.sessionLabels.get(action.sessionId) ?? action.sessionId.slice(0, 8);
-        logger.info(`Manager: writing to ${label}: "${action.detail.slice(0, 50)}..."`);
-        globalManager.write(action.sessionId, action.detail);
+        logger.info(`Manager: writing to ${label} (${action.sessionId.slice(0, 8)}): "${action.detail.slice(0, 50)}"`);
+        const ok = globalManager.write(action.sessionId, action.detail);
+        if (!ok) {
+          logger.warn(`Manager: write FAILED — session ${action.sessionId.slice(0, 8)} not found in TerminalManager`);
+          logger.warn(`Manager: known labels: ${[...this.sessionLabels.entries()].map(([id, l]) => `${l}=${id.slice(0, 8)}`).join(', ') || 'none'}`);
+        }
         // Auto-send Enter after writing
         setTimeout(() => globalManager.write(action.sessionId, '\r'), 200);
         break;
