@@ -1,4 +1,3 @@
-import { spawn } from 'child_process';
 import { logger } from '../utils/logger';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -15,62 +14,18 @@ export interface AiProvider {
   isConfigured(): boolean;
   /** Send chat messages and return the assistant's reply. */
   chat(messages: ChatMessage[], systemPrompt: string): Promise<string>;
+  /** Stream chat response, calling onChunk for each token. Returns full text. */
+  chatStream(
+    messages: ChatMessage[],
+    systemPrompt: string,
+    onChunk: (token: string) => void,
+  ): Promise<string>;
 }
 
 export interface ProviderConfig {
   kimiApiKey?: string;
   glmApiKey?: string;
   activeProvider?: string;
-}
-
-// ── Claude Provider (CLI) ───────────────────────────────────────────────────
-
-class ClaudeProvider implements AiProvider {
-  id = 'claude';
-  name = 'Claude';
-
-  isConfigured(): boolean {
-    // Claude CLI must be in PATH — no API key needed (uses local auth)
-    try {
-      require('child_process').execSync('which claude', { stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  async chat(messages: ChatMessage[], systemPrompt: string): Promise<string> {
-    // Flatten messages into a single prompt for Claude CLI's -p flag
-    let prompt = systemPrompt + '\n\n';
-    for (const msg of messages) {
-      if (msg.role === 'user') prompt += `User: ${msg.content}\n`;
-      else if (msg.role === 'assistant') prompt += `Assistant: ${msg.content}\n`;
-    }
-
-    return new Promise<string>((resolve, reject) => {
-      let output = '';
-      let errOutput = '';
-
-      const child = spawn('claude', ['-p', prompt], {
-        shell: false,
-        timeout: 120_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env },
-      });
-
-      child.stdout.on('data', (data: Buffer) => { output += data.toString(); });
-      child.stderr.on('data', (data: Buffer) => { errOutput += data.toString(); });
-
-      child.on('error', (err) => reject(err));
-      child.on('close', (code) => {
-        if (code === 0 && output.trim()) {
-          resolve(output.trim());
-        } else {
-          reject(new Error(errOutput || `claude exited with code ${code}`));
-        }
-      });
-    });
-  }
 }
 
 // ── Kimi K2.5 Provider (OpenAI-compatible API) ─────────────────────────────
@@ -124,6 +79,75 @@ class KimiProvider implements AiProvider {
     const json = await res.json() as { choices: Array<{ message: { content: string } }> };
     return json.choices[0]?.message?.content ?? '';
   }
+
+  async chatStream(
+    messages: ChatMessage[],
+    systemPrompt: string,
+    onChunk: (token: string) => void,
+  ): Promise<string> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) throw new Error('Kimi API key not configured');
+
+    const apiMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content })),
+    ];
+
+    const res = await fetch(KIMI_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: KIMI_MODEL,
+        messages: apiMessages,
+        temperature: 0.3,
+        max_tokens: 4096,
+        stream: true,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Kimi API error ${res.status}: ${body.slice(0, 200)}`);
+    }
+
+    let full = '';
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        const data = trimmed.slice(6);
+        if (data === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(data) as {
+            choices: Array<{ delta: { content?: string } }>;
+          };
+          const token = parsed.choices[0]?.delta?.content;
+          if (token) {
+            full += token;
+            onChunk(token);
+          }
+        } catch {
+          // skip malformed chunks
+        }
+      }
+    }
+
+    return full;
+  }
 }
 
 // ── GLM 5.0 Provider (ZhipuAI API) ─────────────────────────────────────────
@@ -176,6 +200,75 @@ class GlmProvider implements AiProvider {
     const json = await res.json() as { choices: Array<{ message: { content: string } }> };
     return json.choices[0]?.message?.content ?? '';
   }
+
+  async chatStream(
+    messages: ChatMessage[],
+    systemPrompt: string,
+    onChunk: (token: string) => void,
+  ): Promise<string> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) throw new Error('GLM API key not configured');
+
+    const apiMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content })),
+    ];
+
+    const res = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: GLM_MODEL,
+        messages: apiMessages,
+        temperature: 0.3,
+        max_tokens: 4096,
+        stream: true,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`GLM API error ${res.status}: ${body.slice(0, 200)}`);
+    }
+
+    let full = '';
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        const data = trimmed.slice(6);
+        if (data === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(data) as {
+            choices: Array<{ delta: { content?: string } }>;
+          };
+          const token = parsed.choices[0]?.delta?.content;
+          if (token) {
+            full += token;
+            onChunk(token);
+          }
+        } catch {
+          // skip malformed chunks
+        }
+      }
+    }
+
+    return full;
+  }
 }
 
 // ── Provider Registry ───────────────────────────────────────────────────────
@@ -188,15 +281,15 @@ export class AiProviderRegistry {
   constructor(config: ProviderConfig) {
     this.config = config;
 
-    const claude = new ClaudeProvider();
     const kimi = new KimiProvider(() => this.config.kimiApiKey);
     const glm = new GlmProvider(() => this.config.glmApiKey);
 
-    this.providers.set(claude.id, claude);
     this.providers.set(kimi.id, kimi);
     this.providers.set(glm.id, glm);
 
-    this.activeId = config.activeProvider ?? 'claude';
+    this.activeId = config.activeProvider && this.providers.has(config.activeProvider)
+      ? config.activeProvider
+      : 'glm';
     logger.info(`Manager AI: ${this.providers.size} providers registered, active: ${this.activeId}`);
   }
 
