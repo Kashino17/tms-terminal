@@ -492,68 +492,72 @@ export class ManagerService {
 
   /** Detect and execute terminal commands from user text. Returns action description or null. */
   private tryExecuteCommand(text: string, targetSessionId?: string): string | null {
-    const lower = text.toLowerCase();
+    let command: string | null = null;
+    let shellNum: number | null = null;
 
-    // Pattern: "schreib/sende/mach X in Shell Y" or "in Shell Y: X" or targeted session
-    const shellPatterns = [
-      // "mach mal git status in shell 1"
-      /(?:mach\s*(?:mal)?|führe?\s*(?:mal)?(?:\s*aus)?|run|execute|schreib|sende?|tippe?)\s+(.+?)\s+(?:in|bei|auf)\s+(?:shell|terminal)\s*(\d+)/i,
-      // "in shell 1 mach git status"
-      /(?:in|bei|auf)\s+(?:shell|terminal)\s*(\d+)\s*(?:mach\s*(?:mal)?|:)?\s*(.+)/i,
-      // "shell 1: git status"
-      /(?:shell|terminal)\s*(\d+)\s*[:]\s*(.+)/i,
-      // "schreib 'Hi' und sende es" (with target session)
-      /(?:schreib|sende?|tippe?)\s+["'](.+?)["']\s+(?:und\s+)?(?:sende?|enter|abschicken)/i,
-      // "schreib bei dem TMS Terminal Shell 'Hi'"
-      /(?:schreib|sende?|tippe?)\s+(?:bei\s+(?:dem\s+)?(?:tms\s+)?terminal\s+(?:shell)?)\s*["']?(.+?)["']?\s*$/i,
-    ];
+    // Extract quoted content as the command (highest priority)
+    const quoted = text.match(/["']([^"']+)["']/);
 
-    for (const pattern of shellPatterns) {
-      const match = lower.match(pattern);
-      if (!match) continue;
+    // Pattern 1: "mach/schreib/sende X in Shell N"
+    const p1 = text.match(/(?:mach\s*(?:mal)?|schreib|sende?|tippe?|run)\s+(.+?)\s+(?:in|bei|auf)\s+(?:shell|terminal)\s*(\d+)/i);
+    if (p1) { command = p1[1]; shellNum = parseInt(p1[2]); }
 
-      let command: string;
-      let shellNum: number | null = null;
-
-      if (pattern === shellPatterns[0]) {
-        command = match[1].trim();
-        shellNum = parseInt(match[2]);
-      } else if (pattern === shellPatterns[1] || pattern === shellPatterns[2]) {
-        shellNum = parseInt(match[1]);
-        command = match[2].trim();
-      } else {
-        // For patterns without shell number, use target session or first session
-        command = match[1].trim();
-      }
-
-      // Remove quotes from command
-      command = command.replace(/^["']|["']$/g, '').trim();
-      if (!command) continue;
-
-      // Resolve session
-      let sessionId: string | null = targetSessionId ?? null;
-      if (shellNum !== null) {
-        const label = `Shell ${shellNum}`;
-        for (const [id, lbl] of this.sessionLabels) {
-          if (lbl === label) { sessionId = id; break; }
-        }
-      }
-      if (!sessionId) {
-        // Use first available session
-        const first = this.sessionLabels.keys().next().value;
-        if (first) sessionId = first;
-      }
-      if (!sessionId) return null;
-
-      const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
-      logger.info(`Manager: executing command in ${label}: "${command}"`);
-      globalManager.write(sessionId, command);
-      setTimeout(() => globalManager.write(sessionId!, '\r'), 200);
-
-      return `Befehl "${command}" wurde in ${label} ausgeführt.`;
+    // Pattern 2: "in Shell N: X" or "in Shell N mach X"
+    if (!command) {
+      const p2 = text.match(/(?:in|bei|auf)\s+(?:shell|terminal)\s*(\d+)\s*[:\s]\s*(?:mach\s*(?:mal)?\s*)?(.+)/i);
+      if (p2) { shellNum = parseInt(p2[1]); command = p2[2]; }
     }
 
-    return null;
+    // Pattern 3: "Shell N: X"
+    if (!command) {
+      const p3 = text.match(/(?:shell|terminal)\s*(\d+)\s*:\s*(.+)/i);
+      if (p3) { shellNum = parseInt(p3[1]); command = p3[2]; }
+    }
+
+    // Pattern 4: "schreib 'Hi'" or "sende 'test'" — extract quoted part
+    if (!command && quoted) {
+      const p4 = text.match(/(?:schreib|sende?|tippe?)\s+.*["']([^"']+)["']/i);
+      if (p4) { command = p4[1]; }
+    }
+
+    // Pattern 5: "schreib bei dem TMS Terminal Shell 'Hi'" — extract quoted part
+    if (!command && quoted) {
+      const p5 = text.match(/(?:tms\s+)?terminal\s+(?:shell\s*\d?\s*)?["']([^"']+)["']/i);
+      if (p5) { command = p5[1]; }
+      // Also try to get shell number
+      const shellMatch = text.match(/shell\s*(\d+)/i);
+      if (shellMatch) shellNum = parseInt(shellMatch[1]);
+    }
+
+    if (!command) return null;
+
+    // Clean command — remove trailing "und sende es", "und enter", etc.
+    command = command
+      .replace(/\s+und\s+(?:sende?|enter|abschicken|drück).*$/i, '')
+      .replace(/^["']|["']$/g, '')
+      .trim();
+    if (!command) return null;
+
+    // Resolve session
+    let sessionId: string | null = targetSessionId ?? null;
+    if (shellNum !== null) {
+      const label = `Shell ${shellNum}`;
+      for (const [id, lbl] of this.sessionLabels) {
+        if (lbl === label) { sessionId = id; break; }
+      }
+    }
+    if (!sessionId) {
+      const first = this.sessionLabels.keys().next().value;
+      if (first) sessionId = first;
+    }
+    if (!sessionId) return null;
+
+    const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
+    logger.info(`Manager: executing command in ${label}: "${command}"`);
+    globalManager.write(sessionId, command);
+    setTimeout(() => globalManager.write(sessionId!, '\r'), 200);
+
+    return `Befehl "${command}" wurde in ${label} ausgeführt.`;
   }
 
   async handleChat(text: string, targetSessionId?: string, onboarding?: boolean): Promise<void> {
@@ -592,7 +596,9 @@ export class ManagerService {
     this.chatHistory.push({ role: 'user', content: text }); // store clean version
 
     this.memory = loadMemory();
-    const isOnboarding = onboarding || this.memory.stats.totalSessions === 0;
+    // Only trigger onboarding if memory is truly empty (no learned facts, no user name)
+    const memoryIsEmpty = this.memory.user.learnedFacts.length === 0 && !this.memory.user.name;
+    const isOnboarding = onboarding && memoryIsEmpty;
     const basePrompt = isOnboarding ? ONBOARDING_PROMPT : buildSystemPrompt(this.personality);
     const memoryContext = buildMemoryContext(this.memory);
     const systemPrompt = `${basePrompt}\n\n${memoryContext}\n\n${MEMORY_UPDATE_INSTRUCTION}`;
