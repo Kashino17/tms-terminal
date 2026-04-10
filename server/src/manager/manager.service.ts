@@ -532,74 +532,6 @@ export class ManagerService {
 
   // ── User Chat ─────────────────────────────────────────────────────────────
 
-  /** Detect and execute terminal commands from user text. Returns action description or null. */
-  private tryExecuteCommand(text: string, targetSessionId?: string): string | null {
-    // Only trigger if text contains action keywords
-    const hasAction = /(?:schreib|sende?|tippe?|mach|run|execute|führe?|shell\s*\d+\s*:)/i.test(text);
-    if (!hasAction) return null;
-
-    // Extract command: quoted content has highest priority
-    const quoted = text.match(/[""\u201C\u201D]([^""\u201C\u201D]+)[""\u201C\u201D]/);
-    let command: string | null = quoted ? quoted[1].trim() : null;
-
-    // If no quoted content, try "verb X in Shell N" pattern (all action keywords)
-    // The (?:aus\s+)? handles separable verbs like "führe X aus in Shell N"
-    if (!command) {
-      const cmdMatch = text.match(
-        /(?:schreib|sende?|tippe?|mach\s*(?:mal)?|run|execute|führe?)\s+(.+?)\s+(?:aus\s+)?(?:in|bei|auf)\s+(?:shell|terminal)\s*\d+/i,
-      );
-      if (cmdMatch) command = cmdMatch[1].trim();
-    }
-
-    // Try reverse: "in Shell N verb X" / "Shell N: X"
-    if (!command) {
-      const reverseMatch = text.match(
-        /(?:in|bei|auf)\s+(?:shell|terminal)\s*\d+\s+(?:schreib|sende?|tippe?|mach|run|execute|führe?)\s+(.+)/i,
-      );
-      if (reverseMatch) command = reverseMatch[1].trim();
-    }
-
-    // Try "Shell N: X" colon pattern
-    if (!command) {
-      const colonMatch = text.match(/(?:shell|terminal)\s*\d+\s*:\s*(.+)/i);
-      if (colonMatch) command = colonMatch[1].trim();
-    }
-
-    if (!command) return null;
-
-    // Extract shell number — find the LAST mentioned shell number (handles "nicht Shell 1 sondern Shell 2")
-    let shellNum: number | null = null;
-    const allShellNums = [...text.matchAll(/shell\s*(\d+)/gi)];
-    if (allShellNums.length > 0) {
-      shellNum = parseInt(allShellNums[allShellNums.length - 1][1]);
-    }
-
-    // Resolve session
-    let sessionId: string | null = targetSessionId ?? null;
-    if (shellNum !== null) {
-      const label = `Shell ${shellNum}`;
-      for (const [id, lbl] of this.sessionLabels) {
-        if (lbl === label) { sessionId = id; break; }
-      }
-    }
-    if (!sessionId) {
-      const first = this.sessionLabels.keys().next().value;
-      if (first) sessionId = first;
-    }
-    if (!sessionId) return null;
-
-    const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
-    logger.info(`Manager: executing command in ${label} (${sessionId.slice(0, 8)}): "${command}"`);
-    const ok = globalManager.write(sessionId, command);
-    if (!ok) {
-      logger.warn(`Manager: write FAILED — session ${sessionId.slice(0, 8)} not found in TerminalManager`);
-      return `Fehler: Session ${label} ist nicht mehr aktiv.`;
-    }
-    setTimeout(() => globalManager.write(sessionId!, '\r'), 200);
-
-    return `Befehl "${command}" wurde in ${label} ausgeführt.`;
-  }
-
   /** Resolve a terminal label like "Shell 2" to a sessionId. */
   private resolveLabel(label: string): string | null {
     for (const [id, lbl] of this.sessionLabels) {
@@ -643,17 +575,6 @@ export class ManagerService {
       throw new Error('Manager ist nicht aktiv — bitte zuerst aktivieren (grüner Punkt)');
     }
 
-    // Try to execute terminal commands directly (before AI call)
-    const directAction = this.tryExecuteCommand(text, targetSessionId ?? undefined);
-    if (directAction) {
-      this.memory = loadMemory();
-      this.memory.recentChat.push({ role: 'user', text, timestamp: Date.now() });
-      this.memory.recentChat.push({ role: 'assistant', text: directAction, timestamp: Date.now() });
-      this.memory.stats.totalMessages += 2;
-      saveMemory(this.memory);
-      this.onResponse?.({ text: directAction, actions: [] });
-      return;
-    }
 
     const startTime = Date.now();
     const phases: PhaseInfo[] = [];
