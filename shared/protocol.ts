@@ -268,6 +268,32 @@ export interface ManagerMemoryDataMessage {
   payload: { memory: unknown };
 }
 
+// ── Manager streaming (Server → Client) ──────────────────────────
+export interface PhaseInfo {
+  phase: string;
+  label: string;
+  duration: number;
+}
+
+export interface ManagerThinkingMessage {
+  type: 'manager:thinking';
+  payload: { phase: string; detail?: string; elapsed: number };
+}
+
+export interface ManagerStreamChunkMessage {
+  type: 'manager:stream_chunk';
+  payload: { token: string };
+}
+
+export interface ManagerStreamEndMessage {
+  type: 'manager:stream_end';
+  payload: {
+    text: string;
+    actions?: Array<{ type: string; sessionId: string; detail: string }>;
+    phases: PhaseInfo[];
+  };
+}
+
 export type ServerMessage =
   | TerminalCreatedMessage
   | TerminalOutputMessage
@@ -290,4 +316,7 @@ export type ServerMessage =
   | ManagerProvidersMessage
   | ManagerErrorMessage
   | ManagerStatusMessage
-  | ManagerMemoryDataMessage;
+  | ManagerMemoryDataMessage
+  | ManagerThinkingMessage
+  | ManagerStreamChunkMessage
+  | ManagerStreamEndMessage;
