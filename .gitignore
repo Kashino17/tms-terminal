@@ -42,3 +42,5 @@ mobile/.superpowers/
 mobile/android/app/tms-release.keystore
 mobile/android/app/google-services.json
 .superpowers/
+mcp-server/node_modules/
+mcp-server/dist/
