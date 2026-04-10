@@ -1,4 +1,4 @@
-import { AiProviderRegistry, ChatMessage, ProviderConfig } from './ai-provider';
+import { AiProviderRegistry, ChatMessage, ProviderConfig, ToolDefinition, StreamResult } from './ai-provider';
 import { globalManager } from '../terminal/terminal.manager';
 import { logger } from '../utils/logger';
 import type { PhaseInfo } from '../../../shared/protocol';
@@ -13,6 +13,40 @@ const ANSI_STRIP = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]/g;
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 const OUTPUT_BUFFER_MAX = 50_000; // 50 KB per session
 const MAX_CONTEXT_PER_SESSION = 8_000; // chars sent to AI per session per summary
+
+// ── Native Tool Definitions (for GLM) ──────────────────────────────────────
+
+const MANAGER_TOOLS: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'write_to_terminal',
+      description: 'Schreibt einen Befehl in ein Terminal und führt ihn aus. Nutze diese Funktion IMMER wenn der User möchte dass ein Befehl ausgeführt wird.',
+      parameters: {
+        type: 'object',
+        properties: {
+          session_label: { type: 'string', description: 'Das Terminal-Label, z.B. "Shell 1", "Shell 2"' },
+          command: { type: 'string', description: 'Der auszuführende Befehl, z.B. "git status", "npm run build"' },
+        },
+        required: ['session_label', 'command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'send_enter',
+      description: 'Drückt Enter in einem Terminal. Nutze dies um wartende Prompts zu bestätigen.',
+      parameters: {
+        type: 'object',
+        properties: {
+          session_label: { type: 'string', description: 'Das Terminal-Label, z.B. "Shell 1"' },
+        },
+        required: ['session_label'],
+      },
+    },
+  },
+];
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -571,6 +605,39 @@ export class ManagerService {
     return `Befehl "${command}" wurde in ${label} ausgeführt.`;
   }
 
+  /** Resolve a terminal label like "Shell 2" to a sessionId. */
+  private resolveLabel(label: string): string | null {
+    for (const [id, lbl] of this.sessionLabels) {
+      if (lbl.toLowerCase() === label.toLowerCase()) return id;
+    }
+    // Try partial match (e.g. "Shell2" without space)
+    const normalized = label.replace(/\s+/g, '').toLowerCase();
+    for (const [id, lbl] of this.sessionLabels) {
+      if (lbl.replace(/\s+/g, '').toLowerCase() === normalized) return id;
+    }
+    logger.warn(`Manager: could not resolve label "${label}"`);
+    return null;
+  }
+
+  /** Convert native tool calls to ManagerActions. */
+  private toolCallsToActions(toolCalls: Array<{ name: string; arguments: Record<string, string> }>): ManagerAction[] {
+    const actions: ManagerAction[] = [];
+    for (const tc of toolCalls) {
+      const label = tc.arguments.session_label;
+      const sessionId = label ? this.resolveLabel(label) : null;
+      if (!sessionId) {
+        logger.warn(`Manager: tool call ${tc.name} — could not resolve label "${label}"`);
+        continue;
+      }
+      if (tc.name === 'write_to_terminal') {
+        actions.push({ type: 'write_to_terminal', sessionId, detail: tc.arguments.command ?? '' });
+      } else if (tc.name === 'send_enter') {
+        actions.push({ type: 'send_enter', sessionId, detail: '' });
+      }
+    }
+    return actions;
+  }
+
   private emitThinking(phase: string, startTime: number, detail?: string): void {
     const elapsed = Date.now() - startTime;
     this.onThinking?.(phase, detail, elapsed);
@@ -640,16 +707,33 @@ export class ManagerService {
 
     try {
       const provider = this.registry.getActive();
-      logger.info(`Manager: streaming chat via ${provider.name}`);
+      const glm = this.registry.getActiveAsGlm();
+      logger.info(`Manager: streaming chat via ${provider.name}${glm ? ' (with tools)' : ''}`);
 
       // Phase 4: Streaming
       recordPhase('streaming', 'Schreibt');
 
-      const reply = await provider.chatStream(
-        [...this.chatHistory, { role: 'user', content: onboarding ? text : userMessage }],
-        systemPrompt,
-        (token) => this.onStreamChunk?.(token),
-      );
+      let reply: string;
+      let nativeToolCalls: Array<{ name: string; arguments: Record<string, string> }> = [];
+
+      if (glm) {
+        // GLM: use native tool calling
+        const result = await glm.chatStreamWithTools(
+          [...this.chatHistory, { role: 'user', content: onboarding ? text : userMessage }],
+          systemPrompt,
+          isOnboarding ? [] : MANAGER_TOOLS,
+          (token) => this.onStreamChunk?.(token),
+        );
+        reply = result.text;
+        nativeToolCalls = result.toolCalls;
+      } else {
+        // Kimi: text-only streaming (tags parsed later)
+        reply = await provider.chatStream(
+          [...this.chatHistory, { role: 'user', content: onboarding ? text : userMessage }],
+          systemPrompt,
+          (token) => this.onStreamChunk?.(token),
+        );
+      }
 
       // Close last phase duration
       phases[phases.length - 1].duration = Date.now() - phaseStart;
@@ -702,8 +786,10 @@ export class ManagerService {
       }
       saveMemory(this.memory);
 
-      // Parse actions from reply
-      const actions = this.parseActions(reply);
+      // Collect actions: native tool calls (GLM) + regex fallback (tags in text)
+      const nativeActions = this.toolCallsToActions(nativeToolCalls);
+      const tagActions = this.parseActions(reply);
+      const actions = [...nativeActions, ...tagActions];
 
       // Phase 5: Execute actions (only if there are any)
       if (actions.length > 0) {
@@ -735,9 +821,23 @@ export class ManagerService {
         this.distill().catch(err => logger.warn(`Manager: auto-distill failed — ${err}`));
       }
 
-      const finalText = cleanReply || (parsedConfig
-        ? `${parsedConfig.agentName} ist eingerichtet und bereit.`
-        : 'Verstanden — ich habe mir alles gemerkt.');
+      let finalText = cleanReply;
+      if (!finalText) {
+        if (parsedConfig) {
+          finalText = `${parsedConfig.agentName} ist eingerichtet und bereit.`;
+        } else if (actions.length > 0) {
+          // Auto-generate confirmation for tool-call-only responses
+          const summaries = actions.map(a => {
+            const lbl = this.sessionLabels.get(a.sessionId) ?? a.sessionId.slice(0, 8);
+            return a.type === 'write_to_terminal'
+              ? `\`${a.detail}\` in ${lbl}`
+              : `Enter in ${lbl}`;
+          });
+          finalText = `Ausgeführt: ${summaries.join(', ')}`;
+        } else {
+          finalText = 'Verstanden — ich habe mir alles gemerkt.';
+        }
+      }
 
       // Send stream end with phases
       this.onStreamEnd?.(finalText, actions, phases);
