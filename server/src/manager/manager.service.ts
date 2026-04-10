@@ -259,7 +259,9 @@ customInstruction: <zusammenfassung was du über den user weißt>
 - Kurz und knapp — max 3-4 Sätze pro Nachricht
 - EINE Frage pro Nachricht, nicht mehrere
 - MEMORY_UPDATE bei JEDER Antwort — KEINE Ausnahme
-- Erwähne NIEMALS dass du etwas speicherst oder aufschreibst`;
+- Erwähne NIEMALS dass du etwas speicherst oder aufschreibst
+- Deine Antwort MUSS IMMER sichtbaren Text enthalten — schreibe NIEMALS nur Tags ohne normalen Text davor
+- Die Tags ([MEMORY_UPDATE], [PERSONALITY_CONFIG]) kommen NACH deinem sichtbaren Text, nicht stattdessen`;
 
 function parsePersonalityConfig(text: string): PersonalityConfig | null {
   const match = text.match(/\[PERSONALITY_CONFIG\]([\s\S]*?)\[\/PERSONALITY_CONFIG\]/);
@@ -588,7 +590,11 @@ export class ManagerService {
         this.distill().catch(err => logger.warn(`Manager: auto-distill failed — ${err}`));
       }
 
-      this.onResponse?.({ text: cleanReply, actions });
+      // Don't send empty responses (happens when AI reply was only tags)
+      const finalText = cleanReply || (parsedConfig
+        ? `${parsedConfig.agentName} ist eingerichtet und bereit.`
+        : 'Verstanden — ich habe mir alles gemerkt.');
+      this.onResponse?.({ text: finalText, actions });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`Manager: chat failed — ${msg}`);
