@@ -490,9 +490,88 @@ export class ManagerService {
 
   // ── User Chat ─────────────────────────────────────────────────────────────
 
+  /** Detect and execute terminal commands from user text. Returns action description or null. */
+  private tryExecuteCommand(text: string, targetSessionId?: string): string | null {
+    const lower = text.toLowerCase();
+
+    // Pattern: "schreib/sende/mach X in Shell Y" or "in Shell Y: X" or targeted session
+    const shellPatterns = [
+      // "mach mal git status in shell 1"
+      /(?:mach\s*(?:mal)?|führe?\s*(?:mal)?(?:\s*aus)?|run|execute|schreib|sende?|tippe?)\s+(.+?)\s+(?:in|bei|auf)\s+(?:shell|terminal)\s*(\d+)/i,
+      // "in shell 1 mach git status"
+      /(?:in|bei|auf)\s+(?:shell|terminal)\s*(\d+)\s*(?:mach\s*(?:mal)?|:)?\s*(.+)/i,
+      // "shell 1: git status"
+      /(?:shell|terminal)\s*(\d+)\s*[:]\s*(.+)/i,
+      // "schreib 'Hi' und sende es" (with target session)
+      /(?:schreib|sende?|tippe?)\s+["'](.+?)["']\s+(?:und\s+)?(?:sende?|enter|abschicken)/i,
+      // "schreib bei dem TMS Terminal Shell 'Hi'"
+      /(?:schreib|sende?|tippe?)\s+(?:bei\s+(?:dem\s+)?(?:tms\s+)?terminal\s+(?:shell)?)\s*["']?(.+?)["']?\s*$/i,
+    ];
+
+    for (const pattern of shellPatterns) {
+      const match = lower.match(pattern);
+      if (!match) continue;
+
+      let command: string;
+      let shellNum: number | null = null;
+
+      if (pattern === shellPatterns[0]) {
+        command = match[1].trim();
+        shellNum = parseInt(match[2]);
+      } else if (pattern === shellPatterns[1] || pattern === shellPatterns[2]) {
+        shellNum = parseInt(match[1]);
+        command = match[2].trim();
+      } else {
+        // For patterns without shell number, use target session or first session
+        command = match[1].trim();
+      }
+
+      // Remove quotes from command
+      command = command.replace(/^["']|["']$/g, '').trim();
+      if (!command) continue;
+
+      // Resolve session
+      let sessionId: string | null = targetSessionId ?? null;
+      if (shellNum !== null) {
+        const label = `Shell ${shellNum}`;
+        for (const [id, lbl] of this.sessionLabels) {
+          if (lbl === label) { sessionId = id; break; }
+        }
+      }
+      if (!sessionId) {
+        // Use first available session
+        const first = this.sessionLabels.keys().next().value;
+        if (first) sessionId = first;
+      }
+      if (!sessionId) return null;
+
+      const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
+      logger.info(`Manager: executing command in ${label}: "${command}"`);
+      globalManager.write(sessionId, command);
+      setTimeout(() => globalManager.write(sessionId!, '\r'), 200);
+
+      return `Befehl "${command}" wurde in ${label} ausgeführt.`;
+    }
+
+    return null;
+  }
+
   async handleChat(text: string, targetSessionId?: string, onboarding?: boolean): Promise<void> {
     if (!this.enabled) {
       throw new Error('Manager ist nicht aktiv — bitte zuerst aktivieren (grüner Punkt)');
+    }
+
+    // Try to execute terminal commands directly (before AI call)
+    const directAction = this.tryExecuteCommand(text, targetSessionId ?? undefined);
+    if (directAction) {
+      // Add to memory
+      this.memory = loadMemory();
+      this.memory.recentChat.push({ role: 'user', text, timestamp: Date.now() });
+      this.memory.recentChat.push({ role: 'assistant', text: directAction, timestamp: Date.now() });
+      this.memory.stats.totalMessages += 2;
+      saveMemory(this.memory);
+      this.onResponse?.({ text: directAction, actions: [] });
+      return;
     }
 
     // Build structured context
