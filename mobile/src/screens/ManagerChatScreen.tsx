@@ -29,6 +29,7 @@ import type { RootStackParamList } from '../types/navigation.types';
 import type { WebSocketService } from '../services/websocket.service';
 import { useManagerStore, ManagerMessage, PhaseInfo } from '../store/managerStore';
 import { useTerminalStore } from '../store/terminalStore';
+import { tabDisplayName } from '../utils/tabDisplayName';
 import { colors, spacing, fontSizes } from '../theme';
 import Markdown from 'react-native-markdown-display';
 
@@ -810,7 +811,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
                 ]}
                 numberOfLines={1}
               >
-                {tab.customTitle ? tab.title : `Shell ${idx + 1}`}
+                {`S${idx + 1} · ${tabDisplayName(tab)}`}
               </Text>
             </TouchableOpacity>
           ))}

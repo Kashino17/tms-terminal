@@ -25,7 +25,7 @@ const MANAGER_TOOLS: ToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          session_label: { type: 'string', description: 'Das Terminal-Label, z.B. "Shell 1", "Shell 2"' },
+          session_label: { type: 'string', description: 'Terminal-Name oder Shell-Nummer, z.B. "Shell 1", "ayysir", "TMS Terminal"' },
           command: { type: 'string', description: 'Der auszuführende Befehl, z.B. "git status", "npm run build"' },
         },
         required: ['session_label', 'command'],
@@ -532,15 +532,25 @@ export class ManagerService {
 
   // ── User Chat ─────────────────────────────────────────────────────────────
 
-  /** Resolve a terminal label like "Shell 2" to a sessionId. */
+  /** Resolve a terminal label like "Shell 2", "ayysir", or "Shell 2 · ayysir" to a sessionId. */
   private resolveLabel(label: string): string | null {
+    const lower = label.toLowerCase();
+    // Exact match
     for (const [id, lbl] of this.sessionLabels) {
-      if (lbl.toLowerCase() === label.toLowerCase()) return id;
+      if (lbl.toLowerCase() === lower) return id;
     }
-    // Try partial match (e.g. "Shell2" without space)
+    // Starts-with match (e.g. "Shell 1" matches "Shell 1 · ayysir")
+    for (const [id, lbl] of this.sessionLabels) {
+      if (lbl.toLowerCase().startsWith(lower)) return id;
+    }
+    // Contains match (e.g. "ayysir" matches "Shell 1 · ayysir")
+    for (const [id, lbl] of this.sessionLabels) {
+      if (lbl.toLowerCase().includes(lower)) return id;
+    }
+    // Normalized match (e.g. "Shell2" without space)
     const normalized = label.replace(/\s+/g, '').toLowerCase();
     for (const [id, lbl] of this.sessionLabels) {
-      if (lbl.replace(/\s+/g, '').toLowerCase() === normalized) return id;
+      if (lbl.replace(/\s+/g, '').toLowerCase().includes(normalized)) return id;
     }
     logger.warn(`Manager: could not resolve label "${label}"`);
     return null;

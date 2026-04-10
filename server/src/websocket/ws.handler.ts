@@ -55,6 +55,14 @@ const pendingInputLen = new Map<string, number>();
 // ── Manager Agent ────────────────────────────────────────────────────
 const managerService = new ManagerService(loadManagerConfig());
 
+/** Build a manager label like "Shell 1 · ayysir" from shell number + CWD. */
+function buildShellLabel(shellNum: number, cwd?: string): string {
+  const base = `Shell ${shellNum}`;
+  if (!cwd) return base;
+  const folder = cwd.split('/').filter(Boolean).pop() ?? '';
+  return folder ? `${base} · ${folder}` : base;
+}
+
 // ── Autopilot state ──────────────────────────────────────────────────
 const aiSessions = new Set<string>(); // sessions where AI tool was detected
 const autopilotTimers = new Map<string, NodeJS.Timeout>();
@@ -534,9 +542,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           sessionGens.set(session.id, globalManager.getAttachGen(session.id));
           watchSession(session.id);
           watchSessionIdle(session.id);
-          // Register session with manager — label will be "Shell N"
+          // Register session with manager — label will be "Shell N · folderName"
           const shellNum = ownedSessions.size;
-          managerService.setSessionLabel(session.id, `Shell ${shellNum}`);
+          managerService.setSessionLabel(session.id, buildShellLabel(shellNum, session.cwd));
           send(ws, {
             type: 'terminal:created',
             sessionId: session.id,
@@ -599,11 +607,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           idleDetector.unwatch(session.id);   // reset stale idle state before re-watching
           watchSession(session.id);
           watchSessionIdle(session.id);
-          // Register session with manager if not already labeled
-          if (!managerService.getSessionList().find(s => s.sessionId === session.id)) {
-            const shellNum = ownedSessions.size;
-            managerService.setSessionLabel(session.id, `Shell ${shellNum}`);
-          }
+          // Update session label with CWD folder name on reattach
+          const existing = managerService.getSessionList().find(s => s.sessionId === session.id);
+          const shellNum = existing
+            ? parseInt(existing.label.match(/Shell (\d+)/)?.[1] ?? String(ownedSessions.size))
+            : ownedSessions.size;
+          managerService.setSessionLabel(session.id, buildShellLabel(shellNum, session.cwd));
           globalManager.resize(session.id, cols, rows);
           send(ws, {
             type: 'terminal:reattached',
