@@ -693,7 +693,7 @@ export class ManagerService {
     this.memory = loadMemory();
     const memoryIsEmpty = this.memory.user.learnedFacts.length === 0 && !this.memory.user.name;
     const isOnboarding = onboarding && memoryIsEmpty;
-    const basePrompt = isOnboarding ? ONBOARDING_PROMPT : buildSystemPrompt(this.personality);
+    const basePrompt = onboarding ? ONBOARDING_PROMPT : buildSystemPrompt(this.personality);
     const memoryContext = buildMemoryContext(this.memory);
     const systemPrompt = `${basePrompt}\n\n${memoryContext}\n\n${MEMORY_UPDATE_INSTRUCTION}`;
 
