@@ -716,7 +716,7 @@ export class ManagerService {
         const result = await glm.chatStreamWithTools(
           [...this.chatHistory, { role: 'user', content: onboarding ? text : userMessage }],
           systemPrompt,
-          isOnboarding ? [] : MANAGER_TOOLS,
+          onboarding ? [] : MANAGER_TOOLS,
           (token) => this.onStreamChunk?.(token),
         );
         reply = result.text;
