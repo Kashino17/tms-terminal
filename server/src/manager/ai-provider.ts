@@ -322,7 +322,7 @@ class GlmProvider implements AiProvider {
         max_tokens: 4096,
         stream: true,
         tools: tools.length > 0 ? tools : undefined,
-        tool_choice: tools.length > 0 ? 'auto' : undefined,
+        tool_choice: tools.length > 0 ? 'auto' : 'none',
       }),
     });
 
