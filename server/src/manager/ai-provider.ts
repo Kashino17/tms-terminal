@@ -28,6 +28,31 @@ export interface ProviderConfig {
   activeProvider?: string;
 }
 
+// ── Tool Calling Types ─────────────────────────────────────────────────────
+
+export interface ToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: 'object';
+      properties: Record<string, { type: string; description: string }>;
+      required: string[];
+    };
+  };
+}
+
+export interface ToolCall {
+  name: string;
+  arguments: Record<string, string>;
+}
+
+export interface StreamResult {
+  text: string;
+  toolCalls: ToolCall[];
+}
+
 // ── Kimi K2.5 Provider (OpenAI-compatible API) ─────────────────────────────
 
 // Kimi Code API (kimi.com/code) — NOT the same as Moonshot Open Platform
@@ -154,7 +179,7 @@ class KimiProvider implements AiProvider {
 
 // Model IDs: verify via GET https://open.bigmodel.cn/api/paas/v4/models with your API key.
 // Fallback 'glm-4-plus' is GLM-4. Update to GLM-5 ID once available (e.g. 'glm-5-turbo').
-const GLM_MODEL = 'glm-4-plus';
+const GLM_MODEL = 'glm-5-turbo';
 
 class GlmProvider implements AiProvider {
   id = 'glm';
@@ -269,6 +294,115 @@ class GlmProvider implements AiProvider {
 
     return full;
   }
+
+  async chatStreamWithTools(
+    messages: ChatMessage[],
+    systemPrompt: string,
+    tools: ToolDefinition[],
+    onChunk: (token: string) => void,
+  ): Promise<StreamResult> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) throw new Error('GLM API key not configured');
+
+    const apiMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content })),
+    ];
+
+    const res = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: GLM_MODEL,
+        messages: apiMessages,
+        temperature: 0.3,
+        max_tokens: 4096,
+        stream: true,
+        tools: tools.length > 0 ? tools : undefined,
+        tool_choice: tools.length > 0 ? 'auto' : undefined,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`GLM API error ${res.status}: ${body.slice(0, 200)}`);
+    }
+
+    let fullText = '';
+    const toolCallAccum = new Map<number, { name: string; args: string }>();
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        const data = trimmed.slice(6);
+        if (data === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(data) as {
+            choices: Array<{
+              delta: {
+                content?: string;
+                tool_calls?: Array<{
+                  index: number;
+                  id?: string;
+                  function?: { name?: string; arguments?: string };
+                }>;
+              };
+            }>;
+          };
+          const delta = parsed.choices[0]?.delta;
+
+          // Text content
+          if (delta?.content) {
+            fullText += delta.content;
+            onChunk(delta.content);
+          }
+
+          // Tool call deltas
+          if (delta?.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index;
+              if (!toolCallAccum.has(idx)) {
+                toolCallAccum.set(idx, { name: '', args: '' });
+              }
+              const acc = toolCallAccum.get(idx)!;
+              if (tc.function?.name) acc.name = tc.function.name;
+              if (tc.function?.arguments) acc.args += tc.function.arguments;
+            }
+          }
+        } catch {
+          // skip malformed chunks
+        }
+      }
+    }
+
+    // Parse accumulated tool calls
+    const toolCalls: ToolCall[] = [];
+    for (const [, acc] of toolCallAccum) {
+      if (acc.name && acc.args) {
+        try {
+          toolCalls.push({ name: acc.name, arguments: JSON.parse(acc.args) });
+        } catch {
+          logger.warn(`Manager: failed to parse tool call args: ${acc.args.slice(0, 100)}`);
+        }
+      }
+    }
+
+    return { text: fullText, toolCalls };
+  }
 }
 
 // ── Provider Registry ───────────────────────────────────────────────────────
@@ -295,6 +429,11 @@ export class AiProviderRegistry {
 
   getActive(): AiProvider {
     return this.providers.get(this.activeId)!;
+  }
+
+  getActiveAsGlm(): GlmProvider | null {
+    const active = this.getActive();
+    return active.id === 'glm' ? (active as GlmProvider) : null;
   }
 
   setActive(id: string): void {
