@@ -1,6 +1,7 @@
 import { AiProviderRegistry, ChatMessage, ProviderConfig } from './ai-provider';
 import { globalManager } from '../terminal/terminal.manager';
 import { logger } from '../utils/logger';
+import type { PhaseInfo } from '../../../shared/protocol';
 import {
   loadMemory, saveMemory, ManagerMemory,
   parseMemoryUpdate, applyMemoryUpdate, stripMemoryTags,
@@ -35,6 +36,9 @@ export interface ManagerResponse {
 type SummaryCallback = (summary: ManagerSummary) => void;
 type ResponseCallback = (response: ManagerResponse) => void;
 type ErrorCallback = (error: string) => void;
+type ThinkingCallback = (phase: string, detail?: string, elapsed?: number) => void;
+type StreamChunkCallback = (token: string) => void;
+type StreamEndCallback = (text: string, actions: ManagerAction[], phases: PhaseInfo[]) => void;
 
 // ── Personality Types ────────────────────────────────────────────────────────
 
@@ -286,6 +290,9 @@ export class ManagerService {
   private onResponse: ResponseCallback | null = null;
   private onError: ErrorCallback | null = null;
   private onPersonalityConfigured: ((config: PersonalityConfig) => void) | null = null;
+  private onThinking: ThinkingCallback | null = null;
+  private onStreamChunk: StreamChunkCallback | null = null;
+  private onStreamEnd: StreamEndCallback | null = null;
 
   constructor(providerConfig: ProviderConfig) {
     this.registry = new AiProviderRegistry(providerConfig);
@@ -313,11 +320,17 @@ export class ManagerService {
     onResponse: ResponseCallback,
     onError: ErrorCallback,
     onPersonalityConfigured?: (config: PersonalityConfig) => void,
+    onThinking?: ThinkingCallback,
+    onStreamChunk?: StreamChunkCallback,
+    onStreamEnd?: StreamEndCallback,
   ): void {
     this.onSummary = onSummary;
     this.onResponse = onResponse;
     this.onError = onError;
     if (onPersonalityConfigured) this.onPersonalityConfigured = onPersonalityConfigured;
+    if (onThinking) this.onThinking = onThinking;
+    if (onStreamChunk) this.onStreamChunk = onStreamChunk;
+    if (onStreamEnd) this.onStreamEnd = onStreamEnd;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -500,13 +513,24 @@ export class ManagerService {
     const quoted = text.match(/[""\u201C\u201D]([^""\u201C\u201D]+)[""\u201C\u201D]/);
     let command: string | null = quoted ? quoted[1].trim() : null;
 
-    // If no quoted content, try "mach X in Shell N" pattern
+    // If no quoted content, try "verb X in Shell N" pattern (all action keywords)
+    // The (?:aus\s+)? handles separable verbs like "führe X aus in Shell N"
     if (!command) {
-      const cmdMatch = text.match(/(?:mach\s*(?:mal)?|run|execute)\s+(.+?)\s+(?:in|bei)\s+(?:shell|terminal)/i);
+      const cmdMatch = text.match(
+        /(?:schreib|sende?|tippe?|mach\s*(?:mal)?|run|execute|führe?)\s+(.+?)\s+(?:aus\s+)?(?:in|bei|auf)\s+(?:shell|terminal)\s*\d+/i,
+      );
       if (cmdMatch) command = cmdMatch[1].trim();
     }
 
-    // If no quoted content, try "Shell N: X" pattern
+    // Try reverse: "in Shell N verb X" / "Shell N: X"
+    if (!command) {
+      const reverseMatch = text.match(
+        /(?:in|bei|auf)\s+(?:shell|terminal)\s*\d+\s+(?:schreib|sende?|tippe?|mach|run|execute|führe?)\s+(.+)/i,
+      );
+      if (reverseMatch) command = reverseMatch[1].trim();
+    }
+
+    // Try "Shell N: X" colon pattern
     if (!command) {
       const colonMatch = text.match(/(?:shell|terminal)\s*\d+\s*:\s*(.+)/i);
       if (colonMatch) command = colonMatch[1].trim();
@@ -547,6 +571,11 @@ export class ManagerService {
     return `Befehl "${command}" wurde in ${label} ausgeführt.`;
   }
 
+  private emitThinking(phase: string, startTime: number, detail?: string): void {
+    const elapsed = Date.now() - startTime;
+    this.onThinking?.(phase, detail, elapsed);
+  }
+
   async handleChat(text: string, targetSessionId?: string, onboarding?: boolean): Promise<void> {
     if (!this.enabled) {
       throw new Error('Manager ist nicht aktiv — bitte zuerst aktivieren (grüner Punkt)');
@@ -555,7 +584,6 @@ export class ManagerService {
     // Try to execute terminal commands directly (before AI call)
     const directAction = this.tryExecuteCommand(text, targetSessionId ?? undefined);
     if (directAction) {
-      // Add to memory
       this.memory = loadMemory();
       this.memory.recentChat.push({ role: 'user', text, timestamp: Date.now() });
       this.memory.recentChat.push({ role: 'assistant', text: directAction, timestamp: Date.now() });
@@ -565,7 +593,23 @@ export class ManagerService {
       return;
     }
 
-    // Build structured context
+    const startTime = Date.now();
+    const phases: PhaseInfo[] = [];
+    let phaseStart = startTime;
+
+    const recordPhase = (phase: string, label: string) => {
+      const now = Date.now();
+      if (phases.length > 0) {
+        phases[phases.length - 1].duration = now - phaseStart;
+      }
+      phases.push({ phase, label, duration: 0 });
+      phaseStart = now;
+      this.emitThinking(phase, startTime);
+    };
+
+    // Phase 1: Analyze terminals
+    recordPhase('analyzing_terminals', 'Terminals analysieren');
+
     const contexts = this.buildTerminalContexts();
     let contextBlock: string;
 
@@ -579,23 +623,36 @@ export class ManagerService {
     }
 
     const userMessage = `${text}\n\n---\n${contextBlock}`;
+    this.chatHistory.push({ role: 'user', content: text });
 
-    this.chatHistory.push({ role: 'user', content: text }); // store clean version
+    // Phase 2: Build context
+    recordPhase('building_context', 'Kontext vorbereiten');
 
     this.memory = loadMemory();
-    // Only trigger onboarding if memory is truly empty (no learned facts, no user name)
     const memoryIsEmpty = this.memory.user.learnedFacts.length === 0 && !this.memory.user.name;
     const isOnboarding = onboarding && memoryIsEmpty;
     const basePrompt = isOnboarding ? ONBOARDING_PROMPT : buildSystemPrompt(this.personality);
     const memoryContext = buildMemoryContext(this.memory);
     const systemPrompt = `${basePrompt}\n\n${memoryContext}\n\n${MEMORY_UPDATE_INSTRUCTION}`;
 
+    // Phase 3: Call AI
+    recordPhase('calling_ai', 'Sende an AI');
+
     try {
       const provider = this.registry.getActive();
-      const reply = await provider.chat(
+      logger.info(`Manager: streaming chat via ${provider.name}`);
+
+      // Phase 4: Streaming
+      recordPhase('streaming', 'Schreibt');
+
+      const reply = await provider.chatStream(
         [...this.chatHistory, { role: 'user', content: onboarding ? text : userMessage }],
         systemPrompt,
+        (token) => this.onStreamChunk?.(token),
       );
+
+      // Close last phase duration
+      phases[phases.length - 1].duration = Date.now() - phaseStart;
 
       // Check for personality config (onboarding completion)
       const parsedConfig = parsePersonalityConfig(reply);
@@ -616,7 +673,6 @@ export class ManagerService {
       // Parse memory updates from reply
       const memUpdate = parseMemoryUpdate(reply);
       if (memUpdate) {
-        // Auto-detect agent name from learned facts if no CONFIG block was sent
         if (!parsedConfig && isOnboarding) {
           for (const fact of memUpdate.learnedFacts) {
             const nameMatch = fact.match(/agent\s+(?:heißt|name|nennt?\s+sich)\s+["']?(\w+)/i)
@@ -649,12 +705,17 @@ export class ManagerService {
       // Parse actions from reply
       const actions = this.parseActions(reply);
 
-      // Execute actions
-      for (const action of actions) {
-        this.executeAction(action);
+      // Phase 5: Execute actions (only if there are any)
+      if (actions.length > 0) {
+        phaseStart = Date.now();
+        recordPhase('executing_actions', 'Befehle ausführen');
+        for (const action of actions) {
+          this.executeAction(action);
+        }
+        phases[phases.length - 1].duration = Date.now() - phaseStart;
       }
 
-      // Clean reply — remove action tags, personality config, and memory tags for display
+      // Clean reply
       const cleanReply = stripMemoryTags(
         reply
           .replace(/\[WRITE_TO:[^\]]+\][^[]*\[\/WRITE_TO\]/g, '')
@@ -674,11 +735,12 @@ export class ManagerService {
         this.distill().catch(err => logger.warn(`Manager: auto-distill failed — ${err}`));
       }
 
-      // Don't send empty responses (happens when AI reply was only tags)
       const finalText = cleanReply || (parsedConfig
         ? `${parsedConfig.agentName} ist eingerichtet und bereit.`
         : 'Verstanden — ich habe mir alles gemerkt.');
-      this.onResponse?.({ text: finalText, actions });
+
+      // Send stream end with phases
+      this.onStreamEnd?.(finalText, actions, phases);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`Manager: chat failed — ${msg}`);
