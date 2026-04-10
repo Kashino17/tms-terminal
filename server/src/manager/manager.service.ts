@@ -21,7 +21,7 @@ const MANAGER_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'write_to_terminal',
-      description: 'Schreibt einen Befehl in ein Terminal und führt ihn aus. Nutze diese Funktion IMMER wenn der User möchte dass ein Befehl ausgeführt wird.',
+      description: 'Schreibt einen Befehl in ein Terminal und führt ihn aus. NUR nutzen wenn der User EXPLIZIT einen konkreten Shell-Befehl ausführen will (z.B. "mach git status in Shell 1", "schreib npm run build in Shell 2"). NICHT nutzen wenn der User chattet, sich vorstellt, Fragen stellt, über Persönlichkeit redet, oder allgemein spricht. Im Zweifel: NICHT nutzen.',
       parameters: {
         type: 'object',
         properties: {
@@ -36,7 +36,7 @@ const MANAGER_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'send_enter',
-      description: 'Drückt Enter in einem Terminal. Nutze dies um wartende Prompts zu bestätigen.',
+      description: 'Drückt Enter in einem Terminal. NUR nutzen wenn der User explizit will dass Enter gedrückt wird oder ein Prompt bestätigt werden soll. NICHT nutzen in normalen Gesprächen.',
       parameters: {
         type: 'object',
         properties: {
@@ -716,7 +716,7 @@ export class ManagerService {
         const result = await glm.chatStreamWithTools(
           [...this.chatHistory, { role: 'user', content: onboarding ? text : userMessage }],
           systemPrompt,
-          onboarding ? [] : MANAGER_TOOLS,
+          MANAGER_TOOLS,
           (token) => this.onStreamChunk?.(token),
         );
         reply = result.text;
