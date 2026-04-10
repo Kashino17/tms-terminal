@@ -492,51 +492,34 @@ export class ManagerService {
 
   /** Detect and execute terminal commands from user text. Returns action description or null. */
   private tryExecuteCommand(text: string, targetSessionId?: string): string | null {
-    let command: string | null = null;
+    // Only trigger if text contains action keywords
+    const hasAction = /(?:schreib|sende?|tippe?|mach|run|execute|führe?|shell\s*\d+\s*:)/i.test(text);
+    if (!hasAction) return null;
+
+    // Extract command: quoted content has highest priority
+    const quoted = text.match(/[""\u201C\u201D]([^""\u201C\u201D]+)[""\u201C\u201D]/);
+    let command: string | null = quoted ? quoted[1].trim() : null;
+
+    // If no quoted content, try "mach X in Shell N" pattern
+    if (!command) {
+      const cmdMatch = text.match(/(?:mach\s*(?:mal)?|run|execute)\s+(.+?)\s+(?:in|bei)\s+(?:shell|terminal)/i);
+      if (cmdMatch) command = cmdMatch[1].trim();
+    }
+
+    // If no quoted content, try "Shell N: X" pattern
+    if (!command) {
+      const colonMatch = text.match(/(?:shell|terminal)\s*\d+\s*:\s*(.+)/i);
+      if (colonMatch) command = colonMatch[1].trim();
+    }
+
+    if (!command) return null;
+
+    // Extract shell number — find the LAST mentioned shell number (handles "nicht Shell 1 sondern Shell 2")
     let shellNum: number | null = null;
-
-    // Extract quoted content as the command (highest priority)
-    const quoted = text.match(/["']([^"']+)["']/);
-
-    // Pattern 1: "mach/schreib/sende X in Shell N"
-    const p1 = text.match(/(?:mach\s*(?:mal)?|schreib|sende?|tippe?|run)\s+(.+?)\s+(?:in|bei|auf)\s+(?:shell|terminal)\s*(\d+)/i);
-    if (p1) { command = p1[1]; shellNum = parseInt(p1[2]); }
-
-    // Pattern 2: "in Shell N: X" or "in Shell N mach X"
-    if (!command) {
-      const p2 = text.match(/(?:in|bei|auf)\s+(?:shell|terminal)\s*(\d+)\s*[:\s]\s*(?:mach\s*(?:mal)?\s*)?(.+)/i);
-      if (p2) { shellNum = parseInt(p2[1]); command = p2[2]; }
+    const allShellNums = [...text.matchAll(/shell\s*(\d+)/gi)];
+    if (allShellNums.length > 0) {
+      shellNum = parseInt(allShellNums[allShellNums.length - 1][1]);
     }
-
-    // Pattern 3: "Shell N: X"
-    if (!command) {
-      const p3 = text.match(/(?:shell|terminal)\s*(\d+)\s*:\s*(.+)/i);
-      if (p3) { shellNum = parseInt(p3[1]); command = p3[2]; }
-    }
-
-    // Pattern 4: "schreib 'Hi'" or "sende 'test'" — extract quoted part
-    if (!command && quoted) {
-      const p4 = text.match(/(?:schreib|sende?|tippe?)\s+.*["']([^"']+)["']/i);
-      if (p4) { command = p4[1]; }
-    }
-
-    // Pattern 5: "schreib bei dem TMS Terminal Shell 'Hi'" — extract quoted part
-    if (!command && quoted) {
-      const p5 = text.match(/(?:tms\s+)?terminal\s+(?:shell\s*\d?\s*)?["']([^"']+)["']/i);
-      if (p5) { command = p5[1]; }
-      // Also try to get shell number
-      const shellMatch = text.match(/shell\s*(\d+)/i);
-      if (shellMatch) shellNum = parseInt(shellMatch[1]);
-    }
-
-    if (!command) return null;
-
-    // Clean command — remove trailing "und sende es", "und enter", etc.
-    command = command
-      .replace(/\s+und\s+(?:sende?|enter|abschicken|drück).*$/i, '')
-      .replace(/^["']|["']$/g, '')
-      .trim();
-    if (!command) return null;
 
     // Resolve session
     let sessionId: string | null = targetSessionId ?? null;
@@ -553,8 +536,12 @@ export class ManagerService {
     if (!sessionId) return null;
 
     const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
-    logger.info(`Manager: executing command in ${label}: "${command}"`);
-    globalManager.write(sessionId, command);
+    logger.info(`Manager: executing command in ${label} (${sessionId.slice(0, 8)}): "${command}"`);
+    const ok = globalManager.write(sessionId, command);
+    if (!ok) {
+      logger.warn(`Manager: write FAILED — session ${sessionId.slice(0, 8)} not found in TerminalManager`);
+      return `Fehler: Session ${label} ist nicht mehr aktiv.`;
+    }
     setTimeout(() => globalManager.write(sessionId!, '\r'), 200);
 
     return `Befehl "${command}" wurde in ${label} ausgeführt.`;

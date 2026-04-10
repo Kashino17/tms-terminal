@@ -593,6 +593,11 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           idleDetector.unwatch(session.id);   // reset stale idle state before re-watching
           watchSession(session.id);
           watchSessionIdle(session.id);
+          // Register session with manager if not already labeled
+          if (!managerService.getSessionList().find(s => s.sessionId === session.id)) {
+            const shellNum = ownedSessions.size;
+            managerService.setSessionLabel(session.id, `Shell ${shellNum}`);
+          }
           globalManager.resize(session.id, cols, rows);
           send(ws, {
             type: 'terminal:reattached',
