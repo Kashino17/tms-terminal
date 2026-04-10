@@ -48,6 +48,12 @@ export interface PersonalityConfig {
   customInstruction: string;
 }
 
+export interface PhaseInfo {
+  phase: string;
+  label: string;
+  duration: number;
+}
+
 export const DEFAULT_PERSONALITY: PersonalityConfig = {
   agentName: 'Manager',
   tone: 'chill',
@@ -78,6 +84,12 @@ interface ManagerState {
   providers: ProviderInfo[];
   /** Currently loading (waiting for AI response). */
   loading: boolean;
+  /** Current thinking phase (null = not thinking). */
+  thinking: { phase: string; detail?: string; elapsed: number } | null;
+  /** Accumulated text during streaming. */
+  streamingText: string;
+  /** Phase info from the last completed response. */
+  lastPhases: PhaseInfo[] | null;
   /** API keys for external providers. */
   apiKeys: ApiKeys;
   /** Agent personality config. */
@@ -94,6 +106,9 @@ interface ManagerState {
   setProviders: (providers: ProviderInfo[], active: string) => void;
   setActiveProvider: (id: string) => void;
   setLoading: (loading: boolean) => void;
+  setThinking: (phase: string, detail?: string, elapsed?: number) => void;
+  appendStreamChunk: (token: string) => void;
+  finishStream: (text: string, actions?: ManagerMessage['actions'], phases?: PhaseInfo[]) => void;
   clearMessages: () => void;
   deleteMessage: (id: string) => void;
   setApiKey: (provider: 'kimi' | 'glm', key: string) => void;
@@ -112,9 +127,12 @@ export const useManagerStore = create<ManagerState>()(
     (set, get) => ({
       enabled: false,
       messages: [],
-      activeProvider: 'claude',
+      activeProvider: 'glm',
       providers: [],
       loading: false,
+      thinking: null,
+      streamingText: '',
+      lastPhases: null,
       apiKeys: { kimi: '', glm: '' },
       personality: { ...DEFAULT_PERSONALITY },
       onboarded: false,
@@ -163,6 +181,31 @@ export const useManagerStore = create<ManagerState>()(
       setActiveProvider: (id) => set({ activeProvider: id }),
 
       setLoading: (loading) => set({ loading }),
+
+      setThinking: (phase, detail, elapsed) => set({
+        thinking: { phase, detail, elapsed: elapsed ?? 0 },
+      }),
+
+      appendStreamChunk: (token) => set((s) => ({
+        streamingText: s.streamingText + token,
+      })),
+
+      finishStream: (text, actions, phases) => set((s) => {
+        const messages = [...s.messages, {
+          id: makeId(),
+          role: 'assistant' as const,
+          text,
+          timestamp: Date.now(),
+          actions,
+        }];
+        return {
+          messages: messages.slice(-MAX_MESSAGES),
+          loading: false,
+          thinking: null,
+          streamingText: '',
+          lastPhases: phases ?? null,
+        };
+      }),
 
       clearMessages: () => set({ messages: [] }),
 
