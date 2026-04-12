@@ -1445,6 +1445,13 @@ BEISPIEL:
 
           phases[phases.length - 1].duration = Date.now() - phaseStart;
 
+          // Auto-correlate successful tool executions with task steps.
+          // Compensates for Gemma 4 saying "Ich hake ab ✅" in text instead
+          // of actually calling update_task(complete_step).
+          if (executedActions.length > 0) {
+            this.autoCompleteStepsFromToolExecution(executedActions);
+          }
+
           // If we delegated a task (create_terminal with non-empty command), stop the loop.
           // The heartbeat will monitor the terminal and wake the manager when done.
           const delegated = executedActions.some(a => {
@@ -1626,6 +1633,11 @@ BEISPIEL:
           .replace(/\[SEND_ENTER:[^\]]+\]/g, '')
           .replace(/\[PERSONALITY_CONFIG\][\s\S]*?\[\/PERSONALITY_CONFIG\]/g, '')
       );
+
+      // Parse AI text for step-completion signals that weren't tool calls.
+      // Gemma 4 often writes "Ich hake den Schritt X ab ✅" instead of calling
+      // update_task(complete_step). Detect this and auto-complete the step.
+      this.autoCompleteStepsFromText(cleanReply);
 
       this.chatHistory.push({ role: 'assistant', content: cleanReply });
       if (this.chatHistory.length > 50) {
@@ -2553,6 +2565,126 @@ BEISPIEL:
     // Chain: process next queued review after a brief pause
     if (this.reviewQueue.length > 0) {
       setTimeout(() => this.processReviewQueue(), 2000);
+    }
+  }
+
+  /** Parse AI text response for step-completion signals.
+   *  Gemma 4 writes "Ich hake Schritt X ab ✅" as text instead of calling
+   *  update_task(complete_step). Detect these patterns and auto-mark steps. */
+  private autoCompleteStepsFromText(text: string): void {
+    if (!text) return;
+    const activeTasks = this.getActiveTasks();
+    if (activeTasks.length === 0) return;
+
+    // Patterns that signal the AI thinks a step is done
+    const completionPatterns = [
+      /hake?\s+(?:den\s+)?(?:schritt|step)\s*["„]?([^""\n]+?)[""\n]?\s*(?:ab|sofort\s+ab|direkt\s+ab)/gi,
+      /(?:schritt|step)\s*["„]([^""]+)[""].*?(?:erledigt|abgehakt|✅|fertig|done|abgeschlossen)/gi,
+      /(?:erledigt|abgehakt|✅|fertig|done).*?(?:schritt|step)\s*["„]([^""]+)[""]/gi,
+    ];
+
+    for (const pattern of completionPatterns) {
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        const mentionedStep = match[1]?.trim().toLowerCase();
+        if (!mentionedStep || mentionedStep.length < 5) continue;
+
+        for (const task of activeTasks) {
+          for (let i = 0; i < task.steps.length; i++) {
+            const step = task.steps[i];
+            if (step.status !== 'running' && step.status !== 'pending') continue;
+
+            const stepLower = step.label.toLowerCase();
+            // Check if the mentioned step is a substantial match
+            const mentionedWords = mentionedStep.split(/\s+/).filter(w => w.length > 2);
+            const matchCount = mentionedWords.filter(w => stepLower.includes(w)).length;
+            const matchRatio = matchCount / Math.max(mentionedWords.length, 1);
+
+            if (matchRatio >= 0.5) {
+              logger.info(`Manager: auto-completing step "${step.label}" from AI text (mentioned "${mentionedStep}", ratio=${matchRatio.toFixed(2)})`);
+              step.status = 'done';
+              // Advance next pending step
+              const nextPending = task.steps.find(s => s.status === 'pending');
+              if (nextPending && !task.steps.some(s => s.status === 'running')) {
+                nextPending.status = 'running';
+              }
+              if (task.steps.every(s => s.status === 'done')) {
+                task.status = 'done';
+              }
+              task.updatedAt = Date.now();
+              this.broadcastTasks();
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /** Auto-correlate successful tool executions with task steps.
+   *  Gemma 4 often DESCRIBES completing a step in text ("Ich hake ab ✅")
+   *  instead of actually calling update_task(complete_step). This compensates
+   *  by matching tool actions to step labels and auto-marking them done. */
+  private autoCompleteStepsFromToolExecution(actions: ManagerAction[]): void {
+    const activeTasks = this.getActiveTasks();
+    if (activeTasks.length === 0) return;
+
+    for (const action of actions) {
+      let matchTerms: string[] = [];
+      let terminalLabel = '';
+
+      if (action.type === 'create_terminal') {
+        try {
+          const info = JSON.parse(action.detail);
+          terminalLabel = (info.label || '').toLowerCase();
+          // "Terminal X erstellen/starten" steps
+          matchTerms = ['terminal', 'erstellen', 'starten', 'öffnen', 'aufmachen', 'claude'];
+        } catch {}
+      } else if (action.type === 'write_to_terminal') {
+        terminalLabel = (this.sessionLabels.get(action.sessionId) || '').toLowerCase();
+        const cmdLower = (action.detail || '').toLowerCase();
+        // Detect what kind of command was sent
+        if (/analys|untersu|prüf|check|audit/i.test(cmdLower)) {
+          matchTerms = ['analyse', 'analysieren', 'untersuchen', 'prüfen', 'auftrag', 'senden'];
+        } else if (/frage|q&a|frag/i.test(cmdLower)) {
+          matchTerms = ['frage', 'q&a', 'runde', 'stellen'];
+        } else {
+          matchTerms = ['senden', 'schreiben', 'ausführen', 'befehl'];
+        }
+      } else {
+        continue; // Only auto-complete for terminal actions
+      }
+
+      if (!terminalLabel && matchTerms.length === 0) continue;
+
+      for (const task of activeTasks) {
+        const runningStep = task.steps.find(s => s.status === 'running');
+        if (!runningStep) continue;
+
+        const stepLower = runningStep.label.toLowerCase();
+
+        // Check if step label matches the tool action
+        const hasTerminalMatch = terminalLabel && stepLower.includes(terminalLabel);
+        const hasActionMatch = matchTerms.filter(t => stepLower.includes(t)).length >= 1;
+
+        if (hasTerminalMatch && hasActionMatch) {
+          logger.info(`Manager: auto-completing step "${runningStep.label}" (matched tool ${action.type} for "${terminalLabel}")`);
+          runningStep.status = 'done';
+          // Advance to next step
+          const nextStep = task.steps.find(s => s.status === 'pending');
+          if (nextStep) {
+            nextStep.status = 'running';
+            logger.info(`Manager: auto-advanced to next step → "${nextStep.label}"`);
+          }
+          if (task.steps.every(s => s.status === 'done')) {
+            task.status = 'done';
+            logger.info(`Manager: task "${task.description}" auto-completed — all steps done`);
+          }
+          task.updatedAt = Date.now();
+          this.broadcastTasks();
+          break; // One action matches one step
+        }
+      }
     }
   }
 
