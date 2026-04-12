@@ -18,6 +18,9 @@ interface SettingsState {
   /** Grace period in seconds after unlock before re-locking. 0 = always lock. Default: 0. */
   lockGraceSeconds: number;
   setLockGrace: (seconds: number) => void;
+  /** Keep WebSocket connection alive when app is backgrounded/closed. Default: true. */
+  persistentConnection: boolean;
+  setPersistentConnection: (enabled: boolean) => void;
 }
 
 export const IDLE_THRESHOLD_OPTIONS = [
@@ -59,6 +62,10 @@ export const useSettingsStore = create<SettingsState>()(
       lockGraceSeconds: 0,
       setLockGrace(seconds: number) {
         set({ lockGraceSeconds: seconds });
+      },
+      persistentConnection: true,
+      setPersistentConnection(enabled: boolean) {
+        set({ persistentConnection: enabled });
       },
     }),
     {

@@ -1,8 +1,11 @@
 import React from 'react';
-import { View, TouchableOpacity } from 'react-native';
+import { TouchableOpacity } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Feather } from '@expo/vector-icons';
+import { HomeScreen } from '../screens/HomeScreen';
 import { ServerListScreen } from '../screens/ServerListScreen';
+import { PrayerTimesScreen } from '../screens/PrayerTimesScreen';
+import { HydraScreen } from '../screens/HydraScreen';
 import { AddServerScreen } from '../screens/AddServerScreen';
 import { TerminalScreen } from '../screens/TerminalScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
@@ -28,106 +31,170 @@ const screenOptions = {
 export function AppNavigator() {
   return (
     <Stack.Navigator screenOptions={screenOptions}>
+      {/* ── Home (new start screen) ──────────────────────────── */}
+      <Stack.Screen
+        name="Home"
+        component={HomeScreen}
+        options={{ headerShown: false }}
+      />
+
+      {/* ── Connections ──────────────────────────────────────── */}
       <Stack.Screen
         name="ServerList"
         component={ServerListScreen}
-        options={({ navigation }) => ({
-          title: 'TMS Terminal',
-          headerRight: () => (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-              <TouchableOpacity
-                onPress={() => navigation.navigate('Settings')}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityLabel="Einstellungen"
-                accessibilityRole="button"
-              >
-                <Feather name="settings" size={20} color={colors.textMuted} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => navigation.navigate('Dashboard')}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityLabel="Server Dashboard"
-                accessibilityRole="button"
-              >
-                <Feather name="grid" size={20} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-          ),
-        })}
+        options={{
+          title: 'Connections',
+          animation: 'fade_from_bottom',
+          animationDuration: 250,
+          headerStyle: { backgroundColor: colors.bg },
+          headerTintColor: colors.primary,
+        }}
       />
+
+      {/* ── Hydra (Hydration Tracker) ────────────────────────── */}
+      <Stack.Screen
+        name="Hydra"
+        component={HydraScreen}
+        options={{
+          title: 'Hydra',
+          animation: 'fade_from_bottom',
+          animationDuration: 250,
+          headerStyle: { backgroundColor: colors.bg },
+          headerTintColor: '#3B82F6',
+        }}
+      />
+
+      {/* ── Prayer Times ─────────────────────────────────────── */}
+      <Stack.Screen
+        name="PrayerTimes"
+        component={PrayerTimesScreen}
+        options={{
+          title: 'Gebetszeiten',
+          animation: 'fade_from_bottom',
+          animationDuration: 250,
+          headerStyle: { backgroundColor: colors.bg },
+          headerTintColor: '#10B981',
+        }}
+      />
+
+      {/* ── Add Server — slide up from bottom (modal feel) ─────── */}
       <Stack.Screen
         name="AddServer"
         component={AddServerScreen}
-        options={{ title: 'Add Server', presentation: 'modal' }}
+        options={{
+          title: 'Add Server',
+          presentation: 'formSheet',
+          animation: 'slide_from_bottom',
+          animationDuration: 300,
+          headerStyle: { backgroundColor: colors.surface },
+          contentStyle: { backgroundColor: colors.surface },
+        }}
       />
+
+      {/* ── Terminal — fade when direct, instant when openManager pass-through ── */}
       <Stack.Screen
         name="Terminal"
         component={TerminalScreen}
-        options={{
-          title: 'Terminal',
+        options={({ route }) => ({
           headerShown: false,
-        }}
+          animation: (route.params as any)?.openManager ? 'none' : 'fade_from_bottom',
+          animationDuration: (route.params as any)?.openManager ? 0 : 250,
+        })}
       />
+
+      {/* ── Drawing — slide from right ────────────────────────── */}
       <Stack.Screen
         name="Drawing"
         component={DrawingScreen}
-        options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 280 }}
-      />
-      <Stack.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{ title: 'Settings' }}
-      />
-      <Stack.Screen
-        name="Dashboard"
-        component={DashboardScreen}
-        options={{ title: 'Dashboard' }}
-      />
-      <Stack.Screen
-        name="PinSetup"
-        component={PinSetupScreen}
-        options={({ route }) => ({
-          title:
-            route.params?.mode === 'disable' ? 'Disable App Lock'
-            : route.params?.mode === 'change' ? 'Change PIN'
-            : 'Set App PIN',
-          presentation: 'modal' as const,
-        })}
-      />
-      <Stack.Screen
-        name="Browser"
-        component={BrowserScreen}
         options={{
           headerShown: false,
           animation: 'slide_from_right',
           animationDuration: 250,
         }}
       />
+
+      {/* ── Settings — iOS-style slide from right ─────────────── */}
+      <Stack.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{
+          title: 'Einstellungen',
+          animation: 'slide_from_right',
+          animationDuration: 280,
+        }}
+      />
+
+      {/* ── Dashboard — fade in (overview feel) ───────────────── */}
+      <Stack.Screen
+        name="Dashboard"
+        component={DashboardScreen}
+        options={{
+          title: 'Dashboard',
+          animation: 'fade',
+          animationDuration: 200,
+        }}
+      />
+
+      {/* ── PIN Setup — modal slide up ────────────────────────── */}
+      <Stack.Screen
+        name="PinSetup"
+        component={PinSetupScreen}
+        options={({ route }) => ({
+          title:
+            route.params?.mode === 'disable' ? 'App Lock deaktivieren'
+            : route.params?.mode === 'change' ? 'PIN ändern'
+            : 'App PIN setzen',
+          presentation: 'formSheet',
+          animation: 'slide_from_bottom',
+          animationDuration: 300,
+        })}
+      />
+
+      {/* ── Browser — slide from right ────────────────────────── */}
+      <Stack.Screen
+        name="Browser"
+        component={BrowserScreen}
+        options={{
+          headerShown: false,
+          animation: 'slide_from_right',
+          animationDuration: 220,
+        }}
+      />
+
+      {/* ── Processes — slide from right ──────────────────────── */}
       <Stack.Screen
         name="Processes"
         component={ProcessMonitorScreen}
         options={{
-          title: 'Processes',
+          title: 'Prozesse',
           animation: 'slide_from_right',
-          animationDuration: 280,
+          animationDuration: 250,
           headerStyle: { backgroundColor: colors.bg },
           headerTintColor: colors.text,
           headerTitleStyle: { fontWeight: '700' as const, fontSize: 16 },
         }}
       />
+
+      {/* ── Manager Chat — slide up from bottom (chat feel) ──── */}
       <Stack.Screen
         name="ManagerChat"
         component={ManagerChatScreen}
         options={{
           headerShown: false,
-          animation: 'slide_from_right',
-          animationDuration: 280,
+          animation: 'slide_from_bottom',
+          animationDuration: 300,
         }}
       />
+
+      {/* ── Manager Memory — slide from right ─────────────────── */}
       <Stack.Screen
         name="ManagerMemory"
         component={ManagerMemoryScreen}
-        options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 280 }}
+        options={{
+          headerShown: false,
+          animation: 'slide_from_right',
+          animationDuration: 250,
+        }}
       />
     </Stack.Navigator>
   );

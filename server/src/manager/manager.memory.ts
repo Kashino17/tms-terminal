@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { logger } from '../utils/logger';
+import { buildSkillsSummary } from './skills/skill-registry';
 
 export const CONFIG_DIR = path.join(os.homedir(), '.tms-terminal');
 const MEMORY_FILE = path.join(CONFIG_DIR, 'manager-memory.json');
@@ -12,6 +13,10 @@ const MAX_LEARNED_FACTS = 50;
 const MAX_TRAITS = 30;
 const MAX_SHARED_HISTORY = 20;
 const MAX_PROJECTS = 20;
+
+let _distilling = false;
+export function isDistilling(): boolean { return _distilling; }
+export function setDistilling(v: boolean): void { _distilling = v; }
 
 export interface MemoryUser {
   name: string;
@@ -128,7 +133,10 @@ export function saveMemory(memory: ManagerMemory): void {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   }
-  fs.writeFileSync(MEMORY_FILE, JSON.stringify(memory, null, 2), { mode: 0o600 });
+  enforceLimits(memory);
+  const tmpFile = MEMORY_FILE + '.tmp';
+  fs.writeFileSync(tmpFile, JSON.stringify(memory, null, 2), { mode: 0o600 });
+  fs.renameSync(tmpFile, MEMORY_FILE);
 }
 
 // Re-export limit constants for consumers that need to enforce caps
@@ -324,6 +332,12 @@ export function buildMemoryContext(memory: ManagerMemory): string {
       return line;
     });
     sections.push(projectLines.join('\n'));
+  }
+
+  // --- Skills ---
+  const skillsSummary = buildSkillsSummary();
+  if (skillsSummary) {
+    sections.push(skillsSummary);
   }
 
   // --- Journal (letzte 20) ---

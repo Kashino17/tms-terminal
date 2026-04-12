@@ -1,5 +1,5 @@
-import React, { useEffect, useCallback, useState } from 'react';
-import { View, FlatList, Text, TouchableOpacity, Alert, StyleSheet } from 'react-native';
+import React, { useEffect, useCallback, useState, useRef } from 'react';
+import { View, FlatList, Text, TouchableOpacity, Alert, StyleSheet, Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useServerStore } from '../store/serverStore';
@@ -21,6 +21,7 @@ export function ServerListScreen({ navigation }: Props) {
   const { servers, statuses, loading, loadServers, deleteServer, updateServer, setStatus } = useServerStore();
   const responsive = useResponsive();
   const { rf, rs, ri } = responsive;
+  const fabScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     loadServers();
@@ -100,7 +101,14 @@ export function ServerListScreen({ navigation }: Props) {
       onPress={() => handlePress(item)}
       onLongPress={() => handleLongPress(item)}
       onAvatarPress={() => handleAvatarPress(item)}
-      onManagerPress={() => handlePress(item)}
+      onManagerPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        navigation.navigate('Terminal', {
+          serverId: item.id, serverName: item.name,
+          serverHost: item.host, serverPort: item.port,
+          token: item.token ?? '', openManager: true,
+        });
+      }}
     />
   ), [statuses, handlePress, handleLongPress, handleAvatarPress]);
 
@@ -113,9 +121,23 @@ export function ServerListScreen({ navigation }: Props) {
 
   const fabSize = ri(56);
 
+  const onlineCount = servers.filter(s => statuses[s.id]?.connected).length;
+
   return (
     <View style={styles.container}>
       <UpdateBanner />
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Server</Text>
+        <TouchableOpacity
+          style={styles.settingsBtn}
+          onPress={() => navigation.navigate('Settings')}
+          hitSlop={8}
+        >
+          <Feather name="settings" size={ri(18)} color={colors.textDim} />
+        </TouchableOpacity>
+      </View>
+
       <FlatList
         data={servers}
         key={String(responsive.listColumns)}
@@ -123,13 +145,13 @@ export function ServerListScreen({ navigation }: Props) {
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
         getItemLayout={responsive.listColumns === 1 ? getItemLayout : undefined}
-        contentContainerStyle={{ paddingVertical: rs(12), paddingHorizontal: rs(16) }}
+        contentContainerStyle={{ paddingVertical: rs(6), paddingHorizontal: rs(16) }}
         columnWrapperStyle={responsive.listColumns === 2 ? { gap: rs(12) } : undefined}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Feather name="server" size={ri(48)} color={colors.border} />
-            <Text style={[styles.emptyText, { fontSize: rf(18) }]}>No servers yet</Text>
-            <Text style={[styles.emptySubtext, { fontSize: rf(14) }]}>Tap + to add your first PC</Text>
+            <Text style={[styles.emptyText, { fontSize: rf(18) }]}>Noch keine Server</Text>
+            <Text style={[styles.emptySubtext, { fontSize: rf(14) }]}>Tippe +, um deinen ersten PC hinzuzufügen</Text>
           </View>
         }
       />
@@ -140,20 +162,29 @@ export function ServerListScreen({ navigation }: Props) {
         options={actionSheet?.options ?? []}
         onClose={() => setActionSheet(null)}
       />
-      <TouchableOpacity
-        style={[styles.fab, {
-          right: rs(20),
-          bottom: rs(30),
-          width: fabSize,
-          height: fabSize,
-          borderRadius: fabSize / 2,
-        }]}
-        onPress={() => navigation.navigate('AddServer')}
-        accessibilityLabel="Add server"
-        accessibilityRole="button"
-      >
-        <Feather name="plus" size={ri(24)} color={colors.text} />
-      </TouchableOpacity>
+      <Animated.View style={[styles.fab, {
+        right: rs(20),
+        bottom: rs(30),
+        width: fabSize,
+        height: fabSize,
+        borderRadius: fabSize / 2,
+        transform: [{ scale: fabScale }],
+      }]}>
+        <TouchableOpacity
+          style={{ width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }}
+          onPressIn={() => Animated.spring(fabScale, { toValue: 0.85, tension: 200, friction: 10, useNativeDriver: true }).start()}
+          onPressOut={() => Animated.spring(fabScale, { toValue: 1, tension: 150, friction: 6, useNativeDriver: true }).start()}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            navigation.navigate('AddServer');
+          }}
+          activeOpacity={1}
+          accessibilityLabel="Server hinzufügen"
+          accessibilityRole="button"
+        >
+          <Feather name="plus" size={ri(24)} color={colors.text} />
+        </TouchableOpacity>
+      </Animated.View>
     </View>
   );
 }
@@ -162,6 +193,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  settingsBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   empty: {
     flex: 1,
@@ -172,6 +223,7 @@ const styles = StyleSheet.create({
   emptyText: {
     color: colors.textMuted,
     marginBottom: 8,
+    marginTop: 12,
   },
   emptySubtext: {
     color: colors.textDim,

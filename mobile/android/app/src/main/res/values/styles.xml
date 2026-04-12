@@ -6,6 +6,9 @@
     <item name="colorPrimary">@color/colorPrimary</item>
     <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
     <item name="android:hapticFeedbackEnabled">false</item>
+    <item name="android:windowBackground">@color/appBg</item>
+    <item name="android:navigationBarColor">@color/appBg</item>
+    <item name="android:statusBarColor">@color/appBg</item>
   </style>
   <style name="ResetEditText" parent="@android:style/Widget.EditText">
     <item name="android:padding">0dp</item>

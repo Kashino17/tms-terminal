@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Alert, Switch, Modal, Pressable, ActivityIndicator, ScrollView, TextInput,
+  View, Text, StyleSheet, TouchableOpacity, Alert, Switch, Modal, Pressable, ActivityIndicator, ScrollView, TextInput, NativeModules,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
@@ -23,12 +23,13 @@ type Props = {
 export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
-  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, lockGraceSeconds, setLockGrace } = useSettingsStore();
+  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection } = useSettingsStore();
   const { tokens, notificationsEnabled, pollingIntervalMs, setNotificationsEnabled, setPollingIntervalMs, clearPlatform } = useCloudAuthStore();
   const { clearCache } = useCloudProjectsStore();
   const { apiKeys, setApiKey } = useManagerStore();
   const [kimiKeyInput, setKimiKeyInput] = useState(apiKeys.kimi);
   const [glmKeyInput, setGlmKeyInput] = useState(apiKeys.glm);
+  const [openaiKeyInput, setOpenaiKeyInput] = useState(apiKeys.openai);
   const [idlePickerVisible, setIdlePickerVisible] = useState(false);
   const [themePickerVisible, setThemePickerVisible] = useState(false);
   const [pollingPickerVisible, setPollingPickerVisible] = useState(false);
@@ -303,6 +304,34 @@ export function SettingsScreen({ navigation }: Props) {
                 thumbColor={externalKeyboardMode ? colors.primary : colors.textDim}
               />
             </TouchableOpacity>
+            <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
+            <TouchableOpacity
+              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+              onPress={() => setPersistentConnection(!persistentConnection)}
+              activeOpacity={0.7}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: persistentConnection }}
+            >
+              <View style={styles.rowLeft}>
+                <Feather name="wifi" size={ri(18)} color={persistentConnection ? '#10B981' : colors.textMuted} style={{ marginRight: rs(12) }} />
+                <View>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Verbindung im Hintergrund</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Server-Verbindung bleibt aktiv wenn App geschlossen</Text>
+                </View>
+              </View>
+              <Switch
+                value={persistentConnection}
+                onValueChange={(val) => {
+                  setPersistentConnection(val);
+                  try {
+                    if (val) NativeModules.ConnectionService?.start();
+                    else NativeModules.ConnectionService?.stop();
+                  } catch {}
+                }}
+                trackColor={{ false: colors.border, true: '#10B981' + '88' }}
+                thumbColor={persistentConnection ? '#10B981' : colors.textDim}
+              />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -547,6 +576,46 @@ export function SettingsScreen({ navigation }: Props) {
                     Alert.alert('Gespeichert', 'GLM API Key wird beim nächsten Verbinden übertragen.');
                   }}
                   disabled={glmKeyInput === apiKeys.glm}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{ color: colors.primary, fontSize: rf(13), fontWeight: '600' }}>Speichern</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
+
+            {/* OpenAI API Key */}
+            <View style={{ paddingHorizontal: rs(16), paddingVertical: rs(14) }}>
+              <View style={styles.rowLeft}>
+                <Feather name="image" size={ri(18)} color="#F59E0B" style={{ marginRight: rs(12) }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>OpenAI</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Bildgenerierung (gpt-image-1)</Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', marginTop: rs(8), gap: rs(8) }}>
+                <TextInput
+                  style={[styles.apiKeyInput, { fontSize: rf(13), flex: 1, paddingHorizontal: rs(12), paddingVertical: rs(8) }]}
+                  value={openaiKeyInput}
+                  onChangeText={setOpenaiKeyInput}
+                  placeholder="sk-..."
+                  placeholderTextColor={colors.textDim}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TouchableOpacity
+                  style={[styles.apiKeySaveBtn, {
+                    paddingHorizontal: rs(14),
+                    paddingVertical: rs(8),
+                    opacity: openaiKeyInput !== apiKeys.openai ? 1 : 0.4,
+                  }]}
+                  onPress={() => {
+                    setApiKey('openai', openaiKeyInput);
+                    Alert.alert('Gespeichert', 'OpenAI API Key wird beim nächsten Verbinden übertragen.');
+                  }}
+                  disabled={openaiKeyInput === apiKeys.openai}
                   activeOpacity={0.7}
                 >
                   <Text style={{ color: colors.primary, fontSize: rf(13), fontWeight: '600' }}>Speichern</Text>

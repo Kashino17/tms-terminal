@@ -1,4 +1,7 @@
 import * as http from 'http';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { config, loadServerConfig, ensureConfigDir } from './config';
 import { handleAuthRequest } from './auth/auth.controller';
 import { handleFileList, handleFileRead, handleFileDownload, handleMkdir, handleMove, handleTrash } from './files/file.handler';
@@ -65,6 +68,60 @@ function main(): void {
       handleUploadRequest(req, res);
     } else if (req.url === '/upload/drawing') {
       handleDrawingUpload(req, res);
+    } else if (req.url?.startsWith('/generated-images/')) {
+      // Serve generated images (JWT-protected)
+      const authHeader = req.headers['authorization'] ?? '';
+      let token = authHeader.replace(/^Bearer\s+/i, '');
+      if (!token) {
+        try {
+          const u = new URL(req.url, 'http://localhost');
+          token = u.searchParams.get('token') ?? '';
+        } catch {}
+      }
+      if (!token || !validateToken(token)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+      const filename = decodeURIComponent(req.url.replace('/generated-images/', '').split('?')[0]);
+      // Prevent path traversal
+      if (filename.includes('..') || filename.includes('/')) {
+        res.writeHead(400); res.end('Bad request'); return;
+      }
+      const filePath = path.join(os.homedir(), 'Desktop', 'Image Generations', filename);
+      if (!fs.existsSync(filePath)) {
+        res.writeHead(404); res.end('Not found'); return;
+      }
+      const ext = path.extname(filename).toLowerCase();
+      const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=86400' });
+      fs.createReadStream(filePath).pipe(res);
+    } else if (req.url?.startsWith('/generated-presentations/')) {
+      // Serve generated presentations (JWT-protected)
+      const authHeader = req.headers['authorization'] ?? '';
+      let token = authHeader.replace(/^Bearer\s+/i, '');
+      if (!token) {
+        try {
+          const u = new URL(req.url, 'http://localhost');
+          token = u.searchParams.get('token') ?? '';
+        } catch {}
+      }
+      if (!token || !validateToken(token)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+      const filename = decodeURIComponent(req.url.replace('/generated-presentations/', '').split('?')[0]);
+      // Prevent path traversal
+      if (filename.includes('..') || filename.includes('/')) {
+        res.writeHead(400); res.end('Bad request'); return;
+      }
+      const filePath = path.join(__dirname, '..', 'generated-presentations', filename);
+      if (!fs.existsSync(filePath)) {
+        res.writeHead(404); res.end('Not found'); return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
+      fs.createReadStream(filePath).pipe(res);
     } else if (req.url?.startsWith('/files/')) {
       // JWT-protected file browser endpoints
       // Accept token from Authorization header OR ?token= query param (for Image/download URLs)

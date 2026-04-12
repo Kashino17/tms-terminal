@@ -94,9 +94,9 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   const addSQLEntry = useSQLStore((state) => state.addEntry);
   const terminalTheme = useSettingsStore((state) => state.terminalTheme);
   const externalKeyboardMode = useSettingsStore((state) => state.externalKeyboardMode);
-  // Starts at TOOLBAR_HEIGHT, grows by keyboard height when keyboard opens.
-  // Drives the container's bottom edge so xterm.js always stays above the keyboard.
-  const bottomAnim  = useRef(new Animated.Value(TOOLBAR_HEIGHT)).current;
+  // Drives the container's bottom edge so xterm.js stays above the keyboard.
+  // Default is 0 (fullscreen). Grows by keyboard height when keyboard opens.
+  const bottomAnim  = useRef(new Animated.Value(0)).current;
   // Track last detected AI tool to avoid repeated callbacks
   const lastAiToolRef = useRef<AiToolType>(null);
   const onAiToolDetectedRef = useRef(onAiToolDetected);
@@ -164,14 +164,14 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
       // iOS: manually offset bottom for keyboard height
       const showSub = Keyboard.addListener('keyboardWillShow', (e) => {
         Animated.timing(bottomAnim, {
-          toValue: TOOLBAR_HEIGHT + e.endCoordinates.height,
+          toValue: e.endCoordinates.height,
           duration: e.duration > 0 ? e.duration : 220,
           useNativeDriver: false,
         }).start();
       });
       const hideSub = Keyboard.addListener('keyboardWillHide', (e) => {
         Animated.timing(bottomAnim, {
-          toValue: TOOLBAR_HEIGHT,
+          toValue: 0,
           duration: e.duration > 0 ? e.duration : 220,
           useNativeDriver: false,
         }).start();
@@ -179,8 +179,9 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
       return () => { showSub.remove(); hideSub.remove(); };
     }
 
-    // Android: adjustResize handles layout, but xterm.js needs an explicit
-    // scroll-to-bottom after the resize so the cursor stays visible.
+    // Android: adjustResize handles layout, but we still need to offset
+    // bottomAnim to make room for the floating orb dock above the keyboard.
+    const DOCK_HEIGHT = 60;
     const showSub = Keyboard.addListener('keyboardDidShow', () => {
       // Force-dismiss keyboard when external keyboard mode is active
       if (useSettingsStore.getState().externalKeyboardMode) {
@@ -192,12 +193,15 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         Keyboard.dismiss();
         return;
       }
+      // Add space for the orb dock strip
+      Animated.timing(bottomAnim, {
+        toValue: DOCK_HEIGHT,
+        duration: 200,
+        useNativeDriver: false,
+      }).start();
       // Short delay: let the WebView resize + xterm.js reflow finish first
       setTimeout(() => {
         if (webViewRef.current) {
-          // Send 'focus' instead of 'scroll_to_bottom' so the terminal
-          // respects userScrolledUp — if the user is reading scrollback,
-          // opening the keyboard shouldn't yank the viewport to the bottom.
           const msg = JSON.stringify({ type: 'focus' });
           webViewRef.current.injectJavaScript(
             `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
@@ -205,7 +209,14 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         }
       }, 150);
     });
-    return () => { showSub.remove(); };
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      Animated.timing(bottomAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: false,
+      }).start();
+    });
+    return () => { showSub.remove(); hideSub.remove(); };
   }, []);
 
   // Apply theme changes live (user changes theme in settings while terminal is open)
@@ -465,8 +476,8 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     <Animated.View
       style={
         visible
-          ? [styles.visibleContainer, { bottom: bottomAnim, right: railWidth ?? TOOL_RAIL_WIDTH }]
-          : [styles.hiddenContainer, railWidth ? { right: railWidth } : undefined]
+          ? [styles.visibleContainer, { bottom: bottomAnim, right: railWidth ?? 0 }]
+          : [styles.hiddenContainer, railWidth ? { right: railWidth } : { right: 0 }]
       }
       pointerEvents={visible ? 'auto' : 'none'}
     >
@@ -603,7 +614,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     left: 0,
-    right: TOOL_RAIL_WIDTH,
+    right: 0,
     // bottom is set dynamically via bottomAnim — no static value here
     zIndex: 1,
   },
@@ -611,8 +622,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     left: 0,
-    right: TOOL_RAIL_WIDTH,
-    bottom: TOOLBAR_HEIGHT,
+    right: 0,
+    bottom: 0,
     zIndex: 0,
     opacity: 0,
   },

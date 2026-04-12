@@ -1,12 +1,10 @@
-import React, { useMemo } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useRef, useCallback } from 'react';
+import { View, Text, Image, Pressable, StyleSheet, Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { ServerProfile, ServerStatus } from '../types/server.types';
-import { ConnectionStatus } from './ConnectionStatus';
 import { colors, fonts } from '../theme';
-import { useResponsive } from '../hooks/useResponsive';
 
-const AVATAR_SIZE = 44;
 const AVATAR_COLORS = [
   '#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B',
   '#10B981', '#06B6D4', '#EF4444', '#F97316',
@@ -34,149 +32,198 @@ interface Props {
 }
 
 export function ServerCard({ server, status, onPress, onLongPress, onAvatarPress, onManagerPress }: Props) {
-  const responsive = useResponsive();
-  const { rf, rs, ri } = responsive;
-  const avatarSz = responsive.avatarSize;
+  const connected = status?.connected ?? false;
+  const latency = status?.latency;
+  const color = avatarColor(server.name);
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  const dynamicStyles = useMemo(() => ({
-    card: { padding: rs(18), marginVertical: rs(6) },
-    row: { gap: rs(12) },
-    avatarWrap: { width: avatarSz, height: avatarSz },
-    avatar: { width: avatarSz, height: avatarSz, borderRadius: avatarSz / 2 },
-    avatarText: { fontSize: rf(16) },
-    cameraBadge: { width: rs(18), height: rs(18), borderRadius: rs(9) },
-    name: { fontSize: rf(18) },
-    host: { fontSize: rf(14) },
-    headerMargin: { marginBottom: rs(4) },
-  }), [rf, rs, avatarSz]);
+  const pressIn = useCallback(() => {
+    Animated.spring(scaleAnim, { toValue: 0.97, tension: 200, friction: 10, useNativeDriver: true }).start();
+  }, []);
+
+  const pressOut = useCallback(() => {
+    Animated.spring(scaleAnim, { toValue: 1, tension: 150, friction: 8, useNativeDriver: true }).start();
+  }, []);
 
   return (
-    <TouchableOpacity
-      style={[styles.card, dynamicStyles.card, { borderLeftColor: status?.connected ? colors.accent : colors.border }]}
-      onPress={onPress}
-      onLongPress={onLongPress}
-      activeOpacity={0.7}
-      accessibilityLabel={`${server.name}, ${status?.connected ? 'Connected' : 'Disconnected'}, ${server.host}:${server.port}`}
-      accessibilityRole="button"
-      accessibilityHint="Double tap to connect"
-    >
-      <View style={[styles.row, dynamicStyles.row]}>
-        <TouchableOpacity
-          onPress={onAvatarPress}
-          activeOpacity={0.75}
-          disabled={!onAvatarPress}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          accessibilityLabel={`Change profile picture for ${server.name}`}
-          accessibilityRole="button"
-        >
-          <View style={dynamicStyles.avatarWrap}>
-            {server.avatar ? (
-              <Image source={{ uri: server.avatar }} style={dynamicStyles.avatar} />
-            ) : (
-              <View style={[dynamicStyles.avatar, { backgroundColor: avatarColor(server.name), alignItems: 'center', justifyContent: 'center' }]}>
-                <Text style={[styles.avatarText, dynamicStyles.avatarText]}>{initials(server.name)}</Text>
-              </View>
-            )}
+    <Animated.View style={[s.card, { transform: [{ scale: scaleAnim }] }]}>
+      {/* ── Main area — navigates to terminal ──────────────────── */}
+      <Pressable
+        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress(); }}
+        onPressIn={pressIn}
+        onPressOut={pressOut}
+        onLongPress={onLongPress}
+        style={s.mainRow}
+      >
+        {/* Avatar */}
+        {server.avatar ? (
+          <Image source={{ uri: server.avatar }} style={[s.avatar, { backgroundColor: color }]} />
+        ) : (
+          <View style={[s.avatar, { backgroundColor: color }]}>
+            <Text style={s.avatarText}>{initials(server.name)}</Text>
           </View>
-        </TouchableOpacity>
+        )}
 
-        <View style={styles.info}>
-          <View style={[styles.header, dynamicStyles.headerMargin]}>
-            <Text style={[styles.name, dynamicStyles.name]}>{server.name}</Text>
-            <ConnectionStatus state={status?.connected ? 'connected' : 'disconnected'} />
+        {/* Info */}
+        <View style={s.info}>
+          <View style={s.nameRow}>
+            <Text style={s.name} numberOfLines={1}>{server.name}</Text>
+            <View style={[s.statusDot, connected && s.statusDotOn]} />
           </View>
-          <Text style={[styles.host, dynamicStyles.host]}>{server.host}:{server.port}</Text>
+          <Text style={s.host} numberOfLines={1}>{server.host}:{server.port}</Text>
         </View>
 
-        <Feather name="chevron-right" size={ri(16)} color={colors.textDim} />
-      </View>
-      {onManagerPress && (
-        <TouchableOpacity
-          style={[styles.managerBtn, { width: rs(28), height: rs(28), borderRadius: rs(14) }]}
-          onPress={onManagerPress}
-          hitSlop={6}
-          accessibilityLabel="Manager Agent"
+        {/* Latency */}
+        <View style={s.right}>
+          {connected && latency != null ? (
+            <Text style={[s.latency, { color: latency < 50 ? '#22C55E' : latency < 150 ? '#F59E0B' : '#EF4444' }]}>
+              {latency}ms
+            </Text>
+          ) : (
+            <Text style={s.offlineText}>{connected ? '—' : 'Offline'}</Text>
+          )}
+        </View>
+      </Pressable>
+
+      {/* ── Agent strip — completely separate touch target ──────── */}
+      {connected && (
+        <Pressable
+          onPress={(e) => {
+            // This is the key: the agent strip handles its own press
+            // and does NOT bubble up to the main card area
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            onManagerPress?.();
+          }}
+          style={({ pressed }) => [s.agentStrip, pressed && s.agentStripPressed]}
         >
-          <Feather name="cpu" size={ri(13)} color={colors.textMuted} />
-        </TouchableOpacity>
+          <View style={s.agentDot} />
+          <Text style={s.agentName}>Rem</Text>
+          <Text style={s.agentMsg} numberOfLines={1}>Agent bereit</Text>
+          <View style={s.agentChatBtn}>
+            <Feather name="message-circle" size={12} color="#A78BFA" />
+            <Text style={s.agentChatText}>Chat</Text>
+          </View>
+        </Pressable>
       )}
-    </TouchableOpacity>
+    </Animated.View>
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   card: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 18,
-    marginVertical: 6,
+    backgroundColor: '#1B2336',
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderLeftWidth: 4,
+    borderColor: '#243044',
+    marginVertical: 6,
+    overflow: 'hidden',
   },
-  row: {
+  mainRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 14,
     gap: 12,
   },
-  avatarWrap: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-  },
   avatar: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: AVATAR_SIZE / 2,
+    width: 46,
+    height: 46,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
   avatarText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '700',
     letterSpacing: 0.5,
   },
-  cameraBadge: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: colors.surfaceAlt,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   info: {
     flex: 1,
+    minWidth: 0,
   },
-  header: {
+  nameRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    gap: 6,
   },
   name: {
     color: colors.text,
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '600',
+    flexShrink: 1,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#475569',
+  },
+  statusDotOn: {
+    backgroundColor: '#22C55E',
   },
   host: {
-    color: colors.textMuted,
-    fontSize: 14,
+    color: '#64748B',
+    fontSize: 10,
     fontFamily: fonts.mono,
+    marginTop: 2,
   },
-  managerBtn: {
-    position: 'absolute',
-    bottom: 12,
-    right: 12,
-    backgroundColor: '#243044',
+  right: {
+    alignItems: 'flex-end',
+    flexShrink: 0,
+  },
+  latency: {
+    fontSize: 11,
+    fontFamily: fonts.mono,
+    fontWeight: '600',
+  },
+  offlineText: {
+    fontSize: 10,
+    color: '#475569',
+  },
+  // Agent strip — fully independent touch area
+  agentStrip: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(167,139,250,0.1)',
+    backgroundColor: 'rgba(167,139,250,0.04)',
+  },
+  agentStripPressed: {
+    backgroundColor: 'rgba(167,139,250,0.1)',
+  },
+  agentDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#A78BFA',
+  },
+  agentName: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#A78BFA',
+  },
+  agentMsg: {
+    flex: 1,
+    fontSize: 10,
+    color: '#64748B',
+  },
+  agentChatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: 'rgba(167,139,250,0.1)',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(167,139,250,0.15)',
+  },
+  agentChatText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#A78BFA',
   },
 });

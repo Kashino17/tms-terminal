@@ -55,6 +55,63 @@ const pendingInputLen = new Map<string, number>();
 // ── Manager Agent ────────────────────────────────────────────────────
 const managerService = new ManagerService(loadManagerConfig());
 
+// Mutable reference to the current WebSocket connection.
+// Manager callbacks use this instead of the closure-captured `ws` so that
+// responses are always sent to the CURRENT client, not a stale dead socket.
+let currentWs: WebSocket | null = null;
+// Buffer for manager messages sent while the client is disconnected.
+// Flushed on reconnect.
+const pendingManagerMessages: Array<Record<string, unknown>> = [];
+
+const MAX_PENDING_MANAGER_MESSAGES = 100;
+
+function sendManager(msg: Record<string, unknown>): void {
+  if (currentWs && currentWs.readyState === currentWs.OPEN) {
+    currentWs.send(JSON.stringify(msg));
+  } else {
+    // Client disconnected — buffer the message for delivery on reconnect
+    pendingManagerMessages.push(msg);
+    // Cap buffer to prevent unbounded growth during long disconnects
+    if (pendingManagerMessages.length > MAX_PENDING_MANAGER_MESSAGES) {
+      const dropped = pendingManagerMessages.length - MAX_PENDING_MANAGER_MESSAGES;
+      pendingManagerMessages.splice(0, dropped);
+      logger.info(`Manager: dropped ${dropped} old buffered messages (cap=${MAX_PENDING_MANAGER_MESSAGES})`);
+    }
+    logger.info(`Manager: buffered message (type=${msg.type}, queue=${pendingManagerMessages.length})`);
+  }
+}
+
+function flushPendingManagerMessages(ws: WebSocket): void {
+  if (pendingManagerMessages.length === 0) return;
+  logger.info(`Manager: flushing ${pendingManagerMessages.length} buffered messages`);
+  while (pendingManagerMessages.length > 0) {
+    const msg = pendingManagerMessages.shift()!;
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify(msg));
+    }
+  }
+}
+
+function setupManagerCallbacks(ws: WebSocket): void {
+  managerService.setCallbacks(
+    (summary) => sendManager({ type: 'manager:summary', payload: summary }),
+    (response) => sendManager({ type: 'manager:response', payload: response }),
+    (error) => sendManager({ type: 'manager:error', payload: { message: error } }),
+    (config) => sendManager({ type: 'manager:personality_configured', payload: config }),
+    (phase, detail, elapsed) => sendManager({ type: 'manager:thinking', payload: { phase, detail, elapsed } }),
+    (token, tokenStats) => sendManager({ type: 'manager:stream_chunk', payload: { token, ...tokenStats } }),
+    (text, actions, phases, images, presentations) => sendManager({ type: 'manager:stream_end', payload: { text, actions, phases, images, presentations } }),
+    createTerminalForManager,
+    closeTerminalForManager,
+    (tasks) => sendManager({ type: 'manager:tasks', payload: { tasks } }),
+  );
+}
+
+// These need to be module-level so setupManagerCallbacks can reference them
+// They're assigned inside handleConnection when ws is available
+let createTerminalForManager: (label?: string) => string | null = () => null;
+let closeTerminalForManager: (sessionId: string) => boolean = () => false;
+
 // ── Autopilot state ──────────────────────────────────────────────────
 const aiSessions = new Set<string>(); // sessions where AI tool was detected
 const autopilotTimers = new Map<string, NodeJS.Timeout>();
@@ -97,6 +154,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   let deviceToken: string | null = persistedTokens.size > 0 ? [...persistedTokens][0] : null;
 
   logger.success(`Client connected: ${ip}`);
+
+  // Update the mutable WS reference so manager callbacks always use the current connection
+  currentWs = ws;
+
+  // Flush any manager messages that were buffered while disconnected
+  flushPendingManagerMessages(ws);
 
   /** Register a session with the prompt detector for auto-approve (no FCM — idle detector handles that). */
   const watchSession = (sessionId: string): void => {
@@ -147,6 +210,73 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       }
       void Promise.allSettled(promises);
     });
+  };
+
+  /** Create a new terminal session on behalf of the Manager Agent. */
+  createTerminalForManager = (label?: string): string | null => {
+    try {
+      const cols = 80;
+      const rows = 24;
+      const session = globalManager.createSession(
+        { cols, rows },
+        (sessionId, data) => {
+          send(ws, { type: 'terminal:output', sessionId, payload: { data } });
+          promptDetector.feed(sessionId, data);
+          idleDetector.activity(sessionId);
+          resetAutopilotTimer(sessionId);
+          managerService.feedOutput(sessionId, data);
+        },
+        (sessionId, exitCode) => {
+          ownedSessions.delete(sessionId);
+          promptDetector.unwatch(sessionId);
+          idleDetector.unwatch(sessionId);
+          aiSessions.delete(sessionId);
+          send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
+        },
+      );
+      ownedSessions.add(session.id);
+      sessionGens.set(session.id, globalManager.getAttachGen(session.id));
+      watchSession(session.id);
+      watchSessionIdle(session.id);
+
+      const shellNum = ownedSessions.size;
+      const sessionLabel = label || `Shell ${shellNum}`;
+      managerService.setSessionLabel(session.id, sessionLabel);
+
+      // Notify the client about the new session
+      send(ws, {
+        type: 'terminal:created',
+        sessionId: session.id,
+        payload: { cols: session.cols, rows: session.rows, fromManager: true, label: sessionLabel },
+      } as any);
+
+      logger.info(`Manager: created terminal "${sessionLabel}" (${session.id.slice(0, 8)})`);
+      return session.id;
+    } catch (err) {
+      logger.warn(`Manager: failed to create terminal — ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  };
+
+  /** Close a terminal session on behalf of the Manager Agent. */
+  closeTerminalForManager = (sessionId: string): boolean => {
+    try {
+      if (!ownedSessions.has(sessionId)) {
+        logger.warn(`Manager: cannot close session ${sessionId.slice(0, 8)} — not owned by this connection`);
+        return false;
+      }
+      globalManager.closeSession(sessionId);
+      ownedSessions.delete(sessionId);
+      promptDetector.unwatch(sessionId);
+      idleDetector.unwatch(sessionId);
+      aiSessions.delete(sessionId);
+      send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode: 0 } });
+      logger.info(`Manager: closed terminal ${sessionId.slice(0, 8)}`);
+      return true;
+    } catch (err) {
+      logger.warn(`Manager: failed to close terminal — ${err instanceof Error ? err.message : err}`);
+      return false;
+    }
   };
 
   /** Reset the autopilot idle timer for a session. Fires after AUTOPILOT_IDLE_MS of inactivity. */
@@ -342,15 +472,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     if (msgType === 'manager:toggle') {
       const enabled = !!(msg as any).payload?.enabled;
       if (enabled) {
-        managerService.setCallbacks(
-          (summary) => send(ws, { type: 'manager:summary', payload: summary } as any),
-          (response) => send(ws, { type: 'manager:response', payload: response } as any),
-          (error) => send(ws, { type: 'manager:error', payload: { message: error } } as any),
-          (config) => send(ws, { type: 'manager:personality_configured', payload: config } as any),
-          (phase, detail, elapsed) => send(ws, { type: 'manager:thinking', payload: { phase, detail, elapsed } } as any),
-          (token) => send(ws, { type: 'manager:stream_chunk', payload: { token } } as any),
-          (text, actions, phases) => send(ws, { type: 'manager:stream_end', payload: { text, actions, phases } } as any),
-        );
+        setupManagerCallbacks(ws);
         managerService.start();
       } else {
         managerService.stop();
@@ -363,16 +485,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
     if (msgType === 'manager:chat') {
       // Ensure callbacks are set on every chat (survives server restarts + reconnects)
-      managerService.setCallbacks(
-        (summary) => send(ws, { type: 'manager:summary', payload: summary } as any),
-        (response) => send(ws, { type: 'manager:response', payload: response } as any),
-        (error) => send(ws, { type: 'manager:error', payload: { message: error } } as any),
-        (config) => send(ws, { type: 'manager:personality_configured', payload: config } as any),
-        (phase, detail, elapsed) => send(ws, { type: 'manager:thinking', payload: { phase, detail, elapsed } } as any),
-        (token) => send(ws, { type: 'manager:stream_chunk', payload: { token } } as any),
-        (text, actions, phases) => send(ws, { type: 'manager:stream_end', payload: { text, actions, phases } } as any),
-      );
-      // Auto-start if not running (client thinks it's enabled but server restarted)
+      setupManagerCallbacks(ws);
       if (!managerService.isEnabled()) managerService.start();
 
       const text = (msg as any).payload?.text;
@@ -388,8 +501,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
 
     if (msgType === 'manager:poll') {
+      setupManagerCallbacks(ws);
+      if (!managerService.isEnabled()) managerService.start();
       const pollTarget = (msg as any).payload?.targetSessionId;
-      managerService.poll(pollTarget).catch((err) => {
+      managerService.poll(pollTarget, true).catch((err) => {
         const errMsg = err instanceof Error ? err.message : String(err);
         send(ws, { type: 'manager:error', payload: { message: errMsg } } as any);
       });
@@ -424,6 +539,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         const updates: Record<string, string> = {};
         if (providerId === 'kimi') updates.kimiApiKey = apiKey;
         else if (providerId === 'glm') updates.glmApiKey = apiKey;
+        else if (providerId === 'openai') updates.openaiApiKey = apiKey;
         managerService.updateProviderConfig(updates);
         saveManagerConfig(updates);
         send(ws, { type: 'manager:providers', payload: managerService.getProviders() } as any);
@@ -434,6 +550,15 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     if (msgType === 'manager:sync_labels') {
       const labels = (msg as any).payload?.labels as Array<{ sessionId: string; name: string }> | undefined;
       if (Array.isArray(labels)) {
+        // Clean up stale labels: remove any session labels not in the current sync
+        const syncedIds = new Set(labels.map(l => l.sessionId));
+        const currentList = managerService.getSessionList();
+        for (const { sessionId } of currentList) {
+          if (!syncedIds.has(sessionId) && !ownedSessions.has(sessionId)) {
+            managerService.clearSession(sessionId);
+          }
+        }
+        // Apply new labels
         for (const { sessionId, name } of labels) {
           if (typeof sessionId === 'string' && typeof name === 'string') {
             managerService.setSessionLabel(sessionId, name);
@@ -846,6 +971,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
   ws.on('close', () => {
     logger.info(`Client disconnected: ${ip} — detaching ${ownedSessions.size} sessions (kept alive)`);
+
+    // Clear the current WS reference so manager messages get buffered
+    if (currentWs === ws) {
+      currentWs = null;
+    }
+
     for (const sessionId of ownedSessions) {
       const gen = sessionGens.get(sessionId);
       globalManager.detachSession(sessionId, gen);
@@ -863,6 +994,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
   ws.on('error', (err) => {
     logger.error(`WebSocket error from ${ip}: ${err.message}`);
+    if (currentWs === ws) currentWs = null;
     for (const sessionId of ownedSessions) {
       // Do NOT unwatch promptDetector — same rationale as ws.on('close')
       globalManager.detachSession(sessionId);

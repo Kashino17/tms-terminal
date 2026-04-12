@@ -1,9 +1,12 @@
 import type { WebSocketService } from '../services/websocket.service';
 
 export type RootStackParamList = {
+  Home: undefined;
   ServerList: undefined;
+  PrayerTimes: undefined;
+  Hydra: undefined;
   AddServer: { server?: any } | undefined;
-  Terminal: { serverId: string; serverName: string; serverHost: string; serverPort: number; token: string };
+  Terminal: { serverId: string; serverName: string; serverHost: string; serverPort: number; token: string; openManager?: boolean };
   Settings: undefined;
   Drawing: { serverHost: string; serverPort: number; serverToken: string };
   PinSetup: { mode?: string } | undefined;

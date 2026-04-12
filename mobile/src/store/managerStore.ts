@@ -15,17 +15,29 @@ export interface ManagerMessage {
   actions?: Array<{ type: string; sessionId: string; detail: string }>;
   /** Which terminal was targeted (if user specified). */
   targetSessionId?: string;
+  /** True for error messages. */
+  isError?: boolean;
+  /** Generated image filenames (served via /generated-images/). */
+  images?: string[];
+  /** Generated presentation filenames (served via /generated-presentations/). */
+  presentations?: string[];
+  /** User-uploaded attachment URIs (local file paths). */
+  attachmentUris?: string[];
+  /** Total response time in ms (from request to stream_end). */
+  responseDuration?: number;
 }
 
 export interface ProviderInfo {
   id: string;
   name: string;
   configured: boolean;
+  isLocal?: boolean;
 }
 
 export interface ApiKeys {
   kimi: string;
   glm: string;
+  openai: string;
 }
 
 // ── Personality ─────────────────────────────────────────────────────────────
@@ -46,6 +58,8 @@ export interface PersonalityConfig {
   proactive: boolean;
   /** Custom instruction from the user (free text). */
   customInstruction: string;
+  /** Agent avatar image URI (local file path). */
+  agentAvatarUri?: string;
 }
 
 export interface PhaseInfo {
@@ -77,6 +91,14 @@ export const DETAIL_LABELS: Record<PersonalityDetail, string> = {
   detailed: 'Ausführlich',
 };
 
+// ── Constants ───────────────────────────────────────────────────────────────
+
+const MAX_MESSAGES = 200;
+const MAX_SESSION_MESSAGES = 100;
+const MAX_PERSIST_PER_BUCKET = 50;
+
+// ── State interface ─────────────────────────────────────────────────────────
+
 interface ManagerState {
   enabled: boolean;
   messages: ManagerMessage[];
@@ -84,10 +106,14 @@ interface ManagerState {
   providers: ProviderInfo[];
   /** Currently loading (waiting for AI response). */
   loading: boolean;
+  /** Timestamp when the current request started (survives navigation). */
+  requestStartTime: number | null;
   /** Current thinking phase (null = not thinking). */
   thinking: { phase: string; detail?: string; elapsed: number } | null;
   /** Accumulated text during streaming. */
   streamingText: string;
+  /** Token stats during streaming. */
+  streamTokenStats: { completionTokens: number; tps: number } | null;
   /** Phase info from the last completed response. */
   lastPhases: PhaseInfo[] | null;
   /** API keys for external providers. */
@@ -96,31 +122,55 @@ interface ManagerState {
   personality: PersonalityConfig;
   /** Whether onboarding has been completed. */
   onboarded: boolean;
+  /** Per-session message storage, keyed by sessionId or "alle". */
+  sessionMessages: Record<string, ManagerMessage[]>;
+  /** Currently active chat: "alle" or a sessionId. */
+  activeChat: string;
+  /** Which chat bucket is currently being streamed to. */
+  streamingForChat: string;
+  /** Delegated tasks tracked by the manager agent. */
+  delegatedTasks: Array<{ id: string; description: string; sessionId: string; sessionLabel: string; status: string; createdAt: number; updatedAt: number; steps?: Array<{ label: string; status: string }> }>;
 
   // Actions
   setEnabled: (enabled: boolean) => void;
-  addMessage: (msg: Omit<ManagerMessage, 'id' | 'timestamp'>) => void;
-  addSummary: (text: string, sessions: ManagerMessage['sessions'], timestamp: number) => void;
-  addResponse: (text: string, actions?: ManagerMessage['actions']) => void;
-  addError: (message: string) => void;
+  addMessage: (msg: Omit<ManagerMessage, 'id' | 'timestamp'>, chatKey?: string) => void;
+  addSummary: (text: string, sessions: ManagerMessage['sessions'], timestamp: number, chatKey?: string) => void;
+  addResponse: (text: string, actions?: ManagerMessage['actions'], chatKey?: string) => void;
+  addError: (message: string, chatKey?: string) => void;
   setProviders: (providers: ProviderInfo[], active: string) => void;
   setActiveProvider: (id: string) => void;
   setLoading: (loading: boolean) => void;
-  setThinking: (phase: string, detail?: string, elapsed?: number) => void;
-  appendStreamChunk: (token: string) => void;
-  finishStream: (text: string, actions?: ManagerMessage['actions'], phases?: PhaseInfo[]) => void;
+  setThinking: (phase: string, detail?: string, elapsed?: number, chatKey?: string) => void;
+  appendStreamChunk: (token: string, tokenStats?: { completionTokens: number; tps: number }) => void;
+  finishStream: (text: string, actions?: ManagerMessage['actions'], phases?: PhaseInfo[], images?: string[], presentations?: string[]) => void;
   clearMessages: () => void;
+  clearSessionMessages: (chatKey: string) => void;
   deleteMessage: (id: string) => void;
-  setApiKey: (provider: 'kimi' | 'glm', key: string) => void;
+  setApiKey: (provider: 'kimi' | 'glm' | 'openai', key: string) => void;
   setPersonality: (updates: Partial<PersonalityConfig>) => void;
   setOnboarded: (done: boolean) => void;
+  setActiveChat: (id: string) => void;
+  setDelegatedTasks: (tasks: Array<{ id: string; description: string; sessionId: string; sessionLabel: string; status: string; createdAt: number; updatedAt: number; steps?: Array<{ label: string; status: string }> }>) => void;
 }
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
-const MAX_MESSAGES = 200;
+/** Add a message to a session bucket, respecting the per-session limit. */
+function addToSessionBucket(
+  sessionMessages: Record<string, ManagerMessage[]>,
+  chatKey: string,
+  msg: ManagerMessage,
+): Record<string, ManagerMessage[]> {
+  const existing = sessionMessages[chatKey] ?? [];
+  const updated = [...existing, msg].slice(-MAX_SESSION_MESSAGES);
+  return { ...sessionMessages, [chatKey]: updated };
+}
+
+// ── Store ───────────────────────────────────────────────────────────────────
 
 export const useManagerStore = create<ManagerState>()(
   persist(
@@ -130,88 +180,158 @@ export const useManagerStore = create<ManagerState>()(
       activeProvider: 'glm',
       providers: [],
       loading: false,
+      requestStartTime: null,
       thinking: null,
       streamingText: '',
+      streamTokenStats: null,
       lastPhases: null,
-      apiKeys: { kimi: '', glm: '' },
+      apiKeys: { kimi: '', glm: '', openai: '' },
       personality: { ...DEFAULT_PERSONALITY },
       onboarded: false,
+      sessionMessages: {},
+      activeChat: 'alle',
+      streamingForChat: 'alle',
+      delegatedTasks: [],
 
       setEnabled: (enabled) => set({ enabled }),
 
-      addMessage: (msg) => set((s) => {
-        const messages = [...s.messages, { ...msg, id: makeId(), timestamp: Date.now() }];
-        return { messages: messages.slice(-MAX_MESSAGES) };
+      addMessage: (msg, chatKey = 'alle') => set((s) => {
+        const newMsg: ManagerMessage = { ...msg, id: makeId(), timestamp: Date.now() };
+        return {
+          messages: [...s.messages, newMsg].slice(-MAX_MESSAGES),
+          sessionMessages: addToSessionBucket(s.sessionMessages, chatKey, newMsg),
+        };
       }),
 
-      addSummary: (text, sessions, timestamp) => set((s) => {
-        const messages = [...s.messages, {
+      addSummary: (text, sessions, timestamp, chatKey = 'alle') => set((s) => {
+        const newMsg: ManagerMessage = {
           id: makeId(),
           role: 'assistant' as const,
           text,
           timestamp,
           sessions,
-        }];
-        return { messages: messages.slice(-MAX_MESSAGES), loading: false };
+        };
+        return {
+          messages: [...s.messages, newMsg].slice(-MAX_MESSAGES),
+          sessionMessages: addToSessionBucket(s.sessionMessages, chatKey, newMsg),
+          loading: false,
+        };
       }),
 
-      addResponse: (text, actions) => set((s) => {
-        const messages = [...s.messages, {
+      addResponse: (text, actions, chatKey = 'alle') => set((s) => {
+        const duration = s.requestStartTime ? Date.now() - s.requestStartTime : undefined;
+        const newMsg: ManagerMessage = {
           id: makeId(),
           role: 'assistant' as const,
           text,
           timestamp: Date.now(),
           actions,
-        }];
-        return { messages: messages.slice(-MAX_MESSAGES), loading: false };
+          responseDuration: duration,
+        };
+        return {
+          messages: [...s.messages, newMsg].slice(-MAX_MESSAGES),
+          sessionMessages: addToSessionBucket(s.sessionMessages, chatKey, newMsg),
+          loading: false,
+          requestStartTime: null,
+        };
       }),
 
-      addError: (message) => set((s) => {
-        const messages = [...s.messages, {
+      addError: (message, chatKey = 'alle') => set((s) => {
+        const newMsg: ManagerMessage = {
           id: makeId(),
           role: 'system' as const,
           text: message,
           timestamp: Date.now(),
-        }];
-        return { messages: messages.slice(-MAX_MESSAGES), loading: false };
+          isError: true,
+        };
+        return {
+          messages: [...s.messages, newMsg].slice(-MAX_MESSAGES),
+          sessionMessages: addToSessionBucket(s.sessionMessages, chatKey, newMsg),
+          loading: false,
+          requestStartTime: null,
+        };
       }),
 
-      setProviders: (providers, active) => set({ providers, activeProvider: active }),
+      setProviders: (providers, active) => set((s) => {
+        // Keep the locally persisted provider if it still exists in the list
+        const kept = providers.some(p => p.id === s.activeProvider) ? s.activeProvider : active;
+        return { providers, activeProvider: kept };
+      }),
 
       setActiveProvider: (id) => set({ activeProvider: id }),
 
-      setLoading: (loading) => set({ loading }),
-
-      setThinking: (phase, detail, elapsed) => set({
-        thinking: { phase, detail, elapsed: elapsed ?? 0 },
+      setLoading: (loading) => set({
+        loading,
+        requestStartTime: loading ? Date.now() : null,
       }),
 
-      appendStreamChunk: (token) => set((s) => ({
+      setThinking: (phase, detail, elapsed, chatKey) => set({
+        thinking: { phase, detail, elapsed: elapsed ?? 0 },
+        streamingForChat: chatKey ?? 'alle',
+      }),
+
+      appendStreamChunk: (token, tokenStats) => set((s) => ({
         streamingText: s.streamingText + token,
+        streamTokenStats: tokenStats ?? s.streamTokenStats,
       })),
 
-      finishStream: (text, actions, phases) => set((s) => {
-        const messages = [...s.messages, {
+      finishStream: (text, actions, phases, images, presentations) => set((s) => {
+        const chatKey = s.streamingForChat;
+        const duration = s.requestStartTime ? Date.now() - s.requestStartTime : undefined;
+        const newMsg: ManagerMessage = {
           id: makeId(),
           role: 'assistant' as const,
           text,
           timestamp: Date.now(),
           actions,
-        }];
+          images,
+          presentations,
+          responseDuration: duration,
+        };
         return {
-          messages: messages.slice(-MAX_MESSAGES),
+          messages: [...s.messages, newMsg].slice(-MAX_MESSAGES),
+          sessionMessages: addToSessionBucket(s.sessionMessages, chatKey, newMsg),
           loading: false,
+          requestStartTime: null,
           thinking: null,
           streamingText: '',
+          streamTokenStats: null,
           lastPhases: phases ?? null,
         };
       }),
 
-      clearMessages: () => set({ messages: [] }),
+      clearMessages: () => set((s) => {
+        const chatKey = s.activeChat;
+        if (chatKey === 'alle') {
+          return { messages: [] };
+        }
+        const sessionMessages = { ...s.sessionMessages };
+        delete sessionMessages[chatKey];
+        return { sessionMessages };
+      }),
 
-      deleteMessage: (id) => set((s) => ({
-        messages: s.messages.filter(m => m.id !== id),
-      })),
+      clearSessionMessages: (chatKey) => set((s) => {
+        if (chatKey === 'alle') {
+          return { messages: [] };
+        }
+        const sessionMessages = { ...s.sessionMessages };
+        delete sessionMessages[chatKey];
+        return { sessionMessages };
+      }),
+
+      deleteMessage: (id) => set((s) => {
+        // Remove from global messages
+        const messages = s.messages.filter(m => m.id !== id);
+        // Remove from all session buckets
+        const sessionMessages: Record<string, ManagerMessage[]> = {};
+        for (const [key, msgs] of Object.entries(s.sessionMessages)) {
+          const filtered = msgs.filter(m => m.id !== id);
+          if (filtered.length > 0) {
+            sessionMessages[key] = filtered;
+          }
+        }
+        return { messages, sessionMessages };
+      }),
 
       setApiKey: (provider, key) => set((s) => ({
         apiKeys: { ...s.apiKeys, [provider]: key },
@@ -222,18 +342,30 @@ export const useManagerStore = create<ManagerState>()(
       })),
 
       setOnboarded: (done) => set({ onboarded: done }),
+
+      setActiveChat: (id) => set({ activeChat: id }),
+      setDelegatedTasks: (tasks) => set({ delegatedTasks: tasks }),
     }),
     {
       name: 'tms-manager',
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
-        enabled: state.enabled,
-        messages: state.messages.slice(-50),
-        activeProvider: state.activeProvider,
-        apiKeys: state.apiKeys,
-        personality: state.personality,
-        onboarded: state.onboarded,
-      }),
+      partialize: (state) => {
+        // Limit each session bucket to last MAX_PERSIST_PER_BUCKET messages
+        const persistedSessionMessages: Record<string, ManagerMessage[]> = {};
+        for (const [key, msgs] of Object.entries(state.sessionMessages)) {
+          persistedSessionMessages[key] = msgs.slice(-MAX_PERSIST_PER_BUCKET);
+        }
+        return {
+          enabled: state.enabled,
+          messages: state.messages.slice(-50),
+          activeProvider: state.activeProvider,
+          apiKeys: state.apiKeys,
+          personality: state.personality,
+          onboarded: state.onboarded,
+          sessionMessages: persistedSessionMessages,
+          activeChat: state.activeChat,
+        };
+      },
     },
   ),
 );

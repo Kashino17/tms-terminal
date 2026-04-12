@@ -32,6 +32,7 @@ export class WebSocketService {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<MessageHandler>();
+  private persistentHandler: MessageHandler | null = null;
   private onStateChange: StateHandler = () => {};
   private _state: ConnectionState = 'disconnected';
   private netInfoUnsub: (() => void) | null = null;
@@ -90,6 +91,16 @@ export class WebSocketService {
     this.onStateChange = handler;
   }
 
+  /**
+   * Set a persistent message handler that survives screen unmount.
+   * Unlike addMessageListener, this handler is never removed — it's replaced
+   * on each call. Used for manager:* messages that must be processed even
+   * when the chat screen is not mounted.
+   */
+  setPersistentHandler(handler: MessageHandler): void {
+    this.persistentHandler = handler;
+  }
+
   connect(cfg: WebSocketConfig): void {
     this.config = cfg;
     this.reconnectAttempts = 0;
@@ -132,6 +143,9 @@ export class WebSocketService {
           this.pingSentAt = null;
           this.updateRttMetrics(rawRtt);
         }
+        // Persistent handler runs first (survives screen unmount)
+        this.persistentHandler?.(data);
+        // Regular listeners (may be empty if screen unmounted)
         this.listeners.forEach((l) => l(data));
       } catch {
         // ignore invalid JSON
@@ -357,5 +371,37 @@ export class WebSocketService {
       this.netInfoUnsub();
       this.netInfoUnsub = null;
     }
+  }
+}
+
+// ── Global Connection Pool ──────────────────────────────────────────
+// Singleton WebSocket instances per serverId that persist across screen
+// mount/unmount cycles. This ensures the connection stays alive when
+// TerminalScreen unmounts (navigating away) or the activity is recreated
+// (app swiped away but foreground service keeps process alive).
+
+const connectionPool = new Map<string, WebSocketService>();
+
+/**
+ * Get or create a WebSocket connection for a server.
+ * If a connection already exists and is not explicitly disconnected, reuse it.
+ */
+export function getConnection(serverId: string): WebSocketService {
+  const existing = connectionPool.get(serverId);
+  if (existing) return existing;
+
+  const ws = new WebSocketService();
+  connectionPool.set(serverId, ws);
+  return ws;
+}
+
+/**
+ * Explicitly remove a connection from the pool (e.g. when persistent mode is off).
+ */
+export function removeConnection(serverId: string): void {
+  const ws = connectionPool.get(serverId);
+  if (ws) {
+    ws.disconnect();
+    connectionPool.delete(serverId);
   }
 }

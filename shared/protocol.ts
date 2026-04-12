@@ -292,6 +292,8 @@ export interface ManagerStreamEndMessage {
     text: string;
     actions?: Array<{ type: string; sessionId: string; detail: string }>;
     phases: PhaseInfo[];
+    images?: string[];
+    tasks?: Array<{ id: string; description: string; sessionLabel: string; status: string }>;
   };
 }
 
