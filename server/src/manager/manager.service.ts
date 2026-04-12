@@ -1944,12 +1944,16 @@ BEISPIEL:
                 }
                 this.broadcastTasks();
               } else if (pendingPrompt) {
-                // Only create a delegated task if there's a pending prompt to deliver.
-                // Without a prompt, there's nothing for the heartbeat to track — the AI
-                // manages follow-up via its own update_task steps.
+                // Explicit pending prompt → create task so heartbeat delivers it when ready
                 this.addDelegatedTask(label || initialCommand, newSessionId, pendingPrompt);
+              } else if (/claude/i.test(initialCommand || '')) {
+                // Claude is starting without explicit pending_prompt — create a monitoring task
+                // so the heartbeat tracks this terminal. Without this, terminals 2+3 in
+                // multi-terminal workflows get no heartbeat coverage.
+                this.addDelegatedTask(label || 'Claude Session', newSessionId);
+                logger.info(`Manager: created monitoring task for Claude session "${label}" (no pending_prompt)`);
               } else {
-                logger.info(`Manager: no matching task and no pending_prompt for "${label}" — skipping delegated task (AI manages via update_task)`);
+                logger.info(`Manager: no matching task for "${label}" — skipping delegated task`);
               }
             }
             return { text: `Terminal "${label || 'Shell'}" erstellt (${newSessionId.slice(0, 8)}).${initialCommand ? ` Befehl "${initialCommand}" wird ausgeführt. Aufgabe wird überwacht — ich melde mich wenn sie fertig ist.` : ''}` };
@@ -2406,7 +2410,7 @@ BEISPIEL:
     const activeTasks = this.getActiveTasks();
     if (activeTasks.length === 0) return;
 
-    logger.info(`Manager: heartbeat — checking ${activeTasks.length} active task(s)${this.isProcessing ? ' (review in progress)' : ''}`);
+    let actionsTaken = 0; // Only log when something happens (#7)
 
     for (const task of activeTasks) {
       // Skip tasks without a terminal (standalone chat tasks)
@@ -2418,6 +2422,7 @@ BEISPIEL:
         logger.warn(`Manager: task "${task.sessionLabel}" timed out after ${Math.round(taskAge / 60000)}min`);
         this.updateTaskStatus(task.id, 'failed');
         this.onError?.(`Aufgabe "${task.sessionLabel}" nach ${Math.round(taskAge / 60000)} Minuten abgebrochen (Timeout).`);
+        actionsTaken++;
         continue;
       }
 
@@ -2426,90 +2431,92 @@ BEISPIEL:
         logger.warn(`Manager: task "${task.sessionLabel}" — terminal session dead, marking failed`);
         this.updateTaskStatus(task.id, 'failed');
         this.onError?.(`Terminal "${task.sessionLabel}" existiert nicht mehr — Aufgabe abgebrochen.`);
+        actionsTaken++;
         continue;
       }
 
       // ── Phase 1c: Auto-complete if ALL steps are done ────────────
-      // Safety net for Gemma 4 which often forgets the final complete_step call.
       if (task.steps.length > 0 && task.steps.every(s => s.status === 'done')) {
-        logger.info(`Manager: auto-completing "${task.sessionLabel}" — all ${task.steps.length} steps done (AI forgot to finalize)`);
+        logger.info(`Manager: auto-completing "${task.sessionLabel}" — all ${task.steps.length} steps done`);
         this.updateTaskStatus(task.id, 'done');
+        actionsTaken++;
         continue;
       }
 
       // ── Phase 2: Output stability check ────────────────────────────
       const buffer = this.outputBuffers.get(task.sessionId);
-      if (!buffer || !buffer.data || buffer.data.length === 0) {
-        // No output yet — don't skip entirely, just wait for output to appear.
-        // The timeout check above (Phase 1) will still catch truly stuck tasks.
-        logger.info(`Manager: heartbeat — no output for "${task.sessionLabel}" yet, waiting`);
-        continue;
-      }
+      if (!buffer || !buffer.data || buffer.data.length === 0) continue; // No output yet, wait silently
 
       const currentOutput = buffer.data.replace(ANSI_STRIP, '').slice(-2000);
 
-      // Don't check in the first 15 seconds (give Claude time to start)
+      // Grace period: 10s after task creation (Claude boots in ~5s)
       const age = Date.now() - task.createdAt;
-      if (age < 15_000) continue;
+      if (age < 10_000) continue;
 
-      // ── False-positive protection: require 2 consecutive stable reads ──
-      if (currentOutput === task.lastCheckedOutput) {
-        const stableCount = (this.stableOutputCounts.get(task.id) ?? 0) + 1;
-        this.stableOutputCounts.set(task.id, stableCount);
-        // Only proceed if output has been stable for 2+ cycles (30s)
-        if (stableCount < 2) continue;
-      } else {
-        // Output changed — reset stability counter, refresh updatedAt to prevent false timeout
-        task.lastCheckedOutput = currentOutput;
-        task.updatedAt = Date.now();
-        this.stableOutputCounts.set(task.id, 0);
-        continue; // Wait for next cycle to confirm stability
-      }
-
-      // ── Claude readiness detection (expanded patterns) ─────────────
+      // ── Claude readiness detection ─────────────────────────────────
       const lastChunk = currentOutput.slice(-1000);
       const isClaudeReady =
         /for\s*shortcuts/i.test(lastChunk) ||
         /shells?\s*.*\s*esc/i.test(lastChunk) ||
         /waiting\s*for\s*input/i.test(lastChunk) ||
-        /claude\s*code/i.test(lastChunk.slice(-200)) && />\s*$/.test(lastChunk.slice(-40));
-      const isShellPrompt = /[$%>#❯→]\s*$/.test(lastChunk.slice(-80));
+        (/claude\s*code/i.test(lastChunk.slice(-200)) && /[>❯›]\s*$/.test(lastChunk.slice(-40)));
+      const isShellPrompt = /[$%>#❯→›]\s*$/.test(lastChunk.slice(-80));
       const isComplete = isClaudeReady || isShellPrompt;
 
-      logger.info(`Manager: heartbeat task "${task.sessionLabel}" — age=${Math.round(age / 1000)}s, stable=${this.stableOutputCounts.get(task.id)}, isClaudeReady=${isClaudeReady}, isShellPrompt=${isShellPrompt}`);
+      // ── Stability check: adaptive based on what we detect ──────────
+      // If Claude is clearly ready ("for shortcuts"), only 1 stable cycle needed (15s).
+      // For ambiguous shell prompts, require 2 stable cycles (30s) to avoid false positives.
+      const requiredStableCycles = isClaudeReady ? 1 : 2;
+
+      if (currentOutput === task.lastCheckedOutput) {
+        const stableCount = (this.stableOutputCounts.get(task.id) ?? 0) + 1;
+        this.stableOutputCounts.set(task.id, stableCount);
+        if (stableCount < requiredStableCycles) continue;
+      } else {
+        task.lastCheckedOutput = currentOutput;
+        task.updatedAt = Date.now();
+        this.stableOutputCounts.set(task.id, 0);
+        continue;
+      }
 
       if (!isComplete) continue;
 
       // Reset stability counter after processing
       this.stableOutputCounts.delete(task.id);
 
-      // ── Phase 3a: Send pending prompt (lightweight, no AI call) ────
-      if (task.pendingPrompt && isClaudeReady) {
-        logger.info(`Manager: heartbeat — Claude ready in "${task.sessionLabel}", sending pending prompt`);
+      // ── Phase 3a: Send pending prompt when terminal is ready ───────
+      // Send on BOTH isClaudeReady AND isShellPrompt with Claude detection.
+      // Claude's prompt may appear as ❯ or > which matches isShellPrompt.
+      const hasClaudeProcess = /claude/i.test(currentOutput.slice(-3000));
+      if (task.pendingPrompt && (isClaudeReady || (isShellPrompt && hasClaudeProcess))) {
+        logger.info(`Manager: heartbeat — terminal ready in "${task.sessionLabel}", sending pending prompt`);
         globalManager.write(task.sessionId, task.pendingPrompt);
         setTimeout(() => globalManager.write(task.sessionId, '\r'), 200);
         task.pendingPrompt = undefined;
         task.lastCheckedOutput = undefined;
         task.updatedAt = Date.now();
-        task.createdAt = Date.now(); // Reset age timer
+        // Don't reset createdAt — that would re-trigger the 10s grace period.
+        // The task age is only used for the initial boot grace, not for subsequent checks.
         this.broadcastTasks();
-        // NOTE: Do NOT call advanceTaskStep here — the step isn't done yet,
-        // the prompt was just sent. The AI will mark it done via update_task(complete_step)
-        // after reviewing the result in the heartbeat review cycle.
-        continue; // Process other tasks too — no break!
+        actionsTaken++;
+        continue;
       }
 
-      // ── Phase 3b: Queue for AI review (no break, no blocking) ─────
-      // Guard: don't queue if already queued, already being reviewed (waiting),
-      // or if task has no open steps (will be auto-completed in Phase 1c next cycle)
+      // ── Phase 3b: Queue for AI review ──────────────────────────────
       if (task.status === 'running' && !task.pendingPrompt) {
         const alreadyQueued = this.reviewQueue.includes(task.id);
         const hasWork = task.steps.length === 0 || task.steps.some(s => s.status !== 'done');
         if (!alreadyQueued && hasWork) {
           logger.info(`Manager: heartbeat — queuing "${task.sessionLabel}" for review`);
           this.reviewQueue.push(task.id);
+          actionsTaken++;
         }
       }
+    }
+
+    // Only log when something happened (#7 — reduce log noise)
+    if (actionsTaken > 0) {
+      logger.info(`Manager: heartbeat cycle — ${actionsTaken} action(s) on ${activeTasks.length} task(s)`);
     }
 
     // ── Phase 4: Kick off review processing (if not already busy) ──
@@ -2556,12 +2563,21 @@ BEISPIEL:
     const recentOutput = buffer?.data?.replace(ANSI_STRIP, '').slice(-1500) ?? '';
     const lastChunk = recentOutput.slice(-500);
 
-    // Detect what happened in the terminal
-    const claudeFinished = /for\s*shortcuts/i.test(lastChunk) || />\s*$/.test(lastChunk.slice(-40));
+    // Detect what happened in the terminal — use same patterns as heartbeat
+    const claudeFinished =
+      /for\s*shortcuts/i.test(lastChunk) ||
+      /shells?\s*.*\s*esc/i.test(lastChunk) ||
+      /waiting\s*for\s*input/i.test(lastChunk) ||
+      (/claude\s*code/i.test(lastChunk.slice(-200)) && /[>❯›]\s*$/.test(lastChunk.slice(-40)));
     const hasError = /error|Error|ERR!|FAIL|failed/i.test(lastChunk.slice(-300));
-    const claudeWorking = /thinking|working|reading|writing|searching/i.test(lastChunk.slice(-200));
+    // Only detect "working" at the VERY end of output (last 50 chars) to avoid
+    // matching past-tense text like "I finished working on it"
+    const tail50 = lastChunk.slice(-50).toLowerCase();
+    const claudeWorking = /\b(thinking|reading|writing|searching|analyzing)\b/.test(tail50)
+      || /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(tail50)  // spinner chars
+      || /\.{3}\s*$/.test(tail50);            // ends with "..."
 
-    // If Claude is still working → don't wake the AI, just wait
+    // If Claude is actively working (spinner/progress at very end) → wait
     if (claudeWorking && !claudeFinished) {
       logger.info(`Manager: smart heartbeat — Claude still working in "${task.sessionLabel}", skipping`);
       task.status = 'running';
