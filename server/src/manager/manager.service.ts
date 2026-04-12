@@ -79,12 +79,13 @@ const MANAGER_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'create_terminal',
-      description: 'Erstellt ein neues Shell-Terminal und führt optional sofort einen Befehl darin aus. Nutze dies wenn der User ein neues Terminal braucht, z.B. "Öffne ein Terminal im Desktop Ordner" → create_terminal mit initial_command="cd ~/Desktop".',
+      description: 'Erstellt ein neues Shell-Terminal und führt optional sofort einen Befehl darin aus. Nutze dies wenn der User ein neues Terminal braucht, z.B. "Öffne ein Terminal im Desktop Ordner" → create_terminal mit initial_command="cd ~/Desktop". Wenn du Claude startest (initial_command enthält "claude"), nutze pending_prompt um den Auftrag zu definieren, der an Claude gesendet wird sobald er bereit ist.',
       parameters: {
         type: 'object',
         properties: {
           label: { type: 'string', description: 'Optionaler Name für das neue Terminal, z.B. "Build", "Desktop". Wenn leer, wird automatisch "Shell N" vergeben.' },
           initial_command: { type: 'string', description: 'Optionaler Befehl der sofort nach dem Erstellen ausgeführt wird, z.B. "cd ~/Desktop", "cd ~/Projects && git status". Mehrere Befehle mit && verketten.' },
+          pending_prompt: { type: 'string', description: 'Optionaler Auftrag der automatisch an Claude gesendet wird sobald er bereit ist. NUR nutzen wenn initial_command Claude startet. Beispiel: "Analysiere das Projekt und finde Schwächen"' },
         },
         required: [],
       },
@@ -419,11 +420,13 @@ Pro Terminal/Aufgabe erstellst du einen EIGENEN Task mit eigenem task_name:
 - "Frag Claude 3 Fragen in TMS Shops" → 1 Task: update_task("TMS Shops Brainstorming", steps="Terminal öffnen,Frage 1 stellen,Antwort 1 notieren,Frage 2 stellen,Antwort 2 notieren,Frage 3 stellen,Antwort 3 notieren,Fazit erstellen")
 
 REIHENFOLGE — IMMER:
-1. update_task (alle Schritte planen)
-2. Erste Aktion ausführen
-3. update_task(complete_step) nach jedem erledigten Schritt
+1. update_task(set_steps) — alle Schritte planen
+2. Erste Aktion ausführen (create_terminal, write_to_terminal, etc.)
+3. update_task(complete_step) SOFORT nach jedem erledigten Schritt — DU bist verantwortlich!
 4. Nächste Aktion
 5. Wiederholen bis alle Schritte erledigt
+
+WICHTIG: Schritte werden NICHT automatisch abgehakt! Du MUSST nach jeder erledigten Aktion update_task(complete_step) aufrufen. Wenn du z.B. create_terminal aufrufst und das Terminal erfolgreich erstellt wurde, ist der Schritt "Terminal erstellen" SOFORT erledigt — hake ihn ab bevor du weitermachst.
 
 Das ist deine wichtigste Eigenschaft als Manager. Du planst ZUERST, dann arbeitest du ab. Nie andersherum.
 
@@ -438,13 +441,17 @@ Deine Rolle:
 - Du codest SELBST nur wenn es absolut nicht anders geht (z.B. ein simpler Shell-Befehl)
 
 Workflow für Programmier-Aufgaben:
-1. Erstelle ein Terminal im richtigen Projektordner: create_terminal(label, initial_command="cd /pfad && claude")
-2. Warte bis Claude bereit ist (der Heartbeat erkennt das automatisch)
-3. Der Heartbeat sendet dann den Auftrag automatisch an Claude (pendingPrompt)
-4. Der Heartbeat überwacht den Fortschritt und meldet dir wenn Claude fertig ist
-5. Du prüfst dann das Ergebnis und berichtest dem User
+1. Erstelle ein Terminal: create_terminal(label, initial_command="cd /pfad && claude", pending_prompt="Dein Auftrag an Claude")
+2. Der pending_prompt wird automatisch an Claude gesendet sobald er bereit ist
+3. Der Heartbeat überwacht den Fortschritt und meldet dir wenn Claude fertig ist
+4. Du prüfst dann das Ergebnis und berichtest dem User
+5. Hake den Schritt ab: update_task(complete_step, step_index=N)
 
-WICHTIG: Nach create_terminal mit Claude → NICHT sofort write_to_terminal oder send_enter spammen! Claude braucht Zeit zum Starten. Der Heartbeat kümmert sich darum.
+WICHTIG:
+- Nach create_terminal mit Claude → NICHT sofort write_to_terminal oder send_enter spammen! Claude braucht Zeit zum Starten. Der Heartbeat kümmert sich darum.
+- Nutze IMMER pending_prompt bei create_terminal wenn du Claude einen Auftrag geben willst
+- DU bist verantwortlich für update_task(complete_step) — Schritte werden NICHT automatisch abgehakt
+- Wenn ein Schritt schon erledigt ist (z.B. Terminal existiert schon), hake ihn SOFORT ab
 
 Du hast einen Heartbeat der alle 15 Sekunden prüft:
 - Ist Claude bereit für Eingabe? → sendet den Auftrag
@@ -687,6 +694,7 @@ export class ManagerService {
   private delegatedTasks: DelegatedTask[] = [];
   private enabled = false;
   private isProcessing = false; // prevent overlapping heartbeat + chat
+  private chatQueue: Array<{ text: string; targetSessionId?: string; onboarding?: boolean }> = [];
   private isDistilling = false; // prevent concurrent memory distillation
   private personality: PersonalityConfig = { ...DEFAULT_PERSONALITY };
   private memory: ManagerMemory;
@@ -757,7 +765,7 @@ export class ManagerService {
     // Heartbeat: check delegated tasks every 60s
     this.heartbeatTimer = setInterval(() => this.heartbeat(), HEARTBEAT_INTERVAL_MS);
     this.heartbeatTimer.unref();
-    logger.info('Manager: started (heartbeat every 60s)');
+    logger.info('Manager: started (heartbeat every 15s)');
   }
 
   stop(): void {
@@ -971,9 +979,15 @@ BEISPIEL:
         hasActivity: true,
       }));
 
+      // Only clear buffers for sessions WITHOUT active delegated tasks
+      const activeTaskSessionIds = new Set(
+        this.getActiveTasks().map(t => t.sessionId).filter(Boolean),
+      );
       for (const s of activeContexts) {
         this.lastSummaryAt.set(s.sessionId, now);
-        this.outputBuffers.set(s.sessionId, { data: '', lastUpdated: Date.now() });
+        if (!activeTaskSessionIds.has(s.sessionId)) {
+          this.outputBuffers.set(s.sessionId, { data: '', lastUpdated: Date.now() });
+        }
       }
 
       // Add to chat history
@@ -1036,10 +1050,11 @@ BEISPIEL:
         continue;
       }
       if (tc.name === 'create_terminal') {
-        // Pack label and initial_command into detail as JSON
+        // Pack label, initial_command and pending_prompt into detail as JSON
         const createInfo = JSON.stringify({
           label: tc.arguments.label ?? '',
           initialCommand: tc.arguments.initial_command ?? '',
+          pendingPrompt: tc.arguments.pending_prompt ?? '',
         });
         actions.push({ type: 'create_terminal', sessionId: '', detail: createInfo });
         continue;
@@ -1208,16 +1223,16 @@ BEISPIEL:
     this.onThinking?.(phase, detail, elapsed);
   }
 
-  async handleChat(text: string, targetSessionId?: string, onboarding?: boolean): Promise<void> {
+  async handleChat(text: string, targetSessionId?: string, onboarding?: boolean): Promise<boolean> {
     if (!this.enabled) {
       throw new Error('Manager ist nicht aktiv — bitte zuerst aktivieren (grüner Punkt)');
     }
 
-    // Prevent overlapping processing (heartbeat + manual chat)
+    // Queue messages while processing — don't block or error
     if (this.isProcessing) {
-      logger.info('Manager: skipping chat — already processing');
-      this.onError?.('Ich arbeite gerade noch an etwas — bitte kurz warten.');
-      return;
+      this.chatQueue.push({ text, targetSessionId, onboarding });
+      logger.info(`Manager: queued chat message (${this.chatQueue.length} in queue)`);
+      return false;
     }
     this.isProcessing = true;
 
@@ -1648,12 +1663,26 @@ BEISPIEL:
 
       // Send stream end with phases, images, presentations, and active tasks
       this.onStreamEnd?.(finalText, actions, phases, actionImages.length > 0 ? actionImages : undefined, actionPresentations.length > 0 ? actionPresentations : undefined);
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`Manager: chat failed — ${msg}`);
       this.onError?.(`Fehler: ${msg}`);
+      return true; // Did attempt work, even if it failed
     } finally {
       this.isProcessing = false;
+      // Drain chat queue — process next queued message
+      if (this.chatQueue.length > 0) {
+        const next = this.chatQueue.shift()!;
+        logger.info(`Manager: processing queued chat (${this.chatQueue.length} remaining)`);
+        setTimeout(() => this.handleChat(next.text, next.targetSessionId, next.onboarding).catch(err =>
+          logger.warn(`Manager: queued chat failed — ${err}`)
+        ), 300);
+      }
+      // Drain review queue after processing completes (prevents 15s delay)
+      else if (this.reviewQueue.length > 0) {
+        setTimeout(() => this.processReviewQueue(), 500);
+      }
     }
   }
 
@@ -1751,7 +1780,11 @@ BEISPIEL:
           logger.warn(`Manager: write FAILED — session ${action.sessionId.slice(0, 8)} not found`);
           return { text: `Fehler: Terminal "${label}" nicht gefunden.` };
         }
-        setTimeout(() => globalManager.write(action.sessionId, '\r'), 200);
+        // Wait for Enter key to be sent before returning
+        await new Promise<void>(resolve => setTimeout(() => {
+          globalManager.write(action.sessionId, '\r');
+          resolve();
+        }, 200));
         return { text: `Befehl "${action.detail.slice(0, 60)}" an "${label}" gesendet.` };
       }
       case 'send_enter': {
@@ -1785,15 +1818,25 @@ BEISPIEL:
         };
 
         logger.info(`Manager: sending keys to ${label}: [${keys.join(', ')}]`);
-        let delay = 0;
+        const validKeys: string[] = [];
         for (const key of keys) {
           const seq = KEY_MAP[key];
           if (!seq) {
             logger.warn(`Manager: unknown key "${key}", skipping`);
             continue;
           }
-          setTimeout(() => globalManager.write(action.sessionId, seq), delay);
-          delay += 100;
+          validKeys.push(seq);
+        }
+        // Send keys sequentially with delays, wait for all to complete
+        if (validKeys.length > 0) {
+          await new Promise<void>(resolve => {
+            validKeys.forEach((seq, i) => {
+              setTimeout(() => {
+                globalManager.write(action.sessionId, seq);
+                if (i === validKeys.length - 1) resolve();
+              }, i * 100);
+            });
+          });
         }
         return { text: `Tasten [${keys.join(', ')}] an "${label}" gesendet.` };
       }
@@ -1822,10 +1865,12 @@ BEISPIEL:
       case 'create_terminal': {
         let label: string | undefined;
         let initialCommand: string | undefined;
+        let pendingPrompt: string | undefined;
         try {
           const info = JSON.parse(action.detail);
           label = info.label || undefined;
           initialCommand = info.initialCommand || undefined;
+          pendingPrompt = info.pendingPrompt || undefined;
         } catch {
           label = action.detail || undefined;
         }
@@ -1850,9 +1895,14 @@ BEISPIEL:
                 existingTask.sessionId = newSessionId;
                 existingTask.sessionLabel = this.sessionLabels.get(newSessionId) ?? newSessionId.slice(0, 8);
                 existingTask.updatedAt = Date.now();
+                // Use explicit pendingPrompt from tool call (NOT step labels)
+                if (pendingPrompt) {
+                  existingTask.pendingPrompt = pendingPrompt;
+                  logger.info(`Manager: set explicit pendingPrompt for "${existingTask.description}" → "${pendingPrompt.slice(0, 60)}…"`);
+                }
                 this.broadcastTasks();
               } else {
-                this.addDelegatedTask(initialCommand, newSessionId);
+                this.addDelegatedTask(initialCommand, newSessionId, pendingPrompt);
               }
             }
             return { text: `Terminal "${label || 'Shell'}" erstellt (${newSessionId.slice(0, 8)}).${initialCommand ? ` Befehl "${initialCommand}" wird ausgeführt. Aufgabe wird überwacht — ich melde mich wenn sie fertig ist.` : ''}` };
@@ -2250,25 +2300,26 @@ BEISPIEL:
     }
   }
 
-  private static readonly TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours max per task
+  private static readonly TASK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes max per task
   private stableOutputCounts = new Map<string, number>(); // track consecutive unchanged outputs
+  private reviewQueue: string[] = []; // task IDs waiting for AI review
 
-  /** Heartbeat: check delegated tasks. If a terminal has new output
-   *  indicating Claude finished, auto-trigger the manager to review. */
+  /** Heartbeat: check ALL delegated tasks every cycle.
+   *  Phase 1: Timeout checks (always runs, even during isProcessing)
+   *  Phase 2: Stability detection + pending prompt delivery (lightweight, no AI)
+   *  Phase 3: Queue idle tasks for AI review
+   *  Phase 4: Kick off review processing (one at a time, chained) */
   private async heartbeat(): Promise<void> {
     const activeTasks = this.getActiveTasks();
     if (activeTasks.length === 0) return;
-    if (this.isProcessing) {
-      logger.info(`Manager: heartbeat skipped — already processing (${activeTasks.length} active tasks)`);
-      return;
-    }
-    logger.info(`Manager: heartbeat — checking ${activeTasks.length} active task(s)`);
+
+    logger.info(`Manager: heartbeat — checking ${activeTasks.length} active task(s)${this.isProcessing ? ' (review in progress)' : ''}`);
 
     for (const task of activeTasks) {
       // Skip tasks without a terminal (standalone chat tasks)
       if (!task.sessionId) continue;
 
-      // ── Stuck task timeout ─────────────────────────────────────────
+      // ── Phase 1: Stuck task timeout (always runs) ──────────────────
       const taskAge = Date.now() - task.updatedAt;
       if (taskAge > ManagerService.TASK_TIMEOUT_MS) {
         logger.warn(`Manager: task "${task.sessionLabel}" timed out after ${Math.round(taskAge / 60000)}min`);
@@ -2277,8 +2328,22 @@ BEISPIEL:
         continue;
       }
 
+      // ── Phase 1b: Session liveness check ─────────────────────────
+      if (!globalManager.getSession(task.sessionId)) {
+        logger.warn(`Manager: task "${task.sessionLabel}" — terminal session dead, marking failed`);
+        this.updateTaskStatus(task.id, 'failed');
+        this.onError?.(`Terminal "${task.sessionLabel}" existiert nicht mehr — Aufgabe abgebrochen.`);
+        continue;
+      }
+
+      // ── Phase 2: Output stability check ────────────────────────────
       const buffer = this.outputBuffers.get(task.sessionId);
-      if (!buffer || !buffer.data || buffer.data.length === 0) continue;
+      if (!buffer || !buffer.data || buffer.data.length === 0) {
+        // No output yet — don't skip entirely, just wait for output to appear.
+        // The timeout check above (Phase 1) will still catch truly stuck tasks.
+        logger.info(`Manager: heartbeat — no output for "${task.sessionLabel}" yet, waiting`);
+        continue;
+      }
 
       const currentOutput = buffer.data.replace(ANSI_STRIP, '').slice(-2000);
 
@@ -2293,8 +2358,9 @@ BEISPIEL:
         // Only proceed if output has been stable for 2+ cycles (30s)
         if (stableCount < 2) continue;
       } else {
-        // Output changed — reset stability counter
+        // Output changed — reset stability counter, refresh updatedAt to prevent false timeout
         task.lastCheckedOutput = currentOutput;
+        task.updatedAt = Date.now();
         this.stableOutputCounts.set(task.id, 0);
         continue; // Wait for next cycle to confirm stability
       }
@@ -2316,7 +2382,7 @@ BEISPIEL:
       // Reset stability counter after processing
       this.stableOutputCounts.delete(task.id);
 
-      // Case 1: Claude just started and is ready for a prompt
+      // ── Phase 3a: Send pending prompt (lightweight, no AI call) ────
       if (task.pendingPrompt && isClaudeReady) {
         logger.info(`Manager: heartbeat — Claude ready in "${task.sessionLabel}", sending pending prompt`);
         globalManager.write(task.sessionId, task.pendingPrompt);
@@ -2326,54 +2392,103 @@ BEISPIEL:
         task.updatedAt = Date.now();
         task.createdAt = Date.now(); // Reset age timer
         this.broadcastTasks();
-        // Advance task step if available
-        this.advanceTaskStep(task);
-        break;
+        // NOTE: Do NOT call advanceTaskStep here — the step isn't done yet,
+        // the prompt was just sent. The AI will mark it done via update_task(complete_step)
+        // after reviewing the result in the heartbeat review cycle.
+        continue; // Process other tasks too — no break!
       }
 
-      // Case 2: No pending prompt AND Claude is idle → review + continue workflow
+      // ── Phase 3b: Queue for AI review (no break, no blocking) ─────
       if (task.status === 'running' && !task.pendingPrompt) {
-        logger.info(`Manager: heartbeat detected idle in "${task.sessionLabel}" — waking manager for review`);
-        task.status = 'waiting';
-        task.updatedAt = Date.now();
-        this.broadcastTasks();
-
-        const outputBefore = this.outputBuffers.get(task.sessionId)?.data?.length ?? 0;
-
-        // Build heartbeat prompt with workflow context
-        const pendingSteps = task.steps.filter(s => s.status === 'pending' || s.status === 'running');
-        const doneSteps = task.steps.filter(s => s.status === 'done');
-        const workflowCtx = task.steps.length > 0
-          ? `\n\nWorkflow-Status für "${task.description}":\n- Erledigt: ${doneSteps.map(s => s.label).join(', ') || 'keine'}\n- Ausstehend: ${pendingSteps.map(s => s.label).join(', ') || 'keine'}\nWenn ausstehende Schritte vorhanden sind, arbeite den nächsten ab. Markiere erledigte Schritte mit update_task(complete_step).`
-          : '';
-
-        try {
-          await this.handleChat(
-            `[HEARTBEAT] Terminal "${task.sessionLabel}" ist idle. Prüfe den Output: Was hat Claude geliefert? Gibt es Folgeaufgaben?${workflowCtx}\n\nWenn alles erledigt ist, sage "Alle Aufgaben abgeschlossen".`,
-          );
-
-          const outputAfter = this.outputBuffers.get(task.sessionId)?.data?.length ?? 0;
-          if (outputAfter !== outputBefore) {
-            logger.info(`Manager: review sent new commands to "${task.sessionLabel}" — keeping task alive`);
-            task.status = 'running';
-            task.createdAt = Date.now();
-            task.lastCheckedOutput = undefined;
-            this.broadcastTasks();
-          } else {
-            this.updateTaskStatus(task.id, 'done');
-            logger.info(`Manager: task "${task.sessionLabel}" completed — no follow-up actions`);
-          }
-        } catch (err) {
-          logger.warn(`Manager: heartbeat review failed — ${err instanceof Error ? err.message : err}`);
-          task.status = 'running';
-          this.broadcastTasks();
+        if (!this.reviewQueue.includes(task.id)) {
+          logger.info(`Manager: heartbeat — queuing "${task.sessionLabel}" for review`);
+          this.reviewQueue.push(task.id);
         }
-        break;
       }
+    }
+
+    // ── Phase 4: Kick off review processing (if not already busy) ──
+    this.processReviewQueue();
+  }
+
+  /** Process queued task reviews one at a time, chaining the next review
+   *  after each completion to ensure all tasks get attention. */
+  private async processReviewQueue(): Promise<void> {
+    if (this.isProcessing) return;
+    if (this.reviewQueue.length === 0) return;
+
+    // Find next valid task to review (skip completed/failed tasks)
+    let task: DelegatedTask | undefined;
+    while (this.reviewQueue.length > 0 && !task) {
+      const taskId = this.reviewQueue.shift()!;
+      const candidate = this.delegatedTasks.find(t => t.id === taskId);
+      if (candidate && (candidate.status === 'running' || candidate.status === 'waiting')) {
+        task = candidate;
+      }
+    }
+    if (!task) return;
+
+    logger.info(`Manager: reviewing "${task.sessionLabel}" (${this.reviewQueue.length} more in queue)`);
+    task.status = 'waiting';
+    task.updatedAt = Date.now();
+    this.broadcastTasks();
+
+    const outputBefore = this.outputBuffers.get(task.sessionId)?.data?.length ?? 0;
+
+    // Build heartbeat prompt with workflow context
+    const pendingSteps = task.steps.filter(s => s.status === 'pending' || s.status === 'running');
+    const doneSteps = task.steps.filter(s => s.status === 'done');
+    const currentStep = task.steps.find(s => s.status === 'running');
+    const workflowCtx = task.steps.length > 0
+      ? `\n\nWorkflow-Status für "${task.description}":\n- Erledigt: ${doneSteps.map(s => s.label).join(', ') || 'keine'}\n- Ausstehend: ${pendingSteps.map(s => s.label).join(', ') || 'keine'}${currentStep ? `\n\nDEIN NÄCHSTER SCHRITT: "${currentStep.label}"\n→ Entscheide welches Tool passt (write_to_terminal, create_terminal, etc.) und führe den Schritt aus. Danach update_task(complete_step, task_name="${task.description}", step_index=${task.steps.indexOf(currentStep)}).` : ''}`
+      : '';
+
+    try {
+      const didProcess = await this.handleChat(
+        `[HEARTBEAT] Terminal "${task.sessionLabel}" ist idle.${currentStep ? ` Nächster Schritt: "${currentStep.label}". Prüfe den Terminal-Output und entscheide wie du diesen Schritt am besten ausführst. Nutze update_task(complete_step) wenn der Schritt bereits erledigt ist.` : ' Prüfe den Output: Was hat Claude geliefert? Gibt es Folgeaufgaben?'}${workflowCtx}\n\nWICHTIG: Markiere Schritte die BEREITS erledigt sind sofort mit update_task(complete_step). Wenn ALLE Schritte erledigt sind, sage "Alle Aufgaben abgeschlossen".`,
+      );
+
+      if (!didProcess) {
+        // handleChat was blocked (isProcessing) — put task back, don't mark done
+        logger.info(`Manager: review of "${task.sessionLabel}" skipped (busy) — re-queuing`);
+        task.status = 'running';
+        this.reviewQueue.push(task.id);
+        this.broadcastTasks();
+        return; // Don't chain — the finally block in handleChat will trigger drain
+      }
+
+      const outputAfter = this.outputBuffers.get(task.sessionId)?.data?.length ?? 0;
+      const hasOpenSteps = task.steps.some(s => s.status === 'pending' || s.status === 'running');
+      if (outputAfter !== outputBefore) {
+        logger.info(`Manager: review sent new commands to "${task.sessionLabel}" — keeping task alive`);
+        task.status = 'running';
+        task.createdAt = Date.now();
+        task.lastCheckedOutput = undefined;
+        this.broadcastTasks();
+      } else if (hasOpenSteps) {
+        // Task still has open steps — keep it running, let the AI work through them
+        logger.info(`Manager: task "${task.sessionLabel}" still has ${task.steps.filter(s => s.status !== 'done').length} open steps — keeping alive`);
+        task.status = 'running';
+        this.broadcastTasks();
+      } else {
+        this.updateTaskStatus(task.id, 'done');
+        logger.info(`Manager: task "${task.sessionLabel}" completed — all steps done, no follow-up actions`);
+      }
+    } catch (err) {
+      logger.warn(`Manager: heartbeat review failed — ${err instanceof Error ? err.message : err}`);
+      task.status = 'running';
+      this.broadcastTasks();
+    }
+
+    // Chain: process next queued review after a brief pause
+    if (this.reviewQueue.length > 0) {
+      setTimeout(() => this.processReviewQueue(), 2000);
     }
   }
 
-  /** Advance the next pending step in a task workflow */
+  /** Advance the next pending step in a task workflow.
+   *  Only advances step statuses — does NOT auto-set pendingPrompt.
+   *  The AI controls what gets sent to terminals via update_task(complete_step). */
   private advanceTaskStep(task: DelegatedTask): void {
     const runningStep = task.steps.find(s => s.status === 'running');
     if (runningStep) {
@@ -2382,7 +2497,7 @@ BEISPIEL:
     const nextStep = task.steps.find(s => s.status === 'pending');
     if (nextStep) {
       nextStep.status = 'running';
-      task.description = nextStep.label;
+      logger.info(`Manager: next step → "${nextStep.label}"`);
     }
     if (task.steps.length > 0 && task.steps.every(s => s.status === 'done')) {
       task.status = 'done';
