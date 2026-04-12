@@ -1452,45 +1452,16 @@ BEISPIEL:
             this.autoCompleteStepsFromToolExecution(executedActions);
           }
 
-          // If we delegated a task (create_terminal with non-empty command), stop the loop.
-          // The heartbeat will monitor the terminal and wake the manager when done.
-          const delegated = executedActions.some(a => {
-            if (a.type !== 'create_terminal') return false;
-            try { return !!JSON.parse(a.detail).initialCommand; } catch { return false; }
-          });
-          if (delegated) {
-            logger.info(`Manager: task delegated — stopping tool loop, heartbeat will monitor`);
-            const delegateNote = '\n\nWICHTIG: Die Aufgabe wurde delegiert. Du WARTEST jetzt — drücke NICHT Enter, sende KEINE weiteren Befehle. Der Heartbeat überwacht den Fortschritt und meldet sich automatisch wenn die Aufgabe fertig ist. Antworte dem User nur dass die Aufgabe delegiert wurde.';
-            if (isLocalProvider) {
-              const resultSummary = toolResults.map(tr => `[Tool-Ergebnis] ${tr.result}`).join('\n');
-              turnMessages = [
-                ...turnMessages,
-                { role: 'assistant', content: reply || null },
-                { role: 'user', content: resultSummary + delegateNote },
-              ];
-            } else {
-              turnMessages = [
-                ...turnMessages,
-                { role: 'assistant', content: reply || null, tool_calls: rawToolCalls },
-                ...toolResults.map(tr => ({
-                  role: 'tool' as const,
-                  content: tr.result + delegateNote,
-                  tool_call_id: tr.toolCallId,
-                })),
-              ];
-            }
-            const delegateResult = await toolProvider.chatStreamWithTools(
-              turnMessages as ChatMessage[],
-              systemPrompt,
-              MANAGER_TOOLS,
-              (token) => this.onStreamChunk?.(token),
-            );
-            reply = delegateResult.text;
-            nativeToolCalls = [];
-            rawToolCalls = [];
-            phases[phases.length - 1].duration = Date.now() - phaseStart;
-            break;
-          }
+          // NOTE: We no longer break the tool loop on terminal delegation.
+          // The old code killed the loop after the first create_terminal, which
+          // prevented the AI from creating multiple terminals or doing follow-up
+          // work in the same turn. This was the ROOT CAUSE of multi-step workflow
+          // failures with both GLM and Gemma 4.
+          //
+          // The tool loop continues naturally (up to MAX_TOOL_ROUNDS).
+          // The pending_prompt mechanism handles delayed writes to Claude.
+          // The AI is already instructed not to spam write_to_terminal after
+          // create_terminal (via system prompt).
 
           // Build message history for next call
           if (isLocalProvider) {
