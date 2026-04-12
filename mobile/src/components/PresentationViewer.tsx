@@ -47,12 +47,11 @@ export function PresentationViewer({ visible, url, title, onClose }: Presentatio
       visible={visible}
       animationType="slide"
       onRequestClose={onClose}
-      statusBarTranslucent
     >
-      <StatusBar hidden />
+      <StatusBar hidden translucent />
       <View style={styles.container}>
-        {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        {/* Header — below status bar */}
+        <View style={[styles.header, { paddingTop: 12 }]}>
           <TouchableOpacity style={styles.headerBtn} onPress={onClose} hitSlop={8}>
             <Feather name="x" size={22} color="#F8FAFC" />
           </TouchableOpacity>

@@ -46,7 +46,7 @@ export function buildPresentationHTML(title: string, slides: string[]): string {
 html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0F172A;color:#F8FAFC}
 
 /* ── Slide Container ───────────────────────────────────── */
-.slide{position:absolute;inset:0;padding:24px 20px 60px;display:none;flex-direction:column;overflow-y:auto;-webkit-overflow-scrolling:touch;opacity:0;transform:translateX(40px);transition:opacity .35s ease,transform .35s ease}
+.slide{position:absolute;inset:0;padding:12px 20px 60px;display:none;flex-direction:column;overflow-y:auto;-webkit-overflow-scrolling:touch;opacity:0;transform:translateX(40px);transition:opacity .35s ease,transform .35s ease}
 .slide.active{display:flex;opacity:1;transform:translateX(0)}
 .slide.exit-left{display:flex;opacity:0;transform:translateX(-40px)}
 

@@ -59,6 +59,39 @@ const mdStyles = {
   paragraph: { marginVertical: 2 },
 };
 
+// ── Search Highlight Helpers ─────────────────────────────────────────────────
+
+/** Highlight search matches in plain text — returns Text elements with yellow background */
+function highlightText(text: string, query: string): React.ReactNode {
+  if (!query) return text;
+  const lower = text.toLowerCase();
+  const qLower = query.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let lastIdx = 0;
+  let idx = lower.indexOf(qLower);
+  let key = 0;
+  while (idx !== -1) {
+    if (idx > lastIdx) parts.push(text.slice(lastIdx, idx));
+    parts.push(
+      <Text key={key++} style={{ backgroundColor: 'rgba(250,204,21,0.3)', color: '#FBBF24', borderRadius: 2 }}>
+        {text.slice(idx, idx + query.length)}
+      </Text>
+    );
+    lastIdx = idx + query.length;
+    idx = lower.indexOf(qLower, lastIdx);
+  }
+  if (lastIdx < text.length) parts.push(text.slice(lastIdx));
+  return parts.length > 0 ? <>{parts}</> : text;
+}
+
+/** Wrap search matches in markdown bold for Markdown renderer highlighting */
+function highlightMarkdown(text: string, query: string): string {
+  if (!query) return text;
+  // Escape regex special chars in query
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return text.replace(new RegExp(`(${escaped})`, 'gi'), '**$1**');
+}
+
 // ── Date Separator Helper ────────────────────────────────────────────────────
 
 function formatDateSeparator(ts: number): string {
@@ -91,6 +124,113 @@ const SLASH_COMMANDS = [
   { cmd: '/memory', label: 'Memory', desc: 'Memory-Viewer öffnen' },
   { cmd: '/help', label: 'Hilfe', desc: 'Befehle anzeigen' },
 ];
+
+// ── Command Wizard Data ───────────────────────────────────────────────────
+
+interface WizardOption {
+  icon: string;
+  label: string;
+  hint?: string;
+  value: string;
+}
+
+interface WizardStep {
+  question: string;
+  options: WizardOption[];
+  allowCustom?: boolean;
+  customPlaceholder?: string;
+}
+
+interface WizardFlow {
+  cmd: string;
+  title: string;
+  icon: string;
+  steps: WizardStep[];
+  buildPrompt: (answers: string[]) => string;
+}
+
+const WIZARD_FLOWS: Record<string, WizardFlow> = {
+  '/ppt': {
+    cmd: '/ppt', title: 'Präsentation', icon: '📊',
+    steps: [
+      {
+        question: 'Worüber soll die Präsentation sein?',
+        options: [
+          { icon: '📈', label: 'Projekt-Status', hint: 'Aktueller Stand aller Terminals & Tasks', value: 'Projekt-Status: aktueller Stand aller Terminals, Tasks und Fortschritt' },
+          { icon: '🧠', label: 'Memory & Learnings', hint: 'Was ich gelernt habe', value: 'Memory-Übersicht: alles was du über mich, meine Projekte und Workflows gelernt hast' },
+          { icon: '⚡', label: 'Tech-Stack', hint: 'Technologien & Architektur', value: 'Technologie-Stack und Architektur-Übersicht aller aktiven Projekte' },
+        ],
+        allowCustom: true, customPlaceholder: 'Eigenes Thema...',
+      },
+      {
+        question: 'Welcher Stil?',
+        options: [
+          { icon: '📋', label: 'Kompakt & Daten', hint: 'Charts, Stats, wenig Text', value: 'kompakt und daten-fokussiert mit Charts und Stats' },
+          { icon: '📝', label: 'Ausführlich', hint: 'Mehr Text und Kontext', value: 'ausführlich mit Erklärungen und Kontext' },
+          { icon: '🎨', label: 'Visuell & Creative', hint: 'Gradients, Animationen', value: 'visuell ansprechend mit Gradients und Animationen' },
+        ],
+      },
+    ],
+    buildPrompt: (a) => `[PRÄSENTATION] Erstelle eine Präsentation zum Thema: "${a[0]}". Stil: ${a[1]}. Nutze create_presentation mit 5-8 Slides.`,
+  },
+  '/cron': {
+    cmd: '/cron', title: 'Cron Job', icon: '⏰',
+    steps: [
+      {
+        question: 'Was soll automatisiert werden?',
+        options: [
+          { icon: '🔄', label: 'Git Status Check', hint: 'Alle Repos prüfen', value: 'Git Status in allen Projekt-Verzeichnissen prüfen' },
+          { icon: '🧪', label: 'Tests laufen lassen', hint: 'npm test / pytest', value: 'Automatische Tests laufen lassen' },
+          { icon: '📊', label: 'Status-Report', hint: 'Terminal-Zusammenfassung', value: 'Regelmäßiger Status-Report aller Terminals' },
+        ],
+        allowCustom: true, customPlaceholder: 'Eigene Aufgabe...',
+      },
+      {
+        question: 'Wie oft?',
+        options: [
+          { icon: '⚡', label: 'Alle 15 Min', value: '*/15 * * * *' },
+          { icon: '🕐', label: 'Alle 30 Min', value: '*/30 * * * *' },
+          { icon: '🕑', label: 'Stündlich', value: '0 */1 * * *' },
+          { icon: '📅', label: 'Täglich', value: '0 0 * * *' },
+        ],
+        allowCustom: true, customPlaceholder: 'Eigener Zeitplan (z.B. alle 2h)...',
+      },
+      {
+        question: 'Braucht es Claude oder reicht ein Shell-Befehl?',
+        options: [
+          { icon: '💻', label: 'Shell-Befehl', hint: 'git status, npm test, etc.', value: 'simple' },
+          { icon: '🤖', label: 'Claude Code', hint: 'Für komplexe Aufgaben', value: 'claude' },
+        ],
+      },
+    ],
+    buildPrompt: (a) => `[CRON-SETUP] Erstelle einen Cron Job: Aufgabe="${a[0]}", Zeitplan="${a[1]}", Typ="${a[2]}". Nutze create_cron_job direkt.`,
+  },
+  '/askill': {
+    cmd: '/askill', title: 'Skill erstellen', icon: '⚡',
+    steps: [
+      {
+        question: 'Was für einen Skill brauchst du?',
+        options: [
+          { icon: '🎬', label: 'Media-Konvertierung', hint: 'Video, Audio, Bilder', value: 'Media-Konvertierung (Video, Audio, Bilder umwandeln)' },
+          { icon: '📦', label: 'Daten-Verarbeitung', hint: 'CSV, JSON, APIs', value: 'Daten-Verarbeitung (CSV, JSON, API-Calls, Scraping)' },
+          { icon: '🔧', label: 'System-Automatisierung', hint: 'Cleanup, Backups', value: 'System-Automatisierung (Cleanup, Backups, Monitoring)' },
+        ],
+        allowCustom: true, customPlaceholder: 'Eigene Idee...',
+      },
+      {
+        question: 'Welche Tools/Dependencies?',
+        options: [
+          { icon: '🎥', label: 'ffmpeg', hint: 'Video/Audio', value: 'ffmpeg' },
+          { icon: '🖼️', label: 'ImageMagick', hint: 'Bildverarbeitung', value: 'imagemagick' },
+          { icon: '🐍', label: 'Python', hint: 'Script-basiert', value: 'python3' },
+          { icon: '📦', label: 'Node.js', hint: 'JavaScript', value: 'node' },
+        ],
+        allowCustom: true, customPlaceholder: 'Andere Dependencies...',
+      },
+    ],
+    buildPrompt: (a) => `[SKILL-ERSTELLUNG] Erstelle einen Skill: "${a[0]}". Dependencies: ${a[1]}. Nutze self_education Tool.`,
+  },
+};
 
 // ── Phase Labels ───────────────────────────────────────────────────────────
 
@@ -402,6 +542,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [activePres, setActivePres] = useState<{ url: string; title: string } | null>(null);
+  const [wizard, setWizard] = useState<{ flow: WizardFlow; step: number; answers: string[] } | null>(null);
   const [connQuality, setConnQuality] = useState<string>('good');
   const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -486,9 +627,11 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     ? messages
     : (sessionMessages[activeChat] ?? []);
 
-  const filteredMessages = searchQuery
-    ? chatMessages.filter(m => m.text.toLowerCase().includes(searchQuery.toLowerCase()))
-    : chatMessages;
+  // Search: show ALL messages but highlight matches (don't filter)
+  const filteredMessages = chatMessages;
+  const searchMatchCount = searchQuery
+    ? chatMessages.filter(m => m.text.toLowerCase().includes(searchQuery.toLowerCase())).length
+    : 0;
 
   // ── Toggle Manager ────────────────────────────────────────────────────────
 
@@ -555,48 +698,27 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         setInput('');
         return;
       }
-      if (cmd === '/askill') {
-        const skillDesc = text.slice('/askill'.length).trim();
-        const askillPrompt = skillDesc
-          ? `[SKILL-ERSTELLUNG] Der User möchte einen neuen Skill erstellen: "${skillDesc}". Frage nach Details die du brauchst (was genau soll der Skill können, welche Tools/Dependencies werden benötigt, Input/Output-Format). Plane den Skill sorgfältig bevor du ihn implementierst. Nutze dein self_education Tool.`
-          : `[SKILL-ERSTELLUNG] Der User möchte einen neuen Skill für dich erstellen. Frage ihn: 1) Was soll der Skill können? 2) Gibt es bestimmte Tools oder Programme die verwendet werden sollen? 3) Wie soll das Input/Output aussehen? Sei neugierig und stelle gezielte Fragen bevor du mit der Implementierung beginnst. Nutze dein self_education Tool.`;
-
-        addMessage({ role: 'user', text: skillDesc ? `/askill ${skillDesc}` : '/askill', targetSessionId: activeChat !== 'alle' ? activeChat : undefined }, activeChat);
-        setLoading(true);
-        wsService.send({
-          type: 'manager:chat',
-          payload: { text: askillPrompt, targetSessionId: activeChat !== 'alle' ? activeChat : undefined, onboarding: !onboarded },
-        });
-        setInput('');
-        Keyboard.dismiss();
-        return;
-      }
-      if (cmd === '/cron') {
-        const cronDesc = text.slice('/cron'.length).trim();
-        const cronPrompt = cronDesc
-          ? `[CRON-SETUP] Der User möchte einen Cron Job erstellen: "${cronDesc}". Frage nach den fehlenden Details: Zeitplan (z.B. alle 30 Min, täglich um 9 Uhr), Typ (simple Shell-Befehl oder Claude Code Auftrag), Befehl/Auftrag, Arbeitsverzeichnis. Erstelle den Job dann mit create_cron_job.`
-          : `[CRON-SETUP] Der User möchte einen wiederkehrenden Cron Job einrichten. Frage interaktiv ab:\n1. Was soll der Job tun?\n2. Wie oft? (z.B. alle 30 Min, stündlich, täglich um 9 Uhr)\n3. Typ: einfacher Shell-Befehl oder Claude Code Auftrag?\n4. In welchem Verzeichnis?\nErstelle den Job dann mit create_cron_job.`;
-        addMessage({ role: 'user', text: cronDesc ? `/cron ${cronDesc}` : '/cron', targetSessionId: activeChat !== 'alle' ? activeChat : undefined }, activeChat);
-        setLoading(true);
-        wsService.send({
-          type: 'manager:chat',
-          payload: { text: cronPrompt, targetSessionId: activeChat !== 'alle' ? activeChat : undefined, onboarding: !onboarded },
-        });
-        setInput('');
-        Keyboard.dismiss();
-        return;
-      }
-      if (cmd === '/ppt') {
-        const pptDesc = text.slice('/ppt'.length).trim();
-        const pptPrompt = pptDesc
-          ? `[PRÄSENTATION] Der User möchte eine Präsentation erstellen: "${pptDesc}". Erstelle eine professionelle Präsentation mit 5-8 Slides. Nutze das create_presentation Tool mit HTML-Slides. Verwende die verfügbaren CSS-Klassen (card, grid-2, stat, badge, gradient-*, fade-in, etc.), Chart.js Canvas für Diagramme und Mermaid für Flowcharts wo sinnvoll.`
-          : `[PRÄSENTATION] Der User möchte eine Präsentation erstellen. Frage: 1) Worüber? 2) Für welches Publikum? 3) Wie viele Slides ungefähr? Erstelle dann eine professionelle Präsentation mit dem create_presentation Tool.`;
-        addMessage({ role: 'user', text: pptDesc ? `/ppt ${pptDesc}` : '/ppt', targetSessionId: activeChat !== 'alle' ? activeChat : undefined }, activeChat);
-        setLoading(true);
-        wsService.send({
-          type: 'manager:chat',
-          payload: { text: pptPrompt, targetSessionId: activeChat !== 'alle' ? activeChat : undefined, onboarding: !onboarded },
-        });
+      // Commands with wizard flow
+      if (cmd === '/askill' || cmd === '/cron' || cmd === '/ppt') {
+        const extra = text.slice(cmd.length).trim();
+        if (extra) {
+          // User typed description after command — skip wizard, send directly
+          const prompts: Record<string, string> = {
+            '/ppt': `[PRÄSENTATION] Erstelle eine Präsentation: "${extra}". Nutze create_presentation mit 5-8 Slides.`,
+            '/cron': `[CRON-SETUP] Erstelle einen Cron Job: "${extra}". Nutze create_cron_job.`,
+            '/askill': `[SKILL-ERSTELLUNG] Erstelle einen Skill: "${extra}". Nutze self_education Tool.`,
+          };
+          addMessage({ role: 'user', text: `${cmd} ${extra}`, targetSessionId: activeChat !== 'alle' ? activeChat : undefined }, activeChat);
+          setLoading(true);
+          wsService.send({ type: 'manager:chat', payload: { text: prompts[cmd], targetSessionId: activeChat !== 'alle' ? activeChat : undefined, onboarding: false } });
+        } else {
+          // No description — start wizard
+          const flow = WIZARD_FLOWS[cmd];
+          if (flow) {
+            addMessage({ role: 'user', text: cmd, targetSessionId: activeChat !== 'alle' ? activeChat : undefined }, activeChat);
+            setWizard({ flow, step: 0, answers: [] });
+          }
+        }
         setInput('');
         Keyboard.dismiss();
         return;
@@ -627,6 +749,28 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   }, [input, attachments, activeChat, wsService, addMessage, setLoading, clearSessionMessages, setPersonality, setOnboarded, onboarded, navigation, serverId]);
 
   // ── Manual Poll ───────────────────────────────────────────────────────────
+
+  // ── Wizard Option Selection ─────────────────────────────────────────────
+
+  const handleWizardSelect = useCallback((value: string) => {
+    if (!wizard) return;
+    const { flow, step, answers } = wizard;
+    const newAnswers = [...answers, value];
+
+    // Show user's choice as a message
+    addMessage({ role: 'user', text: value, targetSessionId: activeChat !== 'alle' ? activeChat : undefined }, activeChat);
+
+    if (step + 1 < flow.steps.length) {
+      // Advance to next step
+      setWizard({ flow, step: step + 1, answers: newAnswers });
+    } else {
+      // Final step — build prompt and send
+      setWizard(null);
+      const prompt = flow.buildPrompt(newAnswers);
+      setLoading(true);
+      wsService.send({ type: 'manager:chat', payload: { text: prompt, targetSessionId: activeChat !== 'alle' ? activeChat : undefined, onboarding: false } });
+    }
+  }, [wizard, wsService, activeChat, addMessage, setLoading]);
 
   const handlePoll = useCallback(() => {
     setLoading(true);
@@ -898,10 +1042,12 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
             {isUser || isSystem ? (
               <Text style={[styles.messageText, isSystem && styles.messageTextSystem]}>
-                {item.text}
+                {searchQuery ? highlightText(item.text, searchQuery) : item.text}
               </Text>
             ) : (
-              <Markdown style={mdStyles}>{item.text}</Markdown>
+              <Markdown style={searchQuery ? { ...mdStyles, strong: { ...mdStyles.strong, backgroundColor: 'rgba(250,204,21,0.25)', color: '#FBBF24' } } : mdStyles}>
+                {searchQuery ? highlightMarkdown(item.text, searchQuery) : item.text}
+              </Markdown>
             )}
 
             {/* User-uploaded attachments */}
@@ -1003,7 +1149,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         </Pressable>
       </>
     );
-  }, [handleMessageLongPress, filteredMessages, reversedMessages]);
+  }, [handleMessageLongPress, filteredMessages, reversedMessages, searchQuery]);
 
   // ── Active Provider Label ─────────────────────────────────────────────────
 
@@ -1189,7 +1335,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
             autoFocus
           />
           {searchQuery.length > 0 && (
-            <Text style={styles.searchCount}>{filteredMessages.length}</Text>
+            <Text style={styles.searchCount}>{searchMatchCount}</Text>
           )}
           <TouchableOpacity onPress={() => { setSearchMode(false); setSearchQuery(''); }}>
             <Feather name="x" size={16} color={colors.textMuted} />
@@ -1298,6 +1444,63 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         }
       />
 
+      {/* Wizard Card — interactive command flow */}
+      {wizard && (
+        <View style={wizardStyles.wrap}>
+          <View style={wizardStyles.bubble}>
+            <View style={wizardStyles.labelRow}>
+              <Text style={wizardStyles.labelBadge}>{wizard.flow.icon} {wizard.flow.title}</Text>
+            </View>
+            {/* Progress dots */}
+            <View style={wizardStyles.progress}>
+              {wizard.flow.steps.map((_, i) => (
+                <View key={i} style={[
+                  wizardStyles.pDot,
+                  i < wizard.step && wizardStyles.pDotDone,
+                  i === wizard.step && wizardStyles.pDotActive,
+                ]} />
+              ))}
+            </View>
+            <Text style={wizardStyles.question}>{wizard.flow.steps[wizard.step].question}</Text>
+            <View style={wizardStyles.options}>
+              {wizard.flow.steps[wizard.step].options.map((opt, i) => (
+                <TouchableOpacity
+                  key={i}
+                  style={wizardStyles.optBtn}
+                  activeOpacity={0.7}
+                  onPress={() => handleWizardSelect(opt.value)}
+                >
+                  <Text style={wizardStyles.optIcon}>{opt.icon}</Text>
+                  <View style={wizardStyles.optText}>
+                    <Text style={wizardStyles.optLabel}>{opt.label}</Text>
+                    {opt.hint && <Text style={wizardStyles.optHint}>{opt.hint}</Text>}
+                  </View>
+                  <Feather name="chevron-right" size={14} color="#334155" />
+                </TouchableOpacity>
+              ))}
+              {wizard.flow.steps[wizard.step].allowCustom && (
+                <TouchableOpacity
+                  style={[wizardStyles.optBtn, { borderStyle: 'dashed' as any }]}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    setWizard(null);
+                    setInput(`${wizard.flow.cmd} `);
+                  }}
+                >
+                  <Text style={wizardStyles.optIcon}>✏️</Text>
+                  <View style={wizardStyles.optText}>
+                    <Text style={wizardStyles.optLabel}>Eigene Eingabe...</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            </View>
+            <TouchableOpacity onPress={() => setWizard(null)}>
+              <Text style={wizardStyles.cancel}>Abbrechen</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* Thinking / Streaming indicator — shows immediately on send */}
       {(loading || (thinking && thinking.phase !== '')) && <ThinkingBubble
         phase={thinking?.phase || '__sending'}
@@ -1331,31 +1534,39 @@ export function ManagerChatScreen({ navigation, route }: Props) {
                 key={c.cmd}
                 style={styles.slashPickerItem}
                 onPress={() => {
+                  // Directly execute the command inline (avoids stale closure on input)
+                  const cmd = c.cmd;
                   setInput('');
-                  // Execute command directly
-                  if (c.cmd === '/sm') {
+                  Keyboard.dismiss();
+
+                  if (cmd === '/sm') {
                     setLoading(true);
                     wsService.send({ type: 'manager:poll', payload: { targetSessionId: activeChat !== 'alle' ? activeChat : undefined } } as any);
-                  } else if (c.cmd === '/reset') {
-                    setInput('/reset');
-                    setTimeout(() => handleSend(), 0);
-                    return;
-                  } else if (c.cmd === '/clear') {
+                  } else if (cmd === '/clear') {
                     clearSessionMessages(activeChat);
-                  } else if (c.cmd === '/memory') {
+                  } else if (cmd === '/memory') {
                     navigation.navigate('ManagerMemory', { wsService, serverId });
-                  } else if (c.cmd === '/cron') {
-                    setInput('/cron');
-                    setTimeout(() => handleSend(), 0);
-                    return;
-                  } else if (c.cmd === '/ppt') {
-                    setInput('/ppt');
-                    setTimeout(() => handleSend(), 0);
-                    return;
-                  } else if (c.cmd === '/help') {
+                  } else if (cmd === '/help') {
                     addMessage({ role: 'system', text: 'Verfügbare Befehle:\n/sm — Terminal-Zusammenfassung\n/askill — Neuen Skill erstellen\n/cron — Cron Job einrichten\n/ppt — Präsentation erstellen\n/reset — Agent zurücksetzen\n/clear — Chat leeren\n/memory — Memory-Viewer\n/help — Diese Hilfe' });
+                  } else if (cmd === '/reset') {
+                    Alert.alert('Agent zurücksetzen', 'Memory und Persönlichkeit werden gelöscht.', [
+                      { text: 'Abbrechen', style: 'cancel' },
+                      { text: 'Zurücksetzen', style: 'destructive', onPress: () => {
+                        wsService.send({ type: 'manager:memory_write', payload: { section: 'user', data: { name: '', role: '', techStack: [], preferences: [], learnedFacts: [] } } } as any);
+                        clearSessionMessages(activeChat);
+                        setPersonality({ agentName: 'Manager', tone: 'chill', detail: 'balanced', emojis: true, proactive: true, customInstruction: '' });
+                        setOnboarded(false);
+                        addMessage({ role: 'system', text: 'Agent wurde zurückgesetzt.' });
+                      }},
+                    ]);
+                  } else if (cmd === '/cron' || cmd === '/ppt' || cmd === '/askill') {
+                    // Start wizard flow
+                    const flow = WIZARD_FLOWS[cmd];
+                    if (flow) {
+                      addMessage({ role: 'user', text: cmd, targetSessionId: activeChat !== 'alle' ? activeChat : undefined }, activeChat);
+                      setWizard({ flow, step: 0, answers: [] });
+                    }
                   }
-                  Keyboard.dismiss();
                 }}
               >
                 <Text style={styles.slashPickerCmd}>{c.cmd}</Text>
@@ -2276,6 +2487,96 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
+});
+
+const wizardStyles = StyleSheet.create({
+  wrap: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  bubble: {
+    backgroundColor: '#1B2336',
+    borderRadius: 16,
+    borderTopLeftRadius: 4,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.04)',
+  },
+  labelRow: {
+    marginBottom: 8,
+  },
+  labelBadge: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.primary,
+    backgroundColor: 'rgba(59,130,246,0.08)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    overflow: 'hidden',
+  },
+  progress: {
+    flexDirection: 'row',
+    gap: 4,
+    marginBottom: 10,
+  },
+  pDot: {
+    height: 3,
+    flex: 1,
+    borderRadius: 2,
+    backgroundColor: 'rgba(148,163,184,0.08)',
+  },
+  pDotActive: {
+    backgroundColor: colors.primary,
+  },
+  pDotDone: {
+    backgroundColor: '#22C55E',
+  },
+  question: {
+    fontSize: 14,
+    color: '#CBD5E1',
+    fontWeight: '500',
+    marginBottom: 10,
+    lineHeight: 20,
+  },
+  options: {
+    gap: 6,
+  },
+  optBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 11,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.06)',
+    borderRadius: 10,
+  },
+  optIcon: {
+    fontSize: 16,
+    width: 24,
+    textAlign: 'center',
+  },
+  optText: {
+    flex: 1,
+  },
+  optLabel: {
+    fontSize: 13,
+    color: '#F8FAFC',
+    fontWeight: '500',
+  },
+  optHint: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  cancel: {
+    fontSize: 10,
+    color: colors.textDim,
+    textAlign: 'center',
+    marginTop: 10,
+  },
 });
 
 const stripStyles = StyleSheet.create({

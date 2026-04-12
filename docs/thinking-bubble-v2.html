@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ThinkingBubble V2 — 3 Variations</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0F172A; color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; padding: 20px; }
+
+  h1 { font-size: 13px; color: #64748B; text-transform: uppercase; letter-spacing: 1.5px; margin: 48px 0 6px; }
+  h1:first-of-type { margin-top: 10px; }
+  .label { font-size: 11px; color: #475569; margin-bottom: 16px; line-height: 1.5; }
+
+  .phone {
+    width: 380px;
+    background: #0F172A;
+    border: 1px solid #1E293B;
+    border-radius: 20px;
+    padding: 14px;
+    margin-bottom: 16px;
+  }
+
+  .avatar {
+    width: 28px; height: 28px; border-radius: 14px;
+    background: url('https://i.pinimg.com/736x/2c/54/3f/2c543f9ad0f56e362a2b0e4b8a6e256e.jpg') center/cover;
+    flex-shrink: 0;
+  }
+
+  .sep { height: 1px; background: #1E293B; margin: 14px 0; }
+  .state-label { font-size: 9px; color: #334155; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; padding-left: 4px; }
+
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     VARIANTE A — "Glass Slab"
+     Frosted-glass look. Horizontal bar fills the width.
+     Stats as subtle overlay inside the bar. Ultra-clean.
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .va-row { display: flex; align-items: flex-end; gap: 8px; padding: 6px 0; }
+
+  .va-slab {
+    flex: 1;
+    background: rgba(27, 35, 54, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 14px;
+    border-top-left-radius: 4px;
+    border: 1px solid rgba(148,163,184,0.06);
+    overflow: hidden;
+  }
+
+  .va-top {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px 8px;
+    gap: 8px;
+  }
+
+  .va-dot {
+    width: 6px; height: 6px; border-radius: 3px;
+    animation: vaPulse 1.4s ease infinite;
+  }
+  .va-dot-blue { background: #3B82F6; }
+  .va-dot-gray { background: #475569; animation: none; opacity: 0.5; }
+  .va-dot-green { background: #22C55E; }
+
+  @keyframes vaPulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 1; }
+  }
+
+  .va-phase { font-size: 12px; color: #94A3B8; font-weight: 500; }
+  .va-phase-dim { color: #475569; font-style: italic; }
+
+  .va-time { font-size: 10px; color: #475569; font-family: 'SF Mono', monospace; margin-left: auto; }
+
+  /* Full-width bar container at bottom of slab */
+  .va-bar-track {
+    height: 28px;
+    background: rgba(15,23,42,0.4);
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+  }
+
+  .va-bar-fill {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    border-radius: 0;
+  }
+  .va-bar-fill-blue {
+    background: linear-gradient(90deg, rgba(59,130,246,0.12), rgba(59,130,246,0.06));
+    width: 65%;
+    animation: vaFill 4s ease-in-out infinite;
+  }
+  .va-bar-fill-green {
+    background: linear-gradient(90deg, rgba(34,197,94,0.12), rgba(34,197,94,0.05));
+    width: 82%;
+  }
+  .va-bar-fill-gray {
+    background: rgba(71,85,105,0.08);
+    width: 3%;
+    animation: none;
+  }
+
+  @keyframes vaFill {
+    0% { width: 12%; }
+    60% { width: 75%; }
+    100% { width: 92%; }
+  }
+
+  /* Stats overlaid inside bar */
+  .va-bar-stats {
+    display: flex;
+    gap: 16px;
+    position: relative;
+    z-index: 1;
+    width: 100%;
+  }
+
+  .va-bstat {
+    font-size: 10px;
+    font-family: 'SF Mono', monospace;
+    color: #475569;
+  }
+  .va-bstat b { font-weight: 600; color: #64748B; }
+  .va-bstat-bright b { color: #94A3B8; }
+
+  .va-pct {
+    margin-left: auto;
+    font-size: 10px;
+    font-family: 'SF Mono', monospace;
+    color: #64748B;
+    font-weight: 600;
+  }
+  .va-pct-green { color: #4ADE80; }
+
+  /* Streaming text */
+  .va-stream {
+    padding: 6px 14px 10px;
+    font-size: 13px;
+    color: #CBD5E1;
+    line-height: 1.55;
+  }
+
+  /* Cancel */
+  .va-cancel {
+    font-size: 10px; color: #334155; background: none; border: none;
+    padding: 4px 14px 8px; cursor: pointer; display: block;
+  }
+  .va-cancel:hover { color: #64748B; }
+
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     VARIANTE B — "Inline Strip"
+     Single-line indicator, no bubble. Just a slim strip below the chat.
+     Expands to show streaming text. Maximum minimal.
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .vb-strip {
+    margin: 4px 0;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #1B2336;
+    border: 1px solid rgba(148,163,184,0.04);
+  }
+
+  .vb-main {
+    display: flex;
+    align-items: center;
+    padding: 9px 14px;
+    gap: 10px;
+  }
+
+  .vb-indicator {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+  }
+
+  .vb-bar {
+    width: 3px; height: 12px;
+    border-radius: 1.5px;
+    background: #3B82F6;
+  }
+  .vb-bar:nth-child(1) { animation: vbWave 0.8s ease infinite 0s; }
+  .vb-bar:nth-child(2) { animation: vbWave 0.8s ease infinite 0.15s; height: 16px; }
+  .vb-bar:nth-child(3) { animation: vbWave 0.8s ease infinite 0.3s; }
+
+  @keyframes vbWave {
+    0%, 100% { transform: scaleY(0.5); opacity: 0.3; }
+    50% { transform: scaleY(1); opacity: 1; }
+  }
+
+  .vb-bar-green { background: #22C55E; }
+  .vb-bar-gray { background: #475569; animation: none !important; opacity: 0.3; }
+
+  .vb-phase { font-size: 12px; color: #94A3B8; font-weight: 500; }
+  .vb-phase-dim { color: #475569; font-style: italic; font-weight: 400; }
+
+  .vb-spacer { flex: 1; }
+
+  .vb-stats {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .vb-stat {
+    font-size: 9px;
+    font-family: 'SF Mono', monospace;
+    color: #475569;
+  }
+  .vb-stat b { font-weight: 600; color: #64748B; }
+  .vb-stat-bright b { color: #94A3B8; }
+
+  .vb-time {
+    font-size: 10px;
+    font-family: 'SF Mono', monospace;
+    color: #475569;
+    min-width: 32px;
+    text-align: right;
+  }
+
+  /* Thin progress line at bottom */
+  .vb-progress {
+    height: 2px;
+    background: rgba(59,130,246,0.06);
+  }
+  .vb-progress-fill {
+    height: 100%;
+    background: #3B82F6;
+    transition: width 0.3s ease;
+  }
+  .vb-progress-fill-green { background: #22C55E; }
+  .vb-progress-fill-gray { background: #475569; }
+
+  /* Expand for streaming text */
+  .vb-stream {
+    padding: 0 14px 10px;
+    font-size: 13px;
+    color: #CBD5E1;
+    line-height: 1.55;
+    border-top: 1px solid rgba(148,163,184,0.04);
+    margin-top: 2px;
+    padding-top: 8px;
+  }
+
+  .vb-cancel {
+    font-size: 10px; color: #334155; background: none; border: none;
+    padding: 2px 14px 8px; cursor: pointer;
+  }
+  .vb-cancel:hover { color: #64748B; }
+
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     VARIANTE C — "Neon Pulse"
+     Dark card with glowing accent edge. Animated gradient border.
+     Token stats prominent. Cyberpunk-minimal feel.
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .vc-row { display: flex; align-items: flex-end; gap: 8px; padding: 6px 0; }
+
+  .vc-card {
+    flex: 1;
+    background: #141C2E;
+    border-radius: 14px;
+    border-top-left-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* Animated glow border — left edge only */
+  .vc-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    border-radius: 3px 0 0 3px;
+  }
+  .vc-glow-blue::before {
+    background: linear-gradient(180deg, #3B82F6, #818CF8, #3B82F6);
+    background-size: 100% 200%;
+    animation: vcGlow 2s ease infinite;
+  }
+  .vc-glow-green::before {
+    background: linear-gradient(180deg, #22C55E, #4ADE80, #22C55E);
+    background-size: 100% 200%;
+    animation: vcGlow 2s ease infinite;
+  }
+  .vc-glow-gray::before {
+    background: #334155;
+    animation: none;
+  }
+
+  @keyframes vcGlow {
+    0%, 100% { background-position: 0% 0%; }
+    50% { background-position: 0% 100%; }
+  }
+
+  .vc-inner {
+    padding: 12px 14px;
+  }
+
+  .vc-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .vc-dot {
+    width: 6px; height: 6px; border-radius: 3px;
+    animation: vcPulse 1.2s ease infinite;
+  }
+  .vc-dot-blue { background: #3B82F6; box-shadow: 0 0 6px rgba(59,130,246,0.4); }
+  .vc-dot-green { background: #22C55E; box-shadow: 0 0 6px rgba(34,197,94,0.4); }
+  .vc-dot-gray { background: #475569; animation: none; box-shadow: none; }
+
+  @keyframes vcPulse {
+    0%, 100% { opacity: 0.4; box-shadow: 0 0 4px transparent; }
+    50% { opacity: 1; }
+  }
+
+  .vc-phase { font-size: 12px; color: #94A3B8; font-weight: 500; }
+  .vc-phase-dim { color: #475569; font-style: italic; }
+  .vc-time { font-size: 10px; color: #475569; font-family: 'SF Mono', monospace; margin-left: auto; }
+
+  /* Stats — more prominent here */
+  .vc-stats {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+
+  .vc-stat-box {
+    flex: 1;
+    background: rgba(15,23,42,0.5);
+    border-radius: 8px;
+    padding: 6px 8px;
+    text-align: center;
+  }
+
+  .vc-stat-val {
+    font-size: 14px;
+    font-weight: 700;
+    font-family: 'SF Mono', monospace;
+    color: #CBD5E1;
+    line-height: 1;
+  }
+  .vc-stat-val-blue { color: #60A5FA; }
+  .vc-stat-val-green { color: #4ADE80; }
+
+  .vc-stat-label {
+    font-size: 8px;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 3px;
+  }
+
+  /* Progress bar */
+  .vc-bar-wrap {
+    height: 3px;
+    background: rgba(59,130,246,0.06);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .vc-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+  .vc-bar-blue {
+    background: #3B82F6;
+    box-shadow: 0 0 8px rgba(59,130,246,0.3);
+    width: 65%;
+    animation: vcBarFill 4s ease-in-out infinite;
+  }
+  .vc-bar-green {
+    background: #22C55E;
+    box-shadow: 0 0 8px rgba(34,197,94,0.3);
+    width: 82%;
+  }
+  .vc-bar-gray {
+    background: #475569;
+    box-shadow: none;
+    width: 3%;
+    animation: none;
+  }
+
+  @keyframes vcBarFill {
+    0% { width: 10%; }
+    60% { width: 78%; }
+    100% { width: 93%; }
+  }
+
+  /* Stream */
+  .vc-stream {
+    padding-top: 10px;
+    font-size: 13px;
+    color: #CBD5E1;
+    line-height: 1.55;
+  }
+
+  .vc-cancel {
+    font-size: 10px; color: #334155; background: none; border: none;
+    padding: 8px 0 0; cursor: pointer; display: block;
+  }
+  .vc-cancel:hover { color: #64748B; }
+
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h1>Variante A — Glass Slab</h1>
+<p class="label">Frosted-glass Optik. Bar-Stats als Overlay in einem breiten Track.<br>Alles in einem flachen Slab, kein separater Stats-Bereich.</p>
+
+<div class="phone">
+  <div class="state-label">Gesendet</div>
+  <div class="va-row">
+    <div class="avatar"></div>
+    <div class="va-slab">
+      <div class="va-top">
+        <div class="va-dot va-dot-gray"></div>
+        <span class="va-phase va-phase-dim">Gesendet...</span>
+        <span class="va-time">0.3s</span>
+      </div>
+      <div class="va-bar-track">
+        <div class="va-bar-fill va-bar-fill-gray"></div>
+        <div class="va-bar-stats">
+          <span class="va-bstat">&mdash;</span>
+          <span class="va-pct"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+  <div class="state-label">Verarbeitung</div>
+  <div class="va-row">
+    <div class="avatar"></div>
+    <div class="va-slab">
+      <div class="va-top">
+        <div class="va-dot va-dot-blue"></div>
+        <span class="va-phase">Kontext aufbauen...</span>
+        <span class="va-time">3.8s</span>
+      </div>
+      <div class="va-bar-track">
+        <div class="va-bar-fill va-bar-fill-blue"></div>
+        <div class="va-bar-stats">
+          <span class="va-bstat va-bstat-bright"><b>382</b> tok</span>
+          <span class="va-bstat"><b>21.3</b> t/s</span>
+          <span class="va-pct">65%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+  <div class="state-label">Streaming</div>
+  <div class="va-row">
+    <div class="avatar"></div>
+    <div class="va-slab" style="border-color: rgba(34,197,94,0.08)">
+      <div class="va-top">
+        <div class="va-dot va-dot-green"></div>
+        <span class="va-phase">Schreibt...</span>
+        <span class="va-time">9.1s</span>
+      </div>
+      <div class="va-bar-track">
+        <div class="va-bar-fill va-bar-fill-green"></div>
+        <div class="va-bar-stats">
+          <span class="va-bstat va-bstat-bright"><b>847</b> tok</span>
+          <span class="va-bstat va-bstat-bright"><b>28.6</b> t/s</span>
+          <span class="va-pct va-pct-green">87%</span>
+        </div>
+      </div>
+      <div class="va-stream">Alles klar Boss, ich hab mir die Terminals angeschaut. Shell 2 ist gerade idle und...</div>
+      <div class="va-cancel">Abbrechen</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h1>Variante B — Inline Strip</h1>
+<p class="label">Kein Bubble, kein Avatar. Schmaler Streifen unter dem Chat.<br>Audio-Equalizer-Bars als Indikator. Expandiert nur beim Streaming.</p>
+
+<div class="phone">
+  <div class="state-label">Gesendet</div>
+  <div class="vb-strip">
+    <div class="vb-main">
+      <div class="vb-indicator">
+        <div class="vb-bar vb-bar-gray"></div>
+        <div class="vb-bar vb-bar-gray"></div>
+        <div class="vb-bar vb-bar-gray"></div>
+      </div>
+      <span class="vb-phase vb-phase-dim">Gesendet...</span>
+      <div class="vb-spacer"></div>
+      <span class="vb-time">0.4s</span>
+    </div>
+    <div class="vb-progress"><div class="vb-progress-fill vb-progress-fill-gray" style="width:2%"></div></div>
+  </div>
+
+  <div class="sep"></div>
+  <div class="state-label">Verarbeitung</div>
+  <div class="vb-strip">
+    <div class="vb-main">
+      <div class="vb-indicator">
+        <div class="vb-bar"></div>
+        <div class="vb-bar"></div>
+        <div class="vb-bar"></div>
+      </div>
+      <span class="vb-phase">Terminals...</span>
+      <div class="vb-spacer"></div>
+      <div class="vb-stats">
+        <span class="vb-stat vb-stat-bright"><b>382</b> tok</span>
+        <span class="vb-stat"><b>21.3</b> t/s</span>
+        <span class="vb-stat"><b>65%</b></span>
+      </div>
+      <span class="vb-time">3.8s</span>
+    </div>
+    <div class="vb-progress"><div class="vb-progress-fill" style="width:65%; animation: vbFillAnim 4s ease-in-out infinite"></div></div>
+  </div>
+
+  <div class="sep"></div>
+  <div class="state-label">Streaming</div>
+  <div class="vb-strip">
+    <div class="vb-main">
+      <div class="vb-indicator">
+        <div class="vb-bar vb-bar-green"></div>
+        <div class="vb-bar vb-bar-green"></div>
+        <div class="vb-bar vb-bar-green"></div>
+      </div>
+      <span class="vb-phase" style="color:#4ADE80">Schreibt...</span>
+      <div class="vb-spacer"></div>
+      <div class="vb-stats">
+        <span class="vb-stat vb-stat-bright"><b>847</b> tok</span>
+        <span class="vb-stat vb-stat-bright"><b>28.6</b> t/s</span>
+        <span class="vb-stat" style="color:#4ADE80"><b>87%</b></span>
+      </div>
+      <span class="vb-time">9.1s</span>
+    </div>
+    <div class="vb-progress"><div class="vb-progress-fill vb-progress-fill-green" style="width:87%"></div></div>
+    <div class="vb-stream">Alles klar Boss, ich hab mir die Terminals angeschaut. Shell 2 ist gerade idle und...</div>
+    <div class="vb-cancel">Abbrechen</div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h1>Variante C — Neon Pulse</h1>
+<p class="label">Dunkle Karte mit glühender Akzent-Kante links. Stat-Boxes prominent.<br>Cyberpunk-minimal. Glow-Effekte auf Dot und Bar.</p>
+
+<div class="phone">
+  <div class="state-label">Gesendet</div>
+  <div class="vc-row">
+    <div class="avatar"></div>
+    <div class="vc-card vc-glow-gray">
+      <div class="vc-inner">
+        <div class="vc-top">
+          <div class="vc-dot vc-dot-gray"></div>
+          <span class="vc-phase vc-phase-dim">Gesendet...</span>
+          <span class="vc-time">0.3s</span>
+        </div>
+        <div class="vc-bar-wrap">
+          <div class="vc-bar vc-bar-gray"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+  <div class="state-label">Verarbeitung</div>
+  <div class="vc-row">
+    <div class="avatar"></div>
+    <div class="vc-card vc-glow-blue">
+      <div class="vc-inner">
+        <div class="vc-top">
+          <div class="vc-dot vc-dot-blue"></div>
+          <span class="vc-phase">Kontext aufbauen...</span>
+          <span class="vc-time">3.8s</span>
+        </div>
+        <div class="vc-stats">
+          <div class="vc-stat-box">
+            <div class="vc-stat-val vc-stat-val-blue">382</div>
+            <div class="vc-stat-label">Tokens</div>
+          </div>
+          <div class="vc-stat-box">
+            <div class="vc-stat-val">21.3</div>
+            <div class="vc-stat-label">Tok/s</div>
+          </div>
+          <div class="vc-stat-box">
+            <div class="vc-stat-val vc-stat-val-blue">65%</div>
+            <div class="vc-stat-label">Progress</div>
+          </div>
+        </div>
+        <div class="vc-bar-wrap">
+          <div class="vc-bar vc-bar-blue"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+  <div class="state-label">Streaming</div>
+  <div class="vc-row">
+    <div class="avatar"></div>
+    <div class="vc-card vc-glow-green">
+      <div class="vc-inner">
+        <div class="vc-top">
+          <div class="vc-dot vc-dot-green"></div>
+          <span class="vc-phase" style="color:#4ADE80">Schreibt...</span>
+          <span class="vc-time">9.1s</span>
+        </div>
+        <div class="vc-stats">
+          <div class="vc-stat-box">
+            <div class="vc-stat-val vc-stat-val-green">847</div>
+            <div class="vc-stat-label">Tokens</div>
+          </div>
+          <div class="vc-stat-box">
+            <div class="vc-stat-val">28.6</div>
+            <div class="vc-stat-label">Tok/s</div>
+          </div>
+          <div class="vc-stat-box">
+            <div class="vc-stat-val vc-stat-val-green">87%</div>
+            <div class="vc-stat-label">Progress</div>
+          </div>
+        </div>
+        <div class="vc-bar-wrap">
+          <div class="vc-bar vc-bar-green"></div>
+        </div>
+        <div class="vc-stream">Alles klar Boss, ich hab mir die Terminals angeschaut. Shell 2 ist gerade idle und...</div>
+        <div class="vc-cancel">Abbrechen</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  @keyframes vbFillAnim {
+    0% { width: 10%; }
+    60% { width: 75%; }
+    100% { width: 93%; }
+  }
+</style>
+
+<!-- Live counters -->
+<script>
+  // Simulate ticking tokens on all variants
+  const counters = [
+    { sel: '.va-bstat-bright b', base: 382, speed: 5 },
+  ];
+  let frame = 0;
+  setInterval(() => {
+    frame++;
+    // Just animate the percent displays subtly
+    document.querySelectorAll('.va-pct:not(:empty), .vc-stat-val-blue, .vc-stat-val-green').forEach(el => {
+      if (el.textContent.includes('%')) return;
+      const v = parseInt(el.textContent) || 0;
+      if (v > 0 && v < 5000) {
+        el.textContent = String(v + Math.floor(Math.random() * 6) + 1);
+      }
+    });
+  }, 100);
+</script>
+
+</body>
+</html>

@@ -283,17 +283,24 @@ class AdhanFullscreenActivity : AppCompatActivity() {
         val audioRes = adhanAudio[selectedId] ?: adhanAudio["mishary"]
         try {
             if (audioRes != null) {
+                mediaPlayer?.release()
                 mediaPlayer = MediaPlayer.create(this, audioRes)
                 mediaPlayer?.setOnCompletionListener {
                     it.release()
                     mediaPlayer = null
+                    // Adhan finished — now close the activity
+                    if (!isFinishing) finish()
                 }
                 mediaPlayer?.start()
+                // Keep screen on while adhan plays
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                finish()
             }
-        } catch (_: Exception) {}
-
-        // Close the fullscreen activity — audio continues playing in background
-        finish()
+        } catch (_: Exception) {
+            finish()
+        }
+        // DON'T call finish() here — wait for audio completion
     }
 
     private fun dismissAlert() {
@@ -309,7 +316,9 @@ class AdhanFullscreenActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         vibrator?.cancel()
-        // DON'T stop mediaPlayer here — let it play in background
+        // Release media player if activity is destroyed (e.g. user swipes away)
+        mediaPlayer?.release()
+        mediaPlayer = null
         super.onDestroy()
     }
 

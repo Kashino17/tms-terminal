@@ -2250,7 +2250,7 @@ BEISPIEL:
     }
   }
 
-  private static readonly TASK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max per task
+  private static readonly TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours max per task
   private stableOutputCounts = new Map<string, number>(); // track consecutive unchanged outputs
 
   /** Heartbeat: check delegated tasks. If a terminal has new output

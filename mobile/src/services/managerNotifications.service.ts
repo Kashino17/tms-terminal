@@ -9,7 +9,7 @@ export function setupManagerNotificationChannel(): void {
       description: 'Benachrichtigungen vom Manager-Agent',
       importance: Notifications.AndroidImportance.DEFAULT,
       sound: 'default',
-      vibrationPattern: [0, 150],
+      vibrationPattern: [0, 300, 150, 300, 150, 300],
       enableVibrate: true,
     }).catch(() => {});
   }

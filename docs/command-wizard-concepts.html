@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Command Wizard — 3 Varianten</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0f1a; color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; padding: 20px; }
+  h1 { font-size: 13px; color: #64748B; text-transform: uppercase; letter-spacing: 1.5px; margin: 48px 0 6px; }
+  h1:first-of-type { margin-top: 10px; }
+  .label { font-size: 11px; color: #475569; margin-bottom: 16px; line-height: 1.6; max-width: 380px; }
+  .phone {
+    width: 380px;
+    height: 720px;
+    background: #0F172A;
+    border: 1px solid #1E293B;
+    border-radius: 24px;
+    overflow: hidden;
+    position: relative;
+    margin-bottom: 24px;
+  }
+  /* Fake chat background */
+  .chat-bg {
+    position: absolute; inset: 0;
+    background: #0F172A;
+    display: flex; flex-direction: column; justify-content: flex-end;
+  }
+  .fake-msg {
+    margin: 0 16px 8px;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.4;
+    max-width: 75%;
+  }
+  .fake-msg.user { background: rgba(59,130,246,0.13); align-self: flex-end; color: #CBD5E1; border-top-right-radius: 4px; }
+  .fake-msg.bot { background: #1B2336; align-self: flex-start; color: #CBD5E1; border-top-left-radius: 4px; }
+
+  /* ═══════════════════════════════════════════════════════════════
+     VARIANTE A — Bottom Sheet Wizard
+     Slides up from bottom. Step indicators at top.
+     Option chips to tap. Smooth step transitions.
+     ═══════════════════════════════════════════════════════════════ */
+
+  .va-sheet {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    background: #141C2E;
+    border-top-left-radius: 20px;
+    border-top-right-radius: 20px;
+    border-top: 1px solid rgba(148,163,184,0.08);
+    padding: 0;
+    animation: vaSlideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes vaSlideUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+
+  .va-handle {
+    width: 36px; height: 4px;
+    background: #334155;
+    border-radius: 2px;
+    margin: 10px auto 0;
+  }
+
+  .va-header {
+    display: flex;
+    align-items: center;
+    padding: 14px 20px 0;
+    gap: 10px;
+  }
+  .va-icon {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+  .va-icon-blue { background: rgba(59,130,246,0.12); }
+  .va-icon-green { background: rgba(34,197,94,0.12); }
+  .va-icon-purple { background: rgba(168,85,247,0.12); }
+
+  .va-title { font-size: 16px; font-weight: 600; color: #F8FAFC; }
+  .va-subtitle { font-size: 11px; color: #64748B; margin-top: 1px; }
+
+  .va-close {
+    margin-left: auto;
+    width: 28px; height: 28px;
+    border-radius: 14px;
+    background: rgba(255,255,255,0.05);
+    display: flex; align-items: center; justify-content: center;
+    color: #64748B; font-size: 14px; cursor: pointer;
+  }
+
+  /* Steps indicator */
+  .va-steps {
+    display: flex;
+    gap: 4px;
+    padding: 14px 20px 0;
+  }
+  .va-step-dot {
+    height: 3px;
+    flex: 1;
+    border-radius: 2px;
+    background: rgba(148,163,184,0.1);
+    transition: background 0.3s;
+  }
+  .va-step-dot.active { background: #3B82F6; }
+  .va-step-dot.done { background: #22C55E; }
+
+  /* Question */
+  .va-question {
+    padding: 16px 20px 8px;
+    font-size: 14px;
+    color: #CBD5E1;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+
+  /* Option chips */
+  .va-options {
+    padding: 8px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .va-chip {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(148,163,184,0.06);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .va-chip:hover { background: rgba(59,130,246,0.06); border-color: rgba(59,130,246,0.15); }
+  .va-chip.selected { background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.25); }
+
+  .va-chip-icon { font-size: 16px; width: 24px; text-align: center; }
+  .va-chip-text { flex: 1; }
+  .va-chip-title { font-size: 13px; color: #F8FAFC; font-weight: 500; }
+  .va-chip-desc { font-size: 11px; color: #64748B; margin-top: 1px; }
+  .va-chip-arrow { color: #334155; font-size: 14px; }
+
+  /* Custom input row */
+  .va-custom {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px 16px;
+  }
+  .va-input {
+    flex: 1;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(148,163,184,0.08);
+    border-radius: 10px;
+    padding: 10px 14px;
+    color: #F8FAFC;
+    font-size: 13px;
+    outline: none;
+  }
+  .va-input::placeholder { color: #475569; }
+  .va-send {
+    width: 36px; height: 36px;
+    border-radius: 18px;
+    background: #3B82F6;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 16px; cursor: pointer;
+    border: none;
+  }
+  .va-send:disabled { opacity: 0.3; }
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     VARIANTE B — Inline Expand
+     Expands directly above the input bar. No sheet, no overlay.
+     Compact cards that morph into the next step.
+     ═══════════════════════════════════════════════════════════════ */
+
+  .vb-wrapper {
+    position: absolute;
+    bottom: 62px; left: 0; right: 0;
+    padding: 0 12px;
+    animation: vbFadeIn 0.2s ease both;
+  }
+  @keyframes vbFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .vb-card {
+    background: #1B2336;
+    border: 1px solid rgba(148,163,184,0.06);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
+  .vb-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px 8px;
+  }
+  .vb-cmd-badge {
+    font-size: 11px;
+    font-weight: 600;
+    color: #3B82F6;
+    font-family: 'SF Mono', monospace;
+  }
+  .vb-cmd-label {
+    font-size: 12px;
+    color: #94A3B8;
+  }
+  .vb-step-pills {
+    margin-left: auto;
+    display: flex;
+    gap: 3px;
+  }
+  .vb-pill {
+    width: 16px; height: 4px;
+    border-radius: 2px;
+    background: rgba(148,163,184,0.1);
+  }
+  .vb-pill.active { background: #3B82F6; width: 24px; }
+  .vb-pill.done { background: #22C55E; }
+
+  .vb-question {
+    padding: 4px 14px 10px;
+    font-size: 13px;
+    color: #CBD5E1;
+    font-weight: 500;
+  }
+
+  .vb-options {
+    padding: 0 8px 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .vb-tag {
+    padding: 8px 14px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(148,163,184,0.06);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+  .vb-tag:hover { background: rgba(59,130,246,0.06); border-color: rgba(59,130,246,0.15); }
+  .vb-tag.selected { background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.3); }
+
+  .vb-tag-title { font-size: 12px; color: #F8FAFC; font-weight: 500; }
+  .vb-tag-hint { font-size: 10px; color: #64748B; margin-top: 2px; }
+
+  /* Two-column for schedule options */
+  .vb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 8px 8px; }
+
+  .vb-grid-item {
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(148,163,184,0.06);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+  }
+  .vb-grid-item:hover { background: rgba(59,130,246,0.06); border-color: rgba(59,130,246,0.15); }
+
+  .vb-grid-val { font-size: 15px; font-weight: 600; color: #F8FAFC; }
+  .vb-grid-label { font-size: 10px; color: #64748B; margin-top: 2px; }
+
+  /* Input bar fake */
+  .vb-inputbar {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 62px;
+    background: #1B2336;
+    border-top: 1px solid rgba(148,163,184,0.04);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 8px;
+  }
+  .vb-inputbar input {
+    flex: 1; background: #243044; border: none; border-radius: 20px;
+    padding: 9px 16px; color: #F8FAFC; font-size: 13px; outline: none;
+  }
+  .vb-inputbar input::placeholder { color: #475569; }
+
+
+  /* ═══════════════════════════════════════════════════════════════
+     VARIANTE C — Chat Flow Cards
+     Appears as interactive message bubbles in the chat.
+     Agent "asks" with tappable option buttons inline.
+     Most conversational feel.
+     ═══════════════════════════════════════════════════════════════ */
+
+  .vc-bubble {
+    margin: 0 16px 8px;
+    align-self: flex-start;
+    max-width: 88%;
+  }
+
+  .vc-bubble-inner {
+    background: #1B2336;
+    border-radius: 16px;
+    border-top-left-radius: 4px;
+    padding: 12px 14px;
+    border: 1px solid rgba(148,163,184,0.04);
+  }
+
+  .vc-bubble-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #3B82F6;
+    background: rgba(59,130,246,0.08);
+    padding: 3px 8px;
+    border-radius: 6px;
+    margin-bottom: 8px;
+  }
+
+  .vc-bubble-text {
+    font-size: 13px;
+    color: #CBD5E1;
+    line-height: 1.5;
+    margin-bottom: 10px;
+  }
+
+  .vc-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .vc-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(148,163,184,0.06);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .vc-btn:hover { background: rgba(59,130,246,0.06); border-color: rgba(59,130,246,0.15); }
+  .vc-btn.selected {
+    background: rgba(59,130,246,0.08);
+    border-color: rgba(59,130,246,0.2);
+  }
+
+  .vc-btn-icon { font-size: 18px; width: 28px; text-align: center; }
+  .vc-btn-label { font-size: 13px; color: #F8FAFC; font-weight: 500; }
+  .vc-btn-hint { font-size: 10px; color: #64748B; }
+  .vc-btn-check {
+    margin-left: auto;
+    width: 18px; height: 18px;
+    border-radius: 9px;
+    border: 1.5px solid #334155;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px;
+    transition: all 0.15s;
+  }
+  .vc-btn.selected .vc-btn-check {
+    background: #3B82F6;
+    border-color: #3B82F6;
+    color: white;
+  }
+
+  /* Selected answer appears as user message */
+  .vc-answer {
+    margin: 0 16px 8px;
+    align-self: flex-end;
+    max-width: 70%;
+    padding: 8px 14px;
+    background: rgba(59,130,246,0.13);
+    border-radius: 14px;
+    border-top-right-radius: 4px;
+    font-size: 13px;
+    color: #CBD5E1;
+  }
+
+  /* Progress steps inline */
+  .vc-progress {
+    display: flex;
+    gap: 3px;
+    margin-bottom: 8px;
+  }
+  .vc-pdot {
+    height: 3px; flex: 1;
+    border-radius: 2px;
+    background: rgba(148,163,184,0.08);
+  }
+  .vc-pdot.done { background: #22C55E; }
+  .vc-pdot.active { background: #3B82F6; }
+
+  .vc-typing {
+    margin: 0 16px 8px;
+    align-self: flex-start;
+    display: flex; gap: 4px; align-items: center;
+    padding: 10px 16px;
+    background: #1B2336;
+    border-radius: 16px;
+    border-top-left-radius: 4px;
+  }
+  .vc-typing-dot {
+    width: 6px; height: 6px;
+    border-radius: 3px;
+    background: #3B82F6;
+    animation: vcTyping 1s ease infinite;
+  }
+  .vc-typing-dot:nth-child(2) { animation-delay: 0.15s; }
+  .vc-typing-dot:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes vcTyping {
+    0%, 100% { opacity: 0.3; transform: translateY(0); }
+    50% { opacity: 1; transform: translateY(-3px); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1>Variante A — Bottom Sheet Wizard</h1>
+<p class="label">Sheet gleitet von unten hoch. Step-Indikator oben. Große tappbare Option-Chips mit Icons + Beschreibung. Handle zum Zuziehen. Eigene Eingabe mit Textfeld unten.</p>
+
+<div class="phone">
+  <div class="chat-bg">
+    <div class="fake-msg user">/ppt</div>
+  </div>
+  <div class="va-sheet">
+    <div class="va-handle"></div>
+    <div class="va-header">
+      <div class="va-icon va-icon-blue">📊</div>
+      <div>
+        <div class="va-title">Präsentation erstellen</div>
+        <div class="va-subtitle">Schritt 1 von 3</div>
+      </div>
+      <div class="va-close">✕</div>
+    </div>
+    <div class="va-steps">
+      <div class="va-step-dot active"></div>
+      <div class="va-step-dot"></div>
+      <div class="va-step-dot"></div>
+    </div>
+    <div class="va-question">Worüber soll die Präsentation sein?</div>
+    <div class="va-options">
+      <div class="va-chip">
+        <div class="va-chip-icon">📈</div>
+        <div class="va-chip-text">
+          <div class="va-chip-title">Projekt-Status</div>
+          <div class="va-chip-desc">Aktueller Stand aller Terminals & Tasks</div>
+        </div>
+        <div class="va-chip-arrow">›</div>
+      </div>
+      <div class="va-chip">
+        <div class="va-chip-icon">🧠</div>
+        <div class="va-chip-text">
+          <div class="va-chip-title">Memory & Learnings</div>
+          <div class="va-chip-desc">Was ich über dich und deine Projekte gelernt habe</div>
+        </div>
+        <div class="va-chip-arrow">›</div>
+      </div>
+      <div class="va-chip">
+        <div class="va-chip-icon">⚡</div>
+        <div class="va-chip-text">
+          <div class="va-chip-title">Technologie-Stack</div>
+          <div class="va-chip-desc">Übersicht aller Technologien und Architektur</div>
+        </div>
+        <div class="va-chip-arrow">›</div>
+      </div>
+    </div>
+    <div class="va-custom">
+      <input class="va-input" placeholder="Eigenes Thema eingeben..." />
+      <button class="va-send" disabled>→</button>
+    </div>
+  </div>
+</div>
+
+<!-- Step 2 example -->
+<div class="phone">
+  <div class="chat-bg">
+    <div class="fake-msg user">/ppt</div>
+  </div>
+  <div class="va-sheet" style="animation: none">
+    <div class="va-handle"></div>
+    <div class="va-header">
+      <div class="va-icon va-icon-blue">📊</div>
+      <div>
+        <div class="va-title">Präsentation erstellen</div>
+        <div class="va-subtitle">Schritt 2 von 3 — Stil</div>
+      </div>
+      <div class="va-close">✕</div>
+    </div>
+    <div class="va-steps">
+      <div class="va-step-dot done"></div>
+      <div class="va-step-dot active"></div>
+      <div class="va-step-dot"></div>
+    </div>
+    <div class="va-question">Welcher Stil?</div>
+    <div class="va-options">
+      <div class="va-chip selected">
+        <div class="va-chip-icon">📋</div>
+        <div class="va-chip-text">
+          <div class="va-chip-title">Kompakt & Daten-fokussiert</div>
+          <div class="va-chip-desc">Charts, Stats, Badges — wenig Text</div>
+        </div>
+        <div class="va-chip-arrow" style="color: #3B82F6">✓</div>
+      </div>
+      <div class="va-chip">
+        <div class="va-chip-icon">📝</div>
+        <div class="va-chip-text">
+          <div class="va-chip-title">Ausführlich & Erklärend</div>
+          <div class="va-chip-desc">Mehr Text, Kontext, Hintergründe</div>
+        </div>
+        <div class="va-chip-arrow">›</div>
+      </div>
+      <div class="va-chip">
+        <div class="va-chip-icon">🎨</div>
+        <div class="va-chip-text">
+          <div class="va-chip-title">Visuell & Creative</div>
+          <div class="va-chip-desc">Gradients, Animationen, Eye-Candy</div>
+        </div>
+        <div class="va-chip-arrow">›</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1>Variante B — Inline Expand</h1>
+<p class="label">Kein Sheet, kein Overlay. Erscheint direkt über der Input-Bar als kompakte Karte. Chips und Grid-Auswahl. Fühlt sich wie ein Teil des Chat-Inputs an.</p>
+
+<div class="phone">
+  <div class="chat-bg" style="padding-bottom: 180px;">
+    <div class="fake-msg bot">Was brauchst du, Boss?</div>
+    <div class="fake-msg user">/cron</div>
+  </div>
+  <div class="vb-wrapper" style="bottom: 62px;">
+    <div class="vb-card">
+      <div class="vb-card-header">
+        <span class="vb-cmd-badge">/cron</span>
+        <span class="vb-cmd-label">Scheduler einrichten</span>
+        <div class="vb-step-pills">
+          <div class="vb-pill active"></div>
+          <div class="vb-pill"></div>
+          <div class="vb-pill"></div>
+        </div>
+      </div>
+      <div class="vb-question">Was soll automatisiert werden?</div>
+      <div class="vb-options">
+        <div class="vb-tag">
+          <div class="vb-tag-title">🔄 Git Status Check</div>
+          <div class="vb-tag-hint">Alle Repos prüfen</div>
+        </div>
+        <div class="vb-tag">
+          <div class="vb-tag-title">🧪 Tests laufen lassen</div>
+          <div class="vb-tag-hint">npm test / pytest</div>
+        </div>
+        <div class="vb-tag">
+          <div class="vb-tag-title">📊 Status-Report</div>
+          <div class="vb-tag-hint">Terminal-Übersicht</div>
+        </div>
+        <div class="vb-tag" style="width:100%">
+          <div class="vb-tag-title">✏️ Eigene Aufgabe...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="vb-inputbar">
+    <input placeholder="Nachricht an Manager..." />
+  </div>
+</div>
+
+<!-- Step 2 — Schedule grid -->
+<div class="phone">
+  <div class="chat-bg" style="padding-bottom: 220px;">
+    <div class="fake-msg user">/cron</div>
+    <div class="fake-msg bot">Git Status Check — wie oft?</div>
+  </div>
+  <div class="vb-wrapper" style="bottom: 62px;">
+    <div class="vb-card">
+      <div class="vb-card-header">
+        <span class="vb-cmd-badge">/cron</span>
+        <span class="vb-cmd-label">Git Status Check</span>
+        <div class="vb-step-pills">
+          <div class="vb-pill done"></div>
+          <div class="vb-pill active"></div>
+          <div class="vb-pill"></div>
+        </div>
+      </div>
+      <div class="vb-question">Wie oft soll es laufen?</div>
+      <div class="vb-grid">
+        <div class="vb-grid-item">
+          <div class="vb-grid-val">15 min</div>
+          <div class="vb-grid-label">Alle 15 Minuten</div>
+        </div>
+        <div class="vb-grid-item">
+          <div class="vb-grid-val">30 min</div>
+          <div class="vb-grid-label">Alle 30 Minuten</div>
+        </div>
+        <div class="vb-grid-item">
+          <div class="vb-grid-val">1 h</div>
+          <div class="vb-grid-label">Stündlich</div>
+        </div>
+        <div class="vb-grid-item">
+          <div class="vb-grid-val">2 h</div>
+          <div class="vb-grid-label">Alle 2 Stunden</div>
+        </div>
+        <div class="vb-grid-item">
+          <div class="vb-grid-val">1 Tag</div>
+          <div class="vb-grid-label">Täglich</div>
+        </div>
+        <div class="vb-grid-item">
+          <div class="vb-grid-val">✏️</div>
+          <div class="vb-grid-label">Eigener Zeitplan</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="vb-inputbar">
+    <input placeholder="Nachricht an Manager..." />
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h1>Variante C — Chat Flow Cards</h1>
+<p class="label">Optionen erscheinen als interaktive Nachrichten-Bubbles im Chat. Agent "fragt" mit tappbaren Buttons inline. Ausgewählte Option wird als User-Antwort angezeigt. Natürlichstes Gespräch-Feeling.</p>
+
+<div class="phone">
+  <div class="chat-bg" style="align-items: stretch;">
+    <div class="fake-msg user">/askill</div>
+
+    <!-- Agent asks with inline buttons -->
+    <div class="vc-bubble">
+      <div class="vc-bubble-inner">
+        <div class="vc-bubble-label">⚡ Skill erstellen</div>
+        <div class="vc-progress">
+          <div class="vc-pdot active"></div>
+          <div class="vc-pdot"></div>
+          <div class="vc-pdot"></div>
+        </div>
+        <div class="vc-bubble-text">Was für einen Skill brauchst du?</div>
+        <div class="vc-buttons">
+          <div class="vc-btn">
+            <div class="vc-btn-icon">🎬</div>
+            <div>
+              <div class="vc-btn-label">Media-Konvertierung</div>
+              <div class="vc-btn-hint">Video, Audio, Bilder umwandeln</div>
+            </div>
+            <div class="vc-btn-check"></div>
+          </div>
+          <div class="vc-btn">
+            <div class="vc-btn-icon">📦</div>
+            <div>
+              <div class="vc-btn-label">Daten-Verarbeitung</div>
+              <div class="vc-btn-hint">CSV, JSON, API-Calls, Scraping</div>
+            </div>
+            <div class="vc-btn-check"></div>
+          </div>
+          <div class="vc-btn">
+            <div class="vc-btn-icon">🔧</div>
+            <div>
+              <div class="vc-btn-label">System-Automatisierung</div>
+              <div class="vc-btn-hint">Cleanup, Backups, Monitoring</div>
+            </div>
+            <div class="vc-btn-check"></div>
+          </div>
+          <div class="vc-btn">
+            <div class="vc-btn-icon">✨</div>
+            <div>
+              <div class="vc-btn-label">Eigene Idee...</div>
+              <div class="vc-btn-hint">Beschreib was du brauchst</div>
+            </div>
+            <div class="vc-btn-check"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- After selection — step 2 -->
+<div class="phone">
+  <div class="chat-bg" style="align-items: stretch;">
+    <div class="fake-msg user">/askill</div>
+
+    <!-- Step 1 answered -->
+    <div class="vc-bubble">
+      <div class="vc-bubble-inner">
+        <div class="vc-bubble-label">⚡ Skill erstellen</div>
+        <div class="vc-bubble-text" style="margin-bottom:0; color:#64748B; font-size:12px">Was für einen Skill?</div>
+      </div>
+    </div>
+    <div class="vc-answer">🎬 Media-Konvertierung</div>
+
+    <!-- Step 2 -->
+    <div class="vc-bubble">
+      <div class="vc-bubble-inner">
+        <div class="vc-progress">
+          <div class="vc-pdot done"></div>
+          <div class="vc-pdot active"></div>
+          <div class="vc-pdot"></div>
+        </div>
+        <div class="vc-bubble-text">Welches Format brauchst du?</div>
+        <div class="vc-buttons">
+          <div class="vc-btn selected">
+            <div class="vc-btn-icon">🎥</div>
+            <div>
+              <div class="vc-btn-label">Video → GIF / MP4</div>
+              <div class="vc-btn-hint">ffmpeg-basiert</div>
+            </div>
+            <div class="vc-btn-check">✓</div>
+          </div>
+          <div class="vc-btn">
+            <div class="vc-btn-icon">🖼️</div>
+            <div>
+              <div class="vc-btn-label">Bild → WebP / PNG</div>
+              <div class="vc-btn-hint">ImageMagick</div>
+            </div>
+            <div class="vc-btn-check"></div>
+          </div>
+          <div class="vc-btn">
+            <div class="vc-btn-icon">🎵</div>
+            <div>
+              <div class="vc-btn-label">Audio → MP3 / WAV</div>
+              <div class="vc-btn-hint">ffmpeg</div>
+            </div>
+            <div class="vc-btn-check"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Typing indicator -->
+    <div class="vc-typing">
+      <div class="vc-typing-dot"></div>
+      <div class="vc-typing-dot"></div>
+      <div class="vc-typing-dot"></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

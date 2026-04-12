@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ThinkingBubble Concepts</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0F172A; color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; padding: 20px; }
+
+  h1 { font-size: 14px; color: #64748B; text-transform: uppercase; letter-spacing: 1.5px; margin: 40px 0 20px; }
+  h1:first-of-type { margin-top: 10px; }
+  .label { font-size: 11px; color: #475569; margin-bottom: 8px; letter-spacing: 0.5px; }
+
+  /* Fake phone frame */
+  .phone {
+    width: 380px;
+    background: #0F172A;
+    border: 1px solid #334155;
+    border-radius: 24px;
+    padding: 16px;
+    margin-bottom: 32px;
+    overflow: hidden;
+  }
+
+  /* Avatar */
+  .avatar {
+    width: 32px; height: 32px; border-radius: 16px;
+    background: url('https://i.pinimg.com/736x/2c/54/3f/2c543f9ad0f56e362a2b0e4b8a6e256e.jpg') center/cover;
+    flex-shrink: 0;
+  }
+  .avatar-lg {
+    width: 48px; height: 48px; border-radius: 24px;
+    background: url('https://i.pinimg.com/736x/2c/54/3f/2c543f9ad0f56e362a2b0e4b8a6e256e.jpg') center/cover;
+    flex-shrink: 0;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     VARIANTE 1: Minimal Progress Bar
+     Clean, LM Studio-inspired with token counter and progress
+     ═══════════════════════════════════════════════════════════════════ */
+
+  .v1-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .v1-bubble {
+    background: #1B2336;
+    border-radius: 16px;
+    border-top-left-radius: 4px;
+    padding: 12px 14px;
+    min-width: 220px;
+    max-width: 300px;
+    border: 1px solid rgba(59,130,246,0.08);
+  }
+
+  .v1-phase {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .v1-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #3B82F6;
+    animation: v1Pulse 1.2s ease infinite;
+  }
+  @keyframes v1Pulse {
+    0%, 100% { opacity: 0.4; transform: scale(0.9); }
+    50% { opacity: 1; transform: scale(1.1); }
+  }
+
+  .v1-phase-text { font-size: 12px; color: #94A3B8; font-weight: 500; }
+  .v1-timer { font-size: 11px; color: #475569; font-family: 'SF Mono', monospace; margin-left: auto; }
+
+  /* Progress bar */
+  .v1-progress-wrap {
+    height: 3px;
+    background: rgba(59,130,246,0.1);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .v1-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #3B82F6, #60A5FA);
+    border-radius: 2px;
+    width: 65%;
+    animation: v1Progress 3s ease-in-out infinite;
+  }
+  @keyframes v1Progress {
+    0% { width: 10%; }
+    50% { width: 78%; }
+    100% { width: 95%; }
+  }
+
+  /* Stats row */
+  .v1-stats {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .v1-stat {
+    font-size: 10px;
+    color: #475569;
+    font-family: 'SF Mono', monospace;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .v1-stat-val { color: #94A3B8; font-weight: 600; }
+
+  .v1-cancel {
+    font-size: 10px;
+    color: #475569;
+    background: rgba(255,255,255,0.03);
+    border: none;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  .v1-cancel:hover { color: #94A3B8; background: rgba(255,255,255,0.06); }
+
+
+  /* ═══════════════════════════════════════════════════════════════════
+     VARIANTE 2: Ring Progress (Circular)
+     Compact circular progress with phase icon in center
+     ═══════════════════════════════════════════════════════════════════ */
+
+  .v2-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .v2-ring-wrap {
+    position: relative;
+    width: 44px; height: 44px;
+    flex-shrink: 0;
+  }
+
+  .v2-ring-svg {
+    transform: rotate(-90deg);
+    width: 44px; height: 44px;
+  }
+
+  .v2-ring-bg {
+    fill: none;
+    stroke: rgba(59,130,246,0.1);
+    stroke-width: 3;
+  }
+
+  .v2-ring-fg {
+    fill: none;
+    stroke: #3B82F6;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 120;
+    stroke-dashoffset: 42;
+    animation: v2Ring 4s ease-in-out infinite;
+  }
+  @keyframes v2Ring {
+    0% { stroke-dashoffset: 110; }
+    50% { stroke-dashoffset: 25; }
+    100% { stroke-dashoffset: 5; }
+  }
+
+  .v2-ring-icon {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 16px;
+    animation: v2IconPulse 2s ease infinite;
+  }
+  @keyframes v2IconPulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+
+  .v2-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .v2-phase-text {
+    font-size: 13px;
+    color: #F8FAFC;
+    font-weight: 500;
+    margin-bottom: 3px;
+  }
+
+  .v2-meta {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .v2-meta-item {
+    font-size: 10px;
+    color: #64748B;
+    font-family: 'SF Mono', monospace;
+  }
+  .v2-meta-val { color: #94A3B8; }
+
+  .v2-tokens-bar {
+    height: 2px;
+    background: rgba(59,130,246,0.08);
+    border-radius: 1px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .v2-tokens-fill {
+    height: 100%;
+    background: #3B82F6;
+    border-radius: 1px;
+    width: 45%;
+    animation: v2TokenFill 5s ease-in-out infinite;
+  }
+  @keyframes v2TokenFill {
+    0% { width: 5%; }
+    70% { width: 85%; }
+    100% { width: 100%; }
+  }
+
+  .v2-timer {
+    font-size: 11px;
+    color: #475569;
+    font-family: 'SF Mono', monospace;
+    flex-shrink: 0;
+  }
+
+
+  /* ═══════════════════════════════════════════════════════════════════
+     VARIANTE 3: Anime Thought Bubble
+     Large avatar with floating thought clouds and progress inside
+     ═══════════════════════════════════════════════════════════════════ */
+
+  .v3-container {
+    padding: 12px 16px;
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+  }
+
+  .v3-avatar-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .v3-avatar {
+    width: 52px; height: 52px; border-radius: 26px;
+    background: url('https://i.pinimg.com/736x/2c/54/3f/2c543f9ad0f56e362a2b0e4b8a6e256e.jpg') center/cover;
+    border: 2px solid #243044;
+    box-shadow: 0 0 16px rgba(59,130,246,0.15);
+  }
+
+  /* Thought cloud dots */
+  .v3-cloud-dots {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    margin-bottom: 2px;
+    margin-left: 6px;
+  }
+
+  .v3-dot-sm {
+    width: 8px; height: 8px;
+    background: #1B2336;
+    border-radius: 50%;
+    border: 1px solid rgba(59,130,246,0.12);
+    animation: v3Float 2s ease infinite;
+  }
+  .v3-dot-sm:nth-child(1) { animation-delay: 0s; margin-left: 4px; }
+  .v3-dot-sm:nth-child(2) { width: 12px; height: 12px; border-radius: 6px; animation-delay: 0.15s; margin-left: 0; }
+
+  @keyframes v3Float {
+    0%, 100% { transform: translateY(0); opacity: 0.5; }
+    50% { transform: translateY(-3px); opacity: 0.9; }
+  }
+
+  /* Main thought cloud */
+  .v3-cloud {
+    background: #1B2336;
+    border-radius: 20px;
+    border: 1px solid rgba(59,130,246,0.1);
+    padding: 14px 16px;
+    min-width: 200px;
+    max-width: 280px;
+    position: relative;
+    animation: v3CloudIn 0.4s ease both;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  }
+  @keyframes v3CloudIn {
+    from { opacity: 0; transform: scale(0.9) translateY(8px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  /* Cloud tail */
+  .v3-cloud::before {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 16px;
+    width: 14px; height: 14px;
+    background: #1B2336;
+    border-radius: 50%;
+    border: 1px solid rgba(59,130,246,0.1);
+    border-top: none;
+    border-right: none;
+  }
+
+  .v3-phase-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .v3-sparkle {
+    font-size: 14px;
+    animation: v3Sparkle 1.5s ease infinite;
+  }
+  @keyframes v3Sparkle {
+    0%, 100% { opacity: 0.4; transform: scale(0.8) rotate(0deg); }
+    50% { opacity: 1; transform: scale(1.1) rotate(15deg); }
+  }
+
+  .v3-phase-text { font-size: 12px; color: #CBD5E1; font-weight: 500; }
+  .v3-timer { font-size: 10px; color: #475569; font-family: 'SF Mono', monospace; margin-left: auto; }
+
+  /* Progress area */
+  .v3-progress-area {
+    background: rgba(15,23,42,0.5);
+    border-radius: 12px;
+    padding: 10px 12px;
+  }
+
+  .v3-bar-wrap {
+    height: 4px;
+    background: rgba(59,130,246,0.08);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .v3-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #3B82F6, #818CF8, #A78BFA);
+    background-size: 200% 100%;
+    animation: v3BarShimmer 2s ease infinite, v3BarGrow 4s ease-in-out infinite;
+  }
+  @keyframes v3BarShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @keyframes v3BarGrow {
+    0% { width: 8%; }
+    50% { width: 72%; }
+    100% { width: 96%; }
+  }
+
+  .v3-stats {
+    display: flex;
+    justify-content: space-between;
+  }
+  .v3-stat { font-size: 9px; color: #475569; font-family: 'SF Mono', monospace; }
+  .v3-stat b { color: #94A3B8; font-weight: 600; }
+
+  .v3-cancel {
+    font-size: 10px;
+    color: #475569;
+    background: none;
+    border: none;
+    padding: 6px 0 0;
+    cursor: pointer;
+    text-align: center;
+    width: 100%;
+    display: block;
+  }
+  .v3-cancel:hover { color: #94A3B8; }
+
+
+  /* ═══════════════════════════════════════════════════════════════════
+     PHASE STATES (for all variants)
+     ═══════════════════════════════════════════════════════════════════ */
+
+  .phase-streaming .v1-dot,
+  .phase-streaming .v2-ring-fg { stroke: #22C55E; background: #22C55E; }
+  .phase-streaming .v1-progress-bar,
+  .phase-streaming .v2-tokens-fill { background: #22C55E; }
+  .phase-streaming .v3-bar-fill { background: linear-gradient(90deg, #22C55E, #4ADE80, #86EFAC); background-size: 200% 100%; }
+
+  /* Separator */
+  .sep { height: 1px; background: #1E293B; margin: 20px 0; }
+
+  /* Live counter simulation */
+  .counter { animation: counterUp 0.3s ease; }
+  @keyframes counterUp { from { opacity: 0.5; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+
+<h1>Variante 1 — Minimal Progress Bar</h1>
+<p class="label">LM Studio-inspired. Clean progress bar + token/speed stats.</p>
+
+<div class="phone">
+  <!-- Sending state -->
+  <div class="v1-row">
+    <div class="avatar"></div>
+    <div class="v1-bubble">
+      <div class="v1-phase">
+        <div class="v1-dot" style="background:#64748B"></div>
+        <span class="v1-phase-text" style="color:#64748B; font-style:italic">Gesendet...</span>
+        <span class="v1-timer">0.4s</span>
+      </div>
+      <div class="v1-progress-wrap">
+        <div class="v1-progress-bar" style="width:5%; animation:none; background:#64748B"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- Processing state -->
+  <div class="v1-row">
+    <div class="avatar"></div>
+    <div class="v1-bubble">
+      <div class="v1-phase">
+        <div class="v1-dot"></div>
+        <span class="v1-phase-text">Kontext...</span>
+        <span class="v1-timer" id="v1t1">3.2s</span>
+      </div>
+      <div class="v1-progress-wrap">
+        <div class="v1-progress-bar"></div>
+      </div>
+      <div class="v1-stats">
+        <span class="v1-stat"><span class="v1-stat-val" id="v1tok1">247</span> tokens</span>
+        <span class="v1-stat"><span class="v1-stat-val">18.4</span> t/s</span>
+        <span class="v1-stat"><span class="v1-stat-val">65%</span></span>
+      </div>
+      <button class="v1-cancel">Abbrechen</button>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- Streaming state -->
+  <div class="v1-row phase-streaming">
+    <div class="avatar"></div>
+    <div class="v1-bubble" style="border-color: rgba(34,197,94,0.12)">
+      <div class="v1-phase">
+        <div class="v1-dot" style="background:#22C55E"></div>
+        <span class="v1-phase-text">Schreibt...</span>
+        <span class="v1-timer">8.7s</span>
+      </div>
+      <div class="v1-progress-wrap">
+        <div class="v1-progress-bar" style="background:#22C55E; width:45%; animation: v1Progress 5s ease-in-out infinite"></div>
+      </div>
+      <div class="v1-stats">
+        <span class="v1-stat"><span class="v1-stat-val">512</span> tokens</span>
+        <span class="v1-stat"><span class="v1-stat-val">24.1</span> t/s</span>
+      </div>
+      <div style="margin-top:8px; font-size:13px; color:#CBD5E1; line-height:1.5">
+        Alles klar Boss, ich hab mir die Terminals angeschaut. Shell 2 ist gerade idle und...
+      </div>
+      <button class="v1-cancel">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+
+<h1>Variante 2 — Ring Progress</h1>
+<p class="label">Compact circular ring. Phase icon in center. Inline layout.</p>
+
+<div class="phone">
+  <!-- Sending -->
+  <div class="v2-row">
+    <div class="v2-ring-wrap">
+      <svg class="v2-ring-svg" viewBox="0 0 44 44">
+        <circle class="v2-ring-bg" cx="22" cy="22" r="19"/>
+        <circle class="v2-ring-fg" cx="22" cy="22" r="19" style="stroke:#475569; stroke-dashoffset:110; animation:none"/>
+      </svg>
+      <div class="v2-ring-icon" style="opacity:0.4">...</div>
+    </div>
+    <div class="v2-info">
+      <div class="v2-phase-text" style="color:#64748B">Gesendet...</div>
+      <div class="v2-meta">
+        <span class="v2-meta-item"><span class="v2-meta-val">0.3s</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- Processing -->
+  <div class="v2-row">
+    <div class="v2-ring-wrap">
+      <svg class="v2-ring-svg" viewBox="0 0 44 44">
+        <circle class="v2-ring-bg" cx="22" cy="22" r="19"/>
+        <circle class="v2-ring-fg" cx="22" cy="22" r="19"/>
+      </svg>
+      <div class="v2-ring-icon">&#x1F9E0;</div>
+    </div>
+    <div class="v2-info">
+      <div class="v2-phase-text">Terminals analysieren...</div>
+      <div class="v2-meta">
+        <span class="v2-meta-item"><span class="v2-meta-val">4.1s</span></span>
+        <span class="v2-meta-item"><span class="v2-meta-val">382</span> tok</span>
+        <span class="v2-meta-item"><span class="v2-meta-val">21.3</span> t/s</span>
+      </div>
+      <div class="v2-tokens-bar"><div class="v2-tokens-fill"></div></div>
+    </div>
+    <div class="v2-timer">62%</div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- Streaming -->
+  <div class="v2-row">
+    <div class="v2-ring-wrap">
+      <svg class="v2-ring-svg" viewBox="0 0 44 44">
+        <circle class="v2-ring-bg" cx="22" cy="22" r="19"/>
+        <circle class="v2-ring-fg" cx="22" cy="22" r="19" style="stroke:#22C55E; stroke-dashoffset:15"/>
+      </svg>
+      <div class="v2-ring-icon">&#x270D;&#xFE0F;</div>
+    </div>
+    <div class="v2-info">
+      <div class="v2-phase-text">Schreibt...</div>
+      <div class="v2-meta">
+        <span class="v2-meta-item"><span class="v2-meta-val">9.2s</span></span>
+        <span class="v2-meta-item"><span class="v2-meta-val">847</span> tok</span>
+        <span class="v2-meta-item"><span class="v2-meta-val">28.6</span> t/s</span>
+      </div>
+      <div class="v2-tokens-bar"><div class="v2-tokens-fill" style="background:#22C55E; width:72%"></div></div>
+    </div>
+    <div class="v2-timer" style="color:#4ADE80">87%</div>
+  </div>
+</div>
+
+
+<h1>Variante 3 — Anime Thought Cloud</h1>
+<p class="label">Large avatar + floating thought bubbles. Gaming/anime aesthetic.</p>
+
+<div class="phone">
+  <!-- Thinking state -->
+  <div class="v3-container">
+    <div class="v3-avatar-wrap">
+      <div class="v3-avatar"></div>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:flex-start;">
+      <div class="v3-cloud">
+        <div class="v3-phase-row">
+          <span class="v3-sparkle">&#x2728;</span>
+          <span class="v3-phase-text">Terminals analysieren...</span>
+          <span class="v3-timer">4.2s</span>
+        </div>
+        <div class="v3-progress-area">
+          <div class="v3-bar-wrap">
+            <div class="v3-bar-fill"></div>
+          </div>
+          <div class="v3-stats">
+            <span class="v3-stat"><b>382</b> tokens</span>
+            <span class="v3-stat"><b>21.3</b> t/s</span>
+            <span class="v3-stat"><b>65%</b></span>
+          </div>
+        </div>
+        <button class="v3-cancel">Abbrechen</button>
+      </div>
+      <div class="v3-cloud-dots">
+        <div class="v3-dot-sm"></div>
+        <div class="v3-dot-sm"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- Streaming state -->
+  <div class="v3-container">
+    <div class="v3-avatar-wrap">
+      <div class="v3-avatar" style="box-shadow: 0 0 16px rgba(34,197,94,0.2)"></div>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:flex-start;">
+      <div class="v3-cloud" style="border-color: rgba(34,197,94,0.12)">
+        <div class="v3-phase-row">
+          <span class="v3-sparkle">&#x1F4AC;</span>
+          <span class="v3-phase-text" style="color:#4ADE80">Schreibt...</span>
+          <span class="v3-timer">9.8s</span>
+        </div>
+        <div class="v3-progress-area">
+          <div class="v3-bar-wrap">
+            <div class="v3-bar-fill" style="background: linear-gradient(90deg, #22C55E, #4ADE80, #86EFAC); background-size: 200% 100%; width:78%"></div>
+          </div>
+          <div class="v3-stats">
+            <span class="v3-stat"><b>847</b> tokens</span>
+            <span class="v3-stat"><b>28.6</b> t/s</span>
+            <span class="v3-stat" style="color:#4ADE80"><b>87%</b></span>
+          </div>
+        </div>
+        <div style="margin-top:8px; font-size:12px; color:#CBD5E1; line-height:1.5">
+          Okay Boss, ich schau mir das an. Die Shell 2 ist idle und...
+        </div>
+        <button class="v3-cancel">Abbrechen</button>
+      </div>
+      <div class="v3-cloud-dots">
+        <div class="v3-dot-sm" style="background:#1a3a2a; border-color:rgba(34,197,94,0.15)"></div>
+        <div class="v3-dot-sm" style="background:#1a3a2a; border-color:rgba(34,197,94,0.15)"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Live counter simulation -->
+<script>
+  // Simulate token counting
+  let tok1 = 247;
+  let t1 = 3.2;
+  setInterval(() => {
+    tok1 += Math.floor(Math.random() * 8) + 3;
+    t1 += 0.1;
+    const el = document.getElementById('v1tok1');
+    const tel = document.getElementById('v1t1');
+    if (el) { el.textContent = tok1; el.classList.remove('counter'); void el.offsetWidth; el.classList.add('counter'); }
+    if (tel) tel.textContent = t1.toFixed(1) + 's';
+  }, 100);
+</script>
+
+</body>
+</html>
