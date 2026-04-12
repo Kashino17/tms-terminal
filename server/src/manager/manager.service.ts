@@ -1898,11 +1898,41 @@ BEISPIEL:
                 logger.info(`Manager: executing initial command in ${newSessionId.slice(0, 8)}: "${initialCommand}"`);
                 globalManager.write(newSessionId, initialCommand + '\r');
               }, 800);
-              // Attach to existing chat task (from update_task) — match by label or find first unattached
-              const labelLower = (label ?? '').toLowerCase();
-              const existingTask = this.getActiveTasks().find(t =>
-                !t.sessionId && labelLower && t.description.toLowerCase().includes(labelLower)
-              ) ?? this.getActiveTasks().find(t => !t.sessionId);
+              // Attach to existing chat task (from update_task) — strict matching
+              const labelLower = (label ?? '').toLowerCase().trim();
+              const labelWords = new Set(labelLower.split(/\s+/).filter(w => w.length > 1));
+              let existingTask: DelegatedTask | undefined;
+              if (labelLower) {
+                // 1st: exact match on description
+                existingTask = this.getActiveTasks().find(t =>
+                  !t.sessionId && t.description.toLowerCase().trim() === labelLower
+                );
+                // 2nd: description contains full label (e.g., "TMS Shops" in "TMS Shops Analyse")
+                if (!existingTask) {
+                  existingTask = this.getActiveTasks().find(t =>
+                    !t.sessionId && t.description.toLowerCase().includes(labelLower)
+                  );
+                }
+                // 3rd: word-overlap ≥60% (strict to prevent cross-matching)
+                if (!existingTask) {
+                  let bestScore = 0;
+                  for (const t of this.getActiveTasks()) {
+                    if (t.sessionId) continue;
+                    const descWords = new Set(t.description.toLowerCase().split(/\s+/).filter(w => w.length > 1));
+                    let overlap = 0;
+                    for (const w of labelWords) { if (descWords.has(w)) overlap++; }
+                    const score = overlap / Math.max(labelWords.size, descWords.size);
+                    if (score > bestScore && score >= 0.6) {
+                      bestScore = score;
+                      existingTask = t;
+                    }
+                  }
+                }
+              }
+              // Last resort: first unattached task (only if no label provided)
+              if (!existingTask && !labelLower) {
+                existingTask = this.getActiveTasks().find(t => !t.sessionId);
+              }
               if (existingTask) {
                 existingTask.sessionId = newSessionId;
                 existingTask.sessionLabel = this.sessionLabels.get(newSessionId) ?? newSessionId.slice(0, 8);
@@ -1934,7 +1964,7 @@ BEISPIEL:
           const info = JSON.parse(action.detail);
           const taskName = (info.taskName as string) || '';
 
-          // Find task by name — exact match first, then word-overlap scoring
+          // Find task by name — exact match first, then strict word-overlap
           let task: DelegatedTask | undefined;
           if (taskName) {
             const activeTasks = this.getActiveTasks();
@@ -1943,18 +1973,24 @@ BEISPIEL:
             // 1st pass: exact description match
             task = activeTasks.find(t => t.description.toLowerCase().trim() === nameLower);
 
-            // 2nd pass: word-overlap scoring (avoids "TMS" matching everything)
+            // 2nd pass: description contains full query OR query contains full description
             if (!task) {
-              const queryWords = new Set(nameLower.split(/\s+/).filter(w => w.length > 1));
+              task = activeTasks.find(t => {
+                const desc = t.description.toLowerCase().trim();
+                return desc === nameLower || desc.includes(nameLower) || nameLower.includes(desc);
+              });
+            }
+
+            // 3rd pass: word-overlap scoring (strict: ≥60% to prevent cross-matching)
+            if (!task) {
+              const queryWords = new Set(nameLower.split(/\s+/).filter(w => w.length > 2));
               let bestScore = 0;
               for (const t of activeTasks) {
-                const descWords = new Set(t.description.toLowerCase().split(/\s+/).filter(w => w.length > 1));
-                // Count shared words
+                const descWords = new Set(t.description.toLowerCase().split(/\s+/).filter(w => w.length > 2));
                 let overlap = 0;
                 for (const w of queryWords) { if (descWords.has(w)) overlap++; }
-                // Score = overlap / max(queryWords, descWords) — penalizes partial matches
                 const score = overlap / Math.max(queryWords.size, descWords.size);
-                if (score > bestScore && score >= 0.4) { // At least 40% word overlap
+                if (score > bestScore && score >= 0.6) { // 60% — prevents "TMS Terminal" matching "TMS Shops"
                   bestScore = score;
                   task = t;
                 }
@@ -2498,24 +2534,83 @@ BEISPIEL:
     if (!task) return;
 
     logger.info(`Manager: reviewing "${task.sessionLabel}" (${this.reviewQueue.length} more in queue)`);
+
+    // ── Smart heartbeat: analyze state BEFORE waking the AI ────────
+    // Check if there's actually something actionable to do
+    const pendingSteps = task.steps.filter(s => s.status === 'pending' || s.status === 'running');
+    const doneSteps = task.steps.filter(s => s.status === 'done');
+    const currentStep = task.steps.find(s => s.status === 'running');
+
+    // If all steps done → just mark complete, don't wake AI
+    if (task.steps.length > 0 && pendingSteps.length === 0) {
+      logger.info(`Manager: smart heartbeat — all steps done for "${task.sessionLabel}", auto-completing without AI call`);
+      this.updateTaskStatus(task.id, 'done');
+      if (this.reviewQueue.length > 0) {
+        setTimeout(() => this.processReviewQueue(), 500);
+      }
+      return;
+    }
+
+    // Analyze terminal output to give AI specific context
+    const buffer = this.outputBuffers.get(task.sessionId);
+    const recentOutput = buffer?.data?.replace(ANSI_STRIP, '').slice(-1500) ?? '';
+    const lastChunk = recentOutput.slice(-500);
+
+    // Detect what happened in the terminal
+    const claudeFinished = /for\s*shortcuts/i.test(lastChunk) || />\s*$/.test(lastChunk.slice(-40));
+    const hasError = /error|Error|ERR!|FAIL|failed/i.test(lastChunk.slice(-300));
+    const claudeWorking = /thinking|working|reading|writing|searching/i.test(lastChunk.slice(-200));
+
+    // If Claude is still working → don't wake the AI, just wait
+    if (claudeWorking && !claudeFinished) {
+      logger.info(`Manager: smart heartbeat — Claude still working in "${task.sessionLabel}", skipping`);
+      task.status = 'running';
+      this.broadcastTasks();
+      if (this.reviewQueue.length > 0) {
+        setTimeout(() => this.processReviewQueue(), 2000);
+      }
+      return;
+    }
+
     task.status = 'waiting';
     task.updatedAt = Date.now();
     this.broadcastTasks();
 
-    const outputBefore = this.outputBuffers.get(task.sessionId)?.data?.length ?? 0;
+    const outputBefore = buffer?.data?.length ?? 0;
 
-    // Build heartbeat prompt with workflow context
-    const pendingSteps = task.steps.filter(s => s.status === 'pending' || s.status === 'running');
-    const doneSteps = task.steps.filter(s => s.status === 'done');
-    const currentStep = task.steps.find(s => s.status === 'running');
-    const workflowCtx = task.steps.length > 0
-      ? `\n\nWorkflow-Status für "${task.description}":\n- Erledigt: ${doneSteps.map(s => s.label).join(', ') || 'keine'}\n- Ausstehend: ${pendingSteps.map(s => s.label).join(', ') || 'keine'}${currentStep ? `\n\nDEIN NÄCHSTER SCHRITT: "${currentStep.label}"\n→ Entscheide welches Tool passt (write_to_terminal, create_terminal, etc.) und führe den Schritt aus. Danach update_task(complete_step, task_name="${task.description}", step_index=${task.steps.indexOf(currentStep)}).` : ''}`
-      : '';
+    // Build a CLEAR, ACTIONABLE prompt — not vague "check the output"
+    const stateLines: string[] = [];
+    stateLines.push(`AKTUELLER STAND — Task "${task.description}":`);
+    if (doneSteps.length > 0) stateLines.push(`✅ Erledigt: ${doneSteps.map(s => s.label).join(', ')}`);
+    if (currentStep) stateLines.push(`🔄 Aktueller Schritt: "${currentStep.label}" (step_index=${task.steps.indexOf(currentStep)})`);
+    const nextPending = task.steps.filter(s => s.status === 'pending').map(s => s.label);
+    if (nextPending.length > 0) stateLines.push(`⏳ Danach: ${nextPending.join(', ')}`);
+
+    // Terminal state
+    if (claudeFinished) stateLines.push(`\nTerminal "${task.sessionLabel}": Claude ist fertig und wartet auf Eingabe.`);
+    else if (hasError) stateLines.push(`\nTerminal "${task.sessionLabel}": Fehler erkannt — prüfe den Output.`);
+    else stateLines.push(`\nTerminal "${task.sessionLabel}": Idle.`);
+
+    // Give EXPLICIT instructions
+    const instructions: string[] = [];
+    if (currentStep) {
+      if (claudeFinished) {
+        instructions.push(`AKTION: Der aktuelle Schritt "${currentStep.label}" scheint erledigt zu sein (Claude ist idle). Prüfe kurz den Output und wenn alles passt:`);
+        instructions.push(`1. update_task(complete_step, task_name="${task.description}", step_index=${task.steps.indexOf(currentStep)})`);
+        if (nextPending.length > 0) {
+          instructions.push(`2. Führe den nächsten Schritt "${nextPending[0]}" aus`);
+        }
+      } else {
+        instructions.push(`AKTION: Führe den Schritt "${currentStep.label}" jetzt aus.`);
+      }
+    } else if (pendingSteps.length === 0) {
+      instructions.push('ALLE SCHRITTE ERLEDIGT — berichte dem User die Ergebnisse.');
+    }
+
+    const heartbeatPrompt = `[HEARTBEAT]\n${stateLines.join('\n')}\n\n${instructions.join('\n')}`;
 
     try {
-      const didProcess = await this.handleChat(
-        `[HEARTBEAT] Terminal "${task.sessionLabel}" ist idle.${currentStep ? ` Nächster Schritt: "${currentStep.label}". Prüfe den Terminal-Output und entscheide wie du diesen Schritt am besten ausführst. Nutze update_task(complete_step) wenn der Schritt bereits erledigt ist.` : ' Prüfe den Output: Was hat Claude geliefert? Gibt es Folgeaufgaben?'}${workflowCtx}\n\nWICHTIG: Markiere Schritte die BEREITS erledigt sind sofort mit update_task(complete_step). Wenn ALLE Schritte erledigt sind, sage "Alle Aufgaben abgeschlossen".`,
-      );
+      const didProcess = await this.handleChat(heartbeatPrompt);
 
       if (!didProcess) {
         // handleChat queued the message — it will be processed when current work finishes.
@@ -2658,23 +2753,39 @@ BEISPIEL:
       if (!terminalLabel && matchTerms.length === 0) continue;
 
       for (const task of activeTasks) {
-        const runningStep = task.steps.find(s => s.status === 'running');
-        if (!runningStep) continue;
+        // Scan ALL non-done steps (not just running) — handles out-of-order tool calls
+        // e.g., create_terminal("TMS Banking") fires before step 2 is "running"
+        let bestStep: TaskStep | undefined;
+        let bestStepScore = 0;
 
-        const stepLower = runningStep.label.toLowerCase();
+        for (const step of task.steps) {
+          if (step.status === 'done' || step.status === 'failed') continue;
+          const stepLower = step.label.toLowerCase();
 
-        // Check if step label matches the tool action
-        const hasTerminalMatch = terminalLabel && stepLower.includes(terminalLabel);
-        const hasActionMatch = matchTerms.filter(t => stepLower.includes(t)).length >= 1;
+          const hasTerminalMatch = terminalLabel && stepLower.includes(terminalLabel);
+          const actionMatchCount = matchTerms.filter(t => stepLower.includes(t)).length;
 
-        if (hasTerminalMatch && hasActionMatch) {
-          logger.info(`Manager: auto-completing step "${runningStep.label}" (matched tool ${action.type} for "${terminalLabel}")`);
-          runningStep.status = 'done';
-          // Advance to next step
-          const nextStep = task.steps.find(s => s.status === 'pending');
-          if (nextStep) {
-            nextStep.status = 'running';
-            logger.info(`Manager: auto-advanced to next step → "${nextStep.label}"`);
+          if (hasTerminalMatch && actionMatchCount >= 1) {
+            // Prefer running step, then pending — with higher action match count
+            const statusBonus = step.status === 'running' ? 10 : 0;
+            const score = actionMatchCount + statusBonus;
+            if (score > bestStepScore) {
+              bestStepScore = score;
+              bestStep = step;
+            }
+          }
+        }
+
+        if (bestStep) {
+          logger.info(`Manager: auto-completing step "${bestStep.label}" (matched tool ${action.type} for "${terminalLabel}")`);
+          bestStep.status = 'done';
+          // Ensure exactly one step is "running" — advance if needed
+          if (!task.steps.some(s => s.status === 'running')) {
+            const nextPending = task.steps.find(s => s.status === 'pending');
+            if (nextPending) {
+              nextPending.status = 'running';
+              logger.info(`Manager: auto-advanced to next step → "${nextPending.label}"`);
+            }
           }
           if (task.steps.every(s => s.status === 'done')) {
             task.status = 'done';
