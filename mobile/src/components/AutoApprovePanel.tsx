@@ -39,7 +39,7 @@ export function AutoApprovePanel({ serverId }: Props) {
         ) : (
           connectedTabs.map((tab) => {
             const sid    = tab.sessionId!;
-            const isOn   = enabled[sid] ?? false;
+            const isOn   = enabled[sid] ?? true;
             const isRun  = running[sid] ?? false;
             const aiColor = tab.aiTool ? (AI_TOOL_COLORS[tab.aiTool] ?? '#585b70') : '#585b70';
 

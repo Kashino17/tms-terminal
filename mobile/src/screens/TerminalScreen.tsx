@@ -419,6 +419,11 @@ export function TerminalScreen({ navigation, route }: Props) {
           break;
         case 'manager:providers':
           store.setProviders(m.payload.providers, m.payload.active);
+          // Sync persisted provider choice back to server if it differs
+          const persisted = store.activeProvider;
+          if (persisted && persisted !== m.payload.active && m.payload.providers.some((p: any) => p.id === persisted)) {
+            wsRef.current?.send({ type: 'manager:set_provider', payload: { providerId: persisted } } as any);
+          }
           break;
         case 'manager:status':
           store.setEnabled(m.payload.enabled);
@@ -583,8 +588,9 @@ export function TerminalScreen({ navigation, route }: Props) {
       const currentTabs = useTerminalStore.getState().getTabs(serverId);
       for (const tab of currentTabs) {
         if (!tab.sessionId) continue;
-        const now = state.enabled[tab.sessionId] ?? false;
-        const prev = prevState.enabled[tab.sessionId] ?? false;
+        // Default is true (auto-approve on by default for new terminals)
+        const now = state.enabled[tab.sessionId] ?? true;
+        const prev = prevState.enabled[tab.sessionId] ?? true;
         if (now !== prev) {
           wsRef.current.send({
             type: 'client:set_auto_approve',
@@ -594,12 +600,13 @@ export function TerminalScreen({ navigation, route }: Props) {
         }
       }
     });
-    // Sync current state on connect (auto-approve + AI sessions may have been set before reconnect)
+    // Sync current state on connect — default is true for all sessions
     const currentTabs = useTerminalStore.getState().getTabs(serverId);
     const autoState = useAutoApproveStore.getState();
     for (const tab of currentTabs) {
       if (!tab.sessionId) continue;
-      if (autoState.enabled[tab.sessionId]) {
+      const enabled = autoState.enabled[tab.sessionId] ?? true;
+      if (enabled) {
         wsRef.current.send({
           type: 'client:set_auto_approve',
           sessionId: tab.sessionId,
@@ -1005,6 +1012,16 @@ export function TerminalScreen({ navigation, route }: Props) {
             }}
             activeTabHasBrowser={activeTabHasBrowser}
             onOpenGrid={openGrid}
+            onSwipeTab={(dir) => {
+              if (!activeTerminalTab || serverTabs.length < 2) return;
+              const idx = serverTabs.findIndex(t => t.id === activeTerminalTab.id);
+              if (idx < 0) return;
+              // Swipe left → next tab, swipe right → previous tab (wraps around)
+              const next = dir === 'left'
+                ? (idx + 1) % serverTabs.length
+                : (idx - 1 + serverTabs.length) % serverTabs.length;
+              setActiveTab(serverId, serverTabs[next].id);
+            }}
           />
         </View>
 

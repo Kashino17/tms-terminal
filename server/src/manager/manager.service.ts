@@ -1901,8 +1901,13 @@ BEISPIEL:
                   logger.info(`Manager: set explicit pendingPrompt for "${existingTask.description}" → "${pendingPrompt.slice(0, 60)}…"`);
                 }
                 this.broadcastTasks();
+              } else if (pendingPrompt) {
+                // Only create a delegated task if there's a pending prompt to deliver.
+                // Without a prompt, there's nothing for the heartbeat to track — the AI
+                // manages follow-up via its own update_task steps.
+                this.addDelegatedTask(label || initialCommand, newSessionId, pendingPrompt);
               } else {
-                this.addDelegatedTask(initialCommand, newSessionId, pendingPrompt);
+                logger.info(`Manager: no matching task and no pending_prompt for "${label}" — skipping delegated task (AI manages via update_task)`);
               }
             }
             return { text: `Terminal "${label || 'Shell'}" erstellt (${newSessionId.slice(0, 8)}).${initialCommand ? ` Befehl "${initialCommand}" wird ausgeführt. Aufgabe wird überwacht — ich melde mich wenn sie fertig ist.` : ''}` };
@@ -2449,12 +2454,13 @@ BEISPIEL:
       );
 
       if (!didProcess) {
-        // handleChat was blocked (isProcessing) — put task back, don't mark done
-        logger.info(`Manager: review of "${task.sessionLabel}" skipped (busy) — re-queuing`);
+        // handleChat queued the message — it will be processed when current work finishes.
+        // Don't re-queue the task; the chatQueue already has the heartbeat message.
+        // The next heartbeat cycle will re-evaluate this task if still active.
+        logger.info(`Manager: review of "${task.sessionLabel}" queued (busy) — will process when free`);
         task.status = 'running';
-        this.reviewQueue.push(task.id);
         this.broadcastTasks();
-        return; // Don't chain — the finally block in handleChat will trigger drain
+        return;
       }
 
       const outputAfter = this.outputBuffers.get(task.sessionId)?.data?.length ?? 0;

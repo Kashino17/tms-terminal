@@ -28,6 +28,7 @@ interface DynamicIslandProps {
   onBrowserPress: () => void;
   activeTabHasBrowser: boolean;
   onOpenGrid?: () => void;
+  onSwipeTab?: (direction: 'left' | 'right') => void;
 }
 
 const DOT_COLORS: Record<string, string> = {
@@ -49,6 +50,7 @@ export function DynamicIsland({
   onBrowserPress,
   activeTabHasBrowser,
   onOpenGrid,
+  onSwipeTab,
 }: DynamicIslandProps) {
   const { width: screenWidth } = useWindowDimensions();
   const [expanded, setExpanded] = useState(false);
@@ -114,36 +116,94 @@ export function DynamicIsland({
     }
   }, [expanded]);
 
-  // Swipe-down gesture → open tab grid (Apple-style pull down)
+  // Swipe gestures — down: tab grid, left/right: switch terminal
   const onOpenGridRef = useRef(onOpenGrid);
   onOpenGridRef.current = onOpenGrid;
+  const onSwipeTabRef = useRef(onSwipeTab);
+  onSwipeTabRef.current = onSwipeTab;
   const swipeTriggered = useRef(false);
   const islandScale = useRef(new Animated.Value(1)).current;
 
+  // Horizontal swipe transition animation
+  const swipeTranslateX = useRef(new Animated.Value(0)).current;
+  const swipeDirection = useRef<'horizontal' | 'vertical' | null>(null);
+
   const swipePR = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_e: GestureResponderEvent, gs: PanResponderGestureState) =>
-        gs.dy > 8 && Math.abs(gs.dy) > Math.abs(gs.dx) * 1.5,
+      onMoveShouldSetPanResponder: (_e: GestureResponderEvent, gs: PanResponderGestureState) => {
+        const absX = Math.abs(gs.dx);
+        const absY = Math.abs(gs.dy);
+        // Capture both horizontal and vertical swipes
+        return (gs.dy > 8 && absY > absX * 1.5) || (absX > 12 && absX > absY * 1.3);
+      },
 
       onPanResponderGrant: () => {
         swipeTriggered.current = false;
+        swipeDirection.current = null;
         Animated.spring(islandScale, { toValue: 0.95, tension: 200, friction: 12, useNativeDriver: false }).start();
       },
 
       onPanResponderMove: (_e: GestureResponderEvent, gs: PanResponderGestureState) => {
-        if (!swipeTriggered.current && gs.dy > 40) {
-          swipeTriggered.current = true;
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          onOpenGridRef.current?.();
+        if (swipeTriggered.current) return;
+
+        const absX = Math.abs(gs.dx);
+        const absY = Math.abs(gs.dy);
+
+        // Lock direction on first significant movement
+        if (!swipeDirection.current) {
+          if (absX > 15 && absX > absY * 1.3) swipeDirection.current = 'horizontal';
+          else if (absY > 15 && absY > absX * 1.3) swipeDirection.current = 'vertical';
+          else return;
+        }
+
+        if (swipeDirection.current === 'vertical') {
+          // Existing: swipe down → tab grid
+          if (gs.dy > 40) {
+            swipeTriggered.current = true;
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            onOpenGridRef.current?.();
+          }
+        } else {
+          // Horizontal: drag feedback (clamped to ±60px)
+          const clamped = Math.max(-60, Math.min(60, gs.dx));
+          swipeTranslateX.setValue(clamped);
+
+          // Trigger at 50px threshold
+          if (absX > 50) {
+            swipeTriggered.current = true;
+            Haptics.selectionAsync();
+            const dir = gs.dx < 0 ? 'left' : 'right';
+
+            // Animate: slide out in swipe direction, snap back from opposite side
+            const slideOut = dir === 'left' ? -120 : 120;
+            const slideIn = dir === 'left' ? 80 : -80;
+            Animated.sequence([
+              Animated.timing(swipeTranslateX, {
+                toValue: slideOut, duration: 150, useNativeDriver: false,
+              }),
+              Animated.timing(swipeTranslateX, {
+                toValue: slideIn, duration: 0, useNativeDriver: false,
+              }),
+              Animated.spring(swipeTranslateX, {
+                toValue: 0, tension: 120, friction: 10, useNativeDriver: false,
+              }),
+            ]).start();
+
+            onSwipeTabRef.current?.(dir);
+          }
         }
       },
 
       onPanResponderRelease: () => {
         Animated.spring(islandScale, { toValue: 1, tension: 200, friction: 12, useNativeDriver: false }).start();
+        if (!swipeTriggered.current) {
+          Animated.spring(swipeTranslateX, { toValue: 0, tension: 200, friction: 12, useNativeDriver: false }).start();
+        }
       },
 
       onPanResponderTerminate: () => {
         Animated.spring(islandScale, { toValue: 1, tension: 200, friction: 12, useNativeDriver: false }).start();
+        Animated.spring(swipeTranslateX, { toValue: 0, tension: 200, friction: 12, useNativeDriver: false }).start();
       },
     }),
   ).current;
@@ -184,6 +244,7 @@ export function DynamicIsland({
           paddingHorizontal: animPadH,
           transform: [
             { scale: Animated.multiply(islandScale, bounceScale) },
+            { translateX: swipeTranslateX },
           ],
         },
       ]}
