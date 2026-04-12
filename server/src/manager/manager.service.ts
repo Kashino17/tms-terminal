@@ -1948,10 +1948,11 @@ BEISPIEL:
                 this.addDelegatedTask(label || initialCommand, newSessionId, pendingPrompt);
               } else if (/claude/i.test(initialCommand || '')) {
                 // Claude is starting without explicit pending_prompt — create a monitoring task
-                // so the heartbeat tracks this terminal. Without this, terminals 2+3 in
-                // multi-terminal workflows get no heartbeat coverage.
-                this.addDelegatedTask(label || 'Claude Session', newSessionId);
-                logger.info(`Manager: created monitoring task for Claude session "${label}" (no pending_prompt)`);
+                // with NO steps so the heartbeat tracks this terminal for prompt delivery.
+                // Empty steps = heartbeat will mark it done when Claude is idle (no review loop).
+                const monitorTask = this.addDelegatedTask(label || 'Claude Session', newSessionId, undefined, []);
+                monitorTask.steps = []; // Ensure no steps — heartbeat marks done on idle
+                logger.info(`Manager: created monitoring task for Claude session "${label}" (no steps, no pending_prompt)`);
               } else {
                 logger.info(`Manager: no matching task for "${label}" — skipping delegated task`);
               }
@@ -2035,30 +2036,32 @@ BEISPIEL:
 
           if (info.action === 'complete_step') {
             const idx = parseInt(info.stepIndex, 10);
-            if (task.steps[idx]) {
-              task.steps[idx].status = 'done';
-              const nextPending = task.steps.find(s => s.status === 'pending');
-              if (nextPending) {
-                nextPending.status = 'running';
-              }
-              if (task.steps.every(s => s.status === 'done')) {
-                task.status = 'done';
-              }
-              task.updatedAt = Date.now();
-              this.broadcastTasks();
-              return { text: `[${task.description}] Schritt "${task.steps[idx].label}" abgehakt.` };
+            if (isNaN(idx) || idx < 0 || idx >= task.steps.length) {
+              return { text: `Fehler: step_index ${info.stepIndex} ungültig (Task "${task.description}" hat ${task.steps.length} Schritte, Index 0-${task.steps.length - 1}). Verfügbare Schritte: ${task.steps.map((s, i) => `${i}: "${s.label}" (${s.status})`).join(', ')}` };
             }
+            task.steps[idx].status = 'done';
+            const nextPending = task.steps.find(s => s.status === 'pending');
+            if (nextPending && !task.steps.some(s => s.status === 'running')) {
+              nextPending.status = 'running';
+            }
+            if (task.steps.every(s => s.status === 'done')) {
+              task.status = 'done';
+            }
+            task.updatedAt = Date.now();
+            this.broadcastTasks();
+            return { text: `[${task.description}] Schritt "${task.steps[idx].label}" abgehakt.` };
           }
           if (info.action === 'fail_step') {
             const idx = parseInt(info.stepIndex, 10);
-            if (task.steps[idx]) {
-              task.steps[idx].status = 'failed';
-              task.updatedAt = Date.now();
-              this.broadcastTasks();
-              return { text: `[${task.description}] Schritt "${task.steps[idx].label}" fehlgeschlagen.` };
+            if (isNaN(idx) || idx < 0 || idx >= task.steps.length) {
+              return { text: `Fehler: step_index ${info.stepIndex} ungültig (Task hat ${task.steps.length} Schritte).` };
             }
+            task.steps[idx].status = 'failed';
+            task.updatedAt = Date.now();
+            this.broadcastTasks();
+            return { text: `[${task.description}] Schritt "${task.steps[idx].label}" fehlgeschlagen.` };
           }
-          return { text: 'Unbekannte update_task Aktion.' };
+          return { text: `Unbekannte update_task Aktion: "${info.action}". Erlaubt: set_steps, complete_step, fail_step.` };
         } catch { return { text: 'Fehler beim Task-Update.' }; }
       }
       case 'self_education': {
@@ -2383,6 +2386,7 @@ BEISPIEL:
   private static readonly TASK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes max per task
   private stableOutputCounts = new Map<string, number>(); // track consecutive unchanged outputs
   private reviewQueue: string[] = []; // task IDs waiting for AI review
+  private reviewInFlight = new Set<string>(); // task IDs currently being reviewed (prevents duplicates)
 
   /** Heartbeat: check ALL delegated tasks every cycle.
    *  Phase 1: Timeout checks (always runs, even during isProcessing)
@@ -2502,11 +2506,21 @@ BEISPIEL:
         continue;
       }
 
-      // ── Phase 3b: Queue for AI review ──────────────────────────────
+      // ── Phase 3b: Auto-complete monitoring tasks (0 steps, no prompt) ──
+      // These are lightweight tracking tasks — mark done when idle, don't wake AI.
+      if (task.steps.length === 0 && !task.pendingPrompt && isComplete) {
+        logger.info(`Manager: monitoring task "${task.sessionLabel}" idle — marking done (no steps to review)`);
+        this.updateTaskStatus(task.id, 'done');
+        actionsTaken++;
+        continue;
+      }
+
+      // ── Phase 3c: Queue for AI review ──────────────────────────────
       if (task.status === 'running' && !task.pendingPrompt) {
         const alreadyQueued = this.reviewQueue.includes(task.id);
-        const hasWork = task.steps.length === 0 || task.steps.some(s => s.status !== 'done');
-        if (!alreadyQueued && hasWork) {
+        const isInFlight = this.reviewInFlight.has(task.id);
+        const hasWork = task.steps.some(s => s.status !== 'done');
+        if (!alreadyQueued && !isInFlight && hasWork) {
           logger.info(`Manager: heartbeat — queuing "${task.sessionLabel}" for review`);
           this.reviewQueue.push(task.id);
           actionsTaken++;
@@ -2541,7 +2555,9 @@ BEISPIEL:
     if (!task) return;
 
     logger.info(`Manager: reviewing "${task.sessionLabel}" (${this.reviewQueue.length} more in queue)`);
+    this.reviewInFlight.add(task.id);
 
+    try {
     // ── Smart heartbeat: analyze state BEFORE waking the AI ────────
     // Check if there's actually something actionable to do
     const pendingSteps = task.steps.filter(s => s.status === 'pending' || s.status === 'running');
@@ -2652,8 +2668,8 @@ BEISPIEL:
       else if (outputChanged) {
         logger.info(`Manager: review sent new commands to "${task.sessionLabel}" — keeping task alive`);
         task.status = 'running';
-        task.createdAt = Date.now();
         task.lastCheckedOutput = undefined;
+        task.updatedAt = Date.now();
         this.broadcastTasks();
       }
       // Priority 3: Open steps remain but no output change → keep running
@@ -2676,6 +2692,9 @@ BEISPIEL:
     // Chain: process next queued review after a brief pause
     if (this.reviewQueue.length > 0) {
       setTimeout(() => this.processReviewQueue(), 2000);
+    }
+    } finally {
+      this.reviewInFlight.delete(task.id);
     }
   }
 
