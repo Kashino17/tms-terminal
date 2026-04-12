@@ -1922,16 +1922,39 @@ BEISPIEL:
           const info = JSON.parse(action.detail);
           const taskName = (info.taskName as string) || '';
 
-          // Find task by name (fuzzy match) or fall back to first active
+          // Find task by name — exact match first, then word-overlap scoring
           let task: DelegatedTask | undefined;
           if (taskName) {
-            const nameLower = taskName.toLowerCase();
-            task = this.delegatedTasks.find(t =>
-              (t.status === 'running' || t.status === 'pending' || t.status === 'waiting') &&
-              (t.description.toLowerCase().includes(nameLower) || nameLower.includes(t.description.toLowerCase()))
-            );
+            const activeTasks = this.getActiveTasks();
+            const nameLower = taskName.toLowerCase().trim();
+
+            // 1st pass: exact description match
+            task = activeTasks.find(t => t.description.toLowerCase().trim() === nameLower);
+
+            // 2nd pass: word-overlap scoring (avoids "TMS" matching everything)
+            if (!task) {
+              const queryWords = new Set(nameLower.split(/\s+/).filter(w => w.length > 1));
+              let bestScore = 0;
+              for (const t of activeTasks) {
+                const descWords = new Set(t.description.toLowerCase().split(/\s+/).filter(w => w.length > 1));
+                // Count shared words
+                let overlap = 0;
+                for (const w of queryWords) { if (descWords.has(w)) overlap++; }
+                // Score = overlap / max(queryWords, descWords) — penalizes partial matches
+                const score = overlap / Math.max(queryWords.size, descWords.size);
+                if (score > bestScore && score >= 0.4) { // At least 40% word overlap
+                  bestScore = score;
+                  task = t;
+                }
+              }
+            }
+
+            if (!task) {
+              logger.warn(`Manager: no task matched "${taskName}" — ${activeTasks.length} active tasks`);
+            }
           }
-          if (!task) {
+          // Only fall back to first active task for set_steps (creating), not for updates
+          if (!task && info.action === 'set_steps') {
             task = this.getActiveTasks()[0];
           }
 
@@ -2314,7 +2337,24 @@ BEISPIEL:
    *  Phase 2: Stability detection + pending prompt delivery (lightweight, no AI)
    *  Phase 3: Queue idle tasks for AI review
    *  Phase 4: Kick off review processing (one at a time, chained) */
+  private static readonly TASK_CLEANUP_AGE_MS = 5 * 60 * 1000; // 5 minutes
+
   private async heartbeat(): Promise<void> {
+    // ── Phase 0: Cleanup completed/failed tasks older than 5 minutes ──
+    const now = Date.now();
+    const beforeCount = this.delegatedTasks.length;
+    this.delegatedTasks = this.delegatedTasks.filter(t => {
+      if ((t.status === 'done' || t.status === 'failed') && (now - t.updatedAt) > ManagerService.TASK_CLEANUP_AGE_MS) {
+        this.stableOutputCounts.delete(t.id);
+        return false; // remove
+      }
+      return true;
+    });
+    if (this.delegatedTasks.length < beforeCount) {
+      logger.info(`Manager: cleaned up ${beforeCount - this.delegatedTasks.length} finished tasks (${this.delegatedTasks.length} remaining)`);
+      this.broadcastTasks();
+    }
+
     const activeTasks = this.getActiveTasks();
     if (activeTasks.length === 0) return;
 
@@ -2338,6 +2378,14 @@ BEISPIEL:
         logger.warn(`Manager: task "${task.sessionLabel}" — terminal session dead, marking failed`);
         this.updateTaskStatus(task.id, 'failed');
         this.onError?.(`Terminal "${task.sessionLabel}" existiert nicht mehr — Aufgabe abgebrochen.`);
+        continue;
+      }
+
+      // ── Phase 1c: Auto-complete if ALL steps are done ────────────
+      // Safety net for Gemma 4 which often forgets the final complete_step call.
+      if (task.steps.length > 0 && task.steps.every(s => s.status === 'done')) {
+        logger.info(`Manager: auto-completing "${task.sessionLabel}" — all ${task.steps.length} steps done (AI forgot to finalize)`);
+        this.updateTaskStatus(task.id, 'done');
         continue;
       }
 
@@ -2404,8 +2452,12 @@ BEISPIEL:
       }
 
       // ── Phase 3b: Queue for AI review (no break, no blocking) ─────
+      // Guard: don't queue if already queued, already being reviewed (waiting),
+      // or if task has no open steps (will be auto-completed in Phase 1c next cycle)
       if (task.status === 'running' && !task.pendingPrompt) {
-        if (!this.reviewQueue.includes(task.id)) {
+        const alreadyQueued = this.reviewQueue.includes(task.id);
+        const hasWork = task.steps.length === 0 || task.steps.some(s => s.status !== 'done');
+        if (!alreadyQueued && hasWork) {
           logger.info(`Manager: heartbeat — queuing "${task.sessionLabel}" for review`);
           this.reviewQueue.push(task.id);
         }
@@ -2465,20 +2517,32 @@ BEISPIEL:
 
       const outputAfter = this.outputBuffers.get(task.sessionId)?.data?.length ?? 0;
       const hasOpenSteps = task.steps.some(s => s.status === 'pending' || s.status === 'running');
-      if (outputAfter !== outputBefore) {
+      const outputChanged = outputAfter !== outputBefore;
+
+      // Priority 1: If ALL steps are done → task is DONE, regardless of output changes.
+      // This prevents the critical loop where new terminal output resurrects completed tasks.
+      if (!hasOpenSteps && task.steps.length > 0) {
+        this.updateTaskStatus(task.id, 'done');
+        logger.info(`Manager: task "${task.sessionLabel}" completed — all ${task.steps.length} steps done`);
+      }
+      // Priority 2: AI sent new commands to terminal → keep alive for next review cycle
+      else if (outputChanged) {
         logger.info(`Manager: review sent new commands to "${task.sessionLabel}" — keeping task alive`);
         task.status = 'running';
         task.createdAt = Date.now();
         task.lastCheckedOutput = undefined;
         this.broadcastTasks();
-      } else if (hasOpenSteps) {
-        // Task still has open steps — keep it running, let the AI work through them
+      }
+      // Priority 3: Open steps remain but no output change → keep running
+      else if (hasOpenSteps) {
         logger.info(`Manager: task "${task.sessionLabel}" still has ${task.steps.filter(s => s.status !== 'done').length} open steps — keeping alive`);
         task.status = 'running';
         this.broadcastTasks();
-      } else {
+      }
+      // Priority 4: No steps defined (standalone task) and no output change → done
+      else {
         this.updateTaskStatus(task.id, 'done');
-        logger.info(`Manager: task "${task.sessionLabel}" completed — all steps done, no follow-up actions`);
+        logger.info(`Manager: task "${task.sessionLabel}" completed — no follow-up actions`);
       }
     } catch (err) {
       logger.warn(`Manager: heartbeat review failed — ${err instanceof Error ? err.message : err}`);
