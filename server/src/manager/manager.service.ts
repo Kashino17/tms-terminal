@@ -157,14 +157,14 @@ const MANAGER_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'update_task',
-      description: 'Erstellt und aktualisiert Aufgaben-Listen im Chat. PFLICHT bei jeder mehrstufigen Anfrage! Mehrere Tasks können parallel laufen — jeder braucht einen eigenen task_name. Actions: set_steps (neuen Task erstellen oder Schritte setzen), complete_step (Schritt abhaken), fail_step (Schritt als fehlgeschlagen markieren).',
+      description: 'Definiert einen Aufgaben-Plan. Nutze set_steps um deinen Plan zu definieren — das System trackt den Fortschritt automatisch. Du musst Schritte NICHT manuell abhaken. Pro Terminal wird automatisch ein eigener Task erstellt wenn du create_terminal aufrufst.',
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', description: 'set_steps, complete_step, oder fail_step' },
-          task_name: { type: 'string', description: 'Eindeutiger Name der Aufgabe, z.B. "TMS Shops Brainstorming", "Logo Design", "Bug Fix". PFLICHT — jede Aufgabe braucht ihren eigenen Namen damit mehrere Tasks parallel laufen können.' },
-          steps: { type: 'string', description: 'Komma-getrennte Liste der Aufgaben-Schritte für set_steps, z.B. "Terminal erstellen,Claude starten,Frage 1 stellen,Antwort notieren,Frage 2 stellen,Antwort notieren,Fazit erstellen"' },
-          step_index: { type: 'string', description: 'Index des Schritts (0-basiert) für complete_step/fail_step' },
+          action: { type: 'string', description: 'set_steps (Plan definieren), complete_step (optional — System macht das automatisch), fail_step (Schritt als fehlgeschlagen markieren)' },
+          task_name: { type: 'string', description: 'Name der Aufgabe, z.B. "Projekt-Analyse", "Q&A Session"' },
+          steps: { type: 'string', description: 'Komma-getrennte Schritte, z.B. "Terminals erstellen,Analyse starten,Q&A Runde 1,Q&A Runde 2,Präsentation"' },
+          step_index: { type: 'string', description: 'Step-Index für complete_step/fail_step (0-basiert)' },
         },
         required: ['action', 'task_name'],
       },
@@ -1859,63 +1859,29 @@ BEISPIEL:
                 logger.info(`Manager: executing initial command in ${newSessionId.slice(0, 8)}: "${initialCommand}"`);
                 globalManager.write(newSessionId, initialCommand + '\r');
               }, 800);
-              // Attach to existing chat task (from update_task) — strict matching
-              const labelLower = (label ?? '').toLowerCase().trim();
-              const labelWords = new Set(labelLower.split(/\s+/).filter(w => w.length > 1));
-              let existingTask: DelegatedTask | undefined;
-              if (labelLower) {
-                // 1st: exact match on description
-                existingTask = this.getActiveTasks().find(t =>
-                  !t.sessionId && t.description.toLowerCase().trim() === labelLower
-                );
-                // 2nd: description contains full label (e.g., "TMS Shops" in "TMS Shops Analyse")
-                if (!existingTask) {
-                  existingTask = this.getActiveTasks().find(t =>
-                    !t.sessionId && t.description.toLowerCase().includes(labelLower)
-                  );
-                }
-                // 3rd: word-overlap ≥60% (strict to prevent cross-matching)
-                if (!existingTask) {
-                  let bestScore = 0;
-                  for (const t of this.getActiveTasks()) {
-                    if (t.sessionId) continue;
-                    const descWords = new Set(t.description.toLowerCase().split(/\s+/).filter(w => w.length > 1));
-                    let overlap = 0;
-                    for (const w of labelWords) { if (descWords.has(w)) overlap++; }
-                    const score = overlap / Math.max(labelWords.size, descWords.size);
-                    if (score > bestScore && score >= 0.6) {
-                      bestScore = score;
-                      existingTask = t;
-                    }
-                  }
-                }
-              }
-              // Last resort: first unattached task (only if no label provided)
-              if (!existingTask && !labelLower) {
-                existingTask = this.getActiveTasks().find(t => !t.sessionId);
-              }
-              if (existingTask) {
-                existingTask.sessionId = newSessionId;
-                existingTask.sessionLabel = this.sessionLabels.get(newSessionId) ?? newSessionId.slice(0, 8);
-                existingTask.updatedAt = Date.now();
-                // Use explicit pendingPrompt from tool call (NOT step labels)
+
+              // Auto-create a per-terminal task with system-managed steps.
+              // Each terminal gets its OWN task — solves the multi-terminal problem.
+              const isClaudeSession = /claude/i.test(initialCommand);
+              const termLabel = label || this.sessionLabels.get(newSessionId) || newSessionId.slice(0, 8);
+
+              if (isClaudeSession) {
+                const steps: TaskStep[] = [
+                  { label: `Terminal "${termLabel}" erstellen`, status: 'done', trigger: 'on_create' },
+                  { label: 'Claude starten', status: 'done', trigger: 'on_create' },
+                ];
                 if (pendingPrompt) {
-                  existingTask.pendingPrompt = pendingPrompt;
-                  logger.info(`Manager: set explicit pendingPrompt for "${existingTask.description}" → "${pendingPrompt.slice(0, 60)}…"`);
+                  steps.push({ label: 'Auftrag senden', status: 'running', trigger: 'on_prompt_sent' });
+                  steps.push({ label: 'Claude arbeitet...', status: 'pending', trigger: 'on_claude_idle' });
+                  steps.push({ label: 'Ergebnis bereit', status: 'pending', trigger: 'ai_input' });
                 }
+                const task = this.addDelegatedTask(termLabel, newSessionId, pendingPrompt, []);
+                task.steps = steps;
+                logger.info(`Manager: created per-terminal task "${termLabel}" with ${steps.length} system-managed steps`);
                 this.broadcastTasks();
-              } else if (pendingPrompt) {
-                // Explicit pending prompt → create task so heartbeat delivers it when ready
-                this.addDelegatedTask(label || initialCommand, newSessionId, pendingPrompt);
-              } else if (/claude/i.test(initialCommand || '')) {
-                // Claude is starting without explicit pending_prompt — create a monitoring task
-                // with NO steps so the heartbeat tracks this terminal for prompt delivery.
-                // Empty steps = heartbeat will mark it done when Claude is idle (no review loop).
-                const monitorTask = this.addDelegatedTask(label || 'Claude Session', newSessionId, undefined, []);
-                monitorTask.steps = []; // Ensure no steps — heartbeat marks done on idle
-                logger.info(`Manager: created monitoring task for Claude session "${label}" (no steps, no pending_prompt)`);
               } else {
-                logger.info(`Manager: no matching task for "${label}" — skipping delegated task`);
+                // Non-Claude terminal — no task needed, just run the command
+                logger.info(`Manager: terminal "${termLabel}" created with command (no task needed)`);
               }
             }
             return { text: `Terminal "${label || 'Shell'}" erstellt (${newSessionId.slice(0, 8)}).${initialCommand ? ` Befehl "${initialCommand}" wird ausgeführt. Aufgabe wird überwacht — ich melde mich wenn sie fertig ist.` : ''}` };
@@ -2483,8 +2449,14 @@ BEISPIEL:
         task.pendingPrompt = undefined;
         task.lastCheckedOutput = undefined;
         task.updatedAt = Date.now();
-        // Don't reset createdAt — that would re-trigger the 10s grace period.
-        // The task age is only used for the initial boot grace, not for subsequent checks.
+
+        // Auto-complete the 'on_prompt_sent' step immediately (don't wait for next cycle)
+        const promptStep = task.steps.find(s => s.status === 'running' && s.trigger === 'on_prompt_sent');
+        if (promptStep) {
+          this.completeStepAndAdvance(task, promptStep);
+          logger.info(`Manager: auto-completed "on_prompt_sent" step for "${task.sessionLabel}"`);
+        }
+
         this.broadcastTasks();
         actionsTaken++;
         continue;
@@ -2511,10 +2483,16 @@ BEISPIEL:
             // If somehow still running, auto-complete now
             this.completeStepAndAdvance(task, currentStep);
             autoCompleted = true;
-          } else if (currentStep.trigger === 'on_prompt_sent' && !task.pendingPrompt) {
-            // Pending prompt was delivered (pendingPrompt is now undefined)
-            this.completeStepAndAdvance(task, currentStep);
-            autoCompleted = true;
+          } else if (currentStep.trigger === 'on_prompt_sent') {
+            // Already handled in Phase 3a when prompt is actually delivered.
+            // If we get here, the prompt was already sent — step should be done.
+            // Only complete if prompt was actually delivered (step should have been
+            // completed in Phase 3a, this is a safety net).
+            if (!task.pendingPrompt) {
+              this.completeStepAndAdvance(task, currentStep);
+              autoCompleted = true;
+            }
+            // If pendingPrompt still exists, wait for delivery in Phase 3a
           } else if (currentStep.trigger === 'on_claude_idle' && isClaudeReady) {
             // Claude finished its work and is idle
             this.completeStepAndAdvance(task, currentStep);
