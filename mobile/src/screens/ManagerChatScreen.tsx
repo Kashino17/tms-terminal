@@ -11,6 +11,7 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  Dimensions,
   ScrollView,
   StyleSheet,
   Text,
@@ -453,11 +454,15 @@ function ThinkingBubble({ phase, streamingText, onCancel, requestStartTime, toke
           ]} />
         </View>
 
-        {/* Streaming text (expands) */}
+        {/* Streaming text (scrollable, max 50% screen height) */}
         {isStreaming && (
-          <View style={stripStyles.streamWrap}>
+          <ScrollView
+            style={stripStyles.streamWrap}
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+          >
             <Markdown style={mdStyles}>{streamingText.length > 2000 ? streamingText.slice(-2000) : streamingText}</Markdown>
-          </View>
+          </ScrollView>
         )}
 
         {/* Cancel */}
@@ -1357,7 +1362,10 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       {delegatedTasks.length > 0 && (() => {
         const active = delegatedTasks.filter(t => t.status !== 'done');
         const doneCount = delegatedTasks.length - active.length;
-        if (active.length === 0) return null;
+        const totalSteps = delegatedTasks.reduce((sum, t) => sum + (t.steps?.length ?? 1), 0);
+        const doneSteps = delegatedTasks.reduce((sum, t) => sum + (t.steps?.filter(s => s.status === 'done').length ?? (t.status === 'done' ? 1 : 0)), 0);
+        const progress = totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
+        if (active.length === 0 && doneCount === 0) return null;
 
         return (
           <TouchableOpacity
@@ -1367,9 +1375,10 @@ export function ManagerChatScreen({ navigation, route }: Props) {
           >
             <View style={styles.taskChipDot} />
             <Text style={styles.taskChipText}>
-              {active.length} Aufgabe{active.length > 1 ? 'n' : ''} aktiv
+              {active.length > 0 ? `${active.length} aktiv` : 'Fertig'}
             </Text>
-            {doneCount > 0 && <Text style={styles.taskChipDone}>{doneCount} erledigt</Text>}
+            <Text style={styles.taskChipProgress}>{progress}%</Text>
+            {doneCount > 0 && <Text style={styles.taskChipDone}>{doneCount} ✓</Text>}
             <Feather name={taskPanelOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textMuted} />
           </TouchableOpacity>
         );
@@ -1378,32 +1387,73 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       {/* Expanded task list with steps */}
       {taskPanelOpen && delegatedTasks.length > 0 && (
         <View style={styles.taskPanel}>
+          {/* Progress bar */}
+          {(() => {
+            const totalSteps = delegatedTasks.reduce((sum, t) => sum + (t.steps?.length ?? 1), 0);
+            const doneSteps = delegatedTasks.reduce((sum, t) => sum + (t.steps?.filter(s => s.status === 'done').length ?? (t.status === 'done' ? 1 : 0)), 0);
+            const pct = totalSteps > 0 ? (doneSteps / totalSteps) * 100 : 0;
+            return (
+              <View style={styles.taskProgressWrap}>
+                <View style={[styles.taskProgressBar, { width: `${pct}%` as any }]} />
+              </View>
+            );
+          })()}
+
           {delegatedTasks.map((task) => {
             const steps = task.steps && task.steps.length > 0 ? task.steps : [{ label: task.description, status: task.status }];
+            const taskDone = task.status === 'done' || steps.every(s => s.status === 'done');
+            const taskRunning = steps.some(s => s.status === 'running');
+            const taskStepsDone = steps.filter(s => s.status === 'done').length;
+            const age = Math.round((Date.now() - task.createdAt) / 1000);
+            const ageStr = age > 3600 ? `${Math.round(age / 3600)}h` : age > 60 ? `${Math.round(age / 60)}min` : `${age}s`;
+
+            // Find current running step index for "next up" logic
+            const runningIdx = steps.findIndex(s => s.status === 'running');
+            const nextIdx = runningIdx >= 0 ? runningIdx + 1 : steps.findIndex(s => s.status === 'pending');
 
             return (
-              <View key={task.id} style={{ marginBottom: 4 }}>
-                <Text style={styles.taskRowLabel}>{task.sessionLabel}</Text>
+              <View key={task.id} style={[styles.taskGroup, taskDone && styles.taskGroupDone]}>
+                {/* Task header */}
+                <View style={styles.taskGroupHeader}>
+                  <View style={[styles.taskStatusDot, taskDone ? styles.taskStatusDone : taskRunning ? styles.taskStatusRunning : styles.taskStatusPending]} />
+                  <Text style={[styles.taskRowLabel, taskDone && { color: colors.textDim }]} numberOfLines={1}>{task.sessionLabel}</Text>
+                  <Text style={styles.taskMeta}>{taskStepsDone}/{steps.length}</Text>
+                  <Text style={styles.taskAge}>{ageStr}</Text>
+                </View>
+
                 {steps.map((step, i) => {
                   const isDone = step.status === 'done';
                   const isFailed = step.status === 'failed';
                   const isRunning = step.status === 'running';
                   const isPending = step.status === 'pending';
-                  const checkColor = isDone ? '#10B981' : isFailed ? '#EF4444' : isRunning ? colors.primary : colors.textDim;
+                  const isNext = i === nextIdx && !isDone && !isRunning;
 
                   return (
-                    <View key={i} style={[styles.taskRow, isPending && { opacity: 0.4 }]}>
-                      <View style={[styles.taskCheckbox, { borderColor: checkColor, backgroundColor: isDone ? '#10B981' : isFailed ? '#EF4444' : 'transparent' }]}>
-                        {isDone && <Feather name="check" size={11} color="#fff" />}
-                        {isFailed && <Feather name="x" size={11} color="#fff" />}
-                        {isRunning && <View style={[styles.taskCheckboxDot, { backgroundColor: checkColor }]} />}
+                    <View key={i} style={[styles.taskRow, isPending && !isNext && { opacity: 0.3 }]}>
+                      <View style={[
+                        styles.taskCheckbox,
+                        { borderColor: isDone ? '#10B981' : isFailed ? '#EF4444' : isRunning ? colors.primary : isNext ? '#F59E0B' : colors.textDim },
+                        (isDone || isFailed) && { backgroundColor: isDone ? '#10B981' : '#EF4444' },
+                      ]}>
+                        {isDone && <Feather name="check" size={10} color="#fff" />}
+                        {isFailed && <Feather name="x" size={10} color="#fff" />}
+                        {isRunning && <View style={[styles.taskCheckboxDot, { backgroundColor: colors.primary }]} />}
+                        {isNext && <Feather name="arrow-right" size={8} color="#F59E0B" />}
                       </View>
                       <Text
-                        style={[styles.taskRowDesc, { flex: 1 }, isDone && { textDecorationLine: 'line-through' as const, color: colors.textDim }]}
+                        style={[
+                          styles.taskRowDesc,
+                          { flex: 1 },
+                          isDone && { textDecorationLine: 'line-through' as const, color: colors.textDim },
+                          isRunning && { color: colors.text, fontWeight: '500' as const },
+                          isNext && { color: '#F59E0B' },
+                        ]}
                         numberOfLines={2}
                       >
                         {step.label}
                       </Text>
+                      {isRunning && <Text style={styles.taskRunningBadge}>LÄUFT</Text>}
+                      {isNext && <Text style={styles.taskNextBadge}>NEXT</Text>}
                     </View>
                   );
                 })}
@@ -2398,6 +2448,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600' as const,
   },
+  taskChipProgress: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+  },
   taskChipDone: {
     color: '#10B981',
     fontSize: 10,
@@ -2406,36 +2461,106 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     marginBottom: 4,
     backgroundColor: colors.surface,
-    borderRadius: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: colors.border + '30',
   },
+  taskProgressWrap: {
+    height: 3,
+    backgroundColor: 'rgba(148,163,184,0.06)',
+    borderRadius: 2,
+    marginBottom: 10,
+    overflow: 'hidden' as const,
+  },
+  taskProgressBar: {
+    height: '100%' as any,
+    backgroundColor: '#10B981',
+    borderRadius: 2,
+  },
+  taskGroup: {
+    marginBottom: 10,
+  },
+  taskGroupDone: {
+    opacity: 0.5,
+  },
+  taskGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  taskStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  taskStatusRunning: {
+    backgroundColor: colors.primary,
+  },
+  taskStatusDone: {
+    backgroundColor: '#10B981',
+  },
+  taskStatusPending: {
+    backgroundColor: colors.textDim,
+  },
+  taskMeta: {
+    color: colors.textDim,
+    fontSize: 9,
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    marginLeft: 'auto' as any,
+  },
+  taskAge: {
+    color: colors.textDim,
+    fontSize: 9,
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+  },
   taskRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 8,
-    paddingVertical: 4,
+    paddingVertical: 3,
+    paddingLeft: 4,
   },
   taskCheckbox: {
-    width: 18,
-    height: 18,
+    width: 16,
+    height: 16,
     borderRadius: 4,
     borderWidth: 1.5,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
-    marginTop: 1,
   },
   taskCheckboxDot: {
-    width: 6,
-    height: 6,
+    width: 5,
+    height: 5,
     borderRadius: 3,
+  },
+  taskRunningBadge: {
+    fontSize: 8,
+    fontWeight: '700' as const,
+    color: colors.primary,
+    backgroundColor: colors.primary + '15',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    letterSpacing: 0.5,
+  },
+  taskNextBadge: {
+    fontSize: 8,
+    fontWeight: '700' as const,
+    color: '#F59E0B',
+    backgroundColor: 'rgba(245,158,11,0.1)',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    letterSpacing: 0.5,
   },
   taskRowLabel: {
     color: colors.text,
     fontSize: 12,
     fontWeight: '600' as const,
+    flex: 1,
   },
   taskRowAge: {
     color: colors.textDim,
@@ -2656,6 +2781,7 @@ const stripStyles = StyleSheet.create({
     backgroundColor: colors.primary,
   },
   streamWrap: {
+    maxHeight: Dimensions.get('window').height * 0.5, // Never taller than half the screen
     paddingHorizontal: 14,
     paddingTop: 8,
     paddingBottom: 4,
