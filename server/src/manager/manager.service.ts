@@ -1615,8 +1615,14 @@ BEISPIEL:
         // Aggressive truncation — Gemma 4 degrades beyond ~10K tokens of history.
         // Keep first message (user request) + last 6 messages (most recent conversation).
         // This keeps prompts under ~16K tokens total even with orchestrator outputs.
+        // Defer distillation — don't run during active processing to avoid
+        // LM Studio KV-cache eviction (concurrent requests kill performance)
         if (!this.isDistilling) {
-          this.distill().catch(err => logger.warn(`Manager: pre-truncation distill failed — ${err}`));
+          setTimeout(() => {
+            if (!this.isProcessing && !this.isDistilling) {
+              this.distill().catch(err => logger.warn(`Manager: deferred distill failed — ${err}`));
+            }
+          }, 5000); // Wait 5s for current processing to finish
         }
         this.chatHistory = [this.chatHistory[0], ...this.chatHistory.slice(-6)];
         logger.info(`Manager: truncated chat history to ${this.chatHistory.length} messages`);
@@ -1626,7 +1632,11 @@ BEISPIEL:
       saveMemory(this.memory);
 
       if (this.memory.recentChat.length > MAX_RECENT_CHAT && !this.isDistilling) {
-        this.distill().catch(err => logger.warn(`Manager: auto-distill failed — ${err}`));
+        setTimeout(() => {
+          if (!this.isProcessing && !this.isDistilling) {
+            this.distill().catch(err => logger.warn(`Manager: deferred auto-distill failed — ${err}`));
+          }
+        }, 5000);
       }
 
       let finalText = cleanReply;
@@ -1679,6 +1689,10 @@ BEISPIEL:
     if (this.memory.recentChat.length === 0) return;
     if (this.isDistilling) {
       logger.info('Manager: distill skipped — already distilling');
+      return;
+    }
+    if (this.isProcessing) {
+      logger.info('Manager: distill deferred — AI is processing (avoids LM Studio cache eviction)');
       return;
     }
     this.isDistilling = true;
