@@ -306,6 +306,8 @@ export interface DelegatedTask {
   pendingPrompt?: string;
   /** System-managed steps — AI plans, system tracks and completes */
   steps: TaskStep[];
+  /** For orchestrator tasks (sessionId=''): IDs of linked per-terminal tasks */
+  linkedTaskIds?: string[];
 }
 
 const HEARTBEAT_INTERVAL_MS = 15_000; // 15 seconds — check delegated tasks
@@ -1868,6 +1870,12 @@ BEISPIEL:
               const termLabel = label || this.sessionLabels.get(newSessionId) || newSessionId.slice(0, 8);
 
               if (isClaudeSession) {
+                // Check if an orchestrator task exists (sessionId='', not done)
+                const orchestrator = this.delegatedTasks.find(t =>
+                  t.sessionId === '' && t.status !== 'done' && t.status !== 'failed'
+                );
+                const isOrchestrated = !!orchestrator;
+
                 const steps: TaskStep[] = [
                   { label: `Terminal "${termLabel}" erstellen`, status: 'done', trigger: 'on_create' },
                   { label: 'Claude starten', status: 'done', trigger: 'on_create' },
@@ -1875,11 +1883,22 @@ BEISPIEL:
                 if (pendingPrompt) {
                   steps.push({ label: 'Auftrag senden', status: 'running', trigger: 'on_prompt_sent' });
                   steps.push({ label: 'Claude arbeitet...', status: 'pending', trigger: 'on_claude_idle' });
-                  steps.push({ label: 'Ergebnis bereit', status: 'pending', trigger: 'ai_input' });
+                  // Only add ai_input if NOT orchestrated — orchestrator handles AI review
+                  if (!isOrchestrated) {
+                    steps.push({ label: 'Ergebnis bereit', status: 'pending', trigger: 'ai_input' });
+                  }
                 }
                 const task = this.addDelegatedTask(termLabel, newSessionId, pendingPrompt, []);
                 task.steps = steps;
-                logger.info(`Manager: created per-terminal task "${termLabel}" with ${steps.length} system-managed steps`);
+
+                // Link to orchestrator task
+                if (orchestrator) {
+                  if (!orchestrator.linkedTaskIds) orchestrator.linkedTaskIds = [];
+                  orchestrator.linkedTaskIds.push(task.id);
+                  logger.info(`Manager: linked "${termLabel}" to orchestrator "${orchestrator.description}"`);
+                }
+
+                logger.info(`Manager: created per-terminal task "${termLabel}" with ${steps.length} steps${isOrchestrated ? ' (orchestrated)' : ''}`);
                 this.broadcastTasks();
               } else {
                 // Non-Claude terminal — no task needed, just run the command
@@ -2369,8 +2388,11 @@ BEISPIEL:
     let actionsTaken = 0; // Only log when something happens (#7)
 
     for (const task of activeTasks) {
-      // Skip tasks without a terminal (standalone chat tasks)
-      if (!task.sessionId) continue;
+      // Orchestrator tasks (no sessionId) — process via orchestrator logic
+      if (!task.sessionId) {
+        this.processOrchestratorTask(task);
+        continue;
+      }
 
       // ── Phase 1: Stuck task timeout (always runs) ──────────────────
       const taskAge = Date.now() - task.updatedAt;
@@ -2541,6 +2563,67 @@ BEISPIEL:
     this.processReviewQueue();
   }
 
+  /** Orchestrator: check if all linked terminals are ready, then queue for AI review.
+   *  Lightweight — no AI calls, just state checking every 15s. */
+  private processOrchestratorTask(task: DelegatedTask): void {
+    if (!task.linkedTaskIds?.length) return;
+
+    // Auto-complete if all steps done
+    if (task.steps.length > 0 && task.steps.every(s => s.status === 'done')) {
+      logger.info(`Orchestrator: "${task.description}" completed — all steps done`);
+      this.updateTaskStatus(task.id, 'done');
+      return;
+    }
+
+    // Timeout check (reuse same 30-min timeout)
+    const taskAge = Date.now() - task.updatedAt;
+    if (taskAge > ManagerService.TASK_TIMEOUT_MS) {
+      logger.warn(`Orchestrator: "${task.description}" timed out`);
+      this.updateTaskStatus(task.id, 'failed');
+      return;
+    }
+
+    const currentStep = task.steps.find(s => s.status === 'running');
+    if (!currentStep) return;
+
+    const linkedTasks = task.linkedTaskIds
+      .map(id => this.delegatedTasks.find(t => t.id === id))
+      .filter((t): t is DelegatedTask => !!t);
+
+    if (linkedTasks.length === 0) return;
+
+    // "Terminals erstellen" — auto-complete when all terminals are created
+    if (currentStep.trigger === 'on_create') {
+      const allCreated = linkedTasks.every(t =>
+        t.steps.some(s => s.trigger === 'on_create' && s.status === 'done')
+      );
+      if (allCreated) {
+        this.completeStepAndAdvance(task, currentStep);
+        logger.info(`Orchestrator: "${currentStep.label}" done — all ${linkedTasks.length} terminals created`);
+      }
+      return;
+    }
+
+    // ai_input steps (Q&A, Präsentation) — wait for ALL terminals to have Claude idle
+    if (currentStep.trigger === 'ai_input') {
+      const allReady = linkedTasks.every(t => {
+        if (t.status === 'done' || t.status === 'failed') return true;
+        const claudeStep = t.steps.find(s => s.trigger === 'on_claude_idle');
+        return claudeStep?.status === 'done';
+      });
+
+      if (!allReady) return; // Still waiting
+
+      // All terminals ready — queue for AI review (once)
+      const alreadyQueued = this.reviewQueue.includes(task.id);
+      const isInFlight = this.reviewInFlight.has(task.id);
+      if (!alreadyQueued && !isInFlight) {
+        logger.info(`Orchestrator: all ${linkedTasks.length} terminals ready — queuing "${currentStep.label}"`);
+        this.reviewQueue.push(task.id);
+      }
+    }
+  }
+
   /** Process queued task reviews one at a time, chaining the next review
    *  after each completion to ensure all tasks get attention. */
   private async processReviewQueue(): Promise<void> {
@@ -2578,64 +2661,73 @@ BEISPIEL:
       return;
     }
 
-    // Analyze terminal output to give AI specific context
-    const buffer = this.outputBuffers.get(task.sessionId);
-    const recentOutput = buffer?.data?.replace(ANSI_STRIP, '').slice(-1500) ?? '';
-    const lastChunk = recentOutput.slice(-500);
-
-    // Detect what happened in the terminal — use same patterns as heartbeat
-    const claudeFinished =
-      /for\s*shortcuts/i.test(lastChunk) ||
-      /shells?\s*.*\s*esc/i.test(lastChunk) ||
-      /waiting\s*for\s*input/i.test(lastChunk) ||
-      (/claude\s*code/i.test(lastChunk.slice(-200)) && /[>❯›]\s*$/.test(lastChunk.slice(-40)));
-    const hasError = /error|Error|ERR!|FAIL|failed/i.test(lastChunk.slice(-300));
-    // Only detect "working" at the VERY end of output (last 50 chars) to avoid
-    // matching past-tense text like "I finished working on it"
-    const tail50 = lastChunk.slice(-50).toLowerCase();
-    const claudeWorking = /\b(thinking|reading|writing|searching|analyzing)\b/.test(tail50)
-      || /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(tail50)  // spinner chars
-      || /\.{3}\s*$/.test(tail50);            // ends with "..."
-
-    // If Claude is actively working (spinner/progress at very end) → wait
-    if (claudeWorking && !claudeFinished) {
-      logger.info(`Manager: smart heartbeat — Claude still working in "${task.sessionLabel}", skipping`);
-      task.status = 'running';
-      this.broadcastTasks();
-      if (this.reviewQueue.length > 0) {
-        setTimeout(() => this.processReviewQueue(), 2000);
-      }
-      return;
-    }
-
     task.status = 'waiting';
     task.updatedAt = Date.now();
     this.broadcastTasks();
 
-    const outputBefore = buffer?.data?.length ?? 0;
-
-    // Build a SHORT, ACTIONABLE heartbeat prompt
-    const outputSnippet = recentOutput.slice(-600).trim();
     let heartbeatPrompt: string;
 
-    if (currentStep && currentStep.trigger === 'ai_input') {
-      // The AI needs to DO something — be very specific about what
-      const stepLower = currentStep.label.toLowerCase();
-      const termLabel = task.sessionLabel;
+    // ── ORCHESTRATOR TASK: aggregate all terminal outputs ──────────
+    if (!task.sessionId && task.linkedTaskIds) {
+      const linkedTasks = task.linkedTaskIds
+        .map(id => this.delegatedTasks.find(t => t.id === id))
+        .filter((t): t is DelegatedTask => !!t);
+
+      const outputs = linkedTasks.map(lt => {
+        const buf = this.outputBuffers.get(lt.sessionId);
+        const out = buf?.data?.replace(ANSI_STRIP, '').slice(-600) ?? '(kein Output)';
+        return `${lt.sessionLabel}:\n${out}`;
+      }).join('\n\n---\n\n');
+
+      const labels = linkedTasks.map(t => `"${t.sessionLabel}"`).join(', ');
+      const stepLower = currentStep?.label?.toLowerCase() ?? '';
 
       if (/q&a|frage|runde/i.test(stepLower)) {
-        heartbeatPrompt = `[HEARTBEAT] Claude in "${termLabel}" ist fertig. Sende jetzt eine Q&A-Frage mit write_to_terminal an "${termLabel}". Frage basierend auf dem bisherigen Output.`;
+        heartbeatPrompt = `[ORCHESTRATOR] Alle ${linkedTasks.length} Terminals (${labels}) sind bereit für "${currentStep!.label}". Sende jetzt Q&A-Fragen an ALLE Terminals mit write_to_terminal.\n\n${outputs}`;
       } else if (/präsentation|ppt|summary|zusammenfass/i.test(stepLower)) {
-        heartbeatPrompt = `[HEARTBEAT] "${termLabel}" ist fertig. Erstelle jetzt die Präsentation mit create_presentation.`;
-      } else if (/ergebnis|result|bericht/i.test(stepLower)) {
-        heartbeatPrompt = `[HEARTBEAT] "${termLabel}" ist fertig. Berichte dem User kurz die wichtigsten Ergebnisse.`;
+        heartbeatPrompt = `[ORCHESTRATOR] Alle Ergebnisse liegen vor. Erstelle jetzt Präsentationen mit create_presentation.\n\n${outputs}`;
       } else {
-        heartbeatPrompt = `[HEARTBEAT] "${termLabel}" ist idle. Führe "${currentStep.label}" aus.`;
+        heartbeatPrompt = `[ORCHESTRATOR] Schritt "${currentStep?.label}" — alle ${linkedTasks.length} Terminals bereit.\n\n${outputs}`;
       }
-    } else if (pendingSteps.length === 0) {
-      heartbeatPrompt = `[HEARTBEAT] Alle Aufgaben für "${task.description}" erledigt. Berichte dem User.`;
-    } else {
-      heartbeatPrompt = `[HEARTBEAT] "${task.sessionLabel}" ist idle. Nächster Schritt: "${currentStep?.label ?? 'unbekannt'}".`;
+    }
+    // ── REGULAR TASK: single terminal review ──────────────────────
+    else {
+      const buffer = this.outputBuffers.get(task.sessionId);
+      const recentOutput = buffer?.data?.replace(ANSI_STRIP, '').slice(-1500) ?? '';
+      const lastChunk = recentOutput.slice(-500);
+
+      const claudeFinished =
+        /for\s*shortcuts/i.test(lastChunk) ||
+        /shells?\s*.*\s*esc/i.test(lastChunk) ||
+        /waiting\s*for\s*input/i.test(lastChunk) ||
+        (/claude\s*code/i.test(lastChunk.slice(-200)) && /[>❯›]\s*$/.test(lastChunk.slice(-40)));
+      const tail50 = lastChunk.slice(-50).toLowerCase();
+      const claudeWorking = /\b(thinking|reading|writing|searching|analyzing)\b/.test(tail50)
+        || /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(tail50)
+        || /\.{3}\s*$/.test(tail50);
+
+      if (claudeWorking && !claudeFinished) {
+        logger.info(`Manager: Claude still working in "${task.sessionLabel}", skipping`);
+        task.status = 'running';
+        this.broadcastTasks();
+        if (this.reviewQueue.length > 0) setTimeout(() => this.processReviewQueue(), 2000);
+        return;
+      }
+
+      const stepLower = currentStep?.label?.toLowerCase() ?? '';
+      const termLabel = task.sessionLabel;
+
+      if (currentStep?.trigger === 'ai_input') {
+        if (/q&a|frage|runde/i.test(stepLower)) {
+          heartbeatPrompt = `[HEARTBEAT] Claude in "${termLabel}" ist fertig. Sende jetzt eine Q&A-Frage mit write_to_terminal an "${termLabel}".`;
+        } else if (/präsentation|ppt|summary|zusammenfass/i.test(stepLower)) {
+          heartbeatPrompt = `[HEARTBEAT] "${termLabel}" ist fertig. Erstelle die Präsentation mit create_presentation.`;
+        } else {
+          heartbeatPrompt = `[HEARTBEAT] "${termLabel}" ist idle. Führe "${currentStep.label}" aus.`;
+        }
+      } else {
+        heartbeatPrompt = `[HEARTBEAT] "${termLabel}" ist idle. Nächster Schritt: "${currentStep?.label ?? 'fertig'}".`;
+      }
     }
 
     try {
@@ -2656,14 +2748,34 @@ BEISPIEL:
       const reviewedStep = task.steps.find(s => s.status === 'running' && s.trigger === 'ai_input');
       if (reviewedStep) {
         this.completeStepAndAdvance(task, reviewedStep);
-        logger.info(`Manager: ai_input step "${reviewedStep.label}" completed for "${task.sessionLabel}" (AI responded)`);
+        logger.info(`Manager: ai_input step "${reviewedStep.label}" completed for "${task.description}" (AI responded)`);
+
+        // ORCHESTRATOR: reset linked per-terminal tasks for next round
+        if (!task.sessionId && task.linkedTaskIds) {
+          const hasMoreSteps = task.steps.some(s => s.status === 'pending' || s.status === 'running');
+          if (hasMoreSteps) {
+            for (const ltId of task.linkedTaskIds) {
+              const lt = this.delegatedTasks.find(t => t.id === ltId);
+              if (!lt) continue;
+              const claudeStep = lt.steps.find(s => s.trigger === 'on_claude_idle');
+              if (claudeStep && claudeStep.status === 'done') {
+                claudeStep.status = 'running';
+                lt.status = 'running';
+                lt.lastCheckedOutput = undefined;
+                lt.updatedAt = Date.now();
+              }
+            }
+            logger.info(`Orchestrator: reset ${task.linkedTaskIds.length} terminals for next round`);
+            this.broadcastTasks();
+          }
+        }
       }
 
       const hasOpenSteps = task.steps.some(s => s.status === 'pending' || s.status === 'running');
 
       if (!hasOpenSteps && task.steps.length > 0) {
         this.updateTaskStatus(task.id, 'done');
-        logger.info(`Manager: task "${task.sessionLabel}" completed — all ${task.steps.length} steps done`);
+        logger.info(`Manager: task "${task.description}" completed — all ${task.steps.length} steps done`);
       } else {
         task.status = 'running';
         task.lastCheckedOutput = undefined;
