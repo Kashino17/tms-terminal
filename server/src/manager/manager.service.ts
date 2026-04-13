@@ -251,12 +251,146 @@ const MANAGER_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  // ── Phase 1: New capability tools ──────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'read_terminal',
+      description: 'Liest den aktuellen Output eines Terminals. Nutze dies um zu sehen was in einem Terminal passiert ist, ohne auf den Heartbeat zu warten.',
+      parameters: {
+        type: 'object',
+        properties: {
+          session_label: { type: 'string', description: 'Terminal-Name oder Shell-Nummer' },
+          max_chars: { type: 'string', description: 'Maximale Zeichen (Standard: 2000)' },
+        },
+        required: ['session_label'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: 'Liest eine Datei vom Dateisystem. Pfade relativ zum Home-Verzeichnis oder absolut. Beispiel: "~/Desktop/TMS Shops/package.json"',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Dateipfad, z.B. "~/Desktop/project/README.md"' },
+          max_lines: { type: 'string', description: 'Maximale Zeilen (Standard: 100)' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'write_file',
+      description: 'Schreibt Inhalt in eine Datei. Erstellt die Datei wenn sie nicht existiert. Überschreibt bestehenden Inhalt.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Dateipfad, z.B. "~/Desktop/notizen.txt"' },
+          content: { type: 'string', description: 'Der Inhalt der geschrieben werden soll' },
+        },
+        required: ['path', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'fetch_url',
+      description: 'Ruft eine URL ab (HTTP GET/POST). Nutze dies für Web-Recherche, API-Abfragen oder das Lesen von Dokumentation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Die URL, z.B. "https://api.github.com/repos/Kashino17/tms-terminal"' },
+          method: { type: 'string', description: 'HTTP-Methode: GET (Standard) oder POST' },
+          body: { type: 'string', description: 'Request-Body für POST (JSON-String)' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'system_info',
+      description: 'Gibt Systeminformationen zurück: OS, CPU, RAM, Disk, Hostname, Uptime.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'clipboard',
+      description: 'Liest oder schreibt die Zwischenablage. Action "read" gibt den aktuellen Inhalt zurück, "write" setzt neuen Inhalt.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: '"read" oder "write"' },
+          text: { type: 'string', description: 'Text zum Schreiben (nur bei action=write)' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_url',
+      description: 'Öffnet eine URL im Standard-Browser des Macs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Die URL, z.B. "https://google.com"' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'git_info',
+      description: 'Gibt Git-Informationen für ein Verzeichnis zurück. Actions: status, log, diff.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: '"status", "log" oder "diff"' },
+          directory: { type: 'string', description: 'Git-Verzeichnis, z.B. "~/Desktop/TMS Terminal"' },
+          count: { type: 'string', description: 'Anzahl Log-Einträge (Standard: 5, nur für action=log)' },
+        },
+        required: ['action', 'directory'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'switch_model',
+      description: 'Wechselt das AI-Model für nachfolgende Anfragen. Nutze dies wenn ein anderes Model besser für die aktuelle Aufgabe geeignet ist.',
+      parameters: {
+        type: 'object',
+        properties: {
+          model: { type: 'string', description: 'Model-Name wie in LM Studio angezeigt, z.B. "gemma-4-31b", "qwen3-coder-30b"' },
+          reason: { type: 'string', description: 'Warum der Wechsel (für Logging)' },
+        },
+        required: ['model'],
+      },
+    },
+  },
 ];
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface ManagerAction {
-  type: 'write_to_terminal' | 'send_enter' | 'send_keys' | 'create_terminal' | 'close_terminal' | 'list_terminals' | 'generate_image' | 'self_education' | 'update_task' | 'create_cron_job' | 'list_cron_jobs' | 'toggle_cron_job' | 'delete_cron_job' | 'create_presentation';
+  type: 'write_to_terminal' | 'send_enter' | 'send_keys' | 'create_terminal' | 'close_terminal' | 'list_terminals' | 'generate_image' | 'self_education' | 'update_task' | 'create_cron_job' | 'list_cron_jobs' | 'toggle_cron_job' | 'delete_cron_job' | 'create_presentation' | 'read_terminal' | 'read_file' | 'write_file' | 'fetch_url' | 'system_info' | 'clipboard' | 'open_url' | 'git_info' | 'switch_model';
   sessionId: string;
   detail: string;
 }
@@ -1155,6 +1289,51 @@ BEISPIEL:
         logger.info(`Manager: create_presentation — "${title}", ${slides.length} slides collected`);
         const presInfo = JSON.stringify({ title, slides: JSON.stringify(slides) });
         actions.push({ type: 'create_presentation', sessionId: '', detail: presInfo });
+        continue;
+      }
+      // ── New capability tools (no sessionId needed) ─────────────
+      if (tc.name === 'read_terminal') {
+        const info = JSON.stringify({ sessionLabel: tc.arguments.session_label ?? '', maxChars: tc.arguments.max_chars ?? '2000' });
+        actions.push({ type: 'read_terminal', sessionId: '', detail: info });
+        continue;
+      }
+      if (tc.name === 'read_file') {
+        const info = JSON.stringify({ path: tc.arguments.path ?? '', maxLines: tc.arguments.max_lines ?? '100' });
+        actions.push({ type: 'read_file', sessionId: '', detail: info });
+        continue;
+      }
+      if (tc.name === 'write_file') {
+        const info = JSON.stringify({ path: tc.arguments.path ?? '', content: tc.arguments.content ?? '' });
+        actions.push({ type: 'write_file', sessionId: '', detail: info });
+        continue;
+      }
+      if (tc.name === 'fetch_url') {
+        const info = JSON.stringify({ url: tc.arguments.url ?? '', method: tc.arguments.method ?? 'GET', body: tc.arguments.body ?? '' });
+        actions.push({ type: 'fetch_url', sessionId: '', detail: info });
+        continue;
+      }
+      if (tc.name === 'system_info') {
+        actions.push({ type: 'system_info', sessionId: '', detail: '' });
+        continue;
+      }
+      if (tc.name === 'clipboard') {
+        const info = JSON.stringify({ action: tc.arguments.action ?? 'read', text: tc.arguments.text ?? '' });
+        actions.push({ type: 'clipboard', sessionId: '', detail: info });
+        continue;
+      }
+      if (tc.name === 'open_url') {
+        const info = JSON.stringify({ url: tc.arguments.url ?? '' });
+        actions.push({ type: 'open_url', sessionId: '', detail: info });
+        continue;
+      }
+      if (tc.name === 'git_info') {
+        const info = JSON.stringify({ action: tc.arguments.action ?? 'status', directory: tc.arguments.directory ?? '', count: tc.arguments.count ?? '5' });
+        actions.push({ type: 'git_info', sessionId: '', detail: info });
+        continue;
+      }
+      if (tc.name === 'switch_model') {
+        const info = JSON.stringify({ model: tc.arguments.model ?? '', reason: tc.arguments.reason ?? '' });
+        actions.push({ type: 'switch_model', sessionId: '', detail: info });
         continue;
       }
 
@@ -2190,6 +2369,151 @@ BEISPIEL:
         } catch (err) {
           return { text: `⚠️ Präsentation fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };
         }
+      }
+      // ── New capability tool handlers ───────────────────────────────
+      case 'read_terminal': {
+        try {
+          const info = JSON.parse(action.detail);
+          const sessionId = this.resolveLabel(info.sessionLabel);
+          if (!sessionId) return { text: `Terminal "${info.sessionLabel}" nicht gefunden.` };
+          const buf = this.outputBuffers.get(sessionId);
+          if (!buf?.data) return { text: `Terminal "${info.sessionLabel}" hat keinen Output.` };
+          const maxChars = parseInt(info.maxChars, 10) || 2000;
+          const clean = buf.data.replace(ANSI_STRIP, '').slice(-maxChars);
+          return { text: clean || '(leer)' };
+        } catch (err) { return { text: `Fehler: ${err}` }; }
+      }
+      case 'read_file': {
+        try {
+          const info = JSON.parse(action.detail);
+          let filePath = (info.path || '').replace(/^~/, os.homedir());
+          if (!path.isAbsolute(filePath)) filePath = path.join(os.homedir(), filePath);
+          if (!fs.existsSync(filePath)) return { text: `Datei nicht gefunden: ${filePath}` };
+          const stat = fs.statSync(filePath);
+          if (stat.isDirectory()) return { text: `"${filePath}" ist ein Verzeichnis, keine Datei.` };
+          if (stat.size > 500_000) return { text: `Datei zu groß (${(stat.size / 1024).toFixed(0)} KB). Max 500 KB.` };
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const maxLines = parseInt(info.maxLines, 10) || 100;
+          const lines = content.split('\n');
+          const truncated = lines.length > maxLines;
+          return { text: `📄 ${filePath} (${lines.length} Zeilen):\n${lines.slice(0, maxLines).join('\n')}${truncated ? `\n... (${lines.length - maxLines} weitere Zeilen)` : ''}` };
+        } catch (err) { return { text: `Fehler beim Lesen: ${err instanceof Error ? err.message : String(err)}` }; }
+      }
+      case 'write_file': {
+        try {
+          const info = JSON.parse(action.detail);
+          let filePath = (info.path || '').replace(/^~/, os.homedir());
+          if (!path.isAbsolute(filePath)) filePath = path.join(os.homedir(), filePath);
+          const dir = path.dirname(filePath);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(filePath, info.content || '', 'utf-8');
+          return { text: `✅ Datei geschrieben: ${filePath} (${(info.content || '').length} Zeichen)` };
+        } catch (err) { return { text: `Fehler beim Schreiben: ${err instanceof Error ? err.message : String(err)}` }; }
+      }
+      case 'fetch_url': {
+        try {
+          const info = JSON.parse(action.detail);
+          const url = info.url;
+          if (!url) return { text: 'Keine URL angegeben.' };
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 30_000);
+          const resp = await fetch(url, {
+            method: (info.method || 'GET').toUpperCase(),
+            body: info.body || undefined,
+            headers: info.body ? { 'Content-Type': 'application/json' } : undefined,
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          const text = await resp.text();
+          const truncated = text.length > 50_000 ? text.slice(0, 50_000) + '\n... (abgeschnitten)' : text;
+          return { text: `🌐 ${resp.status} ${resp.statusText} — ${url}\n\n${truncated}` };
+        } catch (err) { return { text: `Fetch fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` }; }
+      }
+      case 'system_info': {
+        try {
+          const { execSync } = require('child_process');
+          const cpus = os.cpus();
+          const disk = execSync('df -h / 2>/dev/null | tail -1', { encoding: 'utf-8' }).trim();
+          const info = [
+            `🖥️ ${os.hostname()} — ${os.platform()} ${os.arch()} ${os.release()}`,
+            `💻 CPU: ${cpus[0]?.model ?? 'unknown'} (${cpus.length} Kerne)`,
+            `🧠 RAM: ${(os.freemem() / 1e9).toFixed(1)} GB frei / ${(os.totalmem() / 1e9).toFixed(1)} GB total`,
+            `💾 Disk: ${disk}`,
+            `⏱️ Uptime: ${(os.uptime() / 3600).toFixed(1)} Stunden`,
+          ];
+          return { text: info.join('\n') };
+        } catch (err) { return { text: `Fehler: ${err}` }; }
+      }
+      case 'clipboard': {
+        try {
+          const { execSync } = require('child_process');
+          const info = JSON.parse(action.detail);
+          if (info.action === 'write') {
+            execSync(`echo ${JSON.stringify(info.text || '')} | pbcopy`);
+            return { text: `📋 In Zwischenablage kopiert (${(info.text || '').length} Zeichen).` };
+          }
+          const content = execSync('pbpaste', { encoding: 'utf-8' });
+          return { text: `📋 Zwischenablage:\n${content.slice(0, 5000)}` };
+        } catch (err) { return { text: `Clipboard-Fehler: ${err}` }; }
+      }
+      case 'open_url': {
+        try {
+          const { execSync } = require('child_process');
+          const info = JSON.parse(action.detail);
+          if (!info.url) return { text: 'Keine URL angegeben.' };
+          execSync(`open ${JSON.stringify(info.url)}`);
+          return { text: `🌐 Geöffnet: ${info.url}` };
+        } catch (err) { return { text: `Fehler: ${err}` }; }
+      }
+      case 'git_info': {
+        try {
+          const { execSync } = require('child_process');
+          const info = JSON.parse(action.detail);
+          let dir = (info.directory || '').replace(/^~/, os.homedir());
+          if (!path.isAbsolute(dir)) dir = path.join(os.homedir(), dir);
+          if (!fs.existsSync(path.join(dir, '.git'))) return { text: `"${dir}" ist kein Git-Repository.` };
+          const gitCmd = (cmd: string) => execSync(`git -C ${JSON.stringify(dir)} ${cmd}`, { encoding: 'utf-8', timeout: 10_000 }).trim();
+          if (info.action === 'status') {
+            const status = gitCmd('status --short');
+            const branch = gitCmd('branch --show-current');
+            return { text: `📦 Git Status — ${dir}\nBranch: ${branch}\n${status || '(clean, keine Änderungen)'}` };
+          }
+          if (info.action === 'log') {
+            const count = parseInt(info.count, 10) || 5;
+            const log = gitCmd(`log --oneline -${count}`);
+            return { text: `📜 Git Log — ${dir} (letzte ${count}):\n${log}` };
+          }
+          if (info.action === 'diff') {
+            const diff = gitCmd('diff --stat');
+            return { text: `📝 Git Diff — ${dir}:\n${diff || '(keine Änderungen)'}` };
+          }
+          return { text: `Unbekannte Git-Action: "${info.action}". Erlaubt: status, log, diff.` };
+        } catch (err) { return { text: `Git-Fehler: ${err instanceof Error ? err.message : String(err)}` }; }
+      }
+      case 'switch_model': {
+        try {
+          const info = JSON.parse(action.detail);
+          const modelName = info.model || '';
+          if (!modelName) return { text: 'Kein Model angegeben.' };
+          // Try to find and switch to the model by partial name match
+          // switch_model uses registry internals — cast to access providers map
+          const reg = this.registry as any;
+          const providers: Map<string, any> = reg.providers;
+          let match: any = null;
+          for (const [id, p] of providers) {
+            if (id.includes(modelName.toLowerCase()) || (p.name || '').toLowerCase().includes(modelName.toLowerCase())) {
+              match = { id, name: p.name };
+              break;
+            }
+          }
+          if (match) {
+            reg.activeId = match.id;
+            logger.info(`Manager: model switched to "${match.name}" (reason: ${info.reason || 'none'})`);
+            return { text: `🔄 Model gewechselt zu "${match.name}".${info.reason ? ` Grund: ${info.reason}` : ''}` };
+          }
+          const available = [...providers.keys()].join(', ');
+          return { text: `Model "${modelName}" nicht gefunden. Verfügbare: ${available}` };
+        } catch (err) { return { text: `Model-Wechsel fehlgeschlagen: ${err}` }; }
       }
     }
     return null;
