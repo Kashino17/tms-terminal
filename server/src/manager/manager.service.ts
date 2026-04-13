@@ -444,7 +444,7 @@ export interface DelegatedTask {
   linkedTaskIds?: string[];
 }
 
-const HEARTBEAT_INTERVAL_MS = 15_000; // 15 seconds — check delegated tasks
+const HEARTBEAT_INTERVAL_MS = 45_000; // 45s safety-net (event-driven handles ~3s reactions)
 
 type SummaryCallback = (summary: ManagerSummary) => void;
 type ResponseCallback = (response: ManagerResponse) => void;
@@ -936,6 +936,82 @@ export class ManagerService {
     }
 
     this.outputBuffers.set(sessionId, { data: finalData, lastUpdated: Date.now() });
+
+    // Event-driven heartbeat: after 3s of output silence, check if terminal is idle.
+    // This reacts in ~3s instead of waiting for the 45s safety-net heartbeat.
+    this.resetOutputDebounce(sessionId);
+  }
+
+  private outputDebounceTimers = new Map<string, NodeJS.Timeout>();
+
+  private resetOutputDebounce(sessionId: string): void {
+    const existing = this.outputDebounceTimers.get(sessionId);
+    if (existing) clearTimeout(existing);
+
+    this.outputDebounceTimers.set(sessionId, setTimeout(() => {
+      this.outputDebounceTimers.delete(sessionId);
+      this.checkTerminalIdle(sessionId);
+    }, 3000)); // 3s after last output chunk
+  }
+
+  /** Event-driven idle check for a single terminal. Mirrors heartbeat Phase 2+3 logic. */
+  private checkTerminalIdle(sessionId: string): void {
+    if (!this.enabled) return;
+
+    // Find task for this terminal
+    const task = this.delegatedTasks.find(t =>
+      t.sessionId === sessionId && (t.status === 'running' || t.status === 'waiting')
+    );
+    if (!task) return;
+
+    const buffer = this.outputBuffers.get(sessionId);
+    if (!buffer?.data) return;
+
+    const currentOutput = buffer.data.replace(ANSI_STRIP, '').slice(-2000);
+    const lastChunk = currentOutput.slice(-1000);
+
+    // Claude readiness detection
+    const isClaudeReady =
+      /for\s*shortcuts/i.test(lastChunk) ||
+      /shells?\s*.*\s*esc/i.test(lastChunk) ||
+      /waiting\s*for\s*input/i.test(lastChunk) ||
+      (/claude\s*code/i.test(lastChunk.slice(-200)) && /[>❯›]\s*$/.test(lastChunk.slice(-40)));
+    const isShellPrompt = /[$%>#❯→›]\s*$/.test(lastChunk.slice(-80));
+
+    if (!isClaudeReady && !isShellPrompt) return; // Terminal still busy
+
+    // Send pending prompt if available
+    const hasClaudeProcess = /claude/i.test(currentOutput.slice(-3000));
+    if (task.pendingPrompt && (isClaudeReady || (isShellPrompt && hasClaudeProcess))) {
+      logger.info(`Manager: event-driven — terminal ready in "${task.sessionLabel}", sending pending prompt`);
+      globalManager.write(task.sessionId, task.pendingPrompt);
+      setTimeout(() => globalManager.write(task.sessionId, '\r'), 200);
+      task.pendingPrompt = undefined;
+      task.lastCheckedOutput = undefined;
+      task.updatedAt = Date.now();
+
+      const promptStep = task.steps.find(s => s.status === 'running' && s.trigger === 'on_prompt_sent');
+      if (promptStep) {
+        this.completeStepAndAdvance(task, promptStep);
+      }
+      this.broadcastTasks();
+      return;
+    }
+
+    // Auto-complete on_claude_idle step
+    if (isClaudeReady && task.status === 'running') {
+      const idleStep = task.steps.find(s => s.status === 'running' && s.trigger === 'on_claude_idle');
+      if (idleStep) {
+        // Require stable output (same as heartbeat but only 1 check since event-driven already waited 3s)
+        if (currentOutput !== task.lastCheckedOutput) {
+          task.lastCheckedOutput = currentOutput;
+          return; // Wait for next event to confirm stability
+        }
+        this.completeStepAndAdvance(task, idleStep);
+        logger.info(`Manager: event-driven — auto-completed "${idleStep.label}" for "${task.sessionLabel}"`);
+        this.broadcastTasks();
+      }
+    }
   }
 
   /** Register a session label (e.g. "Shell 1") for human-readable summaries. */
