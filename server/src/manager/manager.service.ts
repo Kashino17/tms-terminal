@@ -1040,6 +1040,9 @@ export class ManagerService {
     this.outputBuffers.delete(sessionId);
     this.lastSummaryAt.delete(sessionId);
     this.sessionLabels.delete(sessionId);
+    // Clean up event-driven debounce timer
+    const debounce = this.outputDebounceTimers.get(sessionId);
+    if (debounce) { clearTimeout(debounce); this.outputDebounceTimers.delete(sessionId); }
   }
 
   // ── Periodic Summarization ────────────────────────────────────────────────
@@ -2056,9 +2059,14 @@ BEISPIEL:
         const isShellSession = !ctx?.tool; // No AI tool detected = shell
         if (isShellSession) {
           const DANGEROUS = [
-            /\brm\s+-r/i, /\bsudo\b/i, /\bgit\s+push\s+--force\b/i,
-            /\bgit\s+reset\s+--hard\b/i, /\bdrop\s+(table|database)\b/i,
-            /\bdd\s+if=/i, /\bchmod\s+777\b/i, /\bmkfs\b/i, /\b:\(\)\s*\{/,
+            /\brm\b[^|;&\n]*-[a-zA-Z]*r/i, // rm with -r flag anywhere (catches rm -f -r, rm -rf, etc.)
+            /\bsudo\b/i,
+            /\bgit\s+push\s+.*--force\b/i, /\bgit\s+push\s+-f\b/i,
+            /\bgit\s+reset\s+--hard\b/i,
+            /\bdrop\s+(table|database)\b/i,
+            /\bdd\s+if=/i, /\bchmod\s+777\b/i, /\bmkfs\b/i,
+            /:\(\)\s*\{/, // fork bomb
+            /\bkillall\b/i, /\bpkill\s+-9/i,
           ];
           const isDangerous = DANGEROUS.some(p => p.test(action.detail));
           if (isDangerous) {
@@ -2503,10 +2511,15 @@ BEISPIEL:
           const info = JSON.parse(action.detail);
           let filePath = (info.path || '').replace(/^~/, os.homedir());
           if (!path.isAbsolute(filePath)) filePath = path.join(os.homedir(), filePath);
+          filePath = path.resolve(filePath);
+          if (!filePath.startsWith(os.homedir())) return { text: `⛔ Zugriff verweigert: Pfad außerhalb des Home-Verzeichnisses.` };
           if (!fs.existsSync(filePath)) return { text: `Datei nicht gefunden: ${filePath}` };
           const stat = fs.statSync(filePath);
           if (stat.isDirectory()) return { text: `"${filePath}" ist ein Verzeichnis, keine Datei.` };
           if (stat.size > 500_000) return { text: `Datei zu groß (${(stat.size / 1024).toFixed(0)} KB). Max 500 KB.` };
+          const ext = path.extname(filePath).toLowerCase();
+          const BINARY_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.zip', '.gz', '.tar', '.exe', '.bin', '.dylib', '.so', '.a', '.o', '.woff', '.woff2', '.ttf', '.ico', '.apk', '.ipa'];
+          if (BINARY_EXT.includes(ext)) return { text: `Binärdatei (${ext}) — kein Text-Inhalt lesbar. Größe: ${(stat.size / 1024).toFixed(0)} KB` };
           const content = fs.readFileSync(filePath, 'utf-8');
           const maxLines = parseInt(info.maxLines, 10) || 100;
           const lines = content.split('\n');
@@ -2519,6 +2532,8 @@ BEISPIEL:
           const info = JSON.parse(action.detail);
           let filePath = (info.path || '').replace(/^~/, os.homedir());
           if (!path.isAbsolute(filePath)) filePath = path.join(os.homedir(), filePath);
+          filePath = path.resolve(filePath);
+          if (!filePath.startsWith(os.homedir())) return { text: `⛔ Zugriff verweigert: Pfad außerhalb des Home-Verzeichnisses.` };
           const dir = path.dirname(filePath);
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
           fs.writeFileSync(filePath, info.content || '', 'utf-8');
@@ -2532,6 +2547,12 @@ BEISPIEL:
           const info = JSON.parse(action.detail);
           const url = info.url;
           if (!url) return { text: 'Keine URL angegeben.' };
+          try {
+            const parsed = new URL(url);
+            if (!['http:', 'https:'].includes(parsed.protocol)) {
+              return { text: `⛔ Nur HTTP/HTTPS-URLs erlaubt (nicht ${parsed.protocol}).` };
+            }
+          } catch { return { text: `Ungültige URL: ${url}` }; }
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 30_000);
           const resp = await fetch(url, {
@@ -2563,10 +2584,11 @@ BEISPIEL:
       }
       case 'clipboard': {
         try {
-          const { execSync } = require('child_process');
+          const { spawnSync, execSync } = require('child_process');
           const info = JSON.parse(action.detail);
           if (info.action === 'write') {
-            execSync(`echo ${JSON.stringify(info.text || '')} | pbcopy`);
+            // Use spawnSync to avoid shell injection (no shell metachar processing)
+            spawnSync('pbcopy', [], { input: info.text || '', encoding: 'utf-8' });
             return { text: `📋 In Zwischenablage kopiert (${(info.text || '').length} Zeichen).` };
           }
           const content = execSync('pbpaste', { encoding: 'utf-8' });
@@ -2636,22 +2658,19 @@ BEISPIEL:
           const modelName = info.model || '';
           if (!modelName) return { text: 'Kein Model angegeben.' };
           // Try to find and switch to the model by partial name match
-          // switch_model uses registry internals — cast to access providers map
-          const reg = this.registry as any;
-          const providers: Map<string, any> = reg.providers;
-          let match: any = null;
-          for (const [id, p] of providers) {
-            if (id.includes(modelName.toLowerCase()) || (p.name || '').toLowerCase().includes(modelName.toLowerCase())) {
-              match = { id, name: p.name };
-              break;
-            }
-          }
+          // Try to switch by matching provider ID
+          const providersList = this.registry.list();
+          const nameLower = modelName.toLowerCase();
+          const match = providersList.find((p: any) =>
+            (p.id || '').toLowerCase().includes(nameLower) ||
+            (p.name || '').toLowerCase().includes(nameLower)
+          );
           if (match) {
-            reg.activeId = match.id;
+            this.registry.setActive(match.id);
             logger.info(`Manager: model switched to "${match.name}" (reason: ${info.reason || 'none'})`);
             return { text: `🔄 Model gewechselt zu "${match.name}".${info.reason ? ` Grund: ${info.reason}` : ''}` };
           }
-          const available = [...providers.keys()].join(', ');
+          const available = providersList.map((p: any) => p.id).join(', ');
           return { text: `Model "${modelName}" nicht gefunden. Verfügbare: ${available}` };
         } catch (err) { return { text: `Model-Wechsel fehlgeschlagen: ${err}` }; }
       }
@@ -3294,7 +3313,7 @@ BEISPIEL:
         task = candidate;
       }
     }
-    if (!task) return;
+    if (!task) { this.isSystemProcessing = false; return; }
 
     logger.info(`Manager: reviewing "${task.sessionLabel}" (${this.reviewQueue.length} more in queue)`);
     this.reviewInFlight.add(task.id);
