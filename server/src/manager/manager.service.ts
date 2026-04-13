@@ -2418,20 +2418,22 @@ BEISPIEL:
       const isComplete = isClaudeReady || isShellPrompt;
 
       // ── Stability check: adaptive based on what we detect ──────────
-      // If Claude is clearly ready ("for shortcuts"), only 1 stable cycle needed (15s).
-      // For ambiguous shell prompts, require 2 stable cycles (30s) to avoid false positives.
       const requiredStableCycles = isClaudeReady ? 1 : 2;
+      const outputChanged = currentOutput !== task.lastCheckedOutput;
+      const stableCount = outputChanged ? 0 : (this.stableOutputCounts.get(task.id) ?? 0) + 1;
 
-      if (currentOutput === task.lastCheckedOutput) {
-        const stableCount = (this.stableOutputCounts.get(task.id) ?? 0) + 1;
-        this.stableOutputCounts.set(task.id, stableCount);
-        if (stableCount < requiredStableCycles) continue;
-      } else {
+      // Always log heartbeat state for debugging
+      logger.info(`Manager: heartbeat "${task.sessionLabel}" — age=${Math.round(age / 1000)}s, bufLen=${currentOutput.length}, changed=${outputChanged}, stable=${stableCount}/${requiredStableCycles}, ready=${isClaudeReady}, shell=${isShellPrompt}, prompt=${!!task.pendingPrompt}, tail="${currentOutput.slice(-40).replace(/\n/g, '\\n')}"`);
+
+      if (outputChanged) {
         task.lastCheckedOutput = currentOutput;
         task.updatedAt = Date.now();
         this.stableOutputCounts.set(task.id, 0);
         continue;
       }
+
+      this.stableOutputCounts.set(task.id, stableCount);
+      if (stableCount < requiredStableCycles) continue;
 
       if (!isComplete) continue;
 
