@@ -684,6 +684,7 @@ export class ManagerService {
   private isDistilling = false; // prevent concurrent memory distillation
   private saveTasksTimer: NodeJS.Timeout | null = null;
   private saveChatTimer: NodeJS.Timeout | null = null;
+  private lastChatHadToolCalls = false; // Tracks if the last handleChat made tool calls
   private personality: PersonalityConfig = { ...DEFAULT_PERSONALITY };
   private memory: ManagerMemory;
 
@@ -1233,6 +1234,7 @@ BEISPIEL:
     const startTime = Date.now();
     const phases: PhaseInfo[] = [];
     let phaseStart = startTime;
+    this.lastChatHadToolCalls = false;
 
     const recordPhase = (phase: string, label: string) => {
       const now = Date.now();
@@ -1431,6 +1433,7 @@ BEISPIEL:
               toolResults.push({ toolCallId, result: resultText });
               actionResults.push(resultText);
               executedActions.push(action);
+              this.lastChatHadToolCalls = true;
             } else {
               const label = tc.arguments?.session_label ?? 'unbekannt';
               const errorMsg = `Fehler: Terminal "${label}" nicht gefunden. Verfügbare Terminals: ${[...this.sessionLabels.values()].join(', ') || 'keine'}`;
@@ -2898,42 +2901,17 @@ BEISPIEL:
         const stepLower = reviewedStep.label.toLowerCase();
         const isQnAStep = /q&a|frage|runde/i.test(stepLower);
 
-        // For orchestrator Q&A steps: verify the AI actually sent commands to terminals.
-        // Gemma 4 sometimes just SAYS "Fragen sind raus!" without calling write_to_terminal.
-        // Check if any linked terminal's output buffer changed during this handleChat call.
-        let aiActuallyActed = true;
-        if (isQnAStep && !task.sessionId && task.linkedTaskIds) {
-          const anyTerminalGotInput = task.linkedTaskIds.some(ltId => {
-            const lt = this.delegatedTasks.find(t => t.id === ltId);
-            if (!lt) return false;
-            const buf = this.outputBuffers.get(lt.sessionId);
-            // If Claude is working (output changing), the AI sent something
-            return buf && buf.lastUpdated > (Date.now() - 30_000); // Updated in last 30s
-          });
-          // Also check if output buffers changed compared to before the review
-          const linkedOutputChanged = task.linkedTaskIds.some(ltId => {
-            const lt = this.delegatedTasks.find(t => t.id === ltId);
-            if (!lt) return false;
-            const claudeStep = lt.steps.find(s => s.trigger === 'on_claude_idle');
-            // If on_claude_idle was reset to 'running' but is already 'done' again,
-            // that means no new work was sent (terminals were already idle)
-            return claudeStep?.status === 'running' || claudeStep?.status === 'pending';
-          });
-          // AI acted if terminals got recent input OR their idle steps aren't done yet
-          aiActuallyActed = anyTerminalGotInput || !linkedOutputChanged;
-
-          if (!aiActuallyActed) {
-            logger.warn(`Orchestrator: AI claimed "${reviewedStep.label}" done but sent NO tool calls — re-queuing`);
-            // Don't complete the step — re-queue for another try
-            task.status = 'running';
-            task.updatedAt = Date.now();
-            this.broadcastTasks();
-            // Chain next review
-            if (this.reviewQueue.length > 0) {
-              setTimeout(() => this.processReviewQueue(), 2000);
-            }
-            return;
+        // For orchestrator Q&A steps: verify the AI actually called write_to_terminal.
+        // Gemma 4 sometimes just SAYS "Fragen sind raus!" without making tool calls.
+        if (isQnAStep && !task.sessionId && !this.lastChatHadToolCalls) {
+          logger.warn(`Orchestrator: AI claimed "${reviewedStep.label}" done but sent NO tool calls — re-queuing`);
+          task.status = 'running';
+          task.updatedAt = Date.now();
+          this.broadcastTasks();
+          if (this.reviewQueue.length > 0) {
+            setTimeout(() => this.processReviewQueue(), 2000);
           }
+          return;
         }
 
         this.completeStepAndAdvance(task, reviewedStep);
