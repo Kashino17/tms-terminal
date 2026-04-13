@@ -685,6 +685,7 @@ export class ManagerService {
   private saveTasksTimer: NodeJS.Timeout | null = null;
   private saveChatTimer: NodeJS.Timeout | null = null;
   private lastChatHadToolCalls = false; // Tracks if the last handleChat made tool calls
+  private orchestratorRetryCount = new Map<string, number>(); // step retries per task
   private personality: PersonalityConfig = { ...DEFAULT_PERSONALITY };
   private memory: ManagerMemory;
 
@@ -1885,10 +1886,13 @@ BEISPIEL:
               const termLabel = label || this.sessionLabels.get(newSessionId) || newSessionId.slice(0, 8);
 
               if (isClaudeSession) {
-                // Check if an orchestrator task exists (sessionId='', not done)
-                const orchestrator = this.delegatedTasks.find(t =>
+                // Find the NEWEST active orchestrator (last created, not first)
+                const activeOrchestrators = this.delegatedTasks.filter(t =>
                   t.sessionId === '' && t.status !== 'done' && t.status !== 'failed'
                 );
+                const orchestrator = activeOrchestrators.length > 0
+                  ? activeOrchestrators[activeOrchestrators.length - 1]
+                  : undefined;
                 const isOrchestrated = !!orchestrator;
 
                 const steps: TaskStep[] = [
@@ -2901,17 +2905,32 @@ BEISPIEL:
         const stepLower = reviewedStep.label.toLowerCase();
         const isQnAStep = /q&a|frage|runde/i.test(stepLower);
 
-        // For orchestrator Q&A steps: verify the AI actually called write_to_terminal.
-        // Gemma 4 sometimes just SAYS "Fragen sind raus!" without making tool calls.
-        if (isQnAStep && !task.sessionId && !this.lastChatHadToolCalls) {
-          logger.warn(`Orchestrator: AI claimed "${reviewedStep.label}" done but sent NO tool calls — re-queuing`);
-          task.status = 'running';
-          task.updatedAt = Date.now();
-          this.broadcastTasks();
-          if (this.reviewQueue.length > 0) {
-            setTimeout(() => this.processReviewQueue(), 2000);
+        // For ALL orchestrator ai_input steps: verify the AI actually made tool calls.
+        // Gemma 4 sometimes just SAYS "done!" without calling any tools.
+        // Applies to Q&A AND presentation steps.
+        if (!task.sessionId && !this.lastChatHadToolCalls) {
+          const retryKey = `${task.id}:${reviewedStep.label}`;
+          const retries = (this.orchestratorRetryCount.get(retryKey) ?? 0) + 1;
+          this.orchestratorRetryCount.set(retryKey, retries);
+
+          if (retries <= 3) {
+            logger.warn(`Orchestrator: AI responded to "${reviewedStep.label}" without tool calls — retry ${retries}/3`);
+            task.status = 'running';
+            task.updatedAt = Date.now();
+            this.broadcastTasks();
+            if (this.reviewQueue.length > 0) {
+              setTimeout(() => this.processReviewQueue(), 2000);
+            }
+            return;
+          } else {
+            // Max retries reached — complete the step anyway to avoid infinite loop
+            logger.warn(`Orchestrator: "${reviewedStep.label}" failed after 3 retries without tool calls — skipping`);
+            this.orchestratorRetryCount.delete(retryKey);
           }
-          return;
+        } else {
+          // Tool calls were made — clear retry counter
+          const retryKey = `${task.id}:${reviewedStep.label}`;
+          this.orchestratorRetryCount.delete(retryKey);
         }
 
         this.completeStepAndAdvance(task, reviewedStep);
