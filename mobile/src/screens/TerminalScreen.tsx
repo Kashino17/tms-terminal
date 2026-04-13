@@ -194,8 +194,10 @@ export function TerminalScreen({ navigation, route }: Props) {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'background') {
         backgroundedRef.current = true;
-        // Do NOT disconnect — keep the WebSocket alive so manager responses arrive
+        // Report app state to server for context-aware AI responses
+        wsRef.current.send({ type: 'client:app_state', payload: { foreground: false } } as any);
       } else if (nextState === 'active' && backgroundedRef.current) {
+        wsRef.current.send({ type: 'client:app_state', payload: { foreground: true } } as any);
         backgroundedRef.current = false;
         // Check if connection is still alive — reconnect only if dropped
         if (wsRef.current.state !== 'connected') {
@@ -997,7 +999,11 @@ export function TerminalScreen({ navigation, route }: Props) {
             connState={connState}
             rtt={rtt}
             serverName={serverName}
-            onSelectTab={(id) => setActiveTab(serverId, id)}
+            onSelectTab={(id) => {
+              setActiveTab(serverId, id);
+              const tab = serverTabs.find(t => t.id === id);
+              wsRef.current.send({ type: 'client:active_tab', payload: { tabId: id, sessionId: tab?.sessionId } } as any);
+            }}
             onAddTab={createNewTab}
             onGoBack={() => navigation.goBack()}
             onBrowserPress={() => {
