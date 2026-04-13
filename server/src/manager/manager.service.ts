@@ -1988,25 +1988,28 @@ BEISPIEL:
 
               const hasTerminalKeyword = /terminal.*(?:erstell|start|öffn)|(?:erstell|start|öffn).*terminal/i.test(lower);
               const hasClaudeStart = /claude.*(?:start|öffn)|(?:start|öffn).*claude/i.test(lower);
-              // Work that Claude does autonomously — we just wait for it to finish
-              const hasWorkKeyword = /analys|untersu|prüf|scan|audit|check|bewert|fix|implement|einbau|umbau|erstell|schreib|deploy|install|build|compil|migrat|refactor|bug|lassen/i.test(lower);
-              // Interactive steps where the AI must provide input
-              const hasInteractiveKeyword = /frag|q&a|runde|präsentation|zusammenfass|bericht|send|bild|generier|beantwort/i.test(lower);
+              // Work that Claude does IN A TERMINAL — we wait for Claude to finish
+              const hasClaudeWorkKeyword = /analys|untersu|prüf|scan|audit|check|bewert|fix|bug|implement|einbau|umbau|deploy|migrat|refactor|compil|lassen/i.test(lower);
+              // General action words that could be AI OR Claude work
+              const hasGeneralAction = /erstell|schreib|install|build|mach|konfigurier|setz.*auf|commit/i.test(lower);
+              // Interactive steps — the AI must provide input or call specific tools
+              const hasInteractiveKeyword = /frag|q&a|runde|präsentation|zusammenfass|bericht|send|bild|generier|beantwort|cron|job|auswert/i.test(lower);
 
-              if ((hasTerminalKeyword || hasClaudeStart) && hasWorkKeyword) {
+              if ((hasTerminalKeyword || hasClaudeStart) && (hasClaudeWorkKeyword || hasGeneralAction)) {
                 // Combined: "Terminal erstellen & Analyse starten" or "Claude starten & Bugs fixen"
                 trigger = 'on_claude_idle';
               } else if (hasTerminalKeyword || hasClaudeStart) {
                 trigger = 'on_create';
               } else if (/auftrag.*send|analyse.*send|send.*auftrag|prompt.*send|aufgabe.*send/i.test(lower)) {
                 trigger = 'on_prompt_sent';
-              } else if (hasWorkKeyword && !hasInteractiveKeyword) {
-                // Pure work steps: "Bugs fixen", "npm install", "Analyse durchführen"
+              } else if (hasClaudeWorkKeyword && !hasInteractiveKeyword) {
+                // Pure Claude work: "Bugs fixen", "Analyse durchführen", "Code refactoren"
+                // Only classified as on_claude_idle if Claude is actually doing the work
                 trigger = 'on_claude_idle';
               } else if (/wart|abwart|ergebnis.*abwart/i.test(lower)) {
                 trigger = 'on_claude_idle';
               }
-              // Everything else (Q&A, Präsentation, Bild generieren, Zusammenfassung) = 'ai_input'
+              // Everything else (Q&A, Präsentation, Bild generieren, Cron-Job, Auswertung) = 'ai_input'
 
               return {
                 label,
@@ -2760,6 +2763,13 @@ BEISPIEL:
         }
         return false;
       }
+    } else if (currentStep.trigger === 'on_claude_idle' || currentStep.trigger === 'on_create') {
+      // on_claude_idle / on_create WITHOUT linked terminals — these can't auto-complete.
+      // Treat as ai_input so the AI can handle them via tool calls.
+      logger.info(`Orchestrator: "${currentStep.label}" [${currentStep.trigger}] has no linked terminals — treating as ai_input`);
+      currentStep.trigger = 'ai_input';
+      this.broadcastTasks();
+      // Fall through to ai_input handler below
     }
 
     // ── ai_input steps — queue for AI review ─────────────────────
