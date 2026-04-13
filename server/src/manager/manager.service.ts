@@ -1391,7 +1391,7 @@ BEISPIEL:
         // THEN create terminal + run command). We loop until GLM returns no
         // more tool calls, up to MAX_TOOL_ROUNDS to prevent infinite loops.
         const MAX_TOOL_ROUNDS = 10;
-        const TOOL_LOOP_TIMEOUT_MS = 300_000; // 5 minutes — presentations need 3+ minutes on local LLM
+        const TOOL_LOOP_TIMEOUT_MS = 3_000_000; // 50 minutes — long-running workflows on local LLM
         const toolLoopStart = Date.now();
         let round = 0;
         let turnMessages: Array<{ role: string; content?: string | null; tool_calls?: RawToolCall[]; tool_call_id?: string }> =
