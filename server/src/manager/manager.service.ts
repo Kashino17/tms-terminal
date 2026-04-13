@@ -1595,12 +1595,14 @@ BEISPIEL:
       this.autoCompleteStepsFromText(cleanReply);
 
       this.chatHistory.push({ role: 'assistant', content: cleanReply });
-      if (this.chatHistory.length > 50) {
-        // Trigger distillation before truncating so messages aren't lost
+      if (this.chatHistory.length > 20) {
+        // Aggressive truncation — Gemma 4 degrades beyond ~10K tokens of history.
+        // Keep first message (context) + last 12 messages (recent conversation).
         if (!this.isDistilling) {
           this.distill().catch(err => logger.warn(`Manager: pre-truncation distill failed — ${err}`));
         }
-        this.chatHistory = this.chatHistory.slice(-40);
+        this.chatHistory = [this.chatHistory[0], ...this.chatHistory.slice(-12)];
+        logger.info(`Manager: truncated chat history to ${this.chatHistory.length} messages`);
       }
 
       this.memory.recentChat.push({ role: 'assistant', text: cleanReply.slice(0, 2000), timestamp: Date.now() });
@@ -2612,28 +2614,28 @@ BEISPIEL:
 
     const outputBefore = buffer?.data?.length ?? 0;
 
-    // Build heartbeat prompt — focused on what the AI needs to DO
-    const outputSnippet = recentOutput.slice(-800).trim();
-    const doneList = doneSteps.length > 0 ? `\nBisherige Schritte erledigt: ${doneSteps.map(s => s.label).join(', ')}` : '';
-    const remainingList = pendingSteps.filter(s => s !== currentStep).map(s => s.label);
+    // Build a SHORT, ACTIONABLE heartbeat prompt
+    const outputSnippet = recentOutput.slice(-600).trim();
     let heartbeatPrompt: string;
 
-    if (currentStep) {
-      heartbeatPrompt = `[HEARTBEAT] Nächste Aufgabe: "${currentStep.label}"${doneList}
+    if (currentStep && currentStep.trigger === 'ai_input') {
+      // The AI needs to DO something — be very specific about what
+      const stepLower = currentStep.label.toLowerCase();
+      const termLabel = task.sessionLabel;
 
-Terminal "${task.sessionLabel}" — letzter Output:
-${outputSnippet}
-
-${hasError ? '⚠️ Fehler erkannt im Output!\n' : ''}Führe jetzt den Schritt "${currentStep.label}" aus. Nutze write_to_terminal um Text/Aufträge an Claude zu senden, oder create_terminal für neue Terminals.${remainingList.length > 0 ? `\n\nDanach kommen noch: ${remainingList.join(', ')}` : ''}`;
+      if (/q&a|frage|runde/i.test(stepLower)) {
+        heartbeatPrompt = `[HEARTBEAT] Claude in "${termLabel}" ist fertig. Sende jetzt eine Q&A-Frage mit write_to_terminal an "${termLabel}". Frage basierend auf dem bisherigen Output.`;
+      } else if (/präsentation|ppt|summary|zusammenfass/i.test(stepLower)) {
+        heartbeatPrompt = `[HEARTBEAT] "${termLabel}" ist fertig. Erstelle jetzt die Präsentation mit create_presentation.`;
+      } else if (/ergebnis|result|bericht/i.test(stepLower)) {
+        heartbeatPrompt = `[HEARTBEAT] "${termLabel}" ist fertig. Berichte dem User kurz die wichtigsten Ergebnisse.`;
+      } else {
+        heartbeatPrompt = `[HEARTBEAT] "${termLabel}" ist idle. Führe "${currentStep.label}" aus.`;
+      }
     } else if (pendingSteps.length === 0) {
-      heartbeatPrompt = `[HEARTBEAT] Alle Aufgaben erledigt für "${task.description}".${doneList}
-
-Terminal "${task.sessionLabel}" — letzter Output:
-${outputSnippet}
-
-Berichte dem User die Ergebnisse.`;
+      heartbeatPrompt = `[HEARTBEAT] Alle Aufgaben für "${task.description}" erledigt. Berichte dem User.`;
     } else {
-      heartbeatPrompt = `[HEARTBEAT] Terminal "${task.sessionLabel}" ist idle.${doneList}\n\nPrüfe den Output und entscheide was als nächstes zu tun ist.`;
+      heartbeatPrompt = `[HEARTBEAT] "${task.sessionLabel}" ist idle. Nächster Schritt: "${currentStep?.label ?? 'unbekannt'}".`;
     }
 
     try {
@@ -2649,34 +2651,24 @@ Berichte dem User die Ergebnisse.`;
         return;
       }
 
-      const outputAfter = this.outputBuffers.get(task.sessionId)?.data?.length ?? 0;
-      const hasOpenSteps = task.steps.some(s => s.status === 'pending' || s.status === 'running');
-      const outputChanged = outputAfter !== outputBefore;
+      // The AI responded to the review — if the current step was ai_input,
+      // the AI has now provided its input (text or tool calls). Mark it done.
+      const reviewedStep = task.steps.find(s => s.status === 'running' && s.trigger === 'ai_input');
+      if (reviewedStep) {
+        this.completeStepAndAdvance(task, reviewedStep);
+        logger.info(`Manager: ai_input step "${reviewedStep.label}" completed for "${task.sessionLabel}" (AI responded)`);
+      }
 
-      // Priority 1: If ALL steps are done → task is DONE, regardless of output changes.
-      // This prevents the critical loop where new terminal output resurrects completed tasks.
+      const hasOpenSteps = task.steps.some(s => s.status === 'pending' || s.status === 'running');
+
       if (!hasOpenSteps && task.steps.length > 0) {
         this.updateTaskStatus(task.id, 'done');
         logger.info(`Manager: task "${task.sessionLabel}" completed — all ${task.steps.length} steps done`);
-      }
-      // Priority 2: AI sent new commands to terminal → keep alive for next review cycle
-      else if (outputChanged) {
-        logger.info(`Manager: review sent new commands to "${task.sessionLabel}" — keeping task alive`);
+      } else {
         task.status = 'running';
         task.lastCheckedOutput = undefined;
         task.updatedAt = Date.now();
         this.broadcastTasks();
-      }
-      // Priority 3: Open steps remain but no output change → keep running
-      else if (hasOpenSteps) {
-        logger.info(`Manager: task "${task.sessionLabel}" still has ${task.steps.filter(s => s.status !== 'done').length} open steps — keeping alive`);
-        task.status = 'running';
-        this.broadcastTasks();
-      }
-      // Priority 4: No steps defined (standalone task) and no output change → done
-      else {
-        this.updateTaskStatus(task.id, 'done');
-        logger.info(`Manager: task "${task.sessionLabel}" completed — no follow-up actions`);
       }
     } catch (err) {
       logger.warn(`Manager: heartbeat review failed — ${err instanceof Error ? err.message : err}`);
