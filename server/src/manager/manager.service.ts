@@ -1756,7 +1756,7 @@ BEISPIEL:
           globalManager.write(action.sessionId, '\r');
           resolve();
         }, 200));
-        return { text: `Befehl "${action.detail.slice(0, 60)}" an "${label}" gesendet.` };
+        return { text: `Befehl vollständig an "${label}" gesendet (${action.detail.length} Zeichen). Der komplette Text wurde übertragen.` };
       }
       case 'send_enter': {
         const label = this.sessionLabels.get(action.sessionId) ?? action.sessionId.slice(0, 8);
