@@ -2926,6 +2926,8 @@ BEISPIEL:
             // Max retries reached — complete the step anyway to avoid infinite loop
             logger.warn(`Orchestrator: "${reviewedStep.label}" failed after 3 retries without tool calls — skipping`);
             this.orchestratorRetryCount.delete(retryKey);
+            // Notify user that a step was skipped
+            this.onStreamEnd?.(`⚠️ Schritt "${reviewedStep.label}" wurde übersprungen — die AI hat nach 3 Versuchen keine Aktion ausgeführt. Der Workflow fährt mit dem nächsten Schritt fort.`, [], [], undefined, undefined);
           }
         } else {
           // Tool calls were made — clear retry counter
