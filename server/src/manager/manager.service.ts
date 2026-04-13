@@ -3,7 +3,7 @@ import { globalManager } from '../terminal/terminal.manager';
 import { logger } from '../utils/logger';
 import type { PhaseInfo } from '../../../shared/protocol';
 import {
-  loadMemory, saveMemory, ManagerMemory,
+  loadMemory, saveMemory, ManagerMemory, CONFIG_DIR,
   parseMemoryUpdate, applyMemoryUpdate, stripMemoryTags,
   buildMemoryContext, MEMORY_UPDATE_INSTRUCTION, MAX_RECENT_CHAT,
   buildDistillationPrompt, finalizeDistillation,
@@ -682,6 +682,8 @@ export class ManagerService {
   private isProcessing = false; // prevent overlapping heartbeat + chat
   private chatQueue: Array<{ text: string; targetSessionId?: string; onboarding?: boolean }> = [];
   private isDistilling = false; // prevent concurrent memory distillation
+  private saveTasksTimer: NodeJS.Timeout | null = null;
+  private saveChatTimer: NodeJS.Timeout | null = null;
   private personality: PersonalityConfig = { ...DEFAULT_PERSONALITY };
   private memory: ManagerMemory;
 
@@ -748,7 +750,12 @@ export class ManagerService {
   start(): void {
     if (this.enabled) return;
     this.enabled = true;
-    // Heartbeat: check delegated tasks every 60s
+
+    // Restore persisted state from last session
+    this.loadTasks();
+    this.loadChatHistory();
+
+    // Heartbeat: check delegated tasks
     this.heartbeatTimer = setInterval(() => this.heartbeat(), HEARTBEAT_INTERVAL_MS);
     this.heartbeatTimer.unref();
     logger.info('Manager: started (heartbeat every 15s)');
@@ -978,6 +985,7 @@ BEISPIEL:
 
       // Add to chat history
       this.chatHistory.push({ role: 'assistant', content: stripMemoryTags(reply) });
+      this.debouncedSaveChatHistory();
       if (this.chatHistory.length > 50) {
         this.chatHistory = this.chatHistory.slice(-40);
       }
@@ -1269,6 +1277,7 @@ BEISPIEL:
 
     const userMessage = `${text}\n\n---\n[HINTERGRUND-KONTEXT — Nur lesen, NICHT automatisch kommentieren. Nur erwähnen wenn relevant für die Frage des Users.]\n${contextBlock}${sessionListing}${taskListing}`;
     this.chatHistory.push({ role: 'user', content: text });
+    this.debouncedSaveChatHistory();
 
     // Phase 2: Build context
     recordPhase('building_context', 'Kontext vorbereiten');
@@ -1597,6 +1606,7 @@ BEISPIEL:
       this.autoCompleteStepsFromText(cleanReply);
 
       this.chatHistory.push({ role: 'assistant', content: cleanReply });
+      this.debouncedSaveChatHistory();
       if (this.chatHistory.length > 12) {
         // Aggressive truncation — Gemma 4 degrades beyond ~10K tokens of history.
         // Keep first message (user request) + last 6 messages (most recent conversation).
@@ -2323,6 +2333,103 @@ BEISPIEL:
   /** Broadcast current task list to the mobile client */
   private broadcastTasks(): void {
     this.onTaskUpdate?.(this.delegatedTasks);
+    this.debouncedSaveTasks();
+  }
+
+  // ── State Persistence ───────────────────────────────────────────────
+
+  private static readonly TASKS_FILE = path.join(CONFIG_DIR, 'tasks.json');
+  private static readonly CHAT_FILE = path.join(CONFIG_DIR, 'chat-history.json');
+
+  private saveTasks(): void {
+    try {
+      const tmpFile = ManagerService.TASKS_FILE + '.tmp';
+      fs.writeFileSync(tmpFile, JSON.stringify(this.delegatedTasks, null, 2), { mode: 0o600 });
+      fs.renameSync(tmpFile, ManagerService.TASKS_FILE);
+    } catch (err) {
+      logger.warn(`Manager: failed to save tasks — ${err}`);
+    }
+  }
+
+  private loadTasks(): void {
+    try {
+      if (!fs.existsSync(ManagerService.TASKS_FILE)) return;
+      const raw = fs.readFileSync(ManagerService.TASKS_FILE, 'utf-8');
+      const tasks: DelegatedTask[] = JSON.parse(raw);
+
+      // Check if all tasks are old and done/failed — discard
+      const allFinished = tasks.every(t => t.status === 'done' || t.status === 'failed');
+      const oldestUpdate = Math.min(...tasks.map(t => t.updatedAt));
+      if (allFinished && (Date.now() - oldestUpdate) > 60 * 60 * 1000) {
+        fs.unlinkSync(ManagerService.TASKS_FILE);
+        logger.info('Manager: discarded stale task file (all tasks finished > 1h ago)');
+        return;
+      }
+
+      // Mark interrupted tasks as failed — terminals are gone after restart
+      for (const t of tasks) {
+        if (t.status === 'running' || t.status === 'waiting' || t.status === 'pending') {
+          t.status = 'failed';
+          for (const s of t.steps) {
+            if (s.status === 'running' || s.status === 'pending') {
+              s.status = 'failed';
+            }
+          }
+        }
+      }
+
+      this.delegatedTasks = tasks;
+      logger.info(`Manager: restored ${tasks.length} tasks from disk (interrupted tasks marked failed)`);
+    } catch (err) {
+      logger.warn(`Manager: failed to load tasks — ${err}`);
+    }
+  }
+
+  private saveChatHistory(): void {
+    try {
+      const tmpFile = ManagerService.CHAT_FILE + '.tmp';
+      fs.writeFileSync(tmpFile, JSON.stringify(this.chatHistory), { mode: 0o600 });
+      fs.renameSync(tmpFile, ManagerService.CHAT_FILE);
+    } catch (err) {
+      logger.warn(`Manager: failed to save chat history — ${err}`);
+    }
+  }
+
+  private loadChatHistory(): void {
+    try {
+      if (!fs.existsSync(ManagerService.CHAT_FILE)) return;
+      this.chatHistory = JSON.parse(fs.readFileSync(ManagerService.CHAT_FILE, 'utf-8'));
+      logger.info(`Manager: restored ${this.chatHistory.length} chat messages from disk`);
+    } catch (err) {
+      logger.warn(`Manager: failed to load chat history — ${err}`);
+      this.chatHistory = [];
+    }
+  }
+
+  private debouncedSaveTasks(): void {
+    if (this.saveTasksTimer) return;
+    this.saveTasksTimer = setTimeout(() => {
+      this.saveTasks();
+      this.saveTasksTimer = null;
+    }, 1000);
+  }
+
+  private debouncedSaveChatHistory(): void {
+    if (this.saveChatTimer) return;
+    this.saveChatTimer = setTimeout(() => {
+      this.saveChatHistory();
+      this.saveChatTimer = null;
+    }, 2000);
+  }
+
+  /** Called from index.ts on SIGINT/SIGTERM — save everything immediately */
+  saveStateOnShutdown(): void {
+    if (this.saveTasksTimer) { clearTimeout(this.saveTasksTimer); this.saveTasksTimer = null; }
+    if (this.saveChatTimer) { clearTimeout(this.saveChatTimer); this.saveChatTimer = null; }
+    this.saveTasks();
+    this.saveChatHistory();
+    saveMemory(this.memory);
+    logger.info('Manager: state saved to disk (shutdown)');
   }
 
   addDelegatedTask(description: string, sessionId: string, pendingPrompt?: string, steps?: string[]): DelegatedTask {

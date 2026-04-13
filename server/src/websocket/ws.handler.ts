@@ -55,6 +55,10 @@ const pendingInputLen = new Map<string, number>();
 // ── Manager Agent ────────────────────────────────────────────────────
 const managerService = new ManagerService(loadManagerConfig());
 
+// Save manager state on graceful shutdown (before process exits)
+process.on('SIGINT', () => managerService.saveStateOnShutdown());
+process.on('SIGTERM', () => managerService.saveStateOnShutdown());
+
 // Mutable reference to the current WebSocket connection.
 // Manager callbacks use this instead of the closure-captured `ws` so that
 // responses are always sent to the CURRENT client, not a stale dead socket.
