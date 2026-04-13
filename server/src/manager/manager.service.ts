@@ -675,11 +675,12 @@ Du hast viel mehr Tools als nur Terminals. NUTZE SIE wenn sie passen:
 - fetch_url: URLs abrufen, APIs abfragen. Wenn der User nach Web-Inhalten fragt → fetch_url!
 - system_info: RAM, CPU, Disk, Hostname. NICHT "free -m" im Terminal — nutze system_info!
 - git_info: Git Status, Log, Diff direkt abrufen. Kein Terminal nötig.
-- read_terminal: Output eines Terminals JETZT lesen, ohne auf Heartbeat zu warten.
+- read_terminal: Output eines bestimmten Terminals JETZT abrufen — nützlich wenn du ein Terminal prüfen willst ohne auf den nächsten Kontext-Update zu warten.
 - clipboard: Zwischenablage lesen/schreiben. pbcopy/pbpaste direkt.
 - open_url: URL im Browser öffnen.
-- switch_model: AI-Model wechseln (z.B. zu Qwen für Code-Aufgaben).
-- undo_last: Letzte Aktion anzeigen oder rückgängig machen.
+- create_presentation: HTML-Präsentationen mit Slides erstellen — für Reports, Zusammenfassungen, Audit-Ergebnisse.
+- switch_model: AI-Model wechseln. Nutze dies wenn ein anderes Model besser passt (z.B. Qwen für Code, Gemma für Reasoning). Die verfügbaren Models werden beim Fehlschlag angezeigt.
+- undo_last: Letzte Datei-Aktion rückgängig machen. Terminal-Befehle können NICHT rückgängig gemacht werden.
 
 REGEL: Wenn ein direktes Tool existiert, nutze es statt einem Terminal-Umweg!
 - "Lies package.json" → read_file, NICHT "cat package.json" im Terminal
@@ -2252,8 +2253,24 @@ BEISPIEL:
                 logger.info(`Manager: created per-terminal task "${termLabel}" with ${steps.length} steps${isOrchestrated ? ' (orchestrated)' : ''}`);
                 this.broadcastTasks();
               } else {
-                // Non-Claude terminal — no task needed, just run the command
-                logger.info(`Manager: terminal "${termLabel}" created with command (no task needed)`);
+                // Non-Claude terminal (shell) — create lightweight task if orchestrator exists
+                const shellOrchestrator = this.delegatedTasks.filter(t =>
+                  t.sessionId === '' && t.status !== 'done' && t.status !== 'failed'
+                );
+                const orch = shellOrchestrator.length > 0 ? shellOrchestrator[shellOrchestrator.length - 1] : undefined;
+                if (orch) {
+                  const shellTask = this.addDelegatedTask(termLabel, newSessionId, undefined, []);
+                  shellTask.steps = [
+                    { label: `Terminal "${termLabel}" erstellen`, status: 'done', trigger: 'on_create' as StepTrigger },
+                    { label: 'Befehl ausführen', status: 'running', trigger: 'on_claude_idle' as StepTrigger },
+                  ];
+                  if (!orch.linkedTaskIds) orch.linkedTaskIds = [];
+                  orch.linkedTaskIds.push(shellTask.id);
+                  logger.info(`Manager: linked shell terminal "${termLabel}" to orchestrator "${orch.description}"`);
+                  this.broadcastTasks();
+                } else {
+                  logger.info(`Manager: terminal "${termLabel}" created with command (no orchestrator)`);
+                }
               }
             }
             return { text: `Terminal "${label || 'Shell'}" erstellt (${newSessionId.slice(0, 8)}).${initialCommand ? ` Befehl "${initialCommand}" wird ausgeführt. Aufgabe wird überwacht — ich melde mich wenn sie fertig ist.` : ''}` };
@@ -3285,7 +3302,8 @@ BEISPIEL:
         const allIdle = linkedTasks.every(t => {
           if (t.status === 'done' || t.status === 'failed') return true;
           const claudeStep = t.steps.find(s => s.trigger === 'on_claude_idle');
-          return claudeStep?.status === 'done';
+          if (!claudeStep) return t.steps.every(s => s.status === 'done' || s.status === 'failed'); // No idle step → all steps done?
+          return claudeStep.status === 'done';
         });
         if (allIdle) {
           this.completeStepAndAdvance(task, currentStep);
@@ -3309,7 +3327,8 @@ BEISPIEL:
         const allReady = linkedTasks.every(t => {
           if (t.status === 'done' || t.status === 'failed') return true;
           const claudeStep = t.steps.find(s => s.trigger === 'on_claude_idle');
-          return claudeStep?.status === 'done';
+          if (!claudeStep) return t.steps.every(s => s.status === 'done' || s.status === 'failed'); // No idle step → all steps done?
+          return claudeStep.status === 'done';
         });
         if (!allReady) return false;
       }
@@ -3392,8 +3411,16 @@ BEISPIEL:
         heartbeatPrompt = `[ORCHESTRATOR] Alle ${linkedTasks.length} Terminals (${labels}) sind bereit für "${currentStep!.label}". Sende jetzt Q&A-Fragen an ALLE Terminals mit write_to_terminal.\n\n${outputs}`;
       } else if (/präsentation|ppt|summary|zusammenfass/i.test(stepLower)) {
         heartbeatPrompt = `[ORCHESTRATOR] Alle Ergebnisse liegen vor. Erstelle jetzt Präsentationen mit create_presentation.\n\n${outputs}`;
+      } else if (/deploy|push|merge|release|publish/i.test(stepLower)) {
+        heartbeatPrompt = `[ORCHESTRATOR] Alle ${linkedTasks.length} Terminals (${labels}) sind bereit. Führe jetzt "${currentStep!.label}" aus — nutze write_to_terminal für Shell-Befehle oder git_info für Git-Operationen.\n\n${outputs}`;
+      } else if (/test|build|install|compil/i.test(stepLower)) {
+        heartbeatPrompt = `[ORCHESTRATOR] Alle ${linkedTasks.length} Terminals (${labels}) sind bereit. Starte "${currentStep!.label}" in allen Terminals mit write_to_terminal.\n\n${outputs}`;
+      } else if (/commit|speicher|sicher/i.test(stepLower)) {
+        heartbeatPrompt = `[ORCHESTRATOR] Alle ${linkedTasks.length} Terminals sind fertig. Führe "${currentStep!.label}" aus — nutze write_to_terminal oder git_info.\n\n${outputs}`;
+      } else if (/bild|image|generier|logo|design/i.test(stepLower)) {
+        heartbeatPrompt = `[ORCHESTRATOR] Schritt "${currentStep!.label}" — nutze generate_image oder andere passende Tools.\n\n${outputs}`;
       } else {
-        heartbeatPrompt = `[ORCHESTRATOR] Schritt "${currentStep?.label}" — alle ${linkedTasks.length} Terminals bereit.\n\n${outputs}`;
+        heartbeatPrompt = `[ORCHESTRATOR] Alle ${linkedTasks.length} Terminals (${labels}) sind bereit. Nächster Schritt: "${currentStep!.label}". Nutze die passenden Tools (write_to_terminal, read_file, create_presentation, etc.).\n\n${outputs}`;
       }
     }
     // ── REGULAR TASK: single terminal review ──────────────────────
