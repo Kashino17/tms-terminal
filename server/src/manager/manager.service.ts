@@ -1391,7 +1391,7 @@ BEISPIEL:
         // THEN create terminal + run command). We loop until GLM returns no
         // more tool calls, up to MAX_TOOL_ROUNDS to prevent infinite loops.
         const MAX_TOOL_ROUNDS = 10;
-        const TOOL_LOOP_TIMEOUT_MS = 120_000; // 2 minutes max for entire tool loop
+        const TOOL_LOOP_TIMEOUT_MS = 300_000; // 5 minutes — presentations need 3+ minutes on local LLM
         const toolLoopStart = Date.now();
         let round = 0;
         let turnMessages: Array<{ role: string; content?: string | null; tool_calls?: RawToolCall[]; tool_call_id?: string }> =
@@ -1597,13 +1597,14 @@ BEISPIEL:
       this.autoCompleteStepsFromText(cleanReply);
 
       this.chatHistory.push({ role: 'assistant', content: cleanReply });
-      if (this.chatHistory.length > 20) {
+      if (this.chatHistory.length > 12) {
         // Aggressive truncation — Gemma 4 degrades beyond ~10K tokens of history.
-        // Keep first message (context) + last 12 messages (recent conversation).
+        // Keep first message (user request) + last 6 messages (most recent conversation).
+        // This keeps prompts under ~16K tokens total even with orchestrator outputs.
         if (!this.isDistilling) {
           this.distill().catch(err => logger.warn(`Manager: pre-truncation distill failed — ${err}`));
         }
-        this.chatHistory = [this.chatHistory[0], ...this.chatHistory.slice(-12)];
+        this.chatHistory = [this.chatHistory[0], ...this.chatHistory.slice(-6)];
         logger.info(`Manager: truncated chat history to ${this.chatHistory.length} messages`);
       }
 
@@ -1638,7 +1639,8 @@ BEISPIEL:
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`Manager: chat failed — ${msg}`);
-      this.onError?.(`Fehler: ${msg}`);
+      // Send stream end to clear the "Schreibt..." thinking bubble in the UI
+      this.onStreamEnd?.(`⚠️ ${msg}`, [], [], undefined, undefined);
       return true; // Did attempt work, even if it failed
     } finally {
       this.isProcessing = false;
