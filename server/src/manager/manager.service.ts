@@ -2337,12 +2337,12 @@ BEISPIEL:
 
               const hasTerminalKeyword = /terminal.*(?:erstell|start|öffn)|(?:erstell|start|öffn).*terminal/i.test(lower);
               const hasClaudeStart = /claude.*(?:start|öffn)|(?:start|öffn).*claude/i.test(lower);
-              // Work that Claude does IN A TERMINAL — we wait for Claude to finish
-              const hasClaudeWorkKeyword = /analys|untersu|prüf|scan|audit|check|bewert|fix|bug|implement|einbau|umbau|deploy|migrat|refactor|compil|lassen/i.test(lower);
-              // General action words that could be AI OR Claude work
-              const hasGeneralAction = /erstell|schreib|install|build|mach|konfigurier|setz.*auf|commit/i.test(lower);
+              // Work that Claude/Shell does IN A TERMINAL — we wait for it to finish
+              const hasClaudeWorkKeyword = /analys|untersu|prüf|scan|audit|check|bewert|fix|bug|implement|einbau|umbau|deploy|migrat|refactor|compil|lassen|test/i.test(lower);
+              // General action words — usually AI-initiated (creating files, installing, building)
+              const hasGeneralAction = /erstell|schreib|install|build|mach|konfigurier|setz.*auf/i.test(lower);
               // Interactive steps — the AI must provide input or call specific tools
-              const hasInteractiveKeyword = /frag|q&a|runde|präsentation|zusammenfass|bericht|send|bild|generier|beantwort|cron|job|auswert/i.test(lower);
+              const hasInteractiveKeyword = /frag|q&a|runde|präsentation|zusammenfass|bericht|send|bild|generier|beantwort|cron|job|auswert|commit|push|merge|speicher/i.test(lower);
 
               if ((hasTerminalKeyword || hasClaudeStart) && (hasClaudeWorkKeyword || hasGeneralAction)) {
                 // Combined: "Terminal erstellen & Analyse starten" or "Claude starten & Bugs fixen"
@@ -3312,16 +3312,16 @@ BEISPIEL:
         }
         return false;
       }
-    } else if (currentStep.trigger === 'on_claude_idle' || currentStep.trigger === 'on_create') {
-      // on_claude_idle / on_create WITHOUT linked terminals — these can't auto-complete.
+    } else if (currentStep.trigger === 'on_claude_idle' || currentStep.trigger === 'on_create' || currentStep.trigger === 'on_prompt_sent') {
+      // These triggers WITHOUT linked terminals can't auto-complete.
       // Fall through to ai_input handler below WITHOUT mutating the trigger permanently.
       logger.info(`Orchestrator: "${currentStep.label}" [${currentStep.trigger}] has no linked terminals — treating as ai_input`);
     }
 
     // ── ai_input steps — queue for AI review ─────────────────────
     // Works with AND without linked terminals
-    // ai_input OR unlinked on_claude_idle/on_create (fell through from above)
-    if (currentStep.trigger === 'ai_input' || (!hasLinks && (currentStep.trigger === 'on_claude_idle' || currentStep.trigger === 'on_create'))) {
+    // ai_input OR unlinked triggers that fell through from above
+    if (currentStep.trigger === 'ai_input' || (!hasLinks && (currentStep.trigger === 'on_claude_idle' || currentStep.trigger === 'on_create' || currentStep.trigger === 'on_prompt_sent'))) {
       // If we have linked terminals, wait for all to be idle first
       if (hasLinks) {
         const allReady = linkedTasks.every(t => {
@@ -3537,6 +3537,13 @@ BEISPIEL:
                 lt.status = 'running';
                 lt.lastCheckedOutput = undefined;
                 lt.updatedAt = Date.now();
+                // Reset stability counter so heartbeat doesn't immediately re-complete
+                this.stableOutputCounts.delete(lt.id);
+                // Snapshot current output so idle detection requires NEW output + silence
+                const buf = this.outputBuffers.get(lt.sessionId);
+                if (buf) {
+                  lt.lastCheckedOutput = buf.data.replace(ANSI_STRIP, '').slice(-2000);
+                }
               }
             }
             logger.info(`Orchestrator: reset ${task.linkedTaskIds.length} terminals for next round`);
