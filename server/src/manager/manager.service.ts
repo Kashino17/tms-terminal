@@ -2591,39 +2591,44 @@ BEISPIEL:
             spawnSync('pbcopy', [], { input: info.text || '', encoding: 'utf-8' });
             return { text: `📋 In Zwischenablage kopiert (${(info.text || '').length} Zeichen).` };
           }
-          const content = execSync('pbpaste', { encoding: 'utf-8' });
-          return { text: `📋 Zwischenablage:\n${content.slice(0, 5000)}` };
+          if (info.action === 'read') {
+            const content = execSync('pbpaste', { encoding: 'utf-8' });
+            return { text: `📋 Zwischenablage:\n${content.slice(0, 5000)}` };
+          }
+          return { text: `Unbekannte Clipboard-Action: "${info.action}". Erlaubt: read, write.` };
         } catch (err) { return { text: `Clipboard-Fehler: ${err}` }; }
       }
       case 'open_url': {
         try {
-          const { execSync } = require('child_process');
+          const { execFileSync } = require('child_process');
           const info = JSON.parse(action.detail);
           if (!info.url) return { text: 'Keine URL angegeben.' };
-          execSync(`open ${JSON.stringify(info.url)}`);
+          // execFileSync passes URL as argument, no shell interpretation → no injection
+          execFileSync('open', [info.url]);
           return { text: `🌐 Geöffnet: ${info.url}` };
         } catch (err) { return { text: `Fehler: ${err}` }; }
       }
       case 'git_info': {
         try {
-          const { execSync } = require('child_process');
+          const { execFileSync } = require('child_process');
           const info = JSON.parse(action.detail);
           let dir = (info.directory || '').replace(/^~/, os.homedir());
           if (!path.isAbsolute(dir)) dir = path.join(os.homedir(), dir);
           if (!fs.existsSync(path.join(dir, '.git'))) return { text: `"${dir}" ist kein Git-Repository.` };
-          const gitCmd = (cmd: string) => execSync(`git -C ${JSON.stringify(dir)} ${cmd}`, { encoding: 'utf-8', timeout: 10_000 }).trim();
+          // execFileSync with argument array — no shell injection possible
+          const gitCmd = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf-8', timeout: 10_000 }).trim();
           if (info.action === 'status') {
-            const status = gitCmd('status --short');
-            const branch = gitCmd('branch --show-current');
+            const status = gitCmd('status', '--short');
+            const branch = gitCmd('branch', '--show-current');
             return { text: `📦 Git Status — ${dir}\nBranch: ${branch}\n${status || '(clean, keine Änderungen)'}` };
           }
           if (info.action === 'log') {
             const count = parseInt(info.count, 10) || 5;
-            const log = gitCmd(`log --oneline -${count}`);
+            const log = gitCmd('log', '--oneline', `-${count}`);
             return { text: `📜 Git Log — ${dir} (letzte ${count}):\n${log}` };
           }
           if (info.action === 'diff') {
-            const diff = gitCmd('diff --stat');
+            const diff = gitCmd('diff', '--stat');
             return { text: `📝 Git Diff — ${dir}:\n${diff || '(keine Änderungen)'}` };
           }
           return { text: `Unbekannte Git-Action: "${info.action}". Erlaubt: status, log, diff.` };
