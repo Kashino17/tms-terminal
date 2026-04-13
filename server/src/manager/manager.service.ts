@@ -1986,24 +1986,27 @@ BEISPIEL:
               const lower = label.toLowerCase();
               let trigger: StepTrigger = 'ai_input'; // Default: needs AI input
 
-              const hasTerminalKeyword = /terminal.*erstell|terminal.*start|terminal.*öffn|erstell.*terminal|start.*terminal/i.test(lower);
-              const hasAnalyseKeyword = /analys|untersu|prüf|scan|audit|check|bewert/i.test(lower);
-              const hasClaudeStart = /claude.*start|starte.*claude|claude.*öffn/i.test(lower);
+              const hasTerminalKeyword = /terminal.*(?:erstell|start|öffn)|(?:erstell|start|öffn).*terminal/i.test(lower);
+              const hasClaudeStart = /claude.*(?:start|öffn)|(?:start|öffn).*claude/i.test(lower);
+              // Work that Claude does autonomously — we just wait for it to finish
+              const hasWorkKeyword = /analys|untersu|prüf|scan|audit|check|bewert|fix|implement|einbau|umbau|erstell|schreib|deploy|install|build|compil|migrat|refactor|bug|lassen/i.test(lower);
+              // Interactive steps where the AI must provide input
+              const hasInteractiveKeyword = /frag|q&a|runde|präsentation|zusammenfass|bericht|send|bild|generier|beantwort/i.test(lower);
 
-              if (hasTerminalKeyword && hasAnalyseKeyword) {
-                // Combined step like "Terminals erstellen & Analyse starten"
-                // → wait for analysis to complete, not just terminal creation
+              if ((hasTerminalKeyword || hasClaudeStart) && hasWorkKeyword) {
+                // Combined: "Terminal erstellen & Analyse starten" or "Claude starten & Bugs fixen"
                 trigger = 'on_claude_idle';
               } else if (hasTerminalKeyword || hasClaudeStart) {
                 trigger = 'on_create';
               } else if (/auftrag.*send|analyse.*send|send.*auftrag|prompt.*send|aufgabe.*send/i.test(lower)) {
                 trigger = 'on_prompt_sent';
-              } else if (hasAnalyseKeyword && !/frag|q&a|runde|präsentation|zusammenfass/i.test(lower)) {
+              } else if (hasWorkKeyword && !hasInteractiveKeyword) {
+                // Pure work steps: "Bugs fixen", "npm install", "Analyse durchführen"
                 trigger = 'on_claude_idle';
               } else if (/wart|abwart|ergebnis.*abwart/i.test(lower)) {
                 trigger = 'on_claude_idle';
               }
-              // Everything else (Q&A, Präsentation, Zusammenfassung) = 'ai_input'
+              // Everything else (Q&A, Präsentation, Bild generieren, Zusammenfassung) = 'ai_input'
 
               return {
                 label,
@@ -2696,8 +2699,6 @@ BEISPIEL:
   /** Orchestrator: check if all linked terminals are ready, then queue for AI review.
    *  Lightweight — no AI calls, just state checking every 15s. */
   private processOrchestratorTask(task: DelegatedTask): boolean {
-    if (!task.linkedTaskIds?.length) return false;
-
     // Auto-complete if all steps done
     if (task.steps.length > 0 && task.steps.every(s => s.status === 'done')) {
       logger.info(`Orchestrator: "${task.description}" completed — all steps done`);
@@ -2705,18 +2706,21 @@ BEISPIEL:
       return true;
     }
 
-    const linkedTasks = task.linkedTaskIds
+    const linkedTasks = (task.linkedTaskIds ?? [])
       .map(id => this.delegatedTasks.find(t => t.id === id))
       .filter((t): t is DelegatedTask => !!t);
 
+    const hasLinks = linkedTasks.length > 0;
+
     // Keep-alive: refresh updatedAt while linked terminals are still active
-    // Prevents 30-min timeout during long analyses (3 terminals × 10 min each)
-    const hasActiveLinked = linkedTasks.some(t => t.status === 'running' || t.status === 'waiting');
-    if (hasActiveLinked) {
-      task.updatedAt = Date.now();
+    if (hasLinks) {
+      const hasActiveLinked = linkedTasks.some(t => t.status === 'running' || t.status === 'waiting');
+      if (hasActiveLinked) {
+        task.updatedAt = Date.now();
+      }
     }
 
-    // Timeout check — only fires if NO linked terminals are active
+    // Timeout check
     const taskAge = Date.now() - task.updatedAt;
     if (taskAge > ManagerService.TASK_TIMEOUT_MS) {
       logger.warn(`Orchestrator: "${task.description}" timed out`);
@@ -2727,51 +2731,55 @@ BEISPIEL:
     const currentStep = task.steps.find(s => s.status === 'running');
     if (!currentStep) return false;
 
-    if (linkedTasks.length === 0) return false;
-
-    // on_create — auto-complete when all terminals exist
-    if (currentStep.trigger === 'on_create') {
-      const allCreated = linkedTasks.every(t =>
-        t.steps.some(s => s.trigger === 'on_create' && s.status === 'done')
-      );
-      if (allCreated) {
-        this.completeStepAndAdvance(task, currentStep);
-        logger.info(`Orchestrator: "${currentStep.label}" done — all ${linkedTasks.length} terminals created`);
-        return true;
+    // ── Steps that need linked terminals ──────────────────────────
+    if (hasLinks) {
+      // on_create — auto-complete when all terminals exist
+      if (currentStep.trigger === 'on_create') {
+        const allCreated = linkedTasks.every(t =>
+          t.steps.some(s => s.trigger === 'on_create' && s.status === 'done')
+        );
+        if (allCreated) {
+          this.completeStepAndAdvance(task, currentStep);
+          logger.info(`Orchestrator: "${currentStep.label}" done — all ${linkedTasks.length} terminals created`);
+          return true;
+        }
+        return false;
       }
-      return false;
+
+      // on_claude_idle — auto-complete when ALL terminals have Claude idle
+      if (currentStep.trigger === 'on_claude_idle') {
+        const allIdle = linkedTasks.every(t => {
+          if (t.status === 'done' || t.status === 'failed') return true;
+          const claudeStep = t.steps.find(s => s.trigger === 'on_claude_idle');
+          return claudeStep?.status === 'done';
+        });
+        if (allIdle) {
+          this.completeStepAndAdvance(task, currentStep);
+          logger.info(`Orchestrator: "${currentStep.label}" done — all ${linkedTasks.length} terminals idle`);
+          return true;
+        }
+        return false;
+      }
     }
 
-    // on_claude_idle — auto-complete when ALL terminals have Claude idle
-    if (currentStep.trigger === 'on_claude_idle') {
-      const allIdle = linkedTasks.every(t => {
-        if (t.status === 'done' || t.status === 'failed') return true;
-        const claudeStep = t.steps.find(s => s.trigger === 'on_claude_idle');
-        return claudeStep?.status === 'done';
-      });
-      if (allIdle) {
-        this.completeStepAndAdvance(task, currentStep);
-        logger.info(`Orchestrator: "${currentStep.label}" done — all ${linkedTasks.length} terminals idle`);
-        return true;
-      }
-      return false;
-    }
-
-    // ai_input steps (Q&A, Präsentation) — wait for ALL terminals to have Claude idle
+    // ── ai_input steps — queue for AI review ─────────────────────
+    // Works with AND without linked terminals
     if (currentStep.trigger === 'ai_input') {
-      const allReady = linkedTasks.every(t => {
-        if (t.status === 'done' || t.status === 'failed') return true;
-        const claudeStep = t.steps.find(s => s.trigger === 'on_claude_idle');
-        return claudeStep?.status === 'done';
-      });
+      // If we have linked terminals, wait for all to be idle first
+      if (hasLinks) {
+        const allReady = linkedTasks.every(t => {
+          if (t.status === 'done' || t.status === 'failed') return true;
+          const claudeStep = t.steps.find(s => s.trigger === 'on_claude_idle');
+          return claudeStep?.status === 'done';
+        });
+        if (!allReady) return false;
+      }
 
-      if (!allReady) return false; // Still waiting
-
-      // All terminals ready — queue for AI review (once)
+      // Queue for AI review (once)
       const alreadyQueued = this.reviewQueue.includes(task.id);
       const isInFlight = this.reviewInFlight.has(task.id);
       if (!alreadyQueued && !isInFlight) {
-        logger.info(`Orchestrator: all ${linkedTasks.length} terminals ready — queuing "${currentStep.label}"`);
+        logger.info(`Orchestrator: ${hasLinks ? `all ${linkedTasks.length} terminals ready — ` : ''}queuing "${currentStep.label}"`);
         this.reviewQueue.push(task.id);
         return true;
       }
