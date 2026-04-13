@@ -1,5 +1,8 @@
 import type WebSocket from 'ws';
 import type { ClientMessage, ServerMessage } from '../../../shared/protocol';
+import * as path from 'path';
+import * as os from 'os';
+import * as fs from 'fs';
 import { globalManager } from '../terminal/terminal.manager';
 import { promptDetector } from '../notifications/prompt.detector';
 import { idleDetector } from '../notifications/idle.detector';
@@ -548,6 +551,41 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         saveManagerConfig(updates);
         send(ws, { type: 'manager:providers', payload: managerService.getProviders() } as any);
       }
+      return;
+    }
+
+    // ── File Upload from mobile app ───────────────────────────────
+    if (msgType === 'client:file_upload') {
+      const { filename, data, mimeType } = (msg as any).payload ?? {};
+      if (typeof filename === 'string' && typeof data === 'string') {
+        try {
+          const uploadDir = path.join(os.homedir(), '.tms-terminal', 'uploads');
+          if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+          const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const filePath = path.join(uploadDir, `${Date.now()}_${safeName}`);
+          fs.writeFileSync(filePath, Buffer.from(data, 'base64'));
+          logger.info(`File upload: ${safeName} (${mimeType}) → ${filePath}`);
+          // Send file path to manager as a chat message
+          managerService.handleChat(`[DATEI-UPLOAD] Der User hat eine Datei gesendet: ${filePath} (${mimeType || 'unbekannt'}, ${safeName}). Verarbeite sie entsprechend.`).catch(() => {});
+          send(ws, { type: 'client:file_uploaded', payload: { path: filePath, filename: safeName } } as any);
+        } catch (err) {
+          logger.warn(`File upload failed: ${err}`);
+        }
+      }
+      return;
+    }
+
+    // ── App State tracking ──────────────────────────────────────────
+    if (msgType === 'client:app_state') {
+      const { foreground } = (msg as any).payload ?? {};
+      (managerService as any).appForeground = !!foreground;
+      logger.info(`App state: ${foreground ? 'foreground' : 'background'}`);
+      return;
+    }
+    if (msgType === 'client:active_tab') {
+      const { tabId, sessionId: tabSessionId } = (msg as any).payload ?? {};
+      (managerService as any).activeTabId = tabId;
+      (managerService as any).activeSessionId = tabSessionId;
       return;
     }
 

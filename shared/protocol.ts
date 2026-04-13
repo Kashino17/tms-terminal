@@ -91,6 +91,22 @@ export interface ManagerMemoryWriteMessage {
   payload: { section: string; data: unknown };
 }
 
+// ── File Upload (Client → Server) ────────────────────────────────
+export interface FileUploadMessage {
+  type: 'client:file_upload';
+  payload: { filename: string; data: string; /* base64 */ mimeType: string };
+}
+
+// ── App State (Client → Server) ──────────────────────────────────
+export interface AppStateMessage {
+  type: 'client:app_state';
+  payload: { foreground: boolean };
+}
+export interface ActiveTabMessage {
+  type: 'client:active_tab';
+  payload: { tabId: string; sessionId?: string };
+}
+
 export type ClientMessage =
   | TerminalCreateMessage
   | TerminalInputMessage
@@ -114,7 +130,10 @@ export type ClientMessage =
   | ManagerPollMessage
   | ManagerSetApiKeyMessage
   | ManagerMemoryReadMessage
-  | ManagerMemoryWriteMessage;
+  | ManagerMemoryWriteMessage
+  | FileUploadMessage
+  | AppStateMessage
+  | ActiveTabMessage;
 
 // ── Server → Client ──────────────────────────────────────────────
 
