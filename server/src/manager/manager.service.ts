@@ -2785,12 +2785,52 @@ BEISPIEL:
         return;
       }
 
-      // The AI responded to the review — if the current step was ai_input,
-      // the AI has now provided its input (text or tool calls). Mark it done.
+      // The AI responded to the review — check if it actually DID something
       const reviewedStep = task.steps.find(s => s.status === 'running' && s.trigger === 'ai_input');
       if (reviewedStep) {
+        const stepLower = reviewedStep.label.toLowerCase();
+        const isQnAStep = /q&a|frage|runde/i.test(stepLower);
+
+        // For orchestrator Q&A steps: verify the AI actually sent commands to terminals.
+        // Gemma 4 sometimes just SAYS "Fragen sind raus!" without calling write_to_terminal.
+        // Check if any linked terminal's output buffer changed during this handleChat call.
+        let aiActuallyActed = true;
+        if (isQnAStep && !task.sessionId && task.linkedTaskIds) {
+          const anyTerminalGotInput = task.linkedTaskIds.some(ltId => {
+            const lt = this.delegatedTasks.find(t => t.id === ltId);
+            if (!lt) return false;
+            const buf = this.outputBuffers.get(lt.sessionId);
+            // If Claude is working (output changing), the AI sent something
+            return buf && buf.lastUpdated > (Date.now() - 30_000); // Updated in last 30s
+          });
+          // Also check if output buffers changed compared to before the review
+          const linkedOutputChanged = task.linkedTaskIds.some(ltId => {
+            const lt = this.delegatedTasks.find(t => t.id === ltId);
+            if (!lt) return false;
+            const claudeStep = lt.steps.find(s => s.trigger === 'on_claude_idle');
+            // If on_claude_idle was reset to 'running' but is already 'done' again,
+            // that means no new work was sent (terminals were already idle)
+            return claudeStep?.status === 'running' || claudeStep?.status === 'pending';
+          });
+          // AI acted if terminals got recent input OR their idle steps aren't done yet
+          aiActuallyActed = anyTerminalGotInput || !linkedOutputChanged;
+
+          if (!aiActuallyActed) {
+            logger.warn(`Orchestrator: AI claimed "${reviewedStep.label}" done but sent NO tool calls — re-queuing`);
+            // Don't complete the step — re-queue for another try
+            task.status = 'running';
+            task.updatedAt = Date.now();
+            this.broadcastTasks();
+            // Chain next review
+            if (this.reviewQueue.length > 0) {
+              setTimeout(() => this.processReviewQueue(), 2000);
+            }
+            return;
+          }
+        }
+
         this.completeStepAndAdvance(task, reviewedStep);
-        logger.info(`Manager: ai_input step "${reviewedStep.label}" completed for "${task.description}" (AI responded)`);
+        logger.info(`Manager: ai_input step "${reviewedStep.label}" completed for "${task.description}" (AI responded with actions)`);
 
         // ORCHESTRATOR: reset linked per-terminal tasks for next round
         if (!task.sessionId && task.linkedTaskIds) {
