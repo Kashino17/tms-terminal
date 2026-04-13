@@ -827,7 +827,8 @@ export class ManagerService {
   private cronManager = new CronManager();
   private delegatedTasks: DelegatedTask[] = [];
   private enabled = false;
-  private isProcessing = false; // prevent overlapping heartbeat + chat
+  private isProcessing = false; // prevent overlapping calls within same slot
+  private isSystemProcessing = false; // separate slot for heartbeat/orchestrator reviews
   private chatQueue: Array<{ text: string; targetSessionId?: string; onboarding?: boolean }> = [];
   private isDistilling = false; // prevent concurrent memory distillation
   private saveTasksTimer: NodeJS.Timeout | null = null;
@@ -1965,7 +1966,7 @@ BEISPIEL:
       logger.info('Manager: distill skipped — already distilling');
       return;
     }
-    if (this.isProcessing) {
+    if (this.isProcessing || this.isSystemProcessing) {
       logger.info('Manager: distill deferred — AI is processing (avoids LM Studio cache eviction)');
       return;
     }
@@ -3278,8 +3279,11 @@ BEISPIEL:
   /** Process queued task reviews one at a time, chaining the next review
    *  after each completion to ensure all tasks get attention. */
   private async processReviewQueue(): Promise<void> {
-    if (this.isProcessing) return;
+    // System slot: allows reviews to run even while user chat is processing
+    // (LM Studio supports 4 concurrent slots). Only blocks concurrent reviews.
+    if (this.isSystemProcessing) return;
     if (this.reviewQueue.length === 0) return;
+    this.isSystemProcessing = true;
 
     // Find next valid task to review (skip completed/failed tasks)
     let task: DelegatedTask | undefined;
@@ -3382,6 +3386,16 @@ BEISPIEL:
     }
 
     try {
+      // If user chat is processing, wait up to 10s for it to finish
+      // instead of immediately queuing (which loses the review context)
+      if (this.isProcessing) {
+        let waited = 0;
+        while (this.isProcessing && waited < 10_000) {
+          await new Promise(r => setTimeout(r, 500));
+          waited += 500;
+        }
+      }
+
       const didProcess = await this.handleChat(heartbeatPrompt);
 
       if (!didProcess) {
@@ -3477,6 +3491,7 @@ BEISPIEL:
     }
     } finally {
       this.reviewInFlight.delete(task.id);
+      this.isSystemProcessing = false;
     }
   }
 
