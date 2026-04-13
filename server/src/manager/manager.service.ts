@@ -373,6 +373,20 @@ const MANAGER_TOOLS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'undo_last',
+      description: 'Zeigt die letzte Aktion und macht sie rückgängig wenn möglich. Nutze dies wenn der User sagt "mach das rückgängig" oder "undo".',
+      parameters: {
+        type: 'object',
+        properties: {
+          confirm: { type: 'string', description: '"yes" um die letzte Aktion rückgängig zu machen, oder leer um sie nur anzuzeigen' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'switch_model',
       description: 'Wechselt das AI-Model für nachfolgende Anfragen. Nutze dies wenn ein anderes Model besser für die aktuelle Aufgabe geeignet ist.',
       parameters: {
@@ -390,7 +404,7 @@ const MANAGER_TOOLS: ToolDefinition[] = [
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface ManagerAction {
-  type: 'write_to_terminal' | 'send_enter' | 'send_keys' | 'create_terminal' | 'close_terminal' | 'list_terminals' | 'generate_image' | 'self_education' | 'update_task' | 'create_cron_job' | 'list_cron_jobs' | 'toggle_cron_job' | 'delete_cron_job' | 'create_presentation' | 'read_terminal' | 'read_file' | 'write_file' | 'fetch_url' | 'system_info' | 'clipboard' | 'open_url' | 'git_info' | 'switch_model';
+  type: 'write_to_terminal' | 'send_enter' | 'send_keys' | 'create_terminal' | 'close_terminal' | 'list_terminals' | 'generate_image' | 'self_education' | 'update_task' | 'create_cron_job' | 'list_cron_jobs' | 'toggle_cron_job' | 'delete_cron_job' | 'create_presentation' | 'read_terminal' | 'read_file' | 'write_file' | 'fetch_url' | 'system_info' | 'clipboard' | 'open_url' | 'git_info' | 'switch_model' | 'undo_last';
   sessionId: string;
   detail: string;
 }
@@ -820,6 +834,7 @@ export class ManagerService {
   private saveChatTimer: NodeJS.Timeout | null = null;
   private lastChatHadToolCalls = false; // Tracks if the last handleChat made tool calls
   private orchestratorRetryCount = new Map<string, number>(); // step retries per task
+  private commandHistory: Array<{ action: string; target: string; detail: string; timestamp: number }> = [];
   private personality: PersonalityConfig = { ...DEFAULT_PERSONALITY };
   private memory: ManagerMemory;
 
@@ -1410,6 +1425,10 @@ BEISPIEL:
       if (tc.name === 'switch_model') {
         const info = JSON.stringify({ model: tc.arguments.model ?? '', reason: tc.arguments.reason ?? '' });
         actions.push({ type: 'switch_model', sessionId: '', detail: info });
+        continue;
+      }
+      if (tc.name === 'undo_last') {
+        actions.push({ type: 'undo_last', sessionId: '', detail: JSON.stringify({ confirm: tc.arguments.confirm ?? '' }) });
         continue;
       }
 
@@ -2058,6 +2077,8 @@ BEISPIEL:
           globalManager.write(action.sessionId, '\r');
           resolve();
         }, 200));
+        this.commandHistory.push({ action: 'write_to_terminal', target: label, detail: action.detail.slice(0, 200), timestamp: Date.now() });
+        if (this.commandHistory.length > 50) this.commandHistory.shift();
         return { text: `Befehl vollständig an "${label}" gesendet (${action.detail.length} Zeichen). Der komplette Text wurde übertragen.` };
       }
       case 'send_enter': {
@@ -2500,6 +2521,8 @@ BEISPIEL:
           const dir = path.dirname(filePath);
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
           fs.writeFileSync(filePath, info.content || '', 'utf-8');
+          this.commandHistory.push({ action: 'write_file', target: filePath, detail: `${(info.content || '').length} Zeichen`, timestamp: Date.now() });
+          if (this.commandHistory.length > 50) this.commandHistory.shift();
           return { text: `✅ Datei geschrieben: ${filePath} (${(info.content || '').length} Zeichen)` };
         } catch (err) { return { text: `Fehler beim Schreiben: ${err instanceof Error ? err.message : String(err)}` }; }
       }
@@ -2582,6 +2605,29 @@ BEISPIEL:
           }
           return { text: `Unbekannte Git-Action: "${info.action}". Erlaubt: status, log, diff.` };
         } catch (err) { return { text: `Git-Fehler: ${err instanceof Error ? err.message : String(err)}` }; }
+      }
+      case 'undo_last': {
+        if (this.commandHistory.length === 0) return { text: 'Keine Aktionen zum Rückgängigmachen vorhanden.' };
+        const last = this.commandHistory[this.commandHistory.length - 1];
+        const info = JSON.parse(action.detail);
+        const ago = Math.round((Date.now() - last.timestamp) / 1000);
+        if (info.confirm !== 'yes') {
+          return { text: `↩️ Letzte Aktion (vor ${ago}s): ${last.action} → "${last.target}"\nDetail: ${last.detail}\n\nRufe undo_last(confirm="yes") auf um sie rückgängig zu machen.` };
+        }
+        this.commandHistory.pop();
+        if (last.action === 'write_to_terminal') {
+          return { text: `↩️ Letzte Terminal-Eingabe an "${last.target}" kann nicht rückgängig gemacht werden (bereits ausgeführt). Schicke einen korrigierenden Befehl stattdessen.` };
+        }
+        if (last.action === 'write_file') {
+          try {
+            const filePath = last.target;
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+              return { text: `↩️ Datei gelöscht: ${filePath}` };
+            }
+          } catch {}
+        }
+        return { text: `↩️ Aktion "${last.action}" wurde aus der History entfernt.` };
       }
       case 'switch_model': {
         try {
