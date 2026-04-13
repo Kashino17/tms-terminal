@@ -2030,6 +2030,23 @@ BEISPIEL:
     switch (action.type) {
       case 'write_to_terminal': {
         const label = this.sessionLabels.get(action.sessionId) ?? action.sessionId.slice(0, 8);
+
+        // Confirmation-Gate: block dangerous commands (unless it's a Claude session)
+        const ctx = this.buildTerminalContexts().find(c => c.sessionId === action.sessionId);
+        const isShellSession = !ctx?.tool; // No AI tool detected = shell
+        if (isShellSession) {
+          const DANGEROUS = [
+            /\brm\s+-r/i, /\bsudo\b/i, /\bgit\s+push\s+--force\b/i,
+            /\bgit\s+reset\s+--hard\b/i, /\bdrop\s+(table|database)\b/i,
+            /\bdd\s+if=/i, /\bchmod\s+777\b/i, /\bmkfs\b/i, /\b:\(\)\s*\{/,
+          ];
+          const isDangerous = DANGEROUS.some(p => p.test(action.detail));
+          if (isDangerous) {
+            logger.warn(`Manager: BLOCKED dangerous command "${action.detail.slice(0, 80)}" to shell "${label}"`);
+            return { text: `⛔ Befehl blockiert — "${action.detail.slice(0, 60)}" wurde als potenziell gefährlich erkannt. Bitte den User um explizite Bestätigung.` };
+          }
+        }
+
         logger.info(`Manager: writing to ${label} (${action.sessionId.slice(0, 8)}): "${action.detail.slice(0, 50)}"`);
         const ok = globalManager.write(action.sessionId, action.detail);
         if (!ok) {
