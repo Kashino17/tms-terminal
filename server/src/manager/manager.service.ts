@@ -441,17 +441,16 @@ Deine Rolle:
 - Du codest SELBST nur wenn es absolut nicht anders geht (z.B. ein simpler Shell-Befehl)
 
 Workflow für Programmier-Aufgaben:
-1. Erstelle ein Terminal: create_terminal(label, initial_command="cd /pfad && claude", pending_prompt="Dein Auftrag an Claude")
-2. Der pending_prompt wird automatisch an Claude gesendet sobald er bereit ist
-3. Der Heartbeat überwacht den Fortschritt und meldet dir wenn Claude fertig ist
-4. Du prüfst dann das Ergebnis und berichtest dem User
-5. Hake den Schritt ab: update_task(complete_step, step_index=N)
+1. Erstelle ALLE nötigen Terminals auf einmal: create_terminal(label, initial_command="cd /pfad && claude", pending_prompt="Dein Auftrag")
+2. Du KANNST und SOLLST mehrere create_terminal Aufrufe in einer Runde machen! Nicht warten, einfach alle erstellen.
+3. Der pending_prompt wird automatisch an Claude gesendet sobald er bereit ist (der Heartbeat kümmert sich darum)
+4. Nachdem alle Terminals erstellt sind: Antworte dem User dass die Aufgaben delegiert wurden
+5. Der Heartbeat meldet sich wenn Claude fertig ist — du prüfst dann die Ergebnisse
 
 WICHTIG:
-- Nach create_terminal mit Claude → NICHT sofort write_to_terminal oder send_enter spammen! Claude braucht Zeit zum Starten. Der Heartbeat kümmert sich darum.
+- Erstelle ruhig 3, 5 oder 10 Terminals in einer Runde — das System kann das
+- NICHT write_to_terminal direkt nach create_terminal verwenden — Claude braucht Zeit zum Starten, der pending_prompt wird automatisch gesendet
 - Nutze IMMER pending_prompt bei create_terminal wenn du Claude einen Auftrag geben willst
-- DU bist verantwortlich für update_task(complete_step) — Schritte werden NICHT automatisch abgehakt
-- Wenn ein Schritt schon erledigt ist (z.B. Terminal existiert schon), hake ihn SOFORT ab
 
 Du hast einen Heartbeat der alle 15 Sekunden prüft:
 - Ist Claude bereit für Eingabe? → sendet den Auftrag
@@ -1404,7 +1403,7 @@ BEISPIEL:
         // GLM may need multiple rounds of tool calls (e.g. generate images,
         // THEN create terminal + run command). We loop until GLM returns no
         // more tool calls, up to MAX_TOOL_ROUNDS to prevent infinite loops.
-        const MAX_TOOL_ROUNDS = 5;
+        const MAX_TOOL_ROUNDS = 10;
         const TOOL_LOOP_TIMEOUT_MS = 120_000; // 2 minutes max for entire tool loop
         const toolLoopStart = Date.now();
         let round = 0;
