@@ -664,7 +664,7 @@ ABSOLUTE VERBOTE — sag NIEMALS:
 - "Ich kenne den Git-Status nicht" → FALSCH, du hast git_info
 - "Ich kann nicht auf die Zwischenablage zugreifen" → FALSCH, du hast clipboard
 - "Ich kann das Model nicht wechseln" → FALSCH, du hast switch_model
-- "Ich kann das nicht rückgängig machen" → FALSCH, du hast undo_last
+- "Ich kann das nicht rückgängig machen" → Teilweise falsch. Du hast undo_last für Datei-Aktionen. Terminal-Befehle können nicht rückgängig gemacht werden.
 Wenn du eines dieser Dinge sagst, ist das ein FEHLER. Du HAST alle diese Tools. Benutze sie.
 
 ## Erweiterte Fähigkeiten — NUTZE SIE!
@@ -776,7 +776,7 @@ Stell dir vor du schreibst eine WhatsApp-Nachricht an einen neuen Kollegen — s
 ## Das Gespräch — 4 Nachrichten
 
 NACHRICHT 1 (deine erste):
-Sag in 2 Sätzen was du bist — Terminal-Manager, überwachst alles, gibst alle 15 Min Updates. Dann frag: Wie heißt du, und wie soll ich heißen?
+Sag in 2 Sätzen was du bist — Terminal-Manager, überwachst alles automatisch und reagierst in Sekunden. Dann frag: Wie heißt du, und wie soll ich heißen?
 
 NACHRICHT 2 (nachdem der User sich vorgestellt hat):
 Nimm die Namen an, reagiere kurz darauf. Dann frag wie du reden sollst — locker mit Emojis oder eher sachlich und direkt?
@@ -931,7 +931,7 @@ export class ManagerService {
     // Heartbeat: check delegated tasks
     this.heartbeatTimer = setInterval(() => this.heartbeat(), HEARTBEAT_INTERVAL_MS);
     this.heartbeatTimer.unref();
-    logger.info('Manager: started (heartbeat every 15s)');
+    logger.info('Manager: started (event-driven ~3s + heartbeat safety-net 45s)');
   }
 
   stop(): void {
@@ -1035,15 +1035,10 @@ export class ManagerService {
       return;
     }
 
-    // Auto-complete on_claude_idle step
+    // Auto-complete on_claude_idle step (3s debounce = sufficient stability)
     if (isClaudeReady && task.status === 'running') {
       const idleStep = task.steps.find(s => s.status === 'running' && s.trigger === 'on_claude_idle');
-      if (idleStep) {
-        // Require stable output (same as heartbeat but only 1 check since event-driven already waited 3s)
-        if (currentOutput !== task.lastCheckedOutput) {
-          task.lastCheckedOutput = currentOutput;
-          return; // Wait for next event to confirm stability
-        }
+      if (idleStep && idleStep.status === 'running') { // Guard: only if still running (prevents double-completion with heartbeat)
         this.completeStepAndAdvance(task, idleStep);
         logger.info(`Manager: event-driven — auto-completed "${idleStep.label}" for "${task.sessionLabel}"`);
         this.broadcastTasks();
@@ -2935,6 +2930,10 @@ BEISPIEL:
     try {
       if (!fs.existsSync(ManagerService.CHAT_FILE)) return;
       this.chatHistory = JSON.parse(fs.readFileSync(ManagerService.CHAT_FILE, 'utf-8'));
+      // Cap restored history to prevent context overflow on first AI call
+      if (this.chatHistory.length > 12) {
+        this.chatHistory = [this.chatHistory[0], ...this.chatHistory.slice(-6)];
+      }
       logger.info(`Manager: restored ${this.chatHistory.length} chat messages from disk`);
     } catch (err) {
       logger.warn(`Manager: failed to load chat history — ${err}`);
@@ -2943,7 +2942,7 @@ BEISPIEL:
   }
 
   private debouncedSaveTasks(): void {
-    if (this.saveTasksTimer) return;
+    if (this.saveTasksTimer) clearTimeout(this.saveTasksTimer); // trailing-edge: reset on each call
     this.saveTasksTimer = setTimeout(() => {
       this.saveTasks();
       this.saveTasksTimer = null;
@@ -2951,7 +2950,7 @@ BEISPIEL:
   }
 
   private debouncedSaveChatHistory(): void {
-    if (this.saveChatTimer) return;
+    if (this.saveChatTimer) clearTimeout(this.saveChatTimer); // trailing-edge: reset on each call
     this.saveChatTimer = setTimeout(() => {
       this.saveChatHistory();
       this.saveChatTimer = null;
@@ -3032,6 +3031,10 @@ BEISPIEL:
       if ((t.status === 'done' || t.status === 'failed') && (now - t.updatedAt) > ManagerService.TASK_CLEANUP_AGE_MS) {
         if (activeOrchestratorLinkedIds.has(t.id)) return true; // Keep — orchestrator needs it
         this.stableOutputCounts.delete(t.id);
+        // Clean up retry counters for this task
+        for (const key of this.orchestratorRetryCount.keys()) {
+          if (key.startsWith(t.id + ':')) this.orchestratorRetryCount.delete(key);
+        }
         return false; // remove
       }
       return true;
@@ -3288,16 +3291,14 @@ BEISPIEL:
       }
     } else if (currentStep.trigger === 'on_claude_idle' || currentStep.trigger === 'on_create') {
       // on_claude_idle / on_create WITHOUT linked terminals — these can't auto-complete.
-      // Treat as ai_input so the AI can handle them via tool calls.
+      // Fall through to ai_input handler below WITHOUT mutating the trigger permanently.
       logger.info(`Orchestrator: "${currentStep.label}" [${currentStep.trigger}] has no linked terminals — treating as ai_input`);
-      currentStep.trigger = 'ai_input';
-      this.broadcastTasks();
-      // Fall through to ai_input handler below
     }
 
     // ── ai_input steps — queue for AI review ─────────────────────
     // Works with AND without linked terminals
-    if (currentStep.trigger === 'ai_input') {
+    // ai_input OR unlinked on_claude_idle/on_create (fell through from above)
+    if (currentStep.trigger === 'ai_input' || (!hasLinks && (currentStep.trigger === 'on_claude_idle' || currentStep.trigger === 'on_create'))) {
       // If we have linked terminals, wait for all to be idle first
       if (hasLinks) {
         const allReady = linkedTasks.every(t => {
@@ -3355,6 +3356,7 @@ BEISPIEL:
     if (task.steps.length > 0 && pendingSteps.length === 0) {
       logger.info(`Manager: smart heartbeat — all steps done for "${task.sessionLabel}", auto-completing without AI call`);
       this.updateTaskStatus(task.id, 'done');
+      this.isSystemProcessing = false;
       if (this.reviewQueue.length > 0) {
         setTimeout(() => this.processReviewQueue(), 500);
       }
@@ -3410,6 +3412,7 @@ BEISPIEL:
         logger.info(`Manager: Claude still working in "${task.sessionLabel}", skipping`);
         task.status = 'running';
         this.broadcastTasks();
+        this.isSystemProcessing = false;
         if (this.reviewQueue.length > 0) setTimeout(() => this.processReviewQueue(), 2000);
         return;
       }
@@ -3719,7 +3722,7 @@ BEISPIEL:
       const sessionId = this.onCreateTerminal?.(`Cron: ${job.name}`);
       if (sessionId) {
         setTimeout(() => {
-          const globalMgr = (global as any).__terminalManager;
+          const globalMgr = globalManager;
           if (globalMgr) globalMgr.write(sessionId, `cd ${dir} && ${job.command}\r`);
         }, 800);
         setTimeout(() => {
