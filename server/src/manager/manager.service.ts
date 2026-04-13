@@ -1967,13 +1967,19 @@ BEISPIEL:
               const lower = label.toLowerCase();
               let trigger: StepTrigger = 'ai_input'; // Default: needs AI input
 
-              if (/terminal.*erstell|terminal.*start|terminal.*öffn|erstell.*terminal|start.*terminal/i.test(lower)) {
-                trigger = 'on_create';
-              } else if (/claude.*start|starte.*claude|claude.*öffn/i.test(lower)) {
+              const hasTerminalKeyword = /terminal.*erstell|terminal.*start|terminal.*öffn|erstell.*terminal|start.*terminal/i.test(lower);
+              const hasAnalyseKeyword = /analys|untersu|prüf|scan|audit|check|bewert/i.test(lower);
+              const hasClaudeStart = /claude.*start|starte.*claude|claude.*öffn/i.test(lower);
+
+              if (hasTerminalKeyword && hasAnalyseKeyword) {
+                // Combined step like "Terminals erstellen & Analyse starten"
+                // → wait for analysis to complete, not just terminal creation
+                trigger = 'on_claude_idle';
+              } else if (hasTerminalKeyword || hasClaudeStart) {
                 trigger = 'on_create';
               } else if (/auftrag.*send|analyse.*send|send.*auftrag|prompt.*send|aufgabe.*send/i.test(lower)) {
                 trigger = 'on_prompt_sent';
-              } else if (/analys|untersu|prüf|scan|audit|check|bewert/i.test(lower) && !/frag|q&a|runde|präsentation|zusammenfass/i.test(lower)) {
+              } else if (hasAnalyseKeyword && !/frag|q&a|runde|präsentation|zusammenfass/i.test(lower)) {
                 trigger = 'on_claude_idle';
               } else if (/wart|abwart|ergebnis.*abwart/i.test(lower)) {
                 trigger = 'on_claude_idle';
@@ -2368,10 +2374,18 @@ BEISPIEL:
 
   private async heartbeat(): Promise<void> {
     // ── Phase 0: Cleanup completed/failed tasks older than 5 minutes ──
+    // Don't clean up tasks linked to an active orchestrator
     const now = Date.now();
+    const activeOrchestratorLinkedIds = new Set<string>();
+    for (const t of this.delegatedTasks) {
+      if (t.sessionId === '' && t.status !== 'done' && t.status !== 'failed' && t.linkedTaskIds) {
+        for (const id of t.linkedTaskIds) activeOrchestratorLinkedIds.add(id);
+      }
+    }
     const beforeCount = this.delegatedTasks.length;
     this.delegatedTasks = this.delegatedTasks.filter(t => {
       if ((t.status === 'done' || t.status === 'failed') && (now - t.updatedAt) > ManagerService.TASK_CLEANUP_AGE_MS) {
+        if (activeOrchestratorLinkedIds.has(t.id)) return true; // Keep — orchestrator needs it
         this.stableOutputCounts.delete(t.id);
         return false; // remove
       }
@@ -2390,7 +2404,7 @@ BEISPIEL:
     for (const task of activeTasks) {
       // Orchestrator tasks (no sessionId) — process via orchestrator logic
       if (!task.sessionId) {
-        this.processOrchestratorTask(task);
+        if (this.processOrchestratorTask(task)) actionsTaken++;
         continue;
       }
 
@@ -2565,34 +2579,41 @@ BEISPIEL:
 
   /** Orchestrator: check if all linked terminals are ready, then queue for AI review.
    *  Lightweight — no AI calls, just state checking every 15s. */
-  private processOrchestratorTask(task: DelegatedTask): void {
-    if (!task.linkedTaskIds?.length) return;
+  private processOrchestratorTask(task: DelegatedTask): boolean {
+    if (!task.linkedTaskIds?.length) return false;
 
     // Auto-complete if all steps done
     if (task.steps.length > 0 && task.steps.every(s => s.status === 'done')) {
       logger.info(`Orchestrator: "${task.description}" completed — all steps done`);
       this.updateTaskStatus(task.id, 'done');
-      return;
+      return true;
     }
-
-    // Timeout check (reuse same 30-min timeout)
-    const taskAge = Date.now() - task.updatedAt;
-    if (taskAge > ManagerService.TASK_TIMEOUT_MS) {
-      logger.warn(`Orchestrator: "${task.description}" timed out`);
-      this.updateTaskStatus(task.id, 'failed');
-      return;
-    }
-
-    const currentStep = task.steps.find(s => s.status === 'running');
-    if (!currentStep) return;
 
     const linkedTasks = task.linkedTaskIds
       .map(id => this.delegatedTasks.find(t => t.id === id))
       .filter((t): t is DelegatedTask => !!t);
 
-    if (linkedTasks.length === 0) return;
+    // Keep-alive: refresh updatedAt while linked terminals are still active
+    // Prevents 30-min timeout during long analyses (3 terminals × 10 min each)
+    const hasActiveLinked = linkedTasks.some(t => t.status === 'running' || t.status === 'waiting');
+    if (hasActiveLinked) {
+      task.updatedAt = Date.now();
+    }
 
-    // "Terminals erstellen" — auto-complete when all terminals are created
+    // Timeout check — only fires if NO linked terminals are active
+    const taskAge = Date.now() - task.updatedAt;
+    if (taskAge > ManagerService.TASK_TIMEOUT_MS) {
+      logger.warn(`Orchestrator: "${task.description}" timed out`);
+      this.updateTaskStatus(task.id, 'failed');
+      return true;
+    }
+
+    const currentStep = task.steps.find(s => s.status === 'running');
+    if (!currentStep) return false;
+
+    if (linkedTasks.length === 0) return false;
+
+    // on_create — auto-complete when all terminals exist
     if (currentStep.trigger === 'on_create') {
       const allCreated = linkedTasks.every(t =>
         t.steps.some(s => s.trigger === 'on_create' && s.status === 'done')
@@ -2600,8 +2621,24 @@ BEISPIEL:
       if (allCreated) {
         this.completeStepAndAdvance(task, currentStep);
         logger.info(`Orchestrator: "${currentStep.label}" done — all ${linkedTasks.length} terminals created`);
+        return true;
       }
-      return;
+      return false;
+    }
+
+    // on_claude_idle — auto-complete when ALL terminals have Claude idle
+    if (currentStep.trigger === 'on_claude_idle') {
+      const allIdle = linkedTasks.every(t => {
+        if (t.status === 'done' || t.status === 'failed') return true;
+        const claudeStep = t.steps.find(s => s.trigger === 'on_claude_idle');
+        return claudeStep?.status === 'done';
+      });
+      if (allIdle) {
+        this.completeStepAndAdvance(task, currentStep);
+        logger.info(`Orchestrator: "${currentStep.label}" done — all ${linkedTasks.length} terminals idle`);
+        return true;
+      }
+      return false;
     }
 
     // ai_input steps (Q&A, Präsentation) — wait for ALL terminals to have Claude idle
@@ -2612,7 +2649,7 @@ BEISPIEL:
         return claudeStep?.status === 'done';
       });
 
-      if (!allReady) return; // Still waiting
+      if (!allReady) return false; // Still waiting
 
       // All terminals ready — queue for AI review (once)
       const alreadyQueued = this.reviewQueue.includes(task.id);
@@ -2620,8 +2657,11 @@ BEISPIEL:
       if (!alreadyQueued && !isInFlight) {
         logger.info(`Orchestrator: all ${linkedTasks.length} terminals ready — queuing "${currentStep.label}"`);
         this.reviewQueue.push(task.id);
+        return true;
       }
     }
+
+    return false;
   }
 
   /** Process queued task reviews one at a time, chaining the next review
