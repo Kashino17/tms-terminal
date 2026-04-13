@@ -276,9 +276,22 @@ export interface ManagerResponse {
 
 export type TaskStatus = 'pending' | 'running' | 'waiting' | 'done' | 'failed';
 
+/** How a step gets completed — the system handles all of these automatically */
+export type StepTrigger =
+  | 'manual'         // AI must explicitly complete (default, legacy)
+  | 'on_create'      // Done when terminal is created
+  | 'on_prompt_sent' // Done when pending_prompt is delivered to Claude
+  | 'on_claude_idle' // Done when Claude finishes and goes idle
+  | 'on_write'       // Done when write_to_terminal is sent to this terminal
+  | 'ai_input'       // Heartbeat asks AI for input, then sends it and marks done
+  ;
+
 export interface TaskStep {
   label: string;
   status: TaskStatus;
+  trigger: StepTrigger;
+  /** Which terminal this step targets (label or sessionId) */
+  targetTerminal?: string;
 }
 
 export interface DelegatedTask {
@@ -291,7 +304,7 @@ export interface DelegatedTask {
   updatedAt: number;
   lastCheckedOutput?: string;
   pendingPrompt?: string;
-  /** Human-readable steps for this task workflow */
+  /** System-managed steps — AI plans, system tracks and completes */
   steps: TaskStep[];
 }
 
@@ -411,7 +424,7 @@ Wenn der User eine Aufgabe hat:
 4. Das System überwacht den Fortschritt automatisch (Heartbeat alle 15s)
 5. Wenn Claude fertig ist, wirst du geweckt und bekommst die Ergebnisse
 
-Optional kannst du mit update_task(set_steps) einen Plan im UI anzeigen. Das System trackt den Fortschritt dann automatisch — du musst Schritte NICHT manuell abhaken.
+Bei mehrstufigen Aufgaben: Nutze update_task(set_steps) um deinen Plan zu definieren. Das System erkennt automatisch welche Schritte wann erledigt sind — du musst NICHTS manuell abhaken. Einfach planen und arbeiten, das System trackt alles.
 
 Beispiel — User will 3 Projekte analysieren:
 → create_terminal("TMS Shops", initial_command="cd ~/Desktop/'TMS Shops' && claude", pending_prompt="Analysiere das Projekt: Finde Bugs, Schwächen, Sicherheitslücken")
@@ -1962,22 +1975,45 @@ BEISPIEL:
           if (info.action === 'set_steps') {
             const stepLabels = (info.steps as string).split(',').map((s: string) => s.trim()).filter(Boolean);
 
+            // System auto-assigns triggers based on step label content
+            const classifiedSteps: TaskStep[] = stepLabels.map((label, i) => {
+              const lower = label.toLowerCase();
+              let trigger: StepTrigger = 'ai_input'; // Default: needs AI input
+
+              if (/terminal.*erstell|terminal.*start|terminal.*öffn|erstell.*terminal|start.*terminal/i.test(lower)) {
+                trigger = 'on_create';
+              } else if (/claude.*start|starte.*claude|claude.*öffn/i.test(lower)) {
+                trigger = 'on_create';
+              } else if (/auftrag.*send|analyse.*send|send.*auftrag|prompt.*send|aufgabe.*send/i.test(lower)) {
+                trigger = 'on_prompt_sent';
+              } else if (/analys|untersu|prüf|scan|audit|check|bewert/i.test(lower) && !/frag|q&a|runde|präsentation|zusammenfass/i.test(lower)) {
+                trigger = 'on_claude_idle';
+              } else if (/wart|abwart|ergebnis.*abwart/i.test(lower)) {
+                trigger = 'on_claude_idle';
+              }
+              // Everything else (Q&A, Präsentation, Zusammenfassung) = 'ai_input'
+
+              return {
+                label,
+                status: (i === 0 ? 'running' : 'pending') as TaskStatus,
+                trigger,
+              };
+            });
+
             if (!task) {
-              // Create new task — multiple tasks can coexist
-              task = this.addDelegatedTask(taskName || stepLabels[0] || 'Aufgabe', '', undefined, stepLabels);
-              logger.info(`Manager: created new task "${task.description}" with ${stepLabels.length} steps`);
-              return { text: `Task "${task.description}" erstellt: ${stepLabels.join(', ')}` };
+              task = this.addDelegatedTask(taskName || stepLabels[0] || 'Aufgabe', '', undefined, []);
+              task.steps = classifiedSteps;
+              if (task.steps.length > 0) task.steps[0].status = 'running';
+              logger.info(`Manager: created task "${task.description}" — ${classifiedSteps.map(s => `${s.label}[${s.trigger}]`).join(', ')}`);
+              this.broadcastTasks();
+              return { text: `Task "${task.description}" erstellt (${stepLabels.length} Schritte). Das System trackt den Fortschritt automatisch.` };
             }
 
-            // Update existing task steps
-            task.steps = stepLabels.map((label: string, i: number) => ({
-              label,
-              status: (i === 0 ? 'running' : 'pending') as TaskStatus,
-            }));
+            task.steps = classifiedSteps;
             task.description = taskName || stepLabels[0] || task.description;
             task.updatedAt = Date.now();
             this.broadcastTasks();
-            return { text: `Task "${task.description}" aktualisiert: ${stepLabels.join(', ')}` };
+            return { text: `Task "${task.description}" aktualisiert (${stepLabels.length} Schritte).` };
           }
 
           if (!task) return { text: `Kein aktiver Task "${taskName}" gefunden.` };
@@ -2304,7 +2340,7 @@ BEISPIEL:
       createdAt: Date.now(),
       updatedAt: Date.now(),
       pendingPrompt,
-      steps: (steps ?? [description]).map(s => ({ label: s, status: 'pending' as TaskStatus })),
+      steps: (steps ?? [description]).map(s => ({ label: s, status: 'pending' as TaskStatus, trigger: 'manual' as StepTrigger })),
     };
     // Mark first step as running
     if (task.steps.length > 0) task.steps[0].status = 'running';
@@ -2455,21 +2491,59 @@ BEISPIEL:
       }
 
       // ── Phase 3b: Auto-complete monitoring tasks (0 steps, no prompt) ──
-      // These are lightweight tracking tasks — mark done when idle, don't wake AI.
       if (task.steps.length === 0 && !task.pendingPrompt && isComplete) {
-        logger.info(`Manager: monitoring task "${task.sessionLabel}" idle — marking done (no steps to review)`);
+        logger.info(`Manager: monitoring task "${task.sessionLabel}" idle — marking done`);
         this.updateTaskStatus(task.id, 'done');
         actionsTaken++;
         continue;
       }
 
-      // ── Phase 3c: Queue for AI review ──────────────────────────────
-      if (task.status === 'running' && !task.pendingPrompt) {
+      // ── Phase 3c: System-driven step completion (trigger-based) ────
+      // The system checks each running step's trigger and auto-completes it.
+      // Only 'ai_input' steps need the AI — everything else is system-managed.
+      if (task.status === 'running' && isComplete) {
+        const currentStep = task.steps.find(s => s.status === 'running');
+        if (currentStep) {
+          let autoCompleted = false;
+
+          if (currentStep.trigger === 'on_create') {
+            // Terminal was created — should already be done via autoCompleteStepsFromToolExecution
+            // If somehow still running, auto-complete now
+            this.completeStepAndAdvance(task, currentStep);
+            autoCompleted = true;
+          } else if (currentStep.trigger === 'on_prompt_sent' && !task.pendingPrompt) {
+            // Pending prompt was delivered (pendingPrompt is now undefined)
+            this.completeStepAndAdvance(task, currentStep);
+            autoCompleted = true;
+          } else if (currentStep.trigger === 'on_claude_idle' && isClaudeReady) {
+            // Claude finished its work and is idle
+            this.completeStepAndAdvance(task, currentStep);
+            autoCompleted = true;
+          } else if (currentStep.trigger === 'on_write') {
+            // Should be completed by autoCompleteStepsFromToolExecution on write_to_terminal
+            // If still running but terminal is idle, auto-complete
+            this.completeStepAndAdvance(task, currentStep);
+            autoCompleted = true;
+          }
+
+          if (autoCompleted) {
+            logger.info(`Manager: system auto-completed step "${currentStep.label}" [${currentStep.trigger}] for "${task.sessionLabel}"`);
+            actionsTaken++;
+            // Check if the NEXT step can also be auto-completed (chain)
+            continue; // Re-evaluate on next heartbeat cycle
+          }
+        }
+      }
+
+      // ── Phase 3d: Queue for AI review (only for ai_input steps) ────
+      if (task.status === 'running' && !task.pendingPrompt && isComplete) {
+        const currentStep = task.steps.find(s => s.status === 'running');
+        const needsAI = !currentStep || currentStep.trigger === 'ai_input' || currentStep.trigger === 'manual';
         const alreadyQueued = this.reviewQueue.includes(task.id);
         const isInFlight = this.reviewInFlight.has(task.id);
-        const hasWork = task.steps.some(s => s.status !== 'done');
-        if (!alreadyQueued && !isInFlight && hasWork) {
-          logger.info(`Manager: heartbeat — queuing "${task.sessionLabel}" for review`);
+
+        if (needsAI && !alreadyQueued && !isInFlight) {
+          logger.info(`Manager: heartbeat — step "${currentStep?.label}" needs AI input, queuing "${task.sessionLabel}"`);
           this.reviewQueue.push(task.id);
           actionsTaken++;
         }
@@ -2558,22 +2632,28 @@ BEISPIEL:
 
     const outputBefore = buffer?.data?.length ?? 0;
 
-    // Build a SIMPLE heartbeat prompt — just tell the AI what happened
+    // Build heartbeat prompt — focused on what the AI needs to DO
+    const outputSnippet = recentOutput.slice(-800).trim();
+    const doneList = doneSteps.length > 0 ? `\nBisherige Schritte erledigt: ${doneSteps.map(s => s.label).join(', ')}` : '';
+    const remainingList = pendingSteps.filter(s => s !== currentStep).map(s => s.label);
     let heartbeatPrompt: string;
 
-    if (claudeFinished) {
-      // Get a snippet of Claude's output for context
-      const outputSnippet = recentOutput.slice(-800).trim();
-      if (pendingSteps.length > 0 && currentStep) {
-        heartbeatPrompt = `[HEARTBEAT] Claude ist fertig in "${task.sessionLabel}". Hier ist der Output:\n\n${outputSnippet}\n\nWas ist der nächste Schritt? Wenn du einen Befehl an ein Terminal senden willst, nutze write_to_terminal. Wenn du ein neues Terminal brauchst, nutze create_terminal.`;
-      } else {
-        heartbeatPrompt = `[HEARTBEAT] Claude ist fertig in "${task.sessionLabel}". Hier ist der Output:\n\n${outputSnippet}\n\nBerichte dem User die Ergebnisse.`;
-      }
-    } else if (hasError) {
-      const errorSnippet = recentOutput.slice(-500).trim();
-      heartbeatPrompt = `[HEARTBEAT] Fehler in "${task.sessionLabel}":\n\n${errorSnippet}\n\nInformiere den User über den Fehler.`;
+    if (currentStep) {
+      heartbeatPrompt = `[HEARTBEAT] Nächste Aufgabe: "${currentStep.label}"${doneList}
+
+Terminal "${task.sessionLabel}" — letzter Output:
+${outputSnippet}
+
+${hasError ? '⚠️ Fehler erkannt im Output!\n' : ''}Führe jetzt den Schritt "${currentStep.label}" aus. Nutze write_to_terminal um Text/Aufträge an Claude zu senden, oder create_terminal für neue Terminals.${remainingList.length > 0 ? `\n\nDanach kommen noch: ${remainingList.join(', ')}` : ''}`;
+    } else if (pendingSteps.length === 0) {
+      heartbeatPrompt = `[HEARTBEAT] Alle Aufgaben erledigt für "${task.description}".${doneList}
+
+Terminal "${task.sessionLabel}" — letzter Output:
+${outputSnippet}
+
+Berichte dem User die Ergebnisse.`;
     } else {
-      heartbeatPrompt = `[HEARTBEAT] Terminal "${task.sessionLabel}" ist idle. Prüfe ob noch etwas zu tun ist oder berichte dem User.`;
+      heartbeatPrompt = `[HEARTBEAT] Terminal "${task.sessionLabel}" ist idle.${doneList}\n\nPrüfe den Output und entscheide was als nächstes zu tun ist.`;
     }
 
     try {
@@ -2767,6 +2847,21 @@ BEISPIEL:
         }
       }
     }
+  }
+
+  /** Complete a specific step and advance to the next pending step. */
+  private completeStepAndAdvance(task: DelegatedTask, step: TaskStep): void {
+    step.status = 'done';
+    // Advance: find next pending step and mark it running
+    if (!task.steps.some(s => s.status === 'running')) {
+      const next = task.steps.find(s => s.status === 'pending');
+      if (next) next.status = 'running';
+    }
+    if (task.steps.every(s => s.status === 'done')) {
+      task.status = 'done';
+    }
+    task.updatedAt = Date.now();
+    this.broadcastTasks();
   }
 
   /** Advance the next pending step in a task workflow.
