@@ -67,6 +67,9 @@ export interface ManagerChatMessage {
   type: 'manager:chat';
   payload: { text: string; targetSessionId?: string };
 }
+export interface ManagerCancelMessage {
+  type: 'manager:cancel';
+}
 export interface ManagerToggleMessage {
   type: 'manager:toggle';
   payload: { enabled: boolean };
@@ -125,6 +128,7 @@ export type ClientMessage =
   | SystemKillMessage
   | AudioTranscribeMessage
   | ManagerChatMessage
+  | ManagerCancelMessage
   | ManagerToggleMessage
   | ManagerSetProviderMessage
   | ManagerPollMessage

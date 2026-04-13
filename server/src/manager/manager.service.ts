@@ -851,6 +851,7 @@ export class ManagerService {
   private enabled = false;
   private isProcessing = false; // prevent overlapping calls within same slot
   private isSystemProcessing = false; // separate slot for heartbeat/orchestrator reviews
+  private abortController: AbortController | null = null; // Cancel running AI calls
   private chatQueue: Array<{ text: string; targetSessionId?: string; onboarding?: boolean }> = [];
   private isDistilling = false; // prevent concurrent memory distillation
   private saveTasksTimer: NodeJS.Timeout | null = null;
@@ -1526,6 +1527,7 @@ BEISPIEL:
       return false;
     }
     this.isProcessing = true;
+    this.abortController = new AbortController();
 
     const startTime = Date.now();
     const phases: PhaseInfo[] = [];
@@ -1624,11 +1626,14 @@ BEISPIEL:
         let streamTokenCount = 0;
         const streamStart = Date.now();
 
+        if (this.abortController?.signal.aborted) throw new Error('Request cancelled');
+
         const result = await toolProvider.chatStreamWithTools(
           chatMessages,
           systemPrompt,
           MANAGER_TOOLS,
           (token) => {
+            if (this.abortController?.signal.aborted) return; // Stop streaming tokens on cancel
             streamTokenCount++;
             const elapsedSec = (Date.now() - streamStart) / 1000;
             const tps = elapsedSec > 0.5 ? Math.round((streamTokenCount / elapsedSec) * 10) / 10 : 0;
@@ -1704,7 +1709,7 @@ BEISPIEL:
         let turnMessages: Array<{ role: string; content?: string | null; tool_calls?: RawToolCall[]; tool_call_id?: string }> =
           chatMessages.map(m => ({ role: m.role, content: m.content }));
 
-        while (nativeToolCalls.length > 0 && round < MAX_TOOL_ROUNDS && (Date.now() - toolLoopStart) < TOOL_LOOP_TIMEOUT_MS) {
+        while (nativeToolCalls.length > 0 && round < MAX_TOOL_ROUNDS && (Date.now() - toolLoopStart) < TOOL_LOOP_TIMEOUT_MS && !this.abortController?.signal.aborted) {
           round++;
           logger.info(`Manager: tool round ${round} — ${nativeToolCalls.length} tool calls`);
 
@@ -1963,6 +1968,7 @@ BEISPIEL:
       return true; // Did attempt work, even if it failed
     } finally {
       this.isProcessing = false;
+      this.abortController = null;
       // Drain chat queue — process next queued message
       if (this.chatQueue.length > 0) {
         const next = this.chatQueue.shift()!;
@@ -2980,6 +2986,16 @@ BEISPIEL:
   }
 
   /** Called from index.ts on SIGINT/SIGTERM — save everything immediately */
+  /** Cancel the current AI request (called from WS handler on manager:cancel) */
+  cancelCurrentRequest(): void {
+    if (this.abortController) {
+      this.abortController.abort();
+      logger.info('Manager: AI request cancelled by user');
+    }
+    // Also clear the chat queue so queued heartbeats don't fire
+    this.chatQueue.length = 0;
+  }
+
   saveStateOnShutdown(): void {
     if (this.saveTasksTimer) { clearTimeout(this.saveTasksTimer); this.saveTasksTimer = null; }
     if (this.saveChatTimer) { clearTimeout(this.saveChatTimer); this.saveChatTimer = null; }

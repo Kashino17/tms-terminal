@@ -507,6 +507,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
+    if (msgType === 'manager:cancel') {
+      managerService.cancelCurrentRequest();
+      send(ws, { type: 'manager:stream_end', payload: { text: '⛔ Abgebrochen.', actions: [], phases: [] } } as any);
+      return;
+    }
+
     if (msgType === 'manager:poll') {
       setupManagerCallbacks(ws);
       if (!managerService.isEnabled()) managerService.start();
