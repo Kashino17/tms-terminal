@@ -2571,16 +2571,21 @@ BEISPIEL:
           } catch { return { text: `Ungültige URL: ${url}` }; }
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 30_000);
-          const resp = await fetch(url, {
-            method: (info.method || 'GET').toUpperCase(),
-            body: info.body || undefined,
-            headers: info.body ? { 'Content-Type': 'application/json' } : undefined,
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-          const text = await resp.text();
-          const truncated = text.length > 50_000 ? text.slice(0, 50_000) + '\n... (abgeschnitten)' : text;
-          return { text: `🌐 ${resp.status} ${resp.statusText} — ${url}\n\n${truncated}` };
+          try {
+            const resp = await fetch(url, {
+              method: (info.method || 'GET').toUpperCase(),
+              body: info.body || undefined,
+              headers: info.body ? { 'Content-Type': 'application/json' } : undefined,
+              signal: controller.signal,
+            });
+            clearTimeout(timeout);
+            const text = await resp.text();
+            const truncated = text.length > 50_000 ? text.slice(0, 50_000) + '\n... (abgeschnitten)' : text;
+            return { text: `🌐 ${resp.status} ${resp.statusText} — ${url}\n\n${truncated}` };
+          } catch (fetchErr) {
+            clearTimeout(timeout);
+            return { text: `Fetch fehlgeschlagen: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}` };
+          }
         } catch (err) { return { text: `Fetch fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` }; }
       }
       case 'system_info': {
@@ -3349,7 +3354,6 @@ BEISPIEL:
     // ── Smart heartbeat: analyze state BEFORE waking the AI ────────
     // Check if there's actually something actionable to do
     const pendingSteps = task.steps.filter(s => s.status === 'pending' || s.status === 'running');
-    const doneSteps = task.steps.filter(s => s.status === 'done');
     const currentStep = task.steps.find(s => s.status === 'running');
 
     // If all steps done → just mark complete, don't wake AI
@@ -3459,9 +3463,6 @@ BEISPIEL:
       // The AI responded to the review — check if it actually DID something
       const reviewedStep = task.steps.find(s => s.status === 'running' && s.trigger === 'ai_input');
       if (reviewedStep) {
-        const stepLower = reviewedStep.label.toLowerCase();
-        const isQnAStep = /q&a|frage|runde/i.test(stepLower);
-
         // For ALL orchestrator ai_input steps: verify the AI actually made tool calls.
         // Gemma 4 sometimes just SAYS "done!" without calling any tools.
         // Applies to Q&A AND presentation steps.
@@ -3475,10 +3476,11 @@ BEISPIEL:
             task.status = 'running';
             task.updatedAt = Date.now();
             this.broadcastTasks();
-            if (this.reviewQueue.length > 0) {
-              setTimeout(() => this.processReviewQueue(), 2000);
+            // Re-queue this task for retry + chain other queued tasks
+            if (!this.reviewQueue.includes(task.id)) {
+              this.reviewQueue.push(task.id);
             }
-            return;
+            return; // finally block resets isSystemProcessing + reviewInFlight
           } else {
             // Max retries reached — complete the step anyway to avoid infinite loop
             logger.warn(`Orchestrator: "${reviewedStep.label}" failed after 3 retries without tool calls — skipping`);
@@ -3735,11 +3737,8 @@ BEISPIEL:
       const dir = job.targetDir ? job.targetDir.replace('~', os.homedir()) : `${os.homedir()}/Desktop/TMS Terminal`;
       const sessionId = this.onCreateTerminal?.(`Cron: ${job.name}`);
       if (sessionId) {
-        const globalMgr = (global as any).__terminalManager;
-        if (globalMgr) {
-          setTimeout(() => globalMgr.write(sessionId, `cd ${dir} && claude\r`), 800);
-        }
-        this.addDelegatedTask(job.command, sessionId, `Cron: ${job.name}`);
+        setTimeout(() => globalManager.write(sessionId, `cd ${dir} && claude\r`), 800);
+        this.addDelegatedTask(`Cron: ${job.name}`, sessionId, job.command);
       }
     }
   }
