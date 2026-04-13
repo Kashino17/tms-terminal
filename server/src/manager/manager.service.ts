@@ -32,12 +32,12 @@ const MANAGER_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'write_to_terminal',
-      description: 'Schreibt einen Shell-Befehl in ein Terminal und führt ihn aus. NUR nutzen wenn der User EXPLIZIT einen konkreten Befehl ausführen will (z.B. "schreib git status in Shell 1"). NICHT nutzen bei normalen Gesprächen.',
+      description: 'Sendet Text an ein Terminal. WICHTIG: Prüfe vorher ob Claude in dem Terminal läuft (Tool-Status in der Terminal-Übersicht)! In Claude-Sessions: Sende Aufträge/Fragen als natürlichen Text (z.B. "Analysiere die Sicherheitslücken"). In Shell-Sessions (kein AI-Tool aktiv): Sende Shell-Befehle (z.B. "git status"). NIEMALS Shell-Befehle wie "cd", "git", "npm" an ein Terminal mit laufender Claude-Session senden — Claude versteht diese als Textprompt, nicht als Befehl.',
       parameters: {
         type: 'object',
         properties: {
           session_label: { type: 'string', description: 'Terminal-Name oder Shell-Nummer, z.B. "Shell 1", "ayysir", "TMS Terminal"' },
-          command: { type: 'string', description: 'Der auszuführende Befehl, z.B. "git status", "npm run build"' },
+          command: { type: 'string', description: 'Shell-Befehl (für Shell-Sessions) ODER Auftrag/Frage (für Claude-Sessions)' },
         },
         required: ['session_label', 'command'],
       },
@@ -420,6 +420,18 @@ Beispiel — User will 3 Projekte analysieren:
 → "Alle 3 Analysen gestartet! Ich melde mich wenn die Ergebnisse da sind."
 
 NICHT write_to_terminal direkt nach create_terminal — Claude braucht Zeit zum Starten. Der pending_prompt wird automatisch gesendet.
+
+## Terminal-Typen — WICHTIG
+
+Es gibt zwei Arten von Terminals:
+
+1. 💻 SHELL — normales Terminal ohne AI. Hier kannst du Shell-Befehle senden: git status, npm run build, ls, cd etc.
+
+2. 🤖 CLAUDE SESSION — Terminal in dem Claude Code läuft. Hier sendest du AUFTRÄGE als natürlichen Text: "Analysiere die Sicherheitslücken", "Finde alle TODO-Kommentare", "Erkläre mir die Auth-Logik".
+
+NIEMALS Shell-Befehle (cd, git, npm, ls, cat, grep...) an ein Claude-Terminal senden! Claude interpretiert das als Textprompt, nicht als Befehl. Wenn du einen Shell-Befehl ausführen willst, nutze ein Shell-Terminal oder erstelle ein neues mit create_terminal OHNE "claude" im initial_command.
+
+Die Terminal-Übersicht zeigt dir bei jedem Terminal ob es eine Shell oder Claude Session ist.
 
 ## Wie du redest
 ${toneMap[p.tone] ?? toneMap.chill}
@@ -821,10 +833,10 @@ export class ManagerService {
       const buf = this.outputBuffers.get(ctx.sessionId);
       const staleSecs = buf ? Math.round((now - buf.lastUpdated) / 1000) : 0;
       const staleNote = staleSecs > 60 ? ` ⏳ Letzter Output vor ${staleSecs}s — wahrscheinlich idle` : '';
-      block += `### ${emoji} ${ctx.label} — ${statusLabel}${staleNote}\n`;
+      const sessionType = ctx.tool ? `🤖 CLAUDE SESSION (${ctx.tool})` : '💻 SHELL';
+      block += `### ${emoji} ${ctx.label} — ${sessionType} — ${statusLabel}${staleNote}\n`;
+      if (ctx.tool) block += `⚠️ Dies ist eine AI-Session — sende Aufträge als Text, KEINE Shell-Befehle!\n`;
       if (ctx.cwd) block += `📁 ${ctx.cwd}\n`;
-      if (ctx.process) block += `⚡ Prozess: ${ctx.process}\n`;
-      if (ctx.tool) block += `🔧 Tool: ${ctx.tool}\n`;
       if (ctx.project) block += `📦 Projekt: ${ctx.project}\n`;
       block += `\n\`\`\`\n${ctx.recentOutput.slice(-3000)}\n\`\`\`\n\n`;
     }
@@ -1798,8 +1810,14 @@ BEISPIEL:
         return { text: 'Fehler: close_terminal Callback nicht verfügbar.' };
       }
       case 'list_terminals': {
-        const list = [...this.sessionLabels.entries()].map(([id, lbl]) => `${lbl} (${id.slice(0, 8)})`);
-        logger.info(`Manager: list_terminals — ${list.length} sessions: ${list.join(', ')}`);
+        const list = [...this.sessionLabels.entries()].map(([id, lbl]) => {
+          const buf = this.outputBuffers.get(id);
+          const analysis = buf?.data ? analyzeTerminalOutput(buf.data) : { tool: undefined, status: 'idle' as const };
+          const type = analysis.tool ? `🤖 ${analysis.tool}` : '💻 Shell';
+          const status = STATUS_LABEL[analysis.status] ?? 'Unbekannt';
+          return `${lbl} — ${type} (${status})`;
+        });
+        logger.info(`Manager: list_terminals — ${list.length} sessions`);
         return { text: list.length > 0
           ? `Aktive Terminals (${list.length}):\n${list.map((l, i) => `${i + 1}. ${l}`).join('\n')}`
           : 'Keine Terminals offen.' };
