@@ -1249,6 +1249,10 @@ export function ManagerChatScreen({ navigation, route }: Props) {
               <Feather name="database" size={15} color={colors.textMuted} />
               <Text style={headerMenuStyles.itemText}>Memory</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={headerMenuStyles.item} onPress={() => { setShowHeaderMenu(false); navigation.navigate('ManagerArtifacts', { serverId, serverHost, serverPort: server?.port ?? 8767, serverToken: server?.token ?? '' }); }}>
+              <Feather name="package" size={15} color={colors.textMuted} />
+              <Text style={headerMenuStyles.itemText}>Artefakte</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={headerMenuStyles.item} onPress={() => { setShowHeaderMenu(false); handlePoll(); }} disabled={!enabled || loading}>
               <Feather name="refresh-cw" size={15} color={enabled ? colors.textMuted : colors.textDim} />
               <Text style={[headerMenuStyles.itemText, (!enabled || loading) && { color: colors.textDim }]}>Aktualisieren</Text>

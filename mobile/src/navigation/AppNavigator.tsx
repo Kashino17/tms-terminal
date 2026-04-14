@@ -16,6 +16,7 @@ import { BrowserScreen } from '../screens/BrowserScreen';
 import { ProcessMonitorScreen } from '../screens/ProcessMonitorScreen';
 import { ManagerChatScreen } from '../screens/ManagerChatScreen';
 import { ManagerMemoryScreen } from '../screens/ManagerMemoryScreen';
+import { ManagerArtifactsScreen } from '../screens/ManagerArtifactsScreen';
 import { colors } from '../theme';
 import type { RootStackParamList } from '../types/navigation.types';
 
@@ -190,6 +191,17 @@ export function AppNavigator() {
       <Stack.Screen
         name="ManagerMemory"
         component={ManagerMemoryScreen}
+        options={{
+          headerShown: false,
+          animation: 'slide_from_right',
+          animationDuration: 250,
+        }}
+      />
+
+      {/* ── Manager Artifacts — slide from right ────────────────── */}
+      <Stack.Screen
+        name="ManagerArtifacts"
+        component={ManagerArtifactsScreen}
         options={{
           headerShown: false,
           animation: 'slide_from_right',
