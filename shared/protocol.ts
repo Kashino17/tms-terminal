@@ -316,6 +316,7 @@ export interface ManagerStreamEndMessage {
     actions?: Array<{ type: string; sessionId: string; detail: string }>;
     phases: PhaseInfo[];
     images?: string[];
+    presentations?: string[];
     tasks?: Array<{ id: string; description: string; sessionLabel: string; status: string }>;
   };
 }

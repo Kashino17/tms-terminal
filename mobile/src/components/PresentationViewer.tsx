@@ -19,11 +19,12 @@ interface PresentationViewerProps {
   url: string;
   title: string;
   onClose: () => void;
+  onDrillDown?: (text: string, slideIndex: number) => void;
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function PresentationViewer({ visible, url, title, onClose }: PresentationViewerProps) {
+export function PresentationViewer({ visible, url, title, onClose, onDrillDown }: PresentationViewerProps) {
   const insets = useSafeAreaInsets();
   const [slideInfo, setSlideInfo] = useState<{ index: number; total: number } | null>(null);
 
@@ -32,9 +33,11 @@ export function PresentationViewer({ visible, url, title, onClose }: Presentatio
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'slideChange' || data.type === 'ready') {
         setSlideInfo({ index: data.index ?? 0, total: data.total ?? 1 });
+      } else if (data.type === 'drillDown' && data.text) {
+        onDrillDown?.(data.text, data.slideIndex ?? 0);
       }
     } catch {}
-  }, []);
+  }, [onDrillDown]);
 
   const handleShare = useCallback(async () => {
     try {

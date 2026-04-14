@@ -934,6 +934,25 @@ export class ManagerService {
     this.heartbeatTimer = setInterval(() => this.heartbeat(), HEARTBEAT_INTERVAL_MS);
     this.heartbeatTimer.unref();
     logger.info('Manager: started (event-driven ~3s + heartbeat safety-net 45s)');
+
+    // Cleanup old presentations (>7 days)
+    try {
+      const presDir = path.join(__dirname, '..', '..', 'generated-presentations');
+      if (fs.existsSync(presDir)) {
+        const maxAge = 7 * 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        let cleaned = 0;
+        for (const file of fs.readdirSync(presDir)) {
+          const filePath = path.join(presDir, file);
+          const stat = fs.statSync(filePath);
+          if (now - stat.mtimeMs > maxAge) {
+            fs.unlinkSync(filePath);
+            cleaned++;
+          }
+        }
+        if (cleaned > 0) logger.info(`Manager: cleaned up ${cleaned} old presentation(s)`);
+      }
+    } catch {}
   }
 
   stop(): void {

@@ -140,7 +140,15 @@ pre code{background:none;padding:0;font-size:12px}
 #counter{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.8);backdrop-filter:blur(8px);color:#94A3B8;font-size:12px;font-weight:600;padding:6px 16px;border-radius:20px;z-index:100;pointer-events:none}
 
 /* ── Canvas for Charts ─────────────────────────────────── */
-canvas{max-width:100%;max-height:200px;margin:8px 0}
+canvas{max-width:100%;max-height:40vh;margin:8px 0}
+
+/* ── Tables ───────────────────────────────────────────── */
+table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:13px}
+thead{background:#1E293B}
+th{padding:10px 12px;text-align:left;font-weight:600;color:#F8FAFC;border-bottom:2px solid #334155;font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+td{padding:8px 12px;color:#CBD5E1;border-bottom:1px solid rgba(51,65,85,.5)}
+tr:hover td{background:rgba(59,130,246,.05)}
+tbody tr:nth-child(even) td{background:rgba(30,41,59,.5)}
 </style>
 </head>
 <body>
@@ -257,11 +265,34 @@ ${slideMarkup}
     }
   }
 
+  // ── Drill-Down: click elements to ask manager ─────────
+  function initDrillDown() {
+    var sel = 'h2,h3,.card,.card-sm,li,.stat,.badge,strong,th,td';
+    document.querySelectorAll(sel).forEach(function(el) {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var text = (el.textContent || '').trim().substring(0, 200);
+        if (text.length < 3) return;
+        el.style.outline = '2px solid #3B82F6';
+        el.style.outlineOffset = '2px';
+        el.style.borderRadius = '4px';
+        setTimeout(function() { el.style.outline = 'none'; }, 1500);
+        try {
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'drillDown', text: text, tag: el.tagName.toLowerCase(), slideIndex: current
+          }));
+        } catch(ex){}
+      });
+    });
+  }
+
   // ── Ready ─────────────────────────────────────────────
   function onReady() {
     initCharts();
     initMermaid();
     initHighlight();
+    initDrillDown();
     try {
       window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready', total: total }));
     } catch(e){}

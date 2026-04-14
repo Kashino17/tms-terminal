@@ -1097,13 +1097,27 @@ export function ManagerChatScreen({ navigation, route }: Props) {
                     <TouchableOpacity
                       key={i}
                       activeOpacity={0.7}
-                      onPress={() => setActivePres({ url: presUrl, title: pres.replace(/^pres_\d+\.html$/, 'Presentation') })}
+                      onPress={() => {
+                        // Extract title from message text (AI usually mentions it)
+                        const presTitle = item.text.match(/(?:Präsentation|Presentation)[:\s]*["„]?([^"""\n]{5,60})/i)?.[1]?.trim()
+                          || pres.replace(/^pres_\d+\.html$/, 'Präsentation');
+                        setActivePres({ url: presUrl, title: presTitle });
+                      }}
                       style={presCardStyles.card}
                     >
                       <Feather name="monitor" size={20} color={colors.primary} />
                       <View style={presCardStyles.cardContent}>
-                        <Text style={presCardStyles.cardTitle}>Presentation</Text>
-                        <Text style={presCardStyles.cardSub}>Tippen zum Anzeigen</Text>
+                        <Text style={presCardStyles.cardTitle} numberOfLines={1}>
+                          {item.text.match(/(?:Präsentation|Presentation)[:\s]*["„]?([^"""\n]{5,60})/i)?.[1]?.trim() || 'Präsentation'}
+                        </Text>
+                        <Text style={presCardStyles.cardSub}>
+                          {(() => {
+                            const ts = pres.match(/pres_(\d+)/)?.[1];
+                            if (!ts) return 'Tippen zum Anzeigen';
+                            const d = new Date(parseInt(ts, 10));
+                            return `${d.toLocaleDateString('de-DE')} ${d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} · Tippen zum Anzeigen`;
+                          })()}
+                        </Text>
                       </View>
                       <Feather name="chevron-right" size={16} color={colors.textDim} />
                     </TouchableOpacity>
@@ -1846,6 +1860,11 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         url={activePres?.url ?? ''}
         title={activePres?.title ?? ''}
         onClose={() => setActivePres(null)}
+        onDrillDown={(text, _slideIndex) => {
+          setActivePres(null);
+          const question = `Erkläre mir diesen Punkt aus der Präsentation genauer: "${text}"`;
+          handleSend(question);
+        }}
       />
     </KeyboardAvoidingView>
   );
