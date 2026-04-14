@@ -1113,8 +1113,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
                       key={i}
                       activeOpacity={0.7}
                       onPress={() => {
-                        // Extract title from message text (AI usually mentions it)
-                        const presTitle = item.text.match(/(?:Präsentation|Presentation)[:\s]*["„]?([^"""\n]{5,60})/i)?.[1]?.trim()
+                        const presTitle = (item.text || '').match(/(?:Präsentation|Presentation)[:\s]*["„]?([^"""\n]{5,60})/i)?.[1]?.trim()
                           || pres.replace(/^pres_\d+\.html$/, 'Präsentation');
                         setActivePres({ url: presUrl, title: presTitle });
                       }}
@@ -1123,7 +1122,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
                       <Feather name="monitor" size={20} color={colors.primary} />
                       <View style={presCardStyles.cardContent}>
                         <Text style={presCardStyles.cardTitle} numberOfLines={1}>
-                          {item.text.match(/(?:Präsentation|Presentation)[:\s]*["„]?([^"""\n]{5,60})/i)?.[1]?.trim() || 'Präsentation'}
+                          {(item.text || '').match(/(?:Präsentation|Presentation)[:\s]*["„]?([^"""\n]{5,60})/i)?.[1]?.trim() || 'Präsentation'}
                         </Text>
                         <Text style={presCardStyles.cardSub}>
                           {(() => {
