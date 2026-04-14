@@ -6,12 +6,20 @@ interface PendingRequest {
   resolve: (text: string) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
+  onProgress?: (info: { chunk: number; total: number; text: string }) => void;
 }
 
-const TRANSCRIBE_TIMEOUT_MS = 30_000;
+// Dynamic timeout: 30s base + 15s per estimated minute of audio.
+// Base64 WAV at 16kHz/16bit/mono: ~1.33 MB per minute → ~1.78 MB Base64 per minute.
+const BASE_TIMEOUT_MS = 30_000;
+const TIMEOUT_PER_MB_BASE64 = 10_000; // 10s per MB of Base64 data
+
+function calcTimeout(base64Length: number): number {
+  const mbSize = base64Length / (1024 * 1024);
+  return Math.max(BASE_TIMEOUT_MS, Math.round(BASE_TIMEOUT_MS + mbSize * TIMEOUT_PER_MB_BASE64));
+}
 
 // Find the server root (directory containing package.json) by walking up from __dirname.
-// Works for both compiled (dist/server/src/audio/) and dev (src/audio/) contexts.
 function findServerRoot(): string {
   let dir = __dirname;
   for (let i = 0; i < 10; i++) {
@@ -26,11 +34,10 @@ function findServerRoot(): string {
 const SERVER_ROOT = findServerRoot();
 const SIDECAR_DIR = path.join(SERVER_ROOT, 'audio');
 const SIDECAR_SCRIPT = path.join(SIDECAR_DIR, 'whisper_sidecar.py');
-// Prefer the venv Python (where whisper+torch are installed) over system python3
 const VENV_PYTHON = path.join(SIDECAR_DIR, '.venv', 'bin', 'python3');
 
 let sidecar: ChildProcess | null = null;
-let buffer = '';
+let lineBuffer = '';
 let requestId = 0;
 const pending = new Map<string, PendingRequest>();
 let startPromise: Promise<void> | null = null;
@@ -64,9 +71,9 @@ function ensureRunning(): Promise<void> {
     });
 
     child.stdout?.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+      lineBuffer += chunk.toString();
+      const lines = lineBuffer.split('\n');
+      lineBuffer = lines.pop() ?? '';
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
@@ -74,6 +81,13 @@ function ensureRunning(): Promise<void> {
           const id = resp.id as string;
           const req = pending.get(id);
           if (!req) continue;
+
+          // Progress update (chunk completed but more to come)
+          if (resp.progress) {
+            req.onProgress?.({ chunk: resp.chunk, total: resp.total, text: resp.text ?? '' });
+            continue; // Don't resolve yet — more chunks coming
+          }
+
           pending.delete(id);
           clearTimeout(req.timer);
           if (resp.error) {
@@ -91,11 +105,11 @@ function ensureRunning(): Promise<void> {
       logger.warn(`[whisper] Sidecar exited with code ${code}`);
       sidecar = null;
       startPromise = null;
-      for (const [id, req] of pending) {
+      for (const [, req] of pending) {
         clearTimeout(req.timer);
         req.reject(new Error('Whisper sidecar exited unexpectedly'));
-        pending.delete(id);
       }
+      pending.clear();
       if (!resolved) {
         reject(new Error('Whisper sidecar failed to start'));
       }
@@ -114,7 +128,13 @@ function ensureRunning(): Promise<void> {
   return startPromise;
 }
 
-export async function transcribe(audioBase64: string, language = 'de'): Promise<string> {
+export interface TranscribeOptions {
+  language?: string;
+  model?: string; // 'large-v3' | 'turbo' | 'medium'
+  onProgress?: (info: { chunk: number; total: number; text: string }) => void;
+}
+
+export async function transcribe(audioBase64: string, options: TranscribeOptions = {}): Promise<string> {
   await ensureRunning();
 
   if (!sidecar?.stdin?.writable) {
@@ -122,16 +142,25 @@ export async function transcribe(audioBase64: string, language = 'de'): Promise<
   }
 
   const id = `req-${++requestId}`;
+  const timeoutMs = calcTimeout(audioBase64.length);
+
+  logger.info(`[whisper] Transcription request ${id}: ${(audioBase64.length / 1024).toFixed(0)} KB Base64, timeout=${Math.round(timeoutMs / 1000)}s, model=${options.model ?? 'default'}`);
 
   return new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(new Error('Transkription Timeout (30s)'));
-    }, TRANSCRIBE_TIMEOUT_MS);
+      const secs = Math.round(timeoutMs / 1000);
+      reject(new Error(`Transkription Timeout (${secs}s). Audio zu lang oder Model zu langsam.`));
+    }, timeoutMs);
 
-    pending.set(id, { resolve, reject, timer });
+    pending.set(id, { resolve, reject, timer, onProgress: options.onProgress });
 
-    const request = JSON.stringify({ id, audio_base64: audioBase64, language }) + '\n';
+    const request = JSON.stringify({
+      id,
+      audio_base64: audioBase64,
+      language: options.language ?? 'de',
+      model: options.model,
+    }) + '\n';
     sidecar!.stdin!.write(request);
   });
 }

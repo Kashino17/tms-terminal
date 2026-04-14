@@ -227,6 +227,12 @@ export interface AudioTranscriptionMessage {
   payload: { text: string };
 }
 
+export interface AudioProgressMessage {
+  type: 'audio:progress';
+  sessionId: string;
+  payload: { chunk: number; total: number; text: string };
+}
+
 export interface AudioErrorMessage {
   type: 'audio:error';
   sessionId: string;

@@ -590,10 +590,19 @@ export function ManagerChatScreen({ navigation, route }: Props) {
             setInput((prev) => prev + (prev ? ' ' : '') + msg.payload.text);
           }
           setMicState('idle');
+          setRecordingDuration(0);
+          break;
+        case 'audio:progress':
+          // Show progress: "Chunk 2/4 transkribiert..."
+          if (msg.payload?.chunk && msg.payload?.total) {
+            setMicState('processing');
+            setRecordingDuration(-(msg.payload.chunk)); // Negative = chunk progress indicator
+          }
           break;
         case 'audio:error':
           addError(msg.payload?.message ?? 'Transkription fehlgeschlagen');
           setMicState('idle');
+          setRecordingDuration(0);
           break;
       }
     };

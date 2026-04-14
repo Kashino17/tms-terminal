@@ -663,7 +663,15 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         return;
       }
 
-      whisperTranscribe(audio).then((text) => {
+      // Auto-select model based on audio size: turbo for long audio (>2MB base64 ≈ 1+ min), large-v3 for short
+      const autoModel = audio.length > 2 * 1024 * 1024 ? 'turbo' : 'large-v3';
+
+      whisperTranscribe(audio, {
+        model: autoModel,
+        onProgress: (info) => {
+          send(ws, { type: 'audio:progress', sessionId, payload: { chunk: info.chunk, total: info.total, text: info.text } } as any);
+        },
+      }).then((text) => {
         send(ws, { type: 'audio:transcription', sessionId, payload: { text } } as any);
       }).catch((err) => {
         const message = err instanceof Error ? err.message : 'Transkription fehlgeschlagen';
