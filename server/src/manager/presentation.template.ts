@@ -137,7 +137,12 @@ pre code{background:none;padding:0;font-size:12px}
 #progress{position:fixed;top:0;left:0;height:3px;background:#3B82F6;transition:width .35s ease;z-index:100;border-radius:0 2px 2px 0}
 
 /* ── Slide Counter ─────────────────────────────────────── */
-#counter{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.8);backdrop-filter:blur(8px);color:#94A3B8;font-size:12px;font-weight:600;padding:6px 16px;border-radius:20px;z-index:100;pointer-events:none}
+#counter{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.8);backdrop-filter:blur(8px);color:#94A3B8;font-size:12px;font-weight:600;padding:6px 16px;border-radius:20px;z-index:90;pointer-events:none;transition:opacity .2s,transform .2s}
+#counter.hidden{opacity:0;transform:translateX(-50%) translateY(10px);pointer-events:none}
+
+/* ── Selection highlight (persistent, not inline style) ──── */
+.drill-highlight{outline:2px solid #3B82F6;outline-offset:2px;border-radius:4px}
+.multi-highlight{outline:2px solid #F59E0B;outline-offset:2px;border-radius:4px}
 
 /* ── Canvas for Charts ─────────────────────────────────── */
 canvas{max-width:100%;max-height:40vh;margin:8px 0}
@@ -308,9 +313,14 @@ ${slideMarkup}
     document.getElementById('confirmCancel').addEventListener('click', function() {
       confirmBar.style.display = 'none';
       pendingText = '';
+      // Remove single-tap highlight and show counter again
+      document.querySelectorAll('.drill-highlight').forEach(function(e) { e.classList.remove('drill-highlight'); });
+      counter.classList.remove('hidden');
     });
     document.getElementById('confirmSend').addEventListener('click', function() {
       confirmBar.style.display = 'none';
+      document.querySelectorAll('.drill-highlight').forEach(function(e) { e.classList.remove('drill-highlight'); });
+      counter.classList.remove('hidden');
       if (!pendingText) return;
       try {
         window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -328,6 +338,8 @@ ${slideMarkup}
     var preview = text.length > 80 ? text.substring(0, 80) + '...' : text;
     document.getElementById('confirmText').textContent = '\"' + preview + '\"';
     confirmBar.style.display = 'block';
+    // Hide slide counter to avoid overlap
+    counter.classList.add('hidden');
   }
 
   function initDrillDown() {
@@ -339,7 +351,7 @@ ${slideMarkup}
     document.querySelectorAll(sel).forEach(function(el) {
       el.style.cursor = 'pointer';
 
-      // Long-press → toggle multi-select (yellow border)
+      // Long-press → toggle multi-select (yellow border, persistent)
       el.addEventListener('touchstart', function() {
         isLongPress = false;
         longPressTimer = setTimeout(function() {
@@ -347,12 +359,10 @@ ${slideMarkup}
           var idx = selectedEls.indexOf(el);
           if (idx >= 0) {
             selectedEls.splice(idx, 1);
-            el.style.outline = 'none';
+            el.classList.remove('multi-highlight');
           } else {
             selectedEls.push(el);
-            el.style.outline = '2px solid #F59E0B';
-            el.style.outlineOffset = '2px';
-            el.style.borderRadius = '4px';
+            el.classList.add('multi-highlight');
           }
           updateMultiBtn();
         }, 500);
@@ -368,8 +378,8 @@ ${slideMarkup}
         // Multi-select mode: toggle instead of drill-down
         if (selectedEls.length > 0) {
           var idx = selectedEls.indexOf(el);
-          if (idx >= 0) { selectedEls.splice(idx, 1); el.style.outline = 'none'; }
-          else { selectedEls.push(el); el.style.outline = '2px solid #F59E0B'; el.style.outlineOffset = '2px'; el.style.borderRadius = '4px'; }
+          if (idx >= 0) { selectedEls.splice(idx, 1); el.classList.remove('multi-highlight'); }
+          else { selectedEls.push(el); el.classList.add('multi-highlight'); }
           updateMultiBtn();
           return;
         }
@@ -378,11 +388,9 @@ ${slideMarkup}
         var text = (el.textContent || '').trim().substring(0, 200);
         if (text.length < 3) return;
 
-        // Highlight + show confirmation
-        el.style.outline = '2px solid #3B82F6';
-        el.style.outlineOffset = '2px';
-        el.style.borderRadius = '4px';
-        setTimeout(function() { el.style.outline = 'none'; }, 3000);
+        // Persistent highlight until confirm/cancel (CSS class, no timeout!)
+        document.querySelectorAll('.drill-highlight').forEach(function(prev) { prev.classList.remove('drill-highlight'); });
+        el.classList.add('drill-highlight');
 
         showConfirm(text, el.tagName.toLowerCase());
       });
@@ -394,15 +402,16 @@ ${slideMarkup}
     var existing = document.getElementById('multiBtn');
     if (selectedEls.length === 0) {
       if (existing) existing.style.display = 'none';
+      counter.classList.remove('hidden');
       return;
     }
     if (!existing) {
       existing = document.createElement('button');
       existing.id = 'multiBtn';
-      existing.style.cssText = 'position:fixed;bottom:16px;right:12px;z-index:200;background:#F59E0B;color:#0F172A;border:none;border-radius:24px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(245,158,11,.4);cursor:pointer;';
+      existing.style.cssText = 'position:fixed;bottom:50px;left:50%;transform:translateX(-50%);z-index:200;background:#F59E0B;color:#0F172A;border:none;border-radius:24px;padding:10px 20px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(245,158,11,.4);cursor:pointer;white-space:nowrap;';
       existing.addEventListener('click', function() {
         var texts = selectedEls.map(function(el) { return (el.textContent || '').trim().substring(0, 150); });
-        selectedEls.forEach(function(el) { el.style.outline = 'none'; });
+        selectedEls.forEach(function(el) { el.classList.remove('multi-highlight'); });
         selectedEls = [];
         existing.style.display = 'none';
         showConfirm(texts.join(' | '), 'multi');
@@ -411,6 +420,8 @@ ${slideMarkup}
     }
     existing.textContent = selectedEls.length + ' markiert — Frage stellen';
     existing.style.display = 'block';
+    // Hide counter to avoid overlap
+    counter.classList.add('hidden');
   }
 
   // ── Ready ─────────────────────────────────────────────
