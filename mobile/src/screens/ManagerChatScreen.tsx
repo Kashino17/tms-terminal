@@ -662,8 +662,8 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
   // ── Send Chat ─────────────────────────────────────────────────────────────
 
-  const handleSend = useCallback(() => {
-    const text = input.trim();
+  const handleSend = useCallback((customText?: string) => {
+    const text = (customText ?? input).trim();
     if (!text && attachments.length === 0) return;
 
     // Slash commands
@@ -763,7 +763,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       type: 'manager:chat',
       payload: { text: fullText, targetSessionId: activeChat !== 'alle' ? activeChat : undefined, onboarding: !onboarded },
     });
-    setInput('');
+    if (!customText) setInput('');
     setAttachments([]);
     Keyboard.dismiss();
   }, [input, attachments, activeChat, wsService, addMessage, setLoading, clearSessionMessages, setPersonality, setOnboarded, onboarded, navigation, serverId]);

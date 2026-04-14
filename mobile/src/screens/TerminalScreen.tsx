@@ -197,15 +197,26 @@ export function TerminalScreen({ navigation, route }: Props) {
         // Report app state to server for context-aware AI responses
         wsRef.current.send({ type: 'client:app_state', payload: { foreground: false } } as any);
       } else if (nextState === 'active' && backgroundedRef.current) {
-        wsRef.current.send({ type: 'client:app_state', payload: { foreground: true } } as any);
         backgroundedRef.current = false;
-        // Check if connection is still alive — reconnect only if dropped
-        if (wsRef.current.state !== 'connected') {
+
+        // Immediate reconnect check — Android may have killed the socket
+        const reconnectIfNeeded = () => {
           const srv = useServerStore.getState().servers.find((s) => s.id === serverId);
-          if (srv?.token) {
+          if (!srv?.token) return;
+
+          if (wsRef.current.state === 'connected') {
+            // Connection alive — just report foreground
+            wsRef.current.send({ type: 'client:app_state', payload: { foreground: true } } as any);
+          } else {
+            // Connection dropped — reconnect immediately
             wsRef.current.connect({ host: srv.host, port: srv.port, token: srv.token });
           }
-        }
+        };
+
+        // Check immediately + retry after 1s (socket state may not update instantly)
+        reconnectIfNeeded();
+        setTimeout(reconnectIfNeeded, 1000);
+        setTimeout(reconnectIfNeeded, 3000);
       }
     });
     return () => {
