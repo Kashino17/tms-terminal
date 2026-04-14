@@ -148,6 +148,32 @@ thead{background:#1E293B}
 th{padding:10px 12px;text-align:left;font-weight:600;color:#F8FAFC;border-bottom:2px solid #334155;font-size:12px;text-transform:uppercase;letter-spacing:.5px}
 td{padding:8px 12px;color:#CBD5E1;border-bottom:1px solid rgba(51,65,85,.5)}
 tr:hover td{background:rgba(59,130,246,.05)}
+
+/* ── Expandable Details ───────────────────────────────── */
+details{background:#1B2336;border:1px solid #334155;border-radius:8px;margin-bottom:8px;overflow:hidden}
+summary{padding:10px 12px;cursor:pointer;font-weight:600;font-size:14px;color:#F8FAFC;list-style:none;display:flex;align-items:center;gap:8px}
+summary::-webkit-details-marker{display:none}
+summary::before{content:'▸';color:#3B82F6;font-size:12px;transition:transform .2s ease}
+details[open] summary::before{transform:rotate(90deg)}
+details[open] summary{border-bottom:1px solid #334155}
+.detail-content{padding:12px;color:#CBD5E1;font-size:13px;line-height:1.65}
+.detail-content p{margin-bottom:6px}
+.detail-content code{font-size:12px}
+
+/* ── Severity Indicators ──────────────────────────────── */
+.severity-critical{background:rgba(239,68,68,.1);border-left:3px solid #EF4444;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:8px}
+.severity-critical strong{color:#F87171}
+.severity-warning{background:rgba(245,158,11,.1);border-left:3px solid #F59E0B;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:8px}
+.severity-warning strong{color:#FBBF24}
+.severity-info{background:rgba(59,130,246,.1);border-left:3px solid #3B82F6;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:8px}
+.severity-info strong{color:#60A5FA}
+.severity-success{background:rgba(34,197,94,.1);border-left:3px solid #22C55E;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:8px}
+.severity-success strong{color:#4ADE80}
+
+/* ── Info Tooltips (touch-friendly) ───────────────────── */
+.info-tip{position:relative;display:inline-flex;align-items:center;gap:4px;cursor:help;border-bottom:1px dashed #475569}
+.info-tip .tip-text{display:none;position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#1E293B;border:1px solid #334155;border-radius:8px;padding:8px 12px;font-size:12px;color:#CBD5E1;white-space:normal;width:max-content;max-width:250px;z-index:50;box-shadow:0 4px 12px rgba(0,0,0,.4);line-height:1.5}
+.info-tip:active .tip-text,.info-tip:hover .tip-text{display:block}
 tbody tr:nth-child(even) td{background:rgba(30,41,59,.5)}
 </style>
 </head>
@@ -265,12 +291,95 @@ ${slideMarkup}
     }
   }
 
-  // ── Drill-Down: click elements to ask manager ─────────
+  // ── Drill-Down + Multi-Select ──────────────────────────
+  var selectedEls = [];
+  var askBtn = null;
+
+  function createAskButton() {
+    if (askBtn) return;
+    askBtn = document.createElement('button');
+    askBtn.id = 'askBtn';
+    askBtn.style.cssText = 'position:fixed;bottom:50px;right:16px;z-index:200;background:#3B82F6;color:#fff;border:none;border-radius:24px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(59,130,246,.4);display:none;cursor:pointer;';
+    askBtn.addEventListener('click', function() {
+      var texts = selectedEls.map(function(el) { return (el.textContent || '').trim().substring(0, 150); });
+      selectedEls.forEach(function(el) { el.style.outline = 'none'; el.style.background = ''; });
+      selectedEls = [];
+      askBtn.style.display = 'none';
+      try {
+        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'drillDown', text: texts.join(' | '), tag: 'multi', slideIndex: current
+        }));
+      } catch(ex){}
+    });
+    document.body.appendChild(askBtn);
+  }
+
+  function updateAskButton() {
+    if (!askBtn) createAskButton();
+    if (selectedEls.length > 0) {
+      askBtn.textContent = 'Frage stellen (' + selectedEls.length + ')';
+      askBtn.style.display = 'block';
+    } else {
+      askBtn.style.display = 'none';
+    }
+  }
+
   function initDrillDown() {
-    var sel = 'h2,h3,.card,.card-sm,li,.stat,.badge,strong,th,td';
+    createAskButton();
+    var sel = 'h2,h3,.card,.card-sm,li,.stat,.badge,strong,th,td,.severity-critical,.severity-warning,.severity-info,details>summary';
+    var longPressTimer = null;
+    var isLongPress = false;
+
     document.querySelectorAll(sel).forEach(function(el) {
       el.style.cursor = 'pointer';
+
+      // Long-press → toggle multi-select
+      el.addEventListener('touchstart', function(e) {
+        isLongPress = false;
+        longPressTimer = setTimeout(function() {
+          isLongPress = true;
+          var idx = selectedEls.indexOf(el);
+          if (idx >= 0) {
+            selectedEls.splice(idx, 1);
+            el.style.outline = 'none';
+            el.style.background = '';
+          } else {
+            selectedEls.push(el);
+            el.style.outline = '2px solid #F59E0B';
+            el.style.outlineOffset = '2px';
+            el.style.borderRadius = '4px';
+          }
+          updateAskButton();
+        }, 500);
+      }, { passive: true });
+
+      el.addEventListener('touchend', function() {
+        clearTimeout(longPressTimer);
+      }, { passive: true });
+
+      el.addEventListener('touchmove', function() {
+        clearTimeout(longPressTimer);
+      }, { passive: true });
+
+      // Single tap → instant drill-down (only if not long-press)
       el.addEventListener('click', function(e) {
+        if (isLongPress) { isLongPress = false; return; }
+        // If multi-select is active, toggle instead of drill-down
+        if (selectedEls.length > 0) {
+          var idx = selectedEls.indexOf(el);
+          if (idx >= 0) {
+            selectedEls.splice(idx, 1);
+            el.style.outline = 'none';
+            el.style.background = '';
+          } else {
+            selectedEls.push(el);
+            el.style.outline = '2px solid #F59E0B';
+            el.style.outlineOffset = '2px';
+            el.style.borderRadius = '4px';
+          }
+          updateAskButton();
+          return;
+        }
         e.stopPropagation();
         var text = (el.textContent || '').trim().substring(0, 200);
         if (text.length < 3) return;

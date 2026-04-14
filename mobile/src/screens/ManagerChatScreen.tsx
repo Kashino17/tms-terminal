@@ -377,6 +377,19 @@ function ThinkingBubble({ phase, streamingText, onCancel, requestStartTime, toke
 
   const isSending = phase === '__sending';
   const isStreaming = phase === 'streaming' && streamingText.length > 0;
+
+  // Forward AI answer to presentation drill-down overlay
+  useEffect(() => {
+    if (!activePres || !drillDownLoading) return;
+    // When streaming ends (phase goes empty) and we have a new last message
+    if (!isSending && !isStreaming && phase === '' && messages.length > 0) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg.role === 'assistant' && lastMsg.text) {
+        setDrillDownAnswer(lastMsg.text);
+        setDrillDownLoading(false);
+      }
+    }
+  }, [phase, messages.length, activePres, drillDownLoading]);
   const label = isSending ? 'Gesendet...' : (PHASE_LABELS[phase] ?? phase);
   const tokenCount = tokenStats?.completionTokens ?? 0;
   const tps = tokenStats?.tps ?? 0;
@@ -547,6 +560,8 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [activePres, setActivePres] = useState<{ url: string; title: string } | null>(null);
+  const [drillDownAnswer, setDrillDownAnswer] = useState<string | null>(null);
+  const [drillDownLoading, setDrillDownLoading] = useState(false);
   const [wizard, setWizard] = useState<{ flow: WizardFlow; step: number; answers: string[] } | null>(null);
   const [connQuality, setConnQuality] = useState<string>('good');
   const [searchMode, setSearchMode] = useState(false);
@@ -1859,9 +1874,13 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         visible={!!activePres}
         url={activePres?.url ?? ''}
         title={activePres?.title ?? ''}
-        onClose={() => setActivePres(null)}
+        onClose={() => { setActivePres(null); setDrillDownAnswer(null); setDrillDownLoading(false); }}
+        drillDownAnswer={drillDownAnswer}
+        drillDownLoading={drillDownLoading}
         onDrillDown={(text, _slideIndex) => {
-          setActivePres(null);
+          // Send question to manager WITHOUT closing the viewer
+          setDrillDownAnswer(null);
+          setDrillDownLoading(true);
           const question = `Erkläre mir diesen Punkt aus der Präsentation genauer: "${text}"`;
           handleSend(question);
         }}

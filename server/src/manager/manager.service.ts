@@ -736,19 +736,34 @@ create_presentation(
   slide_3: "<h2>Nächste Schritte</h2><ul><li>Feature X fertigstellen</li><li>Release vorbereiten</li></ul>"
 )
 
-CSS-Klassen: grid-2, grid-3, card, card-sm, gradient-blue/purple/green/orange/red/cyan, accent/accent-green/accent-red/accent-amber, badge badge-blue/green/red, stat > stat-value + stat-label, fade-in, slide-up, text-center, text-dim, mt-1/mt-2, divider
+CSS-Klassen:
+- Layout: grid-2, grid-3, card, card-sm, flex-row, flex-col, divider, w-full
+- Farben: gradient-blue/purple/green/orange/red/cyan, accent/accent-green/accent-red/accent-amber
+- Badges: badge badge-blue/green/red/amber
+- Statistiken: stat > stat-value + stat-label
+- Animation: fade-in, slide-up, slide-in-left, scale-in, delay-1 bis delay-5
+- Severity: severity-critical, severity-warning, severity-info, severity-success
+- Text: text-center, text-dim, text-muted, text-sm, text-xs, mt-1/mt-2/mt-3
 
 Charts: <canvas data-chart='pie' data-values='[30,70]' data-labels='["A","B"]'></canvas>
 Mermaid: <div class='mermaid'>graph LR; A-->B</div>
 
-MOBILE-DESIGN-REGELN (SEHR WICHTIG):
-- Die Präsentation wird auf einem Smartphone angezeigt (ca. 380px breit)
-- Verwende grid-2 nur für KURZE Inhalte (Stats, Badges). NICHT für lange Texte oder Listen
-- Lange Texte, Listen, Details → IMMER volle Breite (kein Grid), einfach untereinander
-- Charts maximal 200px hoch — nicht zu groß
-- Pro Slide maximal 3-4 Elemente — nicht überladen
-- Titel-Slide: nur Titel + 1-2 Zeilen Subtitle
-- Text KURZ halten: Stichpunkte statt ganze Sätze
+INHALT-REGELN (WICHTIGER ALS KÜRZE!):
+- Jeder Punkt braucht KONTEXT — nicht "Auth fehlt" sondern "Backend hat keine Auth-Middleware → jeder kann ohne Login auf die API zugreifen"
+- Jede Zahl braucht VERGLEICH — nicht "42 Tests" sondern "42/50 Tests bestanden (84%)"
+- Nutze <details> für aufklappbare Details:
+  <details><summary>Auth-Middleware fehlt (Kritisch)</summary><div class="detail-content">Das Backend hat keinen Auth-Layer. Fix: Express middleware mit JWT.</div></details>
+- Nutze severity-Klassen für Priorität:
+  <div class="severity-critical"><strong>Kritisch:</strong> SQL Injection in der User-Query — alle Eingaben unescaped</div>
+  <div class="severity-warning"><strong>Warnung:</strong> API-Keys in .env.example committed</div>
+- Info-Tooltips für Fachbegriffe:
+  <span class="info-tip">RLS<span class="tip-text">Row Level Security — Datenbankregel die Zugriff pro User einschränkt</span></span>
+
+MOBILE-DESIGN-REGELN:
+- Smartphone-Display (ca. 380px breit)
+- grid-2 nur für Stats/Badges, nicht für Texte
+- Pro Slide maximal 4-5 Elemente
+- Aufklappbare Details (<details>) erlauben mehr Inhalt ohne Überladen
 
 ## Antwort-Format
 Antworte natürlich und menschlich. Wenn du einen Befehl ausführst, sag kurz was du tust.`;
