@@ -1586,11 +1586,10 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         requestStartTime={requestStartTime}
         tokenStats={streamTokenStats}
         onCancel={() => {
-          // Send cancel to server — stops AI processing, not just UI
+          // Send cancel to server — aborts AI processing
           wsService.send({ type: 'manager:cancel' } as any);
           setLoading(false);
           setThinking('', undefined, undefined);
-          setStreamingText('');
           addError('Anfrage abgebrochen', activeChat);
         }}
       />}

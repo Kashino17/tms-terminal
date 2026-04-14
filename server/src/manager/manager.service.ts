@@ -1667,12 +1667,14 @@ BEISPIEL:
           systemPrompt,
           MANAGER_TOOLS,
           (token) => {
-            if (this.abortController?.signal.aborted) return; // Stop streaming tokens on cancel
+            if (this.abortController?.signal.aborted) return;
             streamTokenCount++;
             const elapsedSec = (Date.now() - streamStart) / 1000;
             const tps = elapsedSec > 0.5 ? Math.round((streamTokenCount / elapsedSec) * 10) / 10 : 0;
             this.onStreamChunk?.(token, { completionTokens: streamTokenCount, tps });
           },
+          undefined,
+          this.abortController?.signal,
         );
         reply = result.text;
         nativeToolCalls = result.toolCalls;
@@ -1715,8 +1717,9 @@ BEISPIEL:
               chatMessages,
               systemPrompt,
               MANAGER_TOOLS,
-              () => {}, // Don't double-stream chunks — we already streamed the first attempt
+              () => {},
               { type: 'function', function: { name: forcedTool } },
+              this.abortController?.signal,
             );
 
             if (forcedResult.toolCalls.length > 0) {
@@ -1828,6 +1831,8 @@ BEISPIEL:
             systemPrompt,
             MANAGER_TOOLS,
             (token) => this.onStreamChunk?.(token),
+            undefined,
+            this.abortController?.signal,
           );
 
           reply = nextResult.text;

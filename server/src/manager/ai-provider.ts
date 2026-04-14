@@ -338,11 +338,11 @@ class GlmProvider implements AiProvider {
     tools: ToolDefinition[],
     onChunk: (token: string) => void,
     toolChoice: 'auto' | { type: 'function'; function: { name: string } } = 'auto',
+    cancelSignal?: AbortSignal,
   ): Promise<StreamResult> {
     const apiKey = this.getApiKey();
     if (!apiKey) throw new Error('GLM API key not configured');
 
-    // Build messages — pass through tool_calls and tool_call_id for multi-turn flow
     const apiMessages: Array<Record<string, unknown>> = [
       { role: 'system', content: systemPrompt },
       ...messages.map(m => {
@@ -352,6 +352,11 @@ class GlmProvider implements AiProvider {
         return msg;
       }),
     ];
+
+    const timeoutSignal = AbortSignal.timeout(CLOUD_TIMEOUT_MS);
+    const signal = cancelSignal
+      ? AbortSignal.any([timeoutSignal, cancelSignal])
+      : timeoutSignal;
 
     const res = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
       method: 'POST',
@@ -368,7 +373,7 @@ class GlmProvider implements AiProvider {
         tools,
         tool_choice: toolChoice,
       }),
-      signal: AbortSignal.timeout(CLOUD_TIMEOUT_MS),
+      signal,
     });
 
     if (!res.ok) {
@@ -686,6 +691,7 @@ class LMStudioProvider implements AiProvider {
     tools: ToolDefinition[],
     onChunk: (token: string) => void,
     toolChoice: 'auto' | { type: 'function'; function: { name: string } } = 'auto',
+    cancelSignal?: AbortSignal,
   ): Promise<StreamResult> {
     const baseUrl = this.getBaseUrl();
     const apiMessages: Array<Record<string, unknown>> = [
@@ -697,6 +703,12 @@ class LMStudioProvider implements AiProvider {
         return msg;
       }),
     ];
+
+    // Combine timeout + user cancel signals
+    const timeoutSignal = AbortSignal.timeout(LOCAL_TIMEOUT_MS);
+    const signal = cancelSignal
+      ? AbortSignal.any([timeoutSignal, cancelSignal])
+      : timeoutSignal;
 
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -713,7 +725,7 @@ class LMStudioProvider implements AiProvider {
         tools,
         tool_choice: toolChoice,
       }),
-      signal: AbortSignal.timeout(LOCAL_TIMEOUT_MS),
+      signal,
     });
 
     if (!res.ok) {
@@ -856,6 +868,7 @@ export interface ToolCallingProvider extends AiProvider {
     tools: ToolDefinition[],
     onChunk: (token: string) => void,
     toolChoice?: 'auto' | { type: 'function'; function: { name: string } },
+    cancelSignal?: AbortSignal,
   ): Promise<StreamResult>;
 }
 
