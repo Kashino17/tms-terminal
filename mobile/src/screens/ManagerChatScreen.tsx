@@ -377,19 +377,6 @@ function ThinkingBubble({ phase, streamingText, onCancel, requestStartTime, toke
 
   const isSending = phase === '__sending';
   const isStreaming = phase === 'streaming' && streamingText.length > 0;
-
-  // Forward AI answer to presentation drill-down overlay
-  useEffect(() => {
-    if (!activePres || !drillDownLoading) return;
-    // When streaming ends (phase goes empty) and we have a new last message
-    if (!isSending && !isStreaming && phase === '' && messages.length > 0) {
-      const lastMsg = messages[messages.length - 1];
-      if (lastMsg.role === 'assistant' && lastMsg.text) {
-        setDrillDownAnswer(lastMsg.text);
-        setDrillDownLoading(false);
-      }
-    }
-  }, [phase, messages.length, activePres, drillDownLoading]);
   const label = isSending ? 'Gesendet...' : (PHASE_LABELS[phase] ?? phase);
   const tokenCount = tokenStats?.completionTokens ?? 0;
   const tps = tokenStats?.tps ?? 0;
@@ -579,6 +566,16 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     const timer = setInterval(() => setTaskTick(t => t + 1), 10_000);
     return () => clearInterval(timer);
   }, [delegatedTasks.length]);
+
+  // Forward AI answer to presentation drill-down overlay
+  useEffect(() => {
+    if (!activePres || !drillDownLoading) return;
+    const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.text && !loading) {
+      setDrillDownAnswer(lastMsg.text);
+      setDrillDownLoading(false);
+    }
+  }, [messages.length, loading, activePres, drillDownLoading]);
 
   // ── WS Message Listener (audio only — manager:* handled persistently in TerminalScreen)
 
