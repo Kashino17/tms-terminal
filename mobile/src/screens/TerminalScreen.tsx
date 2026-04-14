@@ -261,21 +261,28 @@ export function TerminalScreen({ navigation, route }: Props) {
         const managerLabel = m.payload?.label as string | undefined;
 
         if (fromManager) {
-          // Manager Agent created a new terminal — add a new tab for it
+          // Manager Agent created a new terminal — add a tab and immediately
+          // mount its WebView so it connects (terminal:reattach) and renders
+          // the full TUI. Without this, the WebView is lazy-mounted only when
+          // the user navigates to the tab, leaving it as a headless PTY.
+          const currentTabs = useTerminalStore.getState().getTabs(serverId);
+          const prevActiveTab = currentTabs.find(t => t.active);
           const newTab = {
             id: `mgr-${Date.now()}`,
             sessionId: m.sessionId,
-            title: managerLabel ?? `Shell ${useTerminalStore.getState().getTabs(serverId).length + 1}`,
+            title: managerLabel ?? `Shell ${currentTabs.length + 1}`,
             serverId,
-            active: true,
+            active: false,
           };
           addTab(serverId, newTab);
-          // Auto-navigate to TerminalScreen to show the new terminal.
-          // popToTop pops ManagerChatScreen (or any screen above) so the user
-          // sees Claude working in the terminal directly.
-          if (!navigation.isFocused()) {
-            navigation.popToTop();
+          // addTab forces active:true on the new tab — restore previous focus
+          // so Manager terminals don't steal the user's current terminal tab.
+          if (prevActiveTab) {
+            setActiveTab(serverId, prevActiveTab.id);
           }
+          // Immediately mount the WebView so xterm.js loads, connects to the
+          // session, and renders Claude's TUI — even while user stays on ManagerChat.
+          setMountedTabs((prev) => new Set([...prev, newTab.id]));
         } else {
           // Normal flow: assign sessionId to the oldest pending tab
           const pending = useTerminalStore.getState().getTabs(serverId).find((t) => !t.sessionId);
