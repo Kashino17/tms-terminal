@@ -1,6 +1,7 @@
 import { AiProviderRegistry, ChatMessage, ProviderConfig, ToolDefinition, StreamResult, RawToolCall, ToolCallingProvider } from './ai-provider';
 import { globalManager } from '../terminal/terminal.manager';
 import { logger } from '../utils/logger';
+import { fcmService } from '../notifications/fcm.service';
 import type { PhaseInfo } from '../../../shared/protocol';
 import {
   loadMemory, saveMemory, ManagerMemory, CONFIG_DIR,
@@ -864,6 +865,7 @@ export class ManagerService {
   private cronManager = new CronManager();
   private delegatedTasks: DelegatedTask[] = [];
   private enabled = false;
+  private fcmTokens: Set<string> = new Set();
   private isProcessing = false; // prevent overlapping calls within same slot
   private isSystemProcessing = false; // separate slot for heartbeat/orchestrator reviews
   private abortController: AbortController | null = null; // Cancel running AI calls
@@ -3078,7 +3080,34 @@ BEISPIEL:
       task.status = status;
       task.updatedAt = Date.now();
       this.broadcastTasks();
+      // Push notification for terminal events
+      if (status === 'done') this.notifyTaskEvent(task, 'completed');
+      else if (status === 'failed') this.notifyTaskEvent(task, 'failed');
     }
+  }
+
+  /** Send FCM push notification for task lifecycle events */
+  private notifyTaskEvent(task: DelegatedTask, event: 'completed' | 'failed' | 'needs_input'): void {
+    if (this.fcmTokens.size === 0) return;
+    const titles: Record<string, string> = {
+      completed: `\u2705 ${task.description}`,
+      failed: `\u274C ${task.description}`,
+      needs_input: `\uD83D\uDD14 ${task.description}`,
+    };
+    const bodies: Record<string, string> = {
+      completed: 'Aufgabe abgeschlossen',
+      failed: 'Aufgabe fehlgeschlagen',
+      needs_input: 'Deine Eingabe wird benötigt',
+    };
+    for (const token of this.fcmTokens) {
+      fcmService.send(token, titles[event], bodies[event], { taskId: task.id, type: `task_${event}` })
+        .catch(() => {}); // Don't crash on FCM errors
+    }
+  }
+
+  /** Set FCM device tokens for push notifications (called from ws.handler) */
+  setFcmTokens(tokens: Set<string>): void {
+    this.fcmTokens = tokens;
   }
 
   private static readonly TASK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes max per task
@@ -3288,6 +3317,7 @@ BEISPIEL:
         if (needsAI && !alreadyQueued && !isInFlight) {
           logger.info(`Manager: heartbeat — step "${currentStep?.label}" needs AI input, queuing "${task.sessionLabel}"`);
           this.reviewQueue.push(task.id);
+          this.notifyTaskEvent(task, 'needs_input');
           actionsTaken++;
         }
       }

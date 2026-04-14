@@ -57,7 +57,7 @@ const TYPING_PAUSE_MS = 2000;
 const pendingInputLen = new Map<string, number>();
 
 // ── Manager Agent ────────────────────────────────────────────────────
-const managerService = new ManagerService(loadManagerConfig());
+export const managerService = new ManagerService(loadManagerConfig());
 
 // Save manager state on graceful shutdown (before process exits)
 process.on('SIGINT', () => managerService.saveStateOnShutdown());
@@ -691,6 +691,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           if (oldest !== undefined) persistedTokens.delete(oldest);
         }
         watcherService.setDeviceToken(deviceToken);
+        managerService.setFcmTokens(persistedTokens);
         logger.success(`FCM token registered for ${ip} (len=${deviceToken.length})`);
         break;
       }
