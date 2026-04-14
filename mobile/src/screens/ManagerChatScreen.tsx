@@ -568,16 +568,17 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   }, [delegatedTasks.length]);
 
   // Forward AI answer to presentation drill-down overlay
+  const currentPhase = thinking?.phase ?? '';
   useEffect(() => {
     if (!activePres || !drillDownLoading) return;
-    if (phase === '' && messages.length > 0) {
+    if (currentPhase === '' && !loading && messages.length > 0) {
       const lastMsg = messages[messages.length - 1];
       if (lastMsg.role === 'assistant' && lastMsg.text) {
         setDrillDownAnswer(lastMsg.text);
         setDrillDownLoading(false);
       }
     }
-  }, [phase, messages.length, activePres, drillDownLoading]);
+  }, [currentPhase, loading, messages.length, activePres, drillDownLoading]);
 
   // ── WS Message Listener (audio only — manager:* handled persistently in TerminalScreen)
 
