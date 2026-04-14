@@ -342,7 +342,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         const ekMode = useSettingsStore.getState().externalKeyboardMode;
         if (ekMode) {
           webViewRef.current?.injectJavaScript(
-            `window.postMessage(${JSON.stringify(JSON.stringify({ type: 'setExternalKeyboardMode', enabled: true }))}, '*'); true;`,
+            `window.postMessage(${JSON.stringify({ type: 'setExternalKeyboardMode', enabled: true })}, '*'); true;`,
           );
         }
         // Replay saved output into the fresh xterm.js instance BEFORE requesting

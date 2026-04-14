@@ -401,11 +401,26 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   });
 
   /* ── Resize ────────────────────────────────────────── */
+  var lastReportedCols = 0, lastReportedRows = 0;
   function reportSize() {
+    // Only report if dimensions actually changed (prevents duplicate resize messages)
+    if (term.cols === lastReportedCols && term.rows === lastReportedRows) return;
+    lastReportedCols = term.cols;
+    lastReportedRows = term.rows;
     sendToRN({ type: 'resize', cols: term.cols, rows: term.rows });
   }
-  new ResizeObserver(function() { fitAddon.fit(); reportSize(); })
-    .observe(document.getElementById('terminal'));
+  var resizeTimer = null;
+  new ResizeObserver(function() {
+    // Debounce: keyboard open/close fires multiple rapid resize events.
+    // Without debounce, each fires fitAddon.fit() + terminal:resize to server,
+    // causing display flicker and line shifting.
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function() {
+      resizeTimer = null;
+      fitAddon.fit();
+      reportSize();
+    }, 100);
+  }).observe(document.getElementById('terminal'));
 
   /* ── Pinch-to-Zoom (does NOT block native scroll) ──── */
   var MIN_FONT = 8, MAX_FONT = 28, baseFontSize = 14;

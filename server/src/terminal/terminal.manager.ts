@@ -161,7 +161,7 @@ export class TerminalManager {
       const combined = existing + data;
       this.reattachBuffers.set(
         sessionId,
-        combined.length > REATTACH_BUFFER_MAX
+        combined.length >= REATTACH_BUFFER_MAX
           ? combined.slice(combined.length - REATTACH_BUFFER_MAX)
           : combined,
       );
@@ -226,17 +226,32 @@ export class TerminalManager {
     return session;
   }
 
-  /** Trim a buffer to a clean line boundary at the start (skip any partial first line
-   *  that may contain a truncated ANSI escape sequence). */
+  /** Trim a buffer to a clean boundary at the start (skip any partial line and
+   *  incomplete ANSI escape sequences that could corrupt the terminal display). */
   private trimToLineBoundary(buf: string): string {
     // If the buffer was already captured from the start (not sliced), it's clean
     if (buf.length < REATTACH_BUFFER_MAX) return buf;
 
-    // The buffer was sliced from a larger stream — the first partial line may contain
-    // a broken ANSI sequence. Find the first newline and start from there.
+    // The buffer was sliced from a larger stream — the start may be mid-ANSI-sequence
+    // or mid-line. Skip to the first complete line after any partial ANSI sequences.
     const firstNewline = buf.indexOf('\n');
     if (firstNewline === -1) return buf; // no newlines at all, send as-is
-    return buf.slice(firstNewline + 1);
+
+    let start = firstNewline + 1;
+
+    // After skipping the first partial line, check if we're still inside an incomplete
+    // ANSI escape sequence. An incomplete sequence looks like: \x1b followed by [ and
+    // then digits/semicolons but no terminating letter (A-Z, a-z).
+    // Scan up to 32 chars to find the end of any stale partial sequence.
+    const chunk = buf.slice(start, start + 32);
+    if (/^[0-9;]*[A-Za-z]/.test(chunk)) {
+      // Looks like the tail of a split CSI sequence (e.g., "27;200mText")
+      // Skip past the terminating letter
+      const match = chunk.match(/^[0-9;]*[A-Za-z]/);
+      if (match) start += match[0].length;
+    }
+
+    return buf.slice(start);
   }
 
   write(sessionId: string, data: string): boolean {
