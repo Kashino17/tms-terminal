@@ -39,18 +39,27 @@ type FilterType = 'all' | 'presentation' | 'image';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+/** Strip markdown formatting from text */
+function stripMd(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, '$1')  // **bold**
+    .replace(/\*([^*]+)\*/g, '$1')       // *italic*
+    .replace(/__([^_]+)__/g, '$1')       // __bold__
+    .replace(/_([^_]+)_/g, '$1')         // _italic_
+    .replace(/`([^`]+)`/g, '$1')         // `code`
+    .replace(/#{1,3}\s*/g, '')           // ### headings
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'); // [link](url)
+}
+
 function getTitle(art: Artifact): string {
-  if (art.type === 'presentation') {
-    return art.messageText?.match(/(?:Präsentation|Presentation)[:\s]*["„]?([^"""\n]{5,60})/i)?.[1]?.trim()
-      || 'Präsentation';
-  }
-  return art.messageText?.match(/(?:Bild|Image|Logo|Diagramm|generiert)[:\s]*["„]?([^"""\n]{5,60})/i)?.[1]?.trim()
-    || 'Generiertes Bild';
+  const raw = art.type === 'presentation'
+    ? art.messageText?.match(/(?:Präsentation|Presentation)[:\s]*["„]?([^"""\n]{5,60})/i)?.[1]?.trim() || 'Präsentation'
+    : art.messageText?.match(/(?:Bild|Image|Logo|Diagramm|generiert)[:\s]*["„]?([^"""\n]{5,60})/i)?.[1]?.trim() || 'Generiertes Bild';
+  return stripMd(raw);
 }
 
 function getDescription(art: Artifact): string {
-  // Extract first 2 meaningful sentences from the AI message
-  const text = art.messageText || '';
+  const text = stripMd(art.messageText || '');
   const sentences = text.split(/[.!]\s/).filter(s => s.length > 20 && !s.startsWith('['));
   return sentences.slice(0, 2).join('. ').slice(0, 120) || '';
 }
@@ -227,23 +236,34 @@ export function ManagerArtifactsScreen({ navigation, route }: Props) {
       </View>
 
       {/* ── Filter Chips ────────────────────────────────── */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterBar} contentContainerStyle={s.filterContent}>
-        <TouchableOpacity style={[s.chip, filter === 'all' && s.chipActive]} onPress={() => setFilter('all')}>
-          <Feather name="layers" size={14} color={filter === 'all' ? '#60A5FA' : '#94A3B8'} />
-          <Text style={[s.chipText, filter === 'all' && s.chipTextActive]}>Alle</Text>
-          <Text style={[s.chipNum, filter === 'all' && s.chipNumActive]}>{allArtifacts.length}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.chip, filter === 'presentation' && s.chipActive]} onPress={() => setFilter('presentation')}>
-          <Feather name="monitor" size={14} color={filter === 'presentation' ? '#60A5FA' : '#94A3B8'} />
-          <Text style={[s.chipText, filter === 'presentation' && s.chipTextActive]}>Präsentationen</Text>
-          <Text style={[s.chipNum, filter === 'presentation' && s.chipNumActive]}>{presCount}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.chip, filter === 'image' && s.chipActive]} onPress={() => setFilter('image')}>
-          <Feather name="image" size={14} color={filter === 'image' ? '#60A5FA' : '#94A3B8'} />
-          <Text style={[s.chipText, filter === 'image' && s.chipTextActive]}>Bilder</Text>
-          <Text style={[s.chipNum, filter === 'image' && s.chipNumActive]}>{imgCount}</Text>
-        </TouchableOpacity>
-      </ScrollView>
+      <View style={s.filterBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterContent}>
+          <TouchableOpacity
+            style={[s.chip, filter === 'all' ? s.chipAll : s.chipInactive]}
+            onPress={() => setFilter('all')}
+          >
+            <Feather name="layers" size={13} color={filter === 'all' ? '#E2E8F0' : '#64748B'} />
+            <Text style={[s.chipText, filter === 'all' && { color: '#E2E8F0' }]}>Alle</Text>
+            <Text style={[s.chipNum, filter === 'all' && { color: '#94A3B8' }]}>{allArtifacts.length}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.chip, filter === 'presentation' ? s.chipPres : s.chipInactive]}
+            onPress={() => setFilter('presentation')}
+          >
+            <Feather name="monitor" size={13} color={filter === 'presentation' ? '#60A5FA' : '#64748B'} />
+            <Text style={[s.chipText, filter === 'presentation' && { color: '#60A5FA' }]}>Präsentationen</Text>
+            <Text style={[s.chipNum, filter === 'presentation' && { color: '#93C5FD' }]}>{presCount}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.chip, filter === 'image' ? s.chipImg : s.chipInactive]}
+            onPress={() => setFilter('image')}
+          >
+            <Feather name="image" size={13} color={filter === 'image' ? '#4ADE80' : '#64748B'} />
+            <Text style={[s.chipText, filter === 'image' && { color: '#4ADE80' }]}>Bilder</Text>
+            <Text style={[s.chipNum, filter === 'image' && { color: '#86EFAC' }]}>{imgCount}</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
 
       {/* ── List ────────────────────────────────────────── */}
       {sections.length === 0 ? (
@@ -315,18 +335,23 @@ const s = StyleSheet.create({
   },
   countText: { color: '#60A5FA', fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] },
 
-  // Filters
-  filterBar: { flexShrink: 0, borderBottomWidth: 1, borderBottomColor: 'rgba(51,65,85,0.25)' },
-  filterContent: { paddingHorizontal: spacing.lg, paddingVertical: 10, gap: 6 },
-  chip: {
-    flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 13, paddingVertical: 6,
-    borderRadius: 10, borderWidth: 1, borderColor: '#334155', backgroundColor: 'rgba(30,41,59,0.3)',
+  // Filters — fixed height, no expansion
+  filterBar: {
+    borderBottomWidth: 1, borderBottomColor: 'rgba(51,65,85,0.25)',
+    height: 52, // Fixed height prevents expansion bug
   },
-  chipActive: { backgroundColor: 'rgba(59,130,246,0.1)', borderColor: 'rgba(59,130,246,0.25)' },
-  chipText: { fontSize: 12, fontWeight: '600', color: '#94A3B8' },
-  chipTextActive: { color: '#60A5FA' },
-  chipNum: { fontSize: 11, color: '#475569' },
-  chipNumActive: { color: '#60A5FA' },
+  filterContent: { paddingHorizontal: spacing.lg, alignItems: 'center', height: 52, gap: 8 },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingVertical: 7,
+    borderRadius: 10, borderWidth: 1,
+  },
+  chipInactive: { borderColor: '#1E293B', backgroundColor: 'rgba(15,23,42,0.5)' },
+  // Matte colors per type (like AI model tool badges)
+  chipAll: { backgroundColor: 'rgba(148,163,184,0.1)', borderColor: 'rgba(148,163,184,0.2)' },
+  chipPres: { backgroundColor: 'rgba(59,130,246,0.1)', borderColor: 'rgba(59,130,246,0.2)' },
+  chipImg: { backgroundColor: 'rgba(34,197,94,0.1)', borderColor: 'rgba(34,197,94,0.2)' },
+  chipText: { fontSize: 12, fontWeight: '600', color: '#64748B' },
+  chipNum: { fontSize: 11, color: '#475569', marginLeft: 2 },
 
   // Section header
   sectionHeader: { paddingHorizontal: spacing.lg, paddingTop: 14, paddingBottom: 6 },
