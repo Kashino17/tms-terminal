@@ -15,11 +15,8 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
+import Markdown from 'react-native-markdown-display';
 import { colors, fonts } from '../theme';
-
-// Safe markdown import — falls back to plain Text if package fails
-let MarkdownComponent: any = null;
-try { MarkdownComponent = require('react-native-markdown-display').default; } catch {}
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -169,10 +166,7 @@ export function PresentationViewer({
 
             {/* Answer body */}
             <ScrollView style={s.answerScroll} showsVerticalScrollIndicator contentContainerStyle={{ paddingBottom: 16 }}>
-              {MarkdownComponent
-                ? <MarkdownComponent style={markdownStyles}>{drillDownAnswer}</MarkdownComponent>
-                : <Text style={{ color: '#CBD5E1', fontSize: 13, lineHeight: 20 }}>{drillDownAnswer}</Text>
-              }
+              <Markdown style={markdownStyles}>{drillDownAnswer}</Markdown>
             </ScrollView>
           </Animated.View>
         )}

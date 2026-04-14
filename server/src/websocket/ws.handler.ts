@@ -14,6 +14,7 @@ import { autopilotService } from '../autopilot/autopilot.service';
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
+import { ConnectionRateLimiter } from './rate-limiter';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -159,6 +160,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   const sessionGens = new Map<string, number>();
   // Use the persisted tokens as the starting value; overwritten on register
   let deviceToken: string | null = persistedTokens.size > 0 ? [...persistedTokens][0] : null;
+
+  // Per-connection rate limiter
+  const rateLimiter = new ConnectionRateLimiter();
 
   logger.success(`Client connected: ${ip}`);
 
@@ -330,6 +334,14 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
     // Handle extension message types not in shared/protocol.ts
     const msgType = (msg as any).type as string;
+
+    // ── Rate limiting ────────────────────────────────────────────────
+    if (!rateLimiter.consume(msgType)) {
+      if (rateLimiter.isBlocked()) {
+        send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Rate limit exceeded — connection temporarily blocked' } });
+      }
+      return;
+    }
 
     if (msgType === 'client:backgrounding') {
       logger.info(`Client backgrounding — detaching all sessions (${ownedSessions.size} sessions)`);

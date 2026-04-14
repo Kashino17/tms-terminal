@@ -7,21 +7,20 @@
 set -e
 cd "$(dirname "$0")"
 
-# Kill any hanging node/gradle processes that might block the build
-echo "🧹 Cleaning stale processes..."
-pkill -f "node.*cli.*config" 2>/dev/null || true
-pkill -f "node.*react-native.*config" 2>/dev/null || true
-cd android && ./gradlew --stop 2>/dev/null || true
-cd ..
+# Kill any hanging processes (fast, no blocking)
+echo "🧹 Cleaning..."
+pkill -9 -f "GradleDaemon" 2>/dev/null || true
+pkill -9 -f "expo-modules-autolinking" 2>/dev/null || true
 
-# Reset watchman to prevent stale cache issues
-watchman watch-del "$(dirname "$(pwd)")" 2>/dev/null || true
-watchman watch-project "$(dirname "$(pwd)")" 2>/dev/null || true
+# Pre-generate ExpoModulesPackageList (Gradle task hangs on this)
+EXPO_PKG_TARGET="node_modules/expo/android/build/generated/expo/src/main/java/expo/modules/ExpoModulesPackageList.java"
+mkdir -p "$(dirname "$EXPO_PKG_TARGET")"
+node --no-warnings -e "require(require.resolve('expo-modules-autolinking', { paths: [require.resolve('expo')] }))(process.argv.slice(1))" \
+  -- generate-package-list --platform android --namespace expo.modules --target "$EXPO_PKG_TARGET"
 
-# Only build arm64-v8a for dev speed (Fold 7 is arm64)
-# Using --no-daemon to prevent Gradle daemon from caching stale Node processes
-echo "⚡ Building release APK (arm64 only)..."
-cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon -q && cd ..
+# Build arm64 only (Fold 7)
+echo "⚡ Building release APK..."
+cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a -q && cd ..
 
 APK="android/app/build/outputs/apk/release/app-release.apk"
 DEST="$HOME/Desktop/TMS-Terminal.apk"
@@ -30,8 +29,7 @@ cp "$APK" "$DEST"
 if [ "$1" = "adb" ]; then
   echo "📲 Installing via ADB..."
   adb install -r "$DEST"
-  echo "✅ Installed! App should update on your phone."
+  echo "✅ Installed!"
 else
   echo "✅ APK ready: ~/Desktop/TMS-Terminal.apk"
-  echo "   Tip: Run './deploy.sh adb' to install directly via USB."
 fi

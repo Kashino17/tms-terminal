@@ -1,4 +1,4 @@
-import { exec as execCb, execSync } from 'child_process';
+import { exec as execCb } from 'child_process';
 import * as os from 'os';
 import { getPlatform } from '../utils/platform';
 
@@ -228,20 +228,10 @@ export async function killProcess(
   }
 
   try {
-    // Try Node's process.kill first (works cross-platform)
+    // Use Node's process.kill — no shell involved, no injection possible
     process.kill(pid, signal as NodeJS.Signals);
     return { ok: true };
   } catch (err: unknown) {
-    // If Node's process.kill fails, try the shell fallback
-    try {
-      const platform = getPlatform();
-      if (platform !== 'win32') {
-        const sig = signal.replace(/^SIG/, '');
-        execSync(`kill -${sig} ${pid}`, { timeout: 3000 });
-        return { ok: true };
-      }
-    } catch { /* fall through */ }
-
     return {
       ok: false,
       error: err instanceof Error ? err.message : `Failed to kill process ${pid}`,
