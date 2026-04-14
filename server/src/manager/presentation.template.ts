@@ -291,50 +291,56 @@ ${slideMarkup}
     }
   }
 
-  // ── Drill-Down + Multi-Select ──────────────────────────
+  // ── Drill-Down + Multi-Select + Confirmation ───────────
   var selectedEls = [];
-  var askBtn = null;
+  var confirmBar = null;
+  var pendingText = '';
+  var pendingTag = '';
 
-  function createAskButton() {
-    if (askBtn) return;
-    askBtn = document.createElement('button');
-    askBtn.id = 'askBtn';
-    askBtn.style.cssText = 'position:fixed;bottom:50px;right:16px;z-index:200;background:#3B82F6;color:#fff;border:none;border-radius:24px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(59,130,246,.4);display:none;cursor:pointer;';
-    askBtn.addEventListener('click', function() {
-      var texts = selectedEls.map(function(el) { return (el.textContent || '').trim().substring(0, 150); });
-      selectedEls.forEach(function(el) { el.style.outline = 'none'; el.style.background = ''; });
-      selectedEls = [];
-      askBtn.style.display = 'none';
+  function createConfirmBar() {
+    if (confirmBar) return;
+    confirmBar = document.createElement('div');
+    confirmBar.id = 'confirmBar';
+    confirmBar.style.cssText = 'position:fixed;bottom:16px;left:12px;right:12px;z-index:200;background:rgba(15,23,42,.95);border:1px solid rgba(59,130,246,.4);border-radius:14px;padding:10px 12px;display:none;backdrop-filter:blur(12px);box-shadow:0 -4px 20px rgba(0,0,0,.4);';
+    confirmBar.innerHTML = '<div style="font-size:12px;color:#94A3B8;margin-bottom:8px;line-height:1.4;max-height:40px;overflow:hidden" id="confirmText"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button id="confirmCancel" style="background:none;border:1px solid #334155;color:#94A3B8;border-radius:10px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer">Abbrechen</button><button id="confirmSend" style="background:#3B82F6;border:none;color:#fff;border-radius:10px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(59,130,246,.3)">Frage stellen</button></div>';
+    document.body.appendChild(confirmBar);
+
+    document.getElementById('confirmCancel').addEventListener('click', function() {
+      confirmBar.style.display = 'none';
+      pendingText = '';
+    });
+    document.getElementById('confirmSend').addEventListener('click', function() {
+      confirmBar.style.display = 'none';
+      if (!pendingText) return;
       try {
         window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'drillDown', text: texts.join(' | '), tag: 'multi', slideIndex: current
+          type: 'drillDown', text: pendingText, tag: pendingTag, slideIndex: current
         }));
       } catch(ex){}
+      pendingText = '';
     });
-    document.body.appendChild(askBtn);
   }
 
-  function updateAskButton() {
-    if (!askBtn) createAskButton();
-    if (selectedEls.length > 0) {
-      askBtn.textContent = 'Frage stellen (' + selectedEls.length + ')';
-      askBtn.style.display = 'block';
-    } else {
-      askBtn.style.display = 'none';
-    }
+  function showConfirm(text, tag) {
+    createConfirmBar();
+    pendingText = text;
+    pendingTag = tag;
+    var preview = text.length > 80 ? text.substring(0, 80) + '...' : text;
+    document.getElementById('confirmText').textContent = '\"' + preview + '\"';
+    confirmBar.style.display = 'block';
   }
 
   function initDrillDown() {
-    createAskButton();
-    var sel = 'h2,h3,.card,.card-sm,li,.stat,.badge,strong,th,td,.severity-critical,.severity-warning,.severity-info,details>summary';
+    createConfirmBar();
+    var sel = 'h2,h3,.card,.card-sm,li,.stat,.badge,strong,th,td,.severity-critical,.severity-warning,.severity-info,.severity-success,details>summary';
     var longPressTimer = null;
     var isLongPress = false;
 
     document.querySelectorAll(sel).forEach(function(el) {
       el.style.cursor = 'pointer';
 
-      // Long-press → toggle multi-select
-      el.addEventListener('touchstart', function(e) {
+      // Long-press → toggle multi-select (yellow border)
+      el.addEventListener('touchstart', function() {
         isLongPress = false;
         longPressTimer = setTimeout(function() {
           isLongPress = true;
@@ -342,58 +348,69 @@ ${slideMarkup}
           if (idx >= 0) {
             selectedEls.splice(idx, 1);
             el.style.outline = 'none';
-            el.style.background = '';
           } else {
             selectedEls.push(el);
             el.style.outline = '2px solid #F59E0B';
             el.style.outlineOffset = '2px';
             el.style.borderRadius = '4px';
           }
-          updateAskButton();
+          updateMultiBtn();
         }, 500);
       }, { passive: true });
 
-      el.addEventListener('touchend', function() {
-        clearTimeout(longPressTimer);
-      }, { passive: true });
+      el.addEventListener('touchend', function() { clearTimeout(longPressTimer); }, { passive: true });
+      el.addEventListener('touchmove', function() { clearTimeout(longPressTimer); }, { passive: true });
 
-      el.addEventListener('touchmove', function() {
-        clearTimeout(longPressTimer);
-      }, { passive: true });
-
-      // Single tap → instant drill-down (only if not long-press)
+      // Single tap
       el.addEventListener('click', function(e) {
         if (isLongPress) { isLongPress = false; return; }
-        // If multi-select is active, toggle instead of drill-down
+
+        // Multi-select mode: toggle instead of drill-down
         if (selectedEls.length > 0) {
           var idx = selectedEls.indexOf(el);
-          if (idx >= 0) {
-            selectedEls.splice(idx, 1);
-            el.style.outline = 'none';
-            el.style.background = '';
-          } else {
-            selectedEls.push(el);
-            el.style.outline = '2px solid #F59E0B';
-            el.style.outlineOffset = '2px';
-            el.style.borderRadius = '4px';
-          }
-          updateAskButton();
+          if (idx >= 0) { selectedEls.splice(idx, 1); el.style.outline = 'none'; }
+          else { selectedEls.push(el); el.style.outline = '2px solid #F59E0B'; el.style.outlineOffset = '2px'; el.style.borderRadius = '4px'; }
+          updateMultiBtn();
           return;
         }
+
         e.stopPropagation();
         var text = (el.textContent || '').trim().substring(0, 200);
         if (text.length < 3) return;
+
+        // Highlight + show confirmation
         el.style.outline = '2px solid #3B82F6';
         el.style.outlineOffset = '2px';
         el.style.borderRadius = '4px';
-        setTimeout(function() { el.style.outline = 'none'; }, 1500);
-        try {
-          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'drillDown', text: text, tag: el.tagName.toLowerCase(), slideIndex: current
-          }));
-        } catch(ex){}
+        setTimeout(function() { el.style.outline = 'none'; }, 3000);
+
+        showConfirm(text, el.tagName.toLowerCase());
       });
     });
+  }
+
+  // Multi-select floating button
+  function updateMultiBtn() {
+    var existing = document.getElementById('multiBtn');
+    if (selectedEls.length === 0) {
+      if (existing) existing.style.display = 'none';
+      return;
+    }
+    if (!existing) {
+      existing = document.createElement('button');
+      existing.id = 'multiBtn';
+      existing.style.cssText = 'position:fixed;bottom:16px;right:12px;z-index:200;background:#F59E0B;color:#0F172A;border:none;border-radius:24px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(245,158,11,.4);cursor:pointer;';
+      existing.addEventListener('click', function() {
+        var texts = selectedEls.map(function(el) { return (el.textContent || '').trim().substring(0, 150); });
+        selectedEls.forEach(function(el) { el.style.outline = 'none'; });
+        selectedEls = [];
+        existing.style.display = 'none';
+        showConfirm(texts.join(' | '), 'multi');
+      });
+      document.body.appendChild(existing);
+    }
+    existing.textContent = selectedEls.length + ' markiert — Frage stellen';
+    existing.style.display = 'block';
   }
 
   // ── Ready ─────────────────────────────────────────────

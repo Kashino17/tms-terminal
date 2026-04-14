@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Modal,
   Pressable,
   ScrollView,
@@ -24,9 +25,9 @@ interface PresentationViewerProps {
   url: string;
   title: string;
   onClose: () => void;
-  /** Called when user taps a slide element. Parent should send the question and call setDrillDownAnswer when AI responds. */
+  /** Called when user confirms a drill-down question */
   onDrillDown?: (text: string, slideIndex: number) => void;
-  /** The AI's answer to the last drill-down question. Set by parent. */
+  /** The AI's answer to the last drill-down question */
   drillDownAnswer?: string | null;
   /** Whether a drill-down answer is loading */
   drillDownLoading?: boolean;
@@ -42,6 +43,17 @@ export function PresentationViewer({
   const [selectedText, setSelectedText] = useState<string | null>(null);
   const [showAnswer, setShowAnswer] = useState(false);
 
+  // Animated overlay slide-up
+  const overlayAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (showAnswer && drillDownAnswer) {
+      Animated.spring(overlayAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: false }).start();
+    } else {
+      Animated.timing(overlayAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+    }
+  }, [showAnswer, drillDownAnswer]);
+
   // Show answer overlay when a new answer arrives
   useEffect(() => {
     if (drillDownAnswer) setShowAnswer(true);
@@ -52,6 +64,7 @@ export function PresentationViewer({
     if (!visible) {
       setSelectedText(null);
       setShowAnswer(false);
+      overlayAnim.setValue(0);
     }
   }, [visible]);
 
@@ -61,25 +74,33 @@ export function PresentationViewer({
       if (data.type === 'slideChange' || data.type === 'ready') {
         setSlideInfo({ index: data.index ?? 0, total: data.total ?? 1 });
       } else if (data.type === 'drillDown' && data.text) {
+        // User confirmed in the HTML confirm bar → send to manager
         setSelectedText(data.text);
-        setShowAnswer(false); // Clear previous answer
+        setShowAnswer(false);
         onDrillDown?.(data.text, data.slideIndex ?? 0);
       }
     } catch {}
   }, [onDrillDown]);
 
   const handleShare = useCallback(async () => {
-    try {
-      await Share.share({ url, title });
-    } catch {}
+    try { await Share.share({ url, title }); } catch {}
   }, [url, title]);
+
+  const dismissOverlay = useCallback(() => {
+    setShowAnswer(false);
+  }, []);
+
+  const overlayTranslateY = overlayAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [300, 0],
+  });
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <StatusBar hidden translucent />
       <View style={s.container}>
         {/* Header */}
-        <View style={[s.header, { paddingTop: 12 }]}>
+        <View style={[s.header, { paddingTop: insets.top > 0 ? insets.top : 12 }]}>
           <TouchableOpacity style={s.headerBtn} onPress={onClose} hitSlop={8}>
             <Feather name="x" size={22} color="#F8FAFC" />
           </TouchableOpacity>
@@ -103,8 +124,8 @@ export function PresentationViewer({
           startInLoadingState
         />
 
-        {/* Slide counter */}
-        {slideInfo && !showAnswer && (
+        {/* Slide counter — hide when overlay is showing */}
+        {slideInfo && !showAnswer && !drillDownLoading && (
           <View style={[s.counter, { bottom: insets.bottom + 16 }]}>
             <Text style={s.counterText}>
               {slideInfo.index + 1} / {slideInfo.total}
@@ -112,35 +133,42 @@ export function PresentationViewer({
           </View>
         )}
 
-        {/* Drill-Down Loading Banner */}
+        {/* Loading Banner */}
         {drillDownLoading && selectedText && !showAnswer && (
           <View style={[s.loadingBanner, { bottom: insets.bottom + 48 }]}>
             <ActivityIndicator size="small" color={colors.primary} />
             <Text style={s.loadingText} numberOfLines={1}>
-              Frage: "{selectedText.slice(0, 60)}..."
+              Frage wird beantwortet...
             </Text>
           </View>
         )}
 
-        {/* Drill-Down Answer Overlay */}
+        {/* Answer Overlay — animated slide-up */}
         {showAnswer && drillDownAnswer && (
-          <View style={[s.answerOverlay, { paddingBottom: insets.bottom + 12 }]}>
-            {/* Header with question + close */}
+          <Animated.View style={[
+            s.answerOverlay,
+            { paddingBottom: insets.bottom + 12, transform: [{ translateY: overlayTranslateY }] },
+          ]}>
+            {/* Drag handle */}
+            <View style={s.dragHandle} />
+
+            {/* Header */}
             <View style={s.answerHeader}>
+              <Feather name="message-circle" size={14} color={colors.primary} style={{ marginTop: 2 }} />
               <View style={{ flex: 1 }}>
-                <Text style={s.answerQuestion} numberOfLines={2}>
-                  {selectedText}
-                </Text>
+                <Text style={s.answerLabel}>Nachfrage zum Punkt:</Text>
+                <Text style={s.answerQuestion} numberOfLines={2}>{selectedText}</Text>
               </View>
-              <Pressable onPress={() => setShowAnswer(false)} hitSlop={10}>
-                <Feather name="x-circle" size={20} color="#94A3B8" />
+              <Pressable onPress={dismissOverlay} hitSlop={12} style={s.closeBtn}>
+                <Feather name="x" size={18} color="#94A3B8" />
               </Pressable>
             </View>
-            {/* Scrollable answer */}
-            <ScrollView style={s.answerScroll} showsVerticalScrollIndicator>
+
+            {/* Answer body */}
+            <ScrollView style={s.answerScroll} showsVerticalScrollIndicator contentContainerStyle={{ paddingBottom: 16 }}>
               <Markdown style={markdownStyles}>{drillDownAnswer}</Markdown>
             </ScrollView>
-          </View>
+          </Animated.View>
         )}
       </View>
     </Modal>
@@ -197,14 +225,13 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  // ── Drill-Down Loading Banner
   loadingBanner: {
     position: 'absolute',
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(15,23,42,0.9)',
+    backgroundColor: 'rgba(15,23,42,0.92)',
     borderWidth: 1,
     borderColor: 'rgba(59,130,246,0.3)',
     paddingHorizontal: 14,
@@ -218,35 +245,65 @@ const s = StyleSheet.create({
     fontFamily: fonts.mono,
     flexShrink: 1,
   },
-  // ── Drill-Down Answer Overlay
+  // ── Answer Overlay
   answerOverlay: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     maxHeight: '55%',
-    backgroundColor: 'rgba(15,23,42,0.95)',
+    backgroundColor: 'rgba(15,23,42,0.97)',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(59,130,246,0.3)',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopColor: 'rgba(59,130,246,0.25)',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 6,
+    // Shadow for depth
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 20,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(148,163,184,0.25)',
+    alignSelf: 'center',
+    marginBottom: 10,
   },
   answerHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 8,
-    paddingBottom: 8,
+    gap: 8,
+    marginBottom: 10,
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(51,65,85,0.5)',
+    borderBottomColor: 'rgba(51,65,85,0.4)',
+  },
+  answerLabel: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
   },
   answerQuestion: {
     color: colors.primary,
     fontSize: 13,
     fontWeight: '600',
-    fontFamily: fonts.mono,
+    lineHeight: 18,
+  },
+  closeBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(51,65,85,0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   answerScroll: {
     flex: 1,
