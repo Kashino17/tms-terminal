@@ -267,9 +267,15 @@ export function TerminalScreen({ navigation, route }: Props) {
             sessionId: m.sessionId,
             title: managerLabel ?? `Shell ${useTerminalStore.getState().getTabs(serverId).length + 1}`,
             serverId,
-            active: false,
+            active: true,
           };
           addTab(serverId, newTab);
+          // Auto-navigate to TerminalScreen to show the new terminal.
+          // popToTop pops ManagerChatScreen (or any screen above) so the user
+          // sees Claude working in the terminal directly.
+          if (!navigation.isFocused()) {
+            navigation.popToTop();
+          }
         } else {
           // Normal flow: assign sessionId to the oldest pending tab
           const pending = useTerminalStore.getState().getTabs(serverId).find((t) => !t.sessionId);
