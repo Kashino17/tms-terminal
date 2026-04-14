@@ -867,6 +867,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         trackPendingInput(msg.sessionId, data);
         idleDetector.activity(msg.sessionId);
         resetAutopilotTimer(msg.sessionId);
+        managerService.trackUserInput(msg.sessionId);
 
         if (!globalManager.write(msg.sessionId, data)) {
           send(ws, {

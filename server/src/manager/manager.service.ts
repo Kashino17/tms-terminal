@@ -876,6 +876,11 @@ export class ManagerService {
   private lastChatHadToolCalls = false; // Tracks if the last handleChat made tool calls
   private orchestratorRetryCount = new Map<string, number>(); // step retries per task
   private commandHistory: Array<{ action: string; target: string; detail: string; timestamp: number }> = [];
+
+  // ── Open-ended question auto-answer ─────────────────────────────
+  private lastAnsweredQuestion = new Map<string, { text: string; answeredAt: number }>();
+  private questionAnswerInFlight = new Set<string>(); // sessionIds currently being answered
+  private managerLastUserInputAt = new Map<string, number>(); // user typing tracking
   private personality: PersonalityConfig = { ...DEFAULT_PERSONALITY };
   private memory: ManagerMemory;
 
@@ -1075,6 +1080,14 @@ export class ManagerService {
 
     // Auto-complete on_claude_idle step (3s debounce = sufficient stability)
     if (isClaudeReady && task.status === 'running') {
+      // Check for open question BEFORE completing idle step.
+      // If Claude is asking a question, don't mark step as done — answer first.
+      const questionText = this.detectOpenQuestion(lastChunk);
+      if (questionText) {
+        this.handleOpenQuestion(sessionId, task, questionText);
+        return; // Don't auto-complete — Claude is waiting for an answer
+      }
+
       const idleStep = task.steps.find(s => s.status === 'running' && s.trigger === 'on_claude_idle');
       if (idleStep && idleStep.status === 'running') { // Guard: only if still running (prevents double-completion with heartbeat)
         this.completeStepAndAdvance(task, idleStep);
@@ -1089,6 +1102,11 @@ export class ManagerService {
     this.sessionLabels.set(sessionId, label);
   }
 
+  /** Called from ws.handler on terminal:input — tracks user typing state. */
+  trackUserInput(sessionId: string): void {
+    this.managerLastUserInputAt.set(sessionId, Date.now());
+  }
+
   /** Remove buffers when a session is closed. */
   clearSession(sessionId: string): void {
     this.outputBuffers.delete(sessionId);
@@ -1097,6 +1115,129 @@ export class ManagerService {
     // Clean up event-driven debounce timer
     const debounce = this.outputDebounceTimers.get(sessionId);
     if (debounce) { clearTimeout(debounce); this.outputDebounceTimers.delete(sessionId); }
+    // Clean up question auto-answer state
+    this.lastAnsweredQuestion.delete(sessionId);
+    this.questionAnswerInFlight.delete(sessionId);
+    this.managerLastUserInputAt.delete(sessionId);
+  }
+
+  // ── Open Question Detection ──────────────────────────────────────────────
+
+  /** Returns true if the line is Claude Code UI chrome (task list, status bar, etc.) */
+  private static isClaudeUIChrome(line: string): boolean {
+    return /^\d+ tasks?\s*\(/.test(line) ||                    // "9 tasks (1 done, ..."
+      /^(Worked|Working) for\s+\d/.test(line) ||               // "Worked for 44s"
+      /^ctrl\+\w+ to/i.test(line) ||                           // "ctrl+t to hide tasks"
+      /^[✓✔✅☑■□☐◻●◆▶►⬛🟩🟧🔲⬜]\s/.test(line);              // Task list indicators
+  }
+
+  /**
+   * Detects if Claude Code is asking an open-ended question (not Y/N).
+   * Returns the question text or null if no question found.
+   */
+  private detectOpenQuestion(lastChunk: string): string | null {
+    const lines = lastChunk.slice(-800).split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 3);
+
+    if (lines.length === 0) return null;
+
+    // Filter out Claude Code UI chrome (task lists, status bar) before scanning.
+    // These appear AFTER the question and would push it out of the scan window.
+    const contentLines = lines.filter(l => !ManagerService.isClaudeUIChrome(l));
+    if (contentLines.length === 0) return null;
+
+    const tailText = contentLines.slice(-6).join('\n');
+
+    // EXCLUDE: Y/N patterns → auto-approve territory
+    if (ManagerService.YN_EXCLUSION_PATTERNS.some(p => p.test(tailText))) return null;
+
+    // EXCLUDE: Claude still working (spinner, "Thinking...")
+    const tail50 = lastChunk.slice(-50).toLowerCase();
+    if (/\b(thinking|reading|writing|searching|analyzing)\b/.test(tail50)) return null;
+    if (/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(tail50)) return null;
+    if (/\.{3}\s*$/.test(tail50)) return null;
+
+    // Search last 5 content lines for a genuine question
+    const scanLines = contentLines.slice(-5);
+    for (const line of scanLines) {
+      if (ManagerService.QUESTION_FALSE_POSITIVE.some(p => p.test(line))) continue;
+      if (ManagerService.OPEN_QUESTION_PATTERNS.some(p => p.test(line))) {
+        return line;
+      }
+    }
+
+    return null;
+  }
+
+  /** Fuzzy comparison: are two question texts substantially the same? */
+  private similarQuestion(a: string, b: string): boolean {
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-zäöüß0-9\s]/g, '').trim();
+    const na = normalize(a);
+    const nb = normalize(b);
+    if (na === nb) return true;
+    if (na.includes(nb) || nb.includes(na)) return true;
+    // Word overlap (Jaccard > 0.7)
+    const wordsA = new Set(na.split(/\s+/).filter(w => w.length > 2));
+    const wordsB = new Set(nb.split(/\s+/).filter(w => w.length > 2));
+    const intersection = [...wordsA].filter(w => wordsB.has(w)).length;
+    const union = new Set([...wordsA, ...wordsB]).size;
+    return union > 0 && (intersection / union) > 0.7;
+  }
+
+  /**
+   * Auto-answers an open-ended question from Claude Code.
+   * Routes through handleChat() → Manager AI reasoning → write_to_terminal.
+   */
+  private handleOpenQuestion(sessionId: string, task: DelegatedTask, questionText: string): void {
+    // Guard 1: Already answering for this session
+    if (this.questionAnswerInFlight.has(sessionId)) return;
+
+    // Guard 2: User is typing → human takes priority
+    const lastInput = this.managerLastUserInputAt.get(sessionId) ?? 0;
+    if (Date.now() - lastInput < ManagerService.USER_TYPING_PAUSE_MS) {
+      logger.info(`Manager: question in "${task.sessionLabel}" but user typing — skipping`);
+      return;
+    }
+
+    // Guard 3: Cooldown (prevent spam)
+    const lastAnswer = this.lastAnsweredQuestion.get(sessionId);
+    if (lastAnswer && Date.now() - lastAnswer.answeredAt < ManagerService.QUESTION_COOLDOWN_MS) return;
+
+    // Guard 4: Same question as last time → don't answer again
+    if (lastAnswer && this.similarQuestion(lastAnswer.text, questionText)) {
+      logger.info(`Manager: duplicate question in "${task.sessionLabel}" — skipping`);
+      return;
+    }
+
+    // Guard 5: Task still active?
+    if (task.status !== 'running' && task.status !== 'waiting') return;
+
+    logger.info(`Manager: open question in "${task.sessionLabel}": "${questionText.slice(0, 80)}"`);
+    this.questionAnswerInFlight.add(sessionId);
+
+    // Build terminal context for the prompt
+    const buffer = this.outputBuffers.get(sessionId);
+    const recentOutput = buffer?.data?.replace(ANSI_STRIP, '').slice(-1500) ?? '';
+
+    const answerPrompt = `[AUTO-FRAGE] Claude Code in "${task.sessionLabel}" hat eine Rückfrage und wartet auf deine Antwort:
+
+Aufgabe: "${task.description}"
+Frage von Claude: "${questionText}"
+
+Letzter Terminal-Output:
+\`\`\`
+${recentOutput.slice(-800)}
+\`\`\`
+
+ANWEISUNG: Beantworte Claudes Frage im Kontext der Aufgabe. Nutze write_to_terminal um deine Antwort an "${task.sessionLabel}" zu senden. Halte die Antwort kurz und präzise — Claude erwartet eine direkte Antwort. Wenn du unsicher bist, wähle die pragmatischste Option.`;
+
+    this.handleChat(answerPrompt, sessionId)
+      .catch(err => logger.warn(`Manager: auto-answer failed — ${err instanceof Error ? err.message : err}`))
+      .finally(() => {
+        this.questionAnswerInFlight.delete(sessionId);
+        this.lastAnsweredQuestion.set(sessionId, { text: questionText, answeredAt: Date.now() });
+      });
   }
 
   // ── Periodic Summarization ────────────────────────────────────────────────
@@ -3111,6 +3252,8 @@ BEISPIEL:
   }
 
   private static readonly TASK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes max per task
+  private static readonly QUESTION_COOLDOWN_MS = 15_000;    // 15s cooldown between auto-answers per session
+  private static readonly USER_TYPING_PAUSE_MS = 5_000;     // Don't auto-answer if user typed recently
   private stableOutputCounts = new Map<string, number>(); // track consecutive unchanged outputs
   private reviewQueue: string[] = []; // task IDs waiting for AI review
   private reviewInFlight = new Set<string>(); // task IDs currently being reviewed (prevents duplicates)
@@ -3121,6 +3264,48 @@ BEISPIEL:
    *  Phase 3: Queue idle tasks for AI review
    *  Phase 4: Kick off review processing (one at a time, chained) */
   private static readonly TASK_CLEANUP_AGE_MS = 5 * 60 * 1000; // 5 minutes
+
+  // ── Open question detection patterns ──────────────────────────────
+  // Y/N patterns we do NOT treat as open questions (auto-approve handles these)
+  private static readonly YN_EXCLUSION_PATTERNS = [
+    /\[y\/n\]/i, /\[Y\/n\]/, /\[y\/N\]/, /\(yes\/no\)/i, /\(y\/n\)/i,
+    /allow (this action|bash|command|running|tool|edit|execution)/i,
+    /dangerous command/i, /Esc\s*to\s*cancel/i, /1\.?\s*Yes/,
+    /allowalledits/i, /apply (this )?edit\?/i,
+    /\?\s*›/,                       // inquirer prompt marker
+    /\?\s*\[[^\]]{0,20}\]/,          // short bracket choices: [y/n], [yes]
+    /\?\s*\([^)]{0,20}\)/,           // short paren choices: (yes/no), (y/n)
+  ];
+
+  // Conversational question patterns (German + English)
+  private static readonly OPEN_QUESTION_PATTERNS = [
+    // German
+    /(?:soll|willst|möchtest|kannst|darf)\s+(?:ich|du|wir)\s+.{5,80}\?/i,
+    /(?:welch|was|wie|wo|wann|warum|woran)\s+.{5,60}\?/i,
+    /(?:hast du|gibt es|brauchst du)\s+.{5,60}\?/i,
+    /(?:bevorzugst|präferierst)\s+.{3,60}\?/i,
+    // English
+    /(?:should|shall|would you like|do you want)\s+.{5,80}\?/i,
+    /(?:which|what|how|where|when)\s+.{5,80}\?/i,
+    /(?:would you prefer|do you prefer)\s+.{3,60}\?/i,
+    /(?:can you|could you)\s+(?:tell|clarify|specify|confirm|decide)\s+.{3,60}\?/i,
+    // Choice patterns (A oder B? / A or B?)
+    /\b\w+\s+(?:oder|or)\s+\w+[^?]{0,40}\?/i,
+  ];
+
+  // Lines that are NOT questions (false positive suppression)
+  private static readonly QUESTION_FALSE_POSITIVE = [
+    /^#/,                           // Markdown headers
+    /^[-*]\s/,                      // List items
+    /╭──|╰──|│/,                   // Box drawing (Claude Code UI)
+    /^\s*\d+\.\s/,                  // Numbered lists
+    /https?:\/\//,                  // URLs containing ?
+    /^\s*\/\//,                     // Code comments
+    /console\.|print|log|echo/i,   // Code output
+    /\bfunction\b|\bconst\b|\blet\b|\bvar\b|\bdef\b/,  // Code
+    /what could go wrong/i,         // Rhetorical
+    /you might wonder/i,            // Rhetorical
+  ];
 
   private async heartbeat(): Promise<void> {
     // ── Phase 0: Cleanup completed/failed tasks older than 5 minutes ──
@@ -3288,7 +3473,14 @@ BEISPIEL:
             }
             // If pendingPrompt still exists, wait for delivery in Phase 3a
           } else if (currentStep.trigger === 'on_claude_idle' && isClaudeReady) {
-            // Claude finished its work and is idle
+            // Check for open question before auto-completing
+            const questionText = this.detectOpenQuestion(lastChunk);
+            if (questionText) {
+              this.handleOpenQuestion(task.sessionId, task, questionText);
+              actionsTaken++;
+              continue; // Don't auto-complete — Claude asked a question
+            }
+            // Claude genuinely finished its work and is idle
             this.completeStepAndAdvance(task, currentStep);
             autoCompleted = true;
           } else if (currentStep.trigger === 'on_write') {
