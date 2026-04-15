@@ -425,7 +425,7 @@ export function TerminalScreen({ navigation, route }: Props) {
     // keeps process + WebSocket alive, this handler keeps processing messages).
     ws.setPersistentHandler((data: unknown) => {
       const m = data as { type: string; payload?: any };
-      if (!m.type?.startsWith('manager:')) return;
+      if (!m.type?.startsWith('manager:') && !m.type?.startsWith('tts:')) return;
 
       const store = useManagerStore.getState();
       const chatKey = m.payload?.targetSessionId ?? store.activeChat;
