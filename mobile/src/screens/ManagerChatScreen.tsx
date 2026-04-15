@@ -581,8 +581,11 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
   useEffect(() => {
     const handler = (data: unknown) => {
-      const msg = data as { type: string; payload?: any };
+      const msg = data as { type: string; sessionId?: string; payload?: any };
       if (!msg.type?.startsWith('audio:')) return;
+      // Only handle transcriptions that were sent from THIS screen (sessionId='manager')
+      // Terminal transcriptions have a terminal sessionId and are handled by TerminalToolbar
+      if (msg.sessionId && msg.sessionId !== 'manager') return;
 
       switch (msg.type) {
         case 'audio:transcription':
@@ -593,10 +596,9 @@ export function ManagerChatScreen({ navigation, route }: Props) {
           setRecordingDuration(0);
           break;
         case 'audio:progress':
-          // Show progress: "Chunk 2/4 transkribiert..."
           if (msg.payload?.chunk && msg.payload?.total) {
             setMicState('processing');
-            setRecordingDuration(-(msg.payload.chunk)); // Negative = chunk progress indicator
+            setRecordingDuration(-(msg.payload.chunk));
           }
           break;
         case 'audio:error':
@@ -892,10 +894,9 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         if (!uri) return;
         const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         await FileSystem.deleteAsync(uri, { idempotent: true });
-        const activeTab = tabs.find(t => t.sessionId);
         wsService.send({
           type: 'audio:transcribe',
-          sessionId: activeTab?.sessionId ?? 'manager',
+          sessionId: 'manager',
           payload: { audio: base64, format: 'wav' },
         } as any);
       } catch {
