@@ -555,6 +555,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const [ttsAudio, setTtsAudio] = useState<Record<string, { url: string; duration: number }>>({});
   const [ttsLoading, setTtsLoading] = useState<Set<string>>(new Set());
   const [ttsProgress, setTtsProgress] = useState<Record<string, { chunk: number; total: number }>>({});
+  const [ttsVersion, setTtsVersion] = useState(0); // bump to force FlatList re-render
   const [wizard, setWizard] = useState<{ flow: WizardFlow; step: number; answers: string[] } | null>(null);
   const [connQuality, setConnQuality] = useState<string>('good');
   const [searchMode, setSearchMode] = useState(false);
@@ -580,23 +581,17 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     const { type, payload } = ttsEvent;
     if (type === 'tts:result' && payload?.messageId && payload?.filename) {
       const audioUrl = `http://${serverHost}:${serverPort}/generated-tts/${encodeURIComponent(payload.filename)}?token=${serverToken}`;
-      console.log('[TTS] Setting audio for messageId:', payload.messageId, 'url:', audioUrl.slice(0, 80));
-      // Log the message to check its role and visibility
-      const targetMsg = useManagerStore.getState().messages.find((m: any) => m.id === payload.messageId);
-      console.log('[TTS] Target message role:', targetMsg?.role, 'text:', targetMsg?.text?.slice(0, 40));
-      console.log('[TTS] ttsAudio keys BEFORE:', JSON.stringify(Object.keys(ttsAudio)));
-      setTtsAudio(prev => {
-        const next = { ...prev, [payload.messageId]: { url: audioUrl, duration: payload.duration ?? 0 } };
-        console.log('[TTS] ttsAudio keys AFTER:', JSON.stringify(Object.keys(next)));
-        return next;
-      });
+      setTtsAudio(prev => ({ ...prev, [payload.messageId]: { url: audioUrl, duration: payload.duration ?? 0 } }));
       setTtsLoading(prev => { const n = new Set(prev); n.delete(payload.messageId); return n; });
       setTtsProgress(prev => { const n = { ...prev }; delete n[payload.messageId]; return n; });
+      setTtsVersion(v => v + 1);
     } else if (type === 'tts:progress' && payload?.messageId) {
       setTtsProgress(prev => ({ ...prev, [payload.messageId]: { chunk: payload.chunk, total: payload.total } }));
+      setTtsVersion(v => v + 1);
     } else if (type === 'tts:error' && payload?.messageId) {
       setTtsLoading(prev => { const n = new Set(prev); n.delete(payload.messageId); return n; });
       setTtsProgress(prev => { const n = { ...prev }; delete n[payload.messageId]; return n; });
+      setTtsVersion(v => v + 1);
     }
   }, [ttsEvent]);
 
@@ -1146,6 +1141,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, paddingVertical: 4 }}
                   onPress={() => {
                     setTtsLoading(prev => new Set(prev).add(item.id));
+                    setTtsVersion(v => v + 1);
                     wsService.send({ type: 'tts:generate', payload: { text: item.text, messageId: item.id } } as any);
                   }}
                 >
@@ -1585,7 +1581,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       <FlatList
         ref={listRef}
         data={reversedMessages}
-        extraData={`${activeChat}-tts${JSON.stringify(Object.keys(ttsAudio))}-load${[...ttsLoading].join(',')}-prog${JSON.stringify(ttsProgress)}`}
+        extraData={`${activeChat}-${ttsVersion}`}
         inverted
         keyExtractor={(item) => item.id}
         renderItem={renderMessage}

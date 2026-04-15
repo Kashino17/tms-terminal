@@ -36,7 +36,7 @@ export function VoiceMessagePlayer({ audioUrl, duration }: VoiceMessagePlayerPro
         if (cancelled) return;
         const { sound, status } = await Audio.Sound.createAsync(
           { uri: audioUrl },
-          { shouldPlay: false, progressUpdateIntervalMillis: 100 },
+          { shouldPlay: false, isLooping: false, progressUpdateIntervalMillis: 100 },
           onPlaybackStatusUpdate,
         );
         soundRef.current = sound;
