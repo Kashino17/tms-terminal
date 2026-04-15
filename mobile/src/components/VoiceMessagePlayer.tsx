@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  LayoutChangeEvent,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -12,7 +13,7 @@ import { colors, fonts } from '../theme';
 
 interface VoiceMessagePlayerProps {
   audioBase64: string;
-  duration: number; // seconds
+  duration: number;
 }
 
 function formatTime(secs: number): string {
@@ -24,34 +25,29 @@ function formatTime(secs: number): string {
 export function VoiceMessagePlayer({ audioBase64, duration }: VoiceMessagePlayerProps) {
   const soundRef = useRef<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [position, setPosition] = useState(0); // seconds
+  const [position, setPosition] = useState(0);
   const [totalDuration, setTotalDuration] = useState(duration || 0);
   const [isLoaded, setIsLoaded] = useState(false);
   const fileRef = useRef<string | null>(null);
+  const waveWidthRef = useRef(200);
 
-  // Write base64 to temp file and load sound
   useEffect(() => {
     let cancelled = false;
-
     const load = async () => {
       try {
-        // Write to temp file
         const filePath = FileSystem.cacheDirectory + `tts_${Date.now()}.wav`;
         await FileSystem.writeAsStringAsync(filePath, audioBase64, {
           encoding: FileSystem.EncodingType.Base64,
         });
         fileRef.current = filePath;
-
         if (cancelled) return;
 
-        // Load sound
         const { sound, status } = await Audio.Sound.createAsync(
           { uri: filePath },
-          { shouldPlay: false },
+          { shouldPlay: false, progressUpdateIntervalMillis: 100 },
           onPlaybackStatusUpdate,
         );
         soundRef.current = sound;
-
         if (status.isLoaded && status.durationMillis) {
           setTotalDuration(status.durationMillis / 1000);
         }
@@ -60,9 +56,7 @@ export function VoiceMessagePlayer({ audioBase64, duration }: VoiceMessagePlayer
         console.warn('[VoicePlayer] Load failed:', err);
       }
     };
-
     load();
-
     return () => {
       cancelled = true;
       soundRef.current?.unloadAsync().catch(() => {});
@@ -75,9 +69,7 @@ export function VoiceMessagePlayer({ audioBase64, duration }: VoiceMessagePlayer
   const onPlaybackStatusUpdate = useCallback((status: any) => {
     if (!status.isLoaded) return;
     setPosition((status.positionMillis ?? 0) / 1000);
-    if (status.durationMillis) {
-      setTotalDuration(status.durationMillis / 1000);
-    }
+    if (status.durationMillis) setTotalDuration(status.durationMillis / 1000);
     if (status.didJustFinish) {
       setIsPlaying(false);
       setPosition(0);
@@ -87,7 +79,6 @@ export function VoiceMessagePlayer({ audioBase64, duration }: VoiceMessagePlayer
 
   const togglePlay = useCallback(async () => {
     if (!soundRef.current || !isLoaded) return;
-
     if (isPlaying) {
       await soundRef.current.pauseAsync();
       setIsPlaying(false);
@@ -100,113 +91,193 @@ export function VoiceMessagePlayer({ audioBase64, duration }: VoiceMessagePlayer
 
   const seek = useCallback(async (ratio: number) => {
     if (!soundRef.current || !isLoaded || totalDuration <= 0) return;
-    const newPos = Math.max(0, Math.min(ratio, 1)) * totalDuration * 1000;
-    await soundRef.current.setPositionAsync(newPos);
-    setPosition(newPos / 1000);
+    const clamped = Math.max(0, Math.min(ratio, 1));
+    await soundRef.current.setPositionAsync(clamped * totalDuration * 1000);
+    setPosition(clamped * totalDuration);
   }, [isLoaded, totalDuration]);
+
+  const skipForward = useCallback(async () => {
+    if (!soundRef.current || !isLoaded) return;
+    const newPos = Math.min(position + 5, totalDuration);
+    await soundRef.current.setPositionAsync(newPos * 1000);
+    setPosition(newPos);
+  }, [isLoaded, position, totalDuration]);
+
+  const skipBack = useCallback(async () => {
+    if (!soundRef.current || !isLoaded) return;
+    const newPos = Math.max(position - 5, 0);
+    await soundRef.current.setPositionAsync(newPos * 1000);
+    setPosition(newPos);
+  }, [isLoaded, position]);
 
   const progress = totalDuration > 0 ? position / totalDuration : 0;
 
-  // Generate fake waveform bars (visual only, like WhatsApp)
-  const bars = 28;
+  const bars = 36;
   const waveform = useRef(
-    Array.from({ length: bars }, () => 0.15 + Math.random() * 0.85)
+    Array.from({ length: bars }, () => 0.12 + Math.random() * 0.88)
   ).current;
 
   return (
     <View style={s.container}>
-      {/* Play/Pause button */}
-      <TouchableOpacity style={s.playBtn} onPress={togglePlay} activeOpacity={0.7}>
-        <Feather
-          name={isPlaying ? 'pause' : 'play'}
-          size={18}
-          color="#F8FAFC"
-          style={!isPlaying ? { marginLeft: 2 } : undefined}
-        />
-      </TouchableOpacity>
+      {/* Top row: play + waveform + time */}
+      <View style={s.topRow}>
+        {/* Skip back 5s */}
+        <TouchableOpacity onPress={skipBack} hitSlop={8} style={s.skipBtn}>
+          <Feather name="rotate-ccw" size={13} color="#64748B" />
+        </TouchableOpacity>
 
-      {/* Waveform + progress */}
-      <TouchableOpacity
-        style={s.waveContainer}
-        activeOpacity={1}
-        onPress={(e) => {
-          const { locationX } = e.nativeEvent;
-          const width = 200; // approximate
-          seek(locationX / width);
-        }}
-      >
-        <View style={s.waveform}>
-          {waveform.map((h, i) => {
-            const barProgress = i / bars;
-            const isActive = barProgress <= progress;
-            return (
-              <View
-                key={i}
-                style={[
-                  s.bar,
-                  {
-                    height: h * 24,
-                    backgroundColor: isActive ? '#3B82F6' : 'rgba(148,163,184,0.25)',
-                  },
-                ]}
-              />
-            );
-          })}
+        {/* Play/Pause */}
+        <TouchableOpacity style={s.playBtn} onPress={togglePlay} activeOpacity={0.7}>
+          <Feather
+            name={isPlaying ? 'pause' : 'play'}
+            size={20}
+            color="#F8FAFC"
+            style={!isPlaying ? { marginLeft: 2 } : undefined}
+          />
+        </TouchableOpacity>
+
+        {/* Skip forward 5s */}
+        <TouchableOpacity onPress={skipForward} hitSlop={8} style={s.skipBtn}>
+          <Feather name="rotate-cw" size={13} color="#64748B" />
+        </TouchableOpacity>
+
+        {/* Waveform */}
+        <TouchableOpacity
+          style={s.waveContainer}
+          activeOpacity={1}
+          onLayout={(e: LayoutChangeEvent) => { waveWidthRef.current = e.nativeEvent.layout.width; }}
+          onPress={(e) => seek(e.nativeEvent.locationX / waveWidthRef.current)}
+        >
+          <View style={s.waveform}>
+            {waveform.map((h, i) => {
+              const barPos = i / bars;
+              const isActive = barPos <= progress;
+              return (
+                <View
+                  key={i}
+                  style={[
+                    s.bar,
+                    {
+                      height: h * 28,
+                      backgroundColor: isActive ? '#3B82F6' : 'rgba(148,163,184,0.2)',
+                    },
+                  ]}
+                />
+              );
+            })}
+          </View>
+          {/* Progress dot */}
+          <View style={[s.progressDot, { left: `${Math.min(progress * 100, 100)}%` }]} />
+        </TouchableOpacity>
+
+        {/* Time */}
+        <Text style={s.time}>
+          {isPlaying || position > 0 ? formatTime(position) : formatTime(totalDuration)}
+        </Text>
+      </View>
+
+      {/* Playback speed indicator */}
+      {isPlaying && (
+        <View style={s.playingIndicator}>
+          <View style={s.playingDot} />
+          <Text style={s.playingText}>Wird abgespielt</Text>
         </View>
-      </TouchableOpacity>
-
-      {/* Time */}
-      <Text style={s.time}>
-        {isPlaying || position > 0
-          ? formatTime(position)
-          : formatTime(totalDuration)}
-      </Text>
+      )}
     </View>
   );
 }
 
 const s = StyleSheet.create({
   container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(30,41,59,0.6)',
-    borderRadius: 20,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    gap: 8,
+    backgroundColor: 'rgba(30,41,59,0.5)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.12)',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
     marginTop: 6,
     marginBottom: 2,
   },
-  playBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#3B82F6',
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  skipBtn: {
+    width: 24,
+    height: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  playBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#3B82F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#3B82F6',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
   waveContainer: {
     flex: 1,
-    height: 28,
+    height: 32,
     justifyContent: 'center',
+    position: 'relative',
   },
   waveform: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 1.5,
-    height: 24,
+    gap: 1.2,
+    height: 28,
   },
   bar: {
     flex: 1,
     borderRadius: 1.5,
     minWidth: 2,
   },
+  progressDot: {
+    position: 'absolute',
+    top: '50%',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#3B82F6',
+    marginTop: -5,
+    marginLeft: -5,
+    shadowColor: '#3B82F6',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 3,
+  },
   time: {
     fontSize: 11,
     fontFamily: fonts.mono,
     color: '#94A3B8',
     fontVariant: ['tabular-nums'],
-    width: 36,
+    width: 34,
     textAlign: 'right',
+  },
+  playingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 6,
+    paddingLeft: 54,
+  },
+  playingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#3B82F6',
+  },
+  playingText: {
+    fontSize: 10,
+    color: '#64748B',
+    fontWeight: '500',
   },
 });
