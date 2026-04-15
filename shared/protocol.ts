@@ -239,6 +239,17 @@ export interface AudioErrorMessage {
   payload: { message: string };
 }
 
+// ── TTS (Text-to-Speech) ────────────────────────────────
+export interface TTSResultMessage {
+  type: 'tts:result';
+  payload: { messageId: string; audio: string; /* base64 WAV */ duration: number };
+}
+
+export interface TTSErrorMessage {
+  type: 'tts:error';
+  payload: { messageId: string; message: string };
+}
+
 // ── System snapshot response (Server → Client) ──────────────────
 export interface SystemSnapshotResponseMessage {
   type: 'system:snapshot';

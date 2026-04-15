@@ -12,6 +12,7 @@ import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 import { autopilotService } from '../autopilot/autopilot.service';
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
+import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
 import { ConnectionRateLimiter } from './rate-limiter';
@@ -677,6 +678,31 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         const message = err instanceof Error ? err.message : 'Transkription fehlgeschlagen';
         logger.warn(`[whisper] Transcription failed: ${message}`);
         send(ws, { type: 'audio:error', sessionId, payload: { message } } as any);
+      });
+      return;
+    }
+
+    // ── TTS: Text-to-Speech synthesis ─────────────────────────────
+    if (msgType === 'tts:generate') {
+      const text = (msg as any).payload?.text;
+      const messageId = (msg as any).payload?.messageId ?? 'unknown';
+
+      if (!text || typeof text !== 'string') {
+        send(ws, { type: 'tts:error', payload: { messageId, message: 'Kein Text angegeben' } } as any);
+        return;
+      }
+
+      if (!ttsAvailable()) {
+        send(ws, { type: 'tts:error', payload: { messageId, message: 'TTS nicht verfügbar. Installiere: pip install mlx-audio' } } as any);
+        return;
+      }
+
+      ttsSynthesize(text).then(({ audioBase64, durationSecs }) => {
+        send(ws, { type: 'tts:result', payload: { messageId, audio: audioBase64, duration: durationSecs } } as any);
+      }).catch((err) => {
+        const message = err instanceof Error ? err.message : 'TTS fehlgeschlagen';
+        logger.warn(`[tts] Synthesis failed: ${message}`);
+        send(ws, { type: 'tts:error', payload: { messageId, message } } as any);
       });
       return;
     }
