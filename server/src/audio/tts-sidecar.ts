@@ -9,9 +9,9 @@ interface PendingRequest {
   onProgress?: (info: { chunk: number; total: number }) => void;
 }
 
-// Timeout: 15s base + 5s per 100 chars (generous for MLX on Apple Silicon)
-const BASE_TIMEOUT_MS = 15_000;
-const TIMEOUT_PER_100_CHARS = 5_000;
+// Timeout: 30s base + 10s per 100 chars (generous for chunked generation)
+const BASE_TIMEOUT_MS = 30_000;
+const TIMEOUT_PER_100_CHARS = 10_000;
 
 function calcTimeout(textLength: number): number {
   return Math.max(BASE_TIMEOUT_MS, BASE_TIMEOUT_MS + Math.ceil(textLength / 100) * TIMEOUT_PER_100_CHARS);

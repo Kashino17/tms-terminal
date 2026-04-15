@@ -699,12 +699,15 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         return;
       }
 
+      logger.info(`[tts] Generating for message ${messageId} (${text.length} chars)`);
       ttsSynthesize(text).then(({ audioBase64, durationSecs }) => {
-        send(ws, { type: 'tts:result', payload: { messageId, audio: audioBase64, duration: durationSecs } } as any);
+        logger.info(`[tts] Done: ${messageId} — ${durationSecs}s audio, ${(audioBase64.length / 1024).toFixed(0)} KB base64`);
+        // Use sendManager (not send) so it gets buffered if client disconnected
+        sendManager({ type: 'tts:result', payload: { messageId, audio: audioBase64, duration: durationSecs } } as any);
       }).catch((err) => {
         const message = err instanceof Error ? err.message : 'TTS fehlgeschlagen';
         logger.warn(`[tts] Synthesis failed: ${message}`);
-        send(ws, { type: 'tts:error', payload: { messageId, message } } as any);
+        sendManager({ type: 'tts:error', payload: { messageId, message } } as any);
       });
       return;
     }
