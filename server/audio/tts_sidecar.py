@@ -84,8 +84,9 @@ def main():
 
         tmp_dir = tempfile.mkdtemp(prefix="tts_")
         try:
+            # Filler prefix gives the model a "runway" to match the voice
             generate_audio(
-                text=text,
+                text="... " + text,
                 model=MODEL,
                 ref_audio=ref_audio,
                 ref_text=ref_text[:200] if ref_text else "",
