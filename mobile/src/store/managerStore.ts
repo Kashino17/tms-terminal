@@ -151,6 +151,9 @@ interface ManagerState {
   setOnboarded: (done: boolean) => void;
   setActiveChat: (id: string) => void;
   setDelegatedTasks: (tasks: Array<{ id: string; description: string; sessionId: string; sessionLabel: string; status: string; createdAt: number; updatedAt: number; steps?: Array<{ label: string; status: string }> }>) => void;
+  /** Latest TTS event (result/progress/error) — consumed by ManagerChatScreen */
+  ttsEvent: { type: string; payload: any } | null;
+  setTtsEvent: (event: { type: string; payload: any }) => void;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -345,6 +348,8 @@ export const useManagerStore = create<ManagerState>()(
 
       setActiveChat: (id) => set({ activeChat: id }),
       setDelegatedTasks: (tasks) => set({ delegatedTasks: tasks }),
+      ttsEvent: null,
+      setTtsEvent: (event) => set({ ttsEvent: event }),
     }),
     {
       name: 'tms-manager',

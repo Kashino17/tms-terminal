@@ -526,7 +526,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     thinking, streamingText, streamTokenStats, lastPhases, requestStartTime,
     setThinking,
     sessionMessages, activeChat, setActiveChat,
-    delegatedTasks,
+    delegatedTasks, ttsEvent,
   } = useManagerStore();
 
   const tabs = useTerminalStore((s) => s.tabs[serverId] ?? []);
@@ -572,6 +572,23 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     return () => clearInterval(timer);
   }, [delegatedTasks.length]);
 
+  // Process TTS events from the store (set by TerminalScreen persistent listener)
+  useEffect(() => {
+    if (!ttsEvent) return;
+    const { type, payload } = ttsEvent;
+    if (type === 'tts:result' && payload?.messageId && payload?.filename) {
+      const audioUrl = `http://${serverHost}:${serverPort}/generated-tts/${encodeURIComponent(payload.filename)}?token=${serverToken}`;
+      setTtsAudio(prev => ({ ...prev, [payload.messageId]: { url: audioUrl, duration: payload.duration ?? 0 } }));
+      setTtsLoading(prev => { const n = new Set(prev); n.delete(payload.messageId); return n; });
+      setTtsProgress(prev => { const n = { ...prev }; delete n[payload.messageId]; return n; });
+    } else if (type === 'tts:progress' && payload?.messageId) {
+      setTtsProgress(prev => ({ ...prev, [payload.messageId]: { chunk: payload.chunk, total: payload.total } }));
+    } else if (type === 'tts:error' && payload?.messageId) {
+      setTtsLoading(prev => { const n = new Set(prev); n.delete(payload.messageId); return n; });
+      setTtsProgress(prev => { const n = { ...prev }; delete n[payload.messageId]; return n; });
+    }
+  }, [ttsEvent]);
+
   // Forward AI answer to presentation drill-down overlay
   useEffect(() => {
     if (!activePres || !drillDownLoading) return;
@@ -614,25 +631,8 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       }
     };
 
-    // TTS result/progress handler
-    const ttsHandler = (data: unknown) => {
-      const msg = data as { type: string; payload?: any };
-      if (msg.type === 'tts:result' && msg.payload?.messageId && msg.payload?.filename) {
-        const audioUrl = `http://${serverHost}:${serverPort}/generated-tts/${encodeURIComponent(msg.payload.filename)}?token=${serverToken}`;
-        setTtsAudio(prev => ({ ...prev, [msg.payload.messageId]: { url: audioUrl, duration: msg.payload.duration ?? 0 } }));
-        setTtsLoading(prev => { const n = new Set(prev); n.delete(msg.payload.messageId); return n; });
-        setTtsProgress(prev => { const n = { ...prev }; delete n[msg.payload.messageId]; return n; });
-      } else if (msg.type === 'tts:progress' && msg.payload?.messageId) {
-        setTtsProgress(prev => ({ ...prev, [msg.payload.messageId]: { chunk: msg.payload.chunk, total: msg.payload.total } }));
-      } else if (msg.type === 'tts:error' && msg.payload?.messageId) {
-        setTtsLoading(prev => { const n = new Set(prev); n.delete(msg.payload.messageId); return n; });
-        setTtsProgress(prev => { const n = { ...prev }; delete n[msg.payload.messageId]; return n; });
-      }
-    };
-
     const unsub1 = wsService.addMessageListener(handler);
-    const unsub2 = wsService.addMessageListener(ttsHandler);
-    return () => { unsub1(); unsub2(); };
+    return unsub1;
   }, [wsService]);
 
   // ── Cleanup on unmount (audio timer + recording) ─────────────────────────

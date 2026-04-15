@@ -475,6 +475,12 @@ export function TerminalScreen({ navigation, route }: Props) {
             store.setDelegatedTasks(m.payload.tasks);
           }
           break;
+        // TTS events — store for ManagerChatScreen to pick up
+        case 'tts:result':
+        case 'tts:progress':
+        case 'tts:error':
+          store.setTtsEvent(m as any);
+          break;
       }
     });
 
