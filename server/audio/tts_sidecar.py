@@ -21,10 +21,11 @@ import wave
 # Voice reference file — user provides a 15-30s WAV with their desired voice
 VOICE_REF_PATH = os.path.expanduser("~/.tms-terminal/voice.wav")
 
-# F5-TTS models to try (in order)
+# TTS models to try (in order) — all MLX-optimized with voice cloning support
 MODELS = [
-    "hvoss-techfak/F5-TTS-German",
-    "lucasnewman/f5-tts-mlx",
+    "mlx-community/chatterbox-turbo-fp16",   # Fast, voice cloning, multilingual
+    "mlx-community/Chatterbox-TTS-fp16",     # Full quality fallback
+    "mlx-community/chatterbox-turbo-4bit",   # Quantized, even faster
 ]
 
 # Max text per synthesis call (characters)
