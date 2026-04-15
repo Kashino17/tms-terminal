@@ -700,7 +700,11 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       }
 
       logger.info(`[tts] Generating for message ${messageId} (${text.length} chars)`);
-      ttsSynthesize(text).then(({ audioBase64, durationSecs }) => {
+      ttsSynthesize(text, {
+        onProgress: (info) => {
+          sendManager({ type: 'tts:progress', payload: { messageId, chunk: info.chunk, total: info.total } } as any);
+        },
+      }).then(({ audioBase64, durationSecs }) => {
         logger.info(`[tts] Done: ${messageId} — ${durationSecs}s audio, ${(audioBase64.length / 1024).toFixed(0)} KB base64`);
         // Use sendManager (not send) so it gets buffered if client disconnected
         sendManager({ type: 'tts:result', payload: { messageId, audio: audioBase64, duration: durationSecs } } as any);

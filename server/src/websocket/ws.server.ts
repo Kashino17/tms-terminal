@@ -10,7 +10,7 @@ const MAX_MISSED_PONGS = 3; // terminate after 3 missed pongs (45s window — to
 export function createWebSocketServer(server: http.Server): WebSocketServer {
   const wss = new WebSocketServer({
     noServer: true,
-    maxPayload: 1_048_576, // 1 MB
+    maxPayload: 10_485_760, // 10 MB (TTS audio can be 3-5 MB base64)
     perMessageDeflate: {
       zlibDeflateOptions: { level: 1 }, // fastest compression, still good ratio for text
       threshold: 128,                   // only compress messages > 128 bytes

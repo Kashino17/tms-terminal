@@ -553,6 +553,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   // TTS audio cache: messageId → { audioBase64, duration }
   const [ttsAudio, setTtsAudio] = useState<Record<string, { audio: string; duration: number }>>({});
   const [ttsLoading, setTtsLoading] = useState<Set<string>>(new Set());
+  const [ttsProgress, setTtsProgress] = useState<Record<string, { chunk: number; total: number }>>({});
   const [wizard, setWizard] = useState<{ flow: WizardFlow; step: number; answers: string[] } | null>(null);
   const [connQuality, setConnQuality] = useState<string>('good');
   const [searchMode, setSearchMode] = useState(false);
@@ -613,14 +614,18 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       }
     };
 
-    // TTS result handler
+    // TTS result/progress handler
     const ttsHandler = (data: unknown) => {
       const msg = data as { type: string; payload?: any };
       if (msg.type === 'tts:result' && msg.payload?.messageId && msg.payload?.audio) {
         setTtsAudio(prev => ({ ...prev, [msg.payload.messageId]: { audio: msg.payload.audio, duration: msg.payload.duration ?? 0 } }));
         setTtsLoading(prev => { const n = new Set(prev); n.delete(msg.payload.messageId); return n; });
+        setTtsProgress(prev => { const n = { ...prev }; delete n[msg.payload.messageId]; return n; });
+      } else if (msg.type === 'tts:progress' && msg.payload?.messageId) {
+        setTtsProgress(prev => ({ ...prev, [msg.payload.messageId]: { chunk: msg.payload.chunk, total: msg.payload.total } }));
       } else if (msg.type === 'tts:error' && msg.payload?.messageId) {
         setTtsLoading(prev => { const n = new Set(prev); n.delete(msg.payload.messageId); return n; });
+        setTtsProgress(prev => { const n = { ...prev }; delete n[msg.payload.messageId]; return n; });
       }
     };
 
@@ -1115,21 +1120,36 @@ export function ManagerChatScreen({ navigation, route }: Props) {
               />
             )}
 
-            {/* TTS Speaker Button — request voice for this message */}
+            {/* TTS: Loading progress ring OR Vorlesen button */}
             {item.role === 'assistant' && !ttsAudio[item.id] && item.text.length > 5 && (
-              <TouchableOpacity
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, paddingVertical: 4, opacity: ttsLoading.has(item.id) ? 0.5 : 1 }}
-                disabled={ttsLoading.has(item.id)}
-                onPress={() => {
-                  setTtsLoading(prev => new Set(prev).add(item.id));
-                  wsService.send({ type: 'tts:generate', payload: { text: item.text, messageId: item.id } } as any);
-                }}
-              >
-                <Feather name={ttsLoading.has(item.id) ? 'loader' : 'volume-2'} size={13} color="#64748B" />
-                <Text style={{ fontSize: 11, color: '#64748B' }}>
-                  {ttsLoading.has(item.id) ? 'Wird vertont...' : 'Vorlesen'}
-                </Text>
-              </TouchableOpacity>
+              ttsLoading.has(item.id) ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: 'rgba(59,130,246,0.06)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(59,130,246,0.1)' }}>
+                  {/* Progress ring */}
+                  <View style={{ width: 32, height: 32, borderRadius: 16, borderWidth: 2.5, borderColor: 'rgba(59,130,246,0.15)', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
+                    <View style={{ position: 'absolute', width: 32, height: 32, borderRadius: 16, borderWidth: 2.5, borderColor: 'transparent', borderTopColor: '#3B82F6', borderRightColor: ttsProgress[item.id] && ttsProgress[item.id].chunk / ttsProgress[item.id].total > 0.5 ? '#3B82F6' : 'transparent' }} />
+                    <Text style={{ fontSize: 8, fontWeight: '700', color: '#3B82F6', fontVariant: ['tabular-nums'] as any }}>
+                      {ttsProgress[item.id] ? `${Math.round((ttsProgress[item.id].chunk / ttsProgress[item.id].total) * 100)}%` : '...'}
+                    </Text>
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 11, color: '#60A5FA', fontWeight: '600' }}>Stimme wird generiert</Text>
+                    <Text style={{ fontSize: 10, color: '#475569' }}>
+                      {ttsProgress[item.id] ? `Chunk ${ttsProgress[item.id].chunk}/${ttsProgress[item.id].total}` : 'Wird vorbereitet...'}
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4, paddingVertical: 5, paddingHorizontal: 8, borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.06)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.1)' }}
+                  onPress={() => {
+                    setTtsLoading(prev => new Set(prev).add(item.id));
+                    wsService.send({ type: 'tts:generate', payload: { text: item.text, messageId: item.id } } as any);
+                  }}
+                >
+                  <Feather name="volume-2" size={13} color="#3B82F6" />
+                  <Text style={{ fontSize: 11, color: '#3B82F6', fontWeight: '500' }}>Vorlesen</Text>
+                </TouchableOpacity>
+              )
             )}
 
             {/* User-uploaded attachments */}
