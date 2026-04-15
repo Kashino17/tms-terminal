@@ -62,7 +62,8 @@ export function VoiceMessagePlayer({ audioUrl, duration }: VoiceMessagePlayerPro
     if (status.didJustFinish) {
       setIsPlaying(false);
       setPosition(0);
-      soundRef.current?.setPositionAsync(0).catch(() => {});
+      // Stop playback completely — pause + reset position
+      soundRef.current?.stopAsync().catch(() => {});
     }
   }, []);
 
