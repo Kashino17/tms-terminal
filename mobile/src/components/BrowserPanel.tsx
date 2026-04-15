@@ -18,6 +18,10 @@ import { useResponsive } from '../hooks/useResponsive';
 import { CredentialOverlay } from './CredentialOverlay';
 import { FORM_DETECT_JS } from '../store/credentialStore';
 import { useCookieIsolation } from '../hooks/useCookieIsolation';
+import { useChromeRemoteStore } from '../store/chromeRemoteStore';
+import { ChromeRemoteView } from './ChromeRemoteView';
+import { ChromeConnectScreen } from './ChromeConnectScreen';
+import { getConnection } from '../services/websocket.service';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -276,6 +280,11 @@ const pd = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.borderStrong },
 });
 
+// ── Chrome helpers ───────────────────────────────────────────────────────────
+function getDomainFromUrl(url: string): string {
+  try { return new URL(url).hostname.replace('www.', ''); } catch { return url; }
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 interface Props {
   serverHost: string;
@@ -295,7 +304,7 @@ interface Props {
 
 export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth = 375, isFullScreen = false, onBrowserOpenChange, onBackToTerminal, openDirect = false }: Props) {
   const { rf, rs, ri } = useResponsive();
-  const { height: windowHeight } = useWindowDimensions();
+  const { width: screenW, height: windowHeight } = useWindowDimensions();
   const CONSOLE_PEEK = useMemo(() => Math.round(windowHeight * 0.20), [windowHeight]); // 1/5 of screen
   const CONSOLE_HALF = useMemo(() => Math.round(windowHeight * 0.35), [windowHeight]);
   const CONSOLE_FULL = useMemo(() => Math.round(windowHeight * 0.7), [windowHeight]);
@@ -320,6 +329,12 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
 
   const pfStore = usePortForwardingStore();
   const pfEntries = usePortForwardingStore((s) => s.getEntries(serverId));
+
+  // ── Chrome Remote state ──
+  const chromeStatus = useChromeRemoteStore(s => s.status[serverId] ?? 'disconnected');
+  const chromeTabs = useChromeRemoteStore(s => s.tabs[serverId] ?? []);
+  const chromeActiveTarget = useChromeRemoteStore(s => s.activeTargetId[serverId]);
+  const [chromeMode, setChromeMode] = useState(false); // true when viewing a remote chrome tab
 
   // ── Panel state ──
   const [section, setSection] = useState<PanelSection>('browser');
@@ -381,6 +396,43 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
   useEffect(() => { load(browserKey); }, [browserKey]);
   useEffect(() => { pfStore.load(serverId); }, [serverId]);
 
+  // ── Chrome Remote: listen for server messages ──
+  useEffect(() => {
+    const store = useChromeRemoteStore.getState();
+    const ws = getConnection(serverId);
+    const unsub = ws.addMessageListener((msg: any) => {
+      switch (msg.type) {
+        case 'chrome:status':
+          store.setStatus(serverId, msg.payload.state, msg.payload.reason);
+          break;
+        case 'chrome:frame':
+          store.setFrame(serverId, msg.payload.data, msg.payload.width, msg.payload.height);
+          store.setLatency(serverId, Date.now() - msg.payload.timestamp);
+          break;
+        case 'chrome:tabs':
+          store.setTabs(serverId, msg.payload.tabs, msg.payload.activeTargetId);
+          break;
+        case 'chrome:tab:created':
+          store.addTab(serverId, msg.payload);
+          break;
+        case 'chrome:tab:removed':
+          store.removeTab(serverId, msg.payload.targetId);
+          break;
+        case 'chrome:tab:updated':
+          store.updateTab(serverId, msg.payload.targetId, msg.payload);
+          break;
+      }
+    });
+    return unsub;
+  }, [serverId]);
+
+  // ── Chrome Remote: send resize on viewport change ──
+  useEffect(() => {
+    if (chromeStatus === 'connected') {
+      getConnection(serverId).send({ type: 'chrome:resize', payload: { width: screenW, height: windowHeight } });
+    }
+  }, [screenW, windowHeight, chromeStatus, serverId]);
+
   const activePath = activeTab?.path ?? '';
   const pathSuffix = activePath ? (activePath.startsWith('/') ? activePath : '/' + activePath) : '';
   const configuredUrl = activeTab ? `http://${serverHost}:${activeTab.port}${pathSuffix}` : '';
@@ -429,10 +481,11 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
   }, [browserKey, tabs.length, removeTab]);
 
   const handleSelectTab = useCallback((tabId: string) => {
-    if (tabId === activeTab?.id) return;
+    if (tabId === activeTab?.id && !chromeMode) return;
     Haptics.selectionAsync();
+    setChromeMode(false);
     setActive(browserKey, tabId);
-  }, [browserKey, activeTab?.id, setActive]);
+  }, [browserKey, activeTab?.id, setActive, chromeMode]);
 
   const handlePortChange = useCallback((port: string) => {
     if (!activeTab) return;
@@ -671,6 +724,52 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
     pfStore.removeEntry(serverId, id);
   }, [serverId]);
 
+  // ── Chrome Remote callbacks ──
+  const handleChromeConnect = useCallback(() => {
+    const ws = getConnection(serverId);
+    ws.send({ type: 'chrome:connect' });
+    setChromeMode(true);
+  }, [serverId]);
+
+  const handleChromeInput = useCallback((action: string, payload: Record<string, any>) => {
+    const ws = getConnection(serverId);
+    ws.send({ type: 'chrome:input', payload: { action, ...payload } });
+  }, [serverId]);
+
+  const handleChromeTabSwitch = useCallback((targetId: string) => {
+    const ws = getConnection(serverId);
+    ws.send({ type: 'chrome:tab:switch', payload: { targetId } });
+    useChromeRemoteStore.getState().setActiveTarget(serverId, targetId);
+    setChromeMode(true);
+  }, [serverId]);
+
+  const handleChromeTabOpen = useCallback((url?: string) => {
+    const ws = getConnection(serverId);
+    ws.send({ type: 'chrome:tab:open', payload: { url } });
+  }, [serverId]);
+
+  const handleChromeTabClose = useCallback((targetId: string) => {
+    const ws = getConnection(serverId);
+    ws.send({ type: 'chrome:tab:close', payload: { targetId } });
+  }, [serverId]);
+
+  const handleChromeNavigate = useCallback((url: string) => {
+    const ws = getConnection(serverId);
+    ws.send({ type: 'chrome:navigate', payload: { url } });
+  }, [serverId]);
+
+  const handleChromeBack = useCallback(() => {
+    getConnection(serverId).send({ type: 'chrome:back' });
+  }, [serverId]);
+
+  const handleChromeForward = useCallback(() => {
+    getConnection(serverId).send({ type: 'chrome:forward' });
+  }, [serverId]);
+
+  const handleChromeReload = useCallback(() => {
+    getConnection(serverId).send({ type: 'chrome:reload' });
+  }, [serverId]);
+
   // ══════════════════════════════════════════════════════════════════════════════
   // ── RENDER ──────────────────────────────────────────────────────────────────
   // ══════════════════════════════════════════════════════════════════════════════
@@ -760,6 +859,22 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
                   </TouchableOpacity>
                 );
               })}
+              {/* Chrome Remote tabs */}
+              {chromeTabs.map(tab => (
+                <TouchableOpacity
+                  key={`chrome-${tab.targetId}`}
+                  style={[
+                    tb.tab,
+                    chromeMode && chromeActiveTarget === tab.targetId && { borderBottomColor: '#4fc3f7', borderBottomWidth: 2 },
+                  ]}
+                  onPress={() => handleChromeTabSwitch(tab.targetId)}
+                  onLongPress={() => handleChromeTabClose(tab.targetId)}
+                >
+                  <Text style={{ color: '#4fc3f7', fontSize: rf(11) }}>
+                    {'\u{1F5A5}\uFE0F'} {getDomainFromUrl(tab.url)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
               <TouchableOpacity
                 style={tb.addBtn}
                 onPress={handleAddTab}
@@ -767,6 +882,18 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
                 accessibilityLabel="New tab"
               >
                 <Feather name="plus" size={14} color={colors.info} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  if (chromeStatus === 'connected') {
+                    handleChromeTabOpen();
+                  } else {
+                    handleChromeConnect();
+                  }
+                }}
+                style={{ paddingHorizontal: rs(8), paddingVertical: rs(6), justifyContent: 'center' }}
+              >
+                <Text style={{ color: '#4fc3f7', fontSize: rf(11) }}>{'\u{1F5A5}\uFE0F'}+</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -1157,8 +1284,36 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
                   </TouchableOpacity>
                 );
               })}
+              {/* Chrome Remote tabs */}
+              {chromeTabs.map(tab => (
+                <TouchableOpacity
+                  key={`chrome-${tab.targetId}`}
+                  style={[
+                    m.tab,
+                    chromeMode && chromeActiveTarget === tab.targetId && { borderBottomColor: '#4fc3f7', borderBottomWidth: 2 },
+                  ]}
+                  onPress={() => handleChromeTabSwitch(tab.targetId)}
+                  onLongPress={() => handleChromeTabClose(tab.targetId)}
+                >
+                  <Text style={{ color: '#4fc3f7', fontSize: rf(11) }}>
+                    {'\u{1F5A5}\uFE0F'} {getDomainFromUrl(tab.url)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
               <TouchableOpacity style={m.tabAddBtn} onPress={handleAddTab} activeOpacity={0.7}>
                 <Feather name="plus" size={13} color={colors.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  if (chromeStatus === 'connected') {
+                    handleChromeTabOpen();
+                  } else {
+                    handleChromeConnect();
+                  }
+                }}
+                style={{ paddingHorizontal: rs(8), paddingVertical: rs(6), justifyContent: 'center' }}
+              >
+                <Text style={{ color: '#4fc3f7', fontSize: rf(11) }}>{'\u{1F5A5}\uFE0F'}+</Text>
               </TouchableOpacity>
             </ScrollView>
 
@@ -1260,7 +1415,16 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
 
           {/* WebView + DevTools — desktop: stacked, mobile: side-by-side */}
           <View style={{ flex: 1, flexDirection: isMobileView ? 'row' : 'column' }}>
-              {/* WebView pane */}
+              {/* WebView pane — or Chrome Remote view when in chrome mode */}
+              {chromeMode && chromeStatus === 'connected' ? (
+                <View style={isMobileView ? mv.webviewPane : { flex: 1 }}>
+                  <ChromeRemoteView serverId={serverId} onInput={handleChromeInput} />
+                </View>
+              ) : chromeMode && chromeStatus !== 'connected' ? (
+                <View style={isMobileView ? mv.webviewPane : { flex: 1 }}>
+                  <ChromeConnectScreen serverId={serverId} onConnect={handleChromeConnect} />
+                </View>
+              ) : (
               <View style={isMobileView ? mv.webviewPane : { flex: 1 }}>
                 <WebView
                   key={`${activeTab?.id}-${webviewKey}`}
@@ -1292,6 +1456,7 @@ export function BrowserPanel({ serverHost, serverId, terminalTabId, screenWidth 
                   </View>
                 )}
               </View>
+              )}
 
             {/* DevTools panel */}
             <View style={isMobileView
