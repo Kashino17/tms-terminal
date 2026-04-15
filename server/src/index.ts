@@ -114,7 +114,7 @@ function main(): void {
       if (!token || !validateToken(token)) { res.writeHead(401); res.end('Unauthorized'); return; }
       const filename = decodeURIComponent(req.url.replace('/generated-tts/', '').split('?')[0]);
       if (filename.includes('..') || filename.includes('/')) { res.writeHead(400); res.end('Bad request'); return; }
-      const filePath = path.join(__dirname, '..', 'generated-tts', filename);
+      const filePath = path.join(__dirname, '..', '..', '..', 'generated-tts', filename);
       if (!fs.existsSync(filePath)) { res.writeHead(404); res.end('Not found'); return; }
       res.writeHead(200, { 'Content-Type': 'audio/wav', 'Cache-Control': 'public, max-age=3600' });
       fs.createReadStream(filePath).pipe(res);

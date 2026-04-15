@@ -581,10 +581,15 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     if (type === 'tts:result' && payload?.messageId && payload?.filename) {
       const audioUrl = `http://${serverHost}:${serverPort}/generated-tts/${encodeURIComponent(payload.filename)}?token=${serverToken}`;
       console.log('[TTS] Setting audio for messageId:', payload.messageId, 'url:', audioUrl.slice(0, 80));
-      // Log all message IDs to compare
-      const allIds = useManagerStore.getState().messages.map((m: any) => m.id);
-      console.log('[TTS] Available message IDs:', JSON.stringify(allIds.slice(-5)));
-      setTtsAudio(prev => ({ ...prev, [payload.messageId]: { url: audioUrl, duration: payload.duration ?? 0 } }));
+      // Log the message to check its role and visibility
+      const targetMsg = useManagerStore.getState().messages.find((m: any) => m.id === payload.messageId);
+      console.log('[TTS] Target message role:', targetMsg?.role, 'text:', targetMsg?.text?.slice(0, 40));
+      console.log('[TTS] ttsAudio keys BEFORE:', JSON.stringify(Object.keys(ttsAudio)));
+      setTtsAudio(prev => {
+        const next = { ...prev, [payload.messageId]: { url: audioUrl, duration: payload.duration ?? 0 } };
+        console.log('[TTS] ttsAudio keys AFTER:', JSON.stringify(Object.keys(next)));
+        return next;
+      });
       setTtsLoading(prev => { const n = new Set(prev); n.delete(payload.messageId); return n; });
       setTtsProgress(prev => { const n = { ...prev }; delete n[payload.messageId]; return n; });
     } else if (type === 'tts:progress' && payload?.messageId) {
