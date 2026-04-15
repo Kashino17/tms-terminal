@@ -977,6 +977,25 @@ export class ManagerService {
         if (cleaned > 0) logger.info(`Manager: cleaned up ${cleaned} old presentation(s)`);
       }
     } catch {}
+
+    // Cleanup old TTS audio (>7 days)
+    try {
+      const ttsDir = path.join(__dirname, '..', '..', 'generated-tts');
+      if (fs.existsSync(ttsDir)) {
+        const maxAge = 7 * 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        let cleaned = 0;
+        for (const file of fs.readdirSync(ttsDir)) {
+          const filePath = path.join(ttsDir, file);
+          const stat = fs.statSync(filePath);
+          if (now - stat.mtimeMs > maxAge) {
+            fs.unlinkSync(filePath);
+            cleaned++;
+          }
+        }
+        if (cleaned > 0) logger.info(`Manager: cleaned up ${cleaned} old TTS audio(s)`);
+      }
+    } catch {}
   }
 
   stop(): void {
