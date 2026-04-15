@@ -1264,7 +1264,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         </Pressable>
       </>
     );
-  }, [handleMessageLongPress, filteredMessages, reversedMessages, searchQuery]);
+  }, [handleMessageLongPress, filteredMessages, reversedMessages, searchQuery, ttsAudio, ttsLoading, ttsProgress]);
 
   // ── Active Provider Label ─────────────────────────────────────────────────
 
