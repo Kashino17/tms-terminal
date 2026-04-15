@@ -110,6 +110,67 @@ export interface ActiveTabMessage {
   payload: { tabId: string; sessionId?: string };
 }
 
+// ── Chrome Remote Control (Client → Server) ─────────────────────
+export interface ChromeConnectMessage {
+  type: 'chrome:connect';
+}
+export interface ChromeDisconnectMessage {
+  type: 'chrome:disconnect';
+}
+export interface ChromeInputMessage {
+  type: 'chrome:input';
+  payload: {
+    action: 'click' | 'dblclick' | 'scroll' | 'key';
+    x?: number;
+    y?: number;
+    deltaX?: number;
+    deltaY?: number;
+    key?: string;
+    code?: string;
+    text?: string;
+    modifiers?: number;
+  };
+}
+export interface ChromeNavigateMessage {
+  type: 'chrome:navigate';
+  payload: { url: string };
+}
+export interface ChromeTabSwitchMessage {
+  type: 'chrome:tab:switch';
+  payload: { targetId: string };
+}
+export interface ChromeTabOpenMessage {
+  type: 'chrome:tab:open';
+  payload: { url?: string };
+}
+export interface ChromeTabCloseMessage {
+  type: 'chrome:tab:close';
+  payload: { targetId: string };
+}
+export interface ChromeQualityMessage {
+  type: 'chrome:quality';
+  payload: { quality: number; maxFps: number };
+}
+export interface ChromePauseMessage {
+  type: 'chrome:pause';
+}
+export interface ChromeResumeMessage {
+  type: 'chrome:resume';
+}
+export interface ChromeResizeMessage {
+  type: 'chrome:resize';
+  payload: { width: number; height: number };
+}
+export interface ChromeGoBackMessage {
+  type: 'chrome:back';
+}
+export interface ChromeGoForwardMessage {
+  type: 'chrome:forward';
+}
+export interface ChromeReloadMessage {
+  type: 'chrome:reload';
+}
+
 export type ClientMessage =
   | TerminalCreateMessage
   | TerminalInputMessage
@@ -137,7 +198,21 @@ export type ClientMessage =
   | ManagerMemoryWriteMessage
   | FileUploadMessage
   | AppStateMessage
-  | ActiveTabMessage;
+  | ActiveTabMessage
+  | ChromeConnectMessage
+  | ChromeDisconnectMessage
+  | ChromeInputMessage
+  | ChromeNavigateMessage
+  | ChromeTabSwitchMessage
+  | ChromeTabOpenMessage
+  | ChromeTabCloseMessage
+  | ChromeQualityMessage
+  | ChromePauseMessage
+  | ChromeResumeMessage
+  | ChromeResizeMessage
+  | ChromeGoBackMessage
+  | ChromeGoForwardMessage
+  | ChromeReloadMessage;
 
 // ── Server → Client ──────────────────────────────────────────────
 
@@ -338,6 +413,44 @@ export interface ManagerStreamEndMessage {
   };
 }
 
+// ── Chrome Remote Control (Server → Client) ─────────────────────
+export interface ChromeStatusMessage {
+  type: 'chrome:status';
+  payload: {
+    state: 'connected' | 'disconnected' | 'not-found' | 'busy' | 'connecting';
+    reason?: string;
+    activeClient?: string;
+  };
+}
+export interface ChromeFrameMessage {
+  type: 'chrome:frame';
+  payload: {
+    data: string;
+    width: number;
+    height: number;
+    timestamp: number;
+  };
+}
+export interface ChromeTabsMessage {
+  type: 'chrome:tabs';
+  payload: {
+    tabs: Array<{ targetId: string; title: string; url: string; faviconUrl?: string }>;
+    activeTargetId?: string;
+  };
+}
+export interface ChromeTabCreatedMessage {
+  type: 'chrome:tab:created';
+  payload: { targetId: string; title: string; url: string };
+}
+export interface ChromeTabRemovedMessage {
+  type: 'chrome:tab:removed';
+  payload: { targetId: string };
+}
+export interface ChromeTabUpdatedMessage {
+  type: 'chrome:tab:updated';
+  payload: { targetId: string; title?: string; url?: string };
+}
+
 export type ServerMessage =
   | TerminalCreatedMessage
   | TerminalOutputMessage
@@ -363,4 +476,10 @@ export type ServerMessage =
   | ManagerMemoryDataMessage
   | ManagerThinkingMessage
   | ManagerStreamChunkMessage
-  | ManagerStreamEndMessage;
+  | ManagerStreamEndMessage
+  | ChromeStatusMessage
+  | ChromeFrameMessage
+  | ChromeTabsMessage
+  | ChromeTabCreatedMessage
+  | ChromeTabRemovedMessage
+  | ChromeTabUpdatedMessage;
