@@ -575,6 +575,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
   // Process TTS events from the store (set by TerminalScreen persistent listener)
   useEffect(() => {
+    console.log('[TTS] ttsEvent changed:', ttsEvent?.type, ttsEvent?.payload?.messageId);
     if (!ttsEvent) return;
     const { type, payload } = ttsEvent;
     if (type === 'tts:result' && payload?.messageId && payload?.filename) {

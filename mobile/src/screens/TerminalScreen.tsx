@@ -479,6 +479,7 @@ export function TerminalScreen({ navigation, route }: Props) {
         case 'tts:result':
         case 'tts:progress':
         case 'tts:error':
+          console.log('[TTS-TerminalScreen] Received:', m.type, m.payload?.messageId);
           store.setTtsEvent(m as any);
           break;
       }

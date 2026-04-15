@@ -77,7 +77,9 @@ const MAX_PENDING_MANAGER_MESSAGES = 100;
 
 function sendManager(msg: Record<string, unknown>): void {
   if (currentWs && currentWs.readyState === currentWs.OPEN) {
-    currentWs.send(JSON.stringify(msg));
+    const json = JSON.stringify(msg);
+    logger.info(`Manager: sending ${msg.type} (${(json.length / 1024).toFixed(0)} KB) to client`);
+    currentWs.send(json);
   } else {
     // Client disconnected — buffer the message for delivery on reconnect
     pendingManagerMessages.push(msg);
