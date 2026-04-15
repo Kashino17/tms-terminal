@@ -154,6 +154,9 @@ interface ManagerState {
   /** Latest TTS event (result/progress/error) — consumed by ManagerChatScreen */
   ttsEvent: { type: string; payload: any } | null;
   setTtsEvent: (event: { type: string; payload: any }) => void;
+  /** Persisted map: messageId → { filename, duration } for TTS audio */
+  ttsAudioMap: Record<string, { filename: string; duration: number }>;
+  setTtsAudioEntry: (messageId: string, filename: string, duration: number) => void;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -350,6 +353,10 @@ export const useManagerStore = create<ManagerState>()(
       setDelegatedTasks: (tasks) => set({ delegatedTasks: tasks }),
       ttsEvent: null,
       setTtsEvent: (event) => set({ ttsEvent: event }),
+      ttsAudioMap: {},
+      setTtsAudioEntry: (messageId, filename, duration) => set((s) => ({
+        ttsAudioMap: { ...s.ttsAudioMap, [messageId]: { filename, duration } },
+      })),
     }),
     {
       name: 'tms-manager',
@@ -369,6 +376,7 @@ export const useManagerStore = create<ManagerState>()(
           onboarded: state.onboarded,
           sessionMessages: persistedSessionMessages,
           activeChat: state.activeChat,
+          ttsAudioMap: state.ttsAudioMap,
         };
       },
     },

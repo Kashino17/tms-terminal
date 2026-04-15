@@ -527,7 +527,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     thinking, streamingText, streamTokenStats, lastPhases, requestStartTime,
     setThinking,
     sessionMessages, activeChat, setActiveChat,
-    delegatedTasks, ttsEvent,
+    delegatedTasks, ttsEvent, ttsAudioMap, setTtsAudioEntry,
   } = useManagerStore();
 
   const tabs = useTerminalStore((s) => s.tabs[serverId] ?? []);
@@ -551,8 +551,18 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const [activePres, setActivePres] = useState<{ url: string; title: string } | null>(null);
   const [drillDownAnswer, setDrillDownAnswer] = useState<string | null>(null);
   const [drillDownLoading, setDrillDownLoading] = useState(false);
-  // TTS audio cache: messageId → { audioBase64, duration }
-  const [ttsAudio, setTtsAudio] = useState<Record<string, { url: string; duration: number }>>({});
+  // TTS audio cache: messageId → { url, duration } — initialized from persisted store
+  const [ttsAudio, setTtsAudio] = useState<Record<string, { url: string; duration: number }>>(() => {
+    // Restore from persisted ttsAudioMap on mount
+    const restored: Record<string, { url: string; duration: number }> = {};
+    for (const [msgId, entry] of Object.entries(ttsAudioMap)) {
+      restored[msgId] = {
+        url: `http://${serverHost}:${serverPort}/generated-tts/${encodeURIComponent(entry.filename)}?token=${serverToken}`,
+        duration: entry.duration,
+      };
+    }
+    return restored;
+  });
   const [ttsLoading, setTtsLoading] = useState<Set<string>>(new Set());
   const [ttsProgress, setTtsProgress] = useState<Record<string, { chunk: number; total: number }>>({});
   const [ttsVersion, setTtsVersion] = useState(0); // bump to force FlatList re-render
@@ -585,6 +595,8 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       setTtsLoading(prev => { const n = new Set(prev); n.delete(payload.messageId); return n; });
       setTtsProgress(prev => { const n = { ...prev }; delete n[payload.messageId]; return n; });
       setTtsVersion(v => v + 1);
+      // Persist to store so it survives app restart
+      setTtsAudioEntry(payload.messageId, payload.filename, payload.duration ?? 0);
     } else if (type === 'tts:progress' && payload?.messageId) {
       setTtsProgress(prev => ({ ...prev, [payload.messageId]: { chunk: payload.chunk, total: payload.total } }));
       setTtsVersion(v => v + 1);
