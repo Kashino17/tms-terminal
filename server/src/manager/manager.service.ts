@@ -867,6 +867,8 @@ export class ManagerService {
   private enabled = false;
   private fcmTokens: Set<string> = new Set();
   private isProcessing = false; // prevent overlapping calls within same slot
+  private lastChatText: string | null = null; // ghost-touch dedup
+  private lastChatTime: number | null = null;
   private isSystemProcessing = false; // separate slot for heartbeat/orchestrator reviews
   private abortController: AbortController | null = null; // Cancel running AI calls
   private chatQueue: Array<{ text: string; targetSessionId?: string; onboarding?: boolean }> = [];
@@ -1696,6 +1698,15 @@ BEISPIEL:
     if (!this.enabled) {
       throw new Error('Manager ist nicht aktiv — bitte zuerst aktivieren (grüner Punkt)');
     }
+
+    // Dedup: drop identical messages within 2s window (ghost-touch protection)
+    const now = Date.now();
+    if (this.lastChatText === text && this.lastChatTime && now - this.lastChatTime < 2000) {
+      logger.info(`Manager: dropped duplicate chat message (ghost-touch dedup)`);
+      return false;
+    }
+    this.lastChatText = text;
+    this.lastChatTime = now;
 
     // Queue messages while processing — don't block or error
     if (this.isProcessing) {

@@ -686,11 +686,18 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
   // ── Send Chat ─────────────────────────────────────────────────────────────
 
+  const isSendingRef = useRef(false);
+
   const handleSend = useCallback((customTextOrEvent?: string | unknown) => {
+    // Guard: prevent ghost-touch / double-tap duplicate sends
+    if (isSendingRef.current) return;
+
     // Guard: onPress passes a GestureResponderEvent, not a string
     const customText = typeof customTextOrEvent === 'string' ? customTextOrEvent : undefined;
     const text = (customText ?? input).trim();
     if (!text && attachments.length === 0) return;
+
+    isSendingRef.current = true;
 
     // Slash commands
     if (text.startsWith('/')) {
@@ -946,6 +953,11 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     wsService.send({ type: 'manager:set_provider', payload: { providerId: id } });
     setShowSettings(false);
   }, [wsService]);
+
+  // ── Reset send guard when loading finishes ────────────────────────────────
+  useEffect(() => {
+    if (!loading) isSendingRef.current = false;
+  }, [loading]);
 
   // ── Scroll to Bottom ──────────────────────────────────────────────────────
 
@@ -1853,9 +1865,9 @@ export function ManagerChatScreen({ navigation, route }: Props) {
           returnKeyType="default"
         />
         <TouchableOpacity
-          style={[styles.sendButton, ((!input.trim() && attachments.length === 0) || !enabled) && styles.sendButtonDisabled]}
+          style={[styles.sendButton, ((!input.trim() && attachments.length === 0) || !enabled || loading) && styles.sendButtonDisabled]}
           onPress={handleSend}
-          disabled={(!input.trim() && attachments.length === 0) || !enabled}
+          disabled={(!input.trim() && attachments.length === 0) || !enabled || loading}
         >
           <Feather name="send" size={18} color={(input.trim() || attachments.length > 0) && enabled ? colors.primary : colors.textDim} />
         </TouchableOpacity>
