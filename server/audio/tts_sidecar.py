@@ -84,15 +84,8 @@ def main():
 
         tmp_dir = tempfile.mkdtemp(prefix="tts_")
         try:
-            # Generate with a filler prefix to avoid cold-start stutter.
-            # Qwen3-TTS often produces garbled audio at the very beginning
-            # because the model needs a "runway" to match the reference voice.
-            # We prepend a short pause phrase and trim it from the output.
-            FILLER = "... "
-            padded_text = FILLER + text
-
             generate_audio(
-                text=padded_text,
+                text=text,
                 model=MODEL,
                 ref_audio=ref_audio,
                 ref_text=ref_text[:200] if ref_text else "",
@@ -114,25 +107,6 @@ def main():
             if not out_file or not os.path.exists(out_file):
                 print(json.dumps({"id": req_id, "error": "No audio generated"}))
                 continue
-
-            # Trim the filler prefix (~0.8s) from the beginning
-            trimmed_path = os.path.join(tmp_dir, "trimmed.wav")
-            try:
-                with wave.open(out_file, 'rb') as w:
-                    params = w.getparams()
-                    rate = w.getframerate()
-                    total = w.getnframes()
-                    # Skip first 0.8 seconds (filler audio)
-                    skip_frames = int(rate * 0.8)
-                    if skip_frames < total:
-                        w.setpos(skip_frames)
-                        data = w.readframes(total - skip_frames)
-                        with wave.open(trimmed_path, 'wb') as out_w:
-                            out_w.setparams(params)
-                            out_w.writeframes(data)
-                        out_file = trimmed_path
-            except Exception as trim_err:
-                sys.stderr.write(f"[tts-sidecar] trim note: {trim_err}\n")
 
             # Read and encode
             with open(out_file, "rb") as f:
