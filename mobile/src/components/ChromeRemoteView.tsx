@@ -41,7 +41,7 @@ export function ChromeRemoteView({ serverId, onInput }: Props) {
   const handleTouchStart = useCallback((e: GestureResponderEvent) => {
     const coords = getRelativeCoords(e);
     longPressTimer.current = setTimeout(() => {
-      onInput('click', { ...coords, button: 'right' });
+      onInput('rightclick', coords);
       longPressTimer.current = null;
     }, LONG_PRESS_THRESHOLD);
   }, [getRelativeCoords, onInput]);

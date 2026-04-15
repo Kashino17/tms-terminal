@@ -731,6 +731,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       };
       chromeManager.connect().then(() => {
         chromeManager.startScreencast();
+      }).catch((err: any) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        send(ws, { type: 'chrome:status', payload: { state: 'not-found', reason: msg } } as any);
       });
       return;
     }

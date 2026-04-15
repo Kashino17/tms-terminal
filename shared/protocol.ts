@@ -120,7 +120,7 @@ export interface ChromeDisconnectMessage {
 export interface ChromeInputMessage {
   type: 'chrome:input';
   payload: {
-    action: 'click' | 'dblclick' | 'scroll' | 'key';
+    action: 'click' | 'dblclick' | 'rightclick' | 'scroll' | 'key';
     x?: number;
     y?: number;
     deltaX?: number;

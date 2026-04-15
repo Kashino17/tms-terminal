@@ -59,6 +59,7 @@ export class ChromeManager {
       return;
     }
     this.destroyed = false;
+    this.onStatus?.('connecting');
 
     let port: number | null = null;
     let launched = false;
@@ -208,7 +209,7 @@ export class ChromeManager {
       const { data, metadata } = params;
       const w = metadata?.deviceWidth ?? this.session?.viewport.width ?? 0;
       const h = metadata?.deviceHeight ?? this.session?.viewport.height ?? 0;
-      const ts = metadata?.timestamp ?? Date.now() / 1000;
+      const ts = Date.now();
       this.onFrame?.(data, w, h, ts);
     });
 
@@ -288,41 +289,6 @@ export class ChromeManager {
         }
         case 'key': {
           await dispatchKey(client, payload.key, payload.code, payload.text, payload.modifiers);
-          break;
-        }
-        case 'type': {
-          // Dispatch each character as a key event
-          const text: string = payload.text ?? '';
-          for (const ch of text) {
-            await dispatchKey(client, ch, `Key${ch.toUpperCase()}`, ch);
-          }
-          break;
-        }
-        case 'mousemove': {
-          const { x, y } = scaleCoordinates(payload.x, payload.y, mw, mh, viewport.width, viewport.height);
-          try {
-            await client.Input.dispatchMouseEvent({ type: 'mouseMoved', x, y });
-          } catch (err) {
-            logger.warn(`[chrome:input] mousemove failed: ${err}`);
-          }
-          break;
-        }
-        case 'mousedown': {
-          const { x, y } = scaleCoordinates(payload.x, payload.y, mw, mh, viewport.width, viewport.height);
-          try {
-            await client.Input.dispatchMouseEvent({ type: 'mousePressed', x, y, button: payload.button ?? 'left', clickCount: 1 });
-          } catch (err) {
-            logger.warn(`[chrome:input] mousedown failed: ${err}`);
-          }
-          break;
-        }
-        case 'mouseup': {
-          const { x, y } = scaleCoordinates(payload.x, payload.y, mw, mh, viewport.width, viewport.height);
-          try {
-            await client.Input.dispatchMouseEvent({ type: 'mouseReleased', x, y, button: payload.button ?? 'left', clickCount: 1 });
-          } catch (err) {
-            logger.warn(`[chrome:input] mouseup failed: ${err}`);
-          }
           break;
         }
         default:
