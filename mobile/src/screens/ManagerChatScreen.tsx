@@ -38,6 +38,7 @@ import { tabDisplayName } from '../utils/tabDisplayName';
 import { colors, spacing, fontSizes } from '../theme';
 import Markdown from 'react-native-markdown-display';
 import { PresentationViewer } from '../components/PresentationViewer';
+import { VoiceMessagePlayer } from '../components/VoiceMessagePlayer';
 
 // ── Markdown Styles ──────────────────────────────────────────────────────────
 
@@ -549,6 +550,9 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const [activePres, setActivePres] = useState<{ url: string; title: string } | null>(null);
   const [drillDownAnswer, setDrillDownAnswer] = useState<string | null>(null);
   const [drillDownLoading, setDrillDownLoading] = useState(false);
+  // TTS audio cache: messageId → { audioBase64, duration }
+  const [ttsAudio, setTtsAudio] = useState<Record<string, { audio: string; duration: number }>>({});
+  const [ttsLoading, setTtsLoading] = useState<Set<string>>(new Set());
   const [wizard, setWizard] = useState<{ flow: WizardFlow; step: number; answers: string[] } | null>(null);
   const [connQuality, setConnQuality] = useState<string>('good');
   const [searchMode, setSearchMode] = useState(false);
@@ -609,8 +613,20 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       }
     };
 
-    const unsub = wsService.addMessageListener(handler);
-    return unsub;
+    // TTS result handler
+    const ttsHandler = (data: unknown) => {
+      const msg = data as { type: string; payload?: any };
+      if (msg.type === 'tts:result' && msg.payload?.messageId && msg.payload?.audio) {
+        setTtsAudio(prev => ({ ...prev, [msg.payload.messageId]: { audio: msg.payload.audio, duration: msg.payload.duration ?? 0 } }));
+        setTtsLoading(prev => { const n = new Set(prev); n.delete(msg.payload.messageId); return n; });
+      } else if (msg.type === 'tts:error' && msg.payload?.messageId) {
+        setTtsLoading(prev => { const n = new Set(prev); n.delete(msg.payload.messageId); return n; });
+      }
+    };
+
+    const unsub1 = wsService.addMessageListener(handler);
+    const unsub2 = wsService.addMessageListener(ttsHandler);
+    return () => { unsub1(); unsub2(); };
   }, [wsService]);
 
   // ── Cleanup on unmount (audio timer + recording) ─────────────────────────
@@ -1077,6 +1093,31 @@ export function ManagerChatScreen({ navigation, route }: Props) {
               <Markdown style={searchQuery ? { ...mdStyles, strong: { ...mdStyles.strong, backgroundColor: 'rgba(250,204,21,0.25)', color: '#FBBF24' } } : mdStyles}>
                 {searchQuery ? highlightMarkdown(item.text, searchQuery) : item.text}
               </Markdown>
+            )}
+
+            {/* TTS Voice Player (WhatsApp-style) */}
+            {item.role === 'assistant' && ttsAudio[item.id] && (
+              <VoiceMessagePlayer
+                audioBase64={ttsAudio[item.id].audio}
+                duration={ttsAudio[item.id].duration}
+              />
+            )}
+
+            {/* TTS Speaker Button — request voice for this message */}
+            {item.role === 'assistant' && !ttsAudio[item.id] && item.text.length > 5 && (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4, paddingVertical: 4, opacity: ttsLoading.has(item.id) ? 0.5 : 1 }}
+                disabled={ttsLoading.has(item.id)}
+                onPress={() => {
+                  setTtsLoading(prev => new Set(prev).add(item.id));
+                  wsService.send({ type: 'tts:generate', payload: { text: item.text, messageId: item.id } } as any);
+                }}
+              >
+                <Feather name={ttsLoading.has(item.id) ? 'loader' : 'volume-2'} size={13} color="#64748B" />
+                <Text style={{ fontSize: 11, color: '#64748B' }}>
+                  {ttsLoading.has(item.id) ? 'Wird vertont...' : 'Vorlesen'}
+                </Text>
+              </TouchableOpacity>
             )}
 
             {/* User-uploaded attachments */}
