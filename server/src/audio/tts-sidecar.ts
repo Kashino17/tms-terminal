@@ -31,7 +31,10 @@ function findServerRoot(): string {
 const SERVER_ROOT = findServerRoot();
 const SIDECAR_DIR = path.join(SERVER_ROOT, 'audio');
 const SIDECAR_SCRIPT = path.join(SIDECAR_DIR, 'tts_sidecar.py');
+// Use the mlx-audio venv (has Qwen3-TTS + mlx dependencies)
 const VENV_PYTHON = path.join(SIDECAR_DIR, '.venv-tts', 'bin', 'python3');
+// Also set HF_TOKEN for model downloads
+const HF_TOKEN = process.env.HF_TOKEN || '';
 
 let sidecar: ChildProcess | null = null;
 let lineBuffer = '';
@@ -52,6 +55,7 @@ function ensureRunning(): Promise<void> {
 
     const child = spawn(pythonBin, [SIDECAR_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, HF_TOKEN },
     });
 
     let resolved = false;

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F5-TTS sidecar — long-running process for text-to-speech synthesis via MLX.
+"""Qwen3-TTS sidecar — long-running process for German text-to-speech with voice cloning.
 
-Uses F5-TTS (German or default) with voice cloning from a reference audio file.
+Uses Qwen3-TTS via mlx-audio on Apple Silicon with voice reference cloning.
 Reads JSON Lines from stdin, synthesizes speech, writes JSON Lines to stdout.
 
 Protocol:
@@ -18,25 +18,14 @@ import tempfile
 import os
 import wave
 
-# Voice reference file — user provides a 15-30s WAV with their desired voice
-VOICE_REF_PATH = os.path.expanduser("~/.tms-terminal/voice.wav")
-
-# TTS models to try (in order) — all MLX-optimized with voice cloning support
-MODELS = [
-    "mlx-community/chatterbox-turbo-fp16",   # Fast, voice cloning, multilingual
-    "mlx-community/Chatterbox-TTS-fp16",     # Full quality fallback
-    "mlx-community/chatterbox-turbo-4bit",   # Quantized, even faster
-]
-
-# Max text per synthesis call (characters)
-MAX_CHUNK_CHARS = 300
+VOICE_REF_PATH = os.path.expanduser("~/.tms-terminal/voice_24k_15s.wav")
+MODEL = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16"
+MAX_CHUNK_CHARS = 200  # Qwen3-TTS works best with short segments
 
 
-def chunk_text(text: str) -> list:
-    """Split text into sentence-sized chunks for better synthesis quality."""
+def chunk_text(text):
     if len(text) <= MAX_CHUNK_CHARS:
         return [text]
-
     chunks = []
     current = ""
     for part in text.replace("! ", "!|").replace(". ", ".|").replace("? ", "?|").replace("\n", "\n|").split("|"):
@@ -53,59 +42,66 @@ def chunk_text(text: str) -> list:
     return chunks if chunks else [text]
 
 
-def wav_duration(path):
-    """Get WAV file duration in seconds."""
-    try:
-        with wave.open(path, 'rb') as w:
-            return w.getnframes() / w.getframerate() if w.getframerate() > 0 else 0
-    except Exception:
-        return 0
-
-
 def main():
     sys.stdout.reconfigure(line_buffering=True)
-    sys.stderr.write("[tts-sidecar] Starting F5-TTS sidecar (MLX)...\n")
+    sys.stderr.write("[tts-sidecar] Starting Qwen3-TTS sidecar (MLX)...\n")
     sys.stderr.flush()
 
     # Check voice reference
     ref_audio = None
+    ref_text = None
     if os.path.exists(VOICE_REF_PATH):
         ref_audio = VOICE_REF_PATH
-        dur = wav_duration(ref_audio)
-        sys.stderr.write(f"[tts-sidecar] Voice reference: {VOICE_REF_PATH} ({dur:.1f}s)\n")
+        sys.stderr.write(f"[tts-sidecar] Voice reference: {VOICE_REF_PATH}\n")
         sys.stderr.flush()
+
+        # Load cached ref_text if available
+        ref_text_path = VOICE_REF_PATH.replace(".wav", ".txt")
+        if os.path.exists(ref_text_path):
+            ref_text = open(ref_text_path).read().strip()
+            sys.stderr.write(f"[tts-sidecar] Reference text loaded ({len(ref_text)} chars)\n")
+            sys.stderr.flush()
+        else:
+            sys.stderr.write(f"[tts-sidecar] WARNING: No reference text at {ref_text_path}\n")
+            sys.stderr.write(f"[tts-sidecar] Create it with the exact transcript of the voice reference.\n")
+            sys.stderr.flush()
+            ref_text = ""
     else:
-        sys.stderr.write(f"[tts-sidecar] No voice reference at {VOICE_REF_PATH} — using default voice\n")
+        sys.stderr.write(f"[tts-sidecar] No voice reference at {VOICE_REF_PATH}\n")
         sys.stderr.flush()
 
     try:
-        from mlx_audio.tts.generate import generate_audio, load_audio
-        from mlx_audio.tts import load_model
+        from mlx_audio.tts.generate import generate_audio
     except ImportError as e:
         sys.stderr.write(f"[tts-sidecar] Missing dependency: {e}\n")
         sys.stderr.write("[tts-sidecar] Install with: pip install mlx-audio\n")
         sys.stderr.flush()
         sys.exit(1)
 
-    # Load model
-    model_name = None
-    for m in MODELS:
-        try:
-            sys.stderr.write(f"[tts-sidecar] Loading model {m}...\n")
-            sys.stderr.flush()
-            model_name = m
-            break
-        except Exception as e:
-            sys.stderr.write(f"[tts-sidecar] Failed to load {m}: {e}\n")
-            sys.stderr.flush()
-            continue
-
-    if not model_name:
-        sys.stderr.write("[tts-sidecar] No TTS model available\n")
+    # Warmup — load model once
+    sys.stderr.write(f"[tts-sidecar] Loading model {MODEL}...\n")
+    sys.stderr.flush()
+    try:
+        generate_audio(
+            text="Test.",
+            model=MODEL,
+            ref_audio=ref_audio,
+            ref_text=(ref_text or "")[:200],
+            output_path="/tmp",
+            file_prefix="_tts_warmup",
+            audio_format="wav",
+            verbose=False,
+            save=False,
+            play=False,
+        )
+        # Cleanup warmup file
+        for f in os.listdir("/tmp"):
+            if f.startswith("_tts_warmup"):
+                os.unlink(os.path.join("/tmp", f))
+    except Exception as e:
+        sys.stderr.write(f"[tts-sidecar] Warmup failed (non-fatal): {e}\n")
         sys.stderr.flush()
-        sys.exit(1)
 
-    sys.stderr.write(f"[tts-sidecar] Using model: {model_name}\n")
     sys.stderr.write("[tts-sidecar] Ready for requests.\n")
     sys.stderr.flush()
 
@@ -113,7 +109,6 @@ def main():
         line = line.strip()
         if not line:
             continue
-
         try:
             req = json.loads(line)
         except json.JSONDecodeError:
@@ -132,45 +127,29 @@ def main():
             sys.stderr.flush()
 
             chunk_files = []
-
             for i, chunk in enumerate(chunks):
-                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
-                os.close(tmp_fd)
+                tmp_dir = tempfile.mkdtemp(prefix="tts_")
+                prefix = f"chunk_{i}"
 
-                # Build generate_audio kwargs
-                kwargs = {
-                    "text": chunk,
-                    "model": model_name,
-                    "output_path": os.path.dirname(tmp_path),
-                    "file_prefix": os.path.basename(tmp_path).replace(".wav", ""),
-                    "audio_format": "wav",
-                    "lang_code": "de",
-                    "verbose": False,
-                    "save": True,
-                    "play": False,
-                    "join_audio": False,
-                }
+                generate_audio(
+                    text=chunk,
+                    model=MODEL,
+                    ref_audio=ref_audio,
+                    ref_text=(ref_text or "")[:200],
+                    output_path=tmp_dir,
+                    file_prefix=prefix,
+                    audio_format="wav",
+                    verbose=False,
+                    save=False,
+                    play=False,
+                )
 
-                if ref_audio:
-                    kwargs["ref_audio"] = ref_audio
-
-                generate_audio(**kwargs)
-
-                # generate_audio saves as {prefix}_0.wav — find the output file
-                output_dir = os.path.dirname(tmp_path)
-                prefix = os.path.basename(tmp_path).replace(".wav", "")
-                generated = None
-                for f in os.listdir(output_dir):
+                # Find generated file
+                for f in sorted(os.listdir(tmp_dir)):
                     if f.startswith(prefix) and f.endswith(".wav"):
-                        generated = os.path.join(output_dir, f)
+                        chunk_files.append(os.path.join(tmp_dir, f))
                         break
 
-                if generated and os.path.exists(generated):
-                    chunk_files.append(generated)
-                else:
-                    chunk_files.append(tmp_path)
-
-                # Progress
                 if len(chunks) > 1:
                     print(json.dumps({
                         "id": req_id,
@@ -183,42 +162,41 @@ def main():
                 print(json.dumps({"id": req_id, "error": "No audio generated"}))
                 continue
 
-            # If single chunk, use directly. Otherwise concat.
+            # Concat if multiple chunks
             if len(chunk_files) == 1:
                 final_path = chunk_files[0]
             else:
-                # Concat WAVs
                 final_fd, final_path = tempfile.mkstemp(suffix=".wav")
                 os.close(final_fd)
                 params = None
                 all_data = []
                 for cf in chunk_files:
-                    try:
-                        with wave.open(cf, 'rb') as w:
-                            if params is None:
-                                params = w.getparams()
-                            all_data.append(w.readframes(w.getnframes()))
-                    except Exception:
-                        continue
-                if params and all_data:
+                    with wave.open(cf, 'rb') as w:
+                        if params is None:
+                            params = w.getparams()
+                        all_data.append(w.readframes(w.getnframes()))
+                if params:
                     with wave.open(final_path, 'wb') as out:
                         out.setparams(params)
                         for d in all_data:
                             out.writeframes(d)
 
-            # Read and encode
+            # Encode
             with open(final_path, "rb") as f:
                 audio_bytes = f.read()
 
-            duration = wav_duration(final_path)
-            audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+            try:
+                with wave.open(final_path, 'rb') as w:
+                    duration = w.getnframes() / w.getframerate()
+            except Exception:
+                duration = 0
 
+            audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
             print(json.dumps({
                 "id": req_id,
                 "audio_base64": audio_b64,
                 "duration_secs": round(duration, 2),
             }))
-
             sys.stderr.write(f"[tts-sidecar] {req_id}: done — {duration:.1f}s audio\n")
             sys.stderr.flush()
 
@@ -227,17 +205,13 @@ def main():
             sys.stderr.write(f"[tts-sidecar] {req_id}: error — {e}\n")
             sys.stderr.flush()
         finally:
-            # Cleanup temp files
-            for cf in chunk_files if 'chunk_files' in dir() else []:
+            for cf in chunk_files:
                 try:
+                    d = os.path.dirname(cf)
                     os.unlink(cf)
-                except (OSError, NameError):
+                    os.rmdir(d)
+                except OSError:
                     pass
-            try:
-                if 'final_path' in dir() and final_path and len(chunk_files) > 1:
-                    os.unlink(final_path)
-            except (OSError, NameError):
-                pass
 
 
 if __name__ == "__main__":
