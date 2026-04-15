@@ -116,7 +116,13 @@ function main(): void {
       if (filename.includes('..') || filename.includes('/')) { res.writeHead(400); res.end('Bad request'); return; }
       const filePath = path.join(__dirname, '..', '..', 'generated-tts', filename);
       if (!fs.existsSync(filePath)) { res.writeHead(404); res.end('Not found'); return; }
-      res.writeHead(200, { 'Content-Type': 'audio/wav', 'Cache-Control': 'public, max-age=3600' });
+      const stat = fs.statSync(filePath);
+      res.writeHead(200, {
+        'Content-Type': 'audio/wav',
+        'Content-Length': stat.size,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'public, max-age=3600',
+      });
       fs.createReadStream(filePath).pipe(res);
     } else if (req.url?.startsWith('/generated-presentations/')) {
       // Serve generated presentations (JWT-protected)
