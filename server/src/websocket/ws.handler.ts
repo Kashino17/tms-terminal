@@ -16,6 +16,7 @@ import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../aud
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
 import { ConnectionRateLimiter } from './rate-limiter';
+import { ChromeManager } from '../chrome/chrome.manager';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -157,6 +158,7 @@ function trackPendingInput(sessionId: string, data: string): void {
 export function handleConnection(ws: WebSocket, ip: string): void {
   // Track which sessions this connection owns (for detach on disconnect)
   const ownedSessions = new Set<string>();
+  const chromeManager = new ChromeManager();
   // Track attach generation per session — passed to detachSession to prevent stale detach
   const sessionGens = new Map<string, number>();
   // Use the persisted tokens as the starting value; overwritten on register
@@ -707,6 +709,111 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
+    // ── Chrome Remote Control ──────────────────────────────────────
+    if (msgType === 'chrome:connect') {
+      chromeManager.onFrame = (data, width, height, timestamp) => {
+        send(ws, { type: 'chrome:frame', payload: { data, width, height, timestamp } } as any);
+      };
+      chromeManager.onStatus = (state, reason) => {
+        send(ws, { type: 'chrome:status', payload: { state, reason } } as any);
+      };
+      chromeManager.onTabEvent = (event) => {
+        if (event.type === 'created') {
+          send(ws, { type: 'chrome:tab:created', payload: event.tab } as any);
+        } else if (event.type === 'removed') {
+          send(ws, { type: 'chrome:tab:removed', payload: { targetId: event.targetId } } as any);
+        } else if (event.type === 'updated') {
+          send(ws, { type: 'chrome:tab:updated', payload: { targetId: event.targetId, title: event.title, url: event.url } } as any);
+        }
+      };
+      chromeManager.onTabsList = (tabs, activeTargetId) => {
+        send(ws, { type: 'chrome:tabs', payload: { tabs, activeTargetId } } as any);
+      };
+      chromeManager.connect().then(() => {
+        chromeManager.startScreencast();
+      });
+      return;
+    }
+
+    if (msgType === 'chrome:disconnect') {
+      chromeManager.disconnect();
+      return;
+    }
+
+    if (msgType === 'chrome:input') {
+      const p = (msg as any).payload ?? {};
+      chromeManager.handleInput(p.action, p);
+      return;
+    }
+
+    if (msgType === 'chrome:navigate') {
+      const { url } = (msg as any).payload ?? {};
+      if (url && typeof url === 'string') chromeManager.navigate(url);
+      return;
+    }
+
+    if (msgType === 'chrome:tab:switch') {
+      const { targetId } = (msg as any).payload ?? {};
+      if (targetId) chromeManager.switchTab(targetId);
+      return;
+    }
+
+    if (msgType === 'chrome:tab:open') {
+      const { url } = (msg as any).payload ?? {};
+      chromeManager.openTab(url);
+      return;
+    }
+
+    if (msgType === 'chrome:tab:close') {
+      const { targetId } = (msg as any).payload ?? {};
+      if (targetId) chromeManager.closeTab(targetId);
+      return;
+    }
+
+    if (msgType === 'chrome:quality') {
+      const { quality, maxFps } = (msg as any).payload ?? {};
+      if (typeof quality === 'number' && typeof maxFps === 'number') {
+        chromeManager.setQuality(quality, maxFps);
+      }
+      return;
+    }
+
+    if (msgType === 'chrome:pause') {
+      chromeManager.pause();
+      return;
+    }
+
+    if (msgType === 'chrome:resume') {
+      chromeManager.resume();
+      return;
+    }
+
+    if (msgType === 'chrome:resize') {
+      const { width, height } = (msg as any).payload ?? {};
+      if (typeof width === 'number' && typeof height === 'number') {
+        chromeManager.setMobileViewport(width, height);
+        const chromeWidth = width < 400 ? 375 : width < 700 ? 600 : Math.max(900, width);
+        const chromeHeight = Math.round(chromeWidth * 1.5);
+        chromeManager.resize(chromeWidth, chromeHeight);
+      }
+      return;
+    }
+
+    if (msgType === 'chrome:back') {
+      chromeManager.goBack();
+      return;
+    }
+
+    if (msgType === 'chrome:forward') {
+      chromeManager.goForward();
+      return;
+    }
+
+    if (msgType === 'chrome:reload') {
+      chromeManager.reload();
+      return;
+    }
+
     switch (msg.type) {
       case 'ping':
         send(ws, { type: 'pong' });
@@ -1072,6 +1179,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     if (currentWs === ws) {
       currentWs = null;
     }
+
+    chromeManager.disconnect();
 
     for (const sessionId of ownedSessions) {
       const gen = sessionGens.get(sessionId);
