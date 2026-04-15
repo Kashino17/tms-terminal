@@ -106,6 +106,18 @@ function main(): void {
       const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'application/octet-stream';
       res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=86400' });
       fs.createReadStream(filePath).pipe(res);
+    } else if (req.url?.startsWith('/generated-tts/')) {
+      // Serve generated TTS audio (JWT-protected)
+      const authHeader = req.headers['authorization'] ?? '';
+      let token = authHeader.replace(/^Bearer\s+/i, '');
+      if (!token) { try { const u = new URL(req.url, 'http://localhost'); token = u.searchParams.get('token') ?? ''; } catch {} }
+      if (!token || !validateToken(token)) { res.writeHead(401); res.end('Unauthorized'); return; }
+      const filename = decodeURIComponent(req.url.replace('/generated-tts/', '').split('?')[0]);
+      if (filename.includes('..') || filename.includes('/')) { res.writeHead(400); res.end('Bad request'); return; }
+      const filePath = path.join(__dirname, '..', 'generated-tts', filename);
+      if (!fs.existsSync(filePath)) { res.writeHead(404); res.end('Not found'); return; }
+      res.writeHead(200, { 'Content-Type': 'audio/wav', 'Cache-Control': 'public, max-age=3600' });
+      fs.createReadStream(filePath).pipe(res);
     } else if (req.url?.startsWith('/generated-presentations/')) {
       // Serve generated presentations (JWT-protected)
       const authHeader = req.headers['authorization'] ?? '';

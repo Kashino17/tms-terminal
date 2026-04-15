@@ -706,8 +706,17 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         },
       }).then(({ audioBase64, durationSecs }) => {
         logger.info(`[tts] Done: ${messageId} — ${durationSecs}s audio, ${(audioBase64.length / 1024).toFixed(0)} KB base64`);
-        // Use sendManager (not send) so it gets buffered if client disconnected
-        sendManager({ type: 'tts:result', payload: { messageId, audio: audioBase64, duration: durationSecs } } as any);
+
+        // Save audio to file and send URL instead of base64 (3+ MB over WS is unreliable)
+        const fs = require('fs');
+        const path = require('path');
+        const audioDir = path.join(__dirname, '..', '..', '..', 'generated-tts');
+        if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
+        const filename = `tts_${messageId}.wav`;
+        fs.writeFileSync(path.join(audioDir, filename), Buffer.from(audioBase64, 'base64'));
+
+        sendManager({ type: 'tts:result', payload: { messageId, filename, duration: durationSecs } } as any);
+        logger.info(`[tts] Sent tts:result for ${messageId} (file: ${filename})`);
       }).catch((err) => {
         const message = err instanceof Error ? err.message : 'TTS fehlgeschlagen';
         logger.warn(`[tts] Synthesis failed: ${message}`);

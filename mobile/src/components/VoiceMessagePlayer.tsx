@@ -8,11 +8,10 @@ import {
 } from 'react-native';
 import { Audio } from 'expo-av';
 import { Feather } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
 import { colors, fonts } from '../theme';
 
 interface VoiceMessagePlayerProps {
-  audioBase64: string;
+  audioUrl: string;
   duration: number;
 }
 
@@ -22,28 +21,21 @@ function formatTime(secs: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export function VoiceMessagePlayer({ audioBase64, duration }: VoiceMessagePlayerProps) {
+export function VoiceMessagePlayer({ audioUrl, duration }: VoiceMessagePlayerProps) {
   const soundRef = useRef<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [totalDuration, setTotalDuration] = useState(duration || 0);
   const [isLoaded, setIsLoaded] = useState(false);
-  const fileRef = useRef<string | null>(null);
   const waveWidthRef = useRef(200);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const filePath = FileSystem.cacheDirectory + `tts_${Date.now()}.wav`;
-        await FileSystem.writeAsStringAsync(filePath, audioBase64, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        fileRef.current = filePath;
         if (cancelled) return;
-
         const { sound, status } = await Audio.Sound.createAsync(
-          { uri: filePath },
+          { uri: audioUrl },
           { shouldPlay: false, progressUpdateIntervalMillis: 100 },
           onPlaybackStatusUpdate,
         );
@@ -60,11 +52,8 @@ export function VoiceMessagePlayer({ audioBase64, duration }: VoiceMessagePlayer
     return () => {
       cancelled = true;
       soundRef.current?.unloadAsync().catch(() => {});
-      if (fileRef.current) {
-        FileSystem.deleteAsync(fileRef.current, { idempotent: true }).catch(() => {});
-      }
     };
-  }, [audioBase64]);
+  }, [audioUrl]);
 
   const onPlaybackStatusUpdate = useCallback((status: any) => {
     if (!status.isLoaded) return;
