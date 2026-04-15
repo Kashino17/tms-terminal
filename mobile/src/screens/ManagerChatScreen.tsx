@@ -1580,7 +1580,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       <FlatList
         ref={listRef}
         data={reversedMessages}
-        extraData={activeChat}
+        extraData={`${activeChat}-${Object.keys(ttsAudio).length}-${ttsLoading.size}-${Object.keys(ttsProgress).length}`}
         inverted
         keyExtractor={(item) => item.id}
         renderItem={renderMessage}
