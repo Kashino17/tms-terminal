@@ -580,6 +580,10 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     const { type, payload } = ttsEvent;
     if (type === 'tts:result' && payload?.messageId && payload?.filename) {
       const audioUrl = `http://${serverHost}:${serverPort}/generated-tts/${encodeURIComponent(payload.filename)}?token=${serverToken}`;
+      console.log('[TTS] Setting audio for messageId:', payload.messageId, 'url:', audioUrl.slice(0, 80));
+      // Log all message IDs to compare
+      const allIds = useManagerStore.getState().messages.map((m: any) => m.id);
+      console.log('[TTS] Available message IDs:', JSON.stringify(allIds.slice(-5)));
       setTtsAudio(prev => ({ ...prev, [payload.messageId]: { url: audioUrl, duration: payload.duration ?? 0 } }));
       setTtsLoading(prev => { const n = new Set(prev); n.delete(payload.messageId); return n; });
       setTtsProgress(prev => { const n = { ...prev }; delete n[payload.messageId]; return n; });
