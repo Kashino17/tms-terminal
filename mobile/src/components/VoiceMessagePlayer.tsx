@@ -166,13 +166,6 @@ export function VoiceMessagePlayer({ audioUrl, duration }: VoiceMessagePlayerPro
         </Text>
       </View>
 
-      {/* Playback speed indicator */}
-      {isPlaying && (
-        <View style={s.playingIndicator}>
-          <View style={s.playingDot} />
-          <Text style={s.playingText}>Wird abgespielt</Text>
-        </View>
-      )}
     </View>
   );
 }
@@ -251,23 +244,5 @@ const s = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     width: 34,
     textAlign: 'right',
-  },
-  playingIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginTop: 6,
-    paddingLeft: 54,
-  },
-  playingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#3B82F6',
-  },
-  playingText: {
-    fontSize: 10,
-    color: '#64748B',
-    fontWeight: '500',
   },
 });
