@@ -424,7 +424,31 @@ export function TerminalScreen({ navigation, route }: Props) {
     // responses are NEVER lost, even when the app is closed (foreground service
     // keeps process + WebSocket alive, this handler keeps processing messages).
     ws.setPersistentHandler((data: unknown) => {
-      const m = data as { type: string; payload?: any };
+      const m = data as { type: string; sessionId?: string; payload?: any };
+
+      // Manager-created terminals — must be in persistent handler so it works
+      // even when user is on ManagerChat screen (TerminalScreen unmounted)
+      if (m.type === 'terminal:created' && m.sessionId && m.payload?.fromManager) {
+        const managerLabel = m.payload?.label as string | undefined;
+        const currentTabs = useTerminalStore.getState().getTabs(serverId);
+        // Don't add duplicate tab if session already has one
+        if (!currentTabs.find(t => t.sessionId === m.sessionId)) {
+          const newTab = {
+            id: `mgr-${Date.now()}`,
+            sessionId: m.sessionId,
+            title: managerLabel ?? `Shell ${currentTabs.length + 1}`,
+            serverId,
+            active: false,
+          };
+          addTab(serverId, newTab);
+          // Restore previous active tab so Manager doesn't steal focus
+          const prevActive = currentTabs.find(t => t.active);
+          if (prevActive) setActiveTab(serverId, prevActive.id);
+          // Mount WebView so it connects and renders TUI
+          setMountedTabs((prev) => new Set([...prev, newTab.id]));
+        }
+      }
+
       if (!m.type?.startsWith('manager:') && !m.type?.startsWith('tts:')) return;
 
       const store = useManagerStore.getState();
