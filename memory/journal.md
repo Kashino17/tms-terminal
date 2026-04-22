@@ -1,5 +1,24 @@
 # Session-Tagebuch
 
+## 2026-04-22 (noch später) — Qwen 3 Coder 30B + Qwen 3.6 35B mit Auto Load/Unload (v1.18.10)
+
+### Was wurde gemacht
+- Zwei neue lokale Provider registriert im `AiProviderRegistry`: `qwen-27b` → `qwen/qwen3-coder-30b`, `qwen-35b` → `qwen/qwen3.6-35b-a3b`
+- Neuer `LmStudioController` (`server/src/manager/lmstudio.controller.ts`): spawnt `lms` CLI für load/unload, serialisiert Operationen via Promise-Queue, findet Binary an 4 Standardpfaden (`~/.lmstudio/bin/lms` primär)
+- `setActive()` erweitert: bei Wechsel auf lokalen Provider → `lms unload --all` + `lms load <id>`; bei Cloud-Provider → `unload --all` (VRAM frei)
+- Initial-Sync im Constructor: beim Server-Start wird der aktive Provider in LM Studio aktiviert
+- `ProviderConfig.localModels` öffnet Override via `~/.tms-terminal/manager.json`
+- Mobile: `QWEN_CAPS` Badges (Tools/Reasoning/Code) für neue Provider, Fuzzy-Fallback auf `id.includes('qwen')`
+- `switch_model` Tool-Description aktualisiert mit neuen Provider-IDs
+
+### User-Entscheidung
+- User-eigene Benennung beibehalten: "Qwen 3.6 35B" (existiert wirklich als `qwen/qwen3.6-35b-a3b` auf Users LM Studio), "27B" als Label für die 30B MoE akzeptiert
+- Promise-Queue-Serialisierung gewählt statt `lms ps`-Check (Overhead gespart, User klickt nicht manuell in LM Studio)
+
+### Notes
+- Build-Fehler beim ersten Release-Versuch: Gradle-Daemon kaputt → `./gradlew --stop` + Retry klappte
+- GitHub Release v1.18.10 mit APK attached: https://github.com/Kashino17/tms-terminal/releases/tag/v1.18.10
+
 ## 2026-04-22 (später) — Manager-Agent Timeout-Fix (v1.18.9)
 
 ### Was wurde gemacht

@@ -1,12 +1,13 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-04-22_
+_Zuletzt aktualisiert: 2026-04-22 (v1.18.10 released)_
 
 ## Aktuelle Version
-- **App:** v1.18.9 (auf GitHub Released, Auto-Update aktiv)
-- **Server:** v1.18.9 (via `tms-terminal update` aktualisiert)
+- **App:** v1.18.10 (auf GitHub Released, Auto-Update aktiv)
+- **Server:** v1.18.10 (via `tms-terminal update` aktualisiert)
 
 ## Zuletzt abgeschlossene Features
+- **Qwen 3 Coder 30B + Qwen 3.6 35B lokal auswählbar** (v1.18.10) — neue Provider `qwen-27b`/`qwen-35b` im Manager; `LmStudioController` lädt gewähltes Modell via `lms` CLI automatisch und unloadet alle anderen (VRAM frei); Model-IDs überschreibbar via `~/.tms-terminal/manager.json` → `localModels`
 - **Manager-Agent Timeout-Fix** (v1.18.9) — Idle-Timeout (60s zwischen Tokens) statt absolutem 3min-Limit; Gemma 4 31B kann jetzt lange generieren ohne Abbruch; Hard-Ceiling 30min als Sicherheitsnetz
 - **Verlässliche Transkription** (v1.18.9) — nur noch `turbo` Model (kein Cold-Swap-Hang), Busy-Lock + SIGKILL on Timeout (keine Zombies), Mobile-Watchdog (60s) in allen 3 Mic-Komponenten
 - **Auto-Approve Zuverlässigkeit** (v1.18.9) — Immediate-Match pro Feed (statt nur bei Silence → Spinner blockieren nicht mehr), Startup-Grace 5s → 1.5s, Tail-Hash-Dedup, Buffer 1200 → 3000
