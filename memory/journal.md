@@ -1,5 +1,27 @@
 # Session-Tagebuch
 
+## 2026-04-23 — Model-Load-Status + bessere leere-Antwort-Fallbacks (v1.19.0)
+
+### Was wurde gemacht
+- Neuer WS-Event `manager:model_status` (`shared/protocol.ts`): Server streamt `loading | ready | error` + `elapsedMs` + optional `message` (Progress-% oder Fehlertext)
+- `LmStudioController.switchTo(modelId, onStatus?)` wartet jetzt wirklich auf `lms load`, emittiert Status alle 500ms über Intervall-Timer, parst `XX%` aus stdout/stderr
+- `AiProviderRegistry.setOnModelStatus()` tagt Events mit `providerId` und reicht an `ManagerService.setOnModelStatus()` durch; `ws.handler.ts` broadcastet sie via `sendManager()` (nutzt bestehenden Buffer bei Disconnect)
+- Mobile: `modelStatus` state im Store, Banner mit Timer über Input-Leiste (`Lade Rem… 0:12 · 45%`), Input disabled während `loading`, Online-Dot im Header pulsiert 2× (`Animated.sequence` auf scale 1↔1.8) bei `ready` und wird nach 2s gecleart
+- Empty-Reply-Fallback (`manager.service.ts:2172`): wenn `cleanReply` leer aber `memUpdate` gesetzt → `📝 Notiert: <erster learnedFact/insight>`, sonst `🤔 Ich hab keine Antwort formuliert — frag mich nochmal.` (statt generischem "Verstanden")
+- `max_tokens` in allen 3 LMStudioProvider-Callsites von 4096 → `LOCAL_MAX_OUTPUT_TOKENS = 16384`
+
+### Root-Cause (aus Screenshot vom 23.4. 23:47)
+1. **"Verstanden" Nachrichten**: Gemma 4 produziert bei "Hi" nur `[MEMORY_UPDATE]`-Block ohne Prose → nach `stripMemoryTags()` leer → Fallback-String
+2. **60s Timeouts**: `setActive()` rief `lmStudio.switchTo(...).catch(() => {})` fire-and-forget auf, Client bekam sofort `manager:providers` mit `active: gemma-4` und glaubte Model sei bereit → erste Message lief in 60s Idle-Timeout weil Model noch lud
+
+### User-Entscheidungen
+- Lade-Anzeige: **(a)** ehrlicher Elapsed-Timer — kein Fake-Progressbar
+- Ready-Feedback: **(z)** pulsierender grüner Online-Dot — kein Chat-System-Message, kein Toast
+
+### Notes
+- `echo y | ./release.sh minor` pipte stdin nicht durch `read -p` → Commit+Tag+Push+gh-release musste manuell nachgeholt werden
+- GitHub Release v1.19.0 mit APK: https://github.com/Kashino17/tms-terminal/releases/tag/v1.19.0
+
 ## 2026-04-22 (noch später) — Qwen 3 Coder 30B + Qwen 3.6 35B mit Auto Load/Unload (v1.18.10)
 
 ### Was wurde gemacht
