@@ -1,5 +1,13 @@
 # Session-Tagebuch
 
+## 2026-04-22 — T4: TTS-Sidecar per-chunk audio
+
+### Was wurde gemacht
+- Python (`tts_sidecar.py`): Text wird per `split_sentences()` in Sätze aufgeteilt; jeder Satz wird einzeln synthetisiert via `synth_sentence()`; nach jedem Satz sofort `{"type":"chunk_audio", ...}` + base64-WAV auf stdout; finale Response enthält weiterhin das konkatenierte Gesamt-WAV (via `_concat_wav_chunks()`) → backward-compatible
+- TypeScript (`tts-sidecar.ts`): `PendingRequest` + `SynthesizeOptions` um `onChunkAudio` Callback erweitert; stdout-Parser handelt `resp.type === 'chunk_audio'` → dekodiert base64 zu `Buffer` und ruft Callback auf; neuer Export `synthesizeChunked(text, onChunk)` für VoiceSessionController (Task 6)
+- Build: TypeScript kompiliert sauber, Python-Syntax validiert
+- Commit: `c91b596`
+
 ## 2026-04-23 — Model-Load-Status + bessere leere-Antwort-Fallbacks (v1.19.0)
 
 ### Was wurde gemacht
