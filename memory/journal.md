@@ -1,6 +1,6 @@
 # Session-Tagebuch
 
-## 2026-04-22 — Transkription & Auto-Approve robuster gemacht (v1.15.1)
+## 2026-04-22 — Transkription & Auto-Approve robuster gemacht (v1.18.8)
 
 ### Was wurde gemacht
 - **Whisper-Transkription:** Nur noch `turbo` Model preloaded (kein Cold-Model-Swap-Hang mehr beim ersten langen Audio), Busy-Lock (strikt ein Request gleichzeitig, wie User gewünscht), Hard-Kill via SIGKILL bei Timeout (MPS ignoriert SIGTERM) damit keine Zombie-Requests entstehen
