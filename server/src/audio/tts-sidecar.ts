@@ -7,6 +7,7 @@ interface PendingRequest {
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
   onProgress?: (info: { chunk: number; total: number }) => void;
+  onChunkAudio?: (info: { chunk: number; total: number; audio: Buffer; sentence: string }) => void;
 }
 
 // Timeout: 30s base + 10s per 100 chars (generous for chunked generation)
@@ -89,6 +90,20 @@ function ensureRunning(): Promise<void> {
             continue;
           }
 
+          // Per-chunk audio (emitted before the final response)
+          if (resp.type === 'chunk_audio') {
+            if (req.onChunkAudio) {
+              const audio = Buffer.from(resp.audio as string, 'base64');
+              req.onChunkAudio({
+                chunk: resp.chunk as number,
+                total: resp.total as number,
+                audio,
+                sentence: resp.sentence as string,
+              });
+            }
+            continue;
+          }
+
           pending.delete(id);
           clearTimeout(req.timer);
           if (resp.error) {
@@ -134,6 +149,7 @@ function ensureRunning(): Promise<void> {
 
 export interface SynthesizeOptions {
   onProgress?: (info: { chunk: number; total: number }) => void;
+  onChunkAudio?: (info: { chunk: number; total: number; audio: Buffer; sentence: string }) => void;
 }
 
 export async function synthesize(text: string, options: SynthesizeOptions = {}): Promise<{ audioBase64: string; durationSecs: number }> {
@@ -154,10 +170,35 @@ export async function synthesize(text: string, options: SynthesizeOptions = {}):
       reject(new Error(`TTS Timeout (${Math.round(timeoutMs / 1000)}s)`));
     }, timeoutMs);
 
-    pending.set(id, { resolve, reject, timer, onProgress: options.onProgress });
+    pending.set(id, {
+      resolve,
+      reject,
+      timer,
+      onProgress: options.onProgress,
+      onChunkAudio: options.onChunkAudio,
+    });
 
     const request = JSON.stringify({ id, text }) + '\n';
     sidecar!.stdin!.write(request);
+  });
+}
+
+/**
+ * Synthesize text sentence-by-sentence and call `onChunk` for each sentence
+ * as its audio becomes available. Resolves when all sentences are done.
+ *
+ * Used by VoiceSessionController (Task 6) to queue audio chunks for pausable
+ * playback without waiting for the full synthesis to finish.
+ */
+export async function synthesizeChunked(
+  text: string,
+  onChunk: (info: { idx: number; sentence: string; audio: Buffer }) => void,
+): Promise<void> {
+  let idx = 0;
+  await synthesize(text, {
+    onChunkAudio: ({ audio, sentence }) => {
+      onChunk({ idx: idx++, sentence, audio });
+    },
   });
 }
 
