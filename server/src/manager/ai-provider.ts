@@ -1,5 +1,7 @@
 import { logger } from '../utils/logger';
-import { LmStudioController } from './lmstudio.controller';
+import { LmStudioController, type ModelStatusEvent, type ModelStatusListener } from './lmstudio.controller';
+
+export type RegistryModelStatusListener = (providerId: string, ev: ModelStatusEvent) => void;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -93,6 +95,7 @@ const CLOUD_TIMEOUT_MS = 60_000;        // 60s for cloud APIs (GLM, Kimi)
 const LOCAL_TIMEOUT_MS = 600_000;       // 10min hard ceiling for local non-streaming calls
 const LOCAL_IDLE_TIMEOUT_MS = 60_000;   // 60s without any token = treat as hung
 const LOCAL_STREAM_HARD_LIMIT_MS = 1_800_000; // 30min absolute cap for a single streaming call
+const LOCAL_MAX_OUTPUT_TOKENS = 16_384; // Output budget for local models — bigger than cloud so long generations aren't truncated
 
 /**
  * Creates an AbortSignal that fires if either:
@@ -678,7 +681,7 @@ class LMStudioProvider implements AiProvider {
         model: this.modelId,
         messages: apiMessages,
         temperature: 0.7,
-        max_tokens: 4096,
+        max_tokens: LOCAL_MAX_OUTPUT_TOKENS,
       }),
       signal: AbortSignal.timeout(LOCAL_TIMEOUT_MS),
     });
@@ -715,7 +718,7 @@ class LMStudioProvider implements AiProvider {
           model: this.modelId,
           messages: apiMessages,
           temperature: 0.7,
-          max_tokens: 4096,
+          max_tokens: LOCAL_MAX_OUTPUT_TOKENS,
           stream: true,
         }),
         signal: timeout.signal,
@@ -795,7 +798,7 @@ class LMStudioProvider implements AiProvider {
         model: this.modelId,
         messages: apiMessages,
         temperature: 0.7,
-        max_tokens: 4096,
+        max_tokens: LOCAL_MAX_OUTPUT_TOKENS,
         stream: true,
         tools,
         tool_choice: toolChoice,
@@ -951,6 +954,7 @@ export class AiProviderRegistry {
   private activeId: string;
   private config: ProviderConfig;
   private lmStudio: LmStudioController;
+  private onModelStatus: RegistryModelStatusListener | null = null;
 
   constructor(config: ProviderConfig) {
     this.config = config;
@@ -989,10 +993,19 @@ export class AiProviderRegistry {
     // Sync LM Studio state to match the active provider on startup
     const initial = this.providers.get(this.activeId)!;
     if (initial.isLocal && initial instanceof LMStudioProvider) {
-      this.lmStudio.switchTo(initial.getModelId()).catch(() => {});
+      this.lmStudio.switchTo(initial.getModelId(), this.forwardStatus(initial.id)).catch(() => {});
     } else {
       this.lmStudio.unloadAll().catch(() => {});
     }
+  }
+
+  /** Register a listener that receives model-load status events. */
+  setOnModelStatus(listener: RegistryModelStatusListener | null): void {
+    this.onModelStatus = listener;
+  }
+
+  private forwardStatus(providerId: string): ModelStatusListener {
+    return (ev) => this.onModelStatus?.(providerId, ev);
   }
 
   getActive(): AiProvider {
@@ -1019,7 +1032,7 @@ export class AiProviderRegistry {
     // all local models so VRAM is freed.
     const provider = this.providers.get(id)!;
     if (provider.isLocal && provider instanceof LMStudioProvider) {
-      this.lmStudio.switchTo(provider.getModelId()).catch(() => {});
+      this.lmStudio.switchTo(provider.getModelId(), this.forwardStatus(provider.id)).catch(() => {});
     } else {
       this.lmStudio.unloadAll().catch(() => {});
     }

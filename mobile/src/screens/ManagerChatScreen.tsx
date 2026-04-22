@@ -538,6 +538,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     setThinking,
     sessionMessages, activeChat, setActiveChat,
     delegatedTasks, ttsEvent, ttsAudioMap, setTtsAudioEntry,
+    modelStatus, setModelStatus,
   } = useManagerStore();
 
   const tabs = useTerminalStore((s) => s.tabs[serverId] ?? []);
@@ -1007,6 +1008,22 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     if (!loading) isSendingRef.current = false;
   }, [loading]);
 
+  // ── Model-load status: pulse online-dot on 'ready', auto-clear after 2s ──
+  const dotPulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (modelStatus?.state !== 'ready') return;
+    // Pulse 2× then clear the status so the banner disappears.
+    const pulse = Animated.sequence([
+      Animated.timing(dotPulse, { toValue: 1.8, duration: 280, useNativeDriver: true }),
+      Animated.timing(dotPulse, { toValue: 1, duration: 280, useNativeDriver: true }),
+      Animated.timing(dotPulse, { toValue: 1.8, duration: 280, useNativeDriver: true }),
+      Animated.timing(dotPulse, { toValue: 1, duration: 280, useNativeDriver: true }),
+    ]);
+    pulse.start();
+    const clearTimer = setTimeout(() => setModelStatus(null), 2000);
+    return () => { pulse.stop(); clearTimeout(clearTimer); };
+  }, [modelStatus?.state, modelStatus?.readyAt, dotPulse, setModelStatus]);
+
   // ── Scroll to Bottom ──────────────────────────────────────────────────────
 
   // Reset stuck state when screen regains focus
@@ -1342,11 +1359,12 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
         <View style={styles.headerRight}>
           <TouchableOpacity onPress={handleToggle} hitSlop={8}>
-            <View style={[
+            <Animated.View style={[
               styles.toggleDot,
               enabled && connQuality === 'good' && styles.toggleDotActive,
               enabled && connQuality === 'fair' && { backgroundColor: '#F59E0B' },
               enabled && (connQuality === 'poor' || connQuality === 'bad') && { backgroundColor: '#EF4444' },
+              modelStatus?.state === 'ready' && { transform: [{ scale: dotPulse }] },
             ]} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setShowHeaderMenu(v => !v)} hitSlop={8}>
@@ -1876,6 +1894,39 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         </View>
       )}
 
+      {/* Model-load status banner */}
+      {modelStatus && modelStatus.state !== 'ready' && (
+        <View style={[
+          styles.modelStatusBanner,
+          modelStatus.state === 'error' && styles.modelStatusBannerError,
+        ]}>
+          {modelStatus.state === 'loading' ? (
+            <>
+              <Feather name="loader" size={14} color={colors.primary} />
+              <Text style={styles.modelStatusText}>
+                Lade {providers.find(p => p.id === modelStatus.providerId)?.name ?? modelStatus.modelId}…
+                {' '}
+                <Text style={styles.modelStatusTimer}>
+                  {Math.floor(modelStatus.elapsedMs / 60000)}:
+                  {String(Math.floor((modelStatus.elapsedMs % 60000) / 1000)).padStart(2, '0')}
+                </Text>
+                {modelStatus.message ? <Text style={styles.modelStatusTimer}> · {modelStatus.message}</Text> : null}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Feather name="alert-circle" size={14} color="#EF4444" />
+              <Text style={[styles.modelStatusText, { color: '#EF4444' }]}>
+                Laden fehlgeschlagen{modelStatus.message ? `: ${modelStatus.message}` : ''}
+              </Text>
+              <TouchableOpacity onPress={() => setModelStatus(null)} hitSlop={8}>
+                <Feather name="x" size={14} color={colors.textMuted} />
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      )}
+
       {/* Input Bar */}
       <View style={[styles.inputBar, { paddingBottom: insets.bottom + spacing.sm }]}>
         <TouchableOpacity
@@ -1912,17 +1963,21 @@ export function ManagerChatScreen({ navigation, route }: Props) {
           style={styles.textInput}
           value={input}
           onChangeText={setInput}
-          placeholder={enabled ? 'Nachricht an Manager...' : 'Manager ist deaktiviert'}
+          placeholder={
+            modelStatus?.state === 'loading'
+              ? 'Warten auf Modell…'
+              : enabled ? 'Nachricht an Manager...' : 'Manager ist deaktiviert'
+          }
           placeholderTextColor={colors.textDim}
-          editable={enabled}
+          editable={enabled && modelStatus?.state !== 'loading'}
           multiline
           maxLength={4000}
           returnKeyType="default"
         />
         <TouchableOpacity
-          style={[styles.sendButton, ((!input.trim() && attachments.length === 0) || !enabled || loading) && styles.sendButtonDisabled]}
+          style={[styles.sendButton, ((!input.trim() && attachments.length === 0) || !enabled || loading || modelStatus?.state === 'loading') && styles.sendButtonDisabled]}
           onPress={handleSend}
-          disabled={(!input.trim() && attachments.length === 0) || !enabled || loading}
+          disabled={(!input.trim() && attachments.length === 0) || !enabled || loading || modelStatus?.state === 'loading'}
         >
           <Feather name="send" size={18} color={(input.trim() || attachments.length > 0) && enabled ? colors.primary : colors.textDim} />
         </TouchableOpacity>
@@ -2521,6 +2576,28 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     backgroundColor: colors.surface,
     gap: spacing.sm,
+  },
+  modelStatusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surfaceAlt,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  modelStatusBannerError: {
+    backgroundColor: '#3a1e1e',
+  },
+  modelStatusText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: fontSizes.sm,
+  },
+  modelStatusTimer: {
+    color: colors.textMuted,
+    fontVariant: ['tabular-nums'],
   },
   textInput: {
     flex: 1,

@@ -1,4 +1,4 @@
-import { AiProviderRegistry, ChatMessage, ProviderConfig, ToolDefinition, StreamResult, RawToolCall, ToolCallingProvider } from './ai-provider';
+import { AiProviderRegistry, ChatMessage, ProviderConfig, ToolDefinition, StreamResult, RawToolCall, ToolCallingProvider, RegistryModelStatusListener } from './ai-provider';
 import { globalManager } from '../terminal/terminal.manager';
 import { logger } from '../utils/logger';
 import { fcmService } from '../notifications/fcm.service';
@@ -916,6 +916,11 @@ export class ManagerService {
   setPersonality(config: Partial<PersonalityConfig>): void {
     this.personality = { ...this.personality, ...config };
     logger.info(`Manager: personality updated — name="${this.personality.agentName}", tone=${this.personality.tone}`);
+  }
+
+  /** Register a listener that receives LM Studio model-load status events. */
+  setOnModelStatus(listener: RegistryModelStatusListener | null): void {
+    this.registry.setOnModelStatus(listener);
   }
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
@@ -2164,8 +2169,20 @@ BEISPIEL:
               : `Enter in ${lbl}`;
           });
           finalText = `Ausgeführt: ${summaries.join(', ')}`;
+        } else if (memUpdate) {
+          // AI only produced a MEMORY_UPDATE block — surface what was learned
+          // instead of a generic acknowledgment so the user knows something happened.
+          const first =
+            memUpdate.learnedFacts[0]
+              ?? memUpdate.insights[0]
+              ?? memUpdate.traits[0]
+              ?? memUpdate.journalEntries[0];
+          finalText = first
+            ? `📝 Notiert: ${first}`
+            : 'Ich hab mir das gemerkt.';
         } else {
-          finalText = 'Verstanden — ich habe mir alles gemerkt.';
+          // Model generated nothing usable — tell the user instead of faking a response.
+          finalText = '🤔 Ich hab keine Antwort formuliert — frag mich nochmal.';
         }
       }
 

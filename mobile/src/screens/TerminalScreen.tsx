@@ -499,6 +499,11 @@ export function TerminalScreen({ navigation, route }: Props) {
             store.setDelegatedTasks(m.payload.tasks);
           }
           break;
+        case 'manager:model_status':
+          if (m.payload) {
+            store.setModelStatus(m.payload);
+          }
+          break;
         // TTS events — store for ManagerChatScreen to pick up
         case 'tts:result':
         case 'tts:progress':

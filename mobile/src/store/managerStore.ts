@@ -130,6 +130,16 @@ interface ManagerState {
   streamingForChat: string;
   /** Delegated tasks tracked by the manager agent. */
   delegatedTasks: Array<{ id: string; description: string; sessionId: string; sessionLabel: string; status: string; createdAt: number; updatedAt: number; steps?: Array<{ label: string; status: string }> }>;
+  /** LM Studio model-load status (null when no local model is loading). */
+  modelStatus: {
+    providerId: string;
+    modelId: string;
+    state: 'loading' | 'ready' | 'error';
+    elapsedMs: number;
+    message?: string;
+    /** Wall-clock timestamp when 'ready' fired — used to pulse the online-dot for 2s then clear. */
+    readyAt?: number;
+  } | null;
 
   // Actions
   setEnabled: (enabled: boolean) => void;
@@ -151,6 +161,7 @@ interface ManagerState {
   setOnboarded: (done: boolean) => void;
   setActiveChat: (id: string) => void;
   setDelegatedTasks: (tasks: Array<{ id: string; description: string; sessionId: string; sessionLabel: string; status: string; createdAt: number; updatedAt: number; steps?: Array<{ label: string; status: string }> }>) => void;
+  setModelStatus: (status: { providerId: string; modelId: string; state: 'loading' | 'ready' | 'error'; elapsedMs?: number; message?: string } | null) => void;
   /** Latest TTS event (result/progress/error) — consumed by ManagerChatScreen */
   ttsEvent: { type: string; payload: any } | null;
   setTtsEvent: (event: { type: string; payload: any }) => void;
@@ -198,6 +209,7 @@ export const useManagerStore = create<ManagerState>()(
       activeChat: 'alle',
       streamingForChat: 'alle',
       delegatedTasks: [],
+      modelStatus: null,
 
       setEnabled: (enabled) => set({ enabled }),
 
@@ -351,6 +363,14 @@ export const useManagerStore = create<ManagerState>()(
 
       setActiveChat: (id) => set({ activeChat: id }),
       setDelegatedTasks: (tasks) => set({ delegatedTasks: tasks }),
+
+      setModelStatus: (status) => set(() => {
+        if (!status) return { modelStatus: null };
+        const elapsedMs = status.elapsedMs ?? 0;
+        // Tag 'ready' with a timestamp so the UI can pulse the online-dot for 2s, then auto-clear.
+        const readyAt = status.state === 'ready' ? Date.now() : undefined;
+        return { modelStatus: { ...status, elapsedMs, readyAt } };
+      }),
       ttsEvent: null,
       setTtsEvent: (event) => set({ ttsEvent: event }),
       ttsAudioMap: {},

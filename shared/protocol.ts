@@ -413,6 +413,17 @@ export interface ManagerStreamEndMessage {
   };
 }
 
+export interface ManagerModelStatusMessage {
+  type: 'manager:model_status';
+  payload: {
+    providerId: string;
+    modelId: string;
+    state: 'loading' | 'ready' | 'error';
+    elapsedMs?: number;
+    message?: string;
+  };
+}
+
 // ── Chrome Remote Control (Server → Client) ─────────────────────
 export interface ChromeStatusMessage {
   type: 'chrome:status';
@@ -477,6 +488,7 @@ export type ServerMessage =
   | ManagerThinkingMessage
   | ManagerStreamChunkMessage
   | ManagerStreamEndMessage
+  | ManagerModelStatusMessage
   | ChromeStatusMessage
   | ChromeFrameMessage
   | ChromeTabsMessage

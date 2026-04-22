@@ -4,10 +4,19 @@ import * as os from 'os';
 import * as path from 'path';
 import { logger } from '../utils/logger';
 
+export type ModelStatusEvent =
+  | { state: 'starting'; modelId: string }
+  | { state: 'loading'; modelId: string; elapsedMs: number; progress?: number }
+  | { state: 'ready'; modelId: string; elapsedMs: number }
+  | { state: 'error'; modelId: string; elapsedMs: number; message: string };
+
+export type ModelStatusListener = (ev: ModelStatusEvent) => void;
+
 /**
  * Controls LM Studio via the `lms` CLI: loads the selected model, unloads all
  * others so VRAM is freed. Operations are serialized so rapid provider switches
- * don't race each other.
+ * don't race each other. Emits status events so the UI can show a loading
+ * banner and fire a "ready" indicator.
  */
 export class LmStudioController {
   private lmsPath: string | null = null;
@@ -24,22 +33,38 @@ export class LmStudioController {
   }
 
   /** Switch to a specific model: unload everything else, ensure target is loaded. */
-  switchTo(modelId: string): Promise<void> {
+  switchTo(modelId: string, onStatus?: ModelStatusListener): Promise<void> {
     return this.enqueue(async () => {
-      if (!this.lmsPath) return;
+      if (!this.lmsPath) {
+        onStatus?.({ state: 'error', modelId, elapsedMs: 0, message: '`lms` CLI not installed' });
+        return;
+      }
       if (this.lastTarget === modelId) {
         logger.info(`LM Studio: ${modelId} already targeted, skipping switch`);
+        // Still emit 'ready' so the UI can clear any stale loading state.
+        onStatus?.({ state: 'ready', modelId, elapsedMs: 0 });
         return;
       }
       this.lastTarget = modelId;
+      const started = Date.now();
+      onStatus?.({ state: 'starting', modelId });
+      const elapsedTimer = onStatus
+        ? setInterval(() => onStatus({ state: 'loading', modelId, elapsedMs: Date.now() - started }), 500)
+        : null;
       try {
         await this.run(['unload', '--all']);
-        await this.run(['load', modelId, '-y']);
-        logger.info(`LM Studio: activated ${modelId}`);
+        await this.runWithProgress(['load', modelId, '-y'], (progress) => {
+          onStatus?.({ state: 'loading', modelId, elapsedMs: Date.now() - started, progress });
+        });
+        logger.info(`LM Studio: activated ${modelId} in ${Date.now() - started}ms`);
+        onStatus?.({ state: 'ready', modelId, elapsedMs: Date.now() - started });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.warn(`LM Studio: failed to activate ${modelId}: ${msg}`);
         this.lastTarget = null;
+        onStatus?.({ state: 'error', modelId, elapsedMs: Date.now() - started, message: msg });
+      } finally {
+        if (elapsedTimer) clearInterval(elapsedTimer);
       }
     });
   }
@@ -78,8 +103,33 @@ export class LmStudioController {
     });
   }
 
+  /** Like run(), but parses `lms load` progress output ("XX%") and reports it. */
+  private runWithProgress(args: string[], onProgress: (pct: number) => void): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn(this.lmsPath!, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      const parsePct = (chunk: string) => {
+        const matches = chunk.match(/(\d+(?:\.\d+)?)\s*%/g);
+        if (!matches) return;
+        const last = matches[matches.length - 1];
+        const n = parseFloat(last);
+        if (!Number.isNaN(n) && n >= 0 && n <= 100) onProgress(n);
+      };
+      proc.stdout?.on('data', (d) => parsePct(d.toString()));
+      proc.stderr?.on('data', (d) => {
+        const s = d.toString();
+        stderr += s;
+        parsePct(s);
+      });
+      proc.on('error', (err) => reject(err));
+      proc.on('exit', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`lms ${args.join(' ')} exited ${code}: ${stderr.slice(0, 300).trim()}`));
+      });
+    });
+  }
+
   private resolveLmsPath(): string | null {
-    // Common install locations for the `lms` CLI
     const candidates = [
       path.join(os.homedir(), '.lmstudio', 'bin', 'lms'),
       path.join(os.homedir(), '.cache', 'lm-studio', 'bin', 'lms'),
@@ -89,7 +139,6 @@ export class LmStudioController {
     for (const p of candidates) {
       try { if (fs.existsSync(p) && fs.statSync(p).isFile()) return p; } catch {}
     }
-    // Fallback: trust PATH — spawn('lms') will fail cleanly if missing
     return 'lms';
   }
 }

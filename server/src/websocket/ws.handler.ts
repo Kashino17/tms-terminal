@@ -119,6 +119,20 @@ function setupManagerCallbacks(ws: WebSocket): void {
   );
 }
 
+// Broadcast LM Studio model-load status to the connected client. Registered
+// once at module load so it's active even before the first WS connection.
+managerService.setOnModelStatus((providerId, ev) => {
+  const payload: Record<string, unknown> = {
+    providerId,
+    modelId: ev.modelId,
+    state: ev.state === 'starting' ? 'loading' : ev.state,
+  };
+  if ('elapsedMs' in ev) payload.elapsedMs = ev.elapsedMs;
+  if ('progress' in ev && typeof ev.progress === 'number') payload.message = `${ev.progress.toFixed(0)}%`;
+  if ('message' in ev && ev.message) payload.message = ev.message;
+  sendManager({ type: 'manager:model_status', payload });
+});
+
 // These need to be module-level so setupManagerCallbacks can reference them
 // They're assigned inside handleConnection when ws is available
 let createTerminalForManager: (label?: string) => string | null = () => null;
