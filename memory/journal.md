@@ -1,5 +1,14 @@
 # Session-Tagebuch
 
+## 2026-04-22 — T6: VoiceSessionController State Machine (TDD)
+
+### Was wurde gemacht
+- `server/src/manager/voice.controller.ts` erstellt: Kernorchestrator für den Voice-Turn-Pipeline (audio → Whisper → LLM stream → SentenceBuffer → chunked TTS → WS emit)
+- `server/test/voice.controller.test.ts` erstellt: 4 Unit-Tests mit gemockten sidecars (Whisper, TTS, Registry)
+- TDD-Prozess: Test zuerst (FAIL), dann Implementation (PASS 4/4)
+- Alle T2-T5 Signaturen passen: `SentenceBuffer.push/flush`, `VoiceEmitter`, `TtsChunk`, `PauseState`, `pickAckAudio`, `synthesizeChunked`
+- Commit: `81b2de3`
+
 ## 2026-04-22 — T4: TTS-Sidecar per-chunk audio
 
 ### Was wurde gemacht
