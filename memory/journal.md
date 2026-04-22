@@ -1,5 +1,17 @@
 # Session-Tagebuch
 
+## 2026-04-22 (später) — Manager-Agent Timeout-Fix (v1.18.9)
+
+### Was wurde gemacht
+- Root-Cause: `ai-provider.ts` hatte `LOCAL_TIMEOUT_MS = 180_000` als **absoluten** AbortSignal.timeout() auf LM-Studio-Streams → Gemma 4 31B wurde nach 3min abgebrochen obwohl aktiv generierend
+- Neuer `createStreamTimeout()` Helper: kombiniert Idle-Timeout (60s zwischen Tokens) + Hard-Ceiling (30min absolut) + optional User-Cancel-Signal
+- Applied auf `chatStream()` und `chatStreamWithTools()` im `LMStudioProvider` — `touch()` bei jedem Stream-Chunk
+- Error-Messages deutsch und informativ: "Modell reagiert nicht mehr (60s kein Token)"
+
+### Symptom (aus User-Screenshots)
+- Manager "Rem" (Gemma 4 31B local) antwortete mit "⚠️ The operation was aborted due to timeout" bei Dauer 180-190s
+- Fehler war undurchsichtig (native Undici-Error)
+
 ## 2026-04-22 — Transkription & Auto-Approve robuster gemacht (v1.18.8)
 
 ### Was wurde gemacht

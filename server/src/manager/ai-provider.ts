@@ -81,8 +81,62 @@ export interface StreamResult {
 // ── Kimi K2.5 Provider (OpenAI-compatible API) ─────────────────────────────
 
 // ── Timeout Constants ──────────────────────────────────────────────────────
-const CLOUD_TIMEOUT_MS = 60_000;   // 60s for cloud APIs (GLM, Kimi)
-const LOCAL_TIMEOUT_MS = 180_000;  // 3min for local models (LM Studio)
+const CLOUD_TIMEOUT_MS = 60_000;        // 60s for cloud APIs (GLM, Kimi)
+const LOCAL_TIMEOUT_MS = 600_000;       // 10min hard ceiling for local non-streaming calls
+const LOCAL_IDLE_TIMEOUT_MS = 60_000;   // 60s without any token = treat as hung
+const LOCAL_STREAM_HARD_LIMIT_MS = 1_800_000; // 30min absolute cap for a single streaming call
+
+/**
+ * Creates an AbortSignal that fires if either:
+ *   - `hardLimitMs` total elapses since creation, OR
+ *   - `idleMs` elapses since the last `touch()` call.
+ *
+ * Use on streaming LLM calls where "took a while" ≠ "hung". Call `touch()` on
+ * every received token so slow-but-progressing responses don't get killed.
+ */
+function createStreamTimeout(idleMs: number, hardLimitMs: number, userCancel?: AbortSignal): {
+  signal: AbortSignal;
+  touch: () => void;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  let idleTimer: NodeJS.Timeout;
+  let disposed = false;
+
+  const armIdle = () => {
+    if (disposed) return;
+    idleTimer = setTimeout(() => {
+      controller.abort(new Error(`Modell reagiert nicht mehr (${idleMs / 1000}s kein Token). Bitte erneut senden.`));
+    }, idleMs);
+    idleTimer.unref();
+  };
+
+  const hardTimer = setTimeout(() => {
+    controller.abort(new Error(`Modell läuft zu lange (>${Math.round(hardLimitMs / 60_000)}min). Bitte erneut senden.`));
+  }, hardLimitMs);
+  hardTimer.unref();
+
+  if (userCancel) {
+    if (userCancel.aborted) controller.abort(userCancel.reason);
+    else userCancel.addEventListener('abort', () => controller.abort(userCancel.reason), { once: true });
+  }
+
+  armIdle();
+
+  return {
+    signal: controller.signal,
+    touch: () => {
+      if (disposed) return;
+      clearTimeout(idleTimer);
+      armIdle();
+    },
+    dispose: () => {
+      disposed = true;
+      clearTimeout(idleTimer);
+      clearTimeout(hardTimer);
+    },
+  };
+}
 
 // Kimi Code API (kimi.com/code) — NOT the same as Moonshot Open Platform
 // sk-kimi-* keys only work on api.kimi.com/coding/v1, not on api.moonshot.ai
@@ -637,51 +691,57 @@ class LMStudioProvider implements AiProvider {
       ...messages.map(m => ({ role: m.role, content: m.content })),
     ];
 
-    const res = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer lm-studio',
-      },
-      body: JSON.stringify({
-        model: this.modelId,
-        messages: apiMessages,
-        temperature: 0.7,
-        max_tokens: 4096,
-        stream: true,
-      }),
-      signal: AbortSignal.timeout(LOCAL_TIMEOUT_MS),
-    });
+    const timeout = createStreamTimeout(LOCAL_IDLE_TIMEOUT_MS, LOCAL_STREAM_HARD_LIMIT_MS);
+    try {
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer lm-studio',
+        },
+        body: JSON.stringify({
+          model: this.modelId,
+          messages: apiMessages,
+          temperature: 0.7,
+          max_tokens: 4096,
+          stream: true,
+        }),
+        signal: timeout.signal,
+      });
 
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`LM Studio error ${res.status}: ${body.slice(0, 200)}`);
-    }
-
-    let full = '';
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data: ')) continue;
-        const data = trimmed.slice(6);
-        if (data === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(data) as { choices: Array<{ delta: { content?: string } }> };
-          const token = parsed.choices[0]?.delta?.content;
-          if (token) { full += token; onChunk(token); }
-        } catch {}
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`LM Studio error ${res.status}: ${body.slice(0, 200)}`);
       }
+
+      let full = '';
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        timeout.touch();
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data: ')) continue;
+          const data = trimmed.slice(6);
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data) as { choices: Array<{ delta: { content?: string } }> };
+            const token = parsed.choices[0]?.delta?.content;
+            if (token) { full += token; onChunk(token); }
+          } catch {}
+        }
+      }
+      return full;
+    } finally {
+      timeout.dispose();
     }
-    return full;
   }
 
   /** Stream with tool calling support (OpenAI-compatible format) */
@@ -704,12 +764,15 @@ class LMStudioProvider implements AiProvider {
       }),
     ];
 
-    // Combine timeout + user cancel signals
-    const timeoutSignal = AbortSignal.timeout(LOCAL_TIMEOUT_MS);
-    const signal = cancelSignal
-      ? AbortSignal.any([timeoutSignal, cancelSignal])
-      : timeoutSignal;
+    const timeout = createStreamTimeout(LOCAL_IDLE_TIMEOUT_MS, LOCAL_STREAM_HARD_LIMIT_MS, cancelSignal);
 
+    let fullText = '';
+    let completionTokens = 0;
+    let promptTokens = 0;
+    let totalTokens = 0;
+    const toolCallAccum = new Map<number, { id: string; name: string; args: string }>();
+
+    try {
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -725,7 +788,7 @@ class LMStudioProvider implements AiProvider {
         tools,
         tool_choice: toolChoice,
       }),
-      signal,
+      signal: timeout.signal,
     });
 
     if (!res.ok) {
@@ -736,11 +799,6 @@ class LMStudioProvider implements AiProvider {
     const tcLabel = typeof toolChoice === 'string' ? toolChoice : `forced:${toolChoice.function.name}`;
     logger.info(`LM Studio API: request sent (${tools.length} tools, ${apiMessages.length} msgs, model=${this.modelId.split('/').pop()}, tool_choice=${tcLabel})`);
 
-    let fullText = '';
-    let completionTokens = 0;
-    let promptTokens = 0;
-    let totalTokens = 0;
-    const toolCallAccum = new Map<number, { id: string; name: string; args: string }>();
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -748,6 +806,7 @@ class LMStudioProvider implements AiProvider {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      timeout.touch();
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
@@ -823,6 +882,9 @@ class LMStudioProvider implements AiProvider {
 
     const usage: StreamUsage = { completionTokens, promptTokens: promptTokens || undefined, totalTokens: totalTokens || undefined };
     return { text: fullText, toolCalls, rawToolCalls, usage };
+    } finally {
+      timeout.dispose();
+    }
   }
 }
 

@@ -3,12 +3,13 @@
 _Zuletzt aktualisiert: 2026-04-22_
 
 ## Aktuelle Version
-- **App:** v1.18.8 (auf GitHub Released, Auto-Update aktiv)
-- **Server:** v1.18.8 (via `tms-terminal update` aktualisiert)
+- **App:** v1.18.9 (auf GitHub Released, Auto-Update aktiv)
+- **Server:** v1.18.9 (via `tms-terminal update` aktualisiert)
 
 ## Zuletzt abgeschlossene Features
-- **Verlässliche Transkription** (v1.18.8) — nur noch `turbo` Model (kein Cold-Swap-Hang), Busy-Lock + SIGKILL on Timeout (keine Zombies), Mobile-Watchdog (60s) in allen 3 Mic-Komponenten
-- **Auto-Approve Zuverlässigkeit** (v1.18.8) — Immediate-Match pro Feed (statt nur bei Silence → Spinner blockieren nicht mehr), Startup-Grace 5s → 1.5s, Tail-Hash-Dedup, Buffer 1200 → 3000
+- **Manager-Agent Timeout-Fix** (v1.18.9) — Idle-Timeout (60s zwischen Tokens) statt absolutem 3min-Limit; Gemma 4 31B kann jetzt lange generieren ohne Abbruch; Hard-Ceiling 30min als Sicherheitsnetz
+- **Verlässliche Transkription** (v1.18.9) — nur noch `turbo` Model (kein Cold-Swap-Hang), Busy-Lock + SIGKILL on Timeout (keine Zombies), Mobile-Watchdog (60s) in allen 3 Mic-Komponenten
+- **Auto-Approve Zuverlässigkeit** (v1.18.9) — Immediate-Match pro Feed (statt nur bei Silence → Spinner blockieren nicht mehr), Startup-Grace 5s → 1.5s, Tail-Hash-Dedup, Buffer 1200 → 3000
 - **Activity Indicator + Token Streaming** (v1.14.0) — ThinkingBubble mit Phasen, Live-Timer, Token-Streaming, Phase-Popup
 - **Native Tool Calling für GLM-5-Turbo** (v1.15.0) — `write_to_terminal` + `send_enter` als native Function Tools
 - **Claude CLI entfernt** (v1.14.0) — nur noch GLM (Default) + Kimi als Provider
