@@ -1,5 +1,18 @@
 # Session-Tagebuch
 
+## 2026-04-22 — Transkription & Auto-Approve robuster gemacht (v1.15.1)
+
+### Was wurde gemacht
+- **Whisper-Transkription:** Nur noch `turbo` Model preloaded (kein Cold-Model-Swap-Hang mehr beim ersten langen Audio), Busy-Lock (strikt ein Request gleichzeitig, wie User gewünscht), Hard-Kill via SIGKILL bei Timeout (MPS ignoriert SIGTERM) damit keine Zombie-Requests entstehen
+- **Mobile Mic-Watchdog:** 60s Safety-Timer in OrbLayer, TerminalToolbar, ManagerChatScreen — Mic-Button kann nie mehr forever auf "processing" hängen; Busy-Error wird silently ignored (anderer Screen arbeitet noch); normale Errors zeigen Toast/Alert
+- **Auto-Approve Prompt-Detector komplett umgebaut:** Match läuft jetzt auf JEDEM Feed (50ms Debounce) statt nur bei Silence — das war der Hauptbug, weil Claude Code Spinner-Frames den Silence-Timer dauerhaft resetten
+- **Weitere Auto-Approve-Fixes:** Startup-Grace 5s → 1.5s (erste Anfrage wird jetzt erkannt), Buffer 1200 → 3000 chars (lange Claude-Boxen passen), Scan-Tail 600 → 1200, Tail-Hash-Dedup verhindert doppeltes Enter, neue `noteApproved()` API leert Buffer nach Auto-Enter
+
+### User-Entscheidungen (wichtig für zukünftige Arbeit)
+- Transkription: nur `turbo` Modell, kein dynamisches Switching
+- Bei Fehler: einfach melden, User klickt nochmal (kein Auto-Retry)
+- Nur eine Transkription parallel, strikter Busy-Lock
+
 ## 2026-04-10 — Activity Indicator, Streaming, Native Tool Calling
 
 ### Was wurde gemacht
