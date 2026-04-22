@@ -1,4 +1,8 @@
 import { AiProviderRegistry, ChatMessage, ProviderConfig, ToolDefinition, StreamResult, RawToolCall, ToolCallingProvider, RegistryModelStatusListener } from './ai-provider';
+import { VoiceSessionController } from './voice.controller';
+import type { VoiceEmitter } from './voice.types';
+import { synthesizeChunked } from '../audio/tts-sidecar';
+import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
 import { globalManager } from '../terminal/terminal.manager';
 import { logger } from '../utils/logger';
 import { fcmService } from '../notifications/fcm.service';
@@ -878,6 +882,7 @@ export class ManagerService {
   private lastChatHadToolCalls = false; // Tracks if the last handleChat made tool calls
   private orchestratorRetryCount = new Map<string, number>(); // step retries per task
   private commandHistory: Array<{ action: string; target: string; detail: string; timestamp: number }> = [];
+  private activeVoiceSession: VoiceSessionController | null = null;
 
   // ── Open-ended question auto-answer ─────────────────────────────
   private lastAnsweredQuestion = new Map<string, { text: string; answeredAt: number }>();
@@ -4121,5 +4126,45 @@ BEISPIEL:
   /** Get active sessions with labels for the client. */
   getSessionList(): Array<{ sessionId: string; label: string }> {
     return [...this.sessionLabels.entries()].map(([id, label]) => ({ sessionId: id, label }));
+  }
+
+  /** Create (or replace) a VoiceSessionController for a WebSocket connection. */
+  createVoiceSession(emit: VoiceEmitter): VoiceSessionController {
+    const session = new VoiceSessionController({
+      registry: {
+        getActive: () => {
+          const provider = this.registry.getActive();
+          return {
+            id: provider.id,
+            chatStream: (
+              messages: Array<{ role: string; content: string }>,
+              systemPrompt: string,
+              onChunk: (token: string) => void,
+            ) => provider.chatStream(messages as ChatMessage[], systemPrompt, onChunk),
+          };
+        },
+      },
+      whisper: {
+        transcribe: async (audio: Buffer): Promise<string> => {
+          // whisper-sidecar expects base64-encoded audio, not a raw Buffer
+          const audioBase64 = audio.toString('base64');
+          return whisperTranscribe(audioBase64);
+        },
+      },
+      tts: {
+        synthesizeChunked: async (text: string, onChunk): Promise<void> => {
+          await synthesizeChunked(text, onChunk);
+        },
+      },
+      emit,
+      systemPrompt: buildSystemPrompt(this.personality),
+    });
+    this.activeVoiceSession = session;
+    return session;
+  }
+
+  /** Returns the currently active voice session, if any (used for provider-switch blocking). */
+  getActiveVoiceSession(): VoiceSessionController | null {
+    return this.activeVoiceSession;
   }
 }

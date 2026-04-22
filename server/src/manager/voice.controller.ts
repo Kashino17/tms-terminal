@@ -106,7 +106,7 @@ export class VoiceSessionController {
       this.setPhase('speaking');
       await this.synthesizeAndEmit(pendingSentences);
 
-      if (this.phase !== 'paused') {
+      if ((this.phase as VoicePhase) !== 'paused') {
         this.setPhase('listening');
       }
     } catch (err) {

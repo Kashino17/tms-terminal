@@ -175,6 +175,16 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   // Track which sessions this connection owns (for detach on disconnect)
   const ownedSessions = new Set<string>();
   const chromeManager = new ChromeManager();
+
+  // ── Per-connection voice session ─────────────────────────────────
+  let voiceSession: import('../manager/voice.controller').VoiceSessionController | null = null;
+
+  const getVoiceSession = () => {
+    if (!voiceSession) {
+      voiceSession = managerService.createVoiceSession((msg) => send(ws, msg as any));
+    }
+    return voiceSession;
+  };
   // Track attach generation per session — passed to detachSession to prevent stale detach
   const sessionGens = new Map<string, number>();
   // Use the persisted tokens as the starting value; overwritten on register
@@ -589,6 +599,48 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         saveManagerConfig(updates);
         send(ws, { type: 'manager:providers', payload: managerService.getProviders() } as any);
       }
+      return;
+    }
+
+    // ── Voice chat message handlers ──────────────────────────────────
+
+    if (msgType === 'voice:start') {
+      getVoiceSession().start();
+      return;
+    }
+    if (msgType === 'voice:audio_chunk') {
+      const audio = (msg as any).payload?.audio;
+      if (typeof audio === 'string') {
+        getVoiceSession().ingestAudio(Buffer.from(audio, 'base64'));
+      }
+      return;
+    }
+    if (msgType === 'voice:end_turn') {
+      getVoiceSession().endUserTurn().catch((err) => {
+        const m = err instanceof Error ? err.message : String(err);
+        send(ws, { type: 'voice:error', payload: { message: m, recoverable: true } } as any);
+      });
+      return;
+    }
+    if (msgType === 'voice:pause') {
+      getVoiceSession().pause();
+      return;
+    }
+    if (msgType === 'voice:resume') {
+      const strategy = (msg as any).payload?.strategy === 'with_interjection' ? 'with_interjection' : 'clean';
+      getVoiceSession().resume(strategy).catch((err) => {
+        const m = err instanceof Error ? err.message : String(err);
+        send(ws, { type: 'voice:error', payload: { message: m, recoverable: true } } as any);
+      });
+      return;
+    }
+    if (msgType === 'voice:cancel') {
+      getVoiceSession().cancel();
+      return;
+    }
+    if (msgType === 'voice:stop') {
+      getVoiceSession().stop();
+      voiceSession = null;
       return;
     }
 
@@ -1211,6 +1263,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     // Clear the current WS reference so manager messages get buffered
     if (currentWs === ws) {
       currentWs = null;
+    }
+
+    // Stop the voice session so all timers/streams are cleaned up
+    if (voiceSession) {
+      voiceSession.stop();
+      voiceSession = null;
     }
 
     chromeManager.disconnect();
