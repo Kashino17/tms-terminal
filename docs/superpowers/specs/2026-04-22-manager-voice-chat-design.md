@@ -50,7 +50,7 @@ Add a voice chat mode to the Manager Agent that feels like a FaceTime call with 
 
 - **Single source of truth:** `VoiceSessionController` holds complete turn state. Mobile mirrors only.
 - **Phase-driven video:** Server emits `voice:phase` on every state change → mobile swaps video loops. Videos stay synchronized with backend activity.
-- **Chunk-based pause/resume:** F5-TTS output is sentence-chunked. Pause happens between chunks → clean cuts, unambiguous resume point.
+- **Chunk-based pause/resume:** The controller splits the LLM's text response into sentences (at `.`, `!`, `?` boundaries) and invokes F5-TTS one sentence at a time, queuing each resulting audio buffer. Pause happens between sentences → clean cuts, unambiguous resume point.
 - **No stream duplication:** Reuses existing WebSocket transport. No WebRTC or additional channels.
 - **Component recycling:** `WhisperSidecar`, `F5TtsSidecar`, `AiProviderRegistry` unchanged.
 
@@ -490,7 +490,7 @@ Shared:
 Server:
 - `server/src/websocket/ws.handler.ts` — route new `voice:*` messages to controller
 - `server/src/index.ts` — serve `/voice-videos/:name.mp4` static endpoint; generate ack audios on startup
-- `server/src/audio/tts-sidecar.ts` — expose sentence-chunked streaming API if not already present
+- `server/src/audio/tts-sidecar.ts` — extend existing chunked-progress API to emit per-chunk audio (currently emits only progress counts; VoiceSessionController needs actual audio buffers per chunk)
 
 Mobile:
 - `mobile/src/screens/ManagerChatScreen.tsx` — add "🎙️ Voice" button in header
