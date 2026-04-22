@@ -2,7 +2,7 @@
   "expo": {
     "name": "TMS Terminal",
     "slug": "tms-terminal",
-    "version": "1.18.10",
+    "version": "1.19.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
