@@ -1,20 +1,16 @@
 // Detects interactive prompts AND AI-tool-finished events in PTY output.
 //
-// Tuned for aggressive auto-approve with fast response times.
-// Guards against false positives:
-// - Startup grace period: ignore first STARTUP_GRACE_MS after watch()
-// - AI detection requires strong signals (not just bare keyword mentions)
-// - AI-finished requires minimum output volume since AI was detected
-// - Prompt patterns are broad but specific (no generic "ends with ?" matching)
-// - AI detection expires after 10 min without resolution
+// Design goals:
+// - Fast response: match on every feed, not just on silence (Claude Code spinners
+//   reset a silence-only timer forever).
+// - Robust against dup-fires: buffer-hash cooldown after each successful match.
+// - Minimal false positives: strict patterns, AI detection requires strong signals.
 
 const ANSI_STRIP = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]/g;
 
 // ── Interactive Prompt Patterns ──────────────────────────────────────────────
-// ONLY match when the terminal is genuinely waiting for user input.
-// Generic "?" at end of line is intentionally excluded — it matches help output, URLs, etc.
 const PROMPT_PATTERNS = [
-  // Y/N confirmations (explicit bracket/paren format)
+  // Y/N confirmations
   /\[y\/n\]/i,
   /\[Y\/n\]/,
   /\[y\/N\]/,
@@ -82,74 +78,65 @@ const PROMPT_PATTERNS = [
 ];
 
 // ── AI Tool Detection ────────────────────────────────────────────────────────
-// Strong signals ONLY. Bare keywords like "claude" or spinner chars are excluded
-// because they fire on `pip install anthropic`, Starship prompts, npm spinners, etc.
 const AI_ACTIVE_PATTERNS = [
-  // Claude Code UI
-  /╭──.*claude/i,                 // Box header with "claude"
-  /tool_use/i,                    // Tool use indicator
+  /╭──.*claude/i,
+  /tool_use/i,
   /allow (this action|bash|command|running|tool|edit|execution)/i,
-
-  // Codex UI
-  /codex\s*>\s/i,                 // Codex prompt marker
+  /codex\s*>\s/i,
   /apply (change|patch|diff)\?/i,
-
-  // Gemini CLI UI
   /waiting for user confirmation/i,
   /gemini\s*>\s/i,
-
-  // Strong contextual signals
-  /Thinking\.\.\./,              // Case-sensitive "Thinking..." (AI progress)
+  /Thinking\.\.\./,
 ];
 
 // ── Shell Prompt Return ──────────────────────────────────────────────────────
-// Indicates the shell is idle. Used ONLY to detect AI-tool exit.
-// The old /[%$#>]\s*$/m matched after EVERY command — removed.
 const SHELL_PROMPT_PATTERNS = [
-  /\w+@[\w.-]+[\s:~][^\n]*[%$#]\s*$/m,   // user@host:~/path$
-  /PS [A-Z]:\\.*>\s*$/m,                   // PowerShell
-  /[A-Z]:\\[^>\n]*>\s*$/m,                 // CMD
-  /❯\s*$/m,                               // Starship
-  /➜\s+\S/m,                              // Oh-My-Zsh
-  /^\$\s*$/m,                              // Bare $
+  /\w+@[\w.-]+[\s:~][^\n]*[%$#]\s*$/m,
+  /PS [A-Z]:\\.*>\s*$/m,
+  /[A-Z]:\\[^>\n]*>\s*$/m,
+  /❯\s*$/m,
+  /➜\s+\S/m,
+  /^\$\s*$/m,
 ];
 
 // ── Timing & Limits ──────────────────────────────────────────────────────────
-const SILENCE_MS       = 1500;   // Silence before checking — fast detection
-const RETRY_MS         = 3000;   // Retry interval for active prompts
-const MAX_RETRIES      = 4;      // Retries per prompt — more persistent
-const SCAN_TAIL        = 600;
-const BUFFER_MAX       = 1200;
-const STARTUP_GRACE_MS = 5000;   // Ignore output for first 5s after watch()
-const MIN_AI_OUTPUT    = 800;    // Min chars since AI detected to trigger "finished"
-const AI_EXPIRE_MS     = 10 * 60 * 1000; // AI detection expires after 10 min
+const SILENCE_MS        = 1200;   // Fallback — immediate check runs on every feed
+const IMMEDIATE_DEBOUNCE_MS = 50; // Coalesce back-to-back feeds into single check
+const SCAN_TAIL         = 1200;   // Up from 600 — Claude Code boxes are often long
+const BUFFER_MAX        = 3000;   // Up from 1200 — fits longer code-context boxes
+const STARTUP_GRACE_MS  = 1500;   // Down from 5000 — don't miss the first prompt
+const MIN_AI_OUTPUT     = 800;
+const AI_EXPIRE_MS      = 10 * 60 * 1000;
+const DEDUP_COOLDOWN_MS = 2000;   // After firing, same tail-hash is ignored for this long
+
+function hashTail(s: string): string {
+  // Cheap non-crypto hash — enough to detect "same text" vs "different text"
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return h.toString(36);
+}
 
 export class PromptDetector {
   private buffers        = new Map<string, string>();
   private timers         = new Map<string, NodeJS.Timeout>();
-  private retryTimers    = new Map<string, NodeJS.Timeout>();
+  private immediateTimers = new Map<string, NodeJS.Timeout>();
   private callbacks      = new Map<string, (snippet: string) => void>();
   private aiActive       = new Map<string, boolean>();
   private aiDetectedAt   = new Map<string, number>();
   private outputLen      = new Map<string, number>();
   private aiOutputStart  = new Map<string, number>();
   private watchedAt      = new Map<string, number>();
+  private lastFiredHash  = new Map<string, string>();
+  private lastFiredAt    = new Map<string, number>();
 
   watch(sessionId: string, onPrompt: (snippet: string) => void): void {
     this.callbacks.set(sessionId, onPrompt);
-    // Only set watchedAt on first watch (not on re-watch/reattach)
-    // This preserves the buffer and AI state across reconnects
     if (!this.watchedAt.has(sessionId)) {
       this.watchedAt.set(sessionId, Date.now());
     }
-    // Do NOT clear buffers/AI state — they may contain valid data from detached period
   }
 
   feed(sessionId: string, data: string): void {
-    // Cancel pending retry (new output = prompt was answered or new activity)
-    const retry = this.retryTimers.get(sessionId);
-    if (retry) { clearTimeout(retry); this.retryTimers.delete(sessionId); }
-
     // Track output volume
     const newLen = (this.outputLen.get(sessionId) ?? 0) + data.length;
     this.outputLen.set(sessionId, newLen);
@@ -171,15 +158,23 @@ export class PromptDetector {
       combined.length > BUFFER_MAX ? combined.slice(combined.length - BUFFER_MAX) : combined,
     );
 
-    // Restart silence timer
+    // Immediate check (debounced by 50ms to coalesce rapid feeds into one check).
+    // This is the primary detection path — spinner output no longer blocks matching.
+    const existingImmediate = this.immediateTimers.get(sessionId);
+    if (existingImmediate) clearTimeout(existingImmediate);
+    const imm = setTimeout(() => {
+      this.immediateTimers.delete(sessionId);
+      this._check(sessionId);
+    }, IMMEDIATE_DEBOUNCE_MS);
+    imm.unref();
+    this.immediateTimers.set(sessionId, imm);
+
+    // Silence-based fallback (kept for edge cases where immediate misses)
     const existing = this.timers.get(sessionId);
     if (existing) clearTimeout(existing);
-
     const timer = setTimeout(() => {
       this.timers.delete(sessionId);
-      const bufLen = (this.buffers.get(sessionId) ?? '').length;
-      console.log(`[PromptDetector] Silence timeout for ${sessionId.slice(0,8)}, buf=${bufLen}, hasCallback=${this.callbacks.has(sessionId)}`);
-      this._check(sessionId, 0);
+      this._check(sessionId);
     }, SILENCE_MS);
     timer.unref();
     this.timers.set(sessionId, timer);
@@ -193,18 +188,26 @@ export class PromptDetector {
     this.outputLen.delete(sessionId);
     this.aiOutputStart.delete(sessionId);
     this.watchedAt.delete(sessionId);
+    this.lastFiredHash.delete(sessionId);
+    this.lastFiredAt.delete(sessionId);
     const t = this.timers.get(sessionId);
     if (t) { clearTimeout(t); this.timers.delete(sessionId); }
-    const r = this.retryTimers.get(sessionId);
-    if (r) { clearTimeout(r); this.retryTimers.delete(sessionId); }
+    const imm = this.immediateTimers.get(sessionId);
+    if (imm) { clearTimeout(imm); this.immediateTimers.delete(sessionId); }
   }
 
-  private _check(sessionId: string, retryCount: number): void {
+  /** Called after an auto-approve Enter is dispatched — forces a fresh match cycle. */
+  noteApproved(sessionId: string): void {
+    // Clear buffer so residual text from before Enter can't re-match.
+    this.buffers.set(sessionId, '');
+    this.lastFiredHash.delete(sessionId);
+    this.lastFiredAt.delete(sessionId);
+  }
+
+  private _check(sessionId: string): void {
     // ── Guard: startup grace period ──
     const startedAt = this.watchedAt.get(sessionId) ?? 0;
-    if (Date.now() - startedAt < STARTUP_GRACE_MS) {
-      return; // Ignore — shell just started, MOTD/prompt output is expected
-    }
+    if (Date.now() - startedAt < STARTUP_GRACE_MS) return;
 
     // ── Guard: expire stale AI detection ──
     const aiDetTime = this.aiDetectedAt.get(sessionId) ?? 0;
@@ -227,19 +230,24 @@ export class PromptDetector {
     const hasEnoughOutput = outputSinceAi >= MIN_AI_OUTPUT;
     const shellReturned   = aiWasActive && hasEnoughOutput && SHELL_PROMPT_PATTERNS.some(p => p.test(tail));
 
-    if (!matched && !shellReturned) {
-      console.log(`[PromptDetector] No match for ${sessionId.slice(0,8)}. Tail: ${tail.slice(-80).replace(/\n/g, '\\n')}`);
+    if (!matched && !shellReturned) return;
+
+    // ── Dedup: don't re-fire on the same tail within cooldown window ──
+    const tailHash = hashTail(tail);
+    const lastHash = this.lastFiredHash.get(sessionId);
+    const lastFired = this.lastFiredAt.get(sessionId) ?? 0;
+    if (lastHash === tailHash && Date.now() - lastFired < DEDUP_COOLDOWN_MS) {
       return;
     }
 
     if (shellReturned) {
-      console.log(`[PromptDetector] AI FINISHED in ${sessionId.slice(0, 8)} (${outputSinceAi} chars output)`);
+      console.log(`[PromptDetector] AI FINISHED in ${sessionId.slice(0, 8)} (${outputSinceAi} chars)`);
       this.aiActive.set(sessionId, false);
       this.outputLen.set(sessionId, 0);
       this.aiOutputStart.delete(sessionId);
       this.aiDetectedAt.delete(sessionId);
     } else if (matched) {
-      console.log(`[PromptDetector] PROMPT in ${sessionId.slice(0, 8)}: ${matched} (retry=${retryCount})`);
+      console.log(`[PromptDetector] PROMPT in ${sessionId.slice(0, 8)}: ${matched}`);
     }
 
     // Extract meaningful snippet for notification body
@@ -259,18 +267,10 @@ export class PromptDetector {
     const body = lastLines || (shellReturned ? 'Task abgeschlossen' : 'Eingabe erforderlich');
     const snippet = shellReturned ? `✅${body}` : body;
 
-    this.callbacks.get(sessionId)?.(snippet);
+    this.lastFiredHash.set(sessionId, tailHash);
+    this.lastFiredAt.set(sessionId, Date.now());
 
-    // Retry ONLY for interactive prompts (not AI-finished), with reduced count
-    if (shellReturned) return;
-    if (retryCount < MAX_RETRIES) {
-      const rt = setTimeout(() => {
-        this.retryTimers.delete(sessionId);
-        this._check(sessionId, retryCount + 1);
-      }, RETRY_MS);
-      rt.unref();
-      this.retryTimers.set(sessionId, rt);
-    }
+    this.callbacks.get(sessionId)?.(snippet);
   }
 }
 

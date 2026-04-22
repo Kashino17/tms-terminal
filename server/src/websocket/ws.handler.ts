@@ -11,7 +11,7 @@ import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 import { autopilotService } from '../autopilot/autopilot.service';
-import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
+import { transcribe as whisperTranscribe, WhisperBusyError } from '../audio/whisper-sidecar';
 import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
@@ -195,7 +195,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         } else {
           logger.info(`Auto-approve: sending Enter for session ${sessionId.slice(0, 8)}`);
           globalManager.write(sessionId, '\r');
-          return; // No WS notification needed
+          promptDetector.noteApproved(sessionId); // Clear buffer so residual text can't re-match
+          return;
         }
       }
 
@@ -668,20 +669,17 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         return;
       }
 
-      // Auto-select model based on audio size: turbo for long audio (>2MB base64 ≈ 1+ min), large-v3 for short
-      const autoModel = audio.length > 2 * 1024 * 1024 ? 'turbo' : 'large-v3';
-
       whisperTranscribe(audio, {
-        model: autoModel,
         onProgress: (info) => {
           send(ws, { type: 'audio:progress', sessionId, payload: { chunk: info.chunk, total: info.total, text: info.text } } as any);
         },
       }).then((text) => {
         send(ws, { type: 'audio:transcription', sessionId, payload: { text } } as any);
       }).catch((err) => {
+        const busy = err instanceof WhisperBusyError;
         const message = err instanceof Error ? err.message : 'Transkription fehlgeschlagen';
-        logger.warn(`[whisper] Transcription failed: ${message}`);
-        send(ws, { type: 'audio:error', sessionId, payload: { message } } as any);
+        if (!busy) logger.warn(`[whisper] Transcription failed: ${message}`);
+        send(ws, { type: 'audio:error', sessionId, payload: { message, busy } } as any);
       });
       return;
     }

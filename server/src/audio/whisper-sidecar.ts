@@ -3,23 +3,22 @@ import path from 'path';
 import { logger } from '../utils/logger';
 
 interface PendingRequest {
+  id: string;
   resolve: (text: string) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
   onProgress?: (info: { chunk: number; total: number; text: string }) => void;
 }
 
-// Dynamic timeout: 30s base + 15s per estimated minute of audio.
-// Base64 WAV at 16kHz/16bit/mono: ~1.33 MB per minute → ~1.78 MB Base64 per minute.
+// Dynamic timeout: 30s base + 10s per MB of Base64 audio.
 const BASE_TIMEOUT_MS = 30_000;
-const TIMEOUT_PER_MB_BASE64 = 10_000; // 10s per MB of Base64 data
+const TIMEOUT_PER_MB_BASE64 = 10_000;
 
 function calcTimeout(base64Length: number): number {
   const mbSize = base64Length / (1024 * 1024);
   return Math.max(BASE_TIMEOUT_MS, Math.round(BASE_TIMEOUT_MS + mbSize * TIMEOUT_PER_MB_BASE64));
 }
 
-// Find the server root (directory containing package.json) by walking up from __dirname.
 function findServerRoot(): string {
   let dir = __dirname;
   for (let i = 0; i < 10; i++) {
@@ -39,8 +38,33 @@ const VENV_PYTHON = path.join(SIDECAR_DIR, '.venv', 'bin', 'python3');
 let sidecar: ChildProcess | null = null;
 let lineBuffer = '';
 let requestId = 0;
-const pending = new Map<string, PendingRequest>();
+let activeRequest: PendingRequest | null = null; // only ONE in flight at a time
 let startPromise: Promise<void> | null = null;
+
+export class WhisperBusyError extends Error {
+  constructor() {
+    super('Transkription läuft bereits. Bitte warten.');
+    this.name = 'WhisperBusyError';
+  }
+}
+
+function killSidecar(reason: string): void {
+  if (sidecar && !sidecar.killed) {
+    logger.warn(`[whisper] Killing sidecar: ${reason}`);
+    sidecar.kill('SIGKILL'); // hard kill — SIGTERM may be ignored during MPS work
+  }
+  sidecar = null;
+  startPromise = null;
+  lineBuffer = '';
+}
+
+function failActive(err: Error): void {
+  if (!activeRequest) return;
+  const req = activeRequest;
+  activeRequest = null;
+  clearTimeout(req.timer);
+  req.reject(err);
+}
 
 function ensureRunning(): Promise<void> {
   if (sidecar && !sidecar.killed) return Promise.resolve();
@@ -79,16 +103,15 @@ function ensureRunning(): Promise<void> {
         try {
           const resp = JSON.parse(line);
           const id = resp.id as string;
-          const req = pending.get(id);
-          if (!req) continue;
+          const req = activeRequest;
+          if (!req || req.id !== id) continue; // stale response from killed request
 
-          // Progress update (chunk completed but more to come)
           if (resp.progress) {
             req.onProgress?.({ chunk: resp.chunk, total: resp.total, text: resp.text ?? '' });
-            continue; // Don't resolve yet — more chunks coming
+            continue;
           }
 
-          pending.delete(id);
+          activeRequest = null;
           clearTimeout(req.timer);
           if (resp.error) {
             req.reject(new Error(resp.error));
@@ -103,16 +126,11 @@ function ensureRunning(): Promise<void> {
 
     child.on('exit', (code) => {
       logger.warn(`[whisper] Sidecar exited with code ${code}`);
+      const wasResolved = resolved;
       sidecar = null;
       startPromise = null;
-      for (const [, req] of pending) {
-        clearTimeout(req.timer);
-        req.reject(new Error('Whisper sidecar exited unexpectedly'));
-      }
-      pending.clear();
-      if (!resolved) {
-        reject(new Error('Whisper sidecar failed to start'));
-      }
+      failActive(new Error('Whisper sidecar exited unexpectedly'));
+      if (!wasResolved) reject(new Error('Whisper sidecar failed to start'));
     });
 
     child.on('error', (err) => {
@@ -130,11 +148,18 @@ function ensureRunning(): Promise<void> {
 
 export interface TranscribeOptions {
   language?: string;
-  model?: string; // 'large-v3' | 'turbo' | 'medium'
   onProgress?: (info: { chunk: number; total: number; text: string }) => void;
 }
 
+export function isBusy(): boolean {
+  return activeRequest !== null;
+}
+
 export async function transcribe(audioBase64: string, options: TranscribeOptions = {}): Promise<string> {
+  if (activeRequest) {
+    throw new WhisperBusyError();
+  }
+
   await ensureRunning();
 
   if (!sidecar?.stdin?.writable) {
@@ -144,30 +169,34 @@ export async function transcribe(audioBase64: string, options: TranscribeOptions
   const id = `req-${++requestId}`;
   const timeoutMs = calcTimeout(audioBase64.length);
 
-  logger.info(`[whisper] Transcription request ${id}: ${(audioBase64.length / 1024).toFixed(0)} KB Base64, timeout=${Math.round(timeoutMs / 1000)}s, model=${options.model ?? 'default'}`);
+  logger.info(`[whisper] Request ${id}: ${(audioBase64.length / 1024).toFixed(0)} KB Base64, timeout=${Math.round(timeoutMs / 1000)}s`);
 
   return new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => {
-      pending.delete(id);
       const secs = Math.round(timeoutMs / 1000);
-      reject(new Error(`Transkription Timeout (${secs}s). Audio zu lang oder Model zu langsam.`));
+      // Hard-kill so the next request starts fresh — otherwise Python keeps chewing
+      // on the stale request and blocks the next one.
+      killSidecar(`request ${id} timed out after ${secs}s`);
+      failActive(new Error(`Transkription Timeout (${secs}s). Bitte erneut versuchen.`));
     }, timeoutMs);
 
-    pending.set(id, { resolve, reject, timer, onProgress: options.onProgress });
+    activeRequest = { id, resolve, reject, timer, onProgress: options.onProgress };
 
     const request = JSON.stringify({
       id,
       audio_base64: audioBase64,
       language: options.language ?? 'de',
-      model: options.model,
     }) + '\n';
-    sidecar!.stdin!.write(request);
+    sidecar!.stdin!.write(request, (err) => {
+      if (err) {
+        logger.error(`[whisper] stdin write failed: ${err.message}`);
+        killSidecar('stdin write failed');
+        failActive(new Error(`Transkription fehlgeschlagen: ${err.message}`));
+      }
+    });
   });
 }
 
 export function shutdown(): void {
-  if (sidecar && !sidecar.killed) {
-    sidecar.kill('SIGTERM');
-    sidecar = null;
-  }
+  killSidecar('shutdown');
 }

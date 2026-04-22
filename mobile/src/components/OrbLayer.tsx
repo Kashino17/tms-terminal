@@ -293,15 +293,47 @@ export function OrbLayer({
   const micTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioInputEnabled = useSettingsStore((s) => (s as any).audioInputEnabled ?? true);
 
-  // Listen for transcription result from server
+  // Safety watchdog: if the server goes silent (crash, disconnect), reset the button
+  // after 60s so it doesn't hang on 'processing' forever. Turbo processes ~10x realtime.
+  const TRANSCRIBE_WATCHDOG_MS = 60_000;
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [micError, setMicError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (micState === 'processing') {
+      watchdogRef.current = setTimeout(() => {
+        console.warn('[mic] watchdog fired — server never responded');
+        setMicState('idle');
+        setMicError('Transkription reagiert nicht. Bitte erneut versuchen.');
+        setTimeout(() => setMicError(null), 4000);
+      }, TRANSCRIBE_WATCHDOG_MS);
+    }
+    return () => {
+      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = null; }
+    };
+  }, [micState]);
+
   useEffect(() => {
     if (!wsService) return;
     const handler = (msg: unknown) => {
       const m = msg as { type: string; sessionId?: string; payload?: any };
       if (m.sessionId !== sessionId) return;
+
       if (m.type === 'audio:transcription') {
         setMicState('idle');
+        setMicError(null);
         onTranscription?.(m.payload?.text ?? '');
+        return;
+      }
+
+      if (m.type === 'audio:error') {
+        // busy = server already has another transcription in flight. Ignore silently:
+        // the user's previous tap is still being processed; this click was a no-op.
+        if (m.payload?.busy) return;
+        setMicState('idle');
+        const errMsg = m.payload?.message ?? 'Transkription fehlgeschlagen';
+        setMicError(errMsg);
+        setTimeout(() => setMicError(null), 4000);
       }
     };
     return wsService.addMessageListener(handler);
@@ -859,6 +891,14 @@ export function OrbLayer({
           </View>
         );
       })()}
+
+      {/* ── Mic Error Toast ──────────────────────────────────────────────── */}
+      {micError && (
+        <View style={[s.micOverlay, { bottom: 100, alignSelf: 'center', borderColor: '#EF4444' }]}>
+          <Feather name="alert-circle" size={14} color="#EF4444" />
+          <Text style={[s.micProcessing, { color: '#EF4444' }]}>{micError}</Text>
+        </View>
+      )}
 
       {/* ── Mic Recording / Processing Overlay (always visible when active) ── */}
       {(micState === 'recording' || micState === 'processing') && (() => {

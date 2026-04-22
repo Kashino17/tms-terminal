@@ -58,6 +58,22 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
     }
   }, [micState]);
 
+  // Safety watchdog: if the server goes silent, reset the button after 60s.
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (micState === 'processing') {
+      watchdogRef.current = setTimeout(() => {
+        console.warn('[mic] watchdog fired — server never responded');
+        setMicState('idle');
+        setMicError('Transkription reagiert nicht. Bitte erneut versuchen.');
+        setTimeout(() => setMicError(null), 4000);
+      }, 60_000);
+    }
+    return () => {
+      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = null; }
+    };
+  }, [micState]);
+
   useEffect(() => {
     return wsService.addMessageListener((msg: unknown) => {
       const m = msg as { type: string; sessionId?: string; payload?: any };
@@ -67,6 +83,8 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
         setMicError(null);
         onTranscription?.(m.payload?.text ?? '');
       } else if (m.type === 'audio:error') {
+        // busy = another transcription is still running; ignore silently, don't flip state.
+        if (m.payload?.busy) return;
         setMicState('idle');
         const errMsg = m.payload?.message ?? 'Transkription fehlgeschlagen';
         setMicError(errMsg);

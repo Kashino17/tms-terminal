@@ -642,6 +642,8 @@ export function ManagerChatScreen({ navigation, route }: Props) {
           }
           break;
         case 'audio:error':
+          // busy = another transcription is still running; ignore silently.
+          if (msg.payload?.busy) break;
           addError(msg.payload?.message ?? 'Transkription fehlgeschlagen');
           setMicState('idle');
           setRecordingDuration(0);
@@ -667,6 +669,18 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       }
     };
   }, []);
+
+  // ── Mic watchdog: reset button if server goes silent ─────────────────────
+  useEffect(() => {
+    if (micState !== 'processing') return;
+    const t = setTimeout(() => {
+      console.warn('[mic] watchdog fired — server never responded');
+      addError('Transkription reagiert nicht. Bitte erneut versuchen.');
+      setMicState('idle');
+      setRecordingDuration(0);
+    }, 60_000);
+    return () => clearTimeout(t);
+  }, [micState]);
 
   // ── Sync terminal labels to Manager Agent ────────────────────────────────
 

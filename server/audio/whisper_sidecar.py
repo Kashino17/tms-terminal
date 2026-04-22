@@ -100,8 +100,8 @@ def main():
             sys.stderr.flush()
         return models[model_name]
 
-    # Pre-load default model
-    default_model = "large-v3"
+    # Pre-load default model (turbo: single model, no hot-swap hangs)
+    default_model = "turbo"
     get_model(default_model)
 
     sys.stderr.write("[whisper-sidecar] Ready for requests.\n")
