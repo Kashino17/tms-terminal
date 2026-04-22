@@ -16,6 +16,7 @@ import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
 import { shutdown as shutdownWhisper } from './audio/whisper-sidecar';
 import { managerService } from './websocket/ws.handler';
+import { ensureAckAudios } from './manager/voice.ack-audio';
 
 // ── Global error handlers ────────────────────────────────────────────
 process.on('unhandledRejection', (reason) => {
@@ -188,6 +189,11 @@ function main(): void {
   server.listen(port, '0.0.0.0', () => {
     logger.success(`Server listening on http://0.0.0.0:${port}`);
     logger.info('Waiting for connections...');
+
+    // Initialize ack audio pre-generation (fire-and-forget)
+    ensureAckAudios().catch((err) => {
+      logger.warn(`Voice: ack audio init failed: ${err instanceof Error ? err.message : err}`);
+    });
   });
 
   // Graceful shutdown
