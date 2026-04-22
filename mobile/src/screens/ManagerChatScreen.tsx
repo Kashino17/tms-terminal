@@ -257,6 +257,11 @@ const GEMMA_CAPS_TEXT = [
   { icon: 'tool', label: 'Tools', color: '#60A5FA' },
   { icon: 'cpu', label: 'Reasoning', color: '#4ADE80' },
 ];
+const QWEN_CAPS = [
+  { icon: 'tool', label: 'Tools', color: '#60A5FA' },
+  { icon: 'cpu', label: 'Reasoning', color: '#4ADE80' },
+  { icon: 'code', label: 'Code', color: '#A78BFA' },
+];
 
 const PROVIDER_CAPS: Record<string, Array<{ icon: string; label: string; color: string }>> = {
   'glm': [
@@ -273,11 +278,16 @@ const PROVIDER_CAPS: Record<string, Array<{ icon: string; label: string; color: 
   'gemma-4': GEMMA_CAPS_VISION,
   'gemma-4-26b': GEMMA_CAPS_TEXT,
   'gemma-4-31b': GEMMA_CAPS_VISION,
+  // Qwen 3 local variants
+  'qwen-27b': QWEN_CAPS,
+  'qwen-35b': QWEN_CAPS,
 };
 
-/** Look up capabilities for a provider, with fuzzy fallback for gemma variants */
+/** Look up capabilities for a provider, with fuzzy fallback for gemma/qwen variants */
 function getProviderCaps(id: string): Array<{ icon: string; label: string; color: string }> | undefined {
   if (PROVIDER_CAPS[id]) return PROVIDER_CAPS[id];
+  // Fallback: any qwen model gets code-focused caps
+  if (id.includes('qwen')) return QWEN_CAPS;
   // Fallback: any gemma model gets at least text caps
   if (id.includes('gemma')) {
     // 31B+ and models with vision get vision caps

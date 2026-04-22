@@ -393,7 +393,7 @@ const MANAGER_TOOLS: ToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          model: { type: 'string', description: 'Model-Name wie in LM Studio angezeigt, z.B. "gemma-4-31b", "qwen3-coder-30b"' },
+          model: { type: 'string', description: 'Provider-ID: "glm", "kimi", "gemma-4", "qwen-27b", "qwen-35b"' },
           reason: { type: 'string', description: 'Warum der Wechsel (für Logging)' },
         },
         required: ['model'],

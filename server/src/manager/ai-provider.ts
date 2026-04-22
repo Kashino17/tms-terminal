@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger';
+import { LmStudioController } from './lmstudio.controller';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,13 @@ export interface ProviderConfig {
   openaiApiKey?: string;
   activeProvider?: string;
   lmStudioUrl?: string;
+  /** Override model IDs for local providers. Must match LM Studio's exact identifier
+   *  (see `lms ls`). Defaults fall back to common Qwen3 / Gemma 4 names. */
+  localModels?: {
+    gemma4?: string;
+    qwen27b?: string;
+    qwen35b?: string;
+  };
 }
 
 // ── Tool Calling Types ─────────────────────────────────────────────────────
@@ -629,6 +637,10 @@ class LMStudioProvider implements AiProvider {
     this.getBaseUrl = getBaseUrl;
   }
 
+  getModelId(): string {
+    return this.modelId;
+  }
+
   isConfigured(): boolean {
     return true; // No API key needed, but might be offline
   }
@@ -938,18 +950,31 @@ export class AiProviderRegistry {
   private providers = new Map<string, AiProvider>();
   private activeId: string;
   private config: ProviderConfig;
+  private lmStudio: LmStudioController;
 
   constructor(config: ProviderConfig) {
     this.config = config;
+    this.lmStudio = new LmStudioController();
 
     const kimi = new KimiProvider(() => this.config.kimiApiKey);
     const glm = new GlmProvider(() => this.config.glmApiKey);
     const getUrl = () => this.config.lmStudioUrl ?? LMSTUDIO_DEFAULT_URL;
-    const gemma = new LMStudioProvider('gemma-4', 'Gemma 4 31B', 'google/gemma-4-31b', getUrl);
+
+    // Local models — IDs can be overridden via config.localModels to match
+    // whatever is shown by `lms ls` on this machine.
+    const gemmaId = config.localModels?.gemma4 ?? 'google/gemma-4-31b';
+    const qwen27bId = config.localModels?.qwen27b ?? 'qwen/qwen3-coder-30b';
+    const qwen35bId = config.localModels?.qwen35b ?? 'qwen/qwen3.6-35b-a3b';
+
+    const gemma = new LMStudioProvider('gemma-4', 'Gemma 4 31B', gemmaId, getUrl);
+    const qwen27b = new LMStudioProvider('qwen-27b', 'Qwen 3 Coder 30B', qwen27bId, getUrl);
+    const qwen35b = new LMStudioProvider('qwen-35b', 'Qwen 3.6 35B', qwen35bId, getUrl);
 
     this.providers.set(kimi.id, kimi);
     this.providers.set(glm.id, glm);
     this.providers.set(gemma.id, gemma);
+    this.providers.set(qwen27b.id, qwen27b);
+    this.providers.set(qwen35b.id, qwen35b);
 
     this.activeId = config.activeProvider && this.providers.has(config.activeProvider)
       ? config.activeProvider
@@ -958,8 +983,16 @@ export class AiProviderRegistry {
 
     // Check LM Studio availability in background
     gemma.checkAvailability()
-      .then((ok) => { if (ok) logger.info('LM Studio: Gemma 4 31B available'); })
+      .then((ok) => { if (ok) logger.info(`LM Studio: reachable (active local target: ${gemmaId})`); })
       .catch(() => {});
+
+    // Sync LM Studio state to match the active provider on startup
+    const initial = this.providers.get(this.activeId)!;
+    if (initial.isLocal && initial instanceof LMStudioProvider) {
+      this.lmStudio.switchTo(initial.getModelId()).catch(() => {});
+    } else {
+      this.lmStudio.unloadAll().catch(() => {});
+    }
   }
 
   getActive(): AiProvider {
@@ -980,6 +1013,16 @@ export class AiProviderRegistry {
     this.activeId = id;
     this.config.activeProvider = id;
     logger.info(`Manager AI: switched to ${id}`);
+
+    // Auto load/kill: when switching to a local provider load it and unload
+    // every other LM Studio model; when switching to a cloud provider unload
+    // all local models so VRAM is freed.
+    const provider = this.providers.get(id)!;
+    if (provider.isLocal && provider instanceof LMStudioProvider) {
+      this.lmStudio.switchTo(provider.getModelId()).catch(() => {});
+    } else {
+      this.lmStudio.unloadAll().catch(() => {});
+    }
   }
 
   getActiveId(): string {
