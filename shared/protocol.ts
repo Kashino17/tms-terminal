@@ -171,6 +171,16 @@ export interface ChromeReloadMessage {
   type: 'chrome:reload';
 }
 
+// ── Voice Chat (Client → Server) ───────────────────────────────────────────
+
+export interface VoiceStartMsg { type: 'voice:start'; payload?: {} }
+export interface VoiceAudioChunkMsg { type: 'voice:audio_chunk'; payload: { audio: string /* base64 PCM */ } }
+export interface VoiceEndTurnMsg { type: 'voice:end_turn'; payload?: {} }
+export interface VoicePauseMsg { type: 'voice:pause'; payload?: {} }
+export interface VoiceResumeMsg { type: 'voice:resume'; payload?: { strategy?: 'clean' | 'with_interjection' } }
+export interface VoiceCancelMsg { type: 'voice:cancel'; payload?: {} }
+export interface VoiceStopMsg { type: 'voice:stop'; payload?: {} }
+
 export type ClientMessage =
   | TerminalCreateMessage
   | TerminalInputMessage
@@ -212,7 +222,14 @@ export type ClientMessage =
   | ChromeResizeMessage
   | ChromeGoBackMessage
   | ChromeGoForwardMessage
-  | ChromeReloadMessage;
+  | ChromeReloadMessage
+  | VoiceStartMsg
+  | VoiceAudioChunkMsg
+  | VoiceEndTurnMsg
+  | VoicePauseMsg
+  | VoiceResumeMsg
+  | VoiceCancelMsg
+  | VoiceStopMsg;
 
 // ── Server → Client ──────────────────────────────────────────────
 
@@ -462,6 +479,25 @@ export interface ChromeTabUpdatedMessage {
   payload: { targetId: string; title?: string; url?: string };
 }
 
+// ── Voice Chat (Server → Client) ───────────────────────────────────────────
+
+export type VoicePhase =
+  | 'idle' | 'listening' | 'transcribing' | 'thinking'
+  | 'tool_call' | 'speaking' | 'paused';
+
+export interface VoicePhaseMsg { type: 'voice:phase'; payload: { phase: VoicePhase } }
+export interface VoiceTranscriptMsg { type: 'voice:transcript'; payload: { text: string; final: boolean } }
+export interface VoiceAiDeltaMsg { type: 'voice:ai_delta'; payload: { text: string } }
+export interface VoiceTtsChunkMsg {
+  type: 'voice:tts_chunk';
+  payload: { chunkIdx: number; audio: string /* base64 WAV */; sentence: string; isLast: boolean }
+}
+export interface VoiceAckAudioMsg {
+  type: 'voice:ack_audio';
+  payload: { kind: 'pause' | 'resume'; audio: string /* base64 WAV */ }
+}
+export interface VoiceErrorMsg { type: 'voice:error'; payload: { message: string; recoverable: boolean } }
+
 export type ServerMessage =
   | TerminalCreatedMessage
   | TerminalOutputMessage
@@ -494,4 +530,10 @@ export type ServerMessage =
   | ChromeTabsMessage
   | ChromeTabCreatedMessage
   | ChromeTabRemovedMessage
-  | ChromeTabUpdatedMessage;
+  | ChromeTabUpdatedMessage
+  | VoicePhaseMsg
+  | VoiceTranscriptMsg
+  | VoiceAiDeltaMsg
+  | VoiceTtsChunkMsg
+  | VoiceAckAudioMsg
+  | VoiceErrorMsg;
