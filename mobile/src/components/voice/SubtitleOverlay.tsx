@@ -15,26 +15,31 @@ export function SubtitleOverlay() {
   let wordIdx = 0;
 
   return (
-    <View style={styles.container} pointerEvents="none">
-      {showUser && (
-        <View style={styles.userBubble}>
-          <Text style={styles.userLabel}>DU</Text>
-          <Text style={styles.userText}>{userTranscript}</Text>
-        </View>
-      )}
-      {showAi && (
-        <Text style={styles.subtitle}>
-          {words.map((w, i) => {
-            if (/^\s+$/.test(w)) return <Text key={i}>{w}</Text>;
-            const isSpoken = wordIdx < aiSpokenWordCount;
-            const isActive = wordIdx === aiSpokenWordCount;
-            wordIdx++;
-            const style = isActive ? styles.wordActive : isSpoken ? styles.wordSpoken : styles.word;
-            return <Text key={i} style={style}>{w}</Text>;
-          })}
-        </Text>
-      )}
-    </View>
+    <>
+      <View style={styles.scrimOuter} pointerEvents="none" />
+      <View style={styles.scrimMiddle} pointerEvents="none" />
+      <View style={styles.scrimInner} pointerEvents="none" />
+      <View style={styles.container} pointerEvents="none">
+        {showUser && (
+          <View style={styles.userBubble}>
+            <Text style={styles.userLabel}>DU</Text>
+            <Text style={styles.userText}>{userTranscript}</Text>
+          </View>
+        )}
+        {showAi && (
+          <Text style={styles.subtitle}>
+            {words.map((w, i) => {
+              if (/^\s+$/.test(w)) return <Text key={i}>{w}</Text>;
+              const isSpoken = wordIdx < aiSpokenWordCount;
+              const isActive = wordIdx === aiSpokenWordCount;
+              wordIdx++;
+              const style = isActive ? styles.wordActive : isSpoken ? styles.wordSpoken : styles.word;
+              return <Text key={i} style={style}>{w}</Text>;
+            })}
+          </Text>
+        )}
+      </View>
+    </>
   );
 }
 
@@ -78,5 +83,23 @@ const styles = StyleSheet.create({
     fontFamily: 'BricolageGrotesque_400Regular',
     fontSize: 15, lineHeight: 21,
     color: '#8A8275', textAlign: 'center',
+  },
+  scrimOuter: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 70,
+    height: 140,
+    backgroundColor: 'rgba(10,8,7,0.28)',
+  },
+  scrimMiddle: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 95,
+    height: 90,
+    backgroundColor: 'rgba(10,8,7,0.35)',
+  },
+  scrimInner: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 115,
+    height: 50,
+    backgroundColor: 'rgba(10,8,7,0.45)',
   },
 });
