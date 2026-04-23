@@ -1,5 +1,14 @@
 # Session-Tagebuch
 
+## 2026-04-23 — Code-Review-Fixes: C-1, I-1, M-6 (Push Notifications)
+
+### Was wurde gemacht
+- **C-1 (Critical):** Cold-start crash bei Manager-Push-Tap behoben — `navigate('ManagerChat' as never)` durch pending-flag-Pattern ersetzt. `setPendingManagerChatOpen` / `consumePendingManagerChatOpen` zu `notifications.service.ts` hinzugefügt. `App.tsx` setzt nur noch das Flag. `TerminalScreen` konsumiert das Flag sobald `connState === 'connected'` und navigiert mit vollständigen Route-Params.
+- **I-1 (Important):** Foreground-Handler fall-through auf non-Android behoben — iOS/fallback `scheduleNotificationAsync` + `return` in `manager_reply`-Branch eingefügt, sodass kein Fall-through zur generischen Notification passiert.
+- **M-6 (Defense-in-depth):** `isChatScreenActive()` aus `managerNotifications.service.ts` exportiert und am Anfang des Foreground-`manager_reply`-Handlers als Guard eingesetzt (gegen Race-Condition wenn FCM bei offenem Chat-Screen ankommt).
+- `tsc --noEmit`: exit 0 (keine Fehler)
+- Commit: `64b6088`
+
 ## 2026-04-23 — T5+T6: ManagerPushDecider (Expandable Push Notifications)
 
 ### Was wurde gemacht
