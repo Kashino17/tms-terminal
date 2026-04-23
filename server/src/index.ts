@@ -18,6 +18,10 @@ import { shutdown as shutdownWhisper } from './audio/whisper-sidecar';
 import { managerService } from './websocket/ws.handler';
 import { ensureAckAudios } from './manager/voice.ack-audio';
 
+// ── Voice video & character HTML paths ────────────────────────────────
+const VOICE_VIDEOS_DIR = path.join(os.homedir(), '.tms-terminal', 'voice-videos');
+const CHARACTER_HTML_PATH = path.join(__dirname, '..', '..', '..', '..', 'prototype', 'voice-design', 'index.html');
+
 // ── Global error handlers ────────────────────────────────────────────
 process.on('unhandledRejection', (reason) => {
   logger.error(`Unhandled rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
@@ -151,6 +155,33 @@ function main(): void {
       }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
       fs.createReadStream(filePath).pipe(res);
+    } else if (req.url?.startsWith('/voice-videos/')) {
+      // Serve voice video loops (public, no auth — Tailscale handles network trust)
+      const name = req.url.slice('/voice-videos/'.length).replace(/[^a-zA-Z0-9_.-]/g, '');
+      if (!name.endsWith('.mp4')) {
+        res.writeHead(404); res.end('Not found'); return;
+      }
+      const filePath = path.join(VOICE_VIDEOS_DIR, name);
+      if (!fs.existsSync(filePath)) {
+        res.writeHead(404); res.end('Not found'); return;
+      }
+      const stat = fs.statSync(filePath);
+      res.writeHead(200, {
+        'Content-Type': 'video/mp4',
+        'Content-Length': stat.size,
+        'Cache-Control': 'max-age=86400',
+        'Accept-Ranges': 'bytes',
+      });
+      fs.createReadStream(filePath).pipe(res);
+      return;
+    } else if (req.url === '/voice-character.html') {
+      // Serve character animation HTML (public, no auth — Tailscale handles network trust)
+      if (!fs.existsSync(CHARACTER_HTML_PATH)) {
+        res.writeHead(404); res.end('Not found'); return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'max-age=3600' });
+      fs.createReadStream(CHARACTER_HTML_PATH).pipe(res);
+      return;
     } else if (req.url?.startsWith('/files/')) {
       // JWT-protected file browser endpoints
       // Accept token from Authorization header OR ?token= query param (for Image/download URLs)
@@ -190,10 +221,19 @@ function main(): void {
     logger.success(`Server listening on http://0.0.0.0:${port}`);
     logger.info('Waiting for connections...');
 
+    // Ensure voice-videos directory exists
+  if (!fs.existsSync(VOICE_VIDEOS_DIR)) {
+    fs.mkdirSync(VOICE_VIDEOS_DIR, { recursive: true, mode: 0o700 });
+    logger.info(`Voice: created videos directory at ${VOICE_VIDEOS_DIR}`);
+  }
+
     // Initialize ack audio pre-generation (fire-and-forget)
     ensureAckAudios().catch((err) => {
       logger.warn(`Voice: ack audio init failed: ${err instanceof Error ? err.message : err}`);
     });
+
+    // Log CHARACTER_HTML_PATH for verification
+    logger.info(`Voice: character HTML path: ${CHARACTER_HTML_PATH}`);
   });
 
   // Graceful shutdown
