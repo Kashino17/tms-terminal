@@ -1,5 +1,16 @@
 # Session-Tagebuch
 
+## 2026-04-23 — T17: VoiceScreen Integration
+
+### Was wurde gemacht
+- `src/screens/VoiceScreen.tsx` erstellt: orchestriert AudioPlayerQueue, VoiceClient, voiceStore, CharacterWebView, SubtitleOverlay, VoiceControls, ResumeOptions, StatusPill
+- WS-Pattern: `wsService` aus `route.params` (gleich wie ManagerChatScreen/ProcessMonitorScreen)
+- `phaseRef` hinzugefügt, um stale-closure in `onTranscript` zu vermeiden
+- `VoiceClient.onError` gibt `(msg, recoverable)` zurück — nur `msg` an `setError` weitergegeben
+- `Voice`-Route zu `navigation.types.ts` + `AppNavigator.tsx` hinzugefügt
+- TypeCheck: sauber, 0 Fehler in neuen Dateien
+- Commit: `848f29a`
+
 ## 2026-04-23 — T16: VoiceControls + ResumeOptions + StatusPill + Fonts
 
 ### Was wurde gemacht
