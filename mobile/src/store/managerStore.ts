@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { cacheAvatarUri } from '../services/notifications.service';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -355,9 +356,10 @@ export const useManagerStore = create<ManagerState>()(
         apiKeys: { ...s.apiKeys, [provider]: key },
       })),
 
-      setPersonality: (updates) => set((s) => ({
-        personality: { ...s.personality, ...updates },
-      })),
+      setPersonality: (updates) => {
+        set((s) => ({ personality: { ...s.personality, ...updates } }));
+        void cacheAvatarUri(get().personality.agentAvatarUri ?? null);
+      },
 
       setOnboarded: (done) => set({ onboarded: done }),
 

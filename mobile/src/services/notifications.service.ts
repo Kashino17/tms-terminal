@@ -1,4 +1,5 @@
-import { PermissionsAndroid, Platform, AppState } from 'react-native';
+import { NativeModules, PermissionsAndroid, Platform, AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import messaging from '@react-native-firebase/messaging';
 import * as Notifications from 'expo-notifications';
 
@@ -101,13 +102,98 @@ export async function getFcmToken(): Promise<string | null> {
   }
 }
 
+// ── Avatar cache helpers ─────────────────────────────────────────────────────
+// The FCM background handler runs outside React context and cannot access
+// Zustand stores. We cache the avatar URI to AsyncStorage whenever it changes,
+// so the background handler can read it without touching the store.
+
+const AVATAR_CACHE_KEY = 'manager.agentAvatarUri';
+
+export async function cacheAvatarUri(uri: string | null): Promise<void> {
+  try {
+    if (uri) await AsyncStorage.setItem(AVATAR_CACHE_KEY, uri);
+    else await AsyncStorage.removeItem(AVATAR_CACHE_KEY);
+  } catch { /* ignore */ }
+}
+
+async function readCachedAvatarUri(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(AVATAR_CACHE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Must be called once outside any component.
  * Handles notifications that arrive when the app is backgrounded or killed.
  */
 export function registerBackgroundHandler(): void {
-  messaging().setBackgroundMessageHandler(async (_message) => {
-    // OS displays the notification automatically from the FCM payload.
+  messaging().setBackgroundMessageHandler(async (message) => {
+    const type = typeof message.data?.type === 'string' ? message.data.type : '';
+
+    if (type === 'manager_reply') {
+      const title = String(message.data?.title ?? '💬 Manager');
+      const body = String(message.data?.body ?? '');
+      const messageId = String(message.data?.messageId ?? '');
+      const avatarUri = await readCachedAvatarUri();
+
+      if (Platform.OS === 'android' && NativeModules.AgentNotification) {
+        NativeModules.AgentNotification.show(title, body, avatarUri ?? null, messageId || null);
+        return;
+      }
+      // Fallback: expo-notifications
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          sound: 'default',
+          data: { type: 'manager_reply', messageId },
+          ...(Platform.OS === 'android' ? { channelId: 'manager-responses' } : {}),
+        },
+        trigger: null,
+      });
+      return;
+    }
+
+    if (type.startsWith('task_')) {
+      const title = String(message.data?.title ?? '');
+      const body = String(message.data?.body ?? '');
+      const taskId = String(message.data?.taskId ?? '');
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          sound: 'default',
+          data: { type, taskId },
+          ...(Platform.OS === 'android' ? { channelId: 'terminal-prompts' } : {}),
+        },
+        trigger: null,
+      });
+      return;
+    }
+
+    if (type === 'watcher_alert') {
+      const title = String(message.data?.title ?? '🔔 Watcher');
+      const body = String(message.data?.body ?? '');
+      const data: Record<string, string> = {};
+      for (const [k, v] of Object.entries(message.data ?? {})) {
+        if (typeof v === 'string') data[k] = v;
+      }
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          sound: 'default',
+          data,
+          ...(Platform.OS === 'android' ? { channelId: 'terminal-prompts' } : {}),
+        },
+        trigger: null,
+      });
+      return;
+    }
+
+    // Fallback for any legacy notification-shaped message
   });
 }
 
@@ -118,15 +204,26 @@ export function registerBackgroundHandler(): void {
  */
 export function registerForegroundHandler(): () => void {
   return messaging().onMessage(async (remoteMessage) => {
-    const title = remoteMessage.notification?.title ?? '\u{1F4A4} Terminal';
-    const body = remoteMessage.notification?.body ?? 'Terminal idle';
+    const type = typeof remoteMessage.data?.type === 'string' ? remoteMessage.data.type : '';
 
-    // Pass FCM data through to the local notification so tap-to-navigate works
+    if (type === 'manager_reply') {
+      const title = String(remoteMessage.data?.title ?? '💬 Manager');
+      const body = String(remoteMessage.data?.body ?? '');
+      const messageId = String(remoteMessage.data?.messageId ?? '');
+      const avatarUri = await readCachedAvatarUri();
+      if (Platform.OS === 'android' && NativeModules.AgentNotification) {
+        NativeModules.AgentNotification.show(title, body, avatarUri ?? null, messageId || null);
+        return;
+      }
+    }
+
+    const title = String(remoteMessage.data?.title ?? remoteMessage.notification?.title ?? '💤 Terminal');
+    const body = String(remoteMessage.data?.body ?? remoteMessage.notification?.body ?? '');
     const data: Record<string, string> = {};
-    if (remoteMessage.data?.sessionId) data.sessionId = String(remoteMessage.data.sessionId);
-    if (remoteMessage.data?.type) data.type = String(remoteMessage.data.type);
+    for (const [k, v] of Object.entries(remoteMessage.data ?? {})) {
+      if (typeof v === 'string') data[k] = v;
+    }
 
-    // Show a local notification so it appears as a heads-up banner
     await Notifications.scheduleNotificationAsync({
       content: {
         title,
@@ -135,7 +232,7 @@ export function registerForegroundHandler(): () => void {
         data,
         ...(Platform.OS === 'android' ? { channelId: 'terminal-prompts' } : {}),
       },
-      trigger: null, // immediately
+      trigger: null,
     });
   });
 }

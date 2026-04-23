@@ -11,9 +11,10 @@ import { LockScreen } from './screens/LockScreen';
 import { AdhanAlert } from './components/AdhanAlert';
 import { useLockStore } from './store/lockStore';
 import { useSettingsStore } from './store/settingsStore';
+import { useManagerStore } from './store/managerStore';
 import { colors } from './theme';
 import { ResponsiveProvider } from './hooks/useResponsive';
-import { registerBackgroundHandler, registerForegroundHandler, registerNotificationResponseHandler } from './services/notifications.service';
+import { registerBackgroundHandler, registerForegroundHandler, registerNotificationResponseHandler, cacheAvatarUri } from './services/notifications.service';
 import { keywordAlertService } from './services/keywordAlert.service';
 import { useAutopilotStore } from './store/autopilotStore';
 import { registerBackgroundUpdateCheck } from './services/updater.service';
@@ -55,6 +56,9 @@ export default function App() {
   useEffect(() => {
     loadLockConfig().then(() => setAppReady(true)).catch(() => setAppReady(true));
     useAutopilotStore.getState().cleanupOldDone();
+    // Populate avatar cache so the FCM background handler can read it without store access
+    const currentAvatar = useManagerStore.getState().personality?.agentAvatarUri ?? null;
+    void cacheAvatarUri(currentAvatar);
   }, []);
 
   // Lock when app moves to background (respects grace period)
