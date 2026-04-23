@@ -4210,4 +4210,59 @@ BEISPIEL:
   getActiveVoiceSession(): VoiceSessionController | null {
     return this.activeVoiceSession;
   }
+
+  /**
+   * Classifies the emotional tone of a text via a single provider.chat() call.
+   * Used by the "Vorlesen" path (chat-message TTS) so each read-aloud carries
+   * a dynamic emotion_prompt matching the content — parallel to the voice-mode
+   * path where the Manager itself tags its responses.
+   *
+   * Returns a short German tone descriptor (2-4 hyphen-joined words) ready to
+   * hand to the TTS sidecar, or an empty string if classification fails or
+   * takes too long. An empty string falls through cleanly — the sidecar then
+   * uses only the static voice_prompt.
+   */
+  async classifyEmotion(text: string, timeoutMs = 5_000): Promise<string> {
+    const provider = this.registry.getActive();
+    if (!provider || !provider.isConfigured()) return '';
+
+    const systemPrompt = `Du klassifizierst den Ton eines deutschen Textes für eine Sprachausgabe. Antworte NUR mit 2-4 Adjektiven auf Deutsch, durch Bindestriche verbunden. Keine Erklärung. Keine Satzzeichen. Nur die Ton-Beschreibung.
+
+Beispiele:
+- "Super, das Build ist durch!" → warm-freudig
+- "Da ist leider ein Fehler aufgetreten." → sanft-bedauernd
+- "Was meinst du damit genau?" → neugierig-fragend
+- "Das Terminal läuft wie erwartet." → ruhig-sachlich
+- "Ich kümmere mich darum, keine Sorge." → liebevoll-zugewandt
+- "Drei Terminals parallel gestartet." → konzentriert-effizient`;
+
+    const trimmed = text.slice(0, 600).trim();
+    const messages = [{ role: 'user' as const, content: `Text: ${trimmed}` }];
+
+    try {
+      const reply = await Promise.race([
+        provider.chat(messages as ChatMessage[], systemPrompt),
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error('classifyEmotion timeout')), timeoutMs),
+        ),
+      ]);
+      // Extract just the first non-empty line; strip quotes, periods, extra whitespace.
+      const first = reply.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+      const cleaned = first.replace(/["""''.]/g, '').trim();
+      // Accept only short descriptors — if the LLM returned a sentence, take the
+      // first 3 hyphen-separated tokens at most.
+      const tokens = cleaned.split(/[\s,]+/).filter(Boolean).slice(0, 3);
+      const emotion = tokens.join('-').toLowerCase();
+      if (emotion && emotion.length <= 40) {
+        logger.info(`Manager: classified emotion = "${emotion}" for ${trimmed.length}-char text`);
+        return emotion;
+      }
+      logger.info(`Manager: emotion classification returned unusable reply (${cleaned.slice(0, 40)}), falling through`);
+      return '';
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`Manager: emotion classification failed — ${msg}`);
+      return '';
+    }
+  }
 }
