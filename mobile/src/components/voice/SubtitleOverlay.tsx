@@ -47,7 +47,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   subtitle: {
-    fontFamily: 'Fraunces_400Italic',
+    fontFamily: 'Fraunces_400Regular_Italic',
     fontSize: 24,
     lineHeight: 30,
     letterSpacing: -0.2,
