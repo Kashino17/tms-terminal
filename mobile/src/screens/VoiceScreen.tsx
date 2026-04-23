@@ -247,6 +247,10 @@ export function VoiceScreen() {
     client?.resume('with_interjection');
   };
   const handleCancel = () => client?.cancel();
+  const handleForceTurnEnd = () => {
+    audioQueue.stop();
+    client?.cancel();
+  };
   const handleClose = () => {
     client?.stop();
     navigation.goBack();
@@ -288,6 +292,7 @@ export function VoiceScreen() {
           onPause={handlePause}
           onResume={handleResume}
           onCancel={handleCancel}
+          onForceTurnEnd={handleForceTurnEnd}
         />
       )}
     </View>
