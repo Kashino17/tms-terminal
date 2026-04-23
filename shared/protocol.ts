@@ -109,6 +109,10 @@ export interface ActiveTabMessage {
   type: 'client:active_tab';
   payload: { tabId: string; sessionId?: string };
 }
+export interface ActiveScreenMessage {
+  type: 'client:active_screen';
+  payload: { activeScreen: 'manager_chat' | 'other'; foregrounded: boolean };
+}
 
 // ── Chrome Remote Control (Client → Server) ─────────────────────
 export interface ChromeConnectMessage {
@@ -209,6 +213,7 @@ export type ClientMessage =
   | FileUploadMessage
   | AppStateMessage
   | ActiveTabMessage
+  | ActiveScreenMessage
   | ChromeConnectMessage
   | ChromeDisconnectMessage
   | ChromeInputMessage
