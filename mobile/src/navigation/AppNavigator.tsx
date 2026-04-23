@@ -17,6 +17,7 @@ import { ProcessMonitorScreen } from '../screens/ProcessMonitorScreen';
 import { ManagerChatScreen } from '../screens/ManagerChatScreen';
 import { ManagerMemoryScreen } from '../screens/ManagerMemoryScreen';
 import { ManagerArtifactsScreen } from '../screens/ManagerArtifactsScreen';
+import { VoiceScreen } from '../screens/VoiceScreen';
 import { colors } from '../theme';
 import type { RootStackParamList } from '../types/navigation.types';
 
@@ -206,6 +207,17 @@ export function AppNavigator() {
           headerShown: false,
           animation: 'slide_from_right',
           animationDuration: 250,
+        }}
+      />
+
+      {/* ── Voice — fullscreen, slide up from bottom ─────────────── */}
+      <Stack.Screen
+        name="Voice"
+        component={VoiceScreen}
+        options={{
+          headerShown: false,
+          animation: 'slide_from_bottom',
+          animationDuration: 350,
         }}
       />
     </Stack.Navigator>

@@ -17,4 +17,5 @@ export type RootStackParamList = {
   ManagerChat: { wsService: WebSocketService; serverId: string; serverHost: string; serverPort: number; serverToken: string };
   ManagerMemory: { wsService: WebSocketService; serverId: string };
   ManagerArtifacts: { serverId: string; serverHost: string; serverPort: number; serverToken: string };
+  Voice: { wsService: WebSocketService };
 };
