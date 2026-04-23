@@ -3283,17 +3283,18 @@ BEISPIEL:
   private notifyTaskEvent(task: DelegatedTask, event: 'completed' | 'failed' | 'needs_input'): void {
     if (this.fcmTokens.size === 0) return;
     const titles: Record<string, string> = {
-      completed: `\u2705 ${task.description}`,
-      failed: `\u274C ${task.description}`,
-      needs_input: `\uD83D\uDD14 ${task.description}`,
+      completed:   '✅ Aufgabe fertig',
+      failed:      '❌ Aufgabe fehlgeschlagen',
+      needs_input: '🔔 Eingabe nötig',
     };
+    const description = task.description?.trim() || '(ohne Beschreibung)';
     const bodies: Record<string, string> = {
-      completed: 'Aufgabe abgeschlossen',
-      failed: 'Aufgabe fehlgeschlagen',
-      needs_input: 'Deine Eingabe wird benötigt',
+      completed:   description,
+      failed:      `${description}\n\nDie Task ist fehlgeschlagen.`,
+      needs_input: `${description}\n\nDeine Eingabe wird benötigt.`,
     };
     for (const token of this.fcmTokens) {
-      fcmService.send(token, titles[event], bodies[event], { taskId: task.id, type: `task_${event}` })
+      fcmService.sendBig(token, titles[event], bodies[event], { taskId: task.id, type: `task_${event}` })
         .catch(() => {}); // Don't crash on FCM errors
     }
   }
