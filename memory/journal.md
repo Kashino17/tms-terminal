@@ -1,5 +1,26 @@
 # Session-Tagebuch
 
+## 2026-04-23 — Voice Mode Hotfixes nach v1.20.2 Test (v1.20.3)
+
+### Was wurde gemeldet
+Nach dem v1.20.2 Install: "Besser, aber immer noch nicht fehlerfrei. Darstellungsfehler, nicht richtig Fullscreen. Außerdem hört er immer noch zu, während er spricht. Untertitel sind nicht mehr korrekt — Wort wird hoch hervorgehoben, aber anderes gesagt."
+
+### Root Causes (systematic-debugging Phase 1)
+1. **Fullscreen fehlt**: `app.json` hat keine `androidNavigationBar` Config. `StatusBar hidden` versteckt nur oben. Android-Nav-Bar unten reserviert ~48dp.
+2. **Echo-Loop**: Server setzt `phase=listening` sobald TTS-Synthese fertig — aber Mobile-AudioQueue spielt noch sekundenlang weiter (TTS-Generierung ist schneller als Playback). 600ms Cooldown wildly insufficient.
+3. **Karaoke-Desync**: `markWordSpoken(sentence)` lief auf `onTtsChunk` (Enqueue-Zeit), nicht auf tatsächlichem Playback-Start. F5-TTS puffert 5-6 Chunks voraus → Highlight rennt dem Ton davon.
+
+### Fixes (3 Commits)
+- `551c72a` **Fix 3 (Karaoke-Sync)**: `AudioPlayerQueue` erweitert — `QueueItem { audio, sentence }`, neuer `onChunkStart`-Callback der BEVOR `sound.playAsync()` feuert, neuer `isIdle()` Helper. `VoiceScreen` wired `markWordSpoken` jetzt via `setOnChunkStart` in client-lifecycle useEffect (cleanup ruft `setOnChunkStart(undefined)`).
+- `7d54174` **Fix 2 (Echo-Loop)**: Mic-Cooldown wartet jetzt auf `audioQueue.isIdle()` via 80ms-Polling statt fixed 600ms. Danach 300ms Room-Echo-Puffer. `needsCooldown` erweitert auf `previousPhase === 'speaking' || !audioQueue.isIdle()`. Force-Turn-End-Pfad (`audioQueue.stop()`) lässt Queue idle → nur 300ms Buffer (User wählte B = safety vor speed).
+- `5491320` **Fix 1 (Fullscreen)**: `expo-navigation-bar` via `npx expo install` installed (`~2.8.1` für SDK 50). `VoiceScreen` `useEffect([], [])` auf Mount → `setVisibilityAsync('hidden')` + `setBehaviorAsync('overlay-swipe')` (immersive sticky — swipe-from-bottom zeigt kurz, dann re-hide). Cleanup restored `'visible'`. Alle Calls mit `.catch(() => {})` für iOS-no-op safety.
+
+### Learnings für Memory
+- **Timing-Lesson**: TTS-Server-Completion ≠ Mobile-Playback-Completion. Wenn ein System Audio-Buffer hat, alle Cooldowns/Timeouts müssen auf Playback-Events triggern, nicht auf Server-Events.
+- **Zustand gotcha bestätigt**: Tritt auch in anderen Stores auf — `set({ x: same })` notifiziert keine Subscriber. Wichtig wenn Effects auf Event-Reaktion laufen sollen.
+- **`expo-navigation-bar` ist der Expo-Weg** für echtes Android-Fullscreen. Nicht `StatusBar hidden` allein. SDK-compatible Version via `npx expo install` installieren, nicht `npm install` direkt.
+- **AudioPlayerQueue Pattern**: Metadaten pro Chunk + Event-Callbacks (`onChunkStart`, `onFinished`) statt nur Raw-Audio. Gibt UI-Komponenten saubere Sync-Points mit Audio-Playback.
+
 ## 2026-04-23 — Voice Mode UX Polish (v1.20.2)
 
 ### Was wurde gemacht
