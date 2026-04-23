@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { View, StyleSheet, TouchableOpacity, StatusBar, Text } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, StatusBar, Text, AppState } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Audio } from 'expo-av';
@@ -74,6 +74,17 @@ export function VoiceScreen() {
     // wsService reference is stable for the lifetime of the screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsService]);
+
+  // Auto-pause when app goes to background while AI is speaking
+  useEffect(() => {
+    if (!client) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active' && phase === 'speaking') {
+        client.pause();
+      }
+    });
+    return () => sub.remove();
+  }, [client, phase]);
 
   useEffect(() => {
     if (!client) return;

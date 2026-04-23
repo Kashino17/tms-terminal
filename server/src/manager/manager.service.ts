@@ -4116,6 +4116,9 @@ BEISPIEL:
   }
 
   setProvider(id: string): void {
+    if (this.activeVoiceSession?.isBusy()) {
+      throw new Error('Provider-Wechsel während aktivem Voice-Turn blockiert. Warte auf Antwortende.');
+    }
     this.registry.setActive(id);
   }
 
