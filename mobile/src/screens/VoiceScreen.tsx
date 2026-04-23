@@ -74,8 +74,8 @@ export function VoiceScreen() {
       },
       onAiDelta: (t) => appendAiDelta(t),
       onTtsChunk: (_idx, audio, sentence, _isLast) => {
-        if (audio) audioQueue.enqueue(audio);
-        if (sentence) markWordSpoken(sentence);
+        if (audio) audioQueue.enqueue(audio, sentence || null);
+        // markWordSpoken fires via audioQueue.onChunkStart (wired below)
       },
       onAckAudio: (_kind, audio) => audioQueue.enqueue(audio),
       onError: (msg) => setError(msg),
@@ -97,9 +97,11 @@ export function VoiceScreen() {
 
   useEffect(() => {
     if (!client) return;
+    audioQueue.setOnChunkStart((sentence) => markWordSpoken(sentence));
     client.subscribe();
     client.start();
     return () => {
+      audioQueue.setOnChunkStart(undefined);
       client.stop();
       client.dispose();
       audioQueue.stop();
