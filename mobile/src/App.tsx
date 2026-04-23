@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { AppState, View, Linking } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
+import { useFonts, Fraunces_400Regular_Italic, Fraunces_500Medium } from '@expo-google-fonts/fraunces';
+import { BricolageGrotesque_400Regular, BricolageGrotesque_500Medium, BricolageGrotesque_600SemiBold } from '@expo-google-fonts/bricolage-grotesque';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import { AppNavigator } from './navigation/AppNavigator';
@@ -41,6 +43,11 @@ export default function App() {
   const { ready, isEnabled, isUnlocked, lock, loadLockConfig } = useLockStore();
   const [appReady, setAppReady] = useState(false);
   const [adhanAlert, setAdhanAlert] = useState<{ name: string; time: string; arabic: string } | null>(null);
+
+  useFonts({
+    Fraunces_400Regular_Italic, Fraunces_500Medium,
+    BricolageGrotesque_400Regular, BricolageGrotesque_500Medium, BricolageGrotesque_600SemiBold,
+  });
 
   // Load lock config before showing anything + cleanup old autopilot items
   useEffect(() => {
