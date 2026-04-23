@@ -685,6 +685,9 @@ export function ManagerChatScreen({ navigation, route }: Props) {
 
   // ── Screen-state heartbeat: keep server in sync so push-notification logic
   //    can skip FCM when the user is actively viewing this screen ─────────────
+  // Empty deps []: wsService comes from route.params and is stable for the
+  // screen's lifetime. We intentionally do NOT re-run this effect on every
+  // render. ESLint's exhaustive-deps rule will flag this — acceptable trade-off.
 
   useEffect(() => {
     const sendState = (foregrounded: boolean) => {

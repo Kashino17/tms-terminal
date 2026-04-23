@@ -1,6 +1,13 @@
 import { AppState, NativeModules, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 
+/** Max body length — mirrors PUSH_BODY_CHAR_LIMIT on the server. */
+const PUSH_BODY_CHAR_LIMIT = 800;
+
+// Module-level flag set from ManagerChatScreen mount/unmount.
+// Caveat: if the screen is ever mounted twice simultaneously (unlikely with
+// stack nav), the second unmount will set this to false while the first is
+// still mounted. In practice this app uses stack nav with a single mount.
 let _chatScreenActive = false;
 
 export function setChatScreenActive(active: boolean): void {
@@ -25,7 +32,7 @@ export function setupManagerNotificationChannel(): void {
   }
 }
 
-function truncateForPush(text: string, limit = 800): string {
+function truncateForPush(text: string, limit = PUSH_BODY_CHAR_LIMIT): string {
   const graphemes = Array.from(text);
   if (graphemes.length <= limit) return text;
   return graphemes.slice(0, limit).join('') + '\n\n… (tap to read more)';
@@ -49,7 +56,7 @@ export async function notifyManagerResponse(
     if (AppState.currentState !== 'active') return; // server handles it via FCM
     if (_chatScreenActive) return;                   // user is reading the reply live
 
-    const preview = truncateForPush(text, 800);
+    const preview = truncateForPush(text, PUSH_BODY_CHAR_LIMIT);
     const title = `💬 ${agentName}`;
 
     if (Platform.OS === 'android' && NativeModules.AgentNotification) {

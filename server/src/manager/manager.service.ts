@@ -891,6 +891,9 @@ export class ManagerService {
   private personality: PersonalityConfig = { ...DEFAULT_PERSONALITY };
   private memory: ManagerMemory;
 
+  /** Public read-only access to the agent's display name (used for push titles). */
+  get agentName(): string { return this.personality.agentName; }
+
   private onSummary: SummaryCallback | null = null;
   private onResponse: ResponseCallback | null = null;
   private onError: ErrorCallback | null = null;

@@ -6,9 +6,8 @@ import * as fs from 'fs';
 import { globalManager } from '../terminal/terminal.manager';
 import { promptDetector } from '../notifications/prompt.detector';
 import { idleDetector } from '../notifications/idle.detector';
-import { fcmService } from '../notifications/fcm.service';
+import { fcmService, stripMarkdownForPush } from '../notifications/fcm.service';
 import { ManagerPushDecider } from '../notifications/manager-push';
-import { stripMarkdownForPush } from '../notifications/fcm.service';
 import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
@@ -272,7 +271,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
     pushDecider.recordPushed(sessionId);
 
-    const agentName = (managerService as any).personality?.agentName ?? 'Manager';
+    const agentName = managerService.agentName || 'Manager';
     const cleanText = stripMarkdownForPush(text || '');
     const messageId = pushDecider.generateMessageId();
 

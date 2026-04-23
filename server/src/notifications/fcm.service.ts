@@ -9,6 +9,11 @@ const SERVICE_ACCOUNT_PATH = path.join(os.homedir(), '.tms-terminal', 'firebase-
 
 const TRUNCATE_SUFFIX = '\n\n… (tap to read more)';
 
+/** Max body length for expandable push notifications (MessagingStyle/BigTextStyle).
+ *  Kept in sync with mobile-side PUSH_BODY_CHAR_LIMIT. See spec
+ *  docs/superpowers/specs/2026-04-23-expandable-push-notifications-design.md */
+export const PUSH_BODY_CHAR_LIMIT = 800;
+
 export function truncateForPush(text: string, limit: number): { text: string; truncated: boolean } {
   const graphemes = Array.from(text);
   if (graphemes.length <= limit) return { text, truncated: false };
@@ -93,7 +98,7 @@ class FcmService {
 
   /**
    * Send a data-only FCM message for Big-Style rendering on the mobile client.
-   * Body is truncated to 800 grapheme-count chars. Title is unchanged.
+   * Body is truncated to PUSH_BODY_CHAR_LIMIT grapheme-count chars. Title is unchanged.
    * data payload MUST include the full `text` field so the client can render.
    */
   async sendBig(
@@ -106,7 +111,7 @@ class FcmService {
       logger.warn(`FCM: sendBig not ready (ready=${this.ready}, admin=${!!this.admin})`);
       return;
     }
-    const { text: truncatedBody } = truncateForPush(body, 800);
+    const { text: truncatedBody } = truncateForPush(body, PUSH_BODY_CHAR_LIMIT);
     logger.info(`FCM sendBig: to ${token.slice(0, 20)}… — "${truncatedBody.slice(0, 60)}" (${truncatedBody.length} chars)`);
 
     try {
