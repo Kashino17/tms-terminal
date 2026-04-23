@@ -1,5 +1,37 @@
 # Session-Tagebuch
 
+## 2026-04-24 — TTS-Upgrade auf Qwen3-TTS-VoiceDesign-1.7B (Server-only)
+
+### Was gemacht
+User fragte nach per-Message-Ton-Steuerung ("traurig, glücklich, verliebt") über Text-Prompts. Recherche in der offiziellen Qwen-Model-Tabelle + mlx-audio-Source: **nur die 1.7B-Varianten unterstützen `instruct`-Parameter**. Im 0.6B (User's Stand) gibt's keinen Weg drumrum.
+
+Entschieden: Upgrade auf `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16`. Commit `c36d21f`.
+
+### Architektur-Wechsel
+- **Vorher**: `mlx_audio.tts.generate.generate_audio` wrapper mit `ref_audio` + `ref_text` (Zero-Shot-Voice-Cloning aus `voice_24k_15s.wav`)
+- **Nachher**: `mlx_audio.tts.utils.load_model` + `model.generate_voice_design(text, instruct, language)` — Stimm-Identität kommt vollständig aus dem `instruct`-Text
+- **Sample-Rate unverändert**: 24kHz PCM mono (mobile Client-Code muss nicht geändert werden)
+
+### Neue Sidecar-Protocol-Felder
+Jede Request kann jetzt zwei optionale Felder tragen:
+- `voice_prompt` — statische Stimm-Identität; defaultet auf ~/.tms-terminal/voice_prompt.txt
+- `emotion_prompt` — dynamischer Ton pro Message; wird an voice_prompt gehängt → finaler instruct
+
+Backward-kompatibel: ohne die Felder läuft's mit dem Default-Prompt (Rem-styled: "Junge weibliche Stimme einer Siebzehnjährigen, sanft und leicht hoch gelegen, warm und fürsorglich…").
+
+### Tradeoffs
+- Referenz-Clip `voice_24k_15s.wav` wird nicht mehr benutzt (kann gelöscht werden)
+- ~3× RAM (3GB vs 1GB), spürbar langsamere Generation
+- Dafür: `instruct` öffnet die Tür für Manager-Agent-gesteuerte Ton-Modulation pro Antwort
+
+### Smoke-Test
+Modell-Download 5:12min (12 Dateien, ~3.4GB bf16). Generation von "Hallo, ich bin Rem." dauerte 2.2s, erzeugte valides 16-bit 24kHz WAV (104kB). TS-wrapper-stdout-Parser toleriert bereits mlx-audio Init-Zeilen.
+
+### Learnings
+- **Qwen3-TTS Model-Familie**: Base (clone from audio) / CustomVoice (9 fixed voices + instruct) / VoiceDesign (any voice from text + instruct). Nur 1.7B-Varianten von CustomVoice/VoiceDesign haben echte Instruction-Control laut offizieller Qwen-Tabelle, auch wenn mlx-audio die API für 0.6B-CustomVoice formal expose't.
+- **mlx-audio-API**: `generate()` / `generate_custom_voice()` / `generate_voice_design()` — dispatchen per Model-Type. Wirft ValueError wenn falsches Modell geladen. Output ist `GenerationResult.audio` als `mx.array`, Konvertierung zu WAV via `np.array(audio)` + `soundfile.write(...)`.
+- **Follow-up-Potenzial**: Manager-Agent könnte per System-Prompt instruiert werden, vor jeder Voice-Antwort einen passenden `emotion_prompt` zu wählen ("warm-freudig", "vorsichtig-bedauernd", "neugierig-fragend"). Noch nicht verkabelt — nur Infrastruktur steht.
+
 ## 2026-04-23 — Voice Mode Hotfixes nach v1.20.2 Test (v1.20.3)
 
 ### Was wurde gemeldet
