@@ -272,31 +272,13 @@ export function TerminalScreen({ navigation, route }: Props) {
 
       if (m.type === 'terminal:created' && m.sessionId) {
         const fromManager = m.payload?.fromManager === true;
-        const managerLabel = m.payload?.label as string | undefined;
 
         if (fromManager) {
-          // Manager Agent created a new terminal — add a tab and immediately
-          // mount its WebView so it connects (terminal:reattach) and renders
-          // the full TUI. Without this, the WebView is lazy-mounted only when
-          // the user navigates to the tab, leaving it as a headless PTY.
-          const currentTabs = useTerminalStore.getState().getTabs(serverId);
-          const prevActiveTab = currentTabs.find(t => t.active);
-          const newTab = {
-            id: `mgr-${Date.now()}`,
-            sessionId: m.sessionId,
-            title: managerLabel ?? `Shell ${currentTabs.length + 1}`,
-            serverId,
-            active: false,
-          };
-          addTab(serverId, newTab);
-          // addTab forces active:true on the new tab — restore previous focus
-          // so Manager terminals don't steal the user's current terminal tab.
-          if (prevActiveTab) {
-            setActiveTab(serverId, prevActiveTab.id);
-          }
-          // Immediately mount the WebView so xterm.js loads, connects to the
-          // session, and renders Claude's TUI — even while user stays on ManagerChat.
-          setMountedTabs((prev) => new Set([...prev, newTab.id]));
+          // Manager-created terminals are handled by the persistent handler
+          // below so they survive screen unmount. Don't also add here — the
+          // WebSocket service fires BOTH persistent handler AND listeners for
+          // every message, and duplicating the tab-add produces two tabs with
+          // the same sessionId sharing one PTY.
         } else {
           // Normal flow: assign sessionId to the oldest pending tab
           const pending = useTerminalStore.getState().getTabs(serverId).find((t) => !t.sessionId);
