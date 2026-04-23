@@ -2,6 +2,7 @@ import { NativeModules, PermissionsAndroid, Platform, AppState } from 'react-nat
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import messaging from '@react-native-firebase/messaging';
 import * as Notifications from 'expo-notifications';
+import { isChatScreenActive } from './managerNotifications.service';
 
 // Configure how notifications appear when app is in foreground
 Notifications.setNotificationHandler({
@@ -49,6 +50,23 @@ export function consumePendingCloudTarget(): { platform: 'render' | 'vercel'; pr
   const target = _pendingCloudTarget;
   _pendingCloudTarget = null;
   return target;
+}
+
+// ── Pending manager chat open target ─────────────────────────────────────────
+// Set when the user taps a manager-reply notification. App.tsx primes it;
+// any screen with a live WebSocket connection can consume it and navigate
+// to ManagerChat *with full route params*.
+let _pendingManagerChatOpen = false;
+
+export function setPendingManagerChatOpen(active: boolean): void {
+  _pendingManagerChatOpen = active;
+}
+
+/** Read and consume the pending manager-chat-open flag (returns false if none). */
+export function consumePendingManagerChatOpen(): boolean {
+  const was = _pendingManagerChatOpen;
+  _pendingManagerChatOpen = false;
+  return was;
 }
 
 /** Set up a listener for notification response (tap). */
@@ -207,6 +225,9 @@ export function registerForegroundHandler(): () => void {
     const type = typeof remoteMessage.data?.type === 'string' ? remoteMessage.data.type : '';
 
     if (type === 'manager_reply') {
+      // Belt-and-suspenders: also gate on chat-screen-active even though server
+      // should already have skipped this push (defense against stale-state race).
+      if (isChatScreenActive()) return;
       const title = String(remoteMessage.data?.title ?? '💬 Manager');
       const body = String(remoteMessage.data?.body ?? '');
       const messageId = String(remoteMessage.data?.messageId ?? '');
@@ -215,6 +236,18 @@ export function registerForegroundHandler(): () => void {
         NativeModules.AgentNotification.show(title, body, avatarUri ?? null, messageId || null);
         return;
       }
+      // iOS / fallback: no MessagingStyle, just a regular expanded notification
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          sound: 'default',
+          data: { type: 'manager_reply', messageId },
+          ...(Platform.OS === 'android' ? { channelId: 'manager-responses' } : {}),
+        },
+        trigger: null,
+      });
+      return;
     }
 
     const title = String(remoteMessage.data?.title ?? remoteMessage.notification?.title ?? '💤 Terminal');

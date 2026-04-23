@@ -14,7 +14,7 @@ import { useSettingsStore } from './store/settingsStore';
 import { useManagerStore } from './store/managerStore';
 import { colors } from './theme';
 import { ResponsiveProvider } from './hooks/useResponsive';
-import { registerBackgroundHandler, registerForegroundHandler, registerNotificationResponseHandler, cacheAvatarUri } from './services/notifications.service';
+import { registerBackgroundHandler, registerForegroundHandler, registerNotificationResponseHandler, cacheAvatarUri, setPendingManagerChatOpen } from './services/notifications.service';
 import { keywordAlertService } from './services/keywordAlert.service';
 import { useAutopilotStore } from './store/autopilotStore';
 import { registerBackgroundUpdateCheck } from './services/updater.service';
@@ -116,7 +116,7 @@ export default function App() {
     return () => { fgSub.remove(); bgSub.remove(); };
   }, []);
 
-  // Manager push notification tap: read AgentNotification launch extras and navigate to ManagerChat
+  // Manager push notification tap: read AgentNotification launch extras and set pending flag
   useEffect(() => {
     const checkLaunchExtras = async () => {
       try {
@@ -124,10 +124,11 @@ export default function App() {
           ? await NativeModules.AgentNotification.consumeLaunchExtras()
           : null;
         if (extras?.notificationType === 'manager_reply') {
-          // Wait one tick so navigationRef is attached
-          setTimeout(() => {
-            navigationRef.current?.navigate('ManagerChat' as never);
-          }, 100);
+          // Don't navigate directly — ManagerChat needs full route params
+          // (wsService, serverId, …). Instead, flag it; the connected screen
+          // (ServerListScreen / TerminalScreen) consumes the flag and opens
+          // the Chat via the existing navigation path that has all params.
+          setPendingManagerChatOpen(true);
         }
       } catch {
         // native module might not be present on first install or iOS

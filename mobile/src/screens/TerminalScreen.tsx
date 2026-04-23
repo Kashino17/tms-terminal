@@ -36,7 +36,7 @@ import { useResponsive } from '../hooks/useResponsive';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../types/navigation.types';
-import { requestNotificationPermission, getFcmToken } from '../services/notifications.service';
+import { requestNotificationPermission, getFcmToken, consumePendingManagerChatOpen } from '../services/notifications.service';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { useAutopilotStore } from '../store/autopilotStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -149,6 +149,20 @@ export function TerminalScreen({ navigation, route }: Props) {
       if (restoreDismissTimer.current) clearTimeout(restoreDismissTimer.current);
     };
   }, []);
+
+  // Consume pending manager-chat-open flag set by App.tsx on cold-start tap
+  // Fires whenever connState changes; once connected it navigates with full params.
+  useEffect(() => {
+    if (connState === 'connected' && consumePendingManagerChatOpen()) {
+      navigation.navigate('ManagerChat', {
+        wsService: wsRef.current,
+        serverId,
+        serverHost: server?.host ?? '',
+        serverPort: server?.port ?? 8767,
+        serverToken: server?.token ?? '',
+      });
+    }
+  }, [connState, serverId, server, navigation]);
 
   // Auto-open Manager Chat if navigated with openManager flag
   const openManagerHandled = useRef(false);

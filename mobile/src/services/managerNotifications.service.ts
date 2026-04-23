@@ -7,6 +7,10 @@ export function setChatScreenActive(active: boolean): void {
   _chatScreenActive = active;
 }
 
+export function isChatScreenActive(): boolean {
+  return _chatScreenActive;
+}
+
 /** Call once at app startup to create the notification channel */
 export function setupManagerNotificationChannel(): void {
   if (Platform.OS === 'android') {
