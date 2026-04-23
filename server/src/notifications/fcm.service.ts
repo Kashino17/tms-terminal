@@ -7,6 +7,26 @@ import { logger } from '../utils/logger';
 // Download it from Firebase Console → Project Settings → Service accounts → Generate new private key.
 const SERVICE_ACCOUNT_PATH = path.join(os.homedir(), '.tms-terminal', 'firebase-service-account.json');
 
+const TRUNCATE_SUFFIX = '\n\n… (tap to read more)';
+
+export function truncateForPush(text: string, limit: number): { text: string; truncated: boolean } {
+  const graphemes = Array.from(text);
+  if (graphemes.length <= limit) return { text, truncated: false };
+  const truncated = graphemes.slice(0, limit).join('') + TRUNCATE_SUFFIX;
+  return { text: truncated, truncated: true };
+}
+
+export function stripMarkdownForPush(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '[code]')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/^#+\s+/gm, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .trim();
+}
+
 class FcmService {
   private admin: typeof import('firebase-admin') | null = null;
   private ready = false;
