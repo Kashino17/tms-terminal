@@ -16,6 +16,7 @@ import { SubtitleOverlay } from '../components/voice/SubtitleOverlay';
 import { VoiceControls } from '../components/voice/VoiceControls';
 import { ResumeOptions } from '../components/voice/ResumeOptions';
 import { StatusPill } from '../components/voice/StatusPill';
+import { PhaseHint } from '../components/voice/PhaseHint';
 import type { RootStackParamList } from '../types/navigation.types';
 
 type VoiceScreenRouteProp = RouteProp<RootStackParamList, 'Voice'>;
@@ -271,6 +272,8 @@ export function VoiceScreen() {
           </TouchableOpacity>
         </View>
       )}
+
+      <PhaseHint />
 
       <SubtitleOverlay />
 
