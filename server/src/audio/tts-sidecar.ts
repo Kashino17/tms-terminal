@@ -48,7 +48,7 @@ function ensureRunning(): Promise<void> {
   if (startPromise) return startPromise;
 
   startPromise = new Promise<void>((resolve, reject) => {
-    logger.info('[tts] Starting F5-TTS sidecar...');
+    logger.info('[tts] Starting Qwen3-TTS VoiceDesign-1.7B sidecar...');
 
     const fs = require('fs');
     const pythonBin = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
