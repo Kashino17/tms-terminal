@@ -809,19 +809,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       }
 
       logger.info(`[tts] Generating for message ${messageId} (${text.length} chars)`);
-      // Post-hoc emotion classification: ask the active LLM to describe the
-      // tone of this message, then pass that descriptor to the TTS sidecar so
-      // the voice modulates per message — mirrors the Voice-Mode behaviour
-      // without requiring the tag to be produced up-front by the Manager.
-      // Fires first; if it fails or times out, it returns '' and synthesis
-      // falls through to the static voice_prompt baseline.
-      managerService.classifyEmotion(text).then((emotionPrompt) => {
-        return ttsSynthesize(text, {
-          emotionPrompt: emotionPrompt || undefined,
-          onProgress: (info) => {
-            sendManager({ type: 'tts:progress', payload: { messageId, chunk: info.chunk, total: info.total } } as any);
-          },
-        });
+      ttsSynthesize(text, {
+        onProgress: (info) => {
+          sendManager({ type: 'tts:progress', payload: { messageId, chunk: info.chunk, total: info.total } } as any);
+        },
       }).then(({ audioBase64, durationSecs }) => {
         logger.info(`[tts] Done: ${messageId} — ${durationSecs}s audio, ${(audioBase64.length / 1024).toFixed(0)} KB base64`);
 

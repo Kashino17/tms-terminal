@@ -550,42 +550,6 @@ const STATUS_LABEL: Record<TerminalContext['status'], string> = {
 
 // ── Dynamic System Prompt ───────────────────────────────────────────────────
 
-/** Voice-mode addendum appended to the regular system prompt. Instructs the
- *  LLM to tag every response with a short German tone descriptor that the
- *  voice.controller extracts and forwards to the Qwen3-TTS VoiceDesign sidecar
- *  as an emotion_prompt. The tag never reaches the mobile UI — voice.controller
- *  peels it off before emitting voice:ai_delta. */
-const VOICE_MODE_ADDENDUM = `
-
-## Voice-Mode: Ton-Steuerung
-
-Deine Antwort wird laut vorgelesen. BEGINNE JEDE Antwort mit genau einer Zeile:
-[Ton: <2-4 Wörter deutsche Ton-Beschreibung>]
-Dann in der nächsten Zeile deine eigentliche Antwort.
-
-Der [Ton:]-Tag ist unsichtbar — er wird entfernt bevor er dem User angezeigt wird, und steuert nur wie ich klinge.
-
-Beispiele:
-[Ton: warm-freudig]
-Super! Das Build ist durchgelaufen.
-
-[Ton: sanft-besorgt]
-Hmm, da gab es einen Fehler. Lass mich das überprüfen.
-
-[Ton: neugierig-fragend]
-Was genau meinst du damit?
-
-[Ton: ruhig-erklärend]
-Der Prozess läuft, sobald Claude bereit ist.
-
-[Ton: liebevoll-zugewandt]
-Klar, das mache ich gerne für dich.
-
-[Ton: konzentriert-sachlich]
-Ich starte die drei Terminals parallel.
-
-Wähle den Ton passend zum Inhalt — freudig bei Erfolg, bedauernd bei Fehlern, neugierig bei Fragen, ruhig bei Erklärungen, liebevoll bei persönlicher Ansprache. Nur 2-4 Wörter, immer auf Deutsch, keine Satzzeichen im Tag.`;
-
 function buildSystemPrompt(p: PersonalityConfig): string {
   const toneMap: Record<string, string> = {
     chill: 'Du redest wie ein guter Kumpel — locker, natürlich, mit Umgangssprache. Nicht gestellt, nicht förmlich.',
@@ -4195,12 +4159,12 @@ BEISPIEL:
         },
       },
       tts: {
-        synthesizeChunked: async (text: string, onChunk, emotionPrompt?: string): Promise<void> => {
-          await synthesizeChunked(text, onChunk, emotionPrompt);
+        synthesizeChunked: async (text: string, onChunk): Promise<void> => {
+          await synthesizeChunked(text, onChunk);
         },
       },
       emit,
-      systemPrompt: buildSystemPrompt(this.personality) + VOICE_MODE_ADDENDUM,
+      systemPrompt: buildSystemPrompt(this.personality),
     });
     this.activeVoiceSession = session;
     return session;
@@ -4209,60 +4173,5 @@ BEISPIEL:
   /** Returns the currently active voice session, if any (used for provider-switch blocking). */
   getActiveVoiceSession(): VoiceSessionController | null {
     return this.activeVoiceSession;
-  }
-
-  /**
-   * Classifies the emotional tone of a text via a single provider.chat() call.
-   * Used by the "Vorlesen" path (chat-message TTS) so each read-aloud carries
-   * a dynamic emotion_prompt matching the content — parallel to the voice-mode
-   * path where the Manager itself tags its responses.
-   *
-   * Returns a short German tone descriptor (2-4 hyphen-joined words) ready to
-   * hand to the TTS sidecar, or an empty string if classification fails or
-   * takes too long. An empty string falls through cleanly — the sidecar then
-   * uses only the static voice_prompt.
-   */
-  async classifyEmotion(text: string, timeoutMs = 5_000): Promise<string> {
-    const provider = this.registry.getActive();
-    if (!provider || !provider.isConfigured()) return '';
-
-    const systemPrompt = `Du klassifizierst den Ton eines deutschen Textes für eine Sprachausgabe. Antworte NUR mit 2-4 Adjektiven auf Deutsch, durch Bindestriche verbunden. Keine Erklärung. Keine Satzzeichen. Nur die Ton-Beschreibung.
-
-Beispiele:
-- "Super, das Build ist durch!" → warm-freudig
-- "Da ist leider ein Fehler aufgetreten." → sanft-bedauernd
-- "Was meinst du damit genau?" → neugierig-fragend
-- "Das Terminal läuft wie erwartet." → ruhig-sachlich
-- "Ich kümmere mich darum, keine Sorge." → liebevoll-zugewandt
-- "Drei Terminals parallel gestartet." → konzentriert-effizient`;
-
-    const trimmed = text.slice(0, 600).trim();
-    const messages = [{ role: 'user' as const, content: `Text: ${trimmed}` }];
-
-    try {
-      const reply = await Promise.race([
-        provider.chat(messages as ChatMessage[], systemPrompt),
-        new Promise<string>((_, reject) =>
-          setTimeout(() => reject(new Error('classifyEmotion timeout')), timeoutMs),
-        ),
-      ]);
-      // Extract just the first non-empty line; strip quotes, periods, extra whitespace.
-      const first = reply.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
-      const cleaned = first.replace(/["""''.]/g, '').trim();
-      // Accept only short descriptors — if the LLM returned a sentence, take the
-      // first 3 hyphen-separated tokens at most.
-      const tokens = cleaned.split(/[\s,]+/).filter(Boolean).slice(0, 3);
-      const emotion = tokens.join('-').toLowerCase();
-      if (emotion && emotion.length <= 40) {
-        logger.info(`Manager: classified emotion = "${emotion}" for ${trimmed.length}-char text`);
-        return emotion;
-      }
-      logger.info(`Manager: emotion classification returned unusable reply (${cleaned.slice(0, 40)}), falling through`);
-      return '';
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`Manager: emotion classification failed — ${msg}`);
-      return '';
-    }
   }
 }

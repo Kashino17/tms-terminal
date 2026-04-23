@@ -48,7 +48,7 @@ function ensureRunning(): Promise<void> {
   if (startPromise) return startPromise;
 
   startPromise = new Promise<void>((resolve, reject) => {
-    logger.info('[tts] Starting Qwen3-TTS VoiceDesign-1.7B sidecar...');
+    logger.info('[tts] Starting Qwen3-TTS Base-1.7B sidecar...');
 
     const fs = require('fs');
     const pythonBin = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
@@ -150,9 +150,6 @@ function ensureRunning(): Promise<void> {
 export interface SynthesizeOptions {
   onProgress?: (info: { chunk: number; total: number }) => void;
   onChunkAudio?: (info: { chunk: number; total: number; audio: Buffer; sentence: string }) => void;
-  /** Short German tone descriptor appended to the sidecar's static voice_prompt.
-   *  Example: 'sanft-besorgt', 'warm-freudig', 'neugierig-fragend'. */
-  emotionPrompt?: string;
 }
 
 export async function synthesize(text: string, options: SynthesizeOptions = {}): Promise<{ audioBase64: string; durationSecs: number }> {
@@ -164,9 +161,8 @@ export async function synthesize(text: string, options: SynthesizeOptions = {}):
 
   const id = `tts-${++requestId}`;
   const timeoutMs = calcTimeout(text.length);
-  const emotionPrompt = options.emotionPrompt?.trim() || '';
 
-  logger.info(`[tts] Synthesis request ${id}: ${text.length} chars, timeout=${Math.round(timeoutMs / 1000)}s${emotionPrompt ? `, emotion="${emotionPrompt}"` : ''}`);
+  logger.info(`[tts] Synthesis request ${id}: ${text.length} chars, timeout=${Math.round(timeoutMs / 1000)}s`);
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -182,9 +178,7 @@ export async function synthesize(text: string, options: SynthesizeOptions = {}):
       onChunkAudio: options.onChunkAudio,
     });
 
-    const payload: Record<string, string> = { id, text };
-    if (emotionPrompt) payload.emotion_prompt = emotionPrompt;
-    const request = JSON.stringify(payload) + '\n';
+    const request = JSON.stringify({ id, text }) + '\n';
     sidecar!.stdin!.write(request);
   });
 }
@@ -195,21 +189,16 @@ export async function synthesize(text: string, options: SynthesizeOptions = {}):
  *
  * Used by VoiceSessionController (Task 6) to queue audio chunks for pausable
  * playback without waiting for the full synthesis to finish.
- *
- * @param emotionPrompt Optional German tone descriptor forwarded to the
- *   Qwen3-TTS VoiceDesign sidecar so the voice modulates per turn.
  */
 export async function synthesizeChunked(
   text: string,
   onChunk: (info: { idx: number; sentence: string; audio: Buffer }) => void,
-  emotionPrompt?: string,
 ): Promise<void> {
   let idx = 0;
   await synthesize(text, {
     onChunkAudio: ({ audio, sentence }) => {
       onChunk({ idx: idx++, sentence, audio });
     },
-    emotionPrompt,
   });
 }
 
