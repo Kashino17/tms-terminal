@@ -1,5 +1,43 @@
 # Session-Tagebuch
 
+## 2026-04-23 — Voice Mode UX Polish (v1.20.2)
+
+### Was wurde gemacht
+User-Feedback nach dem v1.20.0-Voice-Chat: "total buggy — fehlen Animationen für Pause/Play, Text-Overlay geht über das ganze Display, unklar wann KI denkt vs zuhört, nicht intuitiv, fühle mich überfordert". Zusätzlich: **Self-Interruption auf Lautsprecher** — Rem hört ihre eigene Stimme über den Speaker, VAD triggert, Server transkribiert Rem als User-Input → Endlos-Loop.
+
+Komplette Brainstorming-Runde mit visuellem Companion über Tailscale (Mockups direkt auf dem Fold gezeigt), dann Spec + 13-Task-Plan + Subagent-Driven-Execution.
+
+**14 Commits auf feat/chrome-remote-control** (Base `0a29bf2` → Head `461771d`):
+
+**Echo-Mitigation (4 Layer):**
+- `bec0e67` Server: 800ms-Guard discards Transcripts nach letztem TTS-Chunk
+- `3712b29` Server: 3-in-60s Warning "Kopfhörer empfohlen" (auch fixed: `logger.debug` existiert nicht im Projekt-Logger → `logger.info`, hätte sonst silent gethrownt)
+- `d1be837` Mobile: Android `audioSource: 7` (VOICE_COMMUNICATION → HW AEC/NS/AGC) + VAD `-40dB → -32dB` + 150ms-Sustain-Check
+- `239c68a` Mobile: 600ms Cooldown bei `speaking → listening` via `listeningWarmup` Store-Flag
+- `b99cdfd` Mobile Fix: nach `endTurn` lokal `setPhase('transcribing')` — sonst blieb Recorder tot bei Server-Echo-Suppression (zustand notifiziert keine Subscriber bei same-value set)
+
+**UI-Polish:**
+- `af8cdf2` + `a367f65` Neue `PhaseHint`-Komponente: 7 Phasen mit Fraunces-Italic Primary + Bricolage-Uppercase Secondary, Cross-Fade mit Y-Offset, Race-safe via `animRef.stop()`
+- `5feb53c` PhaseHint zwischen CharacterWebView und SubtitleOverlay eingehängt
+- `287ec85` Subtitle-Scrim: 3 gestapelte Views mit Alpha 0.28/0.35/0.45 (Pseudo-Gradient, keine neuen Deps — RN hat kein natives `radial-gradient`)
+- `19f0c88` 3-Zeilen Teleprompter-Scroll: `onLayout` auf aktivem Wort + `Animated.timing` translateY
+- `b82d066` User-Chip nur in `listening`/`transcribing` (nicht mehr in `thinking`), container-gap 6→2
+- `396c202` + `abc98a7` Primary-Button: Icon-Crossfade + Rotate + Ripple + `impactLight`-Haptic; Mic-Button = Force-Turn-End (nur in `speaking`/`thinking` aktiv, "unterbrechen"-Label, `impactMedium`)
+- `461771d` Close-Button 2-Tap-Confirmation mit Pill "Nochmal tippen zum Beenden"
+
+### Ergebnisse
+- 7/7 Server-Tests grün (5 bestehend + 2 neu: 3-in-60s Emission, 1-pro-Window)
+- `tsc --noEmit` auf mobile sauber
+- Full-Branch Code-Review: **Ship it** — keine Critical oder Important Issues
+- Subagent-Driven-Development-Skill genutzt: pro Task Implementer + Spec-Reviewer + Code-Quality-Reviewer
+
+### Learnings für Memory
+- Projekt-Logger hat nur `info/success/warn/error` (kein `debug`) — wichtig für zukünftige Server-Tasks
+- Zustand mit Primitive-Werten: `set({ x: same })` notifiziert KEINE Subscriber → wenn Effects auf Phase-Events reagieren müssen, lokal vorher ändern oder Server muss echten Phase-Wechsel emittieren
+- React Native hat kein natives `radial-gradient` → stacked-alpha-Views sind der Workaround ohne neue Deps
+- `react-native-reanimated` ist NICHT im Projekt — `Animated` aus `react-native` reicht für UI-Polish
+- Visual Companion läuft über Tailscale-IP + `--host 0.0.0.0 --url-host <tailscale-ip>` → Mockups direkt am Fold sichtbar
+
 ## 2026-04-23 — Expandable Push Notifications Polish (I-2, I-3, M-1, M-2, M-5, M-7)
 
 ### Was wurde gemacht
