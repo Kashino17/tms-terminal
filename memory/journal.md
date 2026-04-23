@@ -1,5 +1,18 @@
 # Session-Tagebuch
 
+## 2026-04-23 — Expandable Push Notifications Polish (I-2, I-3, M-1, M-2, M-5, M-7)
+
+### Was wurde gemacht
+Nach dem finalen Code-Review wurden die verbliebenen Polish-Issues adressiert:
+
+- **I-3**: `ManagerService` bekommt einen public `get agentName(): string` Getter. `ws.handler.ts` nutzt jetzt `managerService.agentName` statt `(managerService as any).personality?.agentName` — Typ-Loch geschlossen.
+- **M-1**: Doppelte Imports aus `fcm.service` in `ws.handler.ts` gemerged zu einer Zeile (`fcmService, stripMarkdownForPush`).
+- **M-2**: `PUSH_BODY_CHAR_LIMIT = 800` als Konstante exportiert aus `fcm.service.ts` (Server) und definiert in `managerNotifications.service.ts` (Mobile, eigene Runtime). Alle `800`-Literals durch die Konstante ersetzt.
+- **M-5**: Kommentar an `useEffect([])` in ManagerChatScreen — erklärt warum empty-deps trotz `wsService`-Closure korrekt sind (stable via `route.params`). Und Caveat-Kommentar zu `_chatScreenActive` Single-Mount-Annahme.
+- **I-2** (Spec-Klärung): Szenario #6 und #9 im Test-Plan waren widersprüchlich (globaler Debounce vs per-Session). Entscheidung: globaler 3s-Debounce bleibt — Spec + Plan Szenario #6 umformuliert zu "Max 1 Push pro 3s; 2 Pushes nur wenn Replies ≥3s auseinander".
+- **M-7**: Plan-Pfad `mobile/src/stores/` → `mobile/src/store/` (singular) korrigiert.
+- `tsc --noEmit` server + mobile grün. 33/33 Tests pass. Commits: `b8d3e43` (code polish), `abb8fb7` (docs).
+
 ## 2026-04-23 — Code-Review-Fixes: C-1, I-1, M-6 (Push Notifications)
 
 ### Was wurde gemacht
