@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
 import { useVoiceStore } from '../../store/voiceStore';
 
 export function SubtitleOverlay() {
@@ -14,6 +14,21 @@ export function SubtitleOverlay() {
   const words = aiStreaming.split(/(\s+)/);
   let wordIdx = 0;
 
+  const LINE_HEIGHT = 30;
+  const MIDDLE_LINE_OFFSET = LINE_HEIGHT; // 2nd of 3 lines
+
+  const [activeWordY, setActiveWordY] = useState(0);
+  const translateY = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const target = Math.max(0, activeWordY - MIDDLE_LINE_OFFSET);
+    Animated.timing(translateY, {
+      toValue: -target,
+      duration: 250,
+      useNativeDriver: true,
+    }).start();
+  }, [activeWordY, translateY]);
+
   return (
     <>
       <View style={styles.scrimOuter} pointerEvents="none" />
@@ -27,16 +42,30 @@ export function SubtitleOverlay() {
           </View>
         )}
         {showAi && (
-          <Text style={styles.subtitle}>
-            {words.map((w, i) => {
-              if (/^\s+$/.test(w)) return <Text key={i}>{w}</Text>;
-              const isSpoken = wordIdx < aiSpokenWordCount;
-              const isActive = wordIdx === aiSpokenWordCount;
-              wordIdx++;
-              const style = isActive ? styles.wordActive : isSpoken ? styles.wordSpoken : styles.word;
-              return <Text key={i} style={style}>{w}</Text>;
-            })}
-          </Text>
+          <View style={styles.aiClip}>
+            <Animated.View style={{ transform: [{ translateY }] }}>
+              <Text style={styles.subtitle}>
+                {words.map((w, i) => {
+                  if (/^\s+$/.test(w)) return <Text key={i}>{w}</Text>;
+                  const isSpoken = wordIdx < aiSpokenWordCount;
+                  const isActive = wordIdx === aiSpokenWordCount;
+                  wordIdx++;
+                  const style = isActive ? styles.wordActive : isSpoken ? styles.wordSpoken : styles.word;
+                  return (
+                    <Text
+                      key={i}
+                      style={style}
+                      onLayout={
+                        isActive
+                          ? (e) => setActiveWordY(e.nativeEvent.layout.y)
+                          : undefined
+                      }
+                    >{w}</Text>
+                  );
+                })}
+              </Text>
+            </Animated.View>
+          </View>
         )}
       </View>
     </>
@@ -62,6 +91,12 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 20,
     maxWidth: 540,
+  },
+  aiClip: {
+    height: 90, // 3 lines × 30px lineHeight
+    width: '100%',
+    overflow: 'hidden',
+    alignItems: 'center',
   },
   word: { color: '#F4EFE5' },
   wordSpoken: { color: '#C8BFB0' },
