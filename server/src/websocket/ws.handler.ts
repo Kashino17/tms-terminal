@@ -7,6 +7,8 @@ import { globalManager } from '../terminal/terminal.manager';
 import { promptDetector } from '../notifications/prompt.detector';
 import { idleDetector } from '../notifications/idle.detector';
 import { fcmService } from '../notifications/fcm.service';
+import { ManagerPushDecider } from '../notifications/manager-push';
+import { stripMarkdownForPush } from '../notifications/fcm.service';
 import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
@@ -112,7 +114,10 @@ function setupManagerCallbacks(ws: WebSocket): void {
     (config) => sendManager({ type: 'manager:personality_configured', payload: config }),
     (phase, detail, elapsed) => sendManager({ type: 'manager:thinking', payload: { phase, detail, elapsed } }),
     (token, tokenStats) => sendManager({ type: 'manager:stream_chunk', payload: { token, ...tokenStats } }),
-    (text, actions, phases, images, presentations) => sendManager({ type: 'manager:stream_end', payload: { text, actions, phases, images, presentations } }),
+    (text, actions, phases, images, presentations) => {
+      sendManager({ type: 'manager:stream_end', payload: { text, actions, phases, images, presentations } });
+      notifyManagerReplyRef(text);
+    },
     createTerminalForManager,
     closeTerminalForManager,
     (tasks) => sendManager({ type: 'manager:tasks', payload: { tasks } }),
@@ -137,6 +142,7 @@ managerService.setOnModelStatus((providerId, ev) => {
 // They're assigned inside handleConnection when ws is available
 let createTerminalForManager: (label?: string) => string | null = () => null;
 let closeTerminalForManager: (sessionId: string) => boolean = () => false;
+let notifyManagerReplyRef: (text: string) => void = () => {};
 
 // ── Autopilot state ──────────────────────────────────────────────────
 const aiSessions = new Set<string>(); // sessions where AI tool was detected
@@ -193,6 +199,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   // Per-connection rate limiter
   const rateLimiter = new ConnectionRateLimiter();
 
+  // Per-connection push decider — scoped so it resets automatically on reconnect
+  const pushDecider = new ManagerPushDecider();
+  pushDecider.setTokensCount(persistedTokens.size);
+
   logger.success(`Client connected: ${ip}`);
 
   // Update the mutable WS reference so manager callbacks always use the current connection
@@ -246,12 +256,39 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       for (const token of persistedTokens) {
         promises.push(
           fcmService.send(token, title, body, { sessionId, type: 'idle' })
-            .catch(() => { persistedTokens.delete(token); }),
+            .catch(() => { persistedTokens.delete(token); pushDecider.setTokensCount(persistedTokens.size); }),
         );
       }
       void Promise.allSettled(promises);
     });
   };
+
+  /** Send an FCM push for a manager-agent reply, respecting screen-state + debounce. */
+  const notifyManagerReply = (text: string, sessionId: string = 'manager-global'): void => {
+    const decision = pushDecider.shouldPush(sessionId);
+    if (!decision.push) {
+      logger.info(`ManagerReply push: skipped (${decision.reason})`);
+      return;
+    }
+    pushDecider.recordPushed(sessionId);
+
+    const agentName = (managerService as any).personality?.agentName ?? 'Manager';
+    const cleanText = stripMarkdownForPush(text || '');
+    const messageId = pushDecider.generateMessageId();
+
+    for (const token of persistedTokens) {
+      fcmService.sendBig(token, `💬 ${agentName}`, cleanText, {
+        type: 'manager_reply',
+        agentName,
+        messageId,
+      }).catch(() => {
+        persistedTokens.delete(token);
+        pushDecider.setTokensCount(persistedTokens.size);
+      });
+    }
+  };
+  // Wire per-connection notifyManagerReply into the module-level ref used by setupManagerCallbacks
+  notifyManagerReplyRef = notifyManagerReply;
 
   /** Create a new terminal session on behalf of the Manager Agent. */
   createTerminalForManager = (label?: string): string | null => {
@@ -678,6 +715,13 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       (managerService as any).activeSessionId = tabSessionId;
       return;
     }
+    if (msgType === 'client:active_screen') {
+      const { activeScreen, foregrounded } = (msg as any).payload ?? {};
+      if (activeScreen === 'manager_chat' || activeScreen === 'other') {
+        pushDecider.updateScreenState({ activeScreen, foregrounded: !!foregrounded });
+      }
+      return;
+    }
 
     if (msgType === 'manager:sync_labels') {
       const labels = (msg as any).payload?.labels as Array<{ sessionId: string; name: string }> | undefined;
@@ -911,10 +955,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           break;
         }
         persistedTokens.add(deviceToken);   // survive reconnects
+        pushDecider.setTokensCount(persistedTokens.size);
         // Cap at MAX_PERSISTED_TOKENS — evict oldest (first) entry
         if (persistedTokens.size > MAX_PERSISTED_TOKENS) {
           const oldest = persistedTokens.values().next().value;
           if (oldest !== undefined) persistedTokens.delete(oldest);
+          pushDecider.setTokensCount(persistedTokens.size);
         }
         watcherService.setDeviceToken(deviceToken);
         managerService.setFcmTokens(persistedTokens);
