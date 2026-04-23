@@ -1,5 +1,14 @@
 # Session-Tagebuch
 
+## 2026-04-23 — T19: Error handling + edge cases
+
+### Was wurde gemacht
+- `manager.service.ts`: Guard in `setProvider()` — wirft Error wenn `activeVoiceSession?.isBusy()` true ist (Provider-Wechsel während aktivem Voice-Turn blockiert)
+- `VoiceScreen.tsx`: `AppState` Import hinzugefügt, `useEffect` für Auto-Pause wenn App in Hintergrund geht (phase === 'speaking')
+- `activeVoiceSession`-Tracking war bereits in T7 implementiert — kein neues Tracking nötig
+- Server-Build: sauber (0 Fehler), Mobile TypeCheck: sauber (0 Fehler), Tests: 11/11 pass
+- Commit: `ed59822`
+
 ## 2026-04-23 — T17: VoiceScreen Integration
 
 ### Was wurde gemacht
