@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { AppState, View, Linking } from 'react-native';
+import { AppState, NativeModules, View, Linking } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { useFonts, Fraunces_400Regular_Italic, Fraunces_500Medium } from '@expo-google-fonts/fraunces';
 import { BricolageGrotesque_400Regular, BricolageGrotesque_500Medium, BricolageGrotesque_600SemiBold } from '@expo-google-fonts/bricolage-grotesque';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -26,6 +26,8 @@ try {
 } catch {
   // Firebase not ready on this cold start — background handler will be skipped
 }
+
+export const navigationRef = createNavigationContainerRef();
 
 const darkTheme = {
   dark: true,
@@ -110,6 +112,30 @@ export default function App() {
     return () => { fgSub.remove(); bgSub.remove(); };
   }, []);
 
+  // Manager push notification tap: read AgentNotification launch extras and navigate to ManagerChat
+  useEffect(() => {
+    const checkLaunchExtras = async () => {
+      try {
+        const extras = NativeModules.AgentNotification?.consumeLaunchExtras
+          ? await NativeModules.AgentNotification.consumeLaunchExtras()
+          : null;
+        if (extras?.notificationType === 'manager_reply') {
+          // Wait one tick so navigationRef is attached
+          setTimeout(() => {
+            navigationRef.current?.navigate('ManagerChat' as never);
+          }, 100);
+        }
+      } catch {
+        // native module might not be present on first install or iOS
+      }
+    };
+    checkLaunchExtras();
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') checkLaunchExtras();
+    });
+    return () => sub.remove();
+  }, []);
+
   // Blank screen while reading AsyncStorage (~30ms) to prevent flash
   if (!appReady || !ready) {
     return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
@@ -118,7 +144,7 @@ export default function App() {
   return (
     <ResponsiveProvider>
       <SafeAreaProvider>
-        <NavigationContainer theme={darkTheme}>
+        <NavigationContainer ref={navigationRef} theme={darkTheme}>
           <StatusBar style="light" backgroundColor={colors.bg} translucent={false} />
           <AppNavigator />
         </NavigationContainer>
