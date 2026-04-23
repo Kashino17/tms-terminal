@@ -37,8 +37,17 @@ export class VoiceSessionController {
   private autoPauseTimer: NodeJS.Timeout | null = null;
   private currentStreamAbort: AbortController | null = null;
   private active = false;
+  // Echo-suppression: guards against loudspeaker feedback where TTS bleeds
+  // back into the mic. ECHO_WINDOW_MS covers WS RTT + whisper latency.
+  // Warning fires at most once per ECHO_WARN_WINDOW_MS (60s) after
+  // ECHO_WARN_THRESHOLD suppressions, so the user sees headphone advice
+  // only when the loop is genuinely sustained.
   private lastTtsChunkAt = 0;
+  private echoSuppressTimestamps: number[] = [];
+  private lastEchoWarningAt = 0;
   private readonly ECHO_WINDOW_MS = 800;
+  private readonly ECHO_WARN_WINDOW_MS = 60_000;
+  private readonly ECHO_WARN_THRESHOLD = 3;
 
   constructor(private deps: VoiceSessionDeps) {}
 
@@ -76,8 +85,9 @@ export class VoiceSessionController {
     try {
       const sinceTts = Date.now() - this.lastTtsChunkAt;
       if (this.lastTtsChunkAt > 0 && sinceTts < this.ECHO_WINDOW_MS) {
-        logger.debug(`Voice: echo suppressed (${sinceTts}ms since last tts chunk)`);
+        logger.info(`Voice: echo suppressed (${sinceTts}ms since last tts chunk)`);
         this.audioBuffer = [];
+        this.trackEchoSuppression();
         this.setPhase('listening');
         return;
       }
@@ -277,6 +287,28 @@ export class VoiceSessionController {
     }
   }
 
+  private trackEchoSuppression(): void {
+    const now = Date.now();
+    this.echoSuppressTimestamps = this.echoSuppressTimestamps.filter(
+      (t) => now - t < this.ECHO_WARN_WINDOW_MS,
+    );
+    this.echoSuppressTimestamps.push(now);
+
+    if (
+      this.echoSuppressTimestamps.length >= this.ECHO_WARN_THRESHOLD &&
+      now - this.lastEchoWarningAt > this.ECHO_WARN_WINDOW_MS
+    ) {
+      this.lastEchoWarningAt = now;
+      this.deps.emit({
+        type: 'voice:error',
+        payload: {
+          message: 'Kopfhörer empfohlen — Lautsprecher verursacht Echo',
+          recoverable: true,
+        },
+      });
+    }
+  }
+
   private setPhase(phase: VoicePhase): void {
     this.phase = phase;
     this.deps.emit({ type: 'voice:phase', payload: { phase } });
@@ -287,5 +319,6 @@ export class VoiceSessionController {
     this.ttsQueue = [];
     this.pauseState = null;
     this.currentStreamAbort = null;
+    this.lastTtsChunkAt = 0;
   }
 }

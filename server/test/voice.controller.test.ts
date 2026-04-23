@@ -92,4 +92,47 @@ describe('VoiceSessionController', () => {
     const transcripts = emitted.filter((m) => m.type === 'voice:transcript');
     expect(transcripts.length).toBe(0);
   });
+
+  it('emits voice:error after 3 echo suppressions within 60 seconds', async () => {
+    const ctrl = new VoiceSessionController({
+      registry: mockRegistry, whisper: mockWhisper, tts: mockTts, emit,
+      systemPrompt: 'test',
+    });
+    ctrl.start();
+    ctrl.ingestAudio(Buffer.from('a'));
+    await ctrl.endUserTurn(); // primes lastTtsChunkAt
+
+    // Three consecutive suppressions
+    for (let i = 0; i < 3; i++) {
+      ctrl.ingestAudio(Buffer.from('echo'));
+      await ctrl.endUserTurn();
+    }
+
+    const errs = emitted.filter(
+      (m) => m.type === 'voice:error' && m.payload.message.includes('Kopfhörer'),
+    );
+    expect(errs.length).toBe(1);
+    expect(errs[0].payload.recoverable).toBe(true);
+  });
+
+  it('does not emit echo warning twice in the same 60s window', async () => {
+    const ctrl = new VoiceSessionController({
+      registry: mockRegistry, whisper: mockWhisper, tts: mockTts, emit,
+      systemPrompt: 'test',
+    });
+    ctrl.start();
+    ctrl.ingestAudio(Buffer.from('a'));
+    await ctrl.endUserTurn();
+
+    // Six consecutive suppressions — still only one warning expected
+    for (let i = 0; i < 6; i++) {
+      ctrl.ingestAudio(Buffer.from('echo'));
+      await ctrl.endUserTurn();
+    }
+
+    const errs = emitted.filter(
+      (m) => m.type === 'voice:error' && m.payload.message.includes('Kopfhörer'),
+    );
+    expect(errs.length).toBe(1);
+  });
 });
