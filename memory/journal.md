@@ -1,5 +1,13 @@
 # Session-Tagebuch
 
+## 2026-04-23 — T5+T6: ManagerPushDecider (Expandable Push Notifications)
+
+### Was wurde gemacht
+- `server/test/notify-manager-reply.test.ts` erstellt: 11 Tests für `ManagerPushDecider` (shouldPush, debounce, generateMessageId) — TDD: erst FAIL committed (`563987b`)
+- `server/src/notifications/manager-push.ts` erstellt: `ManagerPushDecider`-Klasse mit injizierbarer Clock, Screen-State-Staleness (15s), Per-Session-Debounce (3s), `generateMessageId()` (`mr_<ts>_<6-char-random>`)
+- Alle 11 Tests grün; Commit `2dc2975`
+- Regex `/^mr_\d+_[a-z0-9]{6}$/` — kein Problem mit `Math.random().toString(36).slice(2,8)` aufgetreten, alle Tests bestanden
+
 ## 2026-04-23 — Voice Chat Feature (v1.20.0 ready for release)
 
 ### Was wurde gemacht
