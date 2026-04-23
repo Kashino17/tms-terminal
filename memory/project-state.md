@@ -1,12 +1,13 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-04-23 (v1.19.0 released)_
+_Zuletzt aktualisiert: 2026-04-23 (Voice Chat Feature complete — awaiting manual test + v1.20.0 release)_
 
 ## Aktuelle Version
-- **App:** v1.19.0 (auf GitHub Released, Auto-Update aktiv)
-- **Server:** v1.19.0 (via `tms-terminal update` aktualisiert — **User muss neu starten**)
+- **App:** v1.19.0 released; **v1.20.0 ready on feat/chrome-remote-control** (Voice Chat Feature — pending manual test + release.sh)
+- **Server:** v1.19.0 (via `tms-terminal update`); v1.20.0 code merged into same branch
 
 ## Zuletzt abgeschlossene Features
+- **Voice Chat Manager (v1.20.0, pending release)** — Fullscreen Voice-Screen mit phasen-synchronisiertem Character-WebView, Karaoke-Untertiteln (Fraunces Italic + Bricolage Grotesque), VAD-Mikrofon mit 800ms-Silence-Detection, Pause/Resume mit pre-generierten Ack-Audios (3 Varianten pro kind), 2-Optionen Resume bei User-Einwand. Server: neuer VoiceSessionController, F5-TTS-Sidecar emittiert per-chunk Audio, ack-audio Pre-Generation bei Startup. 13 neue voice:* WebSocket-Messages. Alle 5 Provider unterstützt. Spec: `docs/superpowers/specs/2026-04-22-manager-voice-chat-design.md`, Plan: `docs/superpowers/plans/2026-04-23-manager-voice-chat.md`.
 - **Lokale Model-Lade-Anzeige + empty-reply fix** (v1.19.0) — WS-Event `manager:model_status` streamt `loading|ready|error` + elapsedMs + Progress-% aus `lms load` stdout; Mobile zeigt Banner mit Timer und disabled Input; Online-Dot pulsiert 2× bei Ready. Empty-Reply-Fallback bei Gemma 4 Memory-only-Antworten: `📝 Notiert: <fact>` statt generischem "Verstanden". `max_tokens` auf 16384 (vorher 4096).
 - **Qwen 3 Coder 30B + Qwen 3.6 35B lokal auswählbar** (v1.18.10) — neue Provider `qwen-27b`/`qwen-35b` im Manager; `LmStudioController` lädt gewähltes Modell via `lms` CLI automatisch und unloadet alle anderen (VRAM frei); Model-IDs überschreibbar via `~/.tms-terminal/manager.json` → `localModels`
 - **Manager-Agent Timeout-Fix** (v1.18.9) — Idle-Timeout (60s zwischen Tokens) statt absolutem 3min-Limit; Gemma 4 31B kann jetzt lange generieren ohne Abbruch; Hard-Ceiling 30min als Sicherheitsnetz

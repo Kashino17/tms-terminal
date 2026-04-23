@@ -1,5 +1,51 @@
 # Session-Tagebuch
 
+## 2026-04-23 — Voice Chat Feature (v1.20.0 ready for release)
+
+### Was wurde gemacht
+20-Task-Plan erfolgreich via subagent-driven-development abgearbeitet. Alle Commits in einer Kette auf `feat/chrome-remote-control`, beginnend mit `58e5c45` (T1) bis `ed59822` (T19) plus `518fd37` (font-fix). Gesamt ~25 Commits.
+
+**Server:**
+- `voice.controller.ts` — State-Machine mit Phasen (idle/listening/transcribing/thinking/tool_call/speaking/paused), orchestriert Whisper → LLM-Stream → SentenceBuffer → chunked TTS → WS-Emit
+- `voice.sentences.ts` — SentenceBuffer (7/7 tests) splittet streaming LLM-Output an `.`/`!`/`?`, ignoriert Dezimalpunkte
+- `voice.ack-audio.ts` — Pre-generiert 6 ack-audio Varianten bei Server-Start, cached in `~/.tms-terminal/voice-samples/`
+- `tts-sidecar.ts` + `tts_sidecar.py` — emittieren per-chunk Audio (`synthesizeChunked()`)
+- `ws.handler.ts` — routet alle voice:* Messages (7 client→server, 6 server→client)
+- `manager.service.ts` — createVoiceSession() factory, setProvider() blockt bei aktivem Turn
+- HTTP endpoints `/voice-videos/:name.mp4` + `/voice-character.html` in `index.ts`
+
+**Mobile:**
+- `AudioPlayerQueue.ts` (3/3 tests) — pausable base64-WAV Queue via expo-av
+- `VoiceClient.ts` — thin WS wrapper mit typed handlers
+- `useVadRecorder.ts` — VAD mit 800ms/-40dB silence-Detection
+- `voiceStore.ts` — Zustand state (phase, subtitles, karaoke word count, errors, interjection)
+- `VoiceScreen.tsx` — orchestriert alle Components, AppState auto-pause bei background
+- `CharacterWebView.tsx` — lädt bundled HTML, postMessage-Bridge für Phase-Sync
+- `SubtitleOverlay.tsx` — Karaoke-Highlight (bone → copper glow → bone-dim)
+- `VoiceControls.tsx`, `ResumeOptions.tsx`, `StatusPill.tsx`
+- `assets/voice-character/index.html` — adapted from `prototype/voice-design/index.html`, transparent bg, phases via `dataset.phase`
+- Fonts: Fraunces_400Regular_Italic (AI-Speech) + BricolageGrotesque_{400,500,600} (UI)
+- Mic-Button in ManagerChatScreen-Header → navigiert zu VoiceScreen
+
+### Architektur-Entscheidungen
+- Server-Side State (VoiceSessionController) = Single Source of Truth, Mobile spiegelt
+- Sentence-Chunking im JS (SentenceBuffer) UND Python (split_sentences) — Doppel-Split akzeptiert, `isLast`-Sentinel macht Client robust
+- WebView-basiertes Character-Rendering für 1:1-Treue zum approved Mockup
+- VAD "record-until-silence, upload-full-WAV" — expo-av streaming ist unreliable
+- Fraunces Italic als Signatur für AI-Voice vs Bricolage Grotesque für UI
+
+### Nächste Schritte (User)
+1. Server neu starten (`tms-terminal update` oder manueller restart) — neue ack-audios werden erstmalig generiert (~10-30s F5-TTS runtime)
+2. Mobile APK bauen: `cd mobile && ./release.sh minor` (v1.19.0 → v1.20.0)
+3. Auf Samsung Fold 7 installieren
+4. Manuelle Tests durchlaufen (siehe Spec "Manual test checklist")
+5. Videos optional: MP4-Dateien in `~/.tms-terminal/voice-videos/` ablegen (idle.mp4, listening.mp4, thinking.mp4, tool_call.mp4, speaking.mp4, paused.mp4)
+
+### Notes
+- Font-Name-Fix: SubtitleOverlay nutzte `Fraunces_400Italic`, der Export heißt aber `Fraunces_400Regular_Italic` (`518fd37`)
+- Jest + babel-jest + babel-preset-expo als test framework für mobile (neuer Setup)
+- `.html` zu metro `assetExts` hinzugefügt damit bundler die Character-HTML included
+
 ## 2026-04-23 — T19: Error handling + edge cases
 
 ### Was wurde gemacht
