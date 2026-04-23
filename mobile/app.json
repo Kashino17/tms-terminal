@@ -24,7 +24,8 @@
         {
           "microphonePermission": "TMS Terminal benoetigt Zugriff auf das Mikrofon fuer Spracheingabe."
         }
-      ]
+      ],
+      "expo-font"
     ]
   }
 }
