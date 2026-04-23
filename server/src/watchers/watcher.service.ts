@@ -150,11 +150,11 @@ class WatcherService {
     const typeLabel = watcher.type === 'file' ? 'File Change'
       : watcher.type === 'process' ? 'Process Alert'
       : 'Log Match';
-    fcmService.send(
+    fcmService.sendBig(
       this.deviceToken,
       `🔔 ${typeLabel}: ${watcher.label}`,
       message,
-      { watcherId: watcher.id, watcherType: watcher.type },
+      { watcherId: watcher.id, watcherType: watcher.type, type: 'watcher_alert' },
     ).catch(() => {});
   }
 
