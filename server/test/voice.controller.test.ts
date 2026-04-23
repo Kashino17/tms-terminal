@@ -115,6 +115,76 @@ describe('VoiceSessionController', () => {
     expect(errs[0].payload.recoverable).toBe(true);
   });
 
+  it('extracts [Ton: ...] tag from the stream and forwards it to TTS', async () => {
+    const taggedRegistry = {
+      getActive: () => ({
+        id: 'mock',
+        chatStream: vi.fn(async (_msgs, _sys, onChunk) => {
+          // Simulate a response that begins with the voice-mode emotion tag.
+          onChunk('[Ton: warm-freudig]\n');
+          onChunk('Hallo, das hat geklappt.');
+          return '[Ton: warm-freudig]\nHallo, das hat geklappt.';
+        }),
+      }),
+    } as any;
+    const ttsSpy = vi.fn(async (_text: string, onChunk: Function, _emotion?: string) => {
+      onChunk({ idx: 0, sentence: 'Hallo, das hat geklappt.', audio: Buffer.from('fake') });
+    });
+    const ctrl = new VoiceSessionController({
+      registry: taggedRegistry, whisper: mockWhisper,
+      tts: { synthesizeChunked: ttsSpy } as any, emit,
+      systemPrompt: 'test',
+    });
+    ctrl.start();
+    ctrl.ingestAudio(Buffer.from('fake-audio'));
+    await ctrl.endUserTurn();
+
+    // voice:ai_delta must NOT carry the raw tag
+    const deltas = emitted
+      .filter((m) => m.type === 'voice:ai_delta')
+      .map((m) => m.payload.text)
+      .join('');
+    expect(deltas).not.toContain('[Ton:');
+    expect(deltas).toContain('Hallo');
+
+    // TTS synthesizeChunked must be called with the extracted emotion
+    expect(ttsSpy).toHaveBeenCalledTimes(1);
+    expect(ttsSpy.mock.calls[0][2]).toBe('warm-freudig');
+  });
+
+  it('falls back gracefully when the LLM forgets the [Ton: ...] tag', async () => {
+    const untaggedRegistry = {
+      getActive: () => ({
+        id: 'mock',
+        chatStream: vi.fn(async (_msgs, _sys, onChunk) => {
+          onChunk('Einfach nur Text ohne Tag.');
+          return 'Einfach nur Text ohne Tag.';
+        }),
+      }),
+    } as any;
+    const ttsSpy = vi.fn(async (_text: string, onChunk: Function, _emotion?: string) => {
+      onChunk({ idx: 0, sentence: 'Einfach nur Text ohne Tag.', audio: Buffer.from('fake') });
+    });
+    const ctrl = new VoiceSessionController({
+      registry: untaggedRegistry, whisper: mockWhisper,
+      tts: { synthesizeChunked: ttsSpy } as any, emit,
+      systemPrompt: 'test',
+    });
+    ctrl.start();
+    ctrl.ingestAudio(Buffer.from('fake-audio'));
+    await ctrl.endUserTurn();
+
+    const deltas = emitted
+      .filter((m) => m.type === 'voice:ai_delta')
+      .map((m) => m.payload.text)
+      .join('');
+    expect(deltas).toContain('Einfach nur Text ohne Tag.');
+
+    expect(ttsSpy).toHaveBeenCalledTimes(1);
+    // No tag present → emotion is falsy (empty string or undefined)
+    expect(ttsSpy.mock.calls[0][2] || '').toBe('');
+  });
+
   it('does not emit echo warning twice in the same 60s window', async () => {
     const ctrl = new VoiceSessionController({
       registry: mockRegistry, whisper: mockWhisper, tts: mockTts, emit,

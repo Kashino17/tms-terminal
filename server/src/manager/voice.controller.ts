@@ -21,11 +21,18 @@ export interface VoiceSessionDeps {
     synthesizeChunked: (
       text: string,
       onChunk: (info: { idx: number; sentence: string; audio: Buffer }) => void,
+      emotionPrompt?: string,
     ) => Promise<void>;
   };
   emit: VoiceEmitter;
   systemPrompt: string;
 }
+
+/** Regex that matches a leading `[Ton: <tone>]` tag produced by the voice-mode
+ *  system prompt. Case-insensitive on "Ton"; allows surrounding whitespace and
+ *  an optional trailing newline. The extracted group 1 is the tone descriptor. */
+const EMOTION_TAG_RE = /^\s*\[\s*Ton\s*:\s*([^\]\n]+?)\s*\]\s*\n?/i;
+const EMOTION_TAG_MAX_WAIT_CHARS = 160;
 
 const AUTO_PAUSE_TIMEOUT_MS = 5 * 60_000;
 
@@ -104,19 +111,11 @@ export class VoiceSessionController {
 
       this.setPhase('thinking');
       const messages = [{ role: 'user', content: userText }];
-      const sentenceBuf = new SentenceBuffer();
-      const pendingSentences: string[] = [];
 
       this.currentStreamAbort = new AbortController();
-      await this.deps.registry.getActive().chatStream(
+      const { emotionPrompt, sentences: pendingSentences } = await this.streamWithEmotionTag(
         messages,
-        this.deps.systemPrompt,
-        (token) => {
-          this.deps.emit({ type: 'voice:ai_delta', payload: { text: token } });
-          pendingSentences.push(...sentenceBuf.push(token));
-        },
       );
-      pendingSentences.push(...sentenceBuf.flush());
 
       if (pendingSentences.length === 0) {
         this.setPhase('listening');
@@ -124,7 +123,7 @@ export class VoiceSessionController {
       }
 
       this.setPhase('speaking');
-      await this.synthesizeAndEmit(pendingSentences);
+      await this.synthesizeAndEmit(pendingSentences, emotionPrompt);
 
       if ((this.phase as VoicePhase) !== 'paused') {
         this.setPhase('listening');
@@ -188,14 +187,9 @@ export class VoiceSessionController {
         { role: 'assistant', content: alreadySpoken },
         { role: 'user', content: `${interjection}\n(Bitte fortsetzen mit Berücksichtigung meines Einwands.)` },
       ];
-      const sentenceBuf = new SentenceBuffer();
-      const newSentences: string[] = [];
-      await this.deps.registry.getActive().chatStream(messages, this.deps.systemPrompt, (token) => {
-        this.deps.emit({ type: 'voice:ai_delta', payload: { text: token } });
-        newSentences.push(...sentenceBuf.push(token));
-      });
-      newSentences.push(...sentenceBuf.flush());
-      await this.synthesizeAndEmit(newSentences);
+      const { emotionPrompt, sentences: newSentences } =
+        await this.streamWithEmotionTag(messages);
+      await this.synthesizeAndEmit(newSentences, emotionPrompt);
     } else {
       // Clean resume: re-emit queue from cursor.
       const cursor = this.pauseState.resumeCursor;
@@ -246,7 +240,75 @@ export class VoiceSessionController {
     return this.phase === 'thinking' || this.phase === 'speaking' || this.phase === 'tool_call';
   }
 
-  private async synthesizeAndEmit(sentences: string[]): Promise<void> {
+  /**
+   * Run chatStream while peeling off the leading `[Ton: …]` tag that the
+   * voice-mode system prompt instructs the LLM to produce. The tag is
+   * extracted without ever being emitted on `voice:ai_delta` (so mobile
+   * never shows it) and without being pushed through the SentenceBuffer
+   * (so TTS never speaks it). Returns both the extracted tone and the
+   * sentences that feed synthesizeAndEmit.
+   *
+   * If the LLM forgets the tag, after EMOTION_TAG_MAX_WAIT_CHARS of
+   * buffered output we give up and flush the buffer through the normal
+   * path — output is never dropped.
+   */
+  private async streamWithEmotionTag(
+    messages: Array<{ role: string; content: string }>,
+  ): Promise<{ emotionPrompt: string; sentences: string[] }> {
+    const sentenceBuf = new SentenceBuffer();
+    const sentences: string[] = [];
+    let emotionPrompt = '';
+    let prefixBuf = '';
+    let tagResolved = false;
+
+    const handleResolvedText = (text: string) => {
+      if (!text) return;
+      this.deps.emit({ type: 'voice:ai_delta', payload: { text } });
+      sentences.push(...sentenceBuf.push(text));
+    };
+
+    await this.deps.registry.getActive().chatStream(
+      messages,
+      this.deps.systemPrompt,
+      (token) => {
+        if (tagResolved) {
+          handleResolvedText(token);
+          return;
+        }
+
+        prefixBuf += token;
+        const match = prefixBuf.match(EMOTION_TAG_RE);
+        if (match) {
+          emotionPrompt = match[1].trim();
+          const remainder = prefixBuf.slice(match[0].length);
+          tagResolved = true;
+          handleResolvedText(remainder);
+          return;
+        }
+
+        // No tag found yet — has the LLM likely ignored the instruction?
+        if (prefixBuf.length >= EMOTION_TAG_MAX_WAIT_CHARS) {
+          tagResolved = true;
+          handleResolvedText(prefixBuf);
+        }
+      },
+    );
+    sentences.push(...sentenceBuf.flush());
+
+    // Stream ended without ever resolving — flush whatever we buffered.
+    if (!tagResolved && prefixBuf) {
+      this.deps.emit({ type: 'voice:ai_delta', payload: { text: prefixBuf } });
+      sentences.push(...sentenceBuf.push(prefixBuf));
+      sentences.push(...sentenceBuf.flush());
+    }
+
+    if (emotionPrompt) {
+      logger.info(`Voice: emotion prompt = "${emotionPrompt}"`);
+    }
+    return { emotionPrompt, sentences };
+  }
+
+  private async synthesizeAndEmit(sentences: string[], emotionPrompt?: string): Promise<void> {
     const baseIdx = this.ttsQueue.length;
     await this.deps.tts.synthesizeChunked(sentences.join(' '), (info) => {
       const chunk: TtsChunk = {
@@ -270,7 +332,7 @@ export class VoiceSessionController {
       });
       chunk.sent = true;
       this.lastTtsChunkAt = Date.now();
-    });
+    }, emotionPrompt);
 
     // Mark the final chunk as last via an end-marker event.
     const last = this.ttsQueue[this.ttsQueue.length - 1];

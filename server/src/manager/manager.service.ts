@@ -550,6 +550,42 @@ const STATUS_LABEL: Record<TerminalContext['status'], string> = {
 
 // ── Dynamic System Prompt ───────────────────────────────────────────────────
 
+/** Voice-mode addendum appended to the regular system prompt. Instructs the
+ *  LLM to tag every response with a short German tone descriptor that the
+ *  voice.controller extracts and forwards to the Qwen3-TTS VoiceDesign sidecar
+ *  as an emotion_prompt. The tag never reaches the mobile UI — voice.controller
+ *  peels it off before emitting voice:ai_delta. */
+const VOICE_MODE_ADDENDUM = `
+
+## Voice-Mode: Ton-Steuerung
+
+Deine Antwort wird laut vorgelesen. BEGINNE JEDE Antwort mit genau einer Zeile:
+[Ton: <2-4 Wörter deutsche Ton-Beschreibung>]
+Dann in der nächsten Zeile deine eigentliche Antwort.
+
+Der [Ton:]-Tag ist unsichtbar — er wird entfernt bevor er dem User angezeigt wird, und steuert nur wie ich klinge.
+
+Beispiele:
+[Ton: warm-freudig]
+Super! Das Build ist durchgelaufen.
+
+[Ton: sanft-besorgt]
+Hmm, da gab es einen Fehler. Lass mich das überprüfen.
+
+[Ton: neugierig-fragend]
+Was genau meinst du damit?
+
+[Ton: ruhig-erklärend]
+Der Prozess läuft, sobald Claude bereit ist.
+
+[Ton: liebevoll-zugewandt]
+Klar, das mache ich gerne für dich.
+
+[Ton: konzentriert-sachlich]
+Ich starte die drei Terminals parallel.
+
+Wähle den Ton passend zum Inhalt — freudig bei Erfolg, bedauernd bei Fehlern, neugierig bei Fragen, ruhig bei Erklärungen, liebevoll bei persönlicher Ansprache. Nur 2-4 Wörter, immer auf Deutsch, keine Satzzeichen im Tag.`;
+
 function buildSystemPrompt(p: PersonalityConfig): string {
   const toneMap: Record<string, string> = {
     chill: 'Du redest wie ein guter Kumpel — locker, natürlich, mit Umgangssprache. Nicht gestellt, nicht förmlich.',
@@ -4159,12 +4195,12 @@ BEISPIEL:
         },
       },
       tts: {
-        synthesizeChunked: async (text: string, onChunk): Promise<void> => {
-          await synthesizeChunked(text, onChunk);
+        synthesizeChunked: async (text: string, onChunk, emotionPrompt?: string): Promise<void> => {
+          await synthesizeChunked(text, onChunk, emotionPrompt);
         },
       },
       emit,
-      systemPrompt: buildSystemPrompt(this.personality),
+      systemPrompt: buildSystemPrompt(this.personality) + VOICE_MODE_ADDENDUM,
     });
     this.activeVoiceSession = session;
     return session;
