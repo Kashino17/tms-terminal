@@ -1,5 +1,16 @@
 # Session-Tagebuch
 
+## 2026-04-23 — T16: VoiceControls + ResumeOptions + StatusPill + Fonts
+
+### Was wurde gemacht
+- `@expo-google-fonts/fraunces` + `@expo-google-fonts/bricolage-grotesque` via `npx expo install` installiert
+- `src/App.tsx`: `useFonts({Fraunces_400Regular_Italic, Fraunces_500Medium, BricolageGrotesque_400Regular, BricolageGrotesque_500Medium, BricolageGrotesque_600SemiBold})` hinzugefügt (kein Blocking — passt zum bestehenden App-Pattern)
+- Hinweis: Package exportiert `Fraunces_400Regular_Italic` (nicht `Fraunces_400Italic` wie in Task-Description) — korrekten Namen verwendet
+- `src/components/voice/VoiceControls.tsx` erstellt: Pause/Resume/Cancel/Mic-Row + REM-Label mit Provider-Name
+- `src/components/voice/ResumeOptions.tsx` erstellt: "Weiter wie zuvor" + "Mit meinem Einwand fortsetzen" Buttons
+- `src/components/voice/StatusPill.tsx` erstellt: Colored dot + German phase label
+- `tsc --noEmit` 0 Fehler; Commit: `f99c765`
+
 ## 2026-04-23 — T10: Mobile VoiceClient WebSocket Wrapper
 
 ### Was wurde gemacht
