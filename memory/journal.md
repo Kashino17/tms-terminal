@@ -1,5 +1,14 @@
 # Session-Tagebuch
 
+## 2026-04-23 — T10: Mobile VoiceClient WebSocket Wrapper
+
+### Was wurde gemacht
+- `mobile/src/services/VoiceClient.ts` erstellt: typisierter Wrapper über `WebSocketService`
+- Nutzt `ws.addMessageListener()` (gibt unsubscribe-Fn zurück) für inbound `voice:*` messages
+- Typed handler interface: `onPhase`, `onTranscript`, `onAiDelta`, `onTtsChunk`, `onAckAudio`, `onError`
+- Outbound-Methoden: `start`, `stop`, `sendAudioChunk`, `endTurn`, `pause`, `resume`, `cancel`
+- `tsc --noEmit` 0 Fehler; Commit: `5d78eed`
+
 ## 2026-04-23 — T9: Mobile AudioPlayerQueue (TDD)
 
 ### Was wurde gemacht
