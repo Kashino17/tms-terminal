@@ -193,6 +193,7 @@ export function VoiceScreen() {
                     const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
                     client.sendAudioChunk(b64);
                     client.endTurn();
+                    setPhase('transcribing');
                   }
                 } catch {
                   setError('Turn-Ende fehlgeschlagen');
