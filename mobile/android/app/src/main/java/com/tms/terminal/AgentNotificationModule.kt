@@ -15,6 +15,8 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.graphics.drawable.IconCompat
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -37,17 +39,25 @@ class AgentNotificationModule(private val reactContext: ReactApplicationContext)
     override fun getName(): String = "AgentNotification"
 
     @ReactMethod
-    fun show(title: String, body: String, avatarUri: String?) {
+    fun show(title: String, body: String, avatarUri: String?, messageId: String?) {
         ensureChannel()
 
         val nm = reactContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val agentName = title.replace("💬 ", "")
 
-        // Launch app when tapping notification
-        val launchIntent = reactContext.packageManager.getLaunchIntentForPackage(reactContext.packageName)
+        // Launch app when tapping — extras carry navigation intent
+        val launchIntent = reactContext.packageManager.getLaunchIntentForPackage(reactContext.packageName)?.apply {
+            putExtra("notificationType", "manager_reply")
+            if (messageId != null) putExtra("messageId", messageId)
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+
+        // Unique requestCode per notification so previous extras don't leak into new taps
         val pendingIntent = PendingIntent.getActivity(
-            reactContext, 0, launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            reactContext,
+            (NOTIFICATION_ID_BASE + notificationCounter),
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
         // Load and crop avatar
@@ -119,6 +129,30 @@ class AgentNotificationModule(private val reactContext: ReactApplicationContext)
 
         notificationCounter++
         nm.notify(NOTIFICATION_ID_BASE + notificationCounter, builder.build())
+    }
+
+    @ReactMethod
+    fun consumeLaunchExtras(promise: Promise) {
+        val activity = currentActivity
+        if (activity == null) {
+            promise.resolve(null)
+            return
+        }
+        val intent = activity.intent
+        val type = intent?.getStringExtra("notificationType")
+        if (type == null) {
+            promise.resolve(null)
+            return
+        }
+        val messageId = intent.getStringExtra("messageId")
+        val result = Arguments.createMap().apply {
+            putString("notificationType", type)
+            if (messageId != null) putString("messageId", messageId)
+        }
+        // Clear so the same tap doesn't re-trigger when React re-mounts
+        intent.removeExtra("notificationType")
+        intent.removeExtra("messageId")
+        promise.resolve(result)
     }
 
     private fun loadBitmap(uriString: String?): Bitmap? {
