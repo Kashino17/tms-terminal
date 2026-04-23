@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { View, StyleSheet, TouchableOpacity, StatusBar, Text } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 
 import { useVoiceStore } from '../store/voiceStore';
 import { AudioPlayerQueue } from '../services/AudioPlayerQueue';
@@ -34,6 +36,11 @@ export function VoiceScreen() {
   const setPausedWithInterjection = useVoiceStore((s) => s.setPausedWithInterjection);
 
   const audioQueue = useRef(new AudioPlayerQueue()).current;
+
+  // VAD recorder refs
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasSpokenRef = useRef(false);
 
   // Keep a ref to the current phase so that the stable VoiceClient closure
   // can read the latest value without needing to be recreated each render.
@@ -79,6 +86,86 @@ export function VoiceScreen() {
       resetTurn();
     };
   }, [client]);
+
+  // Recorder lifecycle: start when listening, stop when not
+  useEffect(() => {
+    if (!client) return;
+    if (phase !== 'listening') {
+      // Stop any ongoing recording
+      (async () => {
+        if (recordingRef.current) {
+          try { await recordingRef.current.stopAndUnloadAsync(); } catch {}
+          recordingRef.current = null;
+        }
+        if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+        hasSpokenRef.current = false;
+      })();
+      return;
+    }
+
+    // Start recording for listening phase
+    let cancelled = false;
+    (async () => {
+      try {
+        const { granted } = await Audio.requestPermissionsAsync();
+        if (!granted) { setError('Mikrofon-Zugriff verweigert'); return; }
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+
+        const rec = new Audio.Recording();
+        await rec.prepareToRecordAsync({
+          android: { extension: '.wav', outputFormat: 3, audioEncoder: 1, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000 },
+          ios: { extension: '.wav', audioQuality: 96, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
+          web: {},
+          isMeteringEnabled: true,
+        } as any);
+
+        if (cancelled) { try { await rec.stopAndUnloadAsync(); } catch {} return; }
+
+        rec.setOnRecordingStatusUpdate(async (s) => {
+          if (!('metering' in s) || typeof s.metering !== 'number') return;
+          if (s.metering > -40) {
+            if (!hasSpokenRef.current) hasSpokenRef.current = true;
+            if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+          } else if (hasSpokenRef.current && !silenceTimerRef.current) {
+            silenceTimerRef.current = setTimeout(async () => {
+              silenceTimerRef.current = null;
+              try {
+                const current = recordingRef.current;
+                if (!current) return;
+                const uri = current.getURI();
+                await current.stopAndUnloadAsync();
+                recordingRef.current = null;
+                hasSpokenRef.current = false;
+                if (uri) {
+                  const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+                  client.sendAudioChunk(b64);
+                  client.endTurn();
+                }
+              } catch {
+                setError('Turn-Ende fehlgeschlagen');
+              }
+            }, 800);
+          }
+        });
+        rec.setProgressUpdateInterval(200);
+        await rec.startAsync();
+        if (cancelled) { try { await rec.stopAndUnloadAsync(); } catch {} return; }
+        recordingRef.current = rec;
+      } catch {
+        setError('Mikrofon konnte nicht gestartet werden');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (recordingRef.current) {
+        recordingRef.current.stopAndUnloadAsync().catch(() => {});
+        recordingRef.current = null;
+      }
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      hasSpokenRef.current = false;
+    };
+  }, [phase, client]);
 
   const handlePause = () => client?.pause();
   const handleResume = () => {

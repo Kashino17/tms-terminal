@@ -1367,6 +1367,13 @@ export function ManagerChatScreen({ navigation, route }: Props) {
               modelStatus?.state === 'ready' && { transform: [{ scale: dotPulse }] },
             ]} />
           </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Voice' as any, { wsService })}
+            hitSlop={8}
+            accessibilityLabel="Voice Chat öffnen"
+          >
+            <Feather name="mic" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => setShowHeaderMenu(v => !v)} hitSlop={8}>
             <Feather name="more-vertical" size={18} color={colors.textMuted} />
           </TouchableOpacity>
