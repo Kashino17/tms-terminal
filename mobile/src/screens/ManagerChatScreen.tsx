@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Easing,
   FlatList,
   Image,
@@ -40,6 +41,7 @@ import { colors, spacing, fontSizes } from '../theme';
 import Markdown from 'react-native-markdown-display';
 import { PresentationViewer } from '../components/PresentationViewer';
 import { VoiceMessagePlayer } from '../components/VoiceMessagePlayer';
+import { setChatScreenActive } from '../services/managerNotifications.service';
 
 // ── Markdown Styles ──────────────────────────────────────────────────────────
 
@@ -678,6 +680,39 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         recordingRef.current.stopAndUnloadAsync().catch(() => {});
         recordingRef.current = null;
       }
+    };
+  }, []);
+
+  // ── Screen-state heartbeat: keep server in sync so push-notification logic
+  //    can skip FCM when the user is actively viewing this screen ─────────────
+
+  useEffect(() => {
+    const sendState = (foregrounded: boolean) => {
+      wsService.send({
+        type: 'client:active_screen',
+        payload: { activeScreen: 'manager_chat', foregrounded },
+      } as any);
+    };
+
+    setChatScreenActive(true);
+    sendState(AppState.currentState === 'active');
+
+    const appStateSub = AppState.addEventListener('change', (next) => {
+      sendState(next === 'active');
+    });
+
+    const heartbeat = setInterval(() => {
+      sendState(AppState.currentState === 'active');
+    }, 10_000);
+
+    return () => {
+      setChatScreenActive(false);
+      clearInterval(heartbeat);
+      appStateSub.remove();
+      wsService.send({
+        type: 'client:active_screen',
+        payload: { activeScreen: 'other', foregrounded: AppState.currentState === 'active' },
+      } as any);
     };
   }, []);
 
