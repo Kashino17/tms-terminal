@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0807" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Rem · Voice Character</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Fraunces:ital,opsz,wght@0,9..144,200..900;1,9..144,200..900&display=swap"
+    rel="stylesheet"
+  />
+
+  <style>
+    :root {
+      /* Cinematic Warmth palette */
+      --obsidian: #0a0807;
+      --obsidian-lift: #14100d;
+      --obsidian-mist: #1c1713;
+      --copper: #d68b4e;
+      --copper-deep: #a8662f;
+      --copper-glow: #f3b57a;
+      --bone: #f4efe5;
+      --bone-dim: #c8bfb0;
+      --bone-muted: #8a8275;
+      --bronze: #6a5d48;
+
+      --phase-color: var(--copper);
+
+      --ff-display: "Fraunces", ui-serif, Georgia, serif;
+      --ff-ui: "Bricolage Grotesque", -apple-system, system-ui, sans-serif;
+
+      --radius-sm: 10px;
+      --radius-md: 18px;
+      --radius-pill: 999px;
+
+      --shadow-warm: 0 30px 80px -20px rgba(214, 139, 78, 0.25),
+        0 10px 40px -10px rgba(0, 0, 0, 0.7);
+
+      --easing: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: var(--obsidian);
+      color: var(--bone);
+      font-family: var(--ff-ui);
+      font-feature-settings: "ss01", "ss02", "cv11";
+      letter-spacing: -0.005em;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ─────────────────── Filmic atmosphere ─────────────────── */
+
+    .stage {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    .stage::before {
+      /* warm radial ambient */
+      content: "";
+      position: absolute;
+      inset: -20%;
+      background:
+        radial-gradient(
+          circle at 30% 20%,
+          rgba(214, 139, 78, 0.18),
+          transparent 55%
+        ),
+        radial-gradient(
+          circle at 80% 90%,
+          rgba(168, 102, 47, 0.12),
+          transparent 60%
+        );
+      z-index: -3;
+      transition: background 1.2s var(--easing);
+    }
+
+    .stage::after {
+      /* film grain */
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.08 0'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>");
+      opacity: 0.5;
+      mix-blend-mode: overlay;
+      pointer-events: none;
+      z-index: -1;
+      animation: grain 1.2s steps(6) infinite;
+    }
+
+    @keyframes grain {
+      0%, 100% { transform: translate(0, 0); }
+      20% { transform: translate(-3%, 5%); }
+      40% { transform: translate(-7%, -5%); }
+      60% { transform: translate(5%, 7%); }
+      80% { transform: translate(-5%, 5%); }
+    }
+
+    /* ─────────────────── Top bar ─────────────────── */
+
+    .topbar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: calc(env(safe-area-inset-top) + 14px) 18px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    .status-pill {
+      pointer-events: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 14px 8px 10px;
+      border-radius: var(--radius-pill);
+      background: rgba(28, 23, 19, 0.55);
+      border: 1px solid rgba(214, 139, 78, 0.2);
+      backdrop-filter: blur(22px) saturate(1.1);
+      -webkit-backdrop-filter: blur(22px) saturate(1.1);
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--bone-dim);
+      transition: all 0.5s var(--easing);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--phase-color);
+      box-shadow: 0 0 12px var(--phase-color);
+      animation: dot-pulse 1.4s ease-in-out infinite;
+    }
+
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 0.55; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.3); }
+    }
+
+    .close-btn {
+      pointer-events: auto;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: rgba(28, 23, 19, 0.55);
+      border: 1px solid rgba(244, 239, 229, 0.1);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      display: grid;
+      place-items: center;
+      color: var(--bone-dim);
+      cursor: pointer;
+      transition: all 0.3s var(--easing);
+    }
+
+    .close-btn:active { transform: scale(0.94); }
+    .close-btn svg { width: 16px; height: 16px; }
+
+    /* ─────────────────── Character stage ─────────────────── */
+
+    .character {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .character-frame {
+      position: relative;
+      width: min(68vw, 340px);
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+    }
+
+    .frame-label {
+      position: absolute;
+      bottom: -32px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: var(--ff-ui);
+      font-size: 10.5px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--bone-muted);
+      opacity: 0.55;
+      white-space: nowrap;
+    }
+
+    /* Aura - main character visualization */
+    .aura {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: radial-gradient(
+        circle at 50% 45%,
+        rgba(243, 181, 122, 0.9) 0%,
+        rgba(214, 139, 78, 0.5) 28%,
+        rgba(168, 102, 47, 0.2) 55%,
+        transparent 72%
+      );
+      filter: blur(8px);
+      animation: aura-breathe 4.5s ease-in-out infinite;
+      transition: filter 0.8s var(--easing);
+    }
+
+    @keyframes aura-breathe {
+      0%, 100% { transform: scale(0.92); opacity: 0.85; }
+      50% { transform: scale(1); opacity: 1; }
+    }
+
+    .core {
+      position: relative;
+      width: 44%;
+      height: 44%;
+      border-radius: 50%;
+      background: radial-gradient(
+        circle at 38% 32%,
+        #ffd4a8 0%,
+        var(--copper) 35%,
+        var(--copper-deep) 68%,
+        #4a2a14 100%
+      );
+      box-shadow:
+        inset 0 0 40px rgba(0, 0, 0, 0.3),
+        inset -10px -20px 50px rgba(0, 0, 0, 0.5),
+        0 0 80px rgba(214, 139, 78, 0.4);
+      z-index: 2;
+      animation: core-breathe 4.5s ease-in-out infinite;
+    }
+
+    @keyframes core-breathe {
+      0%, 100% { transform: scale(0.95); }
+      50% { transform: scale(1.02); }
+    }
+
+    /* Orbit ring */
+    .orbit {
+      position: absolute;
+      inset: -8%;
+      border-radius: 50%;
+      border: 1px solid rgba(214, 139, 78, 0.18);
+      transition: all 0.8s var(--easing);
+    }
+    .orbit::before,
+    .orbit::after {
+      content: "";
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--copper-glow);
+      box-shadow: 0 0 16px var(--copper-glow);
+    }
+    .orbit::before {
+      top: -3px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    .orbit::after {
+      bottom: -3px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    /* Wave rings (for listening / speaking) */
+    .wave {
+      position: absolute;
+      inset: -5%;
+      border-radius: 50%;
+      border: 1.5px solid rgba(243, 181, 122, 0.5);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* ─────────── Phase: IDLE ─────────── */
+    .stage[data-phase="idle"] .aura { filter: blur(14px); opacity: 0.6; }
+    .stage[data-phase="idle"] .orbit { opacity: 0.4; }
+
+    /* ─────────── Phase: LISTENING ─────────── */
+    .stage[data-phase="listening"] {
+      --phase-color: #88d4a0;
+    }
+    .stage[data-phase="listening"] .aura {
+      background: radial-gradient(
+        circle at 50% 45%,
+        rgba(180, 230, 195, 0.9) 0%,
+        rgba(110, 180, 140, 0.5) 28%,
+        rgba(60, 120, 90, 0.2) 55%,
+        transparent 72%
+      );
+      animation: aura-breathe 2s ease-in-out infinite;
+    }
+    .stage[data-phase="listening"] .core {
+      background: radial-gradient(
+        circle at 38% 32%,
+        #d8f4df 0%,
+        #88d4a0 35%,
+        #3d7a54 68%,
+        #1a3a26 100%
+      );
+    }
+    .stage[data-phase="listening"] .wave {
+      opacity: 1;
+      animation: wave-out 1.8s ease-out infinite;
+      border-color: rgba(136, 212, 160, 0.6);
+    }
+    .stage[data-phase="listening"] .wave.w2 {
+      animation-delay: 0.6s;
+    }
+    .stage[data-phase="listening"] .wave.w3 {
+      animation-delay: 1.2s;
+    }
+
+    @keyframes wave-out {
+      0% { transform: scale(0.9); opacity: 0.8; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+
+    /* ─────────── Phase: TRANSCRIBING ─────────── */
+    .stage[data-phase="transcribing"] {
+      --phase-color: #6ec6e0;
+    }
+    .stage[data-phase="transcribing"] .aura {
+      background: radial-gradient(
+        circle at 50% 45%,
+        rgba(160, 220, 240, 0.9) 0%,
+        rgba(80, 170, 200, 0.5) 28%,
+        rgba(40, 100, 130, 0.2) 55%,
+        transparent 72%
+      );
+      animation: aura-breathe 3s ease-in-out infinite;
+    }
+    .stage[data-phase="transcribing"] .core {
+      background: radial-gradient(
+        circle at 38% 32%,
+        #c8ecf8 0%,
+        #6ec6e0 35%,
+        #2e7a96 68%,
+        #0f3244 100%
+      );
+    }
+    .stage[data-phase="transcribing"] .orbit {
+      animation: orbit-spin 6s linear infinite;
+      opacity: 0.7;
+      border-color: rgba(110, 198, 224, 0.4);
+    }
+
+    /* ─────────── Phase: THINKING ─────────── */
+    .stage[data-phase="thinking"] {
+      --phase-color: #e8a94c;
+    }
+    .stage[data-phase="thinking"] .orbit {
+      animation: orbit-spin 4s linear infinite;
+      opacity: 1;
+      border-color: rgba(232, 169, 76, 0.4);
+    }
+    .stage[data-phase="thinking"] .aura {
+      animation: aura-breathe 6s ease-in-out infinite;
+      filter: blur(16px);
+      opacity: 0.75;
+    }
+
+    @keyframes orbit-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Thinking particles */
+    .thinking-particles {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity 0.6s var(--easing);
+    }
+    .stage[data-phase="thinking"] .thinking-particles { opacity: 1; }
+
+    .particle {
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--copper-glow);
+      box-shadow: 0 0 10px var(--copper-glow);
+      top: 50%;
+      left: 50%;
+    }
+    .particle:nth-child(1) { animation: orbit-p 3.2s linear infinite; }
+    .particle:nth-child(2) { animation: orbit-p 3.2s linear infinite; animation-delay: -0.4s; }
+    .particle:nth-child(3) { animation: orbit-p 3.2s linear infinite; animation-delay: -0.8s; }
+    .particle:nth-child(4) { animation: orbit-p 3.2s linear infinite; animation-delay: -1.2s; }
+    .particle:nth-child(5) { animation: orbit-p 3.2s linear infinite; animation-delay: -1.6s; }
+    .particle:nth-child(6) { animation: orbit-p 3.2s linear infinite; animation-delay: -2s; }
+
+    @keyframes orbit-p {
+      0% { transform: translate(-50%, -50%) rotate(0deg) translateX(130px) rotate(0deg); }
+      100% { transform: translate(-50%, -50%) rotate(360deg) translateX(130px) rotate(-360deg); }
+    }
+
+    /* ─────────── Phase: TOOL_CALL ─────────── */
+    .stage[data-phase="tool_call"] {
+      --phase-color: #b5a1ea;
+    }
+    .stage[data-phase="tool_call"] .aura {
+      background: radial-gradient(
+        circle at 50% 45%,
+        rgba(200, 185, 240, 0.9) 0%,
+        rgba(140, 120, 210, 0.5) 28%,
+        rgba(80, 65, 140, 0.2) 55%,
+        transparent 72%
+      );
+    }
+    .stage[data-phase="tool_call"] .core {
+      background: radial-gradient(
+        circle at 38% 32%,
+        #ddd0f4 0%,
+        #b5a1ea 35%,
+        #5e4ba0 68%,
+        #2a2050 100%
+      );
+    }
+    .tool-glyph {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      opacity: 0;
+      transition: opacity 0.5s var(--easing);
+      z-index: 3;
+    }
+    .stage[data-phase="tool_call"] .tool-glyph { opacity: 1; }
+    .tool-glyph svg {
+      width: 28%;
+      height: 28%;
+      animation: tool-spin 3s ease-in-out infinite;
+      color: #0a0807;
+    }
+    @keyframes tool-spin {
+      0%, 100% { transform: rotate(-8deg); }
+      50% { transform: rotate(8deg); }
+    }
+
+    /* ─────────── Phase: SPEAKING ─────────── */
+    .stage[data-phase="speaking"] {
+      --phase-color: var(--copper);
+    }
+    .stage[data-phase="speaking"] .aura {
+      animation: aura-pulse 0.9s ease-in-out infinite;
+      filter: blur(6px);
+    }
+    .stage[data-phase="speaking"] .core {
+      animation: core-speak 0.9s ease-in-out infinite;
+    }
+    @keyframes aura-pulse {
+      0%, 100% { transform: scale(0.98); opacity: 0.9; }
+      50% { transform: scale(1.06); opacity: 1; }
+    }
+    @keyframes core-speak {
+      0%, 100% { transform: scale(0.97) rotate(0deg); }
+      50% { transform: scale(1.04) rotate(1deg); }
+    }
+
+    /* voice bars at bottom of aura */
+    .voice-bars {
+      position: absolute;
+      bottom: 22%;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      height: 20px;
+      opacity: 0;
+      transition: opacity 0.5s var(--easing);
+      z-index: 3;
+    }
+    .stage[data-phase="speaking"] .voice-bars { opacity: 1; }
+    .voice-bars span {
+      width: 3px;
+      background: var(--copper-glow);
+      border-radius: 2px;
+      animation: vbar 0.65s ease-in-out infinite;
+    }
+    .voice-bars span:nth-child(1) { animation-delay: -0.5s; height: 30%; }
+    .voice-bars span:nth-child(2) { animation-delay: -0.3s; height: 70%; }
+    .voice-bars span:nth-child(3) { animation-delay: -0.1s; height: 100%; }
+    .voice-bars span:nth-child(4) { animation-delay: -0.4s; height: 60%; }
+    .voice-bars span:nth-child(5) { animation-delay: -0.2s; height: 40%; }
+    @keyframes vbar {
+      0%, 100% { transform: scaleY(0.5); }
+      50% { transform: scaleY(1); }
+    }
+
+    /* ─────────── Phase: PAUSED ─────────── */
+    .stage[data-phase="paused"] {
+      --phase-color: #9aa2a8;
+    }
+    .stage[data-phase="paused"] .aura,
+    .stage[data-phase="paused"] .core {
+      animation-play-state: paused;
+      filter: grayscale(0.6) blur(10px);
+    }
+    .stage[data-phase="paused"] .core {
+      filter: grayscale(0.6) brightness(0.75);
+    }
+    .stage[data-phase="paused"] .orbit {
+      opacity: 0.3;
+    }
+    .paused-indicator {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      opacity: 0;
+      transition: opacity 0.5s var(--easing);
+      z-index: 3;
+    }
+    .stage[data-phase="paused"] .paused-indicator { opacity: 1; }
+    .paused-indicator::before,
+    .paused-indicator::after {
+      content: "";
+      width: 10px;
+      height: 54px;
+      background: var(--bone-dim);
+      border-radius: 3px;
+      margin: 0 6px;
+    }
+
+    /* ─────────────────── Subtitle ─────────────────── */
+
+    .subtitle-area {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 180px;
+      padding: 0 26px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 4;
+      pointer-events: none;
+    }
+
+    .subtitle {
+      font-family: var(--ff-display);
+      font-optical-sizing: auto;
+      font-style: italic;
+      font-weight: 380;
+      font-size: clamp(20px, 5.2vw, 28px);
+      line-height: 1.28;
+      letter-spacing: -0.015em;
+      color: var(--bone);
+      text-align: center;
+      text-shadow: 0 2px 20px rgba(0, 0, 0, 0.8);
+      max-width: 540px;
+      margin: 0 auto;
+    }
+
+    .subtitle .word {
+      display: inline-block;
+      transition: color 0.3s var(--easing);
+    }
+
+    .subtitle .word.active {
+      color: var(--copper-glow);
+      text-shadow:
+        0 2px 20px rgba(0, 0, 0, 0.8),
+        0 0 30px rgba(243, 181, 122, 0.4);
+    }
+
+    .subtitle .word.spoken {
+      color: var(--bone-dim);
+    }
+
+    .user-subtitle {
+      font-family: var(--ff-ui);
+      font-style: normal;
+      font-weight: 400;
+      font-size: 15px;
+      line-height: 1.4;
+      color: var(--bone-muted);
+      text-align: center;
+      margin: 0 auto;
+      max-width: 440px;
+      padding: 8px 16px;
+      background: rgba(20, 16, 13, 0.5);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(244, 239, 229, 0.08);
+      letter-spacing: -0.005em;
+    }
+
+    .user-subtitle::before {
+      content: "Du";
+      display: block;
+      font-size: 9.5px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--bone-muted);
+      opacity: 0.6;
+      margin-bottom: 4px;
+    }
+
+    /* ─────────────────── Controls ─────────────────── */
+
+    .controls {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: calc(env(safe-area-inset-bottom) + 40px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      z-index: 4;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .control-btn {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: 1px solid rgba(244, 239, 229, 0.14);
+      background: rgba(28, 23, 19, 0.7);
+      backdrop-filter: blur(24px) saturate(1.2);
+      -webkit-backdrop-filter: blur(24px) saturate(1.2);
+      display: grid;
+      place-items: center;
+      color: var(--bone);
+      cursor: pointer;
+      transition: all 0.35s var(--easing);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .control-btn:active { transform: scale(0.93); }
+    .control-btn svg { width: 24px; height: 24px; }
+
+    .control-btn.primary {
+      width: 78px;
+      height: 78px;
+      background: linear-gradient(
+        180deg,
+        var(--copper) 0%,
+        var(--copper-deep) 100%
+      );
+      border-color: rgba(243, 181, 122, 0.5);
+      box-shadow: var(--shadow-warm);
+      color: var(--obsidian);
+    }
+
+    .control-btn.primary::before {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      border-radius: 50%;
+      background: radial-gradient(
+        circle at 50% 0%,
+        rgba(243, 181, 122, 0.6),
+        transparent 60%
+      );
+      opacity: 0;
+      transition: opacity 0.4s var(--easing);
+      pointer-events: none;
+    }
+
+    .control-btn.primary:hover::before { opacity: 1; }
+
+    .control-btn.danger {
+      color: rgba(228, 120, 115, 0.9);
+    }
+
+    .meta-line {
+      font-size: 11.5px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--bone-muted);
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .meta-line .sep {
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: var(--bone-muted);
+      opacity: 0.5;
+    }
+
+    .meta-line em {
+      font-family: var(--ff-display);
+      font-style: italic;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0.02em;
+      color: var(--bone-dim);
+      font-size: 13px;
+    }
+
+    /* Pause-mode Resume button variants */
+    .resume-options {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: calc(env(safe-area-inset-bottom) + 130px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 0 26px;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: all 0.5s var(--easing);
+      pointer-events: none;
+      z-index: 4;
+    }
+
+    .stage[data-paused-with-interjection="true"] .resume-options {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .resume-opt {
+      padding: 12px 22px;
+      border-radius: var(--radius-pill);
+      background: rgba(28, 23, 19, 0.75);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(214, 139, 78, 0.25);
+      color: var(--bone);
+      font-family: var(--ff-ui);
+      font-size: 13.5px;
+      font-weight: 500;
+      letter-spacing: -0.005em;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 240px;
+      justify-content: center;
+      transition: all 0.3s var(--easing);
+    }
+
+    .resume-opt:active { transform: scale(0.97); }
+    .resume-opt svg { width: 14px; height: 14px; }
+    .resume-opt.accent {
+      background: linear-gradient(
+        180deg,
+        rgba(214, 139, 78, 0.85),
+        rgba(168, 102, 47, 0.85)
+      );
+      color: var(--obsidian);
+      border-color: transparent;
+    }
+
+    /* ─────────────────── Demo controls (mockup only) ─────────────────── */
+
+    .demo-bar {
+      position: absolute;
+      top: 50%;
+      right: 12px;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 10;
+      padding: 14px 10px;
+      background: rgba(10, 8, 7, 0.78);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(244, 239, 229, 0.08);
+      border-radius: 16px;
+      max-width: 92px;
+    }
+
+    .demo-bar-label {
+      font-size: 8.5px;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--bone-muted);
+      text-align: center;
+      margin-bottom: 4px;
+      opacity: 0.55;
+    }
+
+    .demo-btn {
+      padding: 7px 10px;
+      background: transparent;
+      border: 1px solid rgba(244, 239, 229, 0.1);
+      border-radius: 8px;
+      color: var(--bone-dim);
+      font-family: var(--ff-ui);
+      font-size: 10.5px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: all 0.3s var(--easing);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .demo-btn:hover {
+      border-color: var(--copper);
+      color: var(--bone);
+    }
+
+    .demo-btn.active {
+      background: var(--copper);
+      color: var(--obsidian);
+      border-color: var(--copper);
+      font-weight: 600;
+    }
+
+    .demo-toggle {
+      position: absolute;
+      top: 50%;
+      right: 0;
+      transform: translate(calc(100% - 4px), -50%);
+      width: 28px;
+      height: 60px;
+      background: rgba(10, 8, 7, 0.85);
+      border: 1px solid rgba(244, 239, 229, 0.08);
+      border-left: none;
+      border-radius: 0 12px 12px 0;
+      display: grid;
+      place-items: center;
+      color: var(--bone-muted);
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .demo-bar.collapsed {
+      transform: translate(calc(100% - 28px), -50%);
+    }
+
+    @media (max-width: 420px) {
+      .demo-bar { max-width: 80px; }
+      .demo-btn { font-size: 10px; padding: 6px 8px; }
+    }
+
+    /* ─────────────────── Entrance animation ─────────────────── */
+
+    .stage > * {
+      animation: fade-in 0.9s var(--easing) backwards;
+    }
+    .topbar { animation-delay: 0.05s; }
+    .character { animation-delay: 0.2s; animation-duration: 1.4s; }
+    .subtitle-area { animation-delay: 0.6s; }
+    .controls { animation-delay: 0.4s; }
+
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Phase transitions */
+    .stage, .stage * {
+      transition-property: color, background, border-color, opacity, filter;
+      transition-duration: 0.6s;
+      transition-timing-function: var(--easing);
+    }
+
+    /* ─────────────────── Landscape + Fold inner screen ─────────────────── */
+
+    @media (min-width: 700px) and (orientation: landscape) {
+      .character-frame { width: min(40vh, 400px); }
+      .subtitle-area { bottom: 140px; }
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       WebView embed overrides: native UI provides topbar, subtitles,
+       controls. Only the character animation lives in this WebView.
+       ══════════════════════════════════════════════════════════════ */
+    body { background: transparent !important; }
+    .stage::before { display: none !important; }
+    .topbar, .subtitle-area, .controls, .resume-options, .demo-bar, .demo-toggle {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="stage" data-phase="idle" id="stage">
+    <!-- Top bar (hidden in WebView embed) -->
+    <div class="topbar">
+      <div class="status-pill">
+        <span class="status-dot"></span>
+        <span id="statusLabel">Bereit</span>
+      </div>
+      <button class="close-btn" aria-label="Beenden">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M6 6l12 12M6 18L18 6"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Character visualization -->
+    <div class="character">
+      <div class="character-frame">
+        <div class="wave w1"></div>
+        <div class="wave w2"></div>
+        <div class="wave w3"></div>
+
+        <div class="aura"></div>
+
+        <div class="orbit"></div>
+
+        <div class="thinking-particles" aria-hidden="true">
+          <div class="particle"></div>
+          <div class="particle"></div>
+          <div class="particle"></div>
+          <div class="particle"></div>
+          <div class="particle"></div>
+          <div class="particle"></div>
+        </div>
+
+        <div class="core"></div>
+
+        <div class="tool-glyph" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M14.7 6.3a1 1 0 0 0-1.4 0l-8 8a1 1 0 0 0 0 1.4l3 3a1 1 0 0 0 1.4 0l8-8a1 1 0 0 0 0-1.4l-3-3z" opacity="0.3"/>
+            <path d="M10.5 6c-1.5-1.5-4-1.5-5.5 0s-1.5 4 0 5.5l.7.7 5-5-.2-.2zm8 8l-.2-.2-5 5 .7.7c1.5 1.5 4 1.5 5.5 0s1.5-4 0-5.5z"/>
+          </svg>
+        </div>
+
+        <div class="voice-bars" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+
+        <div class="paused-indicator" aria-hidden="true"></div>
+
+        <div class="frame-label" id="frameLabel">idle · LOOP</div>
+      </div>
+    </div>
+
+    <!-- Subtitles (hidden in WebView embed) -->
+    <div class="subtitle-area">
+      <p class="subtitle" id="subtitle" hidden></p>
+    </div>
+
+    <!-- Controls (hidden in WebView embed) -->
+    <div class="controls"></div>
+
+    <!-- Resume options (hidden in WebView embed) -->
+    <div class="resume-options"></div>
+  </div>
+
+  <script>
+    (function () {
+      const stage = document.getElementById('stage');
+
+      // ── WebView message bridge ────────────────────────────────────────
+      // React Native sends: { type: 'setPhase', phase: 'idle' | 'listening' |
+      //   'transcribing' | 'thinking' | 'tool_call' | 'speaking' | 'paused' }
+      function handlePostMessage(e) {
+        try {
+          const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+          if (data && data.type === 'setPhase' && typeof data.phase === 'string') {
+            stage.dataset.phase = data.phase;
+          }
+        } catch (err) {}
+      }
+
+      // iOS WKWebView delivers via window.addEventListener('message')
+      window.addEventListener('message', handlePostMessage);
+      // Android WebView delivers via document.addEventListener('message')
+      document.addEventListener('message', handlePostMessage);
+    })();
+  </script>
+</body>
+</html>
