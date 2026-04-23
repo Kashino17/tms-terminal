@@ -4,6 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
+import * as NavigationBar from 'expo-navigation-bar';
 
 import { useVoiceStore } from '../store/voiceStore';
 import type { VoicePhase } from '../store/voiceStore';
@@ -83,6 +84,17 @@ export function VoiceScreen() {
     // wsService reference is stable for the lifetime of the screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsService]);
+
+  // True fullscreen on Android — hide the navigation bar while Voice is open
+  // and restore it on exit. iOS has no nav bar; NavigationBar calls are no-ops
+  // on iOS per the expo-navigation-bar docs.
+  useEffect(() => {
+    NavigationBar.setVisibilityAsync('hidden').catch(() => {});
+    NavigationBar.setBehaviorAsync('overlay-swipe').catch(() => {});
+    return () => {
+      NavigationBar.setVisibilityAsync('visible').catch(() => {});
+    };
+  }, []);
 
   // Auto-pause when app goes to background while AI is speaking
   useEffect(() => {
