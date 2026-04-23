@@ -241,3 +241,15 @@
 ### Offene Fragen
 - Wie verhält sich der conversational Onboarding-Flow in der Praxis? Findet die AI den richtigen Moment für den CONFIG-Block?
 - Server-Update auf Produktiv-Server steht noch aus
+
+## 2026-04-23 — T14: FCM Background/Foreground Handler + Avatar Cache (Expandable Push Notifications)
+
+### Was wurde gemacht
+- `notifications.service.ts`: `NativeModules` + `AsyncStorage` imports hinzugefügt
+- Avatar-Cache-Helpers: `cacheAvatarUri()` (export) + `readCachedAvatarUri()` (intern) via AsyncStorage Key `manager.agentAvatarUri`
+- `registerBackgroundHandler()` komplett ersetzt: handelt jetzt data-only FCM — `manager_reply` → `AgentNotificationModule.show()` mit Avatar-URI; `task_*` + `watcher_alert` → expo-notifications; Fallback für Legacy
+- `registerForegroundHandler()` komplett ersetzt: `manager_reply` → natives Module; alle anderen Typen → expo-notifications mit `data.title/body` statt `notification.title/body`
+- `managerStore.ts`: `cacheAvatarUri` Import + Aufruf nach `set()` in `setPersonality` (liest Avatar aus `get().personality.agentAvatarUri`)
+- `App.tsx`: `useManagerStore` Import + `cacheAvatarUri(currentAvatar)` im mount-once useEffect
+- `tsc --noEmit`: sauber (exit 0)
+- Commit: `7209152`
