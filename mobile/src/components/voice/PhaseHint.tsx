@@ -29,20 +29,30 @@ export function PhaseHint() {
   const subtitleVisible = !!aiStreaming && (phase === 'speaking' || phase === 'thinking');
   const targetOpacity = subtitleVisible ? 0.4 : 1;
 
-  const opacity = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(targetOpacity)).current;
   const translateY = useRef(new Animated.Value(0)).current;
   const keyRef = useRef<string>(copy.primary + '|' + copy.secondary);
+  const animRef = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     const nextKey = copy.primary + '|' + copy.secondary;
+
+    // Cancel any in-flight animation so we never layer conflicting tweens.
+    animRef.current?.stop();
+
     if (nextKey === keyRef.current) {
-      // Only opacity-dim for subtitle overlay case
-      Animated.timing(opacity, { toValue: targetOpacity, duration: 250, useNativeDriver: true }).start();
+      // Same copy, just dim/undim for subtitle overlay case.
+      animRef.current = Animated.timing(opacity, {
+        toValue: targetOpacity,
+        duration: 250,
+        useNativeDriver: true,
+      });
+      animRef.current.start();
       return;
     }
     keyRef.current = nextKey;
 
-    Animated.sequence([
+    animRef.current = Animated.sequence([
       Animated.parallel([
         Animated.timing(opacity,    { toValue: 0, duration: 400, useNativeDriver: true }),
         Animated.timing(translateY, { toValue: 6, duration: 400, useNativeDriver: true }),
@@ -52,7 +62,8 @@ export function PhaseHint() {
         Animated.timing(opacity,    { toValue: targetOpacity, duration: 200, useNativeDriver: true }),
         Animated.timing(translateY, { toValue: 0, duration: 200, useNativeDriver: true }),
       ]),
-    ]).start();
+    ]);
+    animRef.current.start();
   }, [copy.primary, copy.secondary, targetOpacity, opacity, translateY]);
 
   return (
