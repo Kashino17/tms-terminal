@@ -18,7 +18,7 @@ _Zuletzt aktualisiert: 2026-04-23 (v1.19.0 released)_
 - **Stale Buffer Detection** (v1.15.0) — Terminal-Output älter als 60s wird als idle markiert
 
 ## Aktive Arbeit
-- **Voice Chat Pipeline (feat/chrome-remote-control Branch):** T1–T6 abgeschlossen. T7 (WS Handler Wiring) als nächstes.
+- **Voice Chat Pipeline (feat/chrome-remote-control Branch):** T1–T9 abgeschlossen. T10 (Mobile VoiceClient) als nächstes.
 - Shell-Naming: Terminals heißen intern "Shell 1/2/3" aber haben in der App andere Tab-Namen (Verzeichnisnamen). Die AI und der User sollen die echten Namen kennen.
 - Tool Calling funktioniert, aber Shell-Label-Zuordnung muss verbessert werden
 

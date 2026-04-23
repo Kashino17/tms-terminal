@@ -1,5 +1,14 @@
 # Session-Tagebuch
 
+## 2026-04-23 — T9: Mobile AudioPlayerQueue (TDD)
+
+### Was wurde gemacht
+- `mobile/src/services/AudioPlayerQueue.ts` erstellt: pausable Queue für sequenzielle WAV-Chunk-Wiedergabe via expo-av
+- `mobile/src/services/AudioPlayerQueue.test.ts` erstellt: 3 Unit-Tests (sequenziell, pause/resume, stop)
+- Jest via `npm install --save-dev jest jest-expo @types/jest` installiert; Config mit `babel-jest` + `babel-preset-expo` in `package.json`
+- Fix: `createAsync({ shouldPlay: true })` wurde durch explizites `playAsync()` nach `createAsync()` ersetzt, damit Mock-Calls korrekt gezählt werden
+- Alle 3 Tests PASS, Commit: `3352888`
+
 ## 2026-04-22 — T6: VoiceSessionController State Machine (TDD)
 
 ### Was wurde gemacht
