@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, TouchableOpacity, StatusBar, Text, AppState } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -39,6 +39,9 @@ export function VoiceScreen() {
   const setListeningWarmup = useVoiceStore((s) => s.setListeningWarmup);
 
   const audioQueue = useRef(new AudioPlayerQueue()).current;
+
+  const [closeConfirmVisible, setCloseConfirmVisible] = useState(false);
+  const closeConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // VAD recorder refs
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -101,6 +104,7 @@ export function VoiceScreen() {
       client.dispose();
       audioQueue.stop();
       resetTurn();
+      if (closeConfirmTimerRef.current) { clearTimeout(closeConfirmTimerRef.current); closeConfirmTimerRef.current = null; }
     };
   }, [client]);
 
@@ -252,8 +256,21 @@ export function VoiceScreen() {
     client?.cancel();
   };
   const handleClose = () => {
-    client?.stop();
-    navigation.goBack();
+    if (closeConfirmVisible) {
+      if (closeConfirmTimerRef.current) {
+        clearTimeout(closeConfirmTimerRef.current);
+        closeConfirmTimerRef.current = null;
+      }
+      client?.stop();
+      navigation.goBack();
+      return;
+    }
+    setCloseConfirmVisible(true);
+    if (closeConfirmTimerRef.current) clearTimeout(closeConfirmTimerRef.current);
+    closeConfirmTimerRef.current = setTimeout(() => {
+      closeConfirmTimerRef.current = null;
+      setCloseConfirmVisible(false);
+    }, 2000);
   };
 
   return (
@@ -274,6 +291,12 @@ export function VoiceScreen() {
           <TouchableOpacity onPress={() => setError(null)}>
             <Feather name="x" size={14} color="#F4EFE5" />
           </TouchableOpacity>
+        </View>
+      )}
+
+      {closeConfirmVisible && (
+        <View style={styles.closeConfirm} pointerEvents="none">
+          <Text style={styles.closeConfirmText}>Nochmal tippen zum Beenden</Text>
         </View>
       )}
 
@@ -320,4 +343,19 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   errorText: { flex: 1, color: '#F4EFE5', fontFamily: 'BricolageGrotesque_400Regular', fontSize: 13 },
+  closeConfirm: {
+    position: 'absolute',
+    top: 100,
+    alignSelf: 'center',
+    paddingHorizontal: 18, paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(28,23,19,0.85)',
+    borderWidth: 1, borderColor: 'rgba(214,139,78,0.25)',
+    zIndex: 11,
+  },
+  closeConfirmText: {
+    fontFamily: 'BricolageGrotesque_500Medium',
+    fontSize: 12, letterSpacing: 1.5,
+    color: '#F4EFE5', textTransform: 'uppercase',
+  },
 });
