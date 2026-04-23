@@ -8,7 +8,7 @@ export function SubtitleOverlay() {
   const aiSpokenWordCount = useVoiceStore((s) => s.aiSpokenWordCount);
   const phase = useVoiceStore((s) => s.phase);
 
-  const showUser = !!userTranscript && (phase === 'listening' || phase === 'transcribing' || phase === 'thinking');
+  const showUser = !!userTranscript && (phase === 'listening' || phase === 'transcribing');
   const showAi = !!aiStreaming && (phase === 'thinking' || phase === 'tool_call' || phase === 'speaking' || phase === 'paused');
 
   const words = aiStreaming.split(/(\s+)/);
@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
     left: 0, right: 0, bottom: 180,
     paddingHorizontal: 26,
     alignItems: 'center',
-    gap: 6,
+    gap: 2,
   },
   subtitle: {
     fontFamily: 'Fraunces_400Regular_Italic',
