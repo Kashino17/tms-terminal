@@ -6,6 +6,7 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 
 import { useVoiceStore } from '../store/voiceStore';
+import type { VoicePhase } from '../store/voiceStore';
 import { AudioPlayerQueue } from '../services/AudioPlayerQueue';
 import { VoiceClient } from '../services/VoiceClient';
 import type { WebSocketService } from '../services/websocket.service';
@@ -34,6 +35,7 @@ export function VoiceScreen() {
   const setError = useVoiceStore((s) => s.setError);
   const resetTurn = useVoiceStore((s) => s.resetTurn);
   const setPausedWithInterjection = useVoiceStore((s) => s.setPausedWithInterjection);
+  const setListeningWarmup = useVoiceStore((s) => s.setListeningWarmup);
 
   const audioQueue = useRef(new AudioPlayerQueue()).current;
 
@@ -42,6 +44,8 @@ export function VoiceScreen() {
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasSpokenRef = useRef(false);
   const speechSustainStartRef = useRef<number | null>(null);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previousPhaseRef = useRef<VoicePhase>('idle');
 
   // Keep a ref to the current phase so that the stable VoiceClient closure
   // can read the latest value without needing to be recreated each render.
@@ -99,12 +103,23 @@ export function VoiceScreen() {
     };
   }, [client]);
 
-  // Recorder lifecycle: start when listening, stop when not
+  // Recorder lifecycle: start when listening, stop when not. Uses a 600ms
+  // cooldown when transitioning from 'speaking' → 'listening' to let the
+  // speaker buffer drain and hardware AEC re-calibrate.
   useEffect(() => {
     if (!client) return;
+
+    const previousPhase = previousPhaseRef.current;
+    previousPhaseRef.current = phase;
+
     if (phase !== 'listening') {
-      // Stop any ongoing recording
+      // Stop any ongoing recording and pending cooldown
       (async () => {
+        if (cooldownTimerRef.current) {
+          clearTimeout(cooldownTimerRef.current);
+          cooldownTimerRef.current = null;
+        }
+        setListeningWarmup(false);
         if (recordingRef.current) {
           try { await recordingRef.current.stopAndUnloadAsync(); } catch {}
           recordingRef.current = null;
@@ -116,9 +131,13 @@ export function VoiceScreen() {
       return;
     }
 
-    // Start recording for listening phase
+    // phase === 'listening' — decide if we need cooldown
+    const needsCooldown = previousPhase === 'speaking';
+    const startDelayMs = needsCooldown ? 600 : 0;
+
     let cancelled = false;
-    (async () => {
+
+    const startRecording = async () => {
       try {
         const { granted } = await Audio.requestPermissionsAsync();
         if (!granted) { setError('Mikrofon-Zugriff verweigert'); return; }
@@ -130,7 +149,7 @@ export function VoiceScreen() {
             extension: '.wav',
             outputFormat: 3,
             audioEncoder: 1,
-            audioSource: 7, // VOICE_COMMUNICATION → enables hardware AEC/NS/AGC on Android
+            audioSource: 7, // VOICE_COMMUNICATION → hardware AEC/NS/AGC
             sampleRate: 16000,
             numberOfChannels: 1,
             bitRate: 256000,
@@ -189,10 +208,23 @@ export function VoiceScreen() {
       } catch {
         setError('Mikrofon konnte nicht gestartet werden');
       }
-    })();
+    };
+
+    if (needsCooldown) {
+      setListeningWarmup(true);
+      cooldownTimerRef.current = setTimeout(() => {
+        cooldownTimerRef.current = null;
+        setListeningWarmup(false);
+        if (!cancelled) startRecording();
+      }, startDelayMs);
+    } else {
+      startRecording();
+    }
 
     return () => {
       cancelled = true;
+      if (cooldownTimerRef.current) { clearTimeout(cooldownTimerRef.current); cooldownTimerRef.current = null; }
+      setListeningWarmup(false);
       if (recordingRef.current) {
         recordingRef.current.stopAndUnloadAsync().catch(() => {});
         recordingRef.current = null;

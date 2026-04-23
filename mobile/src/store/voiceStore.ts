@@ -13,6 +13,8 @@ interface VoiceState {
   errorBanner: string | null;
   pausedWithInterjection: boolean;     // sub-behavior (c): show resume options
   interjectionText: string | null;
+  listeningWarmup: boolean;            // true during 600ms cooldown after speaking
+  setListeningWarmup: (b: boolean) => void;
 
   setPhase: (p: VoicePhase) => void;
   setUserTranscript: (t: string) => void;
@@ -32,6 +34,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   errorBanner: null,
   pausedWithInterjection: false,
   interjectionText: null,
+  listeningWarmup: false,
 
   setPhase: (p) => set((s) => {
     const patch: Partial<VoiceState> = { phase: p };
@@ -52,4 +55,5 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   }),
   setError: (msg) => set({ errorBanner: msg }),
   setPausedWithInterjection: (b, text) => set({ pausedWithInterjection: b, interjectionText: text ?? null }),
+  setListeningWarmup: (b) => set({ listeningWarmup: b }),
 }));
