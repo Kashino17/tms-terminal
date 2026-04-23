@@ -74,4 +74,22 @@ describe('VoiceSessionController', () => {
     ctrl.stop();
     expect(emitted.some((m) => m.type === 'voice:phase' && m.payload.phase === 'idle')).toBe(true);
   });
+
+  it('discards transcription arriving within 800ms after last tts chunk', async () => {
+    const ctrl = new VoiceSessionController({
+      registry: mockRegistry, whisper: mockWhisper, tts: mockTts, emit,
+      systemPrompt: 'test',
+    });
+    ctrl.start();
+    ctrl.ingestAudio(Buffer.from('fake-audio'));
+    await ctrl.endUserTurn(); // runs full turn, last tts_chunk emits, phase → listening
+    emitted.length = 0;
+
+    // Immediately ingest new audio and end turn — transcription should be suppressed
+    ctrl.ingestAudio(Buffer.from('echo-bleed'));
+    await ctrl.endUserTurn();
+
+    const transcripts = emitted.filter((m) => m.type === 'voice:transcript');
+    expect(transcripts.length).toBe(0);
+  });
 });

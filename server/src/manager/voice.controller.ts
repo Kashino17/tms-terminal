@@ -37,6 +37,8 @@ export class VoiceSessionController {
   private autoPauseTimer: NodeJS.Timeout | null = null;
   private currentStreamAbort: AbortController | null = null;
   private active = false;
+  private lastTtsChunkAt = 0;
+  private readonly ECHO_WINDOW_MS = 800;
 
   constructor(private deps: VoiceSessionDeps) {}
 
@@ -72,6 +74,14 @@ export class VoiceSessionController {
     if (this.phase !== 'listening' || this.audioBuffer.length === 0) return;
 
     try {
+      const sinceTts = Date.now() - this.lastTtsChunkAt;
+      if (this.lastTtsChunkAt > 0 && sinceTts < this.ECHO_WINDOW_MS) {
+        logger.debug(`Voice: echo suppressed (${sinceTts}ms since last tts chunk)`);
+        this.audioBuffer = [];
+        this.setPhase('listening');
+        return;
+      }
+
       this.setPhase('transcribing');
       const audio = Buffer.concat(this.audioBuffer);
       this.audioBuffer = [];
@@ -193,6 +203,7 @@ export class VoiceSessionController {
           },
         });
         c.sent = true;
+        this.lastTtsChunkAt = Date.now();
       }
     }
 
@@ -248,6 +259,7 @@ export class VoiceSessionController {
         },
       });
       chunk.sent = true;
+      this.lastTtsChunkAt = Date.now();
     });
 
     // Mark the final chunk as last via an end-marker event.
