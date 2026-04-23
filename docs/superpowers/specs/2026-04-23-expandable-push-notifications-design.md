@@ -448,7 +448,7 @@ Zwei Zustände → wer rendert?
 | 3 | App offen, TerminalScreen, Manager antwortet 1500 chars | Push zeigt 800 chars + „… (tap to read more)", Tap → Chat |
 | 4 | App gebackgrounded, Manager antwortet | 1 FCM-Push → native Modul → MessagingStyle |
 | 5 | App gekillt, Manager antwortet | 1 FCM-Push via Background-Handler, Tap öffnet App + navigiert zu Chat |
-| 6 | App gekillt → reconnected nach 10s, Manager hat 2x geantwortet | 2 FCM-Pushes (mit 3s-Debounce dazwischen), gepufferte WS-Messages beim Reconnect, keine Duplikate |
+| 6 | App gekillt → reconnected nach 10s, Manager hat 2x geantwortet | Max 1 FCM-Push pro 3s (globaler Debounce, siehe #9). Bei ≥3s Abstand: 2 Pushes. Bei <3s: 1 Push. Gepufferte WS-Messages kommen beim Reconnect, keine Duplikate |
 | 7 | Task completed mit kurzer Description | Titel `✅ Aufgabe fertig`, Body = Description, ausklappbar |
 | 8 | Task failed mit langer Description | Body zeigt Description + Zusatzzeile |
 | 9 | 3 Replies in 1s | Max 1 Push (Debounce) |

@@ -1166,8 +1166,10 @@ export function registerForegroundHandler(): () => void {
 First, find the exact file + line where `agentAvatarUri` is written:
 
 ```bash
-grep -rn "agentAvatarUri" mobile/src/stores mobile/src/App.tsx --include="*.ts" --include="*.tsx"
+grep -rn "agentAvatarUri" mobile/src/store mobile/src/App.tsx --include="*.ts" --include="*.tsx"
 ```
+
+Note: the store path in this repo is `mobile/src/store/managerStore.ts` (singular).
 
 Expected: you find the manager store `setPersonality` (or similar) setter that updates `agentAvatarUri`.
 
@@ -1245,7 +1247,7 @@ Go through each scenario and mark PASS/FAIL in a scratch notepad:
 | 3 | App offen, TerminalScreen, Manager antwortet (1500 chars) | Push zeigt 800 chars + Suffix, Tap → Chat |
 | 4 | App gebackgrounded, Manager antwortet | 1 FCM-Push via native Modul |
 | 5 | App gekillt, Manager antwortet | 1 FCM-Push via Background-Handler, Tap öffnet App + Chat |
-| 6 | App gekillt → reconnect nach 10s, 2 Replies dazwischen | Max 2 Pushes, mit 3s-Debounce-Gap |
+| 6 | App gekillt → reconnect nach 10s, 2 Replies dazwischen | Max 1 Push pro 3s (global, siehe #9). Bei ≥3s Abstand: 2 Pushes |
 | 7 | Task completed (kurze Desc) | Titel `✅ Aufgabe fertig`, Body = Desc, ausklappbar |
 | 8 | Task failed (lange Desc) | Body zeigt Desc + Zusatzzeile |
 | 9 | 3 Replies in 1s | Max 1 Push (Debounce) |
