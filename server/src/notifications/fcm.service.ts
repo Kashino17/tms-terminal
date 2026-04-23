@@ -90,6 +90,45 @@ class FcmService {
       logger.warn(`FCM: Send failed — ${msg}`);
     }
   }
+
+  /**
+   * Send a data-only FCM message for Big-Style rendering on the mobile client.
+   * Body is truncated to 800 grapheme-count chars. Title is unchanged.
+   * data payload MUST include the full `text` field so the client can render.
+   */
+  async sendBig(
+    token: string,
+    title: string,
+    body: string,
+    data: Record<string, string>,
+  ): Promise<void> {
+    if (!this.ready || !this.admin) {
+      logger.warn(`FCM: sendBig not ready (ready=${this.ready}, admin=${!!this.admin})`);
+      return;
+    }
+    const { text: truncatedBody } = truncateForPush(body, 800);
+    logger.info(`FCM sendBig: to ${token.slice(0, 20)}… — "${truncatedBody.slice(0, 60)}" (${truncatedBody.length} chars)`);
+
+    try {
+      // Data-only payload. Client renders via native module (Android) or expo-notifications (iOS).
+      const result = await this.admin.messaging().send({
+        token,
+        data: {
+          ...data,
+          title,
+          body: truncatedBody,
+        },
+        android: {
+          priority: 'high', // required for data-only to wake the app reliably
+        },
+      });
+      logger.success(`FCM sendBig: ✓ (${result})`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`FCM sendBig: failed — ${msg}`);
+      throw err; // re-throw so callers can delete stale tokens
+    }
+  }
 }
 
 export const fcmService = new FcmService();
