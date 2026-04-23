@@ -41,6 +41,7 @@ export function VoiceScreen() {
   const recordingRef = useRef<Audio.Recording | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasSpokenRef = useRef(false);
+  const speechSustainStartRef = useRef<number | null>(null);
 
   // Keep a ref to the current phase so that the stable VoiceClient closure
   // can read the latest value without needing to be recreated each render.
@@ -110,6 +111,7 @@ export function VoiceScreen() {
         }
         if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
         hasSpokenRef.current = false;
+        speechSustainStartRef.current = null;
       })();
       return;
     }
@@ -124,7 +126,15 @@ export function VoiceScreen() {
 
         const rec = new Audio.Recording();
         await rec.prepareToRecordAsync({
-          android: { extension: '.wav', outputFormat: 3, audioEncoder: 1, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000 },
+          android: {
+            extension: '.wav',
+            outputFormat: 3,
+            audioEncoder: 1,
+            audioSource: 7, // VOICE_COMMUNICATION → enables hardware AEC/NS/AGC on Android
+            sampleRate: 16000,
+            numberOfChannels: 1,
+            bitRate: 256000,
+          },
           ios: { extension: '.wav', audioQuality: 96, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
           web: {},
           isMeteringEnabled: true,
@@ -134,28 +144,42 @@ export function VoiceScreen() {
 
         rec.setOnRecordingStatusUpdate(async (s) => {
           if (!('metering' in s) || typeof s.metering !== 'number') return;
-          if (s.metering > -40) {
-            if (!hasSpokenRef.current) hasSpokenRef.current = true;
+          const SPEECH_THRESHOLD_DB = -32;
+          const SUSTAIN_MIN_MS = 150;
+
+          if (s.metering > SPEECH_THRESHOLD_DB) {
+            if (speechSustainStartRef.current === null) {
+              speechSustainStartRef.current = Date.now();
+            } else if (
+              !hasSpokenRef.current &&
+              Date.now() - speechSustainStartRef.current >= SUSTAIN_MIN_MS
+            ) {
+              hasSpokenRef.current = true;
+            }
             if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
-          } else if (hasSpokenRef.current && !silenceTimerRef.current) {
-            silenceTimerRef.current = setTimeout(async () => {
-              silenceTimerRef.current = null;
-              try {
-                const current = recordingRef.current;
-                if (!current) return;
-                const uri = current.getURI();
-                await current.stopAndUnloadAsync();
-                recordingRef.current = null;
-                hasSpokenRef.current = false;
-                if (uri) {
-                  const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-                  client.sendAudioChunk(b64);
-                  client.endTurn();
+          } else {
+            speechSustainStartRef.current = null;
+            if (hasSpokenRef.current && !silenceTimerRef.current) {
+              silenceTimerRef.current = setTimeout(async () => {
+                silenceTimerRef.current = null;
+                try {
+                  const current = recordingRef.current;
+                  if (!current) return;
+                  const uri = current.getURI();
+                  await current.stopAndUnloadAsync();
+                  recordingRef.current = null;
+                  hasSpokenRef.current = false;
+                  speechSustainStartRef.current = null;
+                  if (uri) {
+                    const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+                    client.sendAudioChunk(b64);
+                    client.endTurn();
+                  }
+                } catch {
+                  setError('Turn-Ende fehlgeschlagen');
                 }
-              } catch {
-                setError('Turn-Ende fehlgeschlagen');
-              }
-            }, 800);
+              }, 800);
+            }
           }
         });
         rec.setProgressUpdateInterval(200);
@@ -175,6 +199,7 @@ export function VoiceScreen() {
       }
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       hasSpokenRef.current = false;
+      speechSustainStartRef.current = null;
     };
   }, [phase, client]);
 
