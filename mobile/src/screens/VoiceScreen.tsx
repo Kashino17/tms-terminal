@@ -138,9 +138,10 @@ export function VoiceScreen() {
       return;
     }
 
-    // phase === 'listening' — decide if we need cooldown
-    const needsCooldown = previousPhase === 'speaking';
-    const startDelayMs = needsCooldown ? 600 : 0;
+    // phase === 'listening' — decide if we need cooldown.
+    // Wait for audio queue to actually drain (TTS is usually still playing
+    // after the server transitions to 'listening'), THEN 300ms room-echo buffer.
+    const needsCooldown = previousPhase === 'speaking' || !audioQueue.isIdle();
 
     let cancelled = false;
 
@@ -220,11 +221,26 @@ export function VoiceScreen() {
 
     if (needsCooldown) {
       setListeningWarmup(true);
-      cooldownTimerRef.current = setTimeout(() => {
-        cooldownTimerRef.current = null;
-        setListeningWarmup(false);
-        if (!cancelled) startRecording();
-      }, startDelayMs);
+
+      const POLL_INTERVAL_MS = 80;
+      const POST_DRAIN_BUFFER_MS = 300;
+
+      const pollDrain = () => {
+        if (cancelled) return;
+        if (audioQueue.isIdle()) {
+          // Audio has fully drained — add short buffer for room-echo decay.
+          cooldownTimerRef.current = setTimeout(() => {
+            cooldownTimerRef.current = null;
+            if (cancelled) return;
+            setListeningWarmup(false);
+            startRecording();
+          }, POST_DRAIN_BUFFER_MS);
+          return;
+        }
+        cooldownTimerRef.current = setTimeout(pollDrain, POLL_INTERVAL_MS);
+      };
+
+      pollDrain();
     } else {
       startRecording();
     }
