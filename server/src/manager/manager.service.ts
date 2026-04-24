@@ -477,6 +477,32 @@ const CHAT_BUCKET_GLOBAL = 'alle';
 const CHAT_BUCKET_MAX_BEFORE_TRUNCATE = 12;
 const CHAT_BUCKET_KEEP_AFTER_TRUNCATE = 6;
 const CHAT_BUCKET_HARD_CAP = 50;
+// Hard byte caps — count-based truncation alone misses single-message bloat
+// (Claude tool-results can be MBs). Triggers slice OR per-message clip.
+const CHAT_BUCKET_MAX_BYTES = 2_000_000;   // 2 MB per bucket
+const CHAT_MESSAGE_MAX_BYTES = 200_000;    // 200 KB per message — clip oversized payloads in place
+
+/** Approx byte size of a chat bucket. Cheap — sums string lengths only. */
+function chatBucketBytes(bucket: ChatMessage[]): number {
+  let total = 0;
+  for (const m of bucket) {
+    if (typeof m.content === 'string') total += m.content.length;
+    if (m.tool_calls) total += JSON.stringify(m.tool_calls).length;
+  }
+  return total;
+}
+
+/** Clip an oversized message's content in place. Returns bytes saved. */
+function clipChatMessageIfOversized(msg: ChatMessage): number {
+  if (typeof msg.content !== 'string') return 0;
+  if (msg.content.length <= CHAT_MESSAGE_MAX_BYTES) return 0;
+  const before = msg.content.length;
+  const half = Math.floor(CHAT_MESSAGE_MAX_BYTES / 2);
+  const head = msg.content.slice(0, half);
+  const tail = msg.content.slice(-half);
+  msg.content = `${head}\n\n[… ${before - CHAT_MESSAGE_MAX_BYTES} Zeichen abgeschnitten — Manager hat den Rest verworfen um Speicher zu schonen …]\n\n${tail}`;
+  return before - msg.content.length;
+}
 
 type SummaryCallback = (summary: ManagerSummary) => void;
 type ResponseCallback = (response: ManagerResponse) => void;
@@ -928,14 +954,38 @@ export class ManagerService {
     this.chatHistoriesByTab.set(this.chatBucketKey(targetSessionId), history);
   }
 
-  /** Aggressive truncation per bucket — same policy as the old monolithic
-   *  history (keep first message + last 6) but applied independently per tab. */
+  /** Aggressive truncation per bucket — keep first message + last 6.
+   *  Triggers on EITHER message count OR total bytes (Claude tool-results can
+   *  inflate a single bucket to many MB even with few messages).
+   *  Also clips oversized individual messages in place before deciding to slice. */
   private truncateChatBucket(targetSessionId?: string): void {
     const key = this.chatBucketKey(targetSessionId);
     const bucket = this.chatHistoriesByTab.get(key);
-    if (!bucket || bucket.length <= CHAT_BUCKET_MAX_BEFORE_TRUNCATE) return;
-    this.chatHistoriesByTab.set(key, [bucket[0], ...bucket.slice(-CHAT_BUCKET_KEEP_AFTER_TRUNCATE)]);
-    logger.info(`Manager: truncated chat bucket "${key}" to ${1 + CHAT_BUCKET_KEEP_AFTER_TRUNCATE} messages`);
+    if (!bucket || bucket.length === 0) return;
+
+    // Phase 1: clip oversized individual messages (typical Claude tool-result bloat).
+    let bytesSaved = 0;
+    let clipped = 0;
+    for (const m of bucket) {
+      const saved = clipChatMessageIfOversized(m);
+      if (saved > 0) { bytesSaved += saved; clipped++; }
+    }
+    if (clipped > 0) {
+      logger.info(`Manager: clipped ${clipped} oversized message(s) in bucket "${key}" — saved ${bytesSaved} bytes`);
+    }
+
+    // Phase 2: slice if too many messages OR bucket still too large after clipping.
+    const tooMany = bucket.length > CHAT_BUCKET_MAX_BEFORE_TRUNCATE;
+    const sizeBefore = chatBucketBytes(bucket);
+    const tooBig = sizeBefore > CHAT_BUCKET_MAX_BYTES;
+    if (!tooMany && !tooBig) return;
+
+    const sliced = [bucket[0], ...bucket.slice(-CHAT_BUCKET_KEEP_AFTER_TRUNCATE)];
+    this.chatHistoriesByTab.set(key, sliced);
+    logger.info(
+      `Manager: truncated chat bucket "${key}" to ${sliced.length} messages ` +
+      `(was ${bucket.length} msgs / ${sizeBefore} bytes, reason: ${tooMany ? 'count' : ''}${tooMany && tooBig ? '+' : ''}${tooBig ? 'size' : ''})`
+    );
   }
 
   // ── Open-ended question auto-answer ─────────────────────────────
@@ -3369,12 +3419,12 @@ BEISPIEL:
         }
       }
 
-      // Cap each bucket independently — prevents context overflow on first AI call
+      // Cap each bucket independently — prevents context overflow on first AI call.
+      // Goes through truncateChatBucket so per-message clipping + size-cap apply
+      // even on freshly-restored history (a previous run may have written 10MB tool-results).
       for (const key of [...this.chatHistoriesByTab.keys()]) {
-        const bucket = this.chatHistoriesByTab.get(key)!;
-        if (bucket.length > CHAT_BUCKET_MAX_BEFORE_TRUNCATE) {
-          this.chatHistoriesByTab.set(key, [bucket[0], ...bucket.slice(-CHAT_BUCKET_KEEP_AFTER_TRUNCATE)]);
-        }
+        const isGlobal = key === CHAT_BUCKET_GLOBAL;
+        this.truncateChatBucket(isGlobal ? undefined : key);
       }
 
       const total = [...this.chatHistoriesByTab.values()].reduce((s, h) => s + h.length, 0);
