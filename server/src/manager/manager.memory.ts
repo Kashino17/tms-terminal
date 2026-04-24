@@ -3,6 +3,8 @@ import * as path from 'path';
 import * as os from 'os';
 import { logger } from '../utils/logger';
 import { buildSkillsSummary } from './skills/skill-registry';
+import type { CloudState } from './cloud/cloud.types';
+import { createEmptyCloudState } from './cloud/cloud.types';
 
 export const CONFIG_DIR = path.join(os.homedir(), '.tms-terminal');
 const MEMORY_FILE = path.join(CONFIG_DIR, 'manager-memory.json');
@@ -78,6 +80,7 @@ export interface ManagerMemory {
   journal: MemoryJournalEntry[];
   recentChat: MemoryChatEntry[];
   stats: MemoryStats;
+  cloudState: CloudState;  // NEW
 }
 
 export function createEmptyMemory(): ManagerMemory {
@@ -109,6 +112,7 @@ export function createEmptyMemory(): ManagerMemory {
       lastInteraction: '',
       totalMessages: 0,
     },
+    cloudState: createEmptyCloudState(),  // NEW
   };
 }
 
@@ -126,6 +130,7 @@ export function loadMemory(): ManagerMemory {
         journal: parsed.journal ?? empty.journal,
         recentChat: parsed.recentChat ?? empty.recentChat,
         stats: { ...empty.stats, ...parsed.stats },
+        cloudState: parsed.cloudState ?? empty.cloudState,  // NEW
       };
     }
   } catch (err) {
