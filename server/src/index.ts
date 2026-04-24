@@ -15,6 +15,7 @@ import { fcmService } from './notifications/fcm.service';
 import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
 import { shutdown as shutdownWhisper } from './audio/whisper-sidecar';
+import { shutdown as shutdownTts } from './audio/tts-sidecar';
 import { managerService } from './websocket/ws.handler';
 import { ensureAckAudios } from './manager/voice.ack-audio';
 
@@ -243,6 +244,7 @@ function main(): void {
     logger.info('Shutting down...');
     watcherService.shutdown();
     shutdownWhisper();
+    shutdownTts();
 
     // Close all terminal sessions
     globalManager.closeAllSessions();
