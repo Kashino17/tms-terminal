@@ -1156,6 +1156,9 @@ export class ManagerService {
         sessionId: report.sessionId,
         trigger: report.trigger,
         ts: String(report.ts),
+        // messageId enables mobile-side dedup between the FCM push and the
+        // parallel manager:cloud_report WS message (same hash → same event).
+        messageId: report.hash,
       });
     }
     logger.info(
