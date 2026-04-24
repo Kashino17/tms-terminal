@@ -43,9 +43,29 @@ export const useLockStore = create<LockState>((set, get) => ({
   lastUnlockTime: 0,
 
   async loadLockConfig() {
-    const [[, enabled], [, hash]] = await AsyncStorage.multiGet([KEY_ENABLED, KEY_HASH]);
-    const isEnabled = enabled === 'true';
-    set({ ready: true, isEnabled, pinHash: hash, isUnlocked: !isEnabled });
+    // Defensive: after a native crash, AsyncStorage's SQLite state can be left
+    // in a bad place — multiGet may hang or throw. Without this guard, `ready`
+    // stays false forever and the app is stuck on a blank background screen
+    // (see App.tsx gate). Race against a short timeout and fall back to
+    // "start unlocked" so the user can always recover access.
+    const LOAD_TIMEOUT_MS = 3_000;
+    try {
+      const loadPromise = AsyncStorage.multiGet([KEY_ENABLED, KEY_HASH]);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`loadLockConfig timed out after ${LOAD_TIMEOUT_MS}ms`)), LOAD_TIMEOUT_MS),
+      );
+      const result = await Promise.race([loadPromise, timeoutPromise]);
+      const [[, enabled], [, hash]] = result;
+      const isEnabled = enabled === 'true';
+      set({ ready: true, isEnabled, pinHash: hash, isUnlocked: !isEnabled });
+    } catch (err) {
+      // In-memory fallback only — AsyncStorage is NOT modified. Next app start
+      // will try loadLockConfig again; if storage has recovered, the real PIN
+      // state returns. We keep pinHash=null in memory so no stale hash can be
+      // treated as valid while we're in the degraded state.
+      console.warn('[lockStore] loadLockConfig failed, starting with lock disabled:', err);
+      set({ ready: true, isEnabled: false, pinHash: null, isUnlocked: true });
+    }
   },
 
   async enable(pin: string) {
