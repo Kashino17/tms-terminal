@@ -33,3 +33,7 @@
 - **2026-04-08 · Git-basiertes Memory statt Datenbank** — 5 Markdown-Dateien in `memory/`, Git-getrackt. Einfach, portabel, keine extra Infrastruktur. CLAUDE.md enthält Anweisungen zum Lesen/Schreiben.
 
 - **2026-04-08 · journal.md als Append-Only Log** — Chronologisches Protokoll, max 100 Einträge, danach Archivierung. Alle anderen Dateien werden überschrieben/aktualisiert.
+
+## Push-Benachrichtigungen
+
+- **2026-04-24 · PUSH_INSTANT_MODE Feature-Flag** — Bypasst `ManagerPushDecider` (v1.20.0) komplett: kein Screen-State-Check, kein 3s-Debounce, kein 15s-Stale-Window. Jede Manager-LLM-Response + jede Tool-Completion (manager-side UND terminal-side AI-Tools via prompt.detector) feuert sofort FCM. User-Entscheidung: „Einfach sofort pushen, ohne Debounce." Flag gesetzt via `~/.tms-terminal/manager.json` → `pushInstantMode: true` oder env `PUSH_INSTANT_MODE=1`. Decider-Klasse + Tests bleiben erhalten — flag-bypass statt delete, damit Rollback ein One-Liner ist. Payload-Design: Titel = `{✓|✗} {toolName}`, Body = letzte 300 chars Output, data.type = `tool_completion`. Failure-Detection für Terminal-Output ist heuristisch (regex auf error/failed/fatal/command not found/permission denied) — kein echter Exit-Code auf PTY-Ebene verfügbar.

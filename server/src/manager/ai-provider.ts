@@ -48,6 +48,9 @@ export interface ProviderConfig {
     qwen27b?: string;
     qwen35b?: string;
   };
+  /** Bypass ManagerPushDecider: push every manager-reply + tool-completion immediately.
+   *  No screen-state check, no debounce. Overridable via env PUSH_INSTANT_MODE=1. */
+  pushInstantMode?: boolean;
 }
 
 // ── Tool Calling Types ─────────────────────────────────────────────────────

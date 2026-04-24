@@ -198,6 +198,14 @@ export class PromptDetector {
     if (imm) { clearTimeout(imm); this.immediateTimers.delete(sessionId); }
   }
 
+  /** Return the last `maxChars` of clean (ANSI-stripped) output for a session.
+   *  Used by tool-completion push to attach an output snippet. */
+  getTail(sessionId: string, maxChars: number): string {
+    const raw = this.buffers.get(sessionId) ?? '';
+    const clean = raw.replace(ANSI_STRIP, '');
+    return clean.slice(-maxChars);
+  }
+
   /** Called after an auto-approve Enter is dispatched — forces a fresh match cycle. */
   noteApproved(sessionId: string): void {
     // Clear buffer so residual text from before Enter can't re-match.

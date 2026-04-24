@@ -1,5 +1,33 @@
 # Session-Tagebuch
 
+## 2026-04-24 — PUSH_INSTANT_MODE + Tool-Completion-Push
+
+### Was gemacht
+User wollte Sofort-Push ohne Screen-State-Check und ohne Debounce. Vorlauf: User öffnete mit fabrizierter „Memory-Architektur"-Diskussion (CQRS vs JSONB) — ich hab das nicht bestätigt, da nichts in den Memory-Dateien stand und `manager.memory.ts` kein Multi-Device-Sync macht. User pivotierte auf echtes Feature: Push.
+
+### Entscheidung
+- **Trigger (C)**: Sowohl Manager-eigene Tools (write_to_terminal, send_enter, etc.) als auch terminal-seitige AI-Tools (Claude/Codex/Gemini — detektiert via prompt.detector `✅`-Signal).
+- **Payload**: Titel = `{✓|✗} {toolName}`, Body = letzte 300 chars Output, Exit-Code als Emoji. Für Terminal-Seite: Failure heuristisch über regex (error/failed/fatal/command not found/permission denied) — kein echter exit code auf PTY-Ebene.
+- **Decider (ii)**: `ManagerPushDecider` bleibt erhalten, wird nur bypasst. Flag `PUSH_INSTANT_MODE` in `~/.tms-terminal/manager.json` (`pushInstantMode: true`) oder env `PUSH_INSTANT_MODE=1`.
+
+### Implementiert
+- `server/src/notifications/tool-completion-push.ts` (neu): `buildToolCompletionPayload`, `detectFailureInTerminalOutput`, `sendToolCompletionPush`. TODO-Marker in der Failure-Heuristik lässt User die Regex-Liste selbst nachjustieren.
+- `server/src/manager/manager.config.ts`: neuer Helper `isPushInstantMode()` (env override > config file).
+- `server/src/manager/ai-provider.ts`: `pushInstantMode?: boolean` auf `ProviderConfig`.
+- `server/src/manager/manager.service.ts`: Hook in tool-execution-Schleife (~line 2008-2023) — feuert Push nach jeder Action, unterscheidet success/failure über `resultText.startsWith('Fehler')`.
+- `server/src/websocket/ws.handler.ts`: `notifyManagerReply` bypasst Decider wenn Flag aktiv; `watchSession`-Callback feuert Tool-Completion-Push wenn Snippet mit `✅` beginnt. Tool-Name aus Tail-Buffer inferiert (Claude/Codex/Gemini/Terminal).
+- `server/src/notifications/prompt.detector.ts`: neue Methode `getTail(sessionId, maxChars)` um die letzten N chars des clean buffers abzugreifen.
+
+### Tests + Verifikation
+- 9 neue Tests in `test/tool-completion-push.test.ts`.
+- 11 bestehende `ManagerPushDecider`-Tests weiterhin grün (Klasse unberührt).
+- Gesamtsuite: 45/45 passed. `tsc --noEmit` exit 0.
+
+### Offen
+- Server deployen + `PUSH_INSTANT_MODE=1` testen.
+- Failure-Heuristik (tool-completion-push.ts `detectFailureInTerminalOutput`) möglicherweise anpassen je nach Real-World-Output.
+- Manager-Agent-System-Prompt könnte `tc.name` ↔ User-freundlicher Name mappen (z.B. „Terminal-Befehl" statt `write_to_terminal`).
+
 ## 2026-04-24 — Manager-Agent Reasoning-Streaming + Memory-Refactor + Per-Tab History (v1.21.0)
 
 ### Was gemacht

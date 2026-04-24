@@ -15,7 +15,8 @@ import { autopilotService } from '../autopilot/autopilot.service';
 import { transcribe as whisperTranscribe, WhisperBusyError } from '../audio/whisper-sidecar';
 import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
 import { ManagerService } from '../manager/manager.service';
-import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
+import { loadManagerConfig, saveManagerConfig, isPushInstantMode } from '../manager/manager.config';
+import { sendToolCompletionPush, detectFailureInTerminalOutput } from '../notifications/tool-completion-push';
 import { ConnectionRateLimiter } from './rate-limiter';
 import { ChromeManager } from '../chrome/chrome.manager';
 
@@ -237,6 +238,22 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       // Send in-app badge notification via WebSocket (for auto-approve UI badge)
       const pendingFlag = (pendingInputLen.get(sessionId) ?? 0) > 0;
       send(ws, { type: 'terminal:prompt_detected', sessionId, payload: { snippet, hasPendingInput: pendingFlag } });
+
+      // Instant-mode only: if this is an AI-finished event (prompt.detector prefixes ✅),
+      // fire a tool-completion FCM push. Tool name inferred from the session's tail output.
+      if (isPushInstantMode() && snippet.startsWith('✅') && persistedTokens.size > 0) {
+        const tail = promptDetector.getTail(sessionId, 300);
+        const toolName = /claude/i.test(tail) ? 'Claude'
+          : /codex/i.test(tail) ? 'Codex'
+          : /gemini/i.test(tail) ? 'Gemini'
+          : 'Terminal';
+        const success = !detectFailureInTerminalOutput(tail);
+        sendToolCompletionPush(
+          persistedTokens,
+          { toolName, output: tail, success, source: 'terminal' },
+          (tok) => { persistedTokens.delete(tok); pushDecider.setTokensCount(persistedTokens.size); },
+        );
+      }
     });
   };
 
@@ -263,18 +280,24 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     });
   };
 
-  /** Send an FCM push for a manager-agent reply, respecting screen-state + debounce. */
+  /** Send an FCM push for a manager-agent reply.
+   *  Instant mode bypasses screen-state + debounce — every reply fires.
+   *  Normal mode respects ManagerPushDecider (v1.20.0 behaviour). */
   const notifyManagerReply = (text: string, sessionId: string = 'manager-global'): void => {
-    const decision = pushDecider.shouldPush(sessionId);
-    if (!decision.push) {
-      logger.info(`ManagerReply push: skipped (${decision.reason})`);
-      return;
+    const instant = isPushInstantMode();
+    if (!instant) {
+      const decision = pushDecider.shouldPush(sessionId);
+      if (!decision.push) {
+        logger.info(`ManagerReply push: skipped (${decision.reason})`);
+        return;
+      }
     }
     pushDecider.recordPushed(sessionId);
 
     const agentName = managerService.agentName || 'Manager';
     const cleanText = stripMarkdownForPush(text || '');
     const messageId = pushDecider.generateMessageId();
+    if (instant) logger.info(`ManagerReply push: INSTANT mode (decider bypassed)`);
 
     for (const token of persistedTokens) {
       fcmService.sendBig(token, `💬 ${agentName}`, cleanText, {

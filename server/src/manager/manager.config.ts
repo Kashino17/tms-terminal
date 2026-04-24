@@ -44,6 +44,16 @@ export function loadManagerConfig(): ProviderConfig {
   return {};
 }
 
+/** Whether push notifications should bypass ManagerPushDecider (no screen-state check,
+ *  no debounce, every manager-reply + tool-completion fires immediately). Env var
+ *  `PUSH_INSTANT_MODE=1` overrides the config file. See decisions.md (2026-04-24). */
+export function isPushInstantMode(): boolean {
+  const env = process.env.PUSH_INSTANT_MODE;
+  if (env === '1' || env === 'true') return true;
+  if (env === '0' || env === 'false') return false;
+  return loadManagerConfig().pushInstantMode === true;
+}
+
 /** Save manager config. API keys are encrypted before writing to disk. */
 export function saveManagerConfig(config: ProviderConfig): void {
   const existing = loadManagerConfig(); // loads + decrypts

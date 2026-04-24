@@ -1,12 +1,13 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-04-24 (Manager Reasoning-Streaming + Memory-Refactor + Per-Tab Chat-History — v1.21.0)_
+_Zuletzt aktualisiert: 2026-04-24 (PUSH_INSTANT_MODE feature-flag für Sofort-Push + Tool-Completion-Push)_
 
 ## Aktuelle Version
 - **App:** v1.21.0 — neu released, Thinking-Bubble + Persistente Reasoning-Anzeige
 - **Server:** Pending auf `feat/chrome-remote-control` — braucht `tms-terminal update` + Restart
 
 ## Zuletzt abgeschlossene Features
+- **PUSH_INSTANT_MODE + Tool-Completion-Push (unreleased, 2026-04-24)** — neues Feature-Flag das den `ManagerPushDecider` (v1.20.0) bypasst. Wenn aktiv: kein Screen-State-Check, kein Debounce, jede Manager-Reply + jede Tool-Completion feuert sofort. **Neu**: Tool-Completion-Push für beide Quellen — (a) Manager-Agent-Tools (`write_to_terminal`, `send_enter`, etc.) via Hook in der tool-execution-Schleife in `manager.service.ts:2008-2023`, (b) Terminal-seitige AI-Tools (Claude/Codex/Gemini) via `prompt.detector`'s `✅`-Signal. Payload: Titel = `{✓|✗} {toolName}`, Body = letzte 300 chars Output. Failure-Detection für Terminal ist heuristisch (regex, kein echter exit code). Neue Dateien: `server/src/notifications/tool-completion-push.ts` (+ 9 Tests). Flag in `~/.tms-terminal/manager.json` → `pushInstantMode: true` oder env `PUSH_INSTANT_MODE=1`. Decider-Klasse + 11 Tests bleiben unverändert. 45/45 Server-Tests grün.
 - **Manager-Reasoning-Streaming + Memory-Refactor + Per-Tab Chat-History (v1.21.0)** — größerer Eingriff über die ganze Manager-Pipeline:
   - **Reasoning-Streaming**: Qwen3 thinking-Tokens (`delta.reasoning_content`) werden jetzt gelesen, separater WS-Event `manager:thinking_chunk`, faltbare „Denkt nach"-Sektion in Live-Bubble + persistente „Denkt-Log"-Anzeige in MessageBubble. Behebt: leere Antworten nach 5 Min Generationszeit bei Qwen 3.6 35B local.
   - **Memory-Refactor**: Junk-Filter (`isJunkProjectName`, `isJunkFact`, `isJunkPath`), Fuzzy-Dedup via Token-Jaccard mit deutschen Stopwords, Topic-Slot Conflict Detection (Name/Device/Wohnort/Beruf), Time-Decay für Insights (`archivedInsights` Sektion). Pflicht-Block gelockert: kein Halluzinations-Druck mehr. Live-Cleanup: 20→5 Projekte, 50→21 facts, 30→9 traits, 200→180 insights.
@@ -29,6 +30,7 @@ _Zuletzt aktualisiert: 2026-04-24 (Manager Reasoning-Streaming + Memory-Refactor
 - **Stale Buffer Detection** (v1.15.0) — Terminal-Output älter als 60s wird als idle markiert
 
 ## Aktive Arbeit
+- **PUSH_INSTANT_MODE deployen + testen**: Server neu deployen, dann `PUSH_INSTANT_MODE=1` setzen (env oder `manager.json`) und Push-Flow testen. Warnung: ohne Screen-State-Check feuert Push auch wenn Chat offen ist. Failure-Heuristik (regex für Terminal-Output) möglicherweise nachjustieren falls zu viele false positives/negatives.
 - **TTS-Upgrade auf User-Server deployen**: `tms-terminal update` + Server-Restart, dann testen ob die neue Rem-Stimme (VoiceDesign mit Text-Prompt) passt. Prompt-Datei bearbeitbar unter `~/.tms-terminal/voice_prompt.txt`.
 - **Follow-up-Feature**: Manager-Agent-System-Prompt erweitern, dass er pro Voice-Antwort einen passenden `emotion_prompt` emittiert (z.B. als neues strukturiertes Feld in der Response). Ermöglicht dynamische Ton-Steuerung je nach Gesprächskontext. Noch nicht begonnen.
 - Shell-Naming: Terminals heißen intern "Shell 1/2/3" aber haben in der App andere Tab-Namen (Verzeichnisnamen). Die AI und der User sollen die echten Namen kennen.

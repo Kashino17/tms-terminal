@@ -6,6 +6,8 @@ import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
 import { globalManager } from '../terminal/terminal.manager';
 import { logger } from '../utils/logger';
 import { fcmService } from '../notifications/fcm.service';
+import { sendToolCompletionPush } from '../notifications/tool-completion-push';
+import { isPushInstantMode } from './manager.config';
 import type { PhaseInfo } from '../../../shared/protocol';
 import {
   loadMemory, saveMemory, ManagerMemory, CONFIG_DIR,
@@ -2015,10 +2017,25 @@ BEISPIEL:
               actionResults.push(resultText);
               executedActions.push(action);
               this.lastChatHadToolCalls = true;
+
+              if (isPushInstantMode() && this.fcmTokens.size > 0) {
+                const success = !resultText.startsWith('Fehler');
+                sendToolCompletionPush(
+                  this.fcmTokens,
+                  { toolName: tc.name, output: resultText, success, source: 'manager' },
+                );
+              }
             } else {
               const label = tc.arguments?.session_label ?? 'unbekannt';
               const errorMsg = `Fehler: Terminal "${label}" nicht gefunden. Verfügbare Terminals: ${[...this.sessionLabels.values()].join(', ') || 'keine'}`;
               toolResults.push({ toolCallId, result: errorMsg });
+
+              if (isPushInstantMode() && this.fcmTokens.size > 0) {
+                sendToolCompletionPush(
+                  this.fcmTokens,
+                  { toolName: tc.name, output: errorMsg, success: false, source: 'manager' },
+                );
+              }
             }
           }
 
