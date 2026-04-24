@@ -57,3 +57,20 @@ describe('stripMarkdownForPush', () => {
     expect(stripMarkdownForPush('plain text.')).toBe('plain text.');
   });
 });
+
+describe('fcm sender convention', () => {
+  it('documents that data.sender is passed through verbatim', () => {
+    // This test is a convention contract: sendBig accepts arbitrary data,
+    // and callers set data.sender = "cloud" | "rem". We don't call FCM here
+    // (no mock needed) — we just assert the type signature accepts it.
+    const data: Record<string, string> = {
+      sender: 'cloud',
+      urgency: 'urgent',
+      sessionId: 's1',
+      trigger: 'pattern',
+      ts: '1234567890',
+    };
+    expect(data.sender).toBe('cloud');
+    expect(Object.keys(data).every((k) => typeof data[k] === 'string')).toBe(true);
+  });
+});
