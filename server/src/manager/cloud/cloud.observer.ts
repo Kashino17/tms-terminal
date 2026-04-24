@@ -82,7 +82,7 @@ export class CloudObserver {
   private emitPatternReport(sessionId: string, chunk: string, match: PatternMatch): void {
     if (this.guard.isRateLimited(sessionId)) return;
 
-    const hash = this.makeHash(sessionId, match.matchedLine);
+    const hash = this.makeHash('pattern', sessionId, match.matchedLine);
     if (this.guard.hasSeen(hash)) return;
 
     const label = this.deps.resolveLabel(sessionId);
@@ -100,6 +100,9 @@ export class CloudObserver {
 
     this.guard.recordHash(hash);
     this.guard.recordReport(sessionId);
+    // Dual-surface: urgent reports go to BOTH FCM push (onUrgentPush) and Rem's
+    // context (onInfoReport), sharing the same `hash` field. Consumers that
+    // observe both surfaces must dedupe on hash to avoid double-processing.
     try {
       this.deps.onUrgentPush(report);
     } catch (err) {
@@ -127,11 +130,14 @@ export class CloudObserver {
       buf.buffer = '';
       return;
     }
-    if (this.guard.isRateLimited(sessionId)) return;
+    if (this.guard.isRateLimited(sessionId)) {
+      buf.buffer = '';
+      return;
+    }
 
     const content = buf.buffer;
     const last200 = content.slice(-200);
-    const hash = this.makeHash(sessionId, last200);
+    const hash = this.makeHash('silence', sessionId, last200);
     if (this.guard.hasSeen(hash)) {
       buf.buffer = '';
       return;
@@ -164,7 +170,7 @@ export class CloudObserver {
     }
   }
 
-  private makeHash(sessionId: string, content: string): string {
-    return crypto.createHash('sha256').update(`${sessionId}|${content}`).digest('hex');
+  private makeHash(kind: 'pattern' | 'silence', sessionId: string, content: string): string {
+    return crypto.createHash('sha256').update(`${kind}|${sessionId}|${content}`).digest('hex');
   }
 }
