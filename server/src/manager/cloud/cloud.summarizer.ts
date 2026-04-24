@@ -18,8 +18,8 @@ export function templateSummary(match: PatternMatch, sessionLabel: string): Summ
   switch (match.id) {
     case 'error-signature':
       return {
-        title: `🔴 Error · ${label}`,
-        body: clip(`Error in ${label}: ${vars.error_line ?? match.matchedLine}`, MAX_BODY_CHARS),
+        title: `🔴 Fehler · ${label}`,
+        body: clip(`Fehler in ${label}: ${vars.error_line ?? match.matchedLine}`, MAX_BODY_CHARS),
       };
     case 'shell-yesno-prompt':
       return {
@@ -34,12 +34,12 @@ export function templateSummary(match: PatternMatch, sessionLabel: string): Summ
     case 'crash-signal':
       return {
         title: `💥 Crash · ${label}`,
-        body: clip(`${label} crashed: ${vars.crash_signal ?? match.matchedLine}`, MAX_BODY_CHARS),
+        body: clip(`${label} abgestürzt: ${vars.crash_signal ?? match.matchedLine}`, MAX_BODY_CHARS),
       };
     case 'test-failure':
       return {
-        title: `🧪 Test Failure · ${label}`,
-        body: clip(`Test failed in ${label}: ${vars.fail_line ?? match.matchedLine}`, MAX_BODY_CHARS),
+        title: `🧪 Test fehlgeschlagen · ${label}`,
+        body: clip(`Test fehlgeschlagen in ${label}: ${vars.fail_line ?? match.matchedLine}`, MAX_BODY_CHARS),
       };
     case 'claude-prompt-waiting':
     case 'codex-prompt-waiting':
