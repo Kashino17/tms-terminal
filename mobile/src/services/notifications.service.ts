@@ -211,6 +211,25 @@ export function registerBackgroundHandler(): void {
       return;
     }
 
+    if (type === 'tool_completion') {
+      const title = String(message.data?.title ?? '✓ Tool');
+      const body = String(message.data?.body ?? '');
+      const toolName = String(message.data?.toolName ?? '');
+      const source = String(message.data?.source ?? '');
+      const success = String(message.data?.success ?? 'true');
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          sound: 'default',
+          data: { type, toolName, source, success },
+          ...(Platform.OS === 'android' ? { channelId: 'terminal-prompts' } : {}),
+        },
+        trigger: null,
+      });
+      return;
+    }
+
     // Fallback for any legacy notification-shaped message
   });
 }
