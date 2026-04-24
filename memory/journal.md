@@ -1,5 +1,32 @@
 # Session-Tagebuch
 
+## 2026-04-25 — Zweite Welle Memory-Fixes (TTS-Zombie + Bucket-Drift)
+
+### Was gemacht
+Nach den 3 ersten Fixes nochmal gezielt nach weiteren Lecks gesucht (3 parallele Audit-Agents: Voice-Pipeline, long-running state, Mobile-App).
+
+### Wichtigster Fund
+**TTS-Sidecar-Zombie**: `src/index.ts` Shutdown-Handler rief `shutdownWhisper()` aber NICHT `shutdownTts()`. Bei jedem `tms-terminal` Restart blieb ein lebender ~3GB Python-Prozess (Qwen3-TTS-VoiceDesign-1.7B) zurück. Bei wiederholten Server-Restarts während Debugging summiert sich das zu 10er GB Zombies — passt zum 290GB-Phänomen.
+
+### Fixes
+- **Commit `0927408`** `fix(audio): kill TTS sidecar on server shutdown` — Import + Call von `shutdown` aus `tts-sidecar.ts` im SIGINT/SIGTERM Handler.
+- **Commit `b857c10`** `fix(manager): drop dead session's chat bucket in clearSession` — `chatHistoriesByTab.delete(sessionId)` in clearSession ergänzt (gegen globalen 'alle'-Bucket geguarded). Erste Fix-Welle hatte nur die Größe pro Bucket gecapped, nicht das Anwachsen der Bucket-Anzahl pro Lebensdauer.
+
+### Verifikation
+- `tsc --noEmit` exit 0
+- `vitest run` 94/94 grün
+
+### Bewusst nicht angefasst
+- **`ttsQueue` Cap** (voice.controller.ts:35): Bei langen Voice-Sessions bis 50MB akkumuliert. Pause/Resume-Logik liest aus der gesamten Queue — Cap setzt voraus dass die Resume-UX bei sehr langen Sessions umdesigned wird. Eigener Schritt mit Designentscheidung.
+- **`audioBuffer` Cap** (voice.controller.ts:34): VAD-Mic-Input ohne Cap. Worst-case ~3.4MB wenn User 30 Min in Listening pausiert. Marginal.
+- **CloudObserver `buffers` + `cooldowns`**: Marginale Edge-Cases (~3KB/Session).
+- **PromptDetector unwatch in `_cleanup`**: Zyklischer Import, marginal.
+
+### Mobile-App Audit (Fazit: sauber)
+Kein Beitrag zum Server-Memory. View-Buffer 400KB×20 Tabs, ManagerStore mit persist-Cap, AudioPlayerQueue mit unloadAsync-Cleanup. Theoretische Backpressure nur wenn xterm Canvas-Redraw langsamer als Server schickt — Mobile-Side problem, kein Server-Leak.
+
+---
+
 ## 2026-04-25 — Memory-Leak-Audit + Fixes (290GB-Swap-Problem)
 
 ### Symptom
