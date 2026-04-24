@@ -1332,6 +1332,12 @@ export class ManagerService {
     this.lastAnsweredQuestion.delete(sessionId);
     this.questionAnswerInFlight.delete(sessionId);
     this.managerLastUserInputAt.delete(sessionId);
+    // Drop the per-session chat bucket. Without this, dead session-IDs stay
+    // as keys in chatHistoriesByTab forever — slow drift over weeks of uptime.
+    // Guard against the global 'alle' bucket just in case.
+    if (sessionId !== CHAT_BUCKET_GLOBAL) {
+      this.chatHistoriesByTab.delete(sessionId);
+    }
   }
 
   // ── Open Question Detection ──────────────────────────────────────────────
