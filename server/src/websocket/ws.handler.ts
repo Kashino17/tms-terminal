@@ -345,6 +345,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           promptDetector.unwatch(sessionId);
           idleDetector.unwatch(sessionId);
           aiSessions.delete(sessionId);
+          managerService.clearSession(sessionId);
           send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
         },
       );
@@ -384,6 +385,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       promptDetector.unwatch(sessionId);
       idleDetector.unwatch(sessionId);
       aiSessions.delete(sessionId);
+      managerService.clearSession(sessionId);
       send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode: 0 } });
       logger.info(`Manager: closed terminal ${sessionId.slice(0, 8)}`);
       return true;
@@ -1033,6 +1035,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
               idleDetector.unwatch(sessionId);
               aiSessions.delete(sessionId);
               autopilotService.clearSession(sessionId);
+              managerService.clearSession(sessionId);
               const apTimer = autopilotTimers.get(sessionId);
               if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sessionId); }
               send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
