@@ -26,6 +26,10 @@ export interface ManagerMessage {
   attachmentUris?: string[];
   /** Total response time in ms (from request to stream_end). */
   responseDuration?: number;
+  /** Reasoning / thinking output emitted by the model before the final answer
+   *  (Qwen3 thinking models, DeepSeek R1, etc.). Captured live, persisted with
+   *  the message so the user can re-open it later. */
+  thinkingText?: string;
 }
 
 export interface ProviderInfo {
@@ -113,6 +117,8 @@ interface ManagerState {
   thinking: { phase: string; detail?: string; elapsed: number } | null;
   /** Accumulated text during streaming. */
   streamingText: string;
+  /** Accumulated reasoning/thinking output during streaming (separate channel). */
+  streamingThinkingText: string;
   /** Token stats during streaming. */
   streamTokenStats: { completionTokens: number; tps: number } | null;
   /** Phase info from the last completed response. */
@@ -153,6 +159,7 @@ interface ManagerState {
   setLoading: (loading: boolean) => void;
   setThinking: (phase: string, detail?: string, elapsed?: number, chatKey?: string) => void;
   appendStreamChunk: (token: string, tokenStats?: { completionTokens: number; tps: number }) => void;
+  appendThinkingChunk: (token: string) => void;
   finishStream: (text: string, actions?: ManagerMessage['actions'], phases?: PhaseInfo[], images?: string[], presentations?: string[]) => void;
   clearMessages: () => void;
   clearSessionMessages: (chatKey: string) => void;
@@ -201,6 +208,7 @@ export const useManagerStore = create<ManagerState>()(
       requestStartTime: null,
       thinking: null,
       streamingText: '',
+      streamingThinkingText: '',
       streamTokenStats: null,
       lastPhases: null,
       apiKeys: { kimi: '', glm: '', openai: '' },
@@ -294,6 +302,10 @@ export const useManagerStore = create<ManagerState>()(
         streamTokenStats: tokenStats ?? s.streamTokenStats,
       })),
 
+      appendThinkingChunk: (token) => set((s) => ({
+        streamingThinkingText: s.streamingThinkingText + token,
+      })),
+
       finishStream: (text, actions, phases, images, presentations) => set((s) => {
         const chatKey = s.streamingForChat;
         const duration = s.requestStartTime ? Date.now() - s.requestStartTime : undefined;
@@ -306,6 +318,7 @@ export const useManagerStore = create<ManagerState>()(
           images,
           presentations,
           responseDuration: duration,
+          thinkingText: s.streamingThinkingText || undefined,
         };
         return {
           messages: [...s.messages, newMsg].slice(-MAX_MESSAGES),
@@ -314,6 +327,7 @@ export const useManagerStore = create<ManagerState>()(
           requestStartTime: null,
           thinking: null,
           streamingText: '',
+          streamingThinkingText: '',
           streamTokenStats: null,
           lastPhases: phases ?? null,
         };

@@ -1,5 +1,35 @@
 # Session-Tagebuch
 
+## 2026-04-24 — Manager-Agent Reasoning-Streaming + Memory-Refactor + Per-Tab History (v1.21.0)
+
+### Was gemacht
+User meldete dass „Rem" (Qwen 3.6 35B local) nach 5 Minuten leere Antworten liefert („🤔 Ich hab keine Antwort formuliert"). 5 parallele Explore-Agenten dispatcht zur Root-Cause-Analyse — konvergent: **Qwen3-Thinking-Tokens werden über `delta.reasoning_content` emittiert, der Server las nur `delta.content`** → leerer Output → Empty-Reply-Fallback.
+
+### Implementiert (Server + Mobile)
+- **Streaming-Fix**: `createThinkRouter` Helper (stateful, fängt `<think>...</think>` über Chunk-Grenzen), beide LMStudioProvider-Streams lesen `delta.reasoning_content` separat. Neuer WS-Event `manager:thinking_chunk`. Logging am Empty-Reply-Fallback.
+- **Mobile**: Faltbare „Denkt nach"-Sektion in der Live-`ThinkingBubble` (collapsed default, Tap → expand). Persistente „Denkt-Log"-Anzeige in `MessageBubble` (Badge + Inline-Panel). Store: `streamingThinkingText`, `thinkingText` auf `ManagerMessage`.
+- **Memory-Refactor (3 Iterationen)**:
+  1. Project-Validation: `isJunkProjectName`, `isJunkPath`, `isRealisticPath`, fuzzy-merge via Token-Overlap. Cleanup: 20→5 saubere Projekte mit echten Pfaden.
+  2. Facts/Insights-Dedup: `isJunkFact`, `factSimilarity` (Token-Jaccard mit deutschen Stopwords), `findFuzzyDuplicate`. Cleanup: 50→21 facts, 30→9 traits, 200→180 insights.
+  3. Quick-Win-Pack: Pflicht-Block gelockert (kein Halluzinations-Druck mehr), Topic-Slot Conflict Detection (`SINGLE_FACT_TOPICS` für Name/Device/Wohnort/Beruf), Time-Decay für Insights (`archivedInsights` Sektion, ≤14d aktiv, >30d archiviert).
+- **Per-Tab Chat-History**: `chatHistory: ChatMessage[]` → `chatHistoriesByTab: Map<string, ChatMessage[]>`. Echte Tab-Isolation server-side (vorher: globale History für alle Tabs). Backward-compat-Migration für bestehende Array-Files.
+- **Hygiene**: `console.log` → `logger.info` in `prompt.detector.ts`, `.gitignore` `.venv*/` für TTS-sidecar-venvs.
+
+### Quelle der ursprünglichen Probleme
+- Qwen3-Modelle sind **thinking models** mit separatem `reasoning_content`-Stream-Feld (OpenAI-Extension via LM Studio) — der Server-Code wurde nie dafür angepasst.
+- Memory-System hatte Pflicht zur `[MEMORY_UPDATE]`-Emission → Modell halluzinierte „Kein Projekt genannt" als Projekt-Namen, „Name ist Kadir" 12× in unterschiedlichen Phrasings.
+- ChatHistory war global, Mobile-Bucketing per Tab führte zu UI/Server-Asymmetrie.
+
+### Backups
+- `~/.tms-terminal/manager-memory.json.bak.20260424-112851` (vor Project-Cleanup, 78 KB)
+- `~/.tms-terminal/manager-memory.json.bak.20260424-113944` (vor Facts/Insights-Cleanup, 74 KB)
+- `~/.tms-terminal/chat-history.json.bak.<ts>` (vor Map-Migration)
+
+### Bewusst NICHT angefasst
+- Persönliche Belastungs-Infos in `learnedFacts` (Trennung, Schulden, Depression) — keine Duplikate, konservativ behalten.
+- Firebase-Service-Account in Git-History (separate Aktion nötig: `git filter-repo`).
+- Untracked dirs (prototype/, generated-presentations/, mcp-server/) — User-Entscheid offen.
+
 ## 2026-04-24 — TTS-Upgrade auf Qwen3-TTS-VoiceDesign-1.7B (Server-only)
 
 ### Was gemacht

@@ -486,6 +486,9 @@ export function TerminalScreen({ navigation, route }: Props) {
         case 'manager:stream_chunk':
           store.appendStreamChunk(m.payload.token, m.payload.completionTokens != null ? { completionTokens: m.payload.completionTokens, tps: m.payload.tps ?? 0 } : undefined);
           break;
+        case 'manager:thinking_chunk':
+          store.appendThinkingChunk(m.payload.token);
+          break;
         case 'manager:stream_end':
           store.finishStream(m.payload.text, m.payload.actions, m.payload.phases, m.payload.images, m.payload.presentations);
           notifyManagerResponse(m.payload.text, agentName, store.personality.agentAvatarUri);

@@ -423,6 +423,11 @@ export interface ManagerStreamChunkMessage {
   payload: { token: string };
 }
 
+export interface ManagerThinkingChunkMessage {
+  type: 'manager:thinking_chunk';
+  payload: { token: string };
+}
+
 export interface ManagerStreamEndMessage {
   type: 'manager:stream_end';
   payload: {
@@ -528,6 +533,7 @@ export type ServerMessage =
   | ManagerMemoryDataMessage
   | ManagerThinkingMessage
   | ManagerStreamChunkMessage
+  | ManagerThinkingChunkMessage
   | ManagerStreamEndMessage
   | ManagerModelStatusMessage
   | ChromeStatusMessage

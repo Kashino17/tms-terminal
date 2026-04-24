@@ -120,6 +120,7 @@ function setupManagerCallbacks(ws: WebSocket): void {
     createTerminalForManager,
     closeTerminalForManager,
     (tasks) => sendManager({ type: 'manager:tasks', payload: { tasks } }),
+    (token) => sendManager({ type: 'manager:thinking_chunk', payload: { token } }),
   );
 }
 

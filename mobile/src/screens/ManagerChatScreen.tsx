@@ -372,13 +372,15 @@ const PHASE_COLOR_MAP: Record<string, number> = {
 const PHASE_COLORS = [colors.textDim, colors.primary, '#C8913A', '#22C55E'];
 const PHASE_TEXT_COLORS = [colors.textDim, colors.textMuted, colors.textMuted, '#4ADE80'];
 
-function ThinkingBubble({ phase, streamingText, onCancel, requestStartTime, tokenStats }: {
+function ThinkingBubble({ phase, streamingText, thinkingText, onCancel, requestStartTime, tokenStats }: {
   phase: string;
   streamingText: string;
+  thinkingText: string;
   onCancel: () => void;
   requestStartTime: number | null;
   tokenStats: { completionTokens: number; tps: number } | null;
 }) {
+  const [thinkOpen, setThinkOpen] = useState(false);
   // Equalizer bar animations (native driver only — safe)
   const bar1 = useRef(new Animated.Value(0.3)).current;
   const bar2 = useRef(new Animated.Value(0.3)).current;
@@ -468,6 +470,28 @@ function ThinkingBubble({ phase, streamingText, onCancel, requestStartTime, toke
           ]} />
         </View>
 
+        {/* Reasoning / thinking output (collapsible — Qwen3, DeepSeek R1) */}
+        {thinkingText.length > 0 && (
+          <View style={stripStyles.thinkWrap}>
+            <TouchableOpacity onPress={() => setThinkOpen(o => !o)} activeOpacity={0.6} style={stripStyles.thinkHeader}>
+              <Text style={stripStyles.thinkChevron}>{thinkOpen ? '▾' : '▸'}</Text>
+              <Text style={stripStyles.thinkLabel}>Denkt nach</Text>
+              <Text style={stripStyles.thinkCount}>{thinkingText.length} Zeichen</Text>
+            </TouchableOpacity>
+            {thinkOpen && (
+              <ScrollView
+                style={stripStyles.thinkBody}
+                nestedScrollEnabled
+                showsVerticalScrollIndicator
+              >
+                <Text style={stripStyles.thinkText}>
+                  {thinkingText.length > 1500 ? `…${thinkingText.slice(-1500)}` : thinkingText}
+                </Text>
+              </ScrollView>
+            )}
+          </View>
+        )}
+
         {/* Streaming text (scrollable, max 50% screen height) */}
         {isStreaming && (
           <ScrollView
@@ -536,7 +560,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
     addMessage, addError,
     setLoading, clearMessages, clearSessionMessages, deleteMessage,
     personality, onboarded, setPersonality, setOnboarded,
-    thinking, streamingText, streamTokenStats, lastPhases, requestStartTime,
+    thinking, streamingText, streamingThinkingText, streamTokenStats, lastPhases, requestStartTime,
     setThinking,
     sessionMessages, activeChat, setActiveChat,
     delegatedTasks, ttsEvent, ttsAudioMap, setTtsAudioEntry,
@@ -588,6 +612,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [phasePopupVisible, setPhasePopupVisible] = useState(false);
   const [, setTaskTick] = useState(0); // Force re-render for task age display
+  const [thinkingExpanded, setThinkingExpanded] = useState<Record<string, boolean>>({});
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
 
   // Update task age display every 10s
@@ -1333,11 +1358,33 @@ export function ManagerChatScreen({ navigation, route }: Props) {
               </View>
             )}
 
+            {/* Persistent Thinking Log (Qwen3, DeepSeek R1) */}
+            {item.thinkingText && item.role === 'assistant' && thinkingExpanded[item.id] && (
+              <ScrollView
+                style={styles.persistentThinkBody}
+                nestedScrollEnabled
+                showsVerticalScrollIndicator
+              >
+                <Text style={styles.persistentThinkText}>{item.thinkingText}</Text>
+              </ScrollView>
+            )}
+
             {/* Timestamp + Response Duration */}
             <View style={styles.timestampRow}>
               <Text style={styles.timestamp}>
                 {new Date(item.timestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
               </Text>
+              {item.thinkingText && item.role === 'assistant' && (
+                <Pressable
+                  onPress={() => setThinkingExpanded(s => ({ ...s, [item.id]: !s[item.id] }))}
+                  hitSlop={6}
+                >
+                  <View style={styles.durationBadge}>
+                    <Text style={styles.thinkBadgeIcon}>{thinkingExpanded[item.id] ? '▾' : '▸'}</Text>
+                    <Text style={styles.durationText}>Denkt-Log · {item.thinkingText.length}</Text>
+                  </View>
+                </Pressable>
+              )}
               {item.responseDuration != null && item.role === 'assistant' && (
                 <Pressable onPress={() => setPhasePopupVisible(true)} hitSlop={6}>
                   <View style={styles.durationBadge}>
@@ -1355,7 +1402,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         </Pressable>
       </>
     );
-  }, [handleMessageLongPress, filteredMessages, reversedMessages, searchQuery, ttsAudio, ttsLoading, ttsProgress]);
+  }, [handleMessageLongPress, filteredMessages, reversedMessages, searchQuery, ttsAudio, ttsLoading, ttsProgress, thinkingExpanded]);
 
   // ── Active Provider Label ─────────────────────────────────────────────────
 
@@ -1768,6 +1815,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
       {(loading || (thinking && thinking.phase !== '')) && <ThinkingBubble
         phase={thinking?.phase || '__sending'}
         streamingText={streamingText}
+        thinkingText={streamingThinkingText}
         requestStartTime={requestStartTime}
         tokenStats={streamTokenStats}
         onCancel={() => {
@@ -2407,6 +2455,27 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontFamily: 'monospace',
     fontWeight: '500' as const,
+  },
+  thinkBadgeIcon: {
+    color: colors.textDim,
+    fontSize: 9,
+    width: 8,
+  },
+  persistentThinkBody: {
+    marginTop: 6,
+    maxHeight: 220,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(148,163,184,0.05)',
+    borderLeftWidth: 2,
+    borderLeftColor: 'rgba(148,163,184,0.2)',
+  },
+  persistentThinkText: {
+    color: colors.textDim,
+    fontSize: 11,
+    lineHeight: 16,
+    fontStyle: 'italic',
   },
 
   // Session Chips
@@ -3076,6 +3145,46 @@ const stripStyles = StyleSheet.create({
     color: colors.textDim,
     paddingHorizontal: 14,
     paddingVertical: 6,
+  },
+  thinkWrap: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148,163,184,0.04)',
+    backgroundColor: 'rgba(148,163,184,0.03)',
+  },
+  thinkHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    gap: 8,
+  },
+  thinkChevron: {
+    fontSize: 11,
+    color: colors.textDim,
+    width: 10,
+  },
+  thinkLabel: {
+    fontSize: 11,
+    fontStyle: 'italic',
+    color: colors.textMuted,
+    fontWeight: '500',
+  },
+  thinkCount: {
+    fontSize: 9,
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    color: colors.textDim,
+    marginLeft: 'auto',
+  },
+  thinkBody: {
+    maxHeight: Dimensions.get('window').height * 0.35,
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+  },
+  thinkText: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.textDim,
+    fontStyle: 'italic',
   },
 });
 

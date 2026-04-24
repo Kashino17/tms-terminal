@@ -1,12 +1,17 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-04-24 (TTS migriert auf Qwen3-TTS-VoiceDesign-1.7B — server-only, kein Mobile-Rebuild)_
+_Zuletzt aktualisiert: 2026-04-24 (Manager Reasoning-Streaming + Memory-Refactor + Per-Tab Chat-History — v1.21.0)_
 
 ## Aktuelle Version
-- **App:** v1.20.4 released auf GitHub (Manager-Terminal Duplikat-Fix)
-- **Server:** Pending auf `feat/chrome-remote-control` — commit `c36d21f` TTS-Upgrade, braucht `tms-terminal update` + Restart
+- **App:** v1.21.0 — neu released, Thinking-Bubble + Persistente Reasoning-Anzeige
+- **Server:** Pending auf `feat/chrome-remote-control` — braucht `tms-terminal update` + Restart
 
 ## Zuletzt abgeschlossene Features
+- **Manager-Reasoning-Streaming + Memory-Refactor + Per-Tab Chat-History (v1.21.0)** — größerer Eingriff über die ganze Manager-Pipeline:
+  - **Reasoning-Streaming**: Qwen3 thinking-Tokens (`delta.reasoning_content`) werden jetzt gelesen, separater WS-Event `manager:thinking_chunk`, faltbare „Denkt nach"-Sektion in Live-Bubble + persistente „Denkt-Log"-Anzeige in MessageBubble. Behebt: leere Antworten nach 5 Min Generationszeit bei Qwen 3.6 35B local.
+  - **Memory-Refactor**: Junk-Filter (`isJunkProjectName`, `isJunkFact`, `isJunkPath`), Fuzzy-Dedup via Token-Jaccard mit deutschen Stopwords, Topic-Slot Conflict Detection (Name/Device/Wohnort/Beruf), Time-Decay für Insights (`archivedInsights` Sektion). Pflicht-Block gelockert: kein Halluzinations-Druck mehr. Live-Cleanup: 20→5 Projekte, 50→21 facts, 30→9 traits, 200→180 insights.
+  - **Per-Tab Chat-History**: `chatHistoriesByTab: Map<string, ChatMessage[]>` ersetzt globalen `chatHistory: ChatMessage[]`. Echte Tab-Isolation server-side. Backward-compat-Migration vorhandener Array-Files.
+  - **Hygiene**: prompt.detector.ts mit logger.info statt console.log, `.gitignore` `.venv*/` für TTS-Sidecars.
 - **TTS: Qwen3-TTS-VoiceDesign-1.7B (commit `c36d21f`, server-only)** — Upgrade von 0.6B-Base auf 1.7B-VoiceDesign. Stimm-Identität kommt jetzt aus Text-Prompt (`voice_prompt` in `~/.tms-terminal/voice_prompt.txt`, default Rem-styled). Protocol unterstützt optional `emotion_prompt` für dynamische Ton-Modulation pro Message (noch nicht vom Manager-Agent gesetzt — nur Infrastruktur). API-Wechsel: `mlx_audio.tts.generate.generate_audio` → `mlx_audio.tts.utils.load_model` + `model.generate_voice_design`. Output unverändert 24kHz PCM mono, backward-kompatibel für mobile Client. Tradeoff: ~3× RAM (3GB), langsamer, aber `instruct`-basierte Ton-Steuerung unlocked. Smoke-Test grün.
 - **Manager-Terminal Duplikat-Fix (v1.20.4, released)** — WebSocket-Service feuerte `terminal:created` an persistent Handler + reguläre Listener parallel, beide hatten Tab-Create-Logik (nur persistent mit Dedupe-Check). Duplikat-Logik aus regulärem Listener entfernt. Commit `f3ffa2c`.
 - **Voice Mode Hotfixes (v1.20.3, released)** — Nach v1.20.2-Feedback: echte Fullscreen via `expo-navigation-bar` (`overlay-swipe` immersive-sticky mode), Mic-Cooldown jetzt auf `audioQueue.isIdle()` + 300ms statt fixed 600ms (fängt TTS-Playback-Overlap auf — Server ist fertig bevor Mobile's AudioQueue aufgebraucht ist), Karaoke-Highlight jetzt via neuem `AudioPlayerQueue.onChunkStart`-Callback (fires BEFORE `sound.playAsync()`) statt auf Chunk-Receive — vorher rannte Highlight voraus weil F5-TTS Chunks voraus generiert. Commits: `551c72a` (Fix 3), `7d54174` (Fix 2), `5491320` (Fix 1).
@@ -34,6 +39,12 @@ _Zuletzt aktualisiert: 2026-04-24 (TTS migriert auf Qwen3-TTS-VoiceDesign-1.7B �
 - Shell-Badges fehlen in der Terminal-UI — User kann "Shell 1/2/3" nicht den echten Terminals zuordnen
 - Kimi K2.5 Model-ID muss verifiziert werden
 - `git push` hängt manchmal — Fix: `GIT_TERMINAL_PROMPT=0`
+- **Firebase-Secrets in Git-History** (`firebase-service-account.json`, `firebase-debug.log`) — `.gitignore` ignoriert sie jetzt, aber alte Commits enthalten sie noch. Cleanup wäre `git filter-repo` + Key-Regenerierung. Bisher nicht angegangen.
+- **Zombie Server-Prozess** PID 17622 (CLOSE_WAIT) parallel zum aktiven 95170 — User muss `kill 17622` lokal.
+- **Branch-Name-Mismatch**: `feat/chrome-remote-control` enthält hauptsächlich Voice-/Manager-Commits — Branch sollte umbenannt werden vor Merge in master.
+- **Untracked dirs**: `prototype/`, `generated-presentations/`, `mcp-server/` — Entscheidung offen ob gitignore oder commit.
+- **Memory: noch nicht SOTA** — fehlt: Vector-Embeddings für semantic dedup, RAG-Retrieval (komplett-inject statt top-k), separates Extraction-Modell (Manager-LLM extrahiert sich selbst → halluziniert), Conflict-Resolution für non-slot-Topics, Confidence-Scores. Quick-Wins (#1-#3) sind aber drin.
+- **Server-Bucket-Cleanup bei Tab-Löschung**: Wenn User in Mobile `clearSessionMessages` macht, bleibt der Server-Bucket erhalten. Müsste neuer WS-Event `manager:clear_chat` mit `targetSessionId`. Nicht akut.
 
 ## Nächste geplante Schritte
 - Shell-Naming Feature: echte Terminal-Namen statt "Shell 1/2/3" + Badges in der Terminal-UI

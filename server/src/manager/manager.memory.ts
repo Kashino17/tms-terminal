@@ -72,6 +72,9 @@ export interface ManagerMemory {
   personality: MemoryPersonality;
   projects: MemoryProject[];
   insights: MemoryInsight[];
+  /** Insights older than INSIGHT_ARCHIVE_DAYS — kept for the user's audit trail
+   *  but excluded from the AI's system prompt. Bounded by MAX_ARCHIVED_INSIGHTS. */
+  archivedInsights: MemoryInsight[];
   journal: MemoryJournalEntry[];
   recentChat: MemoryChatEntry[];
   stats: MemoryStats;
@@ -97,6 +100,7 @@ export function createEmptyMemory(): ManagerMemory {
     },
     projects: [],
     insights: [],
+    archivedInsights: [],
     journal: [],
     recentChat: [],
     stats: {
@@ -118,6 +122,7 @@ export function loadMemory(): ManagerMemory {
         personality: { ...empty.personality, ...parsed.personality },
         projects: parsed.projects ?? empty.projects,
         insights: parsed.insights ?? empty.insights,
+        archivedInsights: parsed.archivedInsights ?? empty.archivedInsights,
         journal: parsed.journal ?? empty.journal,
         recentChat: parsed.recentChat ?? empty.recentChat,
         stats: { ...empty.stats, ...parsed.stats },
@@ -150,6 +155,7 @@ export function enforceLimits(memory: ManagerMemory): void {
   if (memory.recentChat.length > MAX_RECENT_CHAT) {
     memory.recentChat = memory.recentChat.slice(-MAX_RECENT_CHAT);
   }
+  archiveOldInsights(memory);
   if (memory.insights.length > MAX_INSIGHTS) {
     memory.insights = memory.insights.slice(-MAX_INSIGHTS);
   }
@@ -179,6 +185,211 @@ export interface MemoryUpdate {
   journalEntries: string[];
 }
 
+// ── Project Validation & Normalization ─────────────────────────────────────
+// Background: the AI is instructed to ALWAYS emit a [MEMORY_UPDATE] block,
+// which leads it to fabricate "projects" like "Kein Projekt genannt" / "N/A"
+// when no real project was discussed. These sentinels filter that garbage out
+// and let fuzzy matching merge variants like "TMS Solvado" / "tms Solvado &
+// Shoporu" / "Solvado/Shoporu" into one canonical entry.
+
+const JUNK_PROJECT_PATTERNS = [
+  /^(keine?\b.*projekte?)/i,
+  /^(kein\s+projekt)/i,
+  /^(no\s+project)/i,
+  /^n\/?a$/i,
+  /^unbekannt$/i,
+  /^unknown$/i,
+  /^-+$/,
+  /^—+$/,
+  /^\.*$/,
+];
+
+function isJunkProjectName(name: string): boolean {
+  const trimmed = name.trim();
+  if (trimmed.length < 2) return true;
+  return JUNK_PROJECT_PATTERNS.some(p => p.test(trimmed));
+}
+
+const JUNK_PATH_VALUES = new Set(['', '-', '/', '/-', 'n/a', 'na', '—', '.', './', 'unbekannt', 'unknown']);
+
+function isJunkPath(path: string): boolean {
+  return JUNK_PATH_VALUES.has(path.trim().toLowerCase());
+}
+
+/** Looks like a real filesystem path (absolute, ~/, or repo-relative with at
+ *  least one segment + an extension or recognized parent like Desktop/src). */
+function isRealisticPath(path: string): boolean {
+  const p = path.trim();
+  if (!p || isJunkPath(p)) return false;
+  if (p.startsWith('/') && p.length > 4 && !p.startsWith('/-')) return true;
+  if (p.startsWith('~/')) return true;
+  if (/^[A-Za-z]:[\\/]/.test(p)) return true; // Windows
+  return false;
+}
+
+/** Normalize a project name for fuzzy matching. Lowercases, strips separators
+ *  ("&", "und", "+", "/", ","), collapses whitespace. "TMS Solvado & Shoporu"
+ *  becomes "tms solvado shoporu" — easy to compare via token overlap. */
+function normalizeProjectName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\s*[&+/,]\s*|\s+und\s+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Returns the count of shared significant tokens (length ≥ 4) between a/b.
+ *  Ignores generic words like "tms", "und". Two projects match if they share
+ *  ≥ 1 distinctive token (e.g. "shoporu", "solvado"). */
+function projectNameOverlap(a: string, b: string): number {
+  const stop = new Set(['tms', 'und', 'der', 'die', 'das', 'app', 'web', 'ui', 'dev']);
+  const tokens = (s: string) =>
+    new Set(normalizeProjectName(s).split(' ').filter(t => t.length >= 4 && !stop.has(t)));
+  const ta = tokens(a);
+  const tb = tokens(b);
+  let n = 0;
+  for (const t of ta) if (tb.has(t)) n++;
+  return n;
+}
+
+// ── Generic Fact / Insight Validation & Deduplication ─────────────────────
+// The AI is instructed to ALWAYS emit learned/trait/insight lines, which
+// causes the same fact to be rephrased and re-stored dozens of times
+// ("Name ist Kadir" → "Der User heißt Kadir" → "User-Name ist Kadir" …).
+// Token-Jaccard catches these; junk patterns drop AI placeholders.
+
+const JUNK_FACT_PATTERNS = [
+  /^keine?\b.*(fakten|persönlich|daten|info|details|merkmale|extrahier|identifizier)/i,
+  /^user\s+hat\s+sich\s+lediglich/i,
+  /^kein(e)?\s+(neuen?|weiteren?)/i,
+  /^nichts\s+neues/i,
+  /^-+$/,
+  /^—+$/,
+  /^\.+$/,
+];
+
+function isJunkFact(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 5) return true;
+  return JUNK_FACT_PATTERNS.some(p => p.test(t));
+}
+
+const FACT_STOP_WORDS = new Set([
+  'der', 'die', 'das', 'des', 'dem', 'den', 'ein', 'eine', 'einen', 'einer', 'eines',
+  'und', 'oder', 'aber', 'als', 'auch', 'nur', 'noch', 'schon', 'sehr', 'bei',
+  'ist', 'sind', 'war', 'wird', 'wurde', 'hat', 'hatte', 'haben', 'sein',
+  'in', 'im', 'auf', 'mit', 'für', 'von', 'vom', 'zu', 'zur', 'zum', 'aus', 'an', 'am',
+  'nach', 'vor', 'über', 'unter', 'durch', 'gegen', 'sich', 'wie', 'so', 'nicht',
+  'user', 'agent', 'kadir', 'rem',
+]);
+
+/** Token-Jaccard similarity for natural-language facts. Strips punctuation,
+ *  drops common stopwords + the user/agent name itself (so "Kadir heißt
+ *  Kadir" doesn't trivially match every other fact about Kadir). */
+function factSimilarity(a: string, b: string): number {
+  const tokens = (s: string) =>
+    new Set(
+      s.toLowerCase()
+        .replace(/[^\w\säöüß]/g, ' ')
+        .split(/\s+/)
+        .filter(t => t.length >= 3 && !FACT_STOP_WORDS.has(t)),
+    );
+  const ta = tokens(a);
+  const tb = tokens(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  const union = new Set([...ta, ...tb]).size;
+  return inter / union;
+}
+
+/** Returns the existing entry that semantically matches `text` (Jaccard ≥ 0.5),
+ *  or undefined if none. Used to drop fuzzy duplicates and prefer the longer
+ *  / more informative phrasing when a new variant arrives. */
+function findFuzzyDuplicate(text: string, existing: string[]): { index: number; existing: string } | undefined {
+  for (let i = 0; i < existing.length; i++) {
+    if (factSimilarity(text, existing[i]) >= 0.5) {
+      return { index: i, existing: existing[i] };
+    }
+  }
+  return undefined;
+}
+
+// ── Insight Time-Decay ─────────────────────────────────────────────────────
+// Insights age out: only items from the last INSIGHT_ACTIVE_DAYS days are
+// shown to the AI. Items older than INSIGHT_ARCHIVE_DAYS are moved out of
+// the active list entirely (still kept in archivedInsights for the user's
+// audit trail / Memory-Editor view).
+
+const INSIGHT_ACTIVE_DAYS = 14;   // shown in system prompt
+const INSIGHT_ARCHIVE_DAYS = 30;  // moved to archivedInsights after this
+const MAX_ARCHIVED_INSIGHTS = 500;
+
+function daysAgo(dateStr: string): number {
+  if (!dateStr) return Infinity;
+  const then = new Date(`${dateStr}T00:00:00`).getTime();
+  if (isNaN(then)) return Infinity;
+  return (Date.now() - then) / (1000 * 60 * 60 * 24);
+}
+
+function archiveOldInsights(memory: ManagerMemory): void {
+  if (!memory.archivedInsights) memory.archivedInsights = [];
+  const stillActive: MemoryInsight[] = [];
+  for (const insight of memory.insights) {
+    if (daysAgo(insight.date) > INSIGHT_ARCHIVE_DAYS) {
+      memory.archivedInsights.push(insight);
+    } else {
+      stillActive.push(insight);
+    }
+  }
+  memory.insights = stillActive;
+  if (memory.archivedInsights.length > MAX_ARCHIVED_INSIGHTS) {
+    memory.archivedInsights = memory.archivedInsights.slice(-MAX_ARCHIVED_INSIGHTS);
+  }
+}
+
+// ── Topic-Slot Conflict Detection ─────────────────────────────────────────
+// Some facts are inherently single-valued — the user has exactly ONE name,
+// ONE primary device, ONE current job. When a new fact lands in such a slot,
+// the previous occupant should be REPLACED, not appended (otherwise we end up
+// with "Name ist Kadir" 12 times in different phrasings).
+//
+// If the user genuinely changes ("ich heiße jetzt Karl"), this also does the
+// right thing — the latest fact wins.
+
+const SINGLE_FACT_TOPICS: Array<{ name: string; pattern: RegExp }> = [
+  { name: 'user_name', pattern: /\b(heißt|heisst|name\s+ist|nennt\s+sich|benutzername|user-name|name\s+des\s+users)\b/i },
+  { name: 'user_device', pattern: /\b(fold\s*\d?|iphone|galaxy|samsung|android|ios)\b/i },
+  { name: 'user_location', pattern: /\b(wohnt|lebt|adresse|wohnort)\s+(in|im|bei)\b/i },
+  { name: 'user_job', pattern: /\b(arbeitet\s+als|beruf\s+ist|tätig\s+als)\b/i },
+];
+
+function detectFactTopic(text: string): string | null {
+  for (const { name, pattern } of SINGLE_FACT_TOPICS) {
+    if (pattern.test(text)) return name;
+  }
+  return null;
+}
+
+/** Insert `fact` into `bucket`, with single-slot semantics for known topics
+ *  and fuzzy-dedup as the fallback. Mutates `bucket` in place. */
+function upsertFact(bucket: string[], fact: string): void {
+  const topic = detectFactTopic(fact);
+  if (topic) {
+    const slotIdx = bucket.findIndex(f => detectFactTopic(f) === topic);
+    if (slotIdx !== -1) {
+      bucket[slotIdx] = fact;
+      return;
+    }
+  }
+  const dup = findFuzzyDuplicate(fact, bucket);
+  if (!dup) {
+    bucket.push(fact);
+  } else if (fact.length > dup.existing.length * 1.3) {
+    bucket[dup.index] = fact;
+  }
+}
+
 export function parseMemoryUpdate(text: string): MemoryUpdate | null {
   const match = text.match(/\[MEMORY_UPDATE\]([\s\S]*?)\[\/MEMORY_UPDATE\]/);
   if (!match) return null;
@@ -192,24 +403,28 @@ export function parseMemoryUpdate(text: string): MemoryUpdate | null {
 
     if (line.startsWith('learned:')) {
       const fact = line.slice('learned:'.length).trim();
-      if (fact) update.learnedFacts.push(fact);
+      if (fact && !isJunkFact(fact)) update.learnedFacts.push(fact);
     } else if (line.startsWith('trait:')) {
       const trait = line.slice('trait:'.length).trim();
-      if (trait) update.traits.push(trait);
+      if (trait && !isJunkFact(trait)) update.traits.push(trait);
     } else if (line.startsWith('project:')) {
       const raw2 = line.slice('project:'.length).trim();
       const parts = raw2.split('|').map((p) => p.trim());
-      if (parts[0]) {
+      const name = parts[0] ?? '';
+      const path = parts[1] ?? '';
+      // Drop AI-fabricated placeholders like "Kein Projekt genannt | | |".
+      // Require either a non-junk name OR a realistic path — preferably both.
+      if (name && !isJunkProjectName(name)) {
         update.projects.push({
-          name: parts[0] ?? '',
-          path: parts[1] ?? '',
+          name,
+          path: isJunkPath(path) ? '' : path,
           type: parts[2] ?? '',
           notes: parts[3] ?? '',
         });
       }
     } else if (line.startsWith('insight:')) {
       const insight = line.slice('insight:'.length).trim();
-      if (insight) update.insights.push(insight);
+      if (insight && !isJunkFact(insight)) update.insights.push(insight);
     } else if (line.startsWith('journal:')) {
       const entry = line.slice('journal:'.length).trim();
       if (entry) update.journalEntries.push(entry);
@@ -227,35 +442,45 @@ export function parseMemoryUpdate(text: string): MemoryUpdate | null {
 }
 
 export function applyMemoryUpdate(memory: ManagerMemory, update: MemoryUpdate): void {
-  for (const fact of update.learnedFacts) {
-    if (!memory.user.learnedFacts.includes(fact)) {
-      memory.user.learnedFacts.push(fact);
-    }
-  }
-
-  for (const trait of update.traits) {
-    if (!memory.personality.traits.includes(trait)) {
-      memory.personality.traits.push(trait);
-    }
-  }
+  for (const fact of update.learnedFacts) upsertFact(memory.user.learnedFacts, fact);
+  for (const trait of update.traits) upsertFact(memory.personality.traits, trait);
 
   for (const proj of update.projects) {
-    const existing = memory.projects.find(
-      (p) => p.name === proj.name || (proj.path && p.path === proj.path)
-    );
+    // Match priority: exact path > exact name > fuzzy name overlap (≥ 1 distinctive token).
+    // This fuses "TMS Solvado", "tms Solvado & Shoporu", "Solvado/Shoporu" into one entry.
+    const existing =
+      memory.projects.find(p => proj.path && isRealisticPath(proj.path) && p.path === proj.path)
+      ?? memory.projects.find(p => p.name.toLowerCase() === proj.name.toLowerCase())
+      ?? memory.projects.find(p => projectNameOverlap(p.name, proj.name) >= 1);
+
     if (existing) {
-      existing.name = proj.name || existing.name;
-      existing.path = proj.path || existing.path;
-      existing.type = proj.type || existing.type;
-      existing.notes = proj.notes || existing.notes;
+      // Prefer the cleaner / more specific name (longer + contains real letters wins).
+      if (proj.name.length > existing.name.length && /[a-zA-Z]{3,}/.test(proj.name)) {
+        existing.name = proj.name;
+      }
+      // Path: only overwrite with a realistic path. Never replace a real path with junk.
+      if (isRealisticPath(proj.path) && !isRealisticPath(existing.path)) {
+        existing.path = proj.path;
+      } else if (proj.path && !existing.path) {
+        existing.path = proj.path;
+      }
+      if (proj.type && proj.type !== '/') existing.type = proj.type;
+      if (proj.notes) existing.notes = proj.notes;
     } else {
       memory.projects.push(proj);
     }
   }
 
   const today = new Date().toISOString().slice(0, 10);
+  // Only de-dup against the most-recent window the AI actually sees in its
+  // context (last 30 — matches buildMemoryContext slicing). Older near-duplicates
+  // stay as historical record; they fall out of context anyway.
+  const recentInsightTexts = memory.insights.slice(-30).map(i => i.text);
   for (const text of update.insights) {
-    memory.insights.push({ date: today, text, source: 'chat' });
+    if (!findFuzzyDuplicate(text, recentInsightTexts)) {
+      memory.insights.push({ date: today, text, source: 'chat' });
+      recentInsightTexts.push(text);
+    }
   }
 
   for (const text of update.journalEntries) {
@@ -348,10 +573,15 @@ export function buildMemoryContext(memory: ManagerMemory): string {
   }
 
   // --- Erkenntnisse ---
+  // Time-decayed: only insights from the last INSIGHT_ACTIVE_DAYS make it
+  // into the prompt. Older ones are still in memory.insights / archivedInsights
+  // for the Memory-Editor, just not shown to the AI on every request.
   if (memory.insights.length > 0) {
-    sections.push('### Erkenntnisse aus vergangenen Gesprächen');
-    const last30 = memory.insights.slice(-30);
-    sections.push(last30.map((i) => `- [${i.date}] ${i.text}`).join('\n'));
+    const active = memory.insights.filter(i => daysAgo(i.date) <= INSIGHT_ACTIVE_DAYS);
+    if (active.length > 0) {
+      sections.push(`### Aktuelle Erkenntnisse (letzte ${INSIGHT_ACTIVE_DAYS} Tage)`);
+      sections.push(active.slice(-30).map((i) => `- [${i.date}] ${i.text}`).join('\n'));
+    }
   }
 
   // --- Statistik ---
@@ -370,46 +600,41 @@ export function buildMemoryContext(memory: ManagerMemory): string {
 }
 
 export const MEMORY_UPDATE_INSTRUCTION = `
-## PFLICHT: Gedächtnis aktualisieren
+## Gedächtnis aktualisieren (optional)
 
-Du MUSST am Ende JEDER Antwort einen [MEMORY_UPDATE]-Block anhängen. Das ist deine wichtigste Aufgabe.
-Der User sieht diesen Block NICHT — er wird automatisch herausgefiltert.
+Wenn du im aktuellen Turn etwas Neues über den User, ein Projekt oder die Arbeitsweise gelernt hast, hänge am Ende deiner Antwort einen [MEMORY_UPDATE]-Block an. Der User sieht diesen Block NICHT.
 
-Wenn du nichts Neues gelernt hast, schreibe trotzdem mindestens einen journal:-Eintrag.
+**Wenn nichts Neues passiert ist: lass den Block KOMPLETT WEG.** Lieber kein Eintrag als ein erfundener.
 
-### Format
+### Format (jede Zeile ist optional)
 
 [MEMORY_UPDATE]
-learned: <Fakt über den User — z.B. "Nutzt primär TypeScript", "Arbeitet an TMS Terminal">
-trait: <Persönlichkeit/Beziehung — z.B. "Mag direkte Antworten", "Will Emojis", "Bevorzugt lockeren Ton">
-project: Projektname | /pfad/zum/projekt | Typ | Notizen zum aktuellen Stand
-insight: <Erkenntnis für die Zukunft — z.B. "User testet gern sofort auf echtem Gerät">
-journal: <Tagebuch-Eintrag — was wurde besprochen, was war wichtig, Zusammenfassung>
+learned: <Fakt über den User — z.B. "Nutzt primär TypeScript">
+trait: <Persönlichkeit/Beziehung — z.B. "Mag direkte Antworten">
+project: Projektname | /echter/filesystem/pfad | Typ | Notizen zum Stand
+insight: <Erkenntnis für die Zukunft — z.B. "User testet sofort auf echtem Gerät">
+journal: <Was Wichtiges besprochen wurde — Meilenstein, Entscheidung, Konflikt>
 [/MEMORY_UPDATE]
 
-### Wann was schreiben
+### Regeln pro Zeilentyp
 
-- **learned:** Bei JEDER neuen Info über den User (Name, Vorlieben, Tech-Stack, Arbeitsstil)
-- **trait:** Bei jeder Erkenntnis über den Kommunikationsstil oder die Beziehung
-- **project:** Wenn ein Projekt erwähnt wird oder Terminal-Output ein Projekt zeigt
-- **insight:** Wenn du etwas Nützliches für zukünftige Gespräche erkennst
-- **journal:** BEI JEDER NACHRICHT — kurze Zusammenfassung was besprochen wurde
+- **learned:** NUR bei wirklich neuer Info (Name, Vorliebe, Tool, Arbeitsstil). Wenn schon bekannt: weglassen.
+- **trait:** NUR bei neuer Erkenntnis über Kommunikationsstil/Beziehung. Routine-Interaktion = kein Eintrag.
+- **project:** NUR wenn ein konkretes Projekt mit echtem Namen UND echtem Pfad (\`/\`, \`~/\`, Laufwerksbuchstabe) genannt wurde. NIEMALS Platzhalter wie "Kein Projekt", "N/A", "—", "/admin".
+- **insight:** NUR bei genuin neuer Erkenntnis, die in zukünftigen Sessions relevant ist.
+- **journal:** NUR bei erwähnenswerten Ereignissen (Feature fertig, Bug gefixt, neue Richtung). Smalltalk, "Hi", Routine-Frage = KEIN Journal-Eintrag.
 
-### Beim Onboarding besonders wichtig
+### Beim Onboarding (erstes Gespräch)
 
-Beim Onboarding (erstes Gespräch) MUSST du ALLES festhalten:
-- Wie der User angesprochen werden will
-- Welchen Namen du bekommen hast
-- Ob Emojis gewünscht sind
-- Ob es locker oder professionell sein soll
-- Welche Projekte der User hat
-- Was der User hauptsächlich macht
+Halte ALLES fest, was der User über sich preisgibt:
+- Wie angesprochen werden, welchen Namen du bekommst, Tonpräferenzen, Hauptprojekte, Arbeitsweise.
 
-### Regeln
-- Einträge kurz (max. 1 Satz pro Zeile)
-- Mehrere Zeilen desselben Typs sind erlaubt
-- Keine exakten Duplikate — aber Updates/Vertiefungen sind erwünscht
-- journal: ist IMMER Pflicht, auch wenn sonst nichts Neues ist
+### Hard-Regeln
+
+- Einträge kurz (max. 1 Satz pro Zeile).
+- Mehrere Zeilen desselben Typs erlaubt.
+- KEIN Pflicht-Block. Wenn nichts Neues: kein Block.
+- KEINE Platzhalter-Einträge ("Nichts neues", "Keine Info", "Heute war ein Tag", "—") — die werden eh rausgefiltert und verschmutzen Logs.
 `.trim();
 
 // ---------------------------------------------------------------------------
@@ -431,11 +656,15 @@ Gib deine Extraktion ausschließlich als [MEMORY_UPDATE]-Block zurück:
 [MEMORY_UPDATE]
 learned: <Fakt über den User>
 trait: <Eigenschaft oder Beziehungsaspekt>
-project: Projektname | /pfad | Typ | Notiz
+project: Projektname | /echter/filesystem/pfad | Typ | Notiz
 insight: <Wichtige Erkenntnis aus dem Gespräch>
 [/MEMORY_UPDATE]
 
-Nur echte neue Informationen aufnehmen. Keine Erfindungen. Einträge kurz und präzise halten.
+KRITISCH:
+- Nur echte neue Informationen. Keine Erfindungen.
+- Einzelne Felder weglassen, wenn nichts Konkretes da ist (eine leere project-Zeile ist BESSER als "project: Kein Projekt | | |").
+- project: NUR wenn ein konkretes Projekt mit echtem Namen UND möglichst echtem Pfad (\`~/...\` oder \`/...\`) genannt wurde. Sonst die project-Zeile KOMPLETT weglassen.
+- Wenn das Gespräch keine Projekt-Info enthält → keine project-Zeile, auch nicht als Platzhalter.
 
 --- Gespräch ---
 ${conversation}`;

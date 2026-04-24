@@ -465,11 +465,20 @@ export interface DelegatedTask {
 
 const HEARTBEAT_INTERVAL_MS = 45_000; // 45s safety-net (event-driven handles ~3s reactions)
 
+/** Bucket key for the "Alle" tab in chatHistoriesByTab. Per-terminal tabs
+ *  use their sessionId as the key. Mirrors the Mobile-side activeChat='alle'
+ *  default — keep these strings in sync. */
+const CHAT_BUCKET_GLOBAL = 'alle';
+const CHAT_BUCKET_MAX_BEFORE_TRUNCATE = 12;
+const CHAT_BUCKET_KEEP_AFTER_TRUNCATE = 6;
+const CHAT_BUCKET_HARD_CAP = 50;
+
 type SummaryCallback = (summary: ManagerSummary) => void;
 type ResponseCallback = (response: ManagerResponse) => void;
 type ErrorCallback = (error: string) => void;
 type ThinkingCallback = (phase: string, detail?: string, elapsed?: number) => void;
 type StreamChunkCallback = (token: string, tokenStats?: { completionTokens: number; tps: number }) => void;
+type ThinkingChunkCallback = (token: string) => void;
 type StreamEndCallback = (text: string, actions: ManagerAction[], phases: PhaseInfo[], images?: string[], presentations?: string[]) => void;
 
 // ── Personality Types ────────────────────────────────────────────────────────
@@ -864,7 +873,11 @@ export class ManagerService {
   private outputBuffers = new Map<string, { data: string; lastUpdated: number }>();
   private lastSummaryAt = new Map<string, number>();
   private sessionLabels = new Map<string, string>();
-  private chatHistory: ChatMessage[] = [];
+  // Per-tab chat history. Each Manager-Chat tab (sessionId-keyed) has its own
+  // conversation thread; the special key CHAT_BUCKET_GLOBAL holds the "Alle"
+  // tab. This mirrors the Mobile-side sessionMessages bucketing so the AI's
+  // memory matches what the user sees in each tab.
+  private chatHistoriesByTab: Map<string, ChatMessage[]> = new Map();
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private cronManager = new CronManager();
   private delegatedTasks: DelegatedTask[] = [];
@@ -884,6 +897,40 @@ export class ManagerService {
   private commandHistory: Array<{ action: string; target: string; detail: string; timestamp: number }> = [];
   private activeVoiceSession: VoiceSessionController | null = null;
 
+  // ── Per-Tab Chat-History Helpers ────────────────────────────────────────
+  /** Resolve the bucket key for a given tab. Undefined / 'alle' / empty all
+   *  map to the global bucket. */
+  private chatBucketKey(targetSessionId?: string): string {
+    return (targetSessionId && targetSessionId !== CHAT_BUCKET_GLOBAL) ? targetSessionId : CHAT_BUCKET_GLOBAL;
+  }
+
+  /** Get-or-create the chat-history bucket for a tab. Returns the live array
+   *  reference — caller can push directly. */
+  private getChatBucket(targetSessionId?: string): ChatMessage[] {
+    const key = this.chatBucketKey(targetSessionId);
+    let bucket = this.chatHistoriesByTab.get(key);
+    if (!bucket) {
+      bucket = [];
+      this.chatHistoriesByTab.set(key, bucket);
+    }
+    return bucket;
+  }
+
+  /** Replace a bucket's contents (used after slice-truncation). */
+  private setChatBucket(targetSessionId: string | undefined, history: ChatMessage[]): void {
+    this.chatHistoriesByTab.set(this.chatBucketKey(targetSessionId), history);
+  }
+
+  /** Aggressive truncation per bucket — same policy as the old monolithic
+   *  history (keep first message + last 6) but applied independently per tab. */
+  private truncateChatBucket(targetSessionId?: string): void {
+    const key = this.chatBucketKey(targetSessionId);
+    const bucket = this.chatHistoriesByTab.get(key);
+    if (!bucket || bucket.length <= CHAT_BUCKET_MAX_BEFORE_TRUNCATE) return;
+    this.chatHistoriesByTab.set(key, [bucket[0], ...bucket.slice(-CHAT_BUCKET_KEEP_AFTER_TRUNCATE)]);
+    logger.info(`Manager: truncated chat bucket "${key}" to ${1 + CHAT_BUCKET_KEEP_AFTER_TRUNCATE} messages`);
+  }
+
   // ── Open-ended question auto-answer ─────────────────────────────
   private lastAnsweredQuestion = new Map<string, { text: string; answeredAt: number }>();
   private questionAnswerInFlight = new Set<string>(); // sessionIds currently being answered
@@ -900,6 +947,7 @@ export class ManagerService {
   private onPersonalityConfigured: ((config: PersonalityConfig) => void) | null = null;
   private onThinking: ThinkingCallback | null = null;
   private onStreamChunk: StreamChunkCallback | null = null;
+  private onThinkingChunk: ThinkingChunkCallback | null = null;
   private onStreamEnd: StreamEndCallback | null = null;
   private onCreateTerminal: ((label?: string) => string | null) | null = null;
   private onCloseTerminal: ((sessionId: string) => boolean) | null = null;
@@ -944,6 +992,7 @@ export class ManagerService {
     onCreateTerminal?: (label?: string) => string | null,
     onCloseTerminal?: (sessionId: string) => boolean,
     onTaskUpdate?: (tasks: DelegatedTask[]) => void,
+    onThinkingChunk?: ThinkingChunkCallback,
   ): void {
     this.onSummary = onSummary;
     this.onResponse = onResponse;
@@ -955,6 +1004,7 @@ export class ManagerService {
     if (onCreateTerminal) this.onCreateTerminal = onCreateTerminal;
     if (onCloseTerminal) this.onCloseTerminal = onCloseTerminal;
     if (onTaskUpdate) this.onTaskUpdate = onTaskUpdate;
+    if (onThinkingChunk) this.onThinkingChunk = onThinkingChunk;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -1443,11 +1493,12 @@ BEISPIEL:
         }
       }
 
-      // Add to chat history
-      this.chatHistory.push({ role: 'assistant', content: stripMemoryTags(reply) });
+      // Add summary to the relevant tab's history (or 'alle' for global poll)
+      const summaryBucket = this.getChatBucket(targetSessionId);
+      summaryBucket.push({ role: 'assistant', content: stripMemoryTags(reply) });
       this.debouncedSaveChatHistory();
-      if (this.chatHistory.length > 50) {
-        this.chatHistory = this.chatHistory.slice(-40);
+      if (summaryBucket.length > CHAT_BUCKET_HARD_CAP) {
+        this.setChatBucket(targetSessionId, summaryBucket.slice(-40));
       }
 
       const summary: ManagerSummary = {
@@ -1796,7 +1847,8 @@ BEISPIEL:
       : '';
 
     const userMessage = `${text}\n\n---\n[HINTERGRUND-KONTEXT — Nur lesen, NICHT automatisch kommentieren. Nur erwähnen wenn relevant für die Frage des Users.]\n${contextBlock}${sessionListing}${taskListing}`;
-    this.chatHistory.push({ role: 'user', content: text });
+    const tabBucket = this.getChatBucket(targetSessionId);
+    tabBucket.push({ role: 'user', content: text });
     this.debouncedSaveChatHistory();
 
     // Phase 2: Build context
@@ -1831,7 +1883,7 @@ BEISPIEL:
       if (toolProvider) {
         // GLM: use native tool calling with multi-turn flow
         // Filter poisoned history: remove assistant messages claiming inability
-        const cleanHistory = this.chatHistory.filter(m => {
+        const cleanHistory = tabBucket.filter(m => {
           if (m.role !== 'assistant') return true;
           // Remove responses where the agent falsely claimed it can't use tools
           return !/kann (ich )?(leider )?(keine|nicht).*(?:bild|image|generier)/i.test(m.content ?? '')
@@ -1839,8 +1891,9 @@ BEISPIEL:
         });
         const chatMessages = [...cleanHistory, { role: 'user' as const, content: onboarding ? text : userMessage }];
 
+        const bucketLabel = this.chatBucketKey(targetSessionId);
         logger.info(`Manager: sending ${MANAGER_TOOLS.length} tools to ${provider.name}: [${MANAGER_TOOLS.map(t => t.function.name).join(', ')}]`);
-        logger.info(`Manager: chat history: ${chatMessages.length} messages (${cleanHistory.length} clean, ${this.chatHistory.length - cleanHistory.length} filtered)`);
+        logger.info(`Manager: chat history (bucket="${bucketLabel}"): ${chatMessages.length} messages (${cleanHistory.length} clean, ${tabBucket.length - cleanHistory.length} filtered)`);
 
         // Token counting for stream stats
         let streamTokenCount = 0;
@@ -1861,6 +1914,10 @@ BEISPIEL:
           },
           undefined,
           this.abortController?.signal,
+          (thinkToken) => {
+            if (this.abortController?.signal.aborted) return;
+            this.onThinkingChunk?.(thinkToken);
+          },
         );
         reply = result.text;
         nativeToolCalls = result.toolCalls;
@@ -2019,6 +2076,7 @@ BEISPIEL:
             (token) => this.onStreamChunk?.(token),
             undefined,
             this.abortController?.signal,
+            (thinkToken) => this.onThinkingChunk?.(thinkToken),
           );
 
           reply = nextResult.text;
@@ -2043,9 +2101,10 @@ BEISPIEL:
       } else {
         // Kimi: text-only streaming (tags parsed later)
         reply = await provider.chatStream(
-          [...this.chatHistory, { role: 'user', content: onboarding ? text : userMessage }],
+          [...tabBucket, { role: 'user', content: onboarding ? text : userMessage }],
           systemPrompt,
           (token) => this.onStreamChunk?.(token),
+          (thinkToken) => this.onThinkingChunk?.(thinkToken),
         );
       }
 
@@ -2134,12 +2193,12 @@ BEISPIEL:
       // update_task(complete_step). Detect this and auto-complete the step.
       this.autoCompleteStepsFromText(cleanReply);
 
-      this.chatHistory.push({ role: 'assistant', content: cleanReply });
+      tabBucket.push({ role: 'assistant', content: cleanReply });
       this.debouncedSaveChatHistory();
-      if (this.chatHistory.length > 12) {
+      if (tabBucket.length > CHAT_BUCKET_MAX_BEFORE_TRUNCATE) {
         // Aggressive truncation — Gemma 4 degrades beyond ~10K tokens of history.
         // Keep first message (user request) + last 6 messages (most recent conversation).
-        // This keeps prompts under ~16K tokens total even with orchestrator outputs.
+        // Per-tab so each Manager-Chat thread stays bounded independently.
         // Defer distillation — don't run during active processing to avoid
         // LM Studio KV-cache eviction (concurrent requests kill performance)
         if (!this.isDistilling) {
@@ -2149,8 +2208,7 @@ BEISPIEL:
             }
           }, 5000); // Wait 5s for current processing to finish
         }
-        this.chatHistory = [this.chatHistory[0], ...this.chatHistory.slice(-6)];
-        logger.info(`Manager: truncated chat history to ${this.chatHistory.length} messages`);
+        this.truncateChatBucket(targetSessionId);
       }
 
       this.memory.recentChat.push({ role: 'assistant', text: cleanReply.slice(0, 2000), timestamp: Date.now() });
@@ -2190,6 +2248,7 @@ BEISPIEL:
             : 'Ich hab mir das gemerkt.';
         } else {
           // Model generated nothing usable — tell the user instead of faking a response.
+          logger.warn(`Manager: empty-reply fallback fired — provider=${provider.id}, raw_reply_len=${reply.length}, clean_reply_len=${cleanReply.length}, actions=${actions.length}, native_tool_calls=${nativeToolCalls.length}, raw_preview=${JSON.stringify(reply.slice(0, 200))}`);
           finalText = '🤔 Ich hab keine Antwort formuliert — frag mich nochmal.';
         }
       }
@@ -3184,7 +3243,9 @@ BEISPIEL:
   private saveChatHistory(): void {
     try {
       const tmpFile = ManagerService.CHAT_FILE + '.tmp';
-      fs.writeFileSync(tmpFile, JSON.stringify(this.chatHistory), { mode: 0o600 });
+      // Serialize the per-tab map as a plain object: { 'alle': [...], '<sessionId>': [...] }
+      const obj = Object.fromEntries(this.chatHistoriesByTab);
+      fs.writeFileSync(tmpFile, JSON.stringify(obj), { mode: 0o600 });
       fs.renameSync(tmpFile, ManagerService.CHAT_FILE);
     } catch (err) {
       logger.warn(`Manager: failed to save chat history — ${err}`);
@@ -3194,15 +3255,36 @@ BEISPIEL:
   private loadChatHistory(): void {
     try {
       if (!fs.existsSync(ManagerService.CHAT_FILE)) return;
-      this.chatHistory = JSON.parse(fs.readFileSync(ManagerService.CHAT_FILE, 'utf-8'));
-      // Cap restored history to prevent context overflow on first AI call
-      if (this.chatHistory.length > 12) {
-        this.chatHistory = [this.chatHistory[0], ...this.chatHistory.slice(-6)];
+      const raw = JSON.parse(fs.readFileSync(ManagerService.CHAT_FILE, 'utf-8'));
+
+      this.chatHistoriesByTab.clear();
+
+      if (Array.isArray(raw)) {
+        // Legacy format: single flat array → migrate everything into the global
+        // bucket. All previous global conversations stay accessible in 'alle'.
+        this.chatHistoriesByTab.set(CHAT_BUCKET_GLOBAL, raw);
+        logger.info(`Manager: migrated ${raw.length} legacy chat messages into "${CHAT_BUCKET_GLOBAL}" bucket`);
+      } else if (raw && typeof raw === 'object') {
+        for (const [key, value] of Object.entries(raw)) {
+          if (Array.isArray(value)) {
+            this.chatHistoriesByTab.set(key, value as ChatMessage[]);
+          }
+        }
       }
-      logger.info(`Manager: restored ${this.chatHistory.length} chat messages from disk`);
+
+      // Cap each bucket independently — prevents context overflow on first AI call
+      for (const key of [...this.chatHistoriesByTab.keys()]) {
+        const bucket = this.chatHistoriesByTab.get(key)!;
+        if (bucket.length > CHAT_BUCKET_MAX_BEFORE_TRUNCATE) {
+          this.chatHistoriesByTab.set(key, [bucket[0], ...bucket.slice(-CHAT_BUCKET_KEEP_AFTER_TRUNCATE)]);
+        }
+      }
+
+      const total = [...this.chatHistoriesByTab.values()].reduce((s, h) => s + h.length, 0);
+      logger.info(`Manager: restored ${this.chatHistoriesByTab.size} chat bucket(s), ${total} total messages`);
     } catch (err) {
       logger.warn(`Manager: failed to load chat history — ${err}`);
-      this.chatHistory = [];
+      this.chatHistoriesByTab.clear();
     }
   }
 

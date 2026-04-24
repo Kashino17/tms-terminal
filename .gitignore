@@ -15,8 +15,9 @@ server/certs/
 .DS_Store
 Thumbs.db
 
-# Python venv (Whisper sidecar)
+# Python venv (Whisper sidecar, F5/Neu/Qwen TTS sidecars)
 .venv/
+.venv*/
 
 # Build
 mobile/android/app/build/

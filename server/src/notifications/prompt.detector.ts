@@ -6,6 +6,8 @@
 // - Robust against dup-fires: buffer-hash cooldown after each successful match.
 // - Minimal false positives: strict patterns, AI detection requires strong signals.
 
+import { logger } from '../utils/logger';
+
 const ANSI_STRIP = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]/g;
 
 // ── Interactive Prompt Patterns ──────────────────────────────────────────────
@@ -144,7 +146,7 @@ export class PromptDetector {
     // Detect AI tool activity (strong signals only)
     const cleanChunk = data.replace(ANSI_STRIP, '');
     if (!this.aiActive.get(sessionId) && AI_ACTIVE_PATTERNS.some(p => p.test(cleanChunk))) {
-      console.log(`[PromptDetector] AI tool detected in ${sessionId.slice(0, 8)}`);
+      logger.info(`[PromptDetector] AI tool detected in ${sessionId.slice(0, 8)}`);
       this.aiActive.set(sessionId, true);
       this.aiDetectedAt.set(sessionId, Date.now());
       this.aiOutputStart.set(sessionId, newLen);
@@ -241,13 +243,13 @@ export class PromptDetector {
     }
 
     if (shellReturned) {
-      console.log(`[PromptDetector] AI FINISHED in ${sessionId.slice(0, 8)} (${outputSinceAi} chars)`);
+      logger.info(`[PromptDetector] AI FINISHED in ${sessionId.slice(0, 8)} (${outputSinceAi} chars)`);
       this.aiActive.set(sessionId, false);
       this.outputLen.set(sessionId, 0);
       this.aiOutputStart.delete(sessionId);
       this.aiDetectedAt.delete(sessionId);
     } else if (matched) {
-      console.log(`[PromptDetector] PROMPT in ${sessionId.slice(0, 8)}: ${matched}`);
+      logger.info(`[PromptDetector] PROMPT in ${sessionId.slice(0, 8)}: ${matched}`);
     }
 
     // Extract meaningful snippet for notification body

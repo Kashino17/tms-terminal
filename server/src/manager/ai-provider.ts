@@ -22,11 +22,16 @@ export interface AiProvider {
   supportsTools(): boolean;
   /** Send chat messages and return the assistant's reply. */
   chat(messages: ChatMessage[], systemPrompt: string): Promise<string>;
-  /** Stream chat response, calling onChunk for each token. Returns full text. */
+  /**
+   * Stream chat response, calling onChunk for each visible token. Returns the
+   * final text (with `<think>` blocks stripped). For thinking-capable models
+   * (Qwen3, etc.), reasoning tokens are routed to onThinkingChunk if provided.
+   */
   chatStream(
     messages: ChatMessage[],
     systemPrompt: string,
     onChunk: (token: string) => void,
+    onThinkingChunk?: (token: string) => void,
   ): Promise<string>;
 }
 
@@ -145,6 +150,77 @@ function createStreamTimeout(idleMs: number, hardLimitMs: number, userCancel?: A
       disposed = true;
       clearTimeout(idleTimer);
       clearTimeout(hardTimer);
+    },
+  };
+}
+
+/**
+ * Stateful router that splits a streamed `delta.content` into normal text and
+ * inline `<think>...</think>` reasoning. Necessary because tags can straddle
+ * chunk boundaries (`<thi` ... `nk>foo</thi` ... `nk>`).
+ *
+ * Use one router per stream. Call feed() for each chunk, flush() at the end.
+ * Returns the visible-text portion that was fed so far (handy for fullText
+ * accumulation without double-buffering).
+ */
+function createThinkRouter() {
+  const OPEN = '<think>';
+  const CLOSE = '</think>';
+  let inThink = false;
+  let buffer = '';
+
+  const drain = (
+    onText: (t: string) => void,
+    onThink: (t: string) => void,
+    flushTail: boolean,
+  ): string => {
+    let visible = '';
+    while (buffer.length > 0) {
+      if (inThink) {
+        const end = buffer.indexOf(CLOSE);
+        if (end === -1) {
+          // Hold last (CLOSE.length - 1) chars in case </think> straddles.
+          const safe = flushTail ? buffer.length : buffer.length - (CLOSE.length - 1);
+          if (safe > 0) {
+            onThink(buffer.slice(0, safe));
+            buffer = buffer.slice(safe);
+          }
+          return visible;
+        }
+        if (end > 0) onThink(buffer.slice(0, end));
+        buffer = buffer.slice(end + CLOSE.length);
+        inThink = false;
+      } else {
+        const start = buffer.indexOf(OPEN);
+        if (start === -1) {
+          const safe = flushTail ? buffer.length : buffer.length - (OPEN.length - 1);
+          if (safe > 0) {
+            const piece = buffer.slice(0, safe);
+            visible += piece;
+            onText(piece);
+            buffer = buffer.slice(safe);
+          }
+          return visible;
+        }
+        if (start > 0) {
+          const piece = buffer.slice(0, start);
+          visible += piece;
+          onText(piece);
+        }
+        buffer = buffer.slice(start + OPEN.length);
+        inThink = true;
+      }
+    }
+    return visible;
+  };
+
+  return {
+    feed(chunk: string, onText: (t: string) => void, onThink: (t: string) => void): string {
+      buffer += chunk;
+      return drain(onText, onThink, false);
+    },
+    flush(onText: (t: string) => void, onThink: (t: string) => void): string {
+      return drain(onText, onThink, true);
     },
   };
 }
@@ -699,6 +775,7 @@ class LMStudioProvider implements AiProvider {
     messages: ChatMessage[],
     systemPrompt: string,
     onChunk: (token: string) => void,
+    onThinkingChunk?: (token: string) => void,
   ): Promise<string> {
     const baseUrl = this.getBaseUrl();
     const apiMessages = [
@@ -730,6 +807,11 @@ class LMStudioProvider implements AiProvider {
       }
 
       let full = '';
+      let thinkingChars = 0;
+      const router = createThinkRouter();
+      const emitText = (t: string) => { full += t; onChunk(t); };
+      const emitThink = (t: string) => { thinkingChars += t.length; onThinkingChunk?.(t); };
+
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -747,11 +829,20 @@ class LMStudioProvider implements AiProvider {
           const data = trimmed.slice(6);
           if (data === '[DONE]') continue;
           try {
-            const parsed = JSON.parse(data) as { choices: Array<{ delta: { content?: string } }> };
-            const token = parsed.choices[0]?.delta?.content;
-            if (token) { full += token; onChunk(token); }
+            const parsed = JSON.parse(data) as {
+              choices: Array<{ delta: { content?: string; reasoning_content?: string } }>;
+            };
+            const delta = parsed.choices[0]?.delta;
+            // OpenAI-compat reasoning channel (Qwen3 thinking models, DeepSeek R1)
+            if (delta?.reasoning_content) emitThink(delta.reasoning_content);
+            // Visible content — split off any inline <think>...</think> blocks
+            if (delta?.content) router.feed(delta.content, emitText, emitThink);
           } catch {}
         }
+      }
+      router.flush(emitText, emitThink);
+      if (thinkingChars > 0) {
+        logger.info(`LM Studio: streamed ${thinkingChars} thinking chars + ${full.length} visible chars (${this.modelId.split('/').pop()})`);
       }
       return full;
     } finally {
@@ -767,6 +858,7 @@ class LMStudioProvider implements AiProvider {
     onChunk: (token: string) => void,
     toolChoice: 'auto' | { type: 'function'; function: { name: string } } = 'auto',
     cancelSignal?: AbortSignal,
+    onThinkingChunk?: (token: string) => void,
   ): Promise<StreamResult> {
     const baseUrl = this.getBaseUrl();
     const apiMessages: Array<Record<string, unknown>> = [
@@ -818,6 +910,11 @@ class LMStudioProvider implements AiProvider {
     const decoder = new TextDecoder();
     let buffer = '';
 
+    let thinkingChars = 0;
+    const router = createThinkRouter();
+    const emitText = (t: string) => { fullText += t; completionTokens++; onChunk(t); };
+    const emitThink = (t: string) => { thinkingChars += t.length; onThinkingChunk?.(t); };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -835,13 +932,15 @@ class LMStudioProvider implements AiProvider {
             choices: Array<{
               delta: {
                 content?: string;
+                reasoning_content?: string;
                 tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>;
               };
             }>;
             usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
           };
           const delta = parsed.choices[0]?.delta;
-          if (delta?.content) { fullText += delta.content; completionTokens++; onChunk(delta.content); }
+          if (delta?.reasoning_content) emitThink(delta.reasoning_content);
+          if (delta?.content) router.feed(delta.content, emitText, emitThink);
           if (delta?.tool_calls) {
             for (const tc of delta.tool_calls) {
               const idx = tc.index;
@@ -859,6 +958,11 @@ class LMStudioProvider implements AiProvider {
           }
         } catch {}
       }
+    }
+
+    router.flush(emitText, emitThink);
+    if (thinkingChars > 0) {
+      logger.info(`LM Studio: streamed ${thinkingChars} thinking chars + ${fullText.length} visible chars (${this.modelId.split('/').pop()})`);
     }
 
     const toolCalls: ToolCall[] = [];
@@ -946,6 +1050,7 @@ export interface ToolCallingProvider extends AiProvider {
     onChunk: (token: string) => void,
     toolChoice?: 'auto' | { type: 'function'; function: { name: string } },
     cancelSignal?: AbortSignal,
+    onThinkingChunk?: (token: string) => void,
   ): Promise<StreamResult>;
 }
 
