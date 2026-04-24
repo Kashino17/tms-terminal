@@ -1,5 +1,46 @@
 # Session-Tagebuch
 
+## 2026-04-25 — Memory-Leak-Audit + Fixes (290GB-Swap-Problem)
+
+### Symptom
+User berichtete: MacBook (M4 Max, 128GB) eskalierte beim Betrieb von TMS-Server + 2 parallelen Claude-Code-Sessions auf bis zu **290GB Virtual Memory** und fror ein. Frage war: Hardware-Defekt oder Software?
+
+### Diagnose
+- **Hardware OK** — `vm_stat` zeigte aktuell ~82GB frei. Historie aber: ~400GB Swapouts / 314GB Swapins (massive Swap-Last in Vergangenheit).
+- **Smoking Gun**: `~/Library/Logs/DiagnosticReports/node-2026-04-24-170556.ips` — V8-OOM-Crash (`v8::internal::Heap::FatalProcessOutOfMemory`) nach 41 Min Uptime.
+- **Nebenproblem**: 16+ Crash-Reports zwischen 16:23-16:24 wegen `Library not loaded: libsimdjson.29.dylib` — durch zwischenzeitlichen Restart bereits weg, aktueller node linkt gegen `libsimdjson.33`.
+- **Hikari** (separates Projekt): 3 verwaiste Next.js postcss-Worker (PIDs 24709/25634/26382) seit 7-8h — getötet. Jeder nur 36MB RSS, also nicht der Haupttäter — Symptom von Next.js 16 Turbopack das Worker bei dev-server Restart nicht aufräumt.
+
+### Root Cause (3 Stellen, alle in TMS Server)
+1. `chatHistoriesByTab` Truncation count-only (12→7 messages) — Claude Tool-Results können einzeln MBs groß sein → wenige große Messages umgehen den Count-Check.
+2. `managerService.clearSession()` wurde nur bei explizitem `session:close` gerufen, nicht bei `pty.onExit` — natürlicher Terminal-Exit (`exit`-Befehl) hat outputBuffers (50KB), Labels, Timer leaked.
+3. `IDLE_TIMEOUT_MS = 4h` für detached Sessions — sehr großzügig, blockiert PTY+Buffer wenn Mobile-Client nicht zurückkommt.
+
+### Fixes (Branch `fix/manager-memory-leaks` von `feat/cloud-observer`)
+- **Commit 1** `fix(manager): size-based truncation + per-message clipping`: neue Konstanten `CHAT_BUCKET_MAX_BYTES=2MB`, `CHAT_MESSAGE_MAX_BYTES=200KB`. `truncateChatBucket` clipped einzelne oversized Messages in-place (Head+Tail behalten) und triggert auch über Bytes (nicht nur Count). Restore-time Truncation in `loadChatHistories` auf zentrale Methode konsolidiert.
+- **Commit 2** `fix(ws): clearSession on PTY exit`: 3 createSession close-Callbacks (manager-spawned, regulär, manager-close-on-behalf) rufen jetzt alle `managerService.clearSession()`.
+- **Commit 3** `fix(terminal): halve idle TTL`: `IDLE_TIMEOUT_MS` 4h → 2h.
+
+### Verifikation
+- `tsc --noEmit` exit 0
+- `vitest run` 94/94 grün
+
+### Operative Quick-Wins (für laufenden Betrieb bis Server-Update)
+- `NODE_OPTIONS="--max-old-space-size=8192" tms-terminal start` als Workaround — bewusster harter Crash bei 8GB statt OS-Swap-Hölle.
+- 3 Hikari postcss-Zombies gekillt.
+
+### Nicht gemacht (bewusste Skips)
+- `promptDetector.unwatch` in `_cleanup` einbauen: 11 Maps × ~3KB pro leaked session = klein, würde zyklischen Import erfordern.
+- HARD_CAP-Pfad bei Zeile 1629 (50→40 keep): per-message clip nicht ergänzt — anderer Pfad, marginal.
+- libsimdjson reinstall: nicht nötig, aktueller node ist bereits korrekt gelinkt.
+
+### Offene Folge-Schritte
+- Branch reviewen + mergen.
+- Server deployen (`tms-terminal update` + restart).
+- Beobachten ob V8-Heap unter 2× heavy Claude-Sessions stabil bleibt.
+
+---
+
 ## 2026-04-24 — PUSH_INSTANT_MODE + Tool-Completion-Push
 
 ### Was gemacht

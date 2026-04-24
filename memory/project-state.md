@@ -1,12 +1,13 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-04-24 (PUSH_INSTANT_MODE feature-flag für Sofort-Push + Tool-Completion-Push)_
+_Zuletzt aktualisiert: 2026-04-25 (Memory-Leak-Fixes — V8-OOM bei 2× heavy Claude-Sessions)_
 
 ## Aktuelle Version
 - **App:** v1.21.0 — neu released, Thinking-Bubble + Persistente Reasoning-Anzeige
-- **Server:** Pending auf `feat/chrome-remote-control` — braucht `tms-terminal update` + Restart
+- **Server:** Pending auf `fix/manager-memory-leaks` (von `feat/cloud-observer` abgezweigt) und `feat/chrome-remote-control` — braucht `tms-terminal update` + Restart
 
 ## Zuletzt abgeschlossene Features
+- **Manager-Memory-Leak-Fixes (unreleased, 2026-04-25)** — Branch `fix/manager-memory-leaks`. Drei chirurgische Commits gegen V8-OOM-Crash der bei zwei parallelen heavy Claude-Code-Sessions zu 290GB-Swap auf 128GB-MacBook führte (verifiziert via DiagnosticReports — `node-2026-04-24-170556.ips` zeigt `v8::internal::Heap::FatalProcessOutOfMemory`). (1) `chatHistoriesByTab` Truncation in `manager.service.ts` reagiert jetzt auf Bytes (`CHAT_BUCKET_MAX_BYTES=2MB`) und clipped einzelne oversized Messages in-place (`CHAT_MESSAGE_MAX_BYTES=200KB`, Head+Tail behalten). Restore-time Truncation auf zentrale Methode konsolidiert. (2) `managerService.clearSession()` wird jetzt in allen 3 PTY-Exit-Pfaden in `ws.handler.ts` gerufen — vorher leakten outputBuffers (50KB) + Labels + Timer für jede natürlich beendete Session. (3) `IDLE_TIMEOUT_MS` in `terminal.manager.ts` 4h → 2h für detached Sessions. 94/94 Tests grün, `tsc --noEmit` clean.
 - **PUSH_INSTANT_MODE + Tool-Completion-Push (unreleased, 2026-04-24)** — neues Feature-Flag das den `ManagerPushDecider` (v1.20.0) bypasst. Wenn aktiv: kein Screen-State-Check, kein Debounce, jede Manager-Reply + jede Tool-Completion feuert sofort. **Neu**: Tool-Completion-Push für beide Quellen — (a) Manager-Agent-Tools (`write_to_terminal`, `send_enter`, etc.) via Hook in der tool-execution-Schleife in `manager.service.ts:2008-2023`, (b) Terminal-seitige AI-Tools (Claude/Codex/Gemini) via `prompt.detector`'s `✅`-Signal. Payload: Titel = `{✓|✗} {toolName}`, Body = letzte 300 chars Output. Failure-Detection für Terminal ist heuristisch (regex, kein echter exit code). Neue Dateien: `server/src/notifications/tool-completion-push.ts` (+ 9 Tests). Flag in `~/.tms-terminal/manager.json` → `pushInstantMode: true` oder env `PUSH_INSTANT_MODE=1`. Decider-Klasse + 11 Tests bleiben unverändert. 45/45 Server-Tests grün.
 - **Manager-Reasoning-Streaming + Memory-Refactor + Per-Tab Chat-History (v1.21.0)** — größerer Eingriff über die ganze Manager-Pipeline:
   - **Reasoning-Streaming**: Qwen3 thinking-Tokens (`delta.reasoning_content`) werden jetzt gelesen, separater WS-Event `manager:thinking_chunk`, faltbare „Denkt nach"-Sektion in Live-Bubble + persistente „Denkt-Log"-Anzeige in MessageBubble. Behebt: leere Antworten nach 5 Min Generationszeit bei Qwen 3.6 35B local.
