@@ -1,5 +1,5 @@
 import type WebSocket from 'ws';
-import type { ClientMessage, ServerMessage } from '../../../shared/protocol';
+import type { ClientMessage, ServerMessage, ManagerCloudReportMessage } from '../../../shared/protocol';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
@@ -122,6 +122,19 @@ function setupManagerCallbacks(ws: WebSocket): void {
     closeTerminalForManager,
     (tasks) => sendManager({ type: 'manager:tasks', payload: { tasks } }),
     (token) => sendManager({ type: 'manager:thinking_chunk', payload: { token } }),
+    (report) => {
+      const msg: ManagerCloudReportMessage = {
+        type: 'manager:cloud_report',
+        sessionId: report.sessionId,
+        sessionLabel: report.sessionLabel,
+        trigger: report.trigger,
+        urgency: report.urgency,
+        title: report.title,
+        body: report.body,
+        ts: report.ts,
+      };
+      sendManager(msg as unknown as Record<string, unknown>);
+    },
   );
 }
 

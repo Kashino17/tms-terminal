@@ -27,6 +27,9 @@ import { buildPresentationHTML } from './presentation.template';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { CloudObserver } from './cloud/cloud.observer';
+import { loadCloudConfig } from './cloud/cloud.config';
+import type { CloudReport } from './cloud/cloud.types';
 
 const ANSI_STRIP = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][AB012]|\x1b\]8;[^\x07]*\x07[^\x1b]*\x1b\]8;;\x07|\x1b[>=<#]/g;
 const OUTPUT_BUFFER_MAX = 50_000; // 50 KB per session
@@ -898,6 +901,8 @@ export class ManagerService {
   private orchestratorRetryCount = new Map<string, number>(); // step retries per task
   private commandHistory: Array<{ action: string; target: string; detail: string; timestamp: number }> = [];
   private activeVoiceSession: VoiceSessionController | null = null;
+  private cloudObserver: CloudObserver | null = null;
+  private emitCloudReport?: (report: CloudReport) => void;
 
   // ── Per-Tab Chat-History Helpers ────────────────────────────────────────
   /** Resolve the bucket key for a given tab. Undefined / 'alle' / empty all
@@ -995,6 +1000,7 @@ export class ManagerService {
     onCloseTerminal?: (sessionId: string) => boolean,
     onTaskUpdate?: (tasks: DelegatedTask[]) => void,
     onThinkingChunk?: ThinkingChunkCallback,
+    onCloudReport?: (report: CloudReport) => void,
   ): void {
     this.onSummary = onSummary;
     this.onResponse = onResponse;
@@ -1007,6 +1013,7 @@ export class ManagerService {
     if (onCloseTerminal) this.onCloseTerminal = onCloseTerminal;
     if (onTaskUpdate) this.onTaskUpdate = onTaskUpdate;
     if (onThinkingChunk) this.onThinkingChunk = onThinkingChunk;
+    if (onCloudReport) this.emitCloudReport = onCloudReport;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -1023,6 +1030,18 @@ export class ManagerService {
     this.heartbeatTimer = setInterval(() => this.heartbeat(), HEARTBEAT_INTERVAL_MS);
     this.heartbeatTimer.unref();
     logger.info('Manager: started (event-driven ~3s + heartbeat safety-net 45s)');
+
+    // Cloud observer — autonomous terminal monitor
+    const cloudConfig = loadCloudConfig();
+    this.cloudObserver = new CloudObserver({
+      config: cloudConfig,
+      state: this.memory.cloudState,
+      resolveLabel: (sid) => this.resolveSessionLabel(sid),
+      onUrgentPush: (report) => this.handleCloudUrgentPush(report),
+      onInfoReport: (report) => this.ingestCloudReport(report),
+      isManagerProcessing: () => this.isProcessing,
+    });
+    this.cloudObserver.start();
 
     // Cleanup old presentations (>7 days)
     try {
@@ -1070,6 +1089,8 @@ export class ManagerService {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    this.cloudObserver?.stop();
+    this.cloudObserver = null;
     this.cronManager.stopAll();
     logger.info('Manager: stopped');
   }
@@ -1106,6 +1127,59 @@ export class ManagerService {
     // Event-driven heartbeat: after 3s of output silence, check if terminal is idle.
     // This reacts in ~3s instead of waiting for the 45s safety-net heartbeat.
     this.resetOutputDebounce(sessionId);
+
+    // Cloud: parallel observer on the same stream
+    this.cloudObserver?.feed(sessionId, clean);
+  }
+
+  // ── Cloud Observer Helpers ────────────────────────────────────────────────
+
+  /** Returns a human-readable label for a session — used by CloudObserver. */
+  private resolveSessionLabel(sessionId: string): string {
+    // Check the manager's own label map first (most reliable, always up-to-date)
+    const label = this.sessionLabels.get(sessionId);
+    if (label) return label;
+    // Fall back to terminal session cwd
+    try {
+      const term = globalManager.getSession(sessionId);
+      if (term?.cwd) return term.cwd.split('/').pop() ?? sessionId;
+    } catch {}
+    return `Shell ${sessionId.slice(0, 6)}`;
+  }
+
+  /** Called by CloudObserver for pattern-triggered events — pushes directly to FCM. */
+  private handleCloudUrgentPush(report: CloudReport): void {
+    for (const token of this.fcmTokens) {
+      void fcmService.sendBig(token, report.title, report.body, {
+        sender: 'cloud',
+        urgency: report.urgency,
+        sessionId: report.sessionId,
+        trigger: report.trigger,
+        ts: String(report.ts),
+      });
+    }
+    logger.info(
+      `[cloud] urgent push: ${report.sessionLabel} — "${report.body.slice(0, 60)}"`,
+    );
+  }
+
+  /** Called by CloudObserver for silence-triggered events (and urgent duplicates) —
+   *  routes the summary into Rem's context for this tab. */
+  private ingestCloudReport(report: CloudReport): void {
+    const bucketKey = this.chatBucketKey(report.sessionId);
+    const bucket = this.chatHistoriesByTab.get(bucketKey) ?? [];
+    const systemMessage: ChatMessage = {
+      role: 'system',
+      content: `[cloud:${report.trigger}] ${report.title}\n${report.body}`,
+    };
+    bucket.push(systemMessage);
+    this.chatHistoriesByTab.set(bucketKey, bucket);
+
+    this.emitCloudReport?.(report);
+
+    logger.info(
+      `[cloud] info report: ${report.sessionLabel} — "${report.body.slice(0, 60)}"`,
+    );
   }
 
   private outputDebounceTimers = new Map<string, NodeJS.Timeout>();
@@ -2422,6 +2496,7 @@ BEISPIEL:
           globalManager.write(action.sessionId, '\r');
           resolve();
         }, 200));
+        this.cloudObserver?.pauseSession(action.sessionId, loadCloudConfig().remWriteCooldownMs);
         this.commandHistory.push({ action: 'write_to_terminal', target: label, detail: action.detail.slice(0, 200), timestamp: Date.now() });
         if (this.commandHistory.length > 50) this.commandHistory.shift();
         return { text: `Befehl vollständig an "${label}" gesendet (${action.detail.length} Zeichen). Der komplette Text wurde übertragen.` };
@@ -2430,6 +2505,7 @@ BEISPIEL:
         const label = this.sessionLabels.get(action.sessionId) ?? action.sessionId.slice(0, 8);
         logger.info(`Manager: sending Enter to ${label}`);
         globalManager.write(action.sessionId, '\r');
+        this.cloudObserver?.pauseSession(action.sessionId, loadCloudConfig().remWriteCooldownMs);
         return { text: `Enter an "${label}" gesendet.` };
       }
       case 'send_keys': {
@@ -2477,6 +2553,7 @@ BEISPIEL:
             });
           });
         }
+        this.cloudObserver?.pauseSession(action.sessionId, loadCloudConfig().remWriteCooldownMs);
         return { text: `Tasten [${keys.join(', ')}] an "${label}" gesendet.` };
       }
       case 'close_terminal': {

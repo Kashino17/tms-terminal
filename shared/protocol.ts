@@ -451,6 +451,17 @@ export interface ManagerModelStatusMessage {
   };
 }
 
+export interface ManagerCloudReportMessage {
+  type: 'manager:cloud_report';
+  sessionId: string;
+  sessionLabel: string;
+  trigger: 'pattern' | 'silence';
+  urgency: 'urgent' | 'info';
+  title: string;
+  body: string;
+  ts: number;
+}
+
 // ── Chrome Remote Control (Server → Client) ─────────────────────
 export interface ChromeStatusMessage {
   type: 'chrome:status';
@@ -547,4 +558,5 @@ export type ServerMessage =
   | VoiceAiDeltaMsg
   | VoiceTtsChunkMsg
   | VoiceAckAudioMsg
-  | VoiceErrorMsg;
+  | VoiceErrorMsg
+  | ManagerCloudReportMessage;
