@@ -8,7 +8,9 @@ import { config } from '../config';
 type OutputCallback = (sessionId: string, data: string) => void;
 type CloseCallback = (sessionId: string, exitCode: number) => void;
 
-const IDLE_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
+const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours — was 4h, halved to release per-session
+                                              // resources sooner (PTY procs + reattachBuffers)
+                                              // when a mobile client doesn't return.
 const REATTACH_BUFFER_MAX = 300_000; // 300 KB — captured while client is away
 const OUTPUT_BUFFER_FLUSH_SIZE = 8192; // 8 KB — flush immediately when buffer exceeds this
 const MAX_SESSIONS = 50;
