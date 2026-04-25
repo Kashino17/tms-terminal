@@ -21,6 +21,9 @@ interface SettingsState {
   /** Keep WebSocket connection alive when app is backgrounded/closed. Default: true. */
   persistentConnection: boolean;
   setPersistentConnection: (enabled: boolean) => void;
+  /** When true, voice transcripts are rewritten into polished AI prompts via the local rewriter sidecar. Default: false. */
+  voicePromptEnhanceEnabled: boolean;
+  setVoicePromptEnhanceEnabled: (enabled: boolean) => void;
 }
 
 export const IDLE_THRESHOLD_OPTIONS = [
@@ -66,6 +69,10 @@ export const useSettingsStore = create<SettingsState>()(
       persistentConnection: true,
       setPersistentConnection(enabled: boolean) {
         set({ persistentConnection: enabled });
+      },
+      voicePromptEnhanceEnabled: false,
+      setVoicePromptEnhanceEnabled(enabled: boolean) {
+        set({ voicePromptEnhanceEnabled: enabled });
       },
     }),
     {
