@@ -17,6 +17,7 @@ Thumbs.db
 
 # Python venv (Whisper sidecar)
 .venv/
+.venv*/
 
 # Build
 mobile/android/app/build/
