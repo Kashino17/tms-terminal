@@ -15,6 +15,7 @@ import { fcmService } from './notifications/fcm.service';
 import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
 import { shutdown as shutdownWhisper } from './audio/whisper-sidecar';
+import { shutdown as shutdownRewriter } from './audio/prompt-rewriter-sidecar';
 import { managerService } from './websocket/ws.handler';
 
 // ── Global error handlers ────────────────────────────────────────────
@@ -179,6 +180,7 @@ function main(): void {
     logger.info('Shutting down...');
     watcherService.shutdown();
     shutdownWhisper();
+    shutdownRewriter();
 
     // Close all terminal sessions
     globalManager.closeAllSessions();
