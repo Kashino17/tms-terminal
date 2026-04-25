@@ -12,6 +12,7 @@ import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 import { autopilotService } from '../autopilot/autopilot.service';
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
+import { rewrite as rewritePrompt } from '../audio/prompt-rewriter-sidecar';
 import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
@@ -650,6 +651,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       const sessionId = (msg as any).sessionId;
       const audio = (msg as any).payload?.audio;
       const format = (msg as any).payload?.format;
+      const enhance = (msg as any).payload?.enhance === true;
 
       if (!isValidSessionId(sessionId)) {
         send(ws, { type: 'audio:error', sessionId: 'none', payload: { message: 'Invalid sessionId' } } as any);
@@ -672,8 +674,20 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         onProgress: (info) => {
           send(ws, { type: 'audio:progress', sessionId, payload: { chunk: info.chunk, total: info.total, text: info.text } } as any);
         },
-      }).then((text) => {
-        send(ws, { type: 'audio:transcription', sessionId, payload: { text } } as any);
+      }).then(async (text) => {
+        if (!enhance || !text.trim()) {
+          send(ws, { type: 'audio:transcription', sessionId, payload: { text } } as any);
+          return;
+        }
+        try {
+          const enhanced = await rewritePrompt(text);
+          send(ws, { type: 'audio:transcription', sessionId, payload: { text: enhanced } } as any);
+        } catch (rewriteErr) {
+          const reason = rewriteErr instanceof Error ? rewriteErr.message : String(rewriteErr);
+          logger.warn(`[rewriter] Falling back to raw transcript: ${reason}`);
+          // Soft-fail: still deliver the raw Whisper text so the user is never blocked.
+          send(ws, { type: 'audio:transcription', sessionId, payload: { text } } as any);
+        }
       }).catch((err) => {
         const message = err instanceof Error ? err.message : 'Transkription fehlgeschlagen';
         logger.warn(`[whisper] Transcription failed: ${message}`);
