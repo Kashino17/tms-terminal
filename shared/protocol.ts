@@ -59,7 +59,12 @@ export interface SystemKillMessage     { type: 'system:kill'; payload: { pid: nu
 export interface AudioTranscribeMessage {
   type: 'audio:transcribe';
   sessionId: string;
-  payload: { audio: string; format: 'wav' };
+  payload: {
+    audio: string;
+    format: 'wav';
+    /** When true, rewrite the transcript into a polished AI prompt before returning. Default: false. */
+    enhance?: boolean;
+  };
 }
 
 // ── Manager messages (Client → Server) ────────────────────────────
