@@ -292,6 +292,7 @@ export function OrbLayer({
   const recordingRef = useRef<Audio.Recording | null>(null);
   const micTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioInputEnabled = useSettingsStore((s) => (s as any).audioInputEnabled ?? true);
+  const voicePromptEnhanceEnabled = useSettingsStore((s) => s.voicePromptEnhanceEnabled);
 
   // Listen for transcription result from server
   useEffect(() => {
@@ -323,7 +324,7 @@ export function OrbLayer({
         if (!uri || !sessionId) { setMicState('idle'); return; }
         const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         await FileSystem.deleteAsync(uri, { idempotent: true });
-        wsService?.send({ type: 'audio:transcribe', sessionId, payload: { audio: base64, format: 'wav' } });
+        wsService?.send({ type: 'audio:transcribe', sessionId, payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled } });
       } catch (err) {
         console.warn('[mic] stop error:', err);
         setMicState('idle');

@@ -25,6 +25,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   const bottomAnim = useRef(new Animated.Value(0)).current;
   const [arrowsOpen, setArrowsOpen] = useState(false);
   const audioInputEnabled = useSettingsStore((s) => s.audioInputEnabled);
+  const voicePromptEnhanceEnabled = useSettingsStore((s) => s.voicePromptEnhanceEnabled);
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
   const [micError, setMicError] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -116,7 +117,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
         wsService.send({
           type: 'audio:transcribe',
           sessionId,
-          payload: { audio: base64, format: 'wav' },
+          payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
         });
       } catch (err) {
         console.warn('[mic] Error stopping recording:', err);

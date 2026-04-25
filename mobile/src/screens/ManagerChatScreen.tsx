@@ -34,6 +34,7 @@ import type { WebSocketService } from '../services/websocket.service';
 import { useManagerStore, ManagerMessage, PhaseInfo } from '../store/managerStore';
 import { useTerminalStore } from '../store/terminalStore';
 import { useServerStore } from '../store/serverStore';
+import { useSettingsStore } from '../store/settingsStore';
 import { tabDisplayName } from '../utils/tabDisplayName';
 import { colors, spacing, fontSizes } from '../theme';
 import Markdown from 'react-native-markdown-display';
@@ -532,6 +533,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
   const tabs = useTerminalStore((s) => s.tabs[serverId] ?? []);
   const setActiveTab = useTerminalStore((s) => s.setActiveTab);
   const server = useServerStore((s) => s.servers.find((sv) => sv.id === serverId));
+  const voicePromptEnhanceEnabled = useSettingsStore((s) => s.voicePromptEnhanceEnabled);
   const [input, setInput] = useState('');
   const [chipMenu, setChipMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -913,7 +915,7 @@ export function ManagerChatScreen({ navigation, route }: Props) {
         wsService.send({
           type: 'audio:transcribe',
           sessionId: 'manager',
-          payload: { audio: base64, format: 'wav' },
+          payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
         } as any);
       } catch {
         setMicState('idle');
