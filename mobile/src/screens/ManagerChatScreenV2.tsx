@@ -341,6 +341,10 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   const [toolMenuAnchor, setToolMenuAnchor] = useState({ x: 200, y: 400 });
   const toolSections = useOrbLayoutStore((s) => s.toolSections);
   const updateToolSections = useOrbLayoutStore((s) => s.updateToolSections);
+  // Mirror of toolMenuVisible the keyboard listener can read (its useEffect
+  // uses an empty deps array to avoid re-subscribing).
+  const toolMenuVisibleRef = useRef(false);
+  toolMenuVisibleRef.current = toolMenuVisible;
 
   const spotlightRef = useRef<MultiSpotlightRef>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -376,6 +380,10 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
       setKeyboardVisible(false);
       setKeyboardHeight(0);
+      // Don't exit focus mode just because a child modal (ToolMenu, etc.)
+      // stole the keyboard — the user expects to land back in the focused
+      // pane after closing the modal.
+      if (toolMenuVisibleRef.current) return;
       setFocusedPaneIdx((cur) => {
         if (cur != null) spotlightRef.current?.blurPaneKeyboard(cur);
         return null;
@@ -410,10 +418,23 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     setToolMenuVisible(true);
   }, []);
 
+  // Re-open the focused pane's soft keyboard after a child modal closes.
+  // setTimeout + requestAnimationFrame gives the layout a chance to settle so
+  // Android actually shows the keyboard instead of swallowing the focus call.
+  const refocusFocusedPane = useCallback(() => {
+    if (focusedPaneIdx != null) {
+      setTimeout(() => spotlightRef.current?.focusPaneKeyboard(focusedPaneIdx), 120);
+    }
+  }, [focusedPaneIdx]);
+
+  const handleCloseToolMenu = useCallback(() => {
+    setToolMenuVisible(false);
+    refocusFocusedPane();
+  }, [refocusFocusedPane]);
+
   const handleSelectTool = useCallback((toolId: string) => {
     setToolMenuVisible(false);
-    // Navigation tools that V2 supports — others get an info alert so the
-    // user knows the tool exists but isn't wired into the chat experience yet.
+    // Navigation tools — these intentionally leave focus mode.
     if (toolId === 'manager') { exitPaneFocus(); return; }
     if (toolId === 'drawing') {
       navigation.navigate('Drawing', {
@@ -426,7 +447,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     if (toolId === 'browser') {
       const focusedSid = focusedPaneIdx != null ? panes[focusedPaneIdx] : null;
       const tab = focusedSid ? tabs.find((t) => t.sessionId === focusedSid) : null;
-      if (!tab) { Alert.alert('Browser', 'Kein aktiver Tab.'); return; }
+      if (!tab) { Alert.alert('Browser', 'Kein aktiver Tab.'); refocusFocusedPane(); return; }
       navigation.navigate('Browser', {
         serverHost,
         serverId,
@@ -438,8 +459,13 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       navigation.navigate('Processes', { wsService } as any);
       return;
     }
-    Alert.alert('Tool', `"${toolId}" ist hier im Manager-Chat noch nicht angeschlossen — bitte im Terminal-Screen öffnen.`);
-  }, [exitPaneFocus, navigation, serverHost, server, serverPort, serverToken, serverId, focusedPaneIdx, panes, tabs, wsService]);
+    // Panel tools that V2 doesn't host yet — show a hint and stay in focus mode.
+    Alert.alert(
+      'Tool',
+      `"${toolId}" ist hier im Manager-Chat noch nicht angeschlossen — bitte im Terminal-Screen öffnen.`,
+      [{ text: 'OK', onPress: refocusFocusedPane }],
+    );
+  }, [exitPaneFocus, navigation, serverHost, server, serverPort, serverToken, serverId, focusedPaneIdx, panes, tabs, wsService, refocusFocusedPane]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const messages = useMemo(
@@ -1571,7 +1597,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
         anchorPosition={toolMenuAnchor}
         sections={toolSections}
         onSelectTool={handleSelectTool}
-        onClose={() => setToolMenuVisible(false)}
+        onClose={handleCloseToolMenu}
         onSectionsChange={updateToolSections}
       />
 
