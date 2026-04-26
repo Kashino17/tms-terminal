@@ -24,6 +24,9 @@ interface SettingsState {
   /** When true, voice transcripts are rewritten into polished AI prompts via the local rewriter sidecar. Default: false. */
   voicePromptEnhanceEnabled: boolean;
   setVoicePromptEnhanceEnabled: (enabled: boolean) => void;
+  /** When true, the redesigned Manager Chat (V2) is used. Beta. Default: false. */
+  managerChatRedesignEnabled: boolean;
+  setManagerChatRedesignEnabled: (enabled: boolean) => void;
 }
 
 export const IDLE_THRESHOLD_OPTIONS = [
@@ -73,6 +76,10 @@ export const useSettingsStore = create<SettingsState>()(
       voicePromptEnhanceEnabled: false,
       setVoicePromptEnhanceEnabled(enabled: boolean) {
         set({ voicePromptEnhanceEnabled: enabled });
+      },
+      managerChatRedesignEnabled: false,
+      setManagerChatRedesignEnabled(enabled: boolean) {
+        set({ managerChatRedesignEnabled: enabled });
       },
     }),
     {

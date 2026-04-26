@@ -23,7 +23,7 @@ type Props = {
 export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
-  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection, voicePromptEnhanceEnabled, setVoicePromptEnhanceEnabled } = useSettingsStore();
+  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection, voicePromptEnhanceEnabled, setVoicePromptEnhanceEnabled, managerChatRedesignEnabled, setManagerChatRedesignEnabled } = useSettingsStore();
   const { tokens, notificationsEnabled, pollingIntervalMs, setNotificationsEnabled, setPollingIntervalMs, clearPlatform } = useCloudAuthStore();
   const { clearCache } = useCloudProjectsStore();
   const { apiKeys, setApiKey } = useManagerStore();
@@ -392,6 +392,35 @@ export function SettingsScreen({ navigation }: Props) {
                 onValueChange={setVoicePromptEnhanceEnabled}
                 trackColor={{ false: colors.border, true: colors.primary + '88' }}
                 thumbColor={voicePromptEnhanceEnabled ? colors.primary : colors.textDim}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* ── Manager Chat Beta ── */}
+        <View style={[styles.section, { marginBottom: rs(28) }]}>
+          <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>Beta</Text>
+
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+              onPress={() => setManagerChatRedesignEnabled(!managerChatRedesignEnabled)}
+              activeOpacity={0.7}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: managerChatRedesignEnabled }}
+            >
+              <View style={styles.rowLeft}>
+                <Feather name="layout" size={ri(18)} color={managerChatRedesignEnabled ? colors.primary : colors.textMuted} style={{ marginRight: rs(12) }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Manager Chat Redesign</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Multi-Spotlight, Tool-Sidebar, Group-Tabs, Direct-Mode (work in progress)</Text>
+                </View>
+              </View>
+              <Switch
+                value={managerChatRedesignEnabled}
+                onValueChange={setManagerChatRedesignEnabled}
+                trackColor={{ false: colors.border, true: colors.primary + '88' }}
+                thumbColor={managerChatRedesignEnabled ? colors.primary : colors.textDim}
               />
             </TouchableOpacity>
           </View>
