@@ -738,6 +738,13 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         // phantom deletions when the diff sees a stale prevValue.
         prevValue = shadowInput.value;
         cancelPendingBs();
+        // In tapFocusDisabled mode, the inputs are hidden+disabled. Re-enable
+        // the shadow input so it can take focus and show the soft keyboard.
+        // Will be re-disabled in the matching blur handler below.
+        if (tapFocusDisabled) {
+          shadowInput.disabled = false;
+          shadowInput.style.display = '';
+        }
         if (!selMode && !userScrolledUp && !externalKbMode) focusShadow();
       }
       else if (msg.type === 'blur')   {
@@ -746,6 +753,12 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         // Reset input state to prevent stale diffs when re-focused
         shadowInput.value = ''; prevValue = '';
         cancelPendingBs();
+        // Re-disable the shadow input if tap-focus is suppressed, so the next
+        // single tap on the pane doesn't accidentally focus it.
+        if (tapFocusDisabled) {
+          shadowInput.disabled = true;
+          shadowInput.style.display = 'none';
+        }
       }
       else if (msg.type === 'get_all') {
         var buf = term.buffer.active;
@@ -811,10 +824,20 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       }
       else if (msg.type === 'setTapFocusDisabled') {
         tapFocusDisabled = !!msg.disabled;
-        // When disabling auto-focus, also blur the shadow input so the keyboard
-        // doesn't stay up after the mode switches.
+        // xterm.js maintains its OWN hidden textarea (.xterm-helper-textarea)
+        // that Android focuses on tap so the soft keyboard pops up. Disabling
+        // our shadow input alone isn't enough; we have to disable xterm's too.
+        // Same trick as setExternalKeyboardMode.
+        var xtermTa = document.querySelector('.xterm-helper-textarea');
         if (tapFocusDisabled) {
           shadowInput.blur();
+          shadowInput.disabled = true;
+          shadowInput.style.display = 'none';
+          if (xtermTa) { xtermTa.disabled = true; xtermTa.style.display = 'none'; }
+        } else {
+          shadowInput.disabled = false;
+          shadowInput.style.display = '';
+          if (xtermTa) { xtermTa.disabled = false; xtermTa.style.display = ''; }
         }
       }
       else if (msg.type === 'setExternalKeyboardMode') {
