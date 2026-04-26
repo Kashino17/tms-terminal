@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useImperativeHandle, forwardRef } from 'react';
+import React, { useMemo, useRef, useImperativeHandle, forwardRef, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,10 @@ export interface MultiSpotlightRef {
   injectIntoActive: (text: string) => void;
   /** Inject text into a specific pane by index. */
   injectIntoPane: (index: number, text: string) => void;
+  /** Open the soft keyboard targeting the pane at `index`. */
+  focusPaneKeyboard: (index: number) => void;
+  /** Close the soft keyboard for the pane at `index`. */
+  blurPaneKeyboard: (index: number) => void;
 }
 
 interface Props {
@@ -37,6 +41,14 @@ interface Props {
   labelFor?: (sessionId: string) => string;
   /** Map sessionId → status (controls badge color). */
   statusFor?: (sessionId: string) => PaneStatus;
+  /**
+   * Fires when a pane receives two stationary taps within ~280 ms — the parent
+   * uses this to enter "pane focus mode" (fullscreen single pane + keyboard).
+   * Single taps still drive `onActivePaneChange` as usual.
+   */
+  onPaneDoubleTap?: (index: number) => void;
+  /** When set, only the pane at this index renders (others hidden). */
+  focusedPaneIndex?: number | null;
 }
 
 const STATUS_LABEL: Record<PaneStatus, string> = {
@@ -65,6 +77,8 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     wsService,
     labelFor,
     statusFor,
+    onPaneDoubleTap,
+    focusedPaneIndex,
   },
   ref,
 ) {
@@ -78,7 +92,37 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     injectIntoPane: (index: number, text: string) => {
       terminalRefs.current[index]?.injectText(text);
     },
+    focusPaneKeyboard: (index: number) => {
+      terminalRefs.current[index]?.focusKeyboard();
+    },
+    blurPaneKeyboard: (index: number) => {
+      terminalRefs.current[index]?.blurKeyboard();
+    },
   }), [activePaneIndex]);
+
+  // Tap counter — single tap activates, double tap (within 280ms) fires
+  // onPaneDoubleTap. Stored per-pane so simultaneous taps on different panes
+  // don't collide. The timer is cleared on unmount.
+  const tapTimers = useRef<Array<ReturnType<typeof setTimeout> | null>>([]);
+  useEffect(() => () => {
+    tapTimers.current.forEach((t) => t && clearTimeout(t));
+  }, []);
+
+  const handlePaneTap = useCallback((paneIdx: number) => {
+    const existing = tapTimers.current[paneIdx];
+    if (existing) {
+      // Double tap
+      clearTimeout(existing);
+      tapTimers.current[paneIdx] = null;
+      onActivePaneChange(paneIdx);
+      onPaneDoubleTap?.(paneIdx);
+      return;
+    }
+    tapTimers.current[paneIdx] = setTimeout(() => {
+      tapTimers.current[paneIdx] = null;
+      onActivePaneChange(paneIdx);
+    }, 280);
+  }, [onActivePaneChange, onPaneDoubleTap]);
 
   const slots = useMemo(() => {
     const arr: (string | null)[] = [];
@@ -105,7 +149,6 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     const label = labelFor?.(sid) ?? sid;
     // Per-mode font size: smaller panes need smaller text so a useful amount
     // of terminal context fits. Clamped client-side to xterm's MIN_FONT/MAX_FONT.
-    // Bumped after device test — 9px was too small to read in mode 4.
     const fontSize = mode === 4 ? 11 : mode === 2 ? 12 : 13;
     return (
       <View
@@ -116,9 +159,7 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
           isActive && { ...s.paneActive, shadowColor: tcolor, borderColor: tcolor },
         ]}
       >
-        {/* Header is the only "tap = activate pane" surface. The terminal area
-            below is plain View so xterm.js gets all touch events (scroll, tap,
-            text-selection) without our outer Pressable swallowing them. */}
+        {/* Header taps activate the pane (no double-tap needed here). */}
         <Pressable style={s.head} onPress={() => onActivePaneChange(i)}>
           <View style={[s.dot, { backgroundColor: tcolor, shadowColor: tcolor }]} />
           <Text style={s.name} numberOfLines={1}>{label}</Text>
@@ -143,7 +184,25 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
             visible={true}
             fontSize={fontSize}
             disableKeyboardOffset
+            tapFocusDisabled
+            onTap={() => handlePaneTap(i)}
           />
+        </View>
+      </View>
+    );
+  }
+
+  // Focus mode — render only the focused pane at full size, but keep all the
+  // other WebViews mounted off-screen so their xterm.js state survives the
+  // round-trip (otherwise re-mounting drops scrollback / requires a re-attach).
+  if (focusedPaneIndex != null && slots[focusedPaneIndex]) {
+    return (
+      <View style={s.grid}>
+        <View style={[s.row, { flex: 1 }]}>
+          {renderPane(slots[focusedPaneIndex], focusedPaneIndex)}
+        </View>
+        <View style={s.offscreen} pointerEvents="none">
+          {slots.map((sid, i) => i !== focusedPaneIndex ? renderPane(sid, i) : null)}
         </View>
       </View>
     );
@@ -290,5 +349,14 @@ const s = StyleSheet.create({
   emptyText: {
     fontSize: 9,
     color: colors.textDim,
+  },
+  // Park non-focused panes off-screen so their WebViews stay mounted and the
+  // xterm.js state survives a focus-mode roundtrip without remount/re-attach.
+  offscreen: {
+    position: 'absolute',
+    top: 0, left: 0,
+    width: 1, height: 1,
+    overflow: 'hidden',
+    opacity: 0,
   },
 });

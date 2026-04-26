@@ -148,6 +148,11 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   // Use touchstart/touchend to detect a genuine stationary tap (not a scroll).
   // The native 'click' event fires even after small scrolls on mobile,
   // which was causing focusShadow() → scrollToBottom() during scroll attempts.
+  // When tapFocusDisabled is true (set by RN via setTapFocusDisabled), taps
+  // do NOT auto-focus the shadow input. Instead we just notify RN with a
+  // 'tap' message — RN decides what to do (e.g. count single vs double tap
+  // for the Manager-Chat MultiSpotlight pane-select-vs-focus behavior).
+  var tapFocusDisabled = false;
   var tapFocusX = 0, tapFocusY = 0, tapFocusT = 0;
   document.getElementById('terminal').addEventListener('touchstart', function(e) {
     if (e.touches.length === 1) {
@@ -160,10 +165,14 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     if (selMode || isPinching) return;
     var t = e.changedTouches[0];
     if (!t) return;
-    // Only count as tap if finger barely moved and was brief
     if (Math.abs(t.clientX - tapFocusX) > 10 || Math.abs(t.clientY - tapFocusY) > 10) return;
     if (Date.now() - tapFocusT > 400) return;
-    if (!externalKbMode) focusShadow();
+    if (externalKbMode) return;
+    if (tapFocusDisabled) {
+      sendToRN({ type: 'tap' });
+      return;
+    }
+    focusShadow();
   }, { passive: true });
 
   /* ── Shadow input (soft keyboard) ─────────────────── */
@@ -798,6 +807,14 @@ const TERMINAL_HTML = `<!DOCTYPE html>
           term.options.fontSize = clamped;
           baseFontSize = clamped;
           fitAddon.fit();
+        }
+      }
+      else if (msg.type === 'setTapFocusDisabled') {
+        tapFocusDisabled = !!msg.disabled;
+        // When disabling auto-focus, also blur the shadow input so the keyboard
+        // doesn't stay up after the mode switches.
+        if (tapFocusDisabled) {
+          shadowInput.blur();
         }
       }
       else if (msg.type === 'setExternalKeyboardMode') {

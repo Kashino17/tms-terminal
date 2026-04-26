@@ -15,6 +15,7 @@ import {
   Modal,
   Animated,
   PanResponder,
+  Keyboard,
 } from 'react-native';
 import * as Sharing from 'expo-sharing';
 import { Feather } from '@expo/vector-icons';
@@ -310,6 +311,9 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [voiceFullscreen, setVoiceFullscreen] = useState(false);
+  // When non-null, that pane fills the whole stage and the chat UI is hidden.
+  // Set by double-tapping a pane; cleared by the close-button or keyboard hide.
+  const [focusedPaneIdx, setFocusedPaneIdx] = useState<number | null>(null);
 
   const spotlightRef = useRef<MultiSpotlightRef>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -321,6 +325,36 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       prev.map((sid) => (sid && tabs.some((t) => t.sessionId === sid) ? sid : null)),
     );
   }, [tabs]);
+
+  // Exit pane-focus mode when the keyboard goes away (hardware back, swipe-down,
+  // app-switch, etc). The chat input path doesn't ever set focusedPaneIdx, so
+  // chat-keyboard hides are no-ops here.
+  useEffect(() => {
+    const sub = Keyboard.addListener('keyboardDidHide', () => {
+      setFocusedPaneIdx((cur) => {
+        if (cur != null) {
+          spotlightRef.current?.blurPaneKeyboard(cur);
+        }
+        return null;
+      });
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Double-tap on a pane → enter fullscreen + focus that terminal's keyboard.
+  const handlePaneDoubleTap = useCallback((idx: number) => {
+    setFocusedPaneIdx(idx);
+    // Defer focus by one tick so the layout swap completes first; otherwise
+    // the keyboard can pop up before the pane has resized.
+    setTimeout(() => spotlightRef.current?.focusPaneKeyboard(idx), 50);
+  }, []);
+
+  const exitPaneFocus = useCallback(() => {
+    setFocusedPaneIdx((cur) => {
+      if (cur != null) spotlightRef.current?.blurPaneKeyboard(cur);
+      return null;
+    });
+  }, []);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const messages = useMemo(
@@ -1237,39 +1271,46 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   }
 
   // ── Layout ─────────────────────────────────────────────────────────────────
+  const inFocus = focusedPaneIdx != null;
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={{ paddingTop: insets.top, backgroundColor: colors.surface }}>
-        {renderHeader()}
-      </View>
+      {!inFocus && (
+        <View style={{ paddingTop: insets.top, backgroundColor: colors.surface }}>
+          {renderHeader()}
+        </View>
+      )}
 
-      {renderModelPicker()}
-      {renderHeaderMenu()}
-      {renderSearchBar()}
+      {!inFocus && renderModelPicker()}
+      {!inFocus && renderHeaderMenu()}
+      {!inFocus && renderSearchBar()}
 
-      <GroupTabsBar
-        groups={groups}
-        activeId={activeGroupId}
-        onLoad={onLoadGroup}
-        onDelete={onDeleteGroup}
-        onSave={onSaveGroup}
-      />
+      {!inFocus && (
+        <GroupTabsBar
+          groups={groups}
+          activeId={activeGroupId}
+          onLoad={onLoadGroup}
+          onDelete={onDeleteGroup}
+          onSave={onSaveGroup}
+        />
+      )}
 
       {/* Stage body: ToolSidebar | Multi-Spotlight (with overlay flyout) */}
-      <View style={s.stageBody}>
-        <ToolSidebar
-          state={sidebarState}
-          activeOrb={activeOrb}
-          activeSessionId={activeSessionId ?? null}
-          onToggleState={cycleSidebar}
-          onPickOrb={handleOrbPick}
-        />
+      <View style={[s.stageBody, inFocus && { paddingTop: insets.top }]}>
+        {!inFocus && (
+          <ToolSidebar
+            state={sidebarState}
+            activeOrb={activeOrb}
+            activeSessionId={activeSessionId ?? null}
+            onToggleState={cycleSidebar}
+            onPickOrb={handleOrbPick}
+          />
+        )}
 
         <View style={{ flex: 1, position: 'relative' }}>
-          {renderMultiBar()}
+          {!inFocus && renderMultiBar()}
           <MultiSpotlight
             ref={spotlightRef}
             mode={mode}
@@ -1281,23 +1322,38 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             wsService={wsService}
             labelFor={labelFor}
             statusFor={statusFor}
+            onPaneDoubleTap={handlePaneDoubleTap}
+            focusedPaneIndex={focusedPaneIdx}
           />
 
-          <ToolFlyout
-            orbId={activeOrb}
-            sidebarState={sidebarState}
-            contextLabel={activeSessionId ? '@' + labelFor(activeSessionId) : undefined}
-            onClose={closeTool}
-          >
-            {renderOrbFlyoutBody()}
-          </ToolFlyout>
+          {!inFocus && (
+            <ToolFlyout
+              orbId={activeOrb}
+              sidebarState={sidebarState}
+              contextLabel={activeSessionId ? '@' + labelFor(activeSessionId) : undefined}
+              onClose={closeTool}
+            >
+              {renderOrbFlyoutBody()}
+            </ToolFlyout>
+          )}
+
+          {/* Floating close-button — only visible while a pane is in focus mode */}
+          {inFocus && (
+            <TouchableOpacity
+              style={[s.focusCloseBtn, { top: insets.top + 8 }]}
+              onPress={exitPaneFocus}
+              hitSlop={10}
+            >
+              <Feather name="minimize-2" size={14} color="#fff" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
-      {renderChipBar()}
-      {renderChat()}
-      {renderAttachments()}
-      {renderInputBar()}
+      {!inFocus && renderChipBar()}
+      {!inFocus && renderChat()}
+      {!inFocus && renderAttachments()}
+      {!inFocus && renderInputBar()}
 
       {/* Fullscreen voice capture — opens when the mic button is tapped */}
       <VoiceFullscreen
@@ -1450,6 +1506,21 @@ const s = StyleSheet.create({
 
   // Stage body container
   stageBody: { flex: 1, flexDirection: 'row', minHeight: 0 },
+
+  // Floating close button shown only in pane-focus mode (top-right corner).
+  focusCloseBtn: {
+    position: 'absolute',
+    right: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 50,
+  },
 
   // Chip bar
   chipBar: {

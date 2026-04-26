@@ -67,6 +67,10 @@ export interface TerminalViewRef {
   scrollToBottom: () => void;
   /** Injects text into the shadow input as if the user typed it. */
   injectText: (text: string) => void;
+  /** Explicitly focus the xterm.js shadow input (opens the soft keyboard). */
+  focusKeyboard: () => void;
+  /** Explicitly blur the xterm.js shadow input (closes the soft keyboard). */
+  blurKeyboard: () => void;
 }
 
 interface Props {
@@ -95,12 +99,23 @@ interface Props {
    * starves the WebView of vertical space and leaves xterm with ~0 visible rows.
    */
   disableKeyboardOffset?: boolean;
+  /**
+   * When true, single taps inside the terminal do NOT auto-focus the shadow
+   * input (i.e. the soft keyboard does not pop up). Instead, every stationary
+   * tap fires `onTap`. Used by Manager-Chat MultiSpotlight to implement
+   * single-tap-selects + double-tap-opens-keyboard semantics.
+   */
+  tapFocusDisabled?: boolean;
+  /** Fires on a stationary tap when `tapFocusDisabled` is true. */
+  onTap?: () => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, Props>(function TerminalView(
-  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false, fontSize, disableKeyboardOffset = false }: Props,
+  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false, fontSize, disableKeyboardOffset = false, tapFocusDisabled = false, onTap }: Props,
   ref,
 ) {
+  const onTapRef = useRef(onTap);
+  onTapRef.current = onTap;
   const webViewRef  = useRef<WebView>(null);
   const [selection, setSelection] = useState('');
   const [selText,   setSelText]   = useState('');
@@ -165,6 +180,22 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     injectText: (text: string) => {
       if (webViewRef.current && text) {
         const msg = JSON.stringify({ type: 'inject_text', data: text });
+        webViewRef.current.injectJavaScript(
+          `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
+        );
+      }
+    },
+    focusKeyboard: () => {
+      if (webViewRef.current) {
+        const msg = JSON.stringify({ type: 'focus' });
+        webViewRef.current.injectJavaScript(
+          `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
+        );
+      }
+    },
+    blurKeyboard: () => {
+      if (webViewRef.current) {
+        const msg = JSON.stringify({ type: 'blur' });
         webViewRef.current.injectJavaScript(
           `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
         );
@@ -239,6 +270,16 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     });
     return () => { showSub.remove(); hideSub.remove(); };
   }, [disableKeyboardOffset]);
+
+  // Push the tap-focus flag whenever it changes, and on every 'ready' message
+  // (the WebView may have been re-rendered with stale state).
+  useEffect(() => {
+    if (!readyReceivedRef.current) return;
+    const msg = JSON.stringify({ type: 'setTapFocusDisabled', disabled: tapFocusDisabled });
+    webViewRef.current?.injectJavaScript(
+      `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
+    );
+  }, [tapFocusDisabled]);
 
   // Apply theme changes live (user changes theme in settings while terminal is open)
   useEffect(() => {
@@ -383,6 +424,12 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
             `window.postMessage(${JSON.stringify({ type: 'setExternalKeyboardMode', enabled: true })}, '*'); true;`,
           );
         }
+        // Apply tap-focus disabled mode (Manager-Chat MultiSpotlight panes)
+        if (tapFocusDisabled) {
+          webViewRef.current?.injectJavaScript(
+            `window.postMessage(${JSON.stringify({ type: 'setTapFocusDisabled', disabled: true })}, '*'); true;`,
+          );
+        }
         // Replay saved output into the fresh xterm.js instance BEFORE requesting
         // terminal:reattach, so history appears instantly and new output appends after.
         if (sessionId) {
@@ -476,6 +523,8 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         if (clickedPath && onPathClickedRef.current) {
           onPathClickedRef.current(clickedPath);
         }
+      } else if (msg.type === 'tap') {
+        onTapRef.current?.();
       }
     } catch {
       // ignore
