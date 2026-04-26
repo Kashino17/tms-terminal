@@ -16,6 +16,7 @@ import {
   Animated,
   PanResponder,
   Keyboard,
+  ActivityIndicator,
 } from 'react-native';
 import * as Sharing from 'expo-sharing';
 import { Feather } from '@expo/vector-icons';
@@ -139,15 +140,6 @@ function LightboxContent({ imageUri, onClose, children }: {
   );
 }
 
-const dpadStyles = StyleSheet.create({
-  key: {
-    width: 38, height: 38, borderRadius: 8,
-    backgroundColor: colors.surfaceAlt,
-    borderWidth: 1, borderColor: colors.border,
-    alignItems: 'center', justifyContent: 'center',
-  },
-});
-
 const lbStyles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
   close: { position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 },
@@ -263,6 +255,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           setRecordingDuration(0);
           setVoiceFullscreen(false);
           voiceTargetSidRef.current = null;
+          setMicFlow(null);
           break;
         case 'audio:progress':
           if (msg.payload?.chunk && msg.payload?.total) {
@@ -276,6 +269,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           setRecordingDuration(0);
           setVoiceFullscreen(false);
           voiceTargetSidRef.current = null;
+          setMicFlow(null);
           break;
       }
     };
@@ -324,6 +318,9 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [voiceFullscreen, setVoiceFullscreen] = useState(false);
+  // Distinguishes chat-mic (renders the Manager-Chat VoiceFullscreen overlay)
+  // from terminal-mic (renders the small terminal-style pill, just like V1).
+  const [micFlow, setMicFlow] = useState<'chat' | 'terminal' | null>(null);
   // When non-null, that pane fills the whole stage and the chat UI is hidden.
   // Set by double-tapping a pane; cleared by the close-button or keyboard hide.
   const [focusedPaneIdx, setFocusedPaneIdx] = useState<number | null>(null);
@@ -626,6 +623,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       setMicState('idle');
       setVoiceFullscreen(false);
       voiceTargetSidRef.current = null;
+      setMicFlow(null);
     }
   }, [wsService, voicePromptEnhanceEnabled]);
 
@@ -641,6 +639,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     setRecordingDuration(0);
     setVoiceFullscreen(false);
     voiceTargetSidRef.current = null;
+    setMicFlow(null);
     if (recording) {
       try {
         await recording.stopAndUnloadAsync();
@@ -656,34 +655,40 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   // starts recording. The transcription lands in the chat input.
   const handleMicPress = useCallback(async () => {
     if (micState === 'recording' || micState === 'processing') {
-      setVoiceFullscreen(true);
+      if (micFlow === 'chat') setVoiceFullscreen(true);
       return;
     }
     voiceTargetSidRef.current = null; // chat input target
+    setMicFlow('chat');
     setVoiceFullscreen(true);
     const ok = await startRecording();
-    if (!ok) setVoiceFullscreen(false);
-  }, [micState, startRecording]);
+    if (!ok) {
+      setVoiceFullscreen(false);
+      setMicFlow(null);
+    }
+  }, [micState, micFlow, startRecording]);
 
-  // Mic ORB (sidebar) → terminal-mic flow. Same fullscreen UI but the
-  // transcription lands in the active pane's terminal as injected text.
+  // Mic ORB (sidebar) → terminal-mic flow. Same small pill UI as the V1
+  // terminal screen; transcription is injected into the active pane.
   const handleOrbMic = useCallback(async () => {
     if (!activeSessionId) {
       Alert.alert('Kein aktives Terminal', 'Wähle zuerst ein Pane aus.');
       return;
     }
-    if (micState === 'recording' || micState === 'processing') {
-      setVoiceFullscreen(true);
+    if (micState === 'recording') {
+      // Recording already running — second press = stop & send.
+      stopAndSendRecording();
       return;
     }
+    if (micState === 'processing') return;
     voiceTargetSidRef.current = activeSessionId;
-    setVoiceFullscreen(true);
+    setMicFlow('terminal');
     const ok = await startRecording();
     if (!ok) {
-      setVoiceFullscreen(false);
       voiceTargetSidRef.current = null;
+      setMicFlow(null);
     }
-  }, [activeSessionId, micState, startRecording]);
+  }, [activeSessionId, micState, startRecording, stopAndSendRecording]);
 
   // ── Orb dispatcher ─────────────────────────────────────────────────────────
   // Tap on a sidebar orb → either fire its action against the active pane
@@ -1078,27 +1083,8 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           </ScrollView>
         );
       case 'dpad':
-        return (
-          <View style={{ padding: 14 }}>
-            <ToolSection>Pfeiltasten · @{ctx ?? 'pane'}</ToolSection>
-            <View style={{ alignItems: 'center', gap: 4, marginTop: 8 }}>
-              <TouchableOpacity style={dpadStyles.key} onPress={() => sendKeyToActive('\x1b[A')}>
-                <Feather name="arrow-up" size={18} color={colors.text} />
-              </TouchableOpacity>
-              <View style={{ flexDirection: 'row', gap: 4 }}>
-                <TouchableOpacity style={dpadStyles.key} onPress={() => sendKeyToActive('\x1b[D')}>
-                  <Feather name="arrow-left" size={18} color={colors.text} />
-                </TouchableOpacity>
-                <TouchableOpacity style={dpadStyles.key} onPress={() => sendKeyToActive('\x1b[B')}>
-                  <Feather name="arrow-down" size={18} color={colors.text} />
-                </TouchableOpacity>
-                <TouchableOpacity style={dpadStyles.key} onPress={() => sendKeyToActive('\x1b[C')}>
-                  <Feather name="arrow-right" size={18} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        );
+        // Rendered by renderDpadOverlay — same compact V1 style.
+        return null;
       default:
         return null;
     }
@@ -1319,6 +1305,67 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     );
   }
 
+  // ── Render: Terminal-mic pill (mirrors V1 OrbLayer.micOverlay) ───────────
+  // Small floating pill that shows red dot + mm:ss timer + send button while
+  // recording, or a spinner + "Transkribiert…" while waiting for Whisper.
+  // Positioned just to the right of the ToolSidebar, near the bottom.
+  function renderTerminalMicPill() {
+    if (micFlow !== 'terminal') return null;
+    if (micState !== 'recording' && micState !== 'processing') return null;
+    const mm = String(Math.floor(Math.max(0, recordingDuration) / 60)).padStart(2, '0');
+    const ss = String(Math.max(0, recordingDuration) % 60).padStart(2, '0');
+    const sidebarOffset = sidebarState === 'expanded' ? 168 : 50;
+    return (
+      <View style={[s.micPill, { left: sidebarOffset, bottom: insets.bottom + 28 }]}>
+        {micState === 'recording' ? (
+          <>
+            <View style={s.micDot} />
+            <Text style={s.micTimer}>{mm}:{ss}</Text>
+            <TouchableOpacity style={s.micSendBtn} onPress={stopAndSendRecording} activeOpacity={0.7}>
+              <Feather name="send" size={14} color="#F8FAFC" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={cancelRecording} hitSlop={8} style={{ marginLeft: 4 }}>
+              <Feather name="x" size={14} color="#94A3B8" />
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={s.micProcessing}>Transkribiert…</Text>
+          </>
+        )}
+      </View>
+    );
+  }
+
+  // ── Render: D-Pad overlay (mirrors V1 OrbLayer.dpadOverlay) ──────────────
+  // Compact 3-button cross floating just to the right of the ToolSidebar.
+  function renderDpadOverlay() {
+    if (activeOrb !== 'dpad') return null;
+    const sidebarOffset = sidebarState === 'expanded' ? 168 : 50;
+    return (
+      <View style={[s.dpadOverlay, { left: sidebarOffset, bottom: insets.bottom + 100 }]}>
+        <TouchableOpacity style={s.dpadKey} onPress={() => sendKeyToActive('\x1b[A')} activeOpacity={0.6}>
+          <Feather name="chevron-up" size={18} color="#94A3B8" />
+        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 4 }}>
+          <TouchableOpacity style={s.dpadKey} onPress={() => sendKeyToActive('\x1b[D')} activeOpacity={0.6}>
+            <Feather name="chevron-left" size={18} color="#94A3B8" />
+          </TouchableOpacity>
+          <TouchableOpacity style={s.dpadKey} onPress={() => sendKeyToActive('\x1b[B')} activeOpacity={0.6}>
+            <Feather name="chevron-down" size={18} color="#94A3B8" />
+          </TouchableOpacity>
+          <TouchableOpacity style={s.dpadKey} onPress={() => sendKeyToActive('\x1b[C')} activeOpacity={0.6}>
+            <Feather name="chevron-right" size={18} color="#94A3B8" />
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity onPress={() => setActiveOrb(null)} style={s.dpadCloseBtn}>
+          <Text style={s.dpadCloseText}>Schließen</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   // ── Layout ─────────────────────────────────────────────────────────────────
   const inFocus = focusedPaneIdx != null;
   return (
@@ -1374,7 +1421,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           />
 
           <ToolFlyout
-            orbId={activeOrb}
+            orbId={activeOrb === 'dpad' ? null : activeOrb}
             sidebarState={sidebarState}
             contextLabel={activeSessionId ? '@' + labelFor(activeSessionId) : undefined}
             onClose={closeTool}
@@ -1400,14 +1447,18 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       {!inFocus && renderAttachments()}
       {!inFocus && renderInputBar()}
 
-      {/* Fullscreen voice capture — opens when the mic button is tapped */}
+      {/* Fullscreen voice capture — only for chat-input mic. Terminal mic uses
+          the small pill overlay (renderTerminalMicPill below). */}
       <VoiceFullscreen
-        visible={voiceFullscreen}
+        visible={voiceFullscreen && micFlow === 'chat'}
         state={micState === 'processing' ? 'processing' : 'recording'}
         duration={Math.max(0, recordingDuration)}
         onCancel={cancelRecording}
         onSend={stopAndSendRecording}
       />
+
+      {renderTerminalMicPill()}
+      {renderDpadOverlay()}
 
       {/* Lightbox — opens on tap of any image thumb in the chat */}
       <Modal
@@ -1551,6 +1602,90 @@ const s = StyleSheet.create({
 
   // Stage body container
   stageBody: { flex: 1, flexDirection: 'row', minHeight: 0 },
+
+  // ── Terminal-mic pill (V1 OrbLayer parity) ──────────────────────────────
+  micPill: {
+    position: 'absolute',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#0F172A',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    zIndex: 220,
+  },
+  micDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#EF4444',
+  },
+  micTimer: {
+    color: '#EF4444',
+    fontSize: 16,
+    fontWeight: '700',
+    fontFamily: fonts.mono,
+  },
+  micSendBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  micProcessing: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  // ── D-Pad overlay (V1 OrbLayer parity) ───────────────────────────────────
+  dpadOverlay: {
+    position: 'absolute',
+    alignItems: 'center',
+    gap: 4,
+    zIndex: 220,
+    padding: 6,
+    backgroundColor: 'rgba(15,23,42,0.85)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  dpadKey: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dpadCloseBtn: {
+    marginTop: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  dpadCloseText: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '600',
+  },
 
   // Floating close button shown only in pane-focus mode (top-right corner).
   focusCloseBtn: {
