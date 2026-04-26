@@ -1460,28 +1460,34 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             {renderOrbFlyoutBody()}
           </ToolFlyout>
 
-          {/* V1-style OrbLayer — replaces the V2 sidebar in focus mode so the
-              user gets the exact same orb dock + tools + mic + dpad they're
-              used to from the terminal screen when its keyboard opens. */}
+          {/* V1-style OrbLayer — wrapped in a high-zIndex View so it sits
+              above the focused-pane overlay (zIndex 99 / elevation 8 in
+              MultiSpotlight). pointerEvents="box-none" lets taps fall
+              through to the terminal where no orb is covering. */}
           {inFocus && focusedPaneIdx != null && (
-            <OrbLayer
-              sessionId={panes[focusedPaneIdx] ?? undefined}
-              wsService={wsService}
-              onScrollToBottom={() => spotlightRef.current && undefined /* no-op */}
-              onOpenTools={() => { /* TODO: hook ToolMenu in a follow-up */ }}
-              onOpenSpotlight={() => { /* TODO: spotlight in V2 */ }}
-              onOpenManager={() => exitPaneFocus()}
-              onRangeToggle={() => { /* TODO: range select in V2 */ }}
-              rangeActive={false}
-              containerSize={stageSize}
-              keyboardVisible={keyboardVisible}
-              keyboardHeight={keyboardHeight}
-              onTranscription={(text) => {
-                if (focusedPaneIdx != null) {
-                  spotlightRef.current?.injectIntoPane(focusedPaneIdx, text);
-                }
-              }}
-            />
+            <View
+              style={[StyleSheet.absoluteFillObject, { zIndex: 150, elevation: 24 }]}
+              pointerEvents="box-none"
+            >
+              <OrbLayer
+                sessionId={panes[focusedPaneIdx] ?? undefined}
+                wsService={wsService}
+                onScrollToBottom={() => { /* spotlightRef has no scroll yet */ }}
+                onOpenTools={() => { /* TODO: hook ToolMenu in a follow-up */ }}
+                onOpenSpotlight={() => { /* TODO: spotlight in V2 */ }}
+                onOpenManager={() => exitPaneFocus()}
+                onRangeToggle={() => { /* TODO: range select in V2 */ }}
+                rangeActive={false}
+                containerSize={stageSize}
+                keyboardVisible={keyboardVisible}
+                keyboardHeight={keyboardHeight}
+                onTranscription={(text) => {
+                  if (focusedPaneIdx != null) {
+                    spotlightRef.current?.injectIntoPane(focusedPaneIdx, text);
+                  }
+                }}
+              />
+            </View>
           )}
 
           {/* Floating close-button — only visible while a pane is in focus mode */}
