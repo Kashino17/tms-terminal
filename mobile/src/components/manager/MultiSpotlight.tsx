@@ -104,8 +104,9 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     const status: PaneStatus = statusFor?.(sid) ?? 'idle';
     const label = labelFor?.(sid) ?? sid;
     // Per-mode font size: smaller panes need smaller text so a useful amount
-    // of terminal context fits. Clamped server-side to xterm's MIN_FONT/MAX_FONT.
-    const fontSize = mode === 4 ? 9 : mode === 2 ? 11 : 13;
+    // of terminal context fits. Clamped client-side to xterm's MIN_FONT/MAX_FONT.
+    // Bumped after device test — 9px was too small to read in mode 4.
+    const fontSize = mode === 4 ? 11 : mode === 2 ? 12 : 13;
     return (
       <View
         key={`${sid}-${i}`}
@@ -141,6 +142,7 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
             wsService={wsService}
             visible={true}
             fontSize={fontSize}
+            disableKeyboardOffset
           />
         </View>
       </View>

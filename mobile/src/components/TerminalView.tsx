@@ -87,10 +87,18 @@ interface Props {
    * If undefined, the terminal keeps its default (14 px) or the user's pinch-zoom value.
    */
   fontSize?: number;
+  /**
+   * When true, the WebView container does NOT shrink itself by `DOCK_HEIGHT` on
+   * keyboard open. Use this whenever the TerminalView is a passenger inside a
+   * larger screen (e.g. Manager-Chat MultiSpotlight) — the chat owns the keyboard,
+   * not the terminal, and adding a self-offset on top of the parent's resize
+   * starves the WebView of vertical space and leaves xterm with ~0 visible rows.
+   */
+  disableKeyboardOffset?: boolean;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, Props>(function TerminalView(
-  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false, fontSize }: Props,
+  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false, fontSize, disableKeyboardOffset = false }: Props,
   ref,
 ) {
   const webViewRef  = useRef<WebView>(null);
@@ -166,6 +174,13 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
 
   // ── Keyboard tracking ──────────────────────────────────────────────────────
   useEffect(() => {
+    // When the terminal is hosted inside a screen that owns the keyboard
+    // (e.g. Manager Chat MultiSpotlight), the parent's KeyboardAvoidingView +
+    // Android adjustResize already handles layout space. Adding our own
+    // bottom-offset on top would starve the WebView and leave xterm with ~0
+    // visible rows.
+    if (disableKeyboardOffset) return;
+
     if (Platform.OS === 'ios') {
       // iOS: manually offset bottom for keyboard height
       const showSub = Keyboard.addListener('keyboardWillShow', (e) => {
@@ -223,7 +238,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
       }).start();
     });
     return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  }, [disableKeyboardOffset]);
 
   // Apply theme changes live (user changes theme in settings while terminal is open)
   useEffect(() => {

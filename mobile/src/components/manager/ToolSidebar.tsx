@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -6,116 +6,197 @@ import {
   Pressable,
   StyleSheet,
   ScrollView,
+  Modal,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, fonts } from '../../theme';
+import { useOrbLayoutStore } from '../../store/orbLayoutStore';
+import {
+  ORB_DEFS,
+  filterSidebarOrbs,
+  allSidebarOrbIds,
+} from '../../constants/orbDefinitions';
 
-export type ToolId = 'wrench' | 'quick' | 'snippets' | 'files' | 'search' | 'ai';
 export type SidebarState = 'collapsed' | 'expanded' | 'hidden';
 
-export interface ToolDef {
-  id: ToolId;
-  /** Feather icon name. */
-  icon: string;
-  /** Label shown when sidebar is expanded. */
-  label: string;
-}
-
-export const DEFAULT_TOOLS: ToolDef[] = [
-  { id: 'wrench',   icon: 'tool',   label: 'Werkzeuge' },
-  { id: 'quick',    icon: 'zap',    label: 'Quick' },
-  { id: 'snippets', icon: 'code',   label: 'Snippets' },
-  { id: 'files',    icon: 'folder', label: 'Files' },
-  { id: 'search',   icon: 'search', label: 'Suche' },
-  { id: 'ai',       icon: 'cpu',    label: 'AI' },
-];
+/**
+ * Special action orbs that need a flyout in the sidebar (rather than firing
+ * directly). The parent renders the actual flyout body keyed off this id.
+ */
+export type FlyoutOrbId = 'tools' | 'dpad';
 
 interface SidebarProps {
   state: SidebarState;
-  /** Currently open tool (highlighted), or null. */
-  activeTool: ToolId | null;
+  /** Currently flyout-open orb (highlighted), or null. */
+  activeOrb: string | null;
+  /** Active pane's sessionId — drives whether direct-action orbs are enabled. */
+  activeSessionId: string | null;
   /** Cycle the sidebar state (called by chevron at top). */
   onToggleState: () => void;
-  /** User tapped a tool. */
-  onPickTool: (tool: ToolId) => void;
-  /** User tapped the "+" to add a custom tool slot (placeholder). */
-  onAddCustom?: () => void;
-  /** Override the default tool list. */
-  tools?: ToolDef[];
+  /** User tapped an orb. Direct-action orbs fire immediately;
+   *  flyout orbs ('tools', 'dpad') should be passed back to the parent. */
+  onPickOrb: (orbId: string) => void;
 }
 
 /**
- * Manager-Chat left sidebar. Replaces the previous "Stage Manager" rail since
- * the bottom chip-bar already lists all open terminals.
+ * Manager-Chat left sidebar. Renders the user's persisted dock-order from
+ * `orbLayoutStore` so the same orbs that appear on the terminal screen are
+ * available here too — and add/remove/reorder is shared state.
  *
- * Three states: collapsed (44 px, icons only), expanded (144 px, icons +
- * labels), hidden (0 px). Tools are tapped to open a flyout panel rendered
- * separately by the parent (see `<ToolFlyout>`).
+ * Three states: collapsed (44 px, icons only), expanded (160 px, icons +
+ * labels), hidden (0 px). Long-press an orb to enter edit mode (X to remove);
+ * the "+" at the bottom opens a picker to restore removed orbs.
  */
 export const ToolSidebar: React.FC<SidebarProps> = ({
   state,
-  activeTool,
+  activeOrb,
+  activeSessionId,
   onToggleState,
-  onPickTool,
-  onAddCustom,
-  tools = DEFAULT_TOOLS,
+  onPickOrb,
 }) => {
+  const dockOrder = useOrbLayoutStore((s) => s.dockOrder);
+  const removedIds = useOrbLayoutStore((s) => s.removedOrbIds);
+  const removeFromDock = useOrbLayoutStore((s) => s.removeFromDock);
+  const addToDock = useOrbLayoutStore((s) => s.addToDock);
+  const restoreOrb = useOrbLayoutStore((s) => s.restoreOrb);
+
+  const [editMode, setEditMode] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const orbs = useMemo(() => filterSidebarOrbs(dockOrder), [dockOrder]);
+  const addable = useMemo(() => {
+    const visible = new Set(orbs);
+    return allSidebarOrbIds().filter((id) => !visible.has(id));
+  }, [orbs]);
+
   if (state === 'hidden') return null;
   const expanded = state === 'expanded';
 
   return (
-    <View style={[s.bar, expanded && s.barExpanded]}>
-      <TouchableOpacity style={s.toggle} onPress={onToggleState} activeOpacity={0.7}>
-        <Feather
-          name={expanded ? 'chevrons-left' : 'chevrons-right'}
-          size={12}
-          color={colors.textMuted}
-        />
-      </TouchableOpacity>
-
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 4 }}>
-        {tools.map((t) => {
-          const active = t.id === activeTool;
-          return (
-            <Pressable
-              key={t.id}
-              style={[s.tool, active && s.toolActive]}
-              onPress={() => onPickTool(t.id)}
+    <>
+      <View style={[s.bar, expanded && s.barExpanded]}>
+        <View style={s.headRow}>
+          <TouchableOpacity style={s.toggle} onPress={onToggleState} activeOpacity={0.7}>
+            <Feather
+              name={expanded ? 'chevrons-left' : 'chevrons-right'}
+              size={12}
+              color={colors.textMuted}
+            />
+          </TouchableOpacity>
+          {expanded && (
+            <TouchableOpacity
+              style={[s.editBtn, editMode && s.editBtnActive]}
+              onPress={() => setEditMode((v) => !v)}
+              hitSlop={6}
             >
-              <View style={s.iconBox}>
-                <Feather
-                  name={t.icon as any}
-                  size={16}
-                  color={active ? colors.primary : colors.textMuted}
-                />
-              </View>
-              {expanded && (
-                <Text style={[s.label, active && s.labelActive]} numberOfLines={1}>
-                  {t.label}
-                </Text>
-              )}
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-
-      <TouchableOpacity style={s.addBtn} onPress={onAddCustom}>
-        <View style={s.iconBox}>
-          <Feather name="plus" size={13} color={colors.textDim} />
+              <Feather name={editMode ? 'check' : 'edit-2'} size={11} color={editMode ? colors.primary : colors.textMuted} />
+            </TouchableOpacity>
+          )}
         </View>
-        {expanded && <Text style={s.addLabel}>Eigenes</Text>}
-      </TouchableOpacity>
-    </View>
+
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 4 }}>
+          {orbs.map((orbId) => {
+            const def = ORB_DEFS[orbId];
+            if (!def) return null;
+            const active = orbId === activeOrb;
+            // Direct-action orbs grey out when no pane is selected; flyout orbs
+            // (tools / dpad / mic) stay enabled because they don't strictly
+            // require an active pane.
+            const isFlyout = def.action === 'tools' || def.action === 'dpad' || def.action === 'mic';
+            const disabled = !isFlyout && !activeSessionId;
+
+            return (
+              <View key={orbId} style={s.orbRow}>
+                <Pressable
+                  style={[s.orb, active && s.orbActive, disabled && s.orbDisabled]}
+                  onPress={() => !disabled && onPickOrb(orbId)}
+                  onLongPress={() => setEditMode(true)}
+                  delayLongPress={350}
+                >
+                  <View style={s.iconBox}>
+                    {def.icon(36, disabled ? colors.textDim : (active ? colors.primary : def.color))}
+                  </View>
+                  {expanded && (
+                    <Text
+                      style={[s.label, active && s.labelActive, disabled && { color: colors.textDim }]}
+                      numberOfLines={1}
+                    >
+                      {def.label}
+                    </Text>
+                  )}
+                </Pressable>
+                {editMode && (
+                  <TouchableOpacity
+                    style={s.removeBtn}
+                    onPress={() => removeFromDock(orbId)}
+                    hitSlop={6}
+                  >
+                    <Feather name="x" size={11} color="#fff" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+        </ScrollView>
+
+        <TouchableOpacity style={s.addBtn} onPress={() => setPickerOpen(true)}>
+          <View style={s.iconBox}>
+            <Feather name="plus" size={13} color={colors.textDim} />
+          </View>
+          {expanded && <Text style={s.addLabel}>Hinzufügen</Text>}
+        </TouchableOpacity>
+      </View>
+
+      {/* Picker — restore removed or hidden orbs */}
+      <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
+        <Pressable style={s.modalBackdrop} onPress={() => setPickerOpen(false)}>
+          <Pressable style={s.pickerPanel} onPress={(e) => e.stopPropagation()}>
+            <Text style={s.pickerTitle}>Orbs hinzufügen</Text>
+            {addable.length === 0 ? (
+              <Text style={s.pickerEmpty}>Alle verfügbaren Orbs sind bereits in der Sidebar.</Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 340 }}>
+                {addable.map((orbId) => {
+                  const def = ORB_DEFS[orbId];
+                  if (!def) return null;
+                  return (
+                    <TouchableOpacity
+                      key={orbId}
+                      style={s.pickerRow}
+                      onPress={() => {
+                        // If the orb was previously removed (in removedOrbIds),
+                        // restore it to the free orbs as well so the terminal
+                        // screen also shows it again.
+                        if (removedIds.includes(orbId)) {
+                          restoreOrb(orbId, { xPct: 0.15, yPct: 0.78 });
+                        }
+                        addToDock(orbId);
+                        setPickerOpen(false);
+                      }}
+                    >
+                      <View style={s.pickerIconBox}>{def.icon(36, def.color)}</View>
+                      <Text style={s.pickerRowLabel}>{def.label}</Text>
+                      <Feather name="plus" size={14} color={colors.primary} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+            <TouchableOpacity style={s.pickerClose} onPress={() => setPickerOpen(false)}>
+              <Text style={s.pickerCloseText}>Schließen</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
   );
 };
 
 // ── Flyout Panel ─────────────────────────────────────────────────────────────
 
 interface FlyoutProps {
-  /** Currently open tool (null = hidden). */
-  tool: ToolId | null;
-  /** Display title (defaults to the matching ToolDef.label). */
-  title?: string;
+  /** Currently open orb id (null = hidden). */
+  orbId: string | null;
   /** Active pane label shown as context (`@<sid>`). */
   contextLabel?: string;
   /** Sidebar state — controls the flyout's left offset. */
@@ -126,31 +207,28 @@ interface FlyoutProps {
 }
 
 /**
- * Flyout panel anchored to the right edge of the ToolSidebar.
- * Caller controls the body content via `children`.
+ * Flyout panel anchored to the right edge of the ToolSidebar. Caller controls
+ * the body content via `children`.
  */
 export const ToolFlyout: React.FC<FlyoutProps> = ({
-  tool,
-  title,
+  orbId,
   contextLabel,
   sidebarState,
   onClose,
   children,
 }) => {
-  if (!tool || sidebarState === 'hidden') return null;
-
+  if (!orbId || sidebarState === 'hidden') return null;
+  const def = ORB_DEFS[orbId];
   // Mirror the sidebar's width so the flyout sits flush against it.
-  const left = sidebarState === 'expanded' ? 150 : 50;
-  const def = DEFAULT_TOOLS.find((t) => t.id === tool);
-
+  const left = sidebarState === 'expanded' ? 168 : 50;
   return (
     <View style={[s.flyout, { left }]} pointerEvents="box-none">
       <View style={s.flyoutInner}>
         <View style={s.flyoutHead}>
           <View style={s.flyoutToolIcon}>
-            {def && <Feather name={def.icon as any} size={13} color={colors.primary} />}
+            {def && def.icon(28, colors.primary)}
           </View>
-          <Text style={s.flyoutTitle}>{title ?? def?.label ?? tool}</Text>
+          <Text style={s.flyoutTitle}>{def?.label ?? orbId}</Text>
           {contextLabel && (
             <View style={s.flyoutContext}>
               <Text style={s.flyoutContextText}>{contextLabel}</Text>
@@ -223,18 +301,42 @@ const s = StyleSheet.create({
     paddingBottom: 4,
   },
   barExpanded: {
-    width: 144,
+    width: 160,
     paddingHorizontal: 6,
   },
+  headRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 6,
+  },
   toggle: {
+    flex: 1,
     height: 22,
     borderRadius: 6,
     backgroundColor: 'rgba(255,255,255,0.04)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 6,
   },
-  tool: {
+  editBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editBtnActive: {
+    backgroundColor: colors.primary + '26',
+  },
+  orbRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    position: 'relative',
+    marginBottom: 4,
+  },
+  orb: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -244,11 +346,13 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.025)',
     borderWidth: 1,
     borderColor: 'transparent',
-    marginBottom: 4,
   },
-  toolActive: {
-    backgroundColor: colors.primary + '26',  // ~15%
-    borderColor: colors.primary + '4D',       // ~30%
+  orbActive: {
+    backgroundColor: colors.primary + '26',
+    borderColor: colors.primary + '4D',
+  },
+  orbDisabled: {
+    opacity: 0.4,
   },
   iconBox: {
     width: 22,
@@ -257,12 +361,22 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   label: {
+    flex: 1,
     fontSize: 11,
     fontWeight: '600',
     color: colors.textMuted,
   },
   labelActive: {
     color: colors.primary,
+  },
+  removeBtn: {
+    position: 'absolute',
+    top: 2, right: 2,
+    width: 16, height: 16, borderRadius: 8,
+    backgroundColor: colors.destructive,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
   },
   addBtn: {
     flexDirection: 'row',
@@ -281,6 +395,61 @@ const s = StyleSheet.create({
     fontWeight: '600',
     color: colors.textDim,
   },
+
+  // Picker modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  pickerPanel: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  pickerTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  pickerEmpty: {
+    color: colors.textMuted,
+    fontSize: 12,
+    paddingVertical: 12,
+    textAlign: 'center',
+  },
+  pickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+  },
+  pickerIconBox: {
+    width: 28, height: 28,
+    borderRadius: 7,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickerRowLabel: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '600' },
+  pickerClose: {
+    marginTop: 12,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+  },
+  pickerCloseText: { color: colors.text, fontSize: 12, fontWeight: '600' },
 
   // Flyout
   flyout: {

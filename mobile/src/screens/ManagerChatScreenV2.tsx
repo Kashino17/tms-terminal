@@ -49,10 +49,10 @@ import {
   ToolFlyout,
   ToolItem,
   ToolSection,
-  type ToolId,
   type SidebarState,
 } from '../components/manager/ToolSidebar';
 import { VoiceFullscreen } from '../components/manager/VoiceFullscreen';
+import { ORB_DEFS, executeOrb } from '../constants/orbDefinitions';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'ManagerChat'>;
@@ -137,6 +137,15 @@ function LightboxContent({ imageUri, onClose, children }: {
     </Animated.View>
   );
 }
+
+const dpadStyles = StyleSheet.create({
+  key: {
+    width: 38, height: 38, borderRadius: 8,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+});
 
 const lbStyles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
@@ -285,7 +294,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   });
   const [activePaneIdx, setActivePaneIdx] = useState(0);
   const [sidebarState, setSidebarState] = useState<SidebarState>('collapsed');
-  const [activeTool, setActiveTool] = useState<ToolId | null>(null);
+  const [activeOrb, setActiveOrb] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<'chat' | 'terminal'>('chat');
   const [input, setInput] = useState('');
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -435,11 +444,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   }, [activePaneIdx]);
 
   // ── Tool callbacks ─────────────────────────────────────────────────────────
-  const openTool = useCallback((id: ToolId) => {
-    setActiveTool((cur) => (cur === id ? null : id));
-  }, []);
-
-  const closeTool = useCallback(() => setActiveTool(null), []);
+  const closeTool = useCallback(() => setActiveOrb(null), []);
 
   const cycleSidebar = useCallback(() => {
     setSidebarState((s) =>
@@ -596,6 +601,49 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     const ok = await startRecording();
     if (!ok) setVoiceFullscreen(false);
   }, [micState, startRecording]);
+
+  // ── Orb dispatcher ─────────────────────────────────────────────────────────
+  // Tap on a sidebar orb → either fire its action against the active pane
+  // (ctrl_c, esc, clear, …) or open a flyout for orbs that need a sub-UI
+  // (tools, dpad). Mic re-uses the existing voice flow.
+  const handleOrbPick = useCallback((orbId: string) => {
+    const def = ORB_DEFS[orbId];
+    if (!def) return;
+
+    if (def.action === 'tools' || def.action === 'dpad') {
+      setActiveOrb((cur) => (cur === orbId ? null : orbId));
+      return;
+    }
+    if (def.action === 'mic') {
+      handleMicPress();
+      return;
+    }
+
+    executeOrb(orbId, {
+      sessionId: activeSessionId ?? null,
+      sendInput: (data) => {
+        if (!activeSessionId) return;
+        wsService.send({ type: 'terminal:input', sessionId: activeSessionId, payload: { data } } as any);
+      },
+      clearTerminal: () => {
+        if (!activeSessionId) return;
+        wsService.send({ type: 'terminal:clear', sessionId: activeSessionId } as any);
+      },
+      scrollToBottom: () => {
+        // MultiSpotlight doesn't expose a per-pane scroll yet — skip silently.
+      },
+      openTools: () => setActiveOrb('tools'),
+      toggleDpad: () => setActiveOrb((cur) => (cur === 'dpad' ? null : 'dpad')),
+      openMic: () => handleMicPress(),
+    });
+  }, [activeSessionId, wsService, handleMicPress]);
+
+  // Helper for the dpad flyout — sends an arrow-key escape sequence to the
+  // active pane via the same `terminal:input` channel as the orb actions.
+  const sendKeyToActive = useCallback((data: string) => {
+    if (!activeSessionId) return;
+    wsService.send({ type: 'terminal:input', sessionId: activeSessionId, payload: { data } } as any);
+  }, [activeSessionId, wsService]);
 
   // ── Send ──────────────────────────────────────────────────────────────────
   const sendMessage = useCallback(() => {
@@ -923,53 +971,53 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     );
   }
 
-  // ── Render: Tool Flyout body ──────────────────────────────────────────────
-  function renderToolBody() {
+  // ── Render: Orb Flyout body ───────────────────────────────────────────────
+  // Only orbs that need a sub-UI render here. Direct-action orbs fire and
+  // never open the flyout.
+  function renderOrbFlyoutBody() {
     const ctx = activeSessionId ? labelFor(activeSessionId) : null;
-    switch (activeTool) {
-      case 'wrench':
+    switch (activeOrb) {
+      case 'tools':
         return (
           <ScrollView>
-            <ToolSection>Aktion auf @{ctx ?? 'pane'}</ToolSection>
-            <ToolItem icon="refresh-cw" label="Restart" onPress={() => { closeTool(); }} />
-            <ToolItem icon="trash-2" label="Output leeren" onPress={() => { closeTool(); }} />
-            <ToolItem icon="copy" label="Output kopieren" onPress={() => { closeTool(); }} />
-            <ToolItem icon="settings" label="Session-Einstellungen" onPress={() => { closeTool(); }} />
-            <ToolItem icon="square" label="Stop" variant="warn" onPress={() => { closeTool(); }} />
-            <ToolItem icon="x-octagon" label="Kill Session" variant="danger" onPress={() => { closeTool(); }} />
-          </ScrollView>
-        );
-      case 'quick':
-        return (
-          <ScrollView>
-            <ToolSection>In @{ctx ?? 'pane'} ausführen</ToolSection>
-            {['git status', 'git pull', 'git log --oneline -10', 'ls -la', 'pwd', 'npm install', 'npm test', 'npm run build', 'clear'].map((cmd) => (
+            <ToolSection>Quick · in @{ctx ?? 'pane'} ausführen</ToolSection>
+            {['git status', 'git pull', 'git log --oneline -10', 'ls -la', 'pwd', 'npm install', 'npm test', 'npm run build'].map((cmd) => (
               <ToolItem
                 key={cmd}
                 cmd={cmd}
                 onPress={() => { pushToActivePane(cmd); closeTool(); }}
               />
             ))}
-          </ScrollView>
-        );
-      case 'snippets':
-        return (
-          <ScrollView>
-            <ToolSection>Eigene Snippets</ToolSection>
+            <ToolSection>Snippets</ToolSection>
             <ToolItem emoji="📦" label="Backup DB" onPress={() => { pushToActivePane('pg_dump -Fc tms_prod > backup.dump'); closeTool(); }} />
             <ToolItem emoji="🚀" label="Deploy staging" onPress={() => { pushToActivePane('flyctl deploy --app tms-staging'); closeTool(); }} />
             <ToolItem emoji="🐳" label="Docker rebuild" onPress={() => { pushToActivePane('docker compose up -d --build'); closeTool(); }} />
           </ScrollView>
         );
-      case 'files':
-      case 'search':
-      case 'ai':
-      default:
+      case 'dpad':
         return (
           <View style={{ padding: 14 }}>
-            <Text style={{ color: colors.textMuted, fontSize: 11 }}>Coming soon — wird in einer späteren Phase angeschlossen.</Text>
+            <ToolSection>Pfeiltasten · @{ctx ?? 'pane'}</ToolSection>
+            <View style={{ alignItems: 'center', gap: 4, marginTop: 8 }}>
+              <TouchableOpacity style={dpadStyles.key} onPress={() => sendKeyToActive('\x1b[A')}>
+                <Feather name="arrow-up" size={18} color={colors.text} />
+              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 4 }}>
+                <TouchableOpacity style={dpadStyles.key} onPress={() => sendKeyToActive('\x1b[D')}>
+                  <Feather name="arrow-left" size={18} color={colors.text} />
+                </TouchableOpacity>
+                <TouchableOpacity style={dpadStyles.key} onPress={() => sendKeyToActive('\x1b[B')}>
+                  <Feather name="arrow-down" size={18} color={colors.text} />
+                </TouchableOpacity>
+                <TouchableOpacity style={dpadStyles.key} onPress={() => sendKeyToActive('\x1b[C')}>
+                  <Feather name="arrow-right" size={18} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
         );
+      default:
+        return null;
     }
   }
 
@@ -1214,9 +1262,10 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       <View style={s.stageBody}>
         <ToolSidebar
           state={sidebarState}
-          activeTool={activeTool}
+          activeOrb={activeOrb}
+          activeSessionId={activeSessionId ?? null}
           onToggleState={cycleSidebar}
-          onPickTool={openTool}
+          onPickOrb={handleOrbPick}
         />
 
         <View style={{ flex: 1, position: 'relative' }}>
@@ -1235,12 +1284,12 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           />
 
           <ToolFlyout
-            tool={activeTool}
+            orbId={activeOrb}
             sidebarState={sidebarState}
             contextLabel={activeSessionId ? '@' + labelFor(activeSessionId) : undefined}
             onClose={closeTool}
           >
-            {renderToolBody()}
+            {renderOrbFlyoutBody()}
           </ToolFlyout>
         </View>
       </View>
