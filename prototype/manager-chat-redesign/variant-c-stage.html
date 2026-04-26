@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Manager Chat · Variant C — Stage & Stream</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --bg: #0F172A;
+    --surface: #1B2336;
+    --surface-alt: #243044;
+    --primary: #3B82F6;
+    --accent: #22C55E;
+    --text: #F8FAFC;
+    --text-muted: #94A3B8;
+    --text-dim: #64748B;
+    --border: #334155;
+    --border-soft: #1E293B;
+    --destructive: #EF4444;
+    --warning: #F59E0B;
+    --info: #06B6D4;
+    --mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, monospace;
+  }
+  body {
+    background: #050810;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px 60px;
+    display: flex; flex-direction: column; align-items: center; gap: 18px;
+  }
+  .page-header { text-align: center; max-width: 540px; }
+  .page-header h1 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+  .page-header .tag { display: inline-block; margin-top: 6px; padding: 3px 10px; font-size: 10px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--info); background: rgba(6,182,212,.12); border: 1px solid rgba(6,182,212,.25); border-radius: 12px; }
+  .page-header p { font-size: 12px; color: var(--text-dim); margin-top: 10px; line-height: 1.55; }
+
+  /* Phone frame */
+  .phone {
+    width: 400px; height: 880px;
+    background: #060B14;
+    border-radius: 38px;
+    overflow: hidden;
+    position: relative;
+    border: 4px solid #11192B;
+    box-shadow: 0 30px 80px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.04);
+  }
+  .sbar { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; font-size: 11px; color: var(--text-dim); font-weight: 600; }
+  .sbar .right { display: flex; gap: 6px; align-items: center; }
+  .notch { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); width: 110px; height: 26px; background: #000; border-radius: 14px; z-index: 50; }
+
+  /* === Layout: rail (left) + workspace (right) === */
+  .stage { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; display: flex; }
+
+  /* === LEFT RAIL === */
+  .rail {
+    width: 64px; flex-shrink: 0; background: linear-gradient(180deg, #0A111F 0%, #060B14 100%);
+    border-right: 1px solid var(--border-soft);
+    display: flex; flex-direction: column;
+    padding: 6px 4px;
+    overflow-y: auto;
+  }
+  .rail::-webkit-scrollbar { width: 0; }
+
+  .rail-head {
+    padding: 4px 0 6px;
+    text-align: center;
+    font-size: 8px; font-weight: 800; letter-spacing: 1.5px; color: var(--text-dim);
+    border-bottom: 1px solid var(--border-soft); margin-bottom: 6px;
+  }
+  .rail-head b { display: block; color: var(--text); font-size: 13px; letter-spacing: 0; margin-bottom: 1px; }
+
+  .spine {
+    margin-bottom: 4px;
+    padding: 6px 4px;
+    border-radius: 10px;
+    background: rgba(255,255,255,.02);
+    border: 1px solid transparent;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    cursor: pointer; transition: all .15s; position: relative;
+  }
+  .spine:hover { background: rgba(255,255,255,.05); border-color: var(--border-soft); }
+  .spine.active {
+    background: color-mix(in srgb, var(--tcolor) 12%, transparent);
+    border-color: color-mix(in srgb, var(--tcolor) 40%, transparent);
+  }
+  .spine.active::before {
+    content: ''; position: absolute; left: -5px; top: 8px; bottom: 8px; width: 3px;
+    background: var(--tcolor); border-radius: 0 2px 2px 0;
+    box-shadow: 0 0 8px var(--tcolor);
+  }
+  .spine.pinned::after {
+    content: ''; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px;
+    background: var(--tcolor); border-radius: 50%; box-shadow: 0 0 6px var(--tcolor);
+  }
+
+  .spine .ab {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: color-mix(in srgb, var(--tcolor) 15%, transparent);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--tcolor);
+    border: 1px solid color-mix(in srgb, var(--tcolor) 25%, transparent);
+  }
+  .spine .nm { font-family: var(--mono); font-size: 8px; font-weight: 600; color: var(--text-muted); text-align: center; line-height: 1.1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .spine.active .nm { color: var(--text); }
+
+  /* tiny vertical sparkline */
+  .spine .sk { display: flex; align-items: end; gap: 1px; height: 12px; }
+  .spine .sk .b { width: 2px; background: var(--tcolor); opacity: .5; border-radius: 1px; min-height: 1.5px; }
+  .spine .sk .b.hi { opacity: .9; }
+
+  .spine .stat {
+    width: 6px; height: 6px; border-radius: 50%;
+    position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+  }
+  .stat.run { background: var(--accent); animation: pulse 1.4s infinite; }
+  .stat.idle { background: var(--text-dim); }
+  .stat.wait { background: var(--warning); }
+  .stat.err { background: var(--destructive); animation: pulse 1s infinite; }
+  .stat.done { background: var(--info); }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: translateX(-50%) scale(1); } 50% { opacity: .4; transform: translateX(-50%) scale(.7); } }
+
+  .spine .sk { display: none; }
+  .spine.active .sk { display: flex; }
+
+  .rail-add {
+    margin-top: auto;
+    padding: 8px 0;
+    border-radius: 10px;
+    border: 1.5px dashed var(--border);
+    color: var(--text-dim);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .rail-add svg { width: 16px; height: 16px; }
+
+  /* === RIGHT WORKSPACE === */
+  .ws { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  /* Spotlight area */
+  .spotlight {
+    flex: 1.05; min-height: 0; display: flex; flex-direction: column;
+    background: #0B1220; border-bottom: 1px solid var(--border-soft);
+    position: relative;
+  }
+  .sp-bar {
+    height: 38px; display: flex; align-items: center; gap: 6px;
+    padding: 0 10px;
+    background: rgba(0,0,0,.3);
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .sp-bar .pin-lbl {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 9px; font-weight: 800; letter-spacing: 1.5px; color: var(--text-dim); text-transform: uppercase;
+  }
+  .sp-bar .pin-lbl::before { content: ''; width: 4px; height: 4px; background: var(--text-dim); border-radius: 50%; }
+  .sp-bar .name {
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 9px; border-radius: 8px;
+    background: color-mix(in srgb, var(--tcolor) 14%, transparent);
+    color: var(--tcolor);
+    border: 1px solid color-mix(in srgb, var(--tcolor) 30%, transparent);
+  }
+  .sp-bar .name .d { width: 6px; height: 6px; border-radius: 50%; background: var(--tcolor); box-shadow: 0 0 6px var(--tcolor); }
+  .sp-bar .badge { font-size: 8.5px; font-weight: 700; padding: 2px 6px; border-radius: 5px; letter-spacing: .5px; text-transform: uppercase; background: rgba(239,68,68,.15); color: var(--destructive); }
+  .sp-bar .ctrl { margin-left: auto; display: flex; gap: 4px; }
+  .sp-bar .ctrl-btn { width: 26px; height: 26px; border-radius: 7px; background: rgba(255,255,255,.04); border: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
+  .sp-bar .ctrl-btn svg { width: 12px; height: 12px; }
+
+  .sp-out {
+    flex: 1; padding: 10px 12px; font-family: var(--mono); font-size: 11px; line-height: 1.55;
+    color: #E2E8F0; overflow-y: auto;
+  }
+  .sp-out::-webkit-scrollbar { width: 0; }
+  .sp-out .l { display: block; }
+  .sp-out .d { color: var(--text-dim); }
+  .sp-out .o { color: #94A3B8; }
+  .sp-out .g { color: var(--accent); }
+  .sp-out .r { color: var(--destructive); }
+  .sp-out .b { color: var(--primary); }
+  .sp-out .w { color: var(--warning); }
+  .sp-out .ai { color: #A78BFA; }
+  .sp-out .ind { color: var(--text-dim); padding-left: 16px; }
+
+  /* Divider with grab handle */
+  .divider {
+    height: 14px; display: flex; align-items: center; justify-content: center;
+    background: #060B14; cursor: ns-resize; position: relative;
+  }
+  .divider::before {
+    content: ''; width: 32px; height: 4px; border-radius: 2px;
+    background: rgba(255,255,255,.15);
+  }
+
+  /* Chat zone */
+  .chat-zone {
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    background: var(--bg);
+    position: relative;
+  }
+  .chat-bar {
+    height: 38px; padding: 0 10px; display: flex; align-items: center; gap: 8px;
+    background: var(--surface); border-bottom: 1px solid var(--border-soft);
+  }
+  .chat-bar .av {
+    width: 24px; height: 24px; border-radius: 7px;
+    background: linear-gradient(135deg, #3B82F6, #8B5CF6);
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+  .chat-bar .av::after {
+    content: ''; position: absolute; bottom: -1px; right: -1px; width: 7px; height: 7px;
+    background: var(--accent); border-radius: 50%; border: 1.5px solid var(--surface);
+  }
+  .chat-bar .av svg { width: 12px; height: 12px; }
+  .chat-bar .name { font-size: 12px; font-weight: 700; }
+  .chat-bar .ctx {
+    margin-left: auto;
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 9px; font-weight: 700; padding: 3px 8px; border-radius: 7px;
+    background: color-mix(in srgb, var(--tcolor, #94A3B8) 12%, transparent);
+    color: var(--tcolor, #94A3B8);
+    border: 1px solid color-mix(in srgb, var(--tcolor, #94A3B8) 25%, transparent);
+    font-family: var(--mono);
+  }
+  .chat-bar .ctx::before { content: '@'; opacity: .6; }
+
+  .chat-scroll {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 10px 10px 6px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .chat-scroll::-webkit-scrollbar { width: 0; }
+
+  .msg { display: flex; gap: 6px; max-width: 95%; }
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .msg-avatar { width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; }
+  .msg.assistant .msg-avatar { background: linear-gradient(135deg, #3B82F6, #8B5CF6); color: #fff; }
+  .msg.user .msg-avatar { background: var(--surface-alt); color: var(--text-muted); }
+  .msg-bubble { padding: 7px 10px; border-radius: 12px; font-size: 11.5px; line-height: 1.5; }
+  .msg.user .msg-bubble { background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant .msg-bubble { background: var(--surface); color: var(--text); border: 1px solid var(--border-soft); border-bottom-left-radius: 4px; }
+  .msg-bubble code { font-family: var(--mono); font-size: 10px; background: rgba(0,0,0,.3); padding: 1px 4px; border-radius: 3px; color: var(--info); }
+
+  .tmention {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 1px 6px 1px 4px; border-radius: 7px;
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    background: color-mix(in srgb, var(--tcolor) 18%, transparent);
+    color: var(--tcolor);
+    border: 1px solid color-mix(in srgb, var(--tcolor) 30%, transparent);
+    cursor: pointer;
+  }
+  .tmention::before { content: '@'; opacity: .6; font-size: 9px; }
+  .tmention .tdot { width: 4px; height: 4px; border-radius: 50%; background: var(--tcolor); }
+
+  /* Suggestion chips above input */
+  .suggest-row { padding: 4px 10px; display: flex; gap: 5px; overflow-x: auto; flex-shrink: 0; }
+  .suggest-row::-webkit-scrollbar { height: 0; }
+  .suggest {
+    flex-shrink: 0; padding: 4px 9px; border-radius: 8px; font-size: 10px; font-weight: 600;
+    background: rgba(255,255,255,.04); border: 1px solid var(--border-soft); color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .suggest.acc { background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.25); color: var(--accent); }
+  .suggest.err { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.25); color: var(--destructive); }
+
+  .chat-input { padding: 6px 8px 8px; display: flex; gap: 6px; align-items: center; border-top: 1px solid var(--border-soft); background: var(--surface); }
+  .chat-input .field { flex: 1; background: var(--bg); border: 1px solid var(--border-soft); border-radius: 10px; padding: 7px 10px; font-size: 12px; color: var(--text-dim); display: flex; align-items: center; min-height: 32px; }
+  .chat-input .send { width: 32px; height: 32px; border-radius: 10px; background: var(--primary); display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; }
+  .chat-input .send svg { width: 14px; height: 14px; }
+  .chat-input .mic { width: 32px; height: 32px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: center; color: var(--text-muted); flex-shrink: 0; }
+  .chat-input .mic svg { width: 14px; height: 14px; }
+
+  /* Notes */
+  .note { max-width: 540px; font-size: 12px; color: var(--text-muted); line-height: 1.6; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; padding: 14px 16px; }
+  .note h3 { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; letter-spacing: .3px; }
+  .note ul { padding-left: 18px; margin-top: 4px; }
+  .note li { margin-top: 3px; }
+
+  .nav { display: flex; gap: 8px; }
+  .nav a { font-size: 11px; padding: 6px 12px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); color: var(--text-muted); text-decoration: none; }
+  .nav a.active { background: var(--info); color: #0F172A; border-color: var(--info); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <span class="tag">Variant C</span>
+  <h1 style="margin-top:8px">Stage &amp; Stream</h1>
+  <p>Linkes Rail mit allen 10 Terminals als "Spines" (kompakt, immer sichtbar). Rechts vertikal geteilt: oben das spotlighted Terminal in voller Größe, unten der Manager Chat. Tap auf einen Spine → Terminal kommt ins Spotlight, Chat bleibt. Dadurch siehst du <b>jederzeit</b> alle Terminals + ein vollständiges Terminal + den Chat. <i>Metapher: DAW / Streaming Control Room.</i></p>
+</div>
+
+<div class="nav">
+  <a href="index.html">Übersicht</a>
+  <a href="variant-a-cockpit.html">A · Cockpit</a>
+  <a href="variant-b-mosaic.html">B · Mosaic</a>
+  <a href="variant-c-stage.html" class="active">C · Stage</a>
+</div>
+
+<div class="phone">
+  <div class="notch"></div>
+  <div class="sbar"><span>9:41</span><span class="right">●●●● 5G 87%</span></div>
+
+  <div class="stage">
+
+    <!-- LEFT RAIL -->
+    <div class="rail">
+      <div class="rail-head"><b>10</b>STREAMS</div>
+
+      <div class="spine" style="--tcolor:#3B82F6" data-id="dev-server">
+        <div class="ab">DV</div>
+        <div class="nm">dev-srv</div>
+        <div class="sk"><div class="b" style="height:30%"></div><div class="b hi" style="height:60%"></div><div class="b" style="height:35%"></div><div class="b hi" style="height:70%"></div></div>
+        <span class="stat run"></span>
+      </div>
+
+      <div class="spine pinned" style="--tcolor:#A78BFA" data-id="build-watch">
+        <div class="ab">BW</div>
+        <div class="nm">build</div>
+        <div class="sk"><div class="b" style="height:25%"></div><div class="b hi" style="height:80%"></div><div class="b hi" style="height:90%"></div><div class="b" style="height:15%"></div></div>
+        <span class="stat done"></span>
+      </div>
+
+      <div class="spine active" style="--tcolor:#22C55E" data-id="test-runner">
+        <div class="ab">TR</div>
+        <div class="nm">tests</div>
+        <div class="sk"><div class="b hi" style="height:60%"></div><div class="b hi" style="height:75%"></div><div class="b hi" style="height:85%"></div><div class="b hi" style="height:90%"></div></div>
+        <span class="stat err"></span>
+      </div>
+
+      <div class="spine" style="--tcolor:#06B6D4" data-id="db-repl">
+        <div class="ab">DB</div>
+        <div class="nm">db</div>
+        <span class="stat idle"></span>
+      </div>
+
+      <div class="spine" style="--tcolor:#F59E0B" data-id="deploy-staging">
+        <div class="ab">DS</div>
+        <div class="nm">deploy</div>
+        <span class="stat wait"></span>
+      </div>
+
+      <div class="spine" style="--tcolor:#94A3B8" data-id="log-tail">
+        <div class="ab">LG</div>
+        <div class="nm">logs</div>
+        <span class="stat run"></span>
+      </div>
+
+      <div class="spine" style="--tcolor:#EF4444" data-id="prod-shell">
+        <div class="ab">⚠</div>
+        <div class="nm">prod</div>
+        <span class="stat idle"></span>
+      </div>
+
+      <div class="spine" style="--tcolor:#14B8A6" data-id="docker-up">
+        <div class="ab">DK</div>
+        <div class="nm">docker</div>
+        <span class="stat run"></span>
+      </div>
+
+      <div class="spine" style="--tcolor:#EC4899" data-id="redis-cli">
+        <div class="ab">RD</div>
+        <div class="nm">redis</div>
+        <span class="stat idle"></span>
+      </div>
+
+      <div class="spine" style="--tcolor:#8B5CF6" data-id="backup-job">
+        <div class="ab">BK</div>
+        <div class="nm">backup</div>
+        <span class="stat done"></span>
+      </div>
+
+      <div class="rail-add">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+    </div>
+
+    <!-- RIGHT WORKSPACE -->
+    <div class="ws">
+
+      <!-- SPOTLIGHT -->
+      <div class="spotlight" id="spotlight" style="--tcolor:#22C55E">
+        <div class="sp-bar">
+          <span class="name"><span class="d"></span><span class="text">test-runner</span></span>
+          <span class="badge">1 Fail</span>
+          <span class="ctrl">
+            <span class="ctrl-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg></span>
+            <span class="ctrl-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></span>
+          </span>
+        </div>
+        <div class="sp-out">
+          <span class="l"><span class="d">$</span> <span class="b">vitest</span> run --reporter=verbose</span>
+          <span class="l"></span>
+          <span class="l"><span class="o"> RUN  v1.6.0  /Users/ayy/tms-terminal</span></span>
+          <span class="l"></span>
+          <span class="l"><span class="g">✓</span> src/utils.spec.ts <span class="d">(24 tests)</span> <span class="g">312ms</span></span>
+          <span class="l"><span class="g">✓</span> src/ws.spec.ts <span class="d">(18 tests)</span> <span class="g">589ms</span></span>
+          <span class="l"><span class="g">✓</span> src/store.spec.ts <span class="d">(12 tests)</span> <span class="g">218ms</span></span>
+          <span class="l"><span class="r">✗</span> src/auth.spec.ts <span class="d">(8 tests | 1 failed)</span></span>
+          <span class="l ind"><span class="r">FAIL</span> › "validates jwt token"</span>
+          <span class="l ind"><span class="o">  AssertionError: token undefined</span></span>
+          <span class="l ind"><span class="d">  expected:</span> <span class="g">'eyJhbGciOi...'</span></span>
+          <span class="l ind"><span class="d">  received:</span> <span class="r">undefined</span></span>
+          <span class="l ind"><span class="d">  at src/auth.ts:42:11</span></span>
+          <span class="l"></span>
+          <span class="l"><span class="d">────────────────</span></span>
+          <span class="l"> Test Files  <span class="r">1 failed</span> | <span class="g">3 passed</span> (4)</span>
+          <span class="l">      Tests  <span class="r">1 failed</span> | <span class="g">61 passed</span> (62)</span>
+          <span class="l">   Duration  4.21s</span>
+          <span class="l"></span>
+          <span class="l"><span class="d">$</span> <span class="b">_</span></span>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- CHAT -->
+      <div class="chat-zone">
+        <div class="chat-bar">
+          <div class="av">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </div>
+          <div class="name">Manager</div>
+          <span class="ctx" style="--tcolor:#22C55E">test-runner</span>
+        </div>
+
+        <div class="chat-scroll">
+          <div class="msg user">
+            <div class="msg-avatar">DU</div>
+            <div class="msg-bubble">Bau den Server, Tests prüfen, dann deploy auf staging.</div>
+          </div>
+          <div class="msg assistant">
+            <div class="msg-avatar">M</div>
+            <div class="msg-bubble">
+              Build in <span class="tmention" style="--tcolor:#A78BFA" data-target="build-watch"><span class="tdot"></span>build-watch</span>, Tests in <span class="tmention" style="--tcolor:#22C55E" data-target="test-runner"><span class="tdot"></span>test-runner</span>, dann <span class="tmention" style="--tcolor:#F59E0B" data-target="deploy-staging"><span class="tdot"></span>deploy-staging</span>.
+            </div>
+          </div>
+          <div class="msg assistant">
+            <div class="msg-avatar">M</div>
+            <div class="msg-bubble">
+              ⚠️ Build ok (12.4s). Aber <span class="tmention" style="--tcolor:#22C55E" data-target="test-runner"><span class="tdot"></span>test-runner</span> hat 1 Fail in <code>auth.spec.ts</code> — <code>token undefined</code>. Ich habe es ins Spotlight gezogen. Vorschlag: erst fixen, dann deploy.
+            </div>
+          </div>
+        </div>
+
+        <div class="suggest-row">
+          <span class="suggest err">Test ignorieren</span>
+          <span class="suggest acc">Fix vorschlagen</span>
+          <span class="suggest">Trotzdem deployen</span>
+        </div>
+
+        <div class="chat-input">
+          <div class="field">Antwort an @test-runner…</div>
+          <div class="mic">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </div>
+          <div class="send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<div class="note">
+  <h3>Wie es sich anfühlt</h3>
+  <ul>
+    <li><b>Linkes Rail</b> ist immer da — alle 10 Terminals als kompakte "Spines" (Avatar + Name + Status-Dot). Aktiver Spine hat Glow-Strich + farbigen Background, gepinnte Spines (vom Manager geheftete) haben einen Dot oben rechts.</li>
+    <li><b>Spotlight</b> oben rechts zeigt das aktive Terminal in voller Größe — du liest echten Terminal-Output, nicht nur Preview. Der ausgewählte Stream im Rail ist visuell klar verlinkt zum Spotlight-Header (gleiche Farbe).</li>
+    <li><b>Chat unten</b> ist immer sichtbar — der Manager kann reagieren während du noch das Terminal liest. Im Chat-Header steht klar im Kontext welches Terminal grade adressiert wird.</li>
+    <li><b>Drag-Handle</b> zwischen Spotlight und Chat lässt dich live umverteilen (mehr Terminal vs. mehr Chat).</li>
+    <li><b>Suggestion-Chips</b> über dem Input: schnelle Antworten basierend auf der letzten Manager-Nachricht.</li>
+    <li><b>Vorteil:</b> Du wechselst nie den Screen — Terminal-Inhalt, Multi-Terminal-Übersicht UND Chat sind permanent im Blick. <b>Nachteil:</b> Spotlight ist kleiner als bei einem Vollbild-Terminal.</li>
+  </ul>
+</div>
+
+<script>
+  // Click spine -> change spotlight
+  document.querySelectorAll('.spine').forEach(spine => {
+    spine.addEventListener('click', () => {
+      const id = spine.dataset.id;
+      if (!id) return;
+      const color = getComputedStyle(spine).getPropertyValue('--tcolor').trim();
+      // Update active state
+      document.querySelectorAll('.spine').forEach(s => s.classList.remove('active'));
+      spine.classList.add('active');
+      // Update spotlight
+      const sp = document.getElementById('spotlight');
+      sp.style.setProperty('--tcolor', color);
+      sp.querySelector('.name .text').textContent = id;
+      // Update chat ctx
+      document.querySelector('.ctx').style.setProperty('--tcolor', color);
+      document.querySelector('.ctx').textContent = id;
+      const inp = document.querySelector('.chat-input .field');
+      inp.textContent = `Antwort an @${id}…`;
+    });
+  });
+
+  // Click @mention -> activate that spine
+  document.querySelectorAll('.tmention').forEach(pill => {
+    pill.addEventListener('click', e => {
+      e.stopPropagation();
+      const target = pill.dataset.target;
+      const spine = document.querySelector(`.spine[data-id="${target}"]`);
+      if (spine) spine.click();
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manager Chat Redesign</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: #050810;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+    color: #F8FAFC;
+    min-height: 100vh;
+    padding: 32px 16px 48px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 26px; font-weight: 800; letter-spacing: -.5px; }
+  .sub { font-size: 13px; color: #64748B; margin-top: 8px; line-height: 1.6; }
+  .meta { font-size: 11px; color: #475569; font-family: 'SF Mono', monospace; margin-top: 12px; padding: 8px 12px; background: rgba(255,255,255,.03); border-radius: 8px; border: 1px solid rgba(255,255,255,.06); }
+  .meta b { color: #94A3B8; }
+
+  .round-header {
+    display: flex; align-items: center; gap: 10px;
+    margin: 32px 0 14px;
+  }
+  .round-header .lbl {
+    font-size: 11px; font-weight: 800; letter-spacing: 1.5px; color: #475569;
+    text-transform: uppercase;
+  }
+  .round-header .ttl { font-size: 18px; font-weight: 700; color: #F8FAFC; }
+  .round-header .badge {
+    font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 5px;
+    letter-spacing: .8px; text-transform: uppercase;
+  }
+  .round-header .badge.new { background: rgba(34,197,94,.15); color: #22C55E; border: 1px solid rgba(34,197,94,.3); }
+  .round-header .badge.archived { background: rgba(100,116,139,.1); color: #64748B; border: 1px solid rgba(100,116,139,.2); }
+  .round-header .line { flex: 1; height: 1px; background: rgba(255,255,255,.06); }
+
+  .grid { display: flex; flex-direction: column; gap: 12px; }
+  .card {
+    display: flex; align-items: stretch; gap: 14px;
+    padding: 14px; border-radius: 14px;
+    background: linear-gradient(180deg, rgba(255,255,255,.04) 0%, rgba(255,255,255,.01) 100%);
+    border: 1px solid rgba(255,255,255,.06);
+    color: #F8FAFC; text-decoration: none;
+    transition: all .2s;
+  }
+  .card:hover { border-color: rgba(255,255,255,.15); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+  .card.archived { opacity: .55; }
+  .card.archived:hover { opacity: .85; }
+  .card .ico {
+    width: 48px; height: 48px; flex-shrink: 0; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'SF Mono', monospace; font-size: 22px; font-weight: 800;
+  }
+  .card.a .ico { background: linear-gradient(135deg, #3B82F6, #1D4ED8); color: #fff; }
+  .card.b .ico { background: linear-gradient(135deg, #A78BFA, #7C3AED); color: #fff; }
+  .card.c .ico { background: linear-gradient(135deg, #06B6D4, #0891B2); color: #fff; }
+  .card.pro .ico { background: linear-gradient(135deg, #06B6D4, #3B82F6); color: #fff; }
+  .card.multi .ico { background: linear-gradient(135deg, #06B6D4, #22C55E); color: #fff; }
+  .card.float .ico { background: linear-gradient(135deg, #06B6D4, #EC4899); color: #fff; }
+  .card .body { flex: 1; min-width: 0; }
+  .card .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .card .name { font-size: 16px; font-weight: 700; }
+  .card .tag { font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 6px; letter-spacing: .8px; text-transform: uppercase; }
+  .card.a .tag { background: rgba(59,130,246,.15); color: #93C5FD; border: 1px solid rgba(59,130,246,.3); }
+  .card.b .tag { background: rgba(167,139,250,.15); color: #C4B5FD; border: 1px solid rgba(167,139,250,.3); }
+  .card.c .tag { background: rgba(6,182,212,.15); color: #67E8F9; border: 1px solid rgba(6,182,212,.3); }
+  .card.pro .tag, .card.multi .tag, .card.float .tag { background: rgba(6,182,212,.15); color: #67E8F9; border: 1px solid rgba(6,182,212,.3); }
+  .card .desc { font-size: 12px; color: #94A3B8; line-height: 1.55; margin-top: 5px; }
+  .card .feat { font-size: 10px; color: #64748B; margin-top: 4px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .card .feat span { display: inline-flex; align-items: center; gap: 3px; }
+  .card .feat span::before { content: '✓'; color: #22C55E; font-weight: 700; }
+  .card .arrow { font-size: 22px; color: #475569; align-self: center; }
+
+  .footer { margin-top: 36px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,.06); font-size: 12px; color: #64748B; line-height: 1.7; }
+  .footer h3 { font-size: 13px; color: #F8FAFC; margin-bottom: 8px; font-weight: 700; }
+  .footer code { font-family: 'SF Mono', monospace; font-size: 11px; background: rgba(255,255,255,.05); padding: 1px 6px; border-radius: 4px; color: #06B6D4; }
+  .footer kbd { display: inline-block; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); font-family: 'SF Mono', monospace; font-size: 10px; color: #F8FAFC; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <h1>Manager Chat · Redesign-Iterationen</h1>
+  <p class="sub">Round 7 ist die Final-Version: <b>Whisper-Header + Quiet-Rail + Group-Tabs</b>. Speichert Pane-Konfigurationen als benannte Gruppen, klickbar zum Laden.</p>
+
+  <div class="meta"><b>Server:</b> <span id="origin">–</span></div>
+
+  <!-- ROUND 7 — final -->
+  <div class="round-header">
+    <span class="lbl">Round 7</span>
+    <span class="ttl">Final · Whisper + Quiet-Rail + Group-Tabs</span>
+    <span class="badge new">final</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="grid">
+    <a href="v7-final.html" class="card pro">
+      <div class="ico">★</div>
+      <div class="body">
+        <div class="row"><span class="name">Final-Combo</span><span class="tag">Mit Group-Tabs</span></div>
+        <div class="desc">Whisper-Header (~42px) + Quiet-Rail (44px Stage Manager Sidebar) + <b>NEU: Group-Tabs-Bar</b> für gespeicherte Pane-Konfigurationen. Default/Debug/Deploy als Beispiel-Gruppen vorbelegt. Klick = laden, "+" = aktuelle Auswahl als neue Gruppe speichern.</div>
+        <div class="feat"><span>Group-Tabs</span><span>Save & Load</span><span>Inline-Naming</span><span>Auto Mode 1/2/4</span></div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+  </div>
+
+  <!-- ROUND 6 — archived -->
+  <div class="round-header">
+    <span class="lbl">Round 6</span>
+    <span class="ttl">Minimal-Stufen (Quiet/Hush/Whisper)</span>
+    <span class="badge archived">Whisper + Quiet-Rail gewählt</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="grid">
+    <a href="v6-quiet.html" class="card pro">
+      <div class="ico">A</div>
+      <div class="body">
+        <div class="row"><span class="name">Quiet</span><span class="tag">Erste Stufe</span></div>
+        <div class="desc">Avatar <b>38×38</b> mit Status-Eck-Dot. Header 50px (statt 76). Rail nur <b>44px</b> mit kompakten Abkürzungen. Multi-Bar 26px mit <b>Icons statt Text-Labels</b>. Tasks-Linie nur 22px wenn aktiv.</div>
+        <div class="feat"><span>38px Avatar</span><span>Rail 44px</span><span>Icon Multi-Bar</span><span>72px Top</span></div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+    <a href="v6-hush.html" class="card multi">
+      <div class="ico">B</div>
+      <div class="body">
+        <div class="row"><span class="name">Hush</span><span class="tag">Mittlere Stufe</span></div>
+        <div class="desc">Avatar <b>36×36</b> mit Online-Dot. Header 46px. Name + Modell <b>auf einer Linie</b>. Tasks komplett aus Top — als <b>Badge auf Avatar</b> + Floating-Pille. Rail <b>36px breit</b> mit runden Color-Kreisen. Multi-Bar 22px.</div>
+        <div class="feat"><span>36px Avatar</span><span>Color Circles</span><span>Tasks auf Avatar</span><span>46px Top</span></div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+    <a href="v6-whisper.html" class="card float">
+      <div class="ico">C</div>
+      <div class="body">
+        <div class="row"><span class="name">Whisper</span><span class="tag">Maximale Stufe</span></div>
+        <div class="desc">Avatar <b>36×36</b> hairline. Header nur <b>42px</b>. Name + Modell + Tasks-Pille <b>alles in einer Zeile</b>. Rail <b>28px ultra-schmal</b> mit Color-Pills. Multi-Bar nur <b>20px</b> mit Mikro-Icons (16×16). Niedrigster Top-Bereich.</div>
+        <div class="feat"><span>28px Rail</span><span>20px Multi-Bar</span><span>42px Top</span><span>One Line Header</span></div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+  </div>
+
+  <!-- ROUND 5 — archived -->
+  <div class="round-header">
+    <span class="lbl">Round 5</span>
+    <span class="ttl">Premium + größerer Avatar</span>
+    <span class="badge archived">zu groß</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="grid">
+    <a href="v5-premium-persona.html" class="card pro archived">
+      <div class="ico">A</div>
+      <div class="body">
+        <div class="row"><span class="name">Persona</span><span class="tag">Referenz</span></div>
+        <div class="desc">56px Avatar mit Status-Ring.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+    <a href="v5-premium-messenger.html" class="card multi archived">
+      <div class="ico">B</div>
+      <div class="body">
+        <div class="row"><span class="name">Messenger</span><span class="tag">Referenz</span></div>
+        <div class="desc">50px Avatar, iMessage Online-Dot.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+    <a href="v5-premium-hero.html" class="card float archived">
+      <div class="ico">C</div>
+      <div class="body">
+        <div class="row"><span class="name">Hero</span><span class="tag">Referenz</span></div>
+        <div class="desc">60px Avatar mit Conic-Gradient Ring.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+  </div>
+
+  <!-- ROUND 4 — archived -->
+  <div class="round-header">
+    <span class="lbl">Round 4</span>
+    <span class="ttl">Native + Polish</span>
+    <span class="badge archived">Premium gewann</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="grid">
+    <a href="v4-native-compact.html" class="card pro archived">
+      <div class="ico">A</div>
+      <div class="body">
+        <div class="row"><span class="name">Native Compact</span><span class="tag">Referenz</span></div>
+        <div class="desc">Rail mini, 🎧 Voice-Button im Header.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+    <a href="v4-native-wide.html" class="card multi archived">
+      <div class="ico">B</div>
+      <div class="body">
+        <div class="row"><span class="name">Native Wide</span><span class="tag">Referenz</span></div>
+        <div class="desc">Rail komplett ausblendbar, Voice-Pille mit Waveform.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+    <a href="v4-native-premium.html" class="card float archived">
+      <div class="ico">C</div>
+      <div class="body">
+        <div class="row"><span class="name">Native Premium</span><span class="tag">Sieger R4</span></div>
+        <div class="desc">3-State Rail, 📞 Phone-Button mit Header-Transform. Basis für Round 5.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+  </div>
+
+  <!-- ROUND 3 — archived -->
+  <div class="round-header">
+    <span class="lbl">Round 3</span>
+    <span class="ttl">Multi mit allen Features</span>
+    <span class="badge archived">Native gewann</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="grid">
+    <a href="v3-multi-native.html" class="card pro archived">
+      <div class="ico">N</div>
+      <div class="body">
+        <div class="row"><span class="name">Multi Native</span><span class="tag">Sieger R3</span></div>
+        <div class="desc">Multi-Architektur im originalen ManagerChatScreen-Look. Basis für Round 4.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+    <a href="v3-multi-studio.html" class="card multi archived">
+      <div class="ico">S</div>
+      <div class="body">
+        <div class="row"><span class="name">Multi Studio</span><span class="tag">Referenz</span></div>
+        <div class="desc">Studio-Toolbar mit Modell-Pille + Settings-Sidebar.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+    <a href="v3-multi-console.html" class="card float archived">
+      <div class="ico">C</div>
+      <div class="body">
+        <div class="row"><span class="name">Multi Console</span><span class="tag">Referenz</span></div>
+        <div class="desc">Server-Switcher + Pinned Tasks + Action-Row.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+  </div>
+
+  <!-- ROUND 2 — archived -->
+  <div class="round-header">
+    <span class="lbl">Round 2</span>
+    <span class="ttl">Stage-Iterationen</span>
+    <span class="badge archived">Referenz</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="grid">
+
+    <a href="v2-stage-pro.html" class="card pro archived">
+      <div class="ico">P</div>
+      <div class="body">
+        <div class="row"><span class="name">Stage Pro</span><span class="tag">C poliert</span></div>
+        <div class="desc">Stage mit reicheren Spines (Sparkline + letzte Log-Zeile sichtbar), klickbaren <b>Tool-Call-Cards</b>, <b>Voice-Drawer</b>, Quick-Actions am Spotlight. Die "C done right"-Version.</div>
+        <div class="feat"><span>Tool calls</span><span>Voice drawer</span><span>Quick actions</span><span>Send works</span></div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+    <a href="v2-stage-multi.html" class="card multi archived">
+      <div class="ico">M</div>
+      <div class="body">
+        <div class="row"><span class="name">Stage Multi</span><span class="tag">Split-Spotlight</span></div>
+        <div class="desc">Spotlight als <b>1/2/4-Pane Grid</b> — Build, Tests, Logs, Docker live nebeneinander. Spine-Klick wirft Terminal in aktives Pane. Pin-Icon promoted Pane zu 1-up.</div>
+        <div class="feat"><span>1/2/4 panes</span><span>Tool calls</span><span>Multi-context</span><span>Voice</span></div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+    <a href="v2-stage-float.html" class="card float archived">
+      <div class="ico">F</div>
+      <div class="body">
+        <div class="row"><span class="name">Stage Float</span><span class="tag">Maximal Terminal</span></div>
+        <div class="desc">Spotlight nimmt den ganzen Screen, Chat schwebt unten als <b>Command-Bar</b> — Tap = Sheet expandiert. Mikro öffnet <b>Vollbild Voice-Modus</b> mit großer Orb. Maximaler Lesemodus.</div>
+        <div class="feat"><span>Floating chat</span><span>Voice fullscreen</span><span>Big terminal</span><span>Unread badge</span></div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+  </div>
+
+  <!-- ROUND 1 — archived -->
+  <div class="round-header">
+    <span class="lbl">Round 1</span>
+    <span class="ttl">Erste Konzepte</span>
+    <span class="badge archived">Referenz</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="grid">
+
+    <a href="variant-a-cockpit.html" class="card a archived">
+      <div class="ico">A</div>
+      <div class="body">
+        <div class="row"><span class="name">Cockpit</span><span class="tag">Chat-zentral</span></div>
+        <div class="desc">Chat oben groß, darunter horizontaler Karten-Strip mit Live-Output.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+    <a href="variant-b-mosaic.html" class="card b archived">
+      <div class="ico">B</div>
+      <div class="body">
+        <div class="row"><span class="name">Mosaic</span><span class="tag">Bento</span></div>
+        <div class="desc">Chat-Tile + Spotlight + 2-Spalten Grid mit Sparklines.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+    <a href="variant-c-stage.html" class="card c archived">
+      <div class="ico">C</div>
+      <div class="body">
+        <div class="row"><span class="name">Stage &amp; Stream</span><span class="tag">Sieger R1</span></div>
+        <div class="desc">Spine-Rail + Spotlight + Chat. Basis für Round 2.</div>
+      </div>
+      <div class="arrow">›</div>
+    </a>
+
+  </div>
+
+  <div class="footer">
+    <h3>Was ist neu in Round 2</h3>
+    Alle drei Varianten teilen die Stage-Architektur (Rail + Spotlight + Chat) und sind <b>voll interaktiv</b>:
+    <ul style="margin-top:6px;padding-left:20px;line-height:1.7">
+      <li><b>Tool-Call-Cards</b> im Chat — klickbare, expandierbare Cards die zeigen <i>was</i> der Manager wirklich getan hat (<code>send_keys</code>, <code>kill_session</code>, <code>pin_to_spotlight</code> etc.)</li>
+      <li><b>Voice-Modus</b> mit Live-Waveform, animierter Transcript-Eingabe und Senden/Abbrechen — Pro hat einen Drawer, Float hat ein Vollbild-Overlay</li>
+      <li><b>Klickbare Spines + @mentions</b> die echte UI-Reaktionen auslösen</li>
+      <li><b>Suggest-Chips</b> die den Input vorausfüllen</li>
+      <li><b>Send-Funktion</b> mit Manager-Replies (canned demo) und neuen Mentions</li>
+      <li><b>Unread-Badge</b> + Pulse-Effekt in Float wenn neue Manager-Nachrichten ankommen</li>
+    </ul>
+    <h3 style="margin-top:14px">Wie wir weiter machen</h3>
+    Schau dir Pro / Multi / Float an, sag mir was du behalten / verändern willst. Dann nächste Iteration mit drei verfeinerten Versionen.
+  </div>
+
+</div>
+
+<script>
+  document.getElementById('origin').textContent = window.location.origin || 'file://';
+</script>
+
+</body>
+</html>

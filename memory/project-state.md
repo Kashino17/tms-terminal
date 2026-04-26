@@ -14,6 +14,7 @@ _Zuletzt aktualisiert: 2026-04-26 (Voice Prompt Enhancer released v1.21.3)_
 - **Stale Buffer Detection** (v1.15.0) — Terminal-Output älter als 60s wird als idle markiert
 
 ## Aktive Arbeit
+- **Manager Chat Redesign — Design-Phase abgeschlossen 2026-04-26.** Final-Mockup ist `prototype/manager-chat-redesign/v8-tools-direct.html`. Implementation in `mobile/src/screens/ManagerChatScreen.tsx` steht als nächster Schritt an. Decisions-Doc enthält die Architektur-Begründung.
 - Shell-Naming: Terminals heißen intern "Shell 1/2/3" aber haben in der App andere Tab-Namen (Verzeichnisnamen). Die AI und der User sollen die echten Namen kennen.
 - Tool Calling funktioniert, aber Shell-Label-Zuordnung muss verbessert werden
 
@@ -24,5 +25,13 @@ _Zuletzt aktualisiert: 2026-04-26 (Voice Prompt Enhancer released v1.21.3)_
 - `git push` hängt manchmal — Fix: `GIT_TERMINAL_PROMPT=0`
 
 ## Nächste geplante Schritte
-- Shell-Naming Feature: echte Terminal-Namen statt "Shell 1/2/3" + Badges in der Terminal-UI
-- Manager Agent UI-Polish
+1. **Manager Chat Redesign Implementation** — `v8-tools-direct.html` → React Native umsetzen. Reihenfolge:
+   - Header-Refactor (Avatar 36×36 + ⋮-Menu mit Voice/Search/Settings)
+   - Multi-Spotlight-Komponente (1/2/4 Pane Grid)
+   - Group-Tabs-Bar mit neuem `panegroupsStore` (id/name/terminals[], persist)
+   - Tool-Sidebar als neue Component + Flyout-Pattern
+   - Direct-Terminal-Mode im Input (Mode-Toggle + send-as-keys statt send-as-message)
+   - Voice-Mode Vollbild + Header-Transform-State
+   - Rich Transkription mit Confidence-Indikator
+- Shell-Naming Feature (parallel): echte Terminal-Namen statt "Shell 1/2/3" + Badges in der Terminal-UI
+- Memory: Manager Chat Redesign Decisions in `memory/decisions.md` festgehalten

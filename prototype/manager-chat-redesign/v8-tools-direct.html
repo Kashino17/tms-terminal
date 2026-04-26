@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Manager Chat · v8 · Tools + Direct</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --bg: #0F172A; --surface: #1B2336; --surface-alt: #243044; --surface-hi: #2A374D;
+    --primary: #3B82F6; --accent: #22C55E; --warning: #F59E0B; --info: #06B6D4; --destructive: #EF4444;
+    --text: #F8FAFC; --text-muted: #94A3B8; --text-dim: #64748B;
+    --border: #334155; --border-strong: #475569;
+    --done-green: #10B981; --ai: #A78BFA; --pink: #EC4899;
+    --mono: 'SF Mono', Menlo, monospace;
+    --hairline: rgba(51,65,85,.6);
+  }
+  html, body { overscroll-behavior: none; }
+  body { background: #050810; color: var(--text); min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif; padding: 24px 16px 60px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  .page-header { text-align: center; max-width: 540px; }
+  .page-header h1 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+  .page-header .tag { display: inline-block; margin-top: 6px; padding: 3px 10px; font-size: 10px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--accent); background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.25); border-radius: 12px; }
+  .page-header p { font-size: 12px; color: var(--text-dim); margin-top: 10px; line-height: 1.55; }
+
+  .phone { width: 400px; height: 880px; background: var(--bg); border-radius: 38px; overflow: hidden; position: relative; border: 4px solid #11192B; box-shadow: 0 30px 80px rgba(0,0,0,.7); }
+  .sbar { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; font-size: 11px; color: var(--text-dim); font-weight: 600; }
+  .notch { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); width: 110px; height: 26px; background: #000; border-radius: 14px; z-index: 50; }
+  .stage { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; }
+
+  /* === HEADER === */
+  .header { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: var(--surface); border-bottom: 1px solid var(--hairline); flex-shrink: 0; transition: all .35s; position: relative; }
+  .voice-active .header { background: linear-gradient(180deg, rgba(236,72,153,.16) 0%, rgba(167,139,250,.08) 100%); border-bottom-color: rgba(236,72,153,.3); }
+  .h-back { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; color: var(--text); cursor: pointer; margin-left: -4px; }
+  .h-back svg { width: 18px; height: 18px; }
+  .h-avatar-wrap { width: 36px; height: 36px; flex-shrink: 0; cursor: pointer; position: relative; }
+  .h-avatar { width: 36px; height: 36px; border-radius: 18px; background: linear-gradient(135deg, #3B82F6, #8B5CF6); display: flex; align-items: center; justify-content: center; border: 1.5px solid rgba(255,255,255,.08); transition: all .35s; }
+  .voice-active .h-avatar { background: linear-gradient(135deg, #EC4899, #A78BFA); animation: avatarPulse 2s ease-in-out infinite; }
+  @keyframes avatarPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+  .h-avatar svg { width: 17px; height: 17px; color: #fff; }
+  .h-avatar-wrap::after { content: ''; position: absolute; bottom: 0; right: 0; width: 8px; height: 8px; border-radius: 4px; background: var(--accent); border: 2px solid var(--surface); }
+  .voice-active .h-avatar-wrap::after { background: var(--pink); animation: pulse 1s infinite; }
+
+  .h-center { flex: 1; min-width: 0; cursor: pointer; }
+  .h-name { color: var(--text); font-size: 14.5px; font-weight: 700; line-height: 1.05; transition: color .25s; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .voice-active .h-name { color: var(--pink); }
+  .h-name .model-mini { font-size: 10.5px; color: var(--text-muted); font-weight: 500; display: inline-flex; align-items: center; gap: 2px; }
+  .h-name .model-mini .model { color: var(--info); font-weight: 600; }
+  .h-name .model-mini svg { width: 8px; height: 8px; opacity: .55; }
+  .voice-active .model-mini { display: none; }
+  .voice-status-text { display: none; color: var(--pink); font-weight: 700; font-family: var(--mono); font-size: 10.5px; }
+  .voice-active .voice-status-text { display: inline-flex; align-items: center; gap: 4px; }
+  .voice-status-text::before { content: '●'; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+  .h-tasks-mini { display: flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 9px; background: rgba(59,130,246,.1); border: 1px solid rgba(59,130,246,.2); font-size: 9.5px; font-weight: 700; color: var(--primary); cursor: pointer; flex-shrink: 0; }
+  .h-tasks-mini .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--primary); animation: pulse 1.4s infinite; }
+  .h-tasks-mini .pct { font-family: var(--mono); color: var(--text-muted); font-weight: 600; }
+  .h-hangup-pill { display: none; align-items: center; gap: 4px; height: 22px; padding: 0 8px; background: var(--destructive); color: #fff; cursor: pointer; border-radius: 11px; font-size: 9.5px; font-weight: 700; box-shadow: 0 2px 8px rgba(239,68,68,.4); animation: callRing 1s infinite; }
+  .h-hangup-pill svg { width: 9px; height: 9px; transform: rotate(135deg); }
+  .voice-active .h-hangup-pill { display: flex; }
+  .voice-active .h-tasks-mini { display: none; }
+  @keyframes callRing { 0%,100% { box-shadow: 0 2px 8px rgba(239,68,68,.4); } 50% { box-shadow: 0 2px 14px rgba(239,68,68,.6); } }
+  .h-menu-btn { width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); cursor: pointer; flex-shrink: 0; }
+  .h-menu-btn:hover { color: var(--text); background: rgba(255,255,255,.05); }
+  .h-menu-btn svg { width: 14px; height: 14px; }
+
+  /* === GROUPS-TABS BAR === */
+  .groups-bar { height: 32px; flex-shrink: 0; padding: 0 8px; display: flex; align-items: center; gap: 4px; background: linear-gradient(180deg, rgba(0,0,0,.22), rgba(0,0,0,.1)); border-bottom: 1px solid var(--hairline); overflow-x: auto; }
+  .groups-bar::-webkit-scrollbar { height: 0; }
+  .groups-label { flex-shrink: 0; padding: 0 4px 0 2px; font-size: 8px; font-weight: 800; letter-spacing: 1px; color: var(--text-dim); text-transform: uppercase; display: flex; align-items: center; gap: 4px; }
+  .groups-label svg { width: 11px; height: 11px; opacity: .7; }
+  .group-tab { flex-shrink: 0; display: flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 7px; background: rgba(255,255,255,.04); border: 1px solid var(--border); cursor: pointer; transition: all .15s; white-space: nowrap; position: relative; }
+  .group-tab:hover { background: rgba(255,255,255,.07); border-color: var(--border-strong); }
+  .group-tab.active { background: rgba(59,130,246,.14); border-color: rgba(59,130,246,.4); box-shadow: 0 0 0 1px rgba(59,130,246,.15), 0 2px 6px rgba(59,130,246,.12); }
+  .group-tab .dots { display: flex; gap: 2px; align-items: center; }
+  .group-tab .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--tcolor); box-shadow: 0 0 3px color-mix(in srgb, var(--tcolor) 50%, transparent); }
+  .group-tab .name { color: var(--text); font-weight: 700; font-family: var(--mono); font-size: 10px; }
+  .group-tab.active .name { color: var(--primary); }
+  .group-tab .count { font-family: var(--mono); font-size: 9px; color: var(--text-dim); font-weight: 600; padding-left: 1px; }
+  .group-tab.active .count { color: var(--primary); opacity: .75; }
+  .group-tab .close { width: 13px; height: 13px; border-radius: 50%; background: rgba(255,255,255,.06); display: none; align-items: center; justify-content: center; color: var(--text-muted); font-size: 10px; margin-left: 1px; line-height: 1; }
+  .group-tab:hover .close { display: flex; }
+  .group-tab .close:hover { background: var(--destructive); color: #fff; }
+  .group-tab-add { flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; background: transparent; border: 1px dashed var(--border); display: flex; align-items: center; justify-content: center; color: var(--text-dim); cursor: pointer; transition: all .15s; }
+  .group-tab-add:hover { color: var(--primary); border-color: var(--primary); border-style: solid; background: rgba(59,130,246,.08); }
+  .group-tab-add svg { width: 11px; height: 11px; }
+  .group-tab-input { background: transparent; border: 0; outline: 0; color: var(--text); font-family: var(--mono); font-size: 10px; font-weight: 700; width: 90px; padding: 0; }
+  .group-tab-input::placeholder { color: var(--text-dim); }
+
+  /* Tasks panel popup */
+  .task-panel-overlay { position: absolute; top: 75px; right: 14px; width: 260px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px; box-shadow: 0 16px 40px rgba(0,0,0,.55); z-index: 50; display: none; }
+  .task-panel-overlay.open { display: block; }
+  .tpo-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .tpo-head svg { width: 12px; height: 12px; color: var(--primary); }
+  .tpo-head .ttl { font-size: 11px; font-weight: 700; flex: 1; }
+  .tpo-head .pct { font-size: 10px; color: var(--text-muted); font-family: var(--mono); }
+  .tp-progress { height: 3px; background: rgba(148,163,184,.06); border-radius: 2px; margin-bottom: 8px; overflow: hidden; }
+  .tp-progress-bar { height: 100%; background: var(--done-green); }
+  .tp-group { margin-bottom: 6px; }
+  .tp-group-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .tp-group-dot { width: 7px; height: 7px; border-radius: 4px; }
+  .tp-group-label { font-size: 10.5px; font-weight: 700; color: var(--text); flex: 1; font-family: var(--mono); }
+  .tp-group-meta { font-size: 9px; color: var(--text-dim); }
+  .tp-step { display: flex; align-items: center; gap: 6px; padding: 2px 0 2px 10px; }
+  .tp-cb { width: 12px; height: 12px; border-radius: 3px; border: 1.5px solid var(--border-strong); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .tp-cb.done { background: var(--done-green); border-color: var(--done-green); }
+  .tp-cb.done svg { width: 8px; height: 8px; color: #fff; }
+  .tp-cb.run { border-color: var(--primary); }
+  .tp-cb.run::after { content: ''; width: 5px; height: 5px; border-radius: 3px; background: var(--primary); animation: pulse 1.4s infinite; }
+  .tp-step-label { font-size: 10.5px; color: var(--text-muted); flex: 1; }
+  .tp-step.done .tp-step-label { color: var(--text); }
+  .tp-step.run .tp-step-label { color: var(--primary); }
+  .tp-step-badge { font-size: 8px; font-weight: 700; padding: 1px 4px; border-radius: 3px; background: rgba(59,130,246,.15); color: var(--primary); }
+
+  /* === STAGE BODY === */
+  .stage-body { flex: 1; display: flex; min-height: 0; position: relative; }
+
+  /* === TOOL SIDEBAR (NEU — ersetzt Quiet-Rail) === */
+  .tool-sidebar {
+    width: 44px; flex-shrink: 0;
+    background: var(--surface); border-right: 1px solid var(--hairline);
+    display: flex; flex-direction: column; padding: 6px 4px;
+    transition: width .3s cubic-bezier(.4,0,.2,1), padding .3s, border-color .3s;
+    overflow: hidden;
+  }
+  .tool-sidebar.expanded { width: 144px; padding: 6px; }
+  .tool-sidebar.hidden { width: 0; padding: 6px 0; border-color: transparent; }
+
+  .ts-toggle {
+    display: flex; align-items: center; justify-content: center;
+    height: 22px; border-radius: 6px;
+    background: rgba(255,255,255,.04);
+    color: var(--text-muted); cursor: pointer;
+    margin-bottom: 6px;
+    transition: all .15s;
+  }
+  .ts-toggle:hover { background: rgba(255,255,255,.08); color: var(--text); }
+  .ts-toggle svg { width: 12px; height: 12px; transition: transform .25s; }
+  .tool-sidebar.expanded .ts-toggle svg { transform: rotate(180deg); }
+
+  .ts-tool {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 6px; border-radius: 7px;
+    background: rgba(255,255,255,.025);
+    border: 1px solid transparent;
+    cursor: pointer;
+    margin-bottom: 4px;
+    color: var(--text-muted);
+    transition: all .15s;
+    overflow: hidden;
+  }
+  .ts-tool:hover { background: rgba(255,255,255,.06); color: var(--text); }
+  .ts-tool.active {
+    background: rgba(59,130,246,.15);
+    border-color: rgba(59,130,246,.3);
+    color: var(--primary);
+  }
+  .ts-icon {
+    width: 22px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .ts-icon svg { width: 16px; height: 16px; }
+  .ts-label {
+    font-size: 11px; font-weight: 600;
+    white-space: nowrap;
+    opacity: 0; max-width: 0;
+    overflow: hidden;
+    transition: opacity .25s, max-width .3s;
+  }
+  .tool-sidebar.expanded .ts-label { opacity: 1; max-width: 100px; }
+  .ts-divider { height: 1px; background: var(--hairline); margin: 4px 0; }
+
+  .ts-add {
+    margin-top: auto; padding: 7px 6px;
+    border-radius: 7px;
+    border: 1.5px dashed var(--border);
+    color: var(--text-dim); cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+    overflow: hidden;
+  }
+  .ts-add:hover { color: var(--primary); border-color: var(--primary); }
+  .ts-add .ts-icon svg { width: 13px; height: 13px; }
+
+  /* === TOOL FLYOUT === */
+  .tool-flyout {
+    position: absolute;
+    left: 50px;
+    top: 8px;
+    width: 230px;
+    max-height: calc(100% - 16px);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.04);
+    z-index: 30;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    animation: flyoutIn .2s ease-out;
+  }
+  .tool-flyout.open { display: flex; }
+  .tool-sidebar.expanded ~ .tool-flyout { left: 150px; }
+  @keyframes flyoutIn { from { opacity: 0; transform: translateX(-8px) scale(.96); } to { opacity: 1; transform: translateX(0) scale(1); } }
+
+  .tf-head {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 10px;
+    background: rgba(255,255,255,.03);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .tf-head .tf-tool-icon {
+    width: 22px; height: 22px; border-radius: 6px;
+    background: rgba(59,130,246,.15); color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .tf-head .tf-tool-icon svg { width: 13px; height: 13px; }
+  .tf-head .tf-title {
+    flex: 1; font-size: 12px; font-weight: 700; color: var(--text);
+  }
+  .tf-head .tf-context {
+    font-size: 10px; color: var(--text-muted);
+    font-family: var(--mono);
+    padding: 1px 6px; border-radius: 4px;
+    background: rgba(255,255,255,.04);
+  }
+  .tf-head .tf-close {
+    width: 22px; height: 22px; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); cursor: pointer;
+  }
+  .tf-head .tf-close:hover { background: rgba(255,255,255,.08); color: var(--text); }
+  .tf-head .tf-close svg { width: 12px; height: 12px; }
+
+  .tf-body {
+    flex: 1; padding: 6px;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .tf-body::-webkit-scrollbar { width: 0; }
+  .tf-section {
+    font-size: 8.5px; font-weight: 800; letter-spacing: 1.2px;
+    color: var(--text-dim); text-transform: uppercase;
+    padding: 6px 6px 4px;
+  }
+  .tf-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 8px; border-radius: 7px;
+    cursor: pointer; transition: all .15s;
+    color: var(--text);
+  }
+  .tf-item:hover { background: rgba(255,255,255,.05); }
+  .tf-item .tf-em { font-size: 14px; flex-shrink: 0; }
+  .tf-item .tf-i {
+    width: 22px; height: 22px; border-radius: 5px;
+    background: rgba(255,255,255,.05);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); flex-shrink: 0;
+  }
+  .tf-item .tf-i svg { width: 12px; height: 12px; }
+  .tf-item .tf-label {
+    flex: 1; font-size: 11.5px; font-weight: 600;
+  }
+  .tf-item .tf-cmd {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--info); flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tf-item.warn { color: var(--warning); }
+  .tf-item.warn .tf-i { color: var(--warning); background: rgba(245,158,11,.1); }
+  .tf-item.danger { color: var(--destructive); }
+  .tf-item.danger .tf-i { color: var(--destructive); background: rgba(239,68,68,.1); }
+  .tf-item.add {
+    color: var(--text-dim); border: 1px dashed var(--border);
+    margin-top: 6px; justify-content: center; padding: 6px;
+  }
+  .tf-item.add:hover { color: var(--primary); border-color: var(--primary); }
+  .tf-divider { height: 1px; background: var(--hairline); margin: 4px 6px; }
+
+  .tf-search-box {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 10px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; margin: 4px;
+  }
+  .tf-search-box svg { width: 12px; height: 12px; color: var(--text-muted); }
+  .tf-search-box input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--text); font-size: 12px; }
+  .tf-search-box input::placeholder { color: var(--text-dim); }
+
+  /* Multi area */
+  .multi { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #0B1220; border-bottom: 1px solid var(--hairline); position: relative; }
+  .multi-bar { height: 20px; flex-shrink: 0; padding: 0 5px; display: flex; align-items: center; gap: 3px; background: var(--surface); border-bottom: 1px solid var(--hairline); }
+  .multi-bar .lbl-mini { font-size: 8px; font-weight: 700; color: var(--text-muted); display: flex; align-items: center; gap: 3px; padding: 0 3px; }
+  .multi-bar .lbl-mini::before { content: ''; width: 3px; height: 3px; background: var(--accent); border-radius: 50%; animation: pulse 1.4s infinite; }
+  .multi-bar .lbl-mini b { color: var(--text); font-size: 9px; }
+  .multi-bar .spacer { flex: 1; }
+  .multi-bar .actions { display: flex; gap: 2px; align-items: center; }
+  .mb-icon-btn { width: 16px; height: 16px; border-radius: 3px; background: rgba(255,255,255,.04); display: flex; align-items: center; justify-content: center; color: var(--text-muted); cursor: pointer; }
+  .mb-icon-btn:hover { background: rgba(255,255,255,.08); color: var(--text); }
+  .mb-icon-btn svg { width: 9px; height: 9px; }
+  .mb-view-toggle { display: flex; gap: 1px; padding: 1px; background: var(--surface-alt); border-radius: 3px; }
+  .mb-view-mode { padding: 1px 4px; border-radius: 2px; font-size: 8.5px; font-weight: 700; color: var(--text-muted); cursor: pointer; min-width: 12px; text-align: center; }
+  .mb-view-mode.active { background: var(--primary); color: #fff; }
+
+  .panes { flex: 1; min-height: 0; padding: 4px; display: grid; gap: 4px; transition: all .25s; }
+  .panes.mode-1 { grid-template-columns: 1fr; }
+  .panes.mode-2 { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .panes.mode-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .pane { background: var(--bg); border-radius: 10px; border: 1px solid var(--border); border-left-width: 3px; border-left-color: var(--tcolor); overflow: hidden; display: flex; flex-direction: column; position: relative; transition: all .2s; }
+  .pane.focused { box-shadow: 0 0 0 1px var(--tcolor), 0 0 16px color-mix(in srgb, var(--tcolor) 28%, transparent); }
+  @keyframes paneFlash {
+    0% { box-shadow: 0 0 0 2px var(--accent), 0 0 24px var(--accent); }
+    100% { box-shadow: 0 0 0 1px var(--tcolor), 0 0 0 transparent; }
+  }
+  .pane.flash { animation: paneFlash .6s ease-out; }
+  .pane-head { height: 24px; flex-shrink: 0; padding: 0 6px 0 8px; display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,.02); border-bottom: 1px solid var(--hairline); }
+  .pane-head .d { width: 6px; height: 6px; border-radius: 50%; background: var(--tcolor); flex-shrink: 0; box-shadow: 0 0 4px var(--tcolor); }
+  .pane-head .n { flex: 1; font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pane-head .st { font-size: 7.5px; font-weight: 700; padding: 1px 4px; border-radius: 4px; letter-spacing: .4px; text-transform: uppercase; }
+  .st.run { background: rgba(34,197,94,.15); color: var(--accent); }
+  .st.idle { background: rgba(100,116,139,.15); color: var(--text-dim); }
+  .st.wait { background: rgba(245,158,11,.15); color: var(--warning); }
+  .st.err { background: rgba(239,68,68,.15); color: var(--destructive); }
+  .st.done { background: rgba(6,182,212,.15); color: var(--info); }
+  .pane-promote { width: 16px; height: 16px; border-radius: 4px; background: rgba(255,255,255,.04); display: flex; align-items: center; justify-content: center; color: var(--text-dim); cursor: pointer; }
+  .pane-promote svg { width: 9px; height: 9px; }
+  .pane-out { flex: 1; padding: 5px 8px; font-family: var(--mono); font-size: 9px; line-height: 1.45; color: #CBD5E1; overflow-y: auto; position: relative; }
+  .panes.mode-1 .pane-out { font-size: 11px; line-height: 1.55; padding: 8px 10px; }
+  .panes.mode-2 .pane-out { font-size: 10px; line-height: 1.5; padding: 6px 9px; }
+  .pane-out::-webkit-scrollbar { width: 0; }
+  .pane-out .l { display: block; white-space: pre-wrap; word-break: break-all; }
+  .pane-out .d { color: var(--text-dim); } .pane-out .o { color: #94A3B8; } .pane-out .g { color: var(--accent); } .pane-out .r { color: var(--destructive); } .pane-out .b { color: var(--primary); } .pane-out .w { color: var(--warning); } .pane-out .ind { color: var(--text-dim); padding-left: 12px; }
+  .pane-out .new {
+    animation: lineIn .3s ease-out;
+  }
+  @keyframes lineIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
+  .pane.empty { border: 1.5px dashed var(--border); border-left: 1.5px dashed var(--border); background: transparent; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 3px; color: var(--text-dim); font-size: 9px; padding: 8px; }
+  .pane.empty svg { width: 16px; height: 16px; }
+
+  .chip-bar { flex-shrink: 0; padding: 6px 12px; background: var(--surface); border-top: 1px solid var(--hairline); display: flex; gap: 6px; overflow-x: auto; }
+  .chip-bar::-webkit-scrollbar { height: 0; }
+  .term-chip { flex-shrink: 0; padding: 5px 10px; border-radius: 14px; background: var(--surface-alt); color: var(--text-muted); font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 5px; cursor: pointer; transition: all .15s; white-space: nowrap; }
+  .term-chip:hover { background: #2A374D; color: var(--text); }
+  .term-chip.active { background: rgba(59,130,246,.3); color: var(--primary); }
+  .term-chip.in-pane { background: color-mix(in srgb, var(--tcolor) 15%, var(--surface-alt)); color: var(--tcolor); }
+  .term-chip .d { width: 5px; height: 5px; border-radius: 50%; background: var(--tcolor, var(--text-muted)); }
+
+  .chat { flex: 1.05; min-height: 0; display: flex; flex-direction: column; background: var(--bg); position: relative; }
+  .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 6px; display: flex; flex-direction: column; gap: 10px; }
+  .chat-scroll::-webkit-scrollbar { width: 0; }
+  .msg { display: flex; gap: 6px; max-width: 92%; animation: msgIn .25s; }
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .msg-av { width: 28px; height: 28px; border-radius: 14px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+  .msg.assistant .msg-av { background: linear-gradient(135deg, #3B82F6, #8B5CF6); color: #fff; }
+  .msg.user .msg-av { background: var(--surface-alt); color: var(--text-muted); }
+  .msg-bub { padding: 8px 12px; border-radius: 14px; font-size: 13px; line-height: 1.5; }
+  .msg.user .msg-bub { background: rgba(59,130,246,.13); color: var(--text); border-top-right-radius: 4px; border: 1px solid rgba(59,130,246,.2); }
+  .msg.assistant .msg-bub { background: var(--surface); color: var(--text); border: 1px solid rgba(51,65,85,.3); border-top-left-radius: 4px; }
+  .msg-bub code { font-family: var(--mono); font-size: 11.5px; background: var(--surface-alt); padding: 1px 5px; border-radius: 3px; color: var(--info); }
+  .msg-time { font-size: 10px; color: var(--text-dim); margin-top: 4px; display: flex; align-items: center; gap: 6px; }
+  @keyframes msgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .tmention { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px 1px 4px; border-radius: 7px; font-family: var(--mono); font-size: 11px; font-weight: 600; background: color-mix(in srgb, var(--tcolor) 18%, transparent); color: var(--tcolor); border: 1px solid color-mix(in srgb, var(--tcolor) 30%, transparent); cursor: pointer; }
+  .tmention::before { content: '@'; opacity: .6; font-size: 10px; }
+  .tmention .tdot { width: 4px; height: 4px; border-radius: 50%; background: var(--tcolor); }
+
+  .att-row { flex-shrink: 0; padding: 6px 12px; display: none; gap: 6px; overflow-x: auto; background: var(--surface); border-top: 1px solid var(--hairline); }
+  .att-row.show { display: flex; }
+  .att-row::-webkit-scrollbar { height: 0; }
+  .att-thumb { flex-shrink: 0; width: 52px; height: 52px; border-radius: 8px; background: var(--surface-alt); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--text-dim); position: relative; cursor: pointer; }
+  .att-thumb .placeholder { width: 100%; height: 100%; border-radius: 8px; background: linear-gradient(135deg, #1E293B, #475569); display: flex; align-items: center; justify-content: center; }
+  .att-thumb svg { width: 18px; height: 18px; }
+  .att-thumb .x { position: absolute; top: -4px; right: -4px; width: 16px; height: 16px; background: var(--destructive); border-radius: 8px; border: 2px solid var(--surface); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 9px; font-weight: 700; cursor: pointer; }
+
+  /* === INPUT BAR (mit Mode-Toggle) === */
+  .input-bar {
+    flex-shrink: 0; display: flex; align-items: flex-end; gap: 6px;
+    padding: 8px 10px 12px;
+    border-top: 1px solid var(--hairline); background: var(--surface);
+    transition: all .25s;
+  }
+  .input-bar.terminal-mode {
+    background: linear-gradient(180deg, var(--surface) 0%, color-mix(in srgb, var(--accent) 5%, var(--surface)) 100%);
+    border-top-color: rgba(34,197,94,.3);
+  }
+
+  .ib-mode-toggle {
+    display: flex; gap: 1px;
+    padding: 2px;
+    background: var(--surface-alt); border: 1px solid var(--border);
+    border-radius: 8px;
+    height: 38px;
+    flex-shrink: 0;
+    transition: all .25s;
+  }
+  .input-bar.terminal-mode .ib-mode-toggle {
+    border-color: rgba(34,197,94,.35);
+  }
+  .ib-mode-btn {
+    width: 26px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    color: var(--text-dim);
+    transition: all .15s;
+  }
+  .ib-mode-btn svg { width: 14px; height: 14px; }
+  .ib-mode-btn[data-mode="chat"].active {
+    background: var(--primary); color: #fff;
+    box-shadow: 0 1px 3px rgba(59,130,246,.4);
+  }
+  .ib-mode-btn[data-mode="terminal"].active {
+    background: var(--accent); color: #fff;
+    box-shadow: 0 1px 3px rgba(34,197,94,.4);
+  }
+
+  .ib-btn { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); cursor: pointer; border-radius: 8px; flex-shrink: 0; transition: all .15s; }
+  .ib-btn:hover { background: rgba(255,255,255,.05); color: var(--text); }
+  .ib-btn svg { width: 20px; height: 20px; }
+  .ib-mic.recording { background: rgba(239,68,68,.15); color: var(--destructive); box-shadow: 0 0 0 2px rgba(239,68,68,.25); }
+  .ib-mic.recording svg { width: 16px; height: 16px; }
+
+  .ib-input {
+    flex: 1; background: var(--surface-alt); border-radius: 20px;
+    padding: 8px 14px; min-height: 38px;
+    display: flex; align-items: center; gap: 4px;
+    transition: all .25s;
+    border: 1px solid transparent;
+  }
+  .input-bar.terminal-mode .ib-input {
+    background: #0B1220;
+    border-color: rgba(34,197,94,.3);
+    border-radius: 8px;
+    box-shadow: inset 0 1px 0 rgba(0,0,0,.3);
+  }
+  .ib-prefix {
+    display: none;
+    align-items: center; gap: 3px;
+    font-family: var(--mono); font-size: 11.5px;
+    color: var(--accent); font-weight: 700;
+    flex-shrink: 0;
+  }
+  .input-bar.terminal-mode .ib-prefix { display: flex; }
+  .ib-prefix .arrow { color: var(--text-muted); margin: 0 2px; }
+  .ib-prefix .target {
+    color: var(--text);
+    font-weight: 700;
+    background: color-mix(in srgb, var(--target-color, var(--accent)) 18%, transparent);
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid color-mix(in srgb, var(--target-color, var(--accent)) 30%, transparent);
+  }
+
+  .ib-input input {
+    width: 100%; background: transparent; border: 0; outline: 0;
+    color: var(--text); font-size: 13px; font-family: inherit;
+    transition: all .25s;
+  }
+  .input-bar.terminal-mode .ib-input input {
+    font-family: var(--mono); font-size: 12.5px;
+    color: var(--text);
+  }
+  .ib-input input::placeholder { color: var(--text-dim); }
+
+  .ib-send {
+    width: 38px; height: 38px; border-radius: 19px;
+    background: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(59,130,246,.3);
+    transition: all .25s;
+  }
+  .input-bar.terminal-mode .ib-send {
+    background: var(--accent);
+    box-shadow: 0 2px 8px rgba(34,197,94,.4);
+    border-radius: 8px;
+  }
+  .ib-send svg { width: 18px; height: 18px; color: #fff; transition: all .25s; }
+  .input-bar.terminal-mode .ib-send svg.send { display: none; }
+  .ib-send svg.run { display: none; }
+  .input-bar.terminal-mode .ib-send svg.run { display: block; }
+
+  .menu { position: absolute; top: 50px; right: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px; box-shadow: 0 16px 40px rgba(0,0,0,.55); z-index: 100; min-width: 220px; display: none; }
+  .menu.open { display: block; }
+  .menu-section { font-size: 9px; font-weight: 800; letter-spacing: 1.2px; color: var(--text-dim); text-transform: uppercase; padding: 6px 10px 4px; }
+  .menu-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; cursor: pointer; font-size: 13px; color: var(--text); }
+  .menu-item:hover { background: rgba(255,255,255,.05); }
+  .menu-item.featured { background: linear-gradient(135deg, rgba(236,72,153,.1), rgba(167,139,250,.08)); border: 1px solid rgba(236,72,153,.2); }
+  .menu-item .icon { width: 28px; height: 28px; border-radius: 8px; background: rgba(255,255,255,.05); display: flex; align-items: center; justify-content: center; color: var(--text-muted); flex-shrink: 0; }
+  .menu-item.featured .icon { background: linear-gradient(135deg, #EC4899, #A78BFA); color: #fff; }
+  .menu-item .icon svg { width: 14px; height: 14px; }
+  .menu-item .text { flex: 1; }
+  .menu-item .text .name { font-weight: 600; }
+  .menu-item .text .desc { font-size: 10px; color: var(--text-dim); margin-top: 1px; }
+  .menu-item .toggle-mini { width: 32px; height: 18px; border-radius: 9px; background: var(--accent); position: relative; }
+  .menu-item .toggle-mini::after { content: ''; position: absolute; top: 2px; left: 16px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+  .menu-item.danger { color: var(--destructive); }
+  .menu-item.danger .icon { color: var(--destructive); }
+  .menu-divider { height: 1px; background: var(--hairline); margin: 4px 0; }
+
+  .model-dropdown { position: absolute; top: 50px; left: 50px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,.5); z-index: 100; min-width: 220px; display: none; }
+  .model-dropdown.open { display: block; }
+  .md-section { font-size: 9px; font-weight: 800; letter-spacing: 1.2px; color: var(--text-dim); text-transform: uppercase; padding: 4px 8px 2px; }
+  .md-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+  .md-item:hover { background: rgba(255,255,255,.04); }
+  .md-item.active { background: rgba(59,130,246,.12); }
+  .md-icon { width: 24px; height: 24px; border-radius: 6px; background: linear-gradient(135deg, #3B82F6, #8B5CF6); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: 800; flex-shrink: 0; font-family: var(--mono); }
+  .md-icon.openai { background: linear-gradient(135deg, #10B981, #047857); }
+  .md-icon.gpt { background: linear-gradient(135deg, #94A3B8, #64748B); }
+  .md-name { font-size: 12px; font-weight: 600; color: var(--text); flex: 1; }
+  .md-meta { font-size: 9.5px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; margin-top: 1px; }
+  .md-meta .cap { padding: 1px 4px; border-radius: 3px; font-size: 8px; font-weight: 700; font-family: var(--mono); }
+  .md-meta .cap.vision { background: rgba(34,197,94,.15); color: var(--accent); }
+  .md-meta .cap.tools { background: rgba(167,139,250,.15); color: var(--ai); }
+  .md-check svg { width: 14px; height: 14px; color: var(--accent); }
+
+  .voice-fullscreen { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 30%, rgba(236,72,153,.18) 0%, rgba(15,23,42,.98) 70%); backdrop-filter: blur(30px); z-index: 50; display: flex; flex-direction: column; padding: 50px 24px 32px; opacity: 0; pointer-events: none; transition: opacity .3s; }
+  .voice-fullscreen.open { opacity: 1; pointer-events: auto; }
+  .vf-close { position: absolute; top: 36px; right: 20px; width: 36px; height: 36px; border-radius: 12px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); display: flex; align-items: center; justify-content: center; color: var(--text-muted); cursor: pointer; }
+  .vf-close svg { width: 16px; height: 16px; }
+  .vf-meta { text-align: center; }
+  .vf-meta .lbl { font-size: 11px; font-weight: 700; letter-spacing: 1.8px; color: var(--pink); text-transform: uppercase; margin-bottom: 8px; }
+  .vf-meta h2 { font-size: 22px; font-weight: 700; }
+  .vf-meta .sub { font-size: 13px; color: var(--text-muted); margin-top: 8px; line-height: 1.5; }
+  .vf-orb-container { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; }
+  .vf-orb { width: 160px; height: 160px; border-radius: 50%; background: radial-gradient(ellipse at 30% 30%, #F472B6 0%, #EC4899 40%, #831843 100%); box-shadow: 0 0 80px rgba(236,72,153,.5), inset 0 0 40px rgba(255,255,255,.18); animation: orbBig 2.4s ease-in-out infinite; display: flex; align-items: center; justify-content: center; position: relative; }
+  @keyframes orbBig { 0%,100% { box-shadow: 0 0 80px rgba(236,72,153,.5); transform: scale(1); } 50% { box-shadow: 0 0 120px rgba(236,72,153,.7); transform: scale(1.04); } }
+  .vf-orb svg { width: 70px; height: 70px; color: #fff; opacity: .92; }
+  .vf-orb::before, .vf-orb::after { content: ''; position: absolute; inset: -10px; border-radius: 50%; border: 2px solid rgba(236,72,153,.3); animation: ringRipple 2.4s ease-out infinite; }
+  .vf-orb::after { animation-delay: 1.2s; }
+  @keyframes ringRipple { 0% { transform: scale(1); opacity: .8; } 100% { transform: scale(1.7); opacity: 0; } }
+  .vf-state { display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 20px; background: rgba(0,0,0,.3); border: 1px solid rgba(236,72,153,.25); font-size: 12px; color: var(--text); font-weight: 600; }
+  .vf-state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--pink); animation: pulse 1.4s infinite; }
+  .vf-actions { display: flex; gap: 14px; align-items: center; justify-content: center; padding: 0 12px; }
+  .vf-circle-btn { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); color: var(--text); }
+  .vf-circle-btn svg { width: 22px; height: 22px; }
+  .vf-circle-btn.hangup { width: 64px; height: 64px; background: var(--destructive); border-color: var(--destructive); color: #fff; box-shadow: 0 4px 18px rgba(239,68,68,.4); }
+  .vf-label { text-align: center; font-size: 10px; color: var(--text-muted); margin-top: 6px; font-weight: 600; }
+  .vf-action-col { display: flex; flex-direction: column; align-items: center; }
+
+  .toast { position: absolute; top: 80px; left: 50%; transform: translateX(-50%) translateY(-20px); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px 14px; font-size: 11px; color: var(--text); white-space: nowrap; opacity: 0; pointer-events: none; transition: all .25s; z-index: 200; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .note { max-width: 540px; font-size: 12px; color: var(--text-muted); line-height: 1.6; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; padding: 14px 16px; }
+  .note h3 { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+  .note ul { padding-left: 18px; margin-top: 4px; }
+  .note li { margin-top: 3px; }
+  .note kbd { display: inline-block; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); font-family: var(--mono); font-size: 10px; color: var(--text); }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .nav a { font-size: 11px; padding: 6px 12px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); color: var(--text-muted); text-decoration: none; }
+  .nav a.active { background: var(--accent); color: #0F172A; border-color: var(--accent); font-weight: 600; }
+  .interactivity-hint { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: rgba(15,23,42,.92); border: 1px solid rgba(34,197,94,.3); padding: 8px 14px; border-radius: 10px; font-size: 11px; color: var(--accent); display: flex; align-items: center; gap: 6px; z-index: 200; animation: hintFade 8s ease forwards; }
+  @keyframes hintFade { 0%, 70% { opacity: 1; } 100% { opacity: 0; pointer-events: none; } }
+  .interactivity-hint svg { width: 14px; height: 14px; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <span class="tag">Round 8 · Final+</span>
+  <h1 style="margin-top:8px">Tools-Sidebar + Direct-Mode</h1>
+  <p>Stage-Sidebar wird zur <b>Tool-Leiste</b> (Werkzeuge, Quick Actions, Snippets, Search, AI). Auf-/Zuklappbar via Chevron oben. Klick auf Tool öffnet Flyout-Panel mit Inhalt. <b>NEU im Chat-Input: Mode-Toggle</b> 💬↔▶ — im Terminal-Mode gehst du direkt in das aktive Pane (mono-Font, grüner Send-Button, Terminal-Prefix). Quick-Actions im Tool-Flyout pushen Befehle direkt mit Flash-Animation im Pane.</p>
+</div>
+
+<div class="nav">
+  <a href="index.html">Übersicht</a>
+  <a href="v7-final.html">v7 Final</a>
+  <a href="v8-tools-direct.html" class="active">v8 Tools+Direct</a>
+</div>
+
+<div class="phone" id="phone">
+  <div class="notch"></div>
+  <div class="sbar"><span>9:41</span><span>●●●● 5G 87%</span></div>
+  <div class="toast" id="toast"></div>
+
+  <div class="stage">
+
+    <!-- HEADER -->
+    <div class="header">
+      <div class="h-back" onclick="toast('← Zurück')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      </div>
+      <div class="h-avatar-wrap" onclick="toast('Avatar')">
+        <div class="h-avatar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </div>
+      </div>
+      <div class="h-center" onclick="event.stopPropagation(); toggleModel()">
+        <div class="h-name">
+          Manager
+          <span class="model-mini">
+            · <span class="model" id="modelName">Claude 4.7</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </span>
+          <span class="voice-status-text"><span id="callTimer">0:00</span></span>
+        </div>
+      </div>
+      <div class="h-tasks-mini" onclick="event.stopPropagation(); document.getElementById('taskPanelOverlay').classList.toggle('open')">
+        <span class="dot"></span>2 <span class="pct">66%</span>
+      </div>
+      <div class="h-hangup-pill" onclick="toggleVoice()">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+        Beenden
+      </div>
+      <div class="h-menu-btn" onclick="event.stopPropagation(); toggleMenu()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+      </div>
+    </div>
+
+    <!-- GROUP TABS -->
+    <div class="groups-bar" id="groupsBar"></div>
+
+    <!-- Tasks panel -->
+    <div class="task-panel-overlay" id="taskPanelOverlay">
+      <div class="tpo-head">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        <span class="ttl">Pipeline</span>
+        <span class="pct">66%</span>
+      </div>
+      <div class="tp-progress"><div class="tp-progress-bar" style="width:66%"></div></div>
+      <div class="tp-group">
+        <div class="tp-group-head"><span class="tp-group-dot" style="background:#A78BFA"></span><span class="tp-group-label">build-watch</span><span class="tp-group-meta">3/3 · 12s</span></div>
+        <div class="tp-step done"><div class="tp-cb done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></div><span class="tp-step-label">npm run build</span></div>
+      </div>
+      <div class="tp-group">
+        <div class="tp-group-head"><span class="tp-group-dot" style="background:#22C55E"></span><span class="tp-group-label">test-runner</span><span class="tp-group-meta">2/3 · 4s</span></div>
+        <div class="tp-step run"><div class="tp-cb run"></div><span class="tp-step-label">Fehler analysieren</span><span class="tp-step-badge">LÄUFT</span></div>
+      </div>
+    </div>
+
+    <div class="model-dropdown" id="modelMenu">
+      <div class="md-section">Cloud</div>
+      <div class="md-item active" onclick="pickModel('Claude 4.7')"><div class="md-icon">CL</div><div style="flex:1"><div class="md-name">Claude 4.7 Opus</div><div class="md-meta"><span class="cap vision">vision</span><span class="cap tools">tools</span></div></div><span class="md-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg></span></div>
+      <div class="md-item" onclick="pickModel('Claude 4.6')"><div class="md-icon">CL</div><div style="flex:1"><div class="md-name">Claude 4.6 Sonnet</div><div class="md-meta"><span class="cap vision">vision</span><span class="cap tools">tools</span></div></div></div>
+      <div class="md-item" onclick="pickModel('GPT-5')"><div class="md-icon openai">G5</div><div style="flex:1"><div class="md-name">GPT-5</div><div class="md-meta"><span class="cap vision">vision</span><span class="cap tools">tools</span></div></div></div>
+      <div class="md-section" style="margin-top:6px">Local</div>
+      <div class="md-item" onclick="pickModel('Llama 70b')"><div class="md-icon gpt">LL</div><div style="flex:1"><div class="md-name">Llama 3.3 70b</div><div class="md-meta"><span class="cap tools">tools</span></div></div></div>
+    </div>
+
+    <div class="menu" id="menuPopup">
+      <div class="menu-section">Modi</div>
+      <div class="menu-item featured" onclick="closeMenu(); toggleVoice()">
+        <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg></span>
+        <div class="text"><div class="name">Live Voice Mode</div><div class="desc">Conversation per Sprache</div></div>
+      </div>
+      <div class="menu-item" onclick="closeMenu(); toast('Suche')"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span><div class="text"><div class="name">Suche</div></div></div>
+      <div class="menu-divider"></div>
+      <div class="menu-section">Manager</div>
+      <div class="menu-item" onclick="closeMenu(); toast('Manager an/aus')"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg></span><div class="text"><div class="name">Aktiv</div></div><div class="toggle-mini"></div></div>
+      <div class="menu-item" onclick="closeMenu(); toast('Memory')"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><div class="text"><div class="name">Memory</div></div></div>
+      <div class="menu-item" onclick="closeMenu(); toast('Settings')"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg></span><div class="text"><div class="name">Einstellungen</div></div></div>
+      <div class="menu-divider"></div>
+      <div class="menu-item danger" onclick="closeMenu(); toast('Chat gelöscht')"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg></span><div class="text"><div class="name">Chat löschen</div></div></div>
+    </div>
+
+    <div class="stage-body">
+
+      <!-- TOOL SIDEBAR (NEU) -->
+      <div class="tool-sidebar" id="toolSidebar">
+        <div class="ts-toggle" onclick="toggleSidebar()" title="Sidebar erweitern">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/></svg>
+        </div>
+
+        <div class="ts-tool" data-tool="wrench" onclick="openTool('wrench', this)" title="Werkzeuge">
+          <span class="ts-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          </span>
+          <span class="ts-label">Werkzeuge</span>
+        </div>
+
+        <div class="ts-tool" data-tool="quick" onclick="openTool('quick', this)" title="Quick Actions">
+          <span class="ts-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </span>
+          <span class="ts-label">Quick</span>
+        </div>
+
+        <div class="ts-tool" data-tool="snippets" onclick="openTool('snippets', this)" title="Snippets">
+          <span class="ts-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </span>
+          <span class="ts-label">Snippets</span>
+        </div>
+
+        <div class="ts-tool" data-tool="files" onclick="openTool('files', this)" title="Files">
+          <span class="ts-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          </span>
+          <span class="ts-label">Files</span>
+        </div>
+
+        <div class="ts-tool" data-tool="search" onclick="openTool('search', this)" title="Suche">
+          <span class="ts-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          </span>
+          <span class="ts-label">Search</span>
+        </div>
+
+        <div class="ts-tool" data-tool="ai" onclick="openTool('ai', this)" title="AI Tools">
+          <span class="ts-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+          </span>
+          <span class="ts-label">AI</span>
+        </div>
+
+        <div class="ts-add" onclick="toast('Eigenes Tool hinzufügen')">
+          <span class="ts-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </span>
+          <span class="ts-label">Eigenes</span>
+        </div>
+      </div>
+
+      <!-- TOOL FLYOUT -->
+      <div class="tool-flyout" id="toolFlyout">
+        <div class="tf-head">
+          <span class="tf-tool-icon" id="tfIcon"></span>
+          <span class="tf-title" id="tfTitle">Werkzeug</span>
+          <span class="tf-context" id="tfContext">@build</span>
+          <span class="tf-close" onclick="closeTool()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </span>
+        </div>
+        <div class="tf-body" id="tfBody"></div>
+      </div>
+
+      <div class="multi">
+        <div class="multi-bar">
+          <div class="lbl-mini"><b id="paneCountLbl">4</b></div>
+          <div class="spacer"></div>
+          <div class="actions">
+            <div class="mb-icon-btn" onclick="toggleSidebar()" title="Tool-Sidebar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </div>
+            <div class="mb-view-toggle">
+              <div class="mb-view-mode" data-mode="1" onclick="setMode(1)">1</div>
+              <div class="mb-view-mode" data-mode="2" onclick="setMode(2)">2</div>
+              <div class="mb-view-mode active" data-mode="4" onclick="setMode(4)">4</div>
+            </div>
+            <div class="mb-icon-btn" onclick="toast('💾')" title="Speichern">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/></svg>
+            </div>
+          </div>
+        </div>
+        <div class="panes mode-4" id="panes"></div>
+      </div>
+    </div>
+
+    <div class="chip-bar">
+      <div class="term-chip active" data-id="alle"><span class="d" style="background:var(--accent)"></span>Alle</div>
+      <div class="term-chip in-pane" data-id="build-watch" style="--tcolor:#A78BFA"><span class="d"></span>S1·build</div>
+      <div class="term-chip in-pane" data-id="test-runner" style="--tcolor:#22C55E"><span class="d"></span>S2·tests</div>
+      <div class="term-chip in-pane" data-id="log-tail" style="--tcolor:#94A3B8"><span class="d"></span>S3·logs</div>
+      <div class="term-chip in-pane" data-id="dev-server" style="--tcolor:#3B82F6"><span class="d"></span>S4·dev</div>
+      <div class="term-chip" data-id="db-repl" style="--tcolor:#06B6D4"><span class="d"></span>S5·db</div>
+      <div class="term-chip" data-id="deploy-staging" style="--tcolor:#F59E0B"><span class="d"></span>S6·deploy</div>
+    </div>
+
+    <div class="chat">
+      <div class="chat-scroll" id="chatScroll">
+        <div class="msg assistant"><div class="msg-av">M</div><div><div class="msg-bub">Tipp: Mit dem <b>▶ Terminal-Mode</b> unten links kannst du Befehle direkt in das aktive Pane (<span class="tmention" style="--tcolor:#22C55E" data-target="test-runner"><span class="tdot"></span>test-runner</span>) schreiben — ohne Umweg über mich. Auch Tools in der linken Leiste (z.B. ⚡ Quick Actions) pushen ihre Befehle direkt.</div><div class="msg-time">9:42 · Manager</div></div></div>
+      </div>
+
+      <div class="att-row" id="attRow">
+        <div class="att-thumb"><div class="placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div><span class="x" onclick="document.getElementById('attRow').classList.remove('show')">×</span></div>
+      </div>
+
+      <!-- INPUT BAR mit MODE-TOGGLE -->
+      <div class="input-bar" id="inputBar">
+        <!-- Mode toggle (NEU) -->
+        <div class="ib-mode-toggle" title="Chat oder Direkt-Terminal">
+          <div class="ib-mode-btn active" data-mode="chat" onclick="setInputMode('chat')" title="An Manager">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div class="ib-mode-btn" data-mode="terminal" onclick="setInputMode('terminal')" title="Direkt an aktives Terminal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          </div>
+        </div>
+
+        <div class="ib-btn" onclick="document.getElementById('attRow').classList.add('show'); toast('Bild')" title="Bild">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        </div>
+        <div class="ib-btn ib-mic" id="micBtn" onclick="toast('Transkription — wie in v7')" title="Sprache">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </div>
+
+        <div class="ib-input">
+          <span class="ib-prefix" id="ibPrefix">
+            <span class="target" id="ibTarget" style="--target-color:#22C55E">@test-runner</span>
+            <span class="arrow">▶</span>
+          </span>
+          <input type="text" id="msgInput" placeholder="Nachricht..." onkeydown="if(event.key==='Enter') sendMsg()">
+        </div>
+
+        <div class="ib-send" onclick="sendMsg()">
+          <svg class="send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>
+          <svg class="run" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="voice-fullscreen" id="voiceFull">
+    <div class="vf-close" onclick="toggleVoice()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+    <div class="vf-meta"><div class="lbl">⏺ Live Voice Call</div><h2>Manager</h2><div class="sub">Sprich frei — Manager antwortet per Voice</div></div>
+    <div class="vf-orb-container">
+      <div class="vf-orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg></div>
+      <div class="vf-state"><span class="dot"></span><span>Höre zu…</span></div>
+    </div>
+    <div class="vf-actions">
+      <div class="vf-action-col"><div class="vf-circle-btn" onclick="toast('🔇')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="1" y1="1" x2="23" y2="23"/></svg></div><span class="vf-label">Mute</span></div>
+      <div class="vf-action-col"><div class="vf-circle-btn hangup" onclick="toggleVoice()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" transform="rotate(135 12 12)"/></svg></div><span class="vf-label">Beenden</span></div>
+      <div class="vf-action-col"><div class="vf-circle-btn" onclick="toast('🔊')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></div><span class="vf-label">Lautsprecher</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="note">
+  <h3>Was hier alles funktioniert</h3>
+  <ul>
+    <li><b>Tool-Sidebar (links)</b>: 6 Tools verfügbar — 🔧 Werkzeuge, ⚡ Quick Actions, 📋 Snippets, 🗂 Files, 🔍 Search, 🤖 AI. Plus + für eigene Tools.</li>
+    <li><b>Sidebar Auf-/Zuklappen</b>: Klick den Chevron oben links — Sidebar wird breiter (zeigt Labels) oder schmal (nur Icons).</li>
+    <li><b>Tool-Flyout</b>: Klick auf ein Tool öffnet ein Panel rechts daneben. Werkzeuge zeigt Aktionen für aktives Pane (Stop, Restart, Clear, Kill). Quick zeigt häufige Befehle (git status, npm install). Snippets zeigt eigene Befehl-Templates.</li>
+    <li><b>Quick-Actions</b> klicken pusht den Befehl <b>direkt ins aktive Pane</b> mit grüner Flash-Animation am Pane-Rand.</li>
+  </ul>
+  <h3 style="margin-top:12px">Direct-Terminal-Mode (NEU im Input)</h3>
+  <ul>
+    <li><b>Mode-Toggle</b> ganz links im Input: 💬 Chat / ▶ Terminal</li>
+    <li><b>Chat-Mode (default)</b>: Nachricht geht an den Manager (wie bisher)</li>
+    <li><b>Terminal-Mode</b>: Klick auf ▶ → Input wechselt zu mono-Font, dunklerem Background, grünem Send-Button + Prefix <kbd>@test-runner ▶</kbd></li>
+    <li>Tippe einen Befehl + <kbd>Enter</kbd> → Befehl wird <b>direkt ins aktive Pane geschrieben</b> mit Flash-Animation</li>
+    <li>Klick Pane = aktives Terminal wechseln. Prefix updates automatisch.</li>
+  </ul>
+</div>
+
+<div class="interactivity-hint">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+  Tipp · ▶-Toggle im Input + Tools links anklicken
+</div>
+
+<script>
+const TERMINALS = {
+  'dev-server':{color:'#3B82F6',name:'dev-server',status:'run',badge:'Run',out:dev()},
+  'build-watch':{color:'#A78BFA',name:'build-watch',status:'done',badge:'Done',out:build()},
+  'test-runner':{color:'#22C55E',name:'test-runner',status:'err',badge:'1 fail',out:tests()},
+  'db-repl':{color:'#06B6D4',name:'db-repl',status:'idle',badge:'Idle',out:db()},
+  'deploy-staging':{color:'#F59E0B',name:'deploy-staging',status:'wait',badge:'Wait',out:deploy()},
+  'log-tail':{color:'#94A3B8',name:'log-tail',status:'run',badge:'Run',out:logs()},
+  'prod-shell':{color:'#EF4444',name:'prod-shell ⚠',status:'idle',badge:'Idle',out:prod()},
+  'docker-up':{color:'#14B8A6',name:'docker-up',status:'run',badge:'Run',out:docker()},
+  'redis-cli':{color:'#EC4899',name:'redis-cli',status:'idle',badge:'Idle',out:redis()},
+  'backup-job':{color:'#8B5CF6',name:'backup-job',status:'done',badge:'Done',out:backup()},
+};
+function dev(){return `<span class="l"><span class="d">$</span> <span class="b">vite</span> dev</span>\n<span class="l"><span class="g">ready 412ms</span></span>\n<span class="l"><span class="o">[hmr] /App</span></span>`}
+function build(){return `<span class="l"><span class="d">$</span> <span class="b">npm</span> build</span>\n<span class="l"><span class="g">✓ 12.4s</span></span>`}
+function tests(){return `<span class="l"><span class="d">$</span> <span class="b">vitest</span></span>\n<span class="l"><span class="g">✓ 61</span></span>\n<span class="l"><span class="r">✗ 1 auth</span></span>`}
+function db(){return `<span class="l"><span class="b">postgres=#</span></span>\n<span class="l"><span class="g">28471</span></span>`}
+function deploy(){return `<span class="l"><span class="d">$</span> flyctl status</span>\n<span class="l"><span class="d">// wartet</span></span>`}
+function logs(){return `<span class="l"><span class="d">14:22</span> <span class="o">GET</span></span>\n<span class="l"><span class="w">slow 412ms</span></span>`}
+function prod(){return `<span class="l"><span class="r">⚠ PROD</span></span>\n<span class="l"><span class="d">14m</span></span>`}
+function docker(){return `<span class="l"><span class="g">api ✓</span></span>\n<span class="l"><span class="g">redis ✓</span></span>`}
+function redis(){return `<span class="l"><span class="b">&gt;</span></span>\n<span class="l"><span class="o">3 keys</span></span>`}
+function backup(){return `<span class="l"><span class="g">✓ 2.4 GB</span></span>`}
+
+let mode = 4; let activePane = 0; let panes = ['build-watch','test-runner','log-tail','dev-server'];
+
+/* === GROUPS === */
+let groups = [
+  { id: 'default', name: 'Default', terminals: ['build-watch','test-runner','log-tail','dev-server'], active: true },
+  { id: 'debug',   name: 'Debug',   terminals: ['prod-shell','log-tail','db-repl'] },
+  { id: 'deploy',  name: 'Deploy',  terminals: ['build-watch','deploy-staging'] },
+];
+
+function renderGroups() {
+  const bar = document.getElementById('groupsBar'); bar.innerHTML = '';
+  const lbl = document.createElement('div');
+  lbl.className = 'groups-label';
+  lbl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>SETS`;
+  bar.appendChild(lbl);
+  groups.forEach(g => {
+    const tab = document.createElement('div');
+    tab.className = 'group-tab' + (g.active ? ' active' : '');
+    const dots = g.terminals.map(tid => `<div class="dot" style="--tcolor:${TERMINALS[tid].color}"></div>`).join('');
+    tab.innerHTML = `<div class="dots">${dots}</div><span class="name">${escapeHtml(g.name)}</span><span class="count">${g.terminals.length}</span><span class="close" data-close="1">×</span>`;
+    tab.addEventListener('click', (e) => { if (e.target.dataset.close) { e.stopPropagation(); deleteGroup(g.id); } else { loadGroup(g.id); } });
+    bar.appendChild(tab);
+  });
+  const addBtn = document.createElement('div');
+  addBtn.className = 'group-tab-add';
+  addBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>`;
+  addBtn.onclick = showSaveDialog;
+  bar.appendChild(addBtn);
+}
+function loadGroup(id) {
+  const g = groups.find(x => x.id === id); if (!g) return;
+  groups.forEach(x => x.active = x.id === id);
+  panes = g.terminals.slice(0, 4);
+  while (panes.length < 4) panes.push(null);
+  const newMode = g.terminals.length === 1 ? 1 : g.terminals.length === 2 ? 2 : 4;
+  setMode(newMode);
+  renderGroups();
+  toast(`Geladen: ${g.name}`);
+}
+function deleteGroup(id) {
+  if (groups.length <= 1) { toast('Letzte Gruppe'); return; }
+  const wasActive = groups.find(x => x.id === id)?.active;
+  groups = groups.filter(x => x.id !== id);
+  if (wasActive) { groups[0].active = true; loadGroup(groups[0].id); } else { renderGroups(); }
+  toast('Gelöscht');
+}
+function showSaveDialog() {
+  const bar = document.getElementById('groupsBar');
+  const addBtn = bar.querySelector('.group-tab-add'); if (addBtn) addBtn.remove();
+  const activeTerminals = panes.slice(0, mode).filter(Boolean);
+  if (!activeTerminals.length) { toast('Keine Terminals'); renderGroups(); return; }
+  bar.querySelectorAll('.group-tab').forEach(t => t.classList.remove('active'));
+  const editTab = document.createElement('div');
+  editTab.className = 'group-tab active';
+  const dots = activeTerminals.map(tid => `<div class="dot" style="--tcolor:${TERMINALS[tid].color}"></div>`).join('');
+  editTab.innerHTML = `<div class="dots">${dots}</div><input type="text" class="group-tab-input" placeholder="Name…"><span class="count">${activeTerminals.length}</span>`;
+  bar.appendChild(editTab);
+  bar.scrollLeft = bar.scrollWidth;
+  const inputEl = editTab.querySelector('input'); inputEl.focus();
+  let saved = false;
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { const name = inputEl.value.trim(); if (name) { saved = true; saveAsGroup(name); } else renderGroups(); }
+    else if (e.key === 'Escape') renderGroups();
+  });
+  inputEl.addEventListener('blur', () => { setTimeout(() => { if (!saved && document.activeElement !== inputEl) renderGroups(); }, 150); });
+}
+function saveAsGroup(name) {
+  groups.forEach(x => x.active = false);
+  const activeTerminals = panes.slice(0, mode).filter(Boolean);
+  groups.push({ id: 'g' + Date.now(), name, terminals: activeTerminals, active: true });
+  renderGroups(); toast(`✓ "${name}" gespeichert`);
+}
+renderGroups();
+
+/* === PANES === */
+function renderPanes() {
+  const c = document.getElementById('panes'); c.className = 'panes mode-' + mode; c.innerHTML = '';
+  for (let i = 0; i < mode; i++) {
+    const id = panes[i];
+    if (!id) { const e = document.createElement('div'); e.className='pane empty'; e.dataset.slot=i; e.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5v14M5 12h14"/></svg><span>leer</span>`; e.onclick=()=>{activePane=i;renderPanes();}; c.appendChild(e); continue; }
+    const t = TERMINALS[id]; const p = document.createElement('div');
+    p.className = 'pane' + (i === activePane ? ' focused' : ''); p.dataset.id = id; p.dataset.slot = i; p.style.setProperty('--tcolor', t.color);
+    p.innerHTML = `<div class="pane-head"><span class="d"></span><span class="n">${t.name}</span><span class="st ${t.status}">${t.badge}</span><span class="pane-promote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/></svg></span></div><div class="pane-out">${t.out}</div>`;
+    p.querySelector('.pane-promote').onclick=(e)=>{e.stopPropagation();promotePane(i);};
+    p.onclick=()=>{activePane=i;document.querySelectorAll('.pane').forEach(x=>x.classList.toggle('focused',x.dataset.slot==i)); updateInputPrefix();};
+    c.appendChild(p);
+  }
+  document.querySelectorAll('.term-chip').forEach(s => { if (s.dataset.id === 'alle') return; s.classList.toggle('in-pane', panes.slice(0, mode).includes(s.dataset.id)); });
+  document.getElementById('paneCountLbl').textContent = mode;
+  updateInputPrefix();
+}
+function setMode(m) { mode = m; document.querySelectorAll('.mb-view-mode').forEach(el=>el.classList.toggle('active',+el.dataset.mode===m)); while (panes.length < m) panes.push(null); if (activePane >= m) activePane = 0; renderPanes(); }
+function promotePane(slot) { const id = panes[slot]; if (!id) return; panes = [id,null,null,null]; activePane = 0; setMode(1); }
+document.querySelectorAll('.term-chip').forEach(s=>{if(s.dataset.id==='alle')return;s.addEventListener('click',()=>{panes[activePane]=s.dataset.id;renderPanes();});});
+document.querySelectorAll('.tmention').forEach(p=>p.addEventListener('click',e=>{e.stopPropagation();const id=p.dataset.target;const slot=panes.indexOf(id);if(slot>=0&&slot<mode){activePane=slot;renderPanes();}else{panes[activePane]=id;renderPanes();}}));
+renderPanes();
+
+/* === TOOL SIDEBAR === */
+let sidebarState = 'collapsed'; // collapsed | expanded | hidden
+function toggleSidebar() {
+  const sb = document.getElementById('toolSidebar');
+  if (sidebarState === 'collapsed') { sidebarState = 'expanded'; sb.classList.add('expanded'); sb.classList.remove('hidden'); }
+  else if (sidebarState === 'expanded') { sidebarState = 'collapsed'; sb.classList.remove('expanded'); sb.classList.remove('hidden'); }
+  else { sidebarState = 'collapsed'; sb.classList.remove('hidden'); }
+}
+
+/* === TOOL FLYOUT === */
+const TOOLS = {
+  wrench: {
+    title: 'Werkzeuge', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
+    body: () => `
+      <div class="tf-section">Aktion auf <span style="color:var(--accent);font-family:var(--mono)">@${activeTermId()}</span></div>
+      <div class="tf-item" onclick="toolAction('restart')"><span class="tf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></span><span class="tf-label">Restart</span></div>
+      <div class="tf-item" onclick="toolAction('clear')"><span class="tf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/></svg></span><span class="tf-label">Output leeren</span></div>
+      <div class="tf-item" onclick="toolAction('copy')"><span class="tf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span class="tf-label">Output kopieren</span></div>
+      <div class="tf-item" onclick="toolAction('settings')"><span class="tf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg></span><span class="tf-label">Session-Einstellungen</span></div>
+      <div class="tf-divider"></div>
+      <div class="tf-item warn" onclick="toolAction('stop')"><span class="tf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg></span><span class="tf-label">Stop</span></div>
+      <div class="tf-item danger" onclick="toolAction('kill')"><span class="tf-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg></span><span class="tf-label">Kill Session</span></div>
+    `
+  },
+  quick: {
+    title: 'Quick Actions', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+    body: () => `
+      <div class="tf-section">In <span style="color:var(--accent);font-family:var(--mono)">@${activeTermId()}</span> ausführen</div>
+      <div class="tf-item" onclick="pushCmd('git status')"><span class="tf-cmd">git status</span></div>
+      <div class="tf-item" onclick="pushCmd('git pull')"><span class="tf-cmd">git pull</span></div>
+      <div class="tf-item" onclick="pushCmd('git log --oneline -10')"><span class="tf-cmd">git log --oneline -10</span></div>
+      <div class="tf-item" onclick="pushCmd('ls -la')"><span class="tf-cmd">ls -la</span></div>
+      <div class="tf-item" onclick="pushCmd('pwd')"><span class="tf-cmd">pwd</span></div>
+      <div class="tf-item" onclick="pushCmd('npm install')"><span class="tf-cmd">npm install</span></div>
+      <div class="tf-item" onclick="pushCmd('npm test')"><span class="tf-cmd">npm test</span></div>
+      <div class="tf-item" onclick="pushCmd('npm run build')"><span class="tf-cmd">npm run build</span></div>
+      <div class="tf-item" onclick="pushCmd('clear')"><span class="tf-cmd">clear</span></div>
+    `
+  },
+  snippets: {
+    title: 'Snippets', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+    body: () => `
+      <div class="tf-section">Eigene Snippets</div>
+      <div class="tf-item" onclick="pushCmd('pg_dump -Fc tms_prod > backup.dump')"><span class="tf-em">📦</span><span class="tf-label">Backup DB</span></div>
+      <div class="tf-item" onclick="pushCmd('flyctl deploy --app tms-staging')"><span class="tf-em">🚀</span><span class="tf-label">Deploy staging</span></div>
+      <div class="tf-item" onclick="pushCmd('npm run e2e -- --headed')"><span class="tf-em">🧪</span><span class="tf-label">Run e2e (headed)</span></div>
+      <div class="tf-item" onclick="pushCmd('docker compose up -d --build')"><span class="tf-em">🐳</span><span class="tf-label">Docker rebuild</span></div>
+      <div class="tf-item" onclick="pushCmd('redis-cli FLUSHDB')"><span class="tf-em">🧹</span><span class="tf-label">Redis flush</span></div>
+      <div class="tf-item add" onclick="toast('+ Neuer Snippet')">+ Neuer Snippet</div>
+    `
+  },
+  files: {
+    title: 'Files', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
+    body: () => `
+      <div class="tf-section">~/projects/tms-terminal</div>
+      <div class="tf-item" onclick="pushCmd('cat package.json')"><span class="tf-em">📄</span><span class="tf-label">package.json</span></div>
+      <div class="tf-item" onclick="pushCmd('cat README.md')"><span class="tf-em">📖</span><span class="tf-label">README.md</span></div>
+      <div class="tf-item" onclick="pushCmd('ls src/')"><span class="tf-em">📂</span><span class="tf-label">src/</span></div>
+      <div class="tf-item" onclick="pushCmd('ls mobile/')"><span class="tf-em">📂</span><span class="tf-label">mobile/</span></div>
+      <div class="tf-item" onclick="pushCmd('cat .env')"><span class="tf-em">🔐</span><span class="tf-label">.env</span></div>
+      <div class="tf-item" onclick="toast('Datei-Browser')"><span class="tf-em">🗂</span><span class="tf-label">Browser öffnen…</span></div>
+    `
+  },
+  search: {
+    title: 'Suche', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>`,
+    body: () => `
+      <div class="tf-search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" placeholder="In allen Terminals suchen..." value="error">
+      </div>
+      <div class="tf-section">3 Treffer</div>
+      <div class="tf-item" onclick="toast('→ test-runner Zeile 12')"><span class="tf-em">🟢</span><span class="tf-label">@test-runner · 1×</span></div>
+      <div class="tf-item" onclick="toast('→ log-tail Zeile 4')"><span class="tf-em">⚪</span><span class="tf-label">@log-tail · 2×</span></div>
+      <div class="tf-divider"></div>
+      <div class="tf-item" onclick="toast('Suche speichern')"><span class="tf-em">⭐</span><span class="tf-label">Suche speichern</span></div>
+    `
+  },
+  ai: {
+    title: 'AI Tools', icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>`,
+    body: () => `
+      <div class="tf-section">KI auf <span style="color:var(--accent);font-family:var(--mono)">@${activeTermId()}</span></div>
+      <div class="tf-item" onclick="aiAction('analyze')"><span class="tf-em">🔍</span><span class="tf-label">Letzten Output analysieren</span></div>
+      <div class="tf-item" onclick="aiAction('explain')"><span class="tf-em">📖</span><span class="tf-label">Befehl erklären</span></div>
+      <div class="tf-item" onclick="aiAction('fix')"><span class="tf-em">💡</span><span class="tf-label">Fix vorschlagen</span></div>
+      <div class="tf-item" onclick="aiAction('generate')"><span class="tf-em">🎯</span><span class="tf-label">Befehl aus Beschreibung</span></div>
+      <div class="tf-item" onclick="aiAction('summarize')"><span class="tf-em">📝</span><span class="tf-label">Output zusammenfassen</span></div>
+    `
+  }
+};
+
+let activeTool = null;
+function openTool(toolId, btn) {
+  if (activeTool === toolId) { closeTool(); return; }
+  activeTool = toolId;
+  document.querySelectorAll('.ts-tool').forEach(t => t.classList.toggle('active', t.dataset.tool === toolId));
+  const t = TOOLS[toolId];
+  document.getElementById('tfIcon').innerHTML = t.icon;
+  document.getElementById('tfTitle').textContent = t.title;
+  document.getElementById('tfContext').textContent = '@' + activeTermId();
+  document.getElementById('tfBody').innerHTML = t.body();
+  document.getElementById('toolFlyout').classList.add('open');
+}
+function closeTool() {
+  activeTool = null;
+  document.getElementById('toolFlyout').classList.remove('open');
+  document.querySelectorAll('.ts-tool').forEach(t => t.classList.remove('active'));
+}
+function activeTermId() { return panes[activePane] || panes.find(Boolean) || 'build-watch'; }
+
+function toolAction(action) {
+  const id = activeTermId();
+  const t = TERMINALS[id];
+  switch(action) {
+    case 'restart': pushRaw(id, '<span class="l new"><span class="d">// session restart…</span></span>\n<span class="l new"><span class="g">✓ ready</span></span>'); toast(`↻ Restart @${id}`); break;
+    case 'clear': clearPane(id); toast(`🧹 Cleared @${id}`); break;
+    case 'copy': toast(`📋 Output kopiert @${id}`); break;
+    case 'settings': toast(`⚙ Session-Settings @${id}`); break;
+    case 'stop': pushRaw(id, '<span class="l new"><span class="w">⏹ Stopped</span></span>'); toast(`⏹ Stopped @${id}`); break;
+    case 'kill': toast(`⚠ @${id} killed`); break;
+  }
+  closeTool();
+}
+function aiAction(kind) {
+  const id = activeTermId();
+  switch(kind) {
+    case 'analyze':
+      appendMsg('user', `🔍 Analyze last output of <span class='tmention' style='--tcolor:${TERMINALS[id].color}' data-target='${id}'><span class='tdot'></span>${id}</span>`);
+      setTimeout(() => appendMsg('assistant', `Output von <code>@${id}</code> analysiert: Es gibt einen Token-Validierungs-Fehler in <code>auth.ts:42</code>. Wahrscheinlich fehlt das JWT-Setup im Test-Mock.`), 700);
+      break;
+    case 'explain': appendMsg('assistant', `Letzter Befehl in <code>@${id}</code>: <code>vitest run</code> startet alle Tests in der Datei und beendet danach den Process.`); break;
+    case 'fix': appendMsg('assistant', `Vorschlag: Add <code>vi.mock('jwt')</code> at the top of <code>auth.spec.ts</code>.`); break;
+    case 'generate': appendMsg('assistant', `Was möchtest du tun? (z.B. "find all .log files larger than 10MB")`); break;
+    case 'summarize': appendMsg('assistant', `<b>@${id} Summary:</b> 61 tests passed, 1 failed. Build successful in 12.4s. No deployments yet.`); break;
+  }
+  closeTool();
+  toast(`🤖 AI: ${kind}`);
+}
+
+/* === DIRECT TERMINAL MODE === */
+let inputMode = 'chat';
+function setInputMode(m) {
+  inputMode = m;
+  const bar = document.getElementById('inputBar');
+  bar.classList.toggle('terminal-mode', m === 'terminal');
+  document.querySelectorAll('.ib-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+  const inp = document.getElementById('msgInput');
+  if (m === 'terminal') {
+    inp.placeholder = 'Befehl eingeben...';
+    updateInputPrefix();
+    inp.focus();
+  } else {
+    inp.placeholder = 'Nachricht...';
+  }
+}
+function updateInputPrefix() {
+  if (inputMode !== 'terminal') return;
+  const id = activeTermId();
+  const t = TERMINALS[id];
+  const target = document.getElementById('ibTarget');
+  target.textContent = '@' + id;
+  target.style.setProperty('--target-color', t.color);
+}
+
+function pushCmd(command) {
+  const id = activeTermId();
+  pushRaw(id, `<span class="l new"><span class="d">$</span> <span class="b">${escapeHtml(command)}</span></span>\n<span class="l new"><span class="g">✓ executed</span></span>`);
+  toast(`▶ @${id}: ${command}`);
+  closeTool();
+}
+function pushRaw(termId, html) {
+  // update TERMINAL data
+  if (TERMINALS[termId]) TERMINALS[termId].out += '\n' + html;
+  // find rendered pane
+  const paneEl = document.querySelector(`.pane[data-id="${termId}"]`);
+  if (paneEl) {
+    const out = paneEl.querySelector('.pane-out');
+    if (out) {
+      out.innerHTML = TERMINALS[termId].out;
+      out.scrollTop = out.scrollHeight;
+      paneEl.classList.add('flash');
+      setTimeout(() => paneEl.classList.remove('flash'), 600);
+    }
+  }
+}
+function clearPane(termId) {
+  if (TERMINALS[termId]) TERMINALS[termId].out = '<span class="l"><span class="d">$</span> <span class="b">_</span></span>';
+  const paneEl = document.querySelector(`.pane[data-id="${termId}"]`);
+  if (paneEl) paneEl.querySelector('.pane-out').innerHTML = TERMINALS[termId].out;
+}
+
+/* === SEND / CHAT === */
+function appendMsg(role, html) { const s = document.getElementById('chatScroll'); const m = document.createElement('div'); m.className = `msg ${role}`; m.innerHTML = `<div class="msg-av">${role==='user'?'DU':'M'}</div><div><div class="msg-bub">${html}</div><div class="msg-time">${new Date().toLocaleTimeString().slice(0,5)} · ${role==='user'?'DU':'Manager'}</div></div>`; s.appendChild(m); s.scrollTop = s.scrollHeight; return m; }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+const REPLIES = ["Verstanden. Ich pin <span class='tmention' style='--tcolor:#22C55E' data-target='test-runner'><span class='tdot'></span>test-runner</span>.","Klar — ich rufe send_keys parallel.","Ich öffne <code>auth.ts:42</code>."];
+function bindMentions() { document.querySelectorAll('.tmention').forEach(p=>{if(p.dataset.bound)return;p.dataset.bound='1';p.addEventListener('click',e=>{e.stopPropagation();const id=p.dataset.target;const slot=panes.indexOf(id);if(slot>=0&&slot<mode){activePane=slot;renderPanes();}else{panes[activePane]=id;renderPanes();}});}); }
+function sendMsg() {
+  const inp = document.getElementById('msgInput');
+  const text = inp.value.trim(); if (!text) return;
+
+  if (inputMode === 'terminal') {
+    pushCmd(text);
+    inp.value = '';
+  } else {
+    appendMsg('user', escapeHtml(text));
+    inp.value = '';
+    setTimeout(() => { appendMsg('assistant', REPLIES[Math.floor(Math.random()*REPLIES.length)]); bindMentions(); }, 600);
+  }
+}
+bindMentions();
+
+/* === MENU + MODEL === */
+function toggleMenu() { document.getElementById('menuPopup').classList.toggle('open'); document.getElementById('modelMenu').classList.remove('open'); }
+function closeMenu() { document.getElementById('menuPopup').classList.remove('open'); }
+function toggleModel() { document.getElementById('modelMenu').classList.toggle('open'); document.getElementById('menuPopup').classList.remove('open'); }
+function pickModel(name) { document.querySelectorAll('.md-item').forEach(el=>el.classList.remove('active')); event.currentTarget.classList.add('active'); document.getElementById('modelName').textContent = name; document.getElementById('modelMenu').classList.remove('open'); toast(`Modell: ${name}`); }
+document.addEventListener('click', () => { document.getElementById('menuPopup').classList.remove('open'); document.getElementById('modelMenu').classList.remove('open'); document.getElementById('taskPanelOverlay').classList.remove('open'); });
+
+/* === VOICE === */
+let isVoice = false; let callT = null; let callSecs = 0;
+function toggleVoice() { const phone = document.getElementById('phone'); isVoice = !isVoice; if (isVoice) { phone.classList.add('voice-active'); document.getElementById('voiceFull').classList.add('open'); callSecs = 0; callT = setInterval(() => { callSecs++; document.getElementById('callTimer').textContent = `${Math.floor(callSecs/60)}:${String(callSecs%60).padStart(2,'0')}`; }, 1000); } else { phone.classList.remove('voice-active'); document.getElementById('voiceFull').classList.remove('open'); if (callT) clearInterval(callT); document.getElementById('callTimer').textContent = '0:00'; } }
+
+let toastT = null;
+function toast(m) { const e = document.getElementById('toast'); e.textContent = m; e.classList.add('show'); if (toastT) clearTimeout(toastT); toastT = setTimeout(()=>e.classList.remove('show'), 1600); }
+</script>
+
+</body>
+</html>

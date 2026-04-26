@@ -1,5 +1,38 @@
 # Session-Tagebuch
 
+## 2026-04-26 — Manager Chat Redesign (8 Runden HTML-Mockups)
+
+### Was wurde gemacht
+- 8 Runden Design-Iteration des Manager Chat Screens als interaktive HTML-Mockups in `prototype/manager-chat-redesign/`. Pro Runde 3 Varianten zum Vergleichen, dann User-Feedback → nächste Runde.
+- R1: 3 Architektur-Konzepte (Cockpit / Mosaic / Stage) — Stage gewann
+- R2: Stage-Iterationen (Pro / Multi / Float) — Multi gewann
+- R3: Multi mit allen echten Features aus ManagerChatScreen.tsx (Native / Studio / Console) — Native gewann
+- R4: Native + Polish (Compact / Wide / Premium) — Premium gewann (3-State Rail, Voice-Call mit Header-Transform, Rich Transkription)
+- R5: Premium + größerer Avatar (Persona / Messenger / Hero) — alle zu groß
+- R6: Minimal-Stufen (Quiet / Hush / Whisper) — Whisper-Header + Quiet-Rail-Kombi gewählt
+- R7 (`v7-final.html`): Whisper + Quiet-Rail + NEUES Group-Tabs Feature (Pane-Konfigs als benannte Gruppen speichern/laden, inline-naming, mit Dot-Vorschau)
+- R8 (`v8-tools-direct.html`): FINAL — Stage-Sidebar wird zu Tool-Leiste (🔧 Werkzeuge, ⚡ Quick, 📋 Snippets, 🗂 Files, 🔍 Search, 🤖 AI), Chat-Input bekommt Direct-Mode-Toggle (💬↔▶) für direktes Terminal-Schreiben mit Flash-Animation
+- Vor R3: Explore-Subagent hat ManagerChatScreen.tsx (3000 Zeilen) komplett gemappt — alle Features (Header, Tasks, Search, Wizards, TTS, Lightbox, Phase-Popup, Voice-Enhance) inventarisiert damit Redesign nichts vergisst.
+- Server lief durchgehend auf Port 8789 (Tailscale), User testete am Galaxy Fold 7.
+- Final-Decision in `decisions.md` dokumentiert.
+
+### Was lief gut
+- Drei-Varianten-pro-Runde-Format hat super geholfen — User konnte Stärken kombinieren ("Whisper-Header aber Quiet-Rail")
+- Originale Design-Tokens (`theme.ts`) wurden 1:1 verwendet — Übergang zur Implementation wird visuell konsistent
+- Demo-Interaktivität (Klick auf Spines, @mentions, Tool-Cards, Voice-Modus, Transkription) hat User echtes "Feel" gegeben statt nur Static-Mockups
+- Group-Tabs-Feature ist user-vorgeschlagen und super sinnvoll für Multi-Pane-Workflows (Default/Debug/Deploy schnell switchen)
+- Direct-Terminal-Mode trennt Manager-Conversation klar von Terminal-Befehlen — Mode-Toggle (💬/▶) ist visuell eindeutig
+
+### Was war schwierig
+- File-Größe: jede Variante ist ~70-85kb HTML (alle Features inline) — viel Code-Duplication zwischen Varianten
+- Lange Iterations-Sequenz (8 Runden) — User hatte sehr genaue Vorstellungen, jede Runde war notwendig
+
+### Entscheidungen
+- Final v8-tools-direct.html als Implementation-Vorlage festgelegt
+- Group-Tabs sind ein neues Feature (nicht im aktuellen ManagerChatScreen) — braucht neuen Store + Persistenz
+- Tool-Sidebar ist neu, Tools sind eigene Components mit Flyout-Pattern
+- Stage-Manager-Rail mit Terminal-Abkürzungen wurde gestrichen (redundant zu Term-Chip-Bar unten)
+
 ## 2026-04-26 — Voice Prompt Enhancer (v1.21.3)
 
 ### Was wurde gemacht

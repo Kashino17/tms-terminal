@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Manager Chat · Variant B — Mosaic</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --bg: #0F172A;
+    --surface: #1B2336;
+    --surface-alt: #243044;
+    --primary: #3B82F6;
+    --accent: #22C55E;
+    --text: #F8FAFC;
+    --text-muted: #94A3B8;
+    --text-dim: #64748B;
+    --border: #334155;
+    --border-soft: #1E293B;
+    --destructive: #EF4444;
+    --warning: #F59E0B;
+    --info: #06B6D4;
+    --mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, monospace;
+  }
+  body {
+    background: #050810;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px 60px;
+    display: flex; flex-direction: column; align-items: center; gap: 18px;
+  }
+  .page-header { text-align: center; max-width: 540px; }
+  .page-header h1 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+  .page-header .tag { display: inline-block; margin-top: 6px; padding: 3px 10px; font-size: 10px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: #A78BFA; background: rgba(167,139,250,.12); border: 1px solid rgba(167,139,250,.25); border-radius: 12px; }
+  .page-header p { font-size: 12px; color: var(--text-dim); margin-top: 10px; line-height: 1.55; }
+
+  /* Phone frame */
+  .phone {
+    width: 400px; height: 880px;
+    background: #060B14;
+    border-radius: 38px;
+    overflow: hidden;
+    position: relative;
+    border: 4px solid #11192B;
+    box-shadow: 0 30px 80px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.04);
+  }
+  .sbar { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; font-size: 11px; color: var(--text-dim); font-weight: 600; }
+  .sbar .right { display: flex; gap: 6px; align-items: center; }
+  .notch { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); width: 110px; height: 26px; background: #000; border-radius: 14px; z-index: 50; }
+
+  .stage { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; padding: 8px 8px 8px; gap: 8px; }
+
+  /* Top bar — minimal */
+  .topbar {
+    display: flex; align-items: center; gap: 8px; padding: 4px 4px 0;
+  }
+  .pill-agent {
+    flex: 1; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 6px;
+    background: linear-gradient(135deg, rgba(59,130,246,.12), rgba(167,139,250,.12));
+    border: 1px solid rgba(167,139,250,.2);
+    border-radius: 14px;
+  }
+  .pill-agent .av { width: 26px; height: 26px; border-radius: 8px; background: linear-gradient(135deg, #3B82F6, #8B5CF6); display: flex; align-items: center; justify-content: center; }
+  .pill-agent .av svg { width: 14px; height: 14px; }
+  .pill-agent .meta { flex: 1; min-width: 0; }
+  .pill-agent .meta .n { font-size: 12px; font-weight: 700; }
+  .pill-agent .meta .s { font-size: 9.5px; color: var(--text-muted); display: flex; align-items: center; gap: 5px; }
+  .pill-agent .meta .s .d { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+  .pill-iconbtn { width: 32px; height: 32px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
+  .pill-iconbtn svg { width: 14px; height: 14px; }
+
+  /* === CHAT TILE === */
+  .chat-tile {
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    border-radius: 18px;
+    padding: 10px 10px 8px;
+    display: flex; flex-direction: column;
+    height: 320px;
+    position: relative;
+    box-shadow: 0 8px 24px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.04);
+  }
+  .chat-tile::before {
+    content: 'CHAT'; position: absolute; top: -7px; left: 12px;
+    font-size: 9px; font-weight: 800; letter-spacing: 1.5px; color: var(--text-dim);
+    background: #060B14; padding: 0 6px;
+  }
+  .chat-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 2px; }
+  .chat-scroll::-webkit-scrollbar { width: 0; }
+
+  .msg { display: flex; gap: 6px; max-width: 95%; }
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .msg-avatar { width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; }
+  .msg.assistant .msg-avatar { background: linear-gradient(135deg, #3B82F6, #8B5CF6); color: #fff; }
+  .msg.user .msg-avatar { background: var(--surface-alt); color: var(--text-muted); }
+  .msg-bubble { padding: 7px 10px; border-radius: 12px; font-size: 12px; line-height: 1.5; }
+  .msg.user .msg-bubble { background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant .msg-bubble { background: var(--surface-alt); color: var(--text); border-bottom-left-radius: 4px; }
+  .msg-bubble code { font-family: var(--mono); font-size: 10.5px; background: rgba(0,0,0,.3); padding: 1px 4px; border-radius: 3px; color: var(--info); }
+
+  .tmention {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 1px 6px 1px 4px; border-radius: 7px;
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    background: color-mix(in srgb, var(--tcolor) 18%, transparent);
+    color: var(--tcolor);
+    border: 1px solid color-mix(in srgb, var(--tcolor) 30%, transparent);
+    cursor: pointer;
+  }
+  .tmention::before { content: '@'; opacity: .6; font-size: 9px; }
+  .tmention .tdot { width: 4px; height: 4px; border-radius: 50%; background: var(--tcolor); }
+
+  /* Chat input within tile */
+  .chat-input { display: flex; gap: 6px; align-items: center; padding-top: 6px; border-top: 1px solid rgba(255,255,255,.05); margin-top: 4px; }
+  .chat-input .target { font-family: var(--mono); font-size: 10px; font-weight: 700; padding: 4px 7px; border-radius: 7px; background: rgba(59,130,246,.12); color: var(--primary); border: 1px solid rgba(59,130,246,.25); flex-shrink: 0; }
+  .chat-input .field { flex: 1; background: rgba(0,0,0,.2); border: 1px solid var(--border-soft); border-radius: 9px; padding: 6px 9px; font-size: 11px; color: var(--text-dim); }
+  .chat-input .send { width: 28px; height: 28px; border-radius: 8px; background: var(--primary); display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; }
+  .chat-input .send svg { width: 12px; height: 12px; }
+
+  /* === SPOTLIGHT TILE === */
+  .spotlight {
+    background: #0B1220; border: 1px solid var(--border-soft); border-radius: 14px;
+    padding: 0; display: flex; flex-direction: column; height: 130px; overflow: hidden;
+    position: relative;
+    border-left: 3px solid var(--tcolor);
+  }
+  .spotlight::before {
+    content: 'SPOTLIGHT'; position: absolute; top: -7px; left: 12px;
+    font-size: 9px; font-weight: 800; letter-spacing: 1.5px; color: var(--tcolor);
+    background: #060B14; padding: 0 6px;
+  }
+  .sp-head { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--border-soft); }
+  .sp-head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tcolor); box-shadow: 0 0 6px var(--tcolor); }
+  .sp-head .name { font-family: var(--mono); font-size: 11px; font-weight: 700; flex: 1; }
+  .sp-head .badge { font-size: 8.5px; font-weight: 700; padding: 2px 6px; border-radius: 5px; letter-spacing: .5px; text-transform: uppercase; background: rgba(239,68,68,.15); color: var(--destructive); }
+  .sp-head .pin { font-size: 9px; color: var(--tcolor); display: flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 5px; background: color-mix(in srgb, var(--tcolor) 12%, transparent); border: 1px solid color-mix(in srgb, var(--tcolor) 25%, transparent); }
+  .sp-head .pin svg { width: 9px; height: 9px; }
+  .sp-out { flex: 1; padding: 6px 10px; font-family: var(--mono); font-size: 10px; line-height: 1.45; color: #CBD5E1; overflow: hidden; }
+  .sp-out .l { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sp-out .d { color: var(--text-dim); }
+  .sp-out .o { color: #94A3B8; }
+  .sp-out .g { color: var(--accent); }
+  .sp-out .r { color: var(--destructive); }
+  .sp-out .b { color: var(--primary); }
+  .sp-out .w { color: var(--warning); }
+
+  /* === GRID OF MINI TILES === */
+  .grid-zone { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+  .grid-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
+  .grid-head .lbl { font-size: 9px; font-weight: 800; letter-spacing: 1.5px; color: var(--text-dim); }
+  .grid-head .lbl b { color: var(--text); }
+  .grid-head .filters { display: flex; gap: 4px; }
+  .grid-head .chip { font-size: 9px; padding: 2px 7px; border-radius: 5px; background: rgba(255,255,255,.04); border: 1px solid var(--border-soft); color: var(--text-muted); }
+  .grid-head .chip.active { background: rgba(59,130,246,.15); color: var(--primary); border-color: rgba(59,130,246,.3); }
+
+  .grid {
+    flex: 1; overflow-y: auto;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    padding-bottom: 6px;
+  }
+  .grid::-webkit-scrollbar { width: 0; }
+
+  .tile {
+    background: #0E1626;
+    border: 1px solid var(--border-soft);
+    border-radius: 11px;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    cursor: pointer;
+    transition: all .2s;
+    position: relative;
+  }
+  .tile.glow {
+    border-color: var(--tcolor);
+    box-shadow: 0 0 0 1px var(--tcolor), 0 0 14px color-mix(in srgb, var(--tcolor) 30%, transparent);
+    animation: tileGlow 2s ease-in-out infinite;
+  }
+  @keyframes tileGlow {
+    0%, 100% { box-shadow: 0 0 0 1px var(--tcolor), 0 0 12px color-mix(in srgb, var(--tcolor) 25%, transparent); }
+    50% { box-shadow: 0 0 0 1px var(--tcolor), 0 0 20px color-mix(in srgb, var(--tcolor) 45%, transparent); }
+  }
+  .tile:hover { border-color: rgba(255,255,255,.15); transform: translateY(-1px); }
+  .tile-head { padding: 5px 8px; display: flex; align-items: center; gap: 5px; border-bottom: 1px solid var(--border-soft); background: rgba(0,0,0,.2); }
+  .tile-head .c { width: 6px; height: 6px; border-radius: 50%; background: var(--tcolor); flex-shrink: 0; box-shadow: 0 0 4px var(--tcolor); }
+  .tile-head .n { flex: 1; font-family: var(--mono); font-size: 10px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile-head .st { font-size: 7.5px; font-weight: 700; padding: 1px 4px; border-radius: 4px; letter-spacing: .4px; text-transform: uppercase; }
+  .st.run { background: rgba(34,197,94,.15); color: var(--accent); }
+  .st.idle { background: rgba(100,116,139,.15); color: var(--text-dim); }
+  .st.wait { background: rgba(245,158,11,.15); color: var(--warning); }
+  .st.err { background: rgba(239,68,68,.15); color: var(--destructive); }
+  .st.done { background: rgba(6,182,212,.15); color: var(--info); }
+
+  .tile-body { flex: 1; padding: 5px 7px; font-family: var(--mono); font-size: 8.5px; line-height: 1.45; color: #CBD5E1; overflow: hidden; position: relative; }
+  .tile-body .l { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile-body .d { color: var(--text-dim); }
+  .tile-body .o { color: #94A3B8; }
+  .tile-body .g { color: var(--accent); }
+  .tile-body .r { color: var(--destructive); }
+  .tile-body .b { color: var(--primary); }
+  .tile-body .w { color: var(--warning); }
+  .tile-body::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 18px; background: linear-gradient(180deg, transparent 0%, #0E1626 100%); pointer-events: none; }
+
+  /* Sparkline activity bar */
+  .tile-spark { height: 14px; padding: 0 6px; display: flex; align-items: end; gap: 1px; border-top: 1px solid var(--border-soft); background: rgba(0,0,0,.15); }
+  .tile-spark .bar { flex: 1; background: var(--tcolor); opacity: .4; border-radius: 1px; min-height: 2px; }
+  .tile-spark .bar.hi { opacity: .9; }
+  .tile-spark .bar.md { opacity: .6; }
+
+  /* Add tile */
+  .tile.add { border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 4px; color: var(--text-dim); background: transparent; }
+  .tile.add svg { width: 18px; height: 18px; }
+  .tile.add span { font-size: 9px; font-weight: 600; }
+
+  /* Notes */
+  .note { max-width: 540px; font-size: 12px; color: var(--text-muted); line-height: 1.6; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; padding: 14px 16px; }
+  .note h3 { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; letter-spacing: .3px; }
+  .note ul { padding-left: 18px; margin-top: 4px; }
+  .note li { margin-top: 3px; }
+  .note .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin: 0 4px 1px 0; }
+
+  .nav { display: flex; gap: 8px; }
+  .nav a { font-size: 11px; padding: 6px 12px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); color: var(--text-muted); text-decoration: none; }
+  .nav a.active { background: #A78BFA; color: #0F172A; border-color: #A78BFA; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <span class="tag">Variant B</span>
+  <h1 style="margin-top:8px">Mosaic</h1>
+  <p>Bento-Workspace: Chat ist eine eigene Tile (oben, prominent), darunter ein "Spotlight"-Tile mit dem aktuell wichtigsten Terminal in voller Breite, und unten ein 2-Spalten Grid mit allen weiteren Terminals (Mini-Output + Aktivitäts-Sparkline). Der Manager kann jedes Tile "spotlighten" — dann wird es zum großen Tile hochgezogen.</p>
+</div>
+
+<div class="nav">
+  <a href="index.html">Übersicht</a>
+  <a href="variant-a-cockpit.html">A · Cockpit</a>
+  <a href="variant-b-mosaic.html" class="active">B · Mosaic</a>
+  <a href="variant-c-stage.html">C · Stage</a>
+</div>
+
+<div class="phone">
+  <div class="notch"></div>
+  <div class="sbar"><span>9:41</span><span class="right">●●●● 5G 87%</span></div>
+
+  <div class="stage">
+
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="pill-agent">
+        <div class="av">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </div>
+        <div class="meta">
+          <div class="n">Manager Agent</div>
+          <div class="s"><span class="d"></span>10 Terminals · 1 Fehler · 2 laufen</div>
+        </div>
+      </div>
+      <div class="pill-iconbtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </div>
+      <div class="pill-iconbtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+      </div>
+    </div>
+
+    <!-- CHAT TILE -->
+    <div class="chat-tile">
+      <div class="chat-scroll">
+        <div class="msg user">
+          <div class="msg-avatar">DU</div>
+          <div class="msg-bubble">Bau mal den Server neu und schau dass alle Tests grün sind. Wenn ja, deploy auf staging.</div>
+        </div>
+        <div class="msg assistant">
+          <div class="msg-avatar">M</div>
+          <div class="msg-bubble">
+            Ich starte Build in <span class="tmention" style="--tcolor:#A78BFA" data-target="build-watch"><span class="tdot"></span>build-watch</span> und beobachte <span class="tmention" style="--tcolor:#22C55E" data-target="test-runner"><span class="tdot"></span>test-runner</span>. Dann <span class="tmention" style="--tcolor:#F59E0B" data-target="deploy-staging"><span class="tdot"></span>deploy-staging</span>.
+          </div>
+        </div>
+        <div class="msg assistant">
+          <div class="msg-avatar">M</div>
+          <div class="msg-bubble">
+            ⚠️ <span class="tmention" style="--tcolor:#22C55E" data-target="test-runner"><span class="tdot"></span>test-runner</span> hat 1 Fehler in <code>auth.spec.ts</code>. Ich habe das Terminal als Spotlight gepinnt. Was tun?
+          </div>
+        </div>
+      </div>
+      <div class="chat-input">
+        <div class="target">@alle</div>
+        <div class="field">Nachricht oder Befehl…</div>
+        <div class="send">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- SPOTLIGHT TILE -->
+    <div class="spotlight" style="--tcolor:#22C55E" id="spotlight">
+      <div class="sp-head">
+        <span class="dot"></span>
+        <span class="name">test-runner</span>
+        <span class="badge">Error · 1/67</span>
+        <span class="pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>gepinnt</span>
+      </div>
+      <div class="sp-out">
+        <span class="l"><span class="d">$</span> <span class="b">vitest</span> run</span>
+        <span class="l"><span class="g">✓ utils.spec.ts (24)  ✓ ws.spec.ts (18)  ✓ store.spec.ts (12)</span></span>
+        <span class="l"><span class="r">✗ auth.spec.ts › "validates jwt"  AssertionError: token undefined</span></span>
+        <span class="l"><span class="o">  › expected: 'eyJhbG…'  received: undefined</span></span>
+        <span class="l"><span class="o">  › src/auth.ts:42:11</span></span>
+      </div>
+    </div>
+
+    <!-- GRID -->
+    <div class="grid-zone">
+      <div class="grid-head">
+        <div class="lbl"><b>9</b> WEITERE TERMINALS</div>
+        <div class="filters">
+          <span class="chip active">Alle</span>
+          <span class="chip">Aktiv</span>
+          <span class="chip">Fehler</span>
+        </div>
+      </div>
+      <div class="grid">
+
+        <div class="tile glow" style="--tcolor:#A78BFA" data-id="build-watch">
+          <div class="tile-head"><span class="c"></span><span class="n">build-watch</span><span class="st done">Done</span></div>
+          <div class="tile-body">
+            <span class="l"><span class="b">npm</span> run build</span>
+            <span class="l"><span class="o">142 modules</span></span>
+            <span class="l"><span class="g">✓ 12.4s</span></span>
+          </div>
+          <div class="tile-spark"><div class="bar md" style="height:30%"></div><div class="bar hi" style="height:70%"></div><div class="bar hi" style="height:90%"></div><div class="bar md" style="height:50%"></div><div class="bar" style="height:25%"></div><div class="bar" style="height:15%"></div><div class="bar" style="height:8%"></div><div class="bar" style="height:5%"></div></div>
+        </div>
+
+        <div class="tile" style="--tcolor:#F59E0B" data-id="deploy-staging">
+          <div class="tile-head"><span class="c"></span><span class="n">deploy-stg</span><span class="st wait">Wait</span></div>
+          <div class="tile-body">
+            <span class="l"><span class="b">cd</span> infra/stg</span>
+            <span class="l"><span class="d">// wartet…</span></span>
+            <span class="l"><span class="b">_</span></span>
+          </div>
+          <div class="tile-spark"><div class="bar" style="height:5%"></div><div class="bar" style="height:10%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:8%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div></div>
+        </div>
+
+        <div class="tile" style="--tcolor:#3B82F6" data-id="dev-server">
+          <div class="tile-head"><span class="c"></span><span class="n">dev-server</span><span class="st run">Run</span></div>
+          <div class="tile-body">
+            <span class="l"><span class="b">vite</span> :5173</span>
+            <span class="l"><span class="g">ready 412ms</span></span>
+            <span class="l"><span class="o">HMR /App.tsx</span></span>
+          </div>
+          <div class="tile-spark"><div class="bar md" style="height:40%"></div><div class="bar hi" style="height:60%"></div><div class="bar md" style="height:35%"></div><div class="bar md" style="height:50%"></div><div class="bar hi" style="height:70%"></div><div class="bar md" style="height:45%"></div><div class="bar hi" style="height:65%"></div><div class="bar md" style="height:50%"></div></div>
+        </div>
+
+        <div class="tile" style="--tcolor:#94A3B8" data-id="log-tail">
+          <div class="tile-head"><span class="c"></span><span class="n">log-tail</span><span class="st run">Run</span></div>
+          <div class="tile-body">
+            <span class="l"><span class="d">14:22</span> <span class="o">GET /me 200</span></span>
+            <span class="l"><span class="d">14:22</span> <span class="w">slow 412ms</span></span>
+            <span class="l"><span class="d">14:22</span> <span class="o">POST /msg</span></span>
+          </div>
+          <div class="tile-spark"><div class="bar md" style="height:30%"></div><div class="bar hi" style="height:55%"></div><div class="bar md" style="height:40%"></div><div class="bar hi" style="height:75%"></div><div class="bar hi" style="height:60%"></div><div class="bar md" style="height:35%"></div><div class="bar md" style="height:45%"></div><div class="bar hi" style="height:70%"></div></div>
+        </div>
+
+        <div class="tile" style="--tcolor:#EF4444" data-id="prod-shell">
+          <div class="tile-head"><span class="c"></span><span class="n">prod-shell ⚠</span><span class="st idle">Idle</span></div>
+          <div class="tile-body">
+            <span class="l"><span class="r">⚠ PRODUCTION</span></span>
+            <span class="l"><span class="o">user@prod-eu1</span></span>
+            <span class="l"><span class="d">14m idle</span></span>
+          </div>
+          <div class="tile-spark"><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div></div>
+        </div>
+
+        <div class="tile" style="--tcolor:#06B6D4" data-id="db-repl">
+          <div class="tile-head"><span class="c"></span><span class="n">db-repl</span><span class="st idle">Idle</span></div>
+          <div class="tile-body">
+            <span class="l"><span class="b">postgres=#</span></span>
+            <span class="l"><span class="o">SELECT count(*)</span></span>
+            <span class="l"><span class="g">28471</span></span>
+          </div>
+          <div class="tile-spark"><div class="bar" style="height:8%"></div><div class="bar md" style="height:30%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div></div>
+        </div>
+
+        <div class="tile" style="--tcolor:#14B8A6" data-id="docker-up">
+          <div class="tile-head"><span class="c"></span><span class="n">docker-up</span><span class="st run">Run</span></div>
+          <div class="tile-body">
+            <span class="l"><span class="g">api healthy</span></span>
+            <span class="l"><span class="g">redis healthy</span></span>
+            <span class="l"><span class="g">postgres ✓</span></span>
+          </div>
+          <div class="tile-spark"><div class="bar md" style="height:30%"></div><div class="bar md" style="height:35%"></div><div class="bar md" style="height:30%"></div><div class="bar md" style="height:32%"></div><div class="bar md" style="height:30%"></div><div class="bar md" style="height:35%"></div><div class="bar md" style="height:30%"></div><div class="bar md" style="height:32%"></div></div>
+        </div>
+
+        <div class="tile" style="--tcolor:#EC4899" data-id="redis-cli">
+          <div class="tile-head"><span class="c"></span><span class="n">redis-cli</span><span class="st idle">Idle</span></div>
+          <div class="tile-body">
+            <span class="l"><span class="b">127.0.0.1:6379&gt;</span></span>
+            <span class="l"><span class="o">KEYS user:*</span></span>
+            <span class="l"><span class="o">3 results</span></span>
+          </div>
+          <div class="tile-spark"><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar md" style="height:30%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div></div>
+        </div>
+
+        <div class="tile" style="--tcolor:#8B5CF6" data-id="backup-job">
+          <div class="tile-head"><span class="c"></span><span class="n">backup-job</span><span class="st done">Done</span></div>
+          <div class="tile-body">
+            <span class="l"><span class="d">[03:00]</span> <span class="o">pg_dump</span></span>
+            <span class="l"><span class="g">✓ 2.4 GB</span></span>
+            <span class="l"><span class="o">4m 12s</span></span>
+          </div>
+          <div class="tile-spark"><div class="bar hi" style="height:80%"></div><div class="bar hi" style="height:70%"></div><div class="bar md" style="height:50%"></div><div class="bar md" style="height:40%"></div><div class="bar" style="height:15%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div><div class="bar" style="height:5%"></div></div>
+        </div>
+
+        <div class="tile add">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span>Neuer Terminal</span>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="note">
+  <h3>Wie es sich anfühlt</h3>
+  <ul>
+    <li>Drei klare <b>Zonen</b> übereinander: Chat-Tile, Spotlight-Tile, Mini-Tile-Grid. Jede Zone macht eine Sache richtig gut.</li>
+    <li>Der <b>Spotlight-Bereich</b> ist die "Bühne" — hier landet automatisch das Terminal, das gerade Aufmerksamkeit braucht (z.B. Test-Fehler). Manuell pinnen via Long-Press auf eine Tile.</li>
+    <li>Das <b>2-Spalten Grid</b> zeigt 6 Terminals gleichzeitig sichtbar, weitere durch Scroll. Jede Tile hat eine <b>Sparkline</b> die Output-Aktivität über Zeit zeigt — du siehst auf einen Blick wo gerade was passiert.</li>
+    <li>Die <b>@mention im Chat</b> markiert die zugehörige Tile mit Glow — wieder probier es, klick auf eine Pille.</li>
+    <li>Filter-Chips ("Alle / Aktiv / Fehler") über dem Grid für schnelles Eingrenzen wenn 10 Terminals zu viel werden.</li>
+    <li>Kompakter als A — du siehst den Chat, das wichtigste Terminal UND alle anderen in EINEM Screen ohne Scrollen.</li>
+  </ul>
+</div>
+
+<script>
+  document.querySelectorAll('.tmention').forEach(pill => {
+    pill.addEventListener('click', e => {
+      e.stopPropagation();
+      const target = pill.dataset.target;
+      document.querySelectorAll('.tile').forEach(c => c.classList.remove('glow'));
+      const tile = document.querySelector(`.tile[data-id="${target}"]`);
+      if (tile) {
+        tile.classList.add('glow');
+        tile.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } else if (target === 'test-runner') {
+        // it's the spotlight
+        document.getElementById('spotlight').animate(
+          [{ transform: 'scale(1)' }, { transform: 'scale(1.02)' }, { transform: 'scale(1)' }],
+          { duration: 400 }
+        );
+      }
+    });
+  });
+
+  document.querySelectorAll('.tile').forEach(tile => {
+    if (tile.classList.contains('add')) return;
+    tile.addEventListener('click', () => {
+      const id = tile.dataset.id;
+      if (!id) return;
+      const color = getComputedStyle(tile).getPropertyValue('--tcolor').trim();
+      // Move this terminal into spotlight
+      const sp = document.getElementById('spotlight');
+      sp.style.setProperty('--tcolor', color);
+      sp.querySelector('.name').textContent = id;
+      sp.querySelector('.badge').textContent = 'Spotlight';
+      sp.querySelector('.badge').style.background = `color-mix(in srgb, ${color} 15%, transparent)`;
+      sp.querySelector('.badge').style.color = color;
+    });
+  });
+</script>
+
+</body>
+</html>
