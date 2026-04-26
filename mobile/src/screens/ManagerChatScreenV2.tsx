@@ -52,6 +52,7 @@ import {
   type ToolId,
   type SidebarState,
 } from '../components/manager/ToolSidebar';
+import { VoiceFullscreen } from '../components/manager/VoiceFullscreen';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'ManagerChat'>;
@@ -239,6 +240,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           }
           setMicState('idle');
           setRecordingDuration(0);
+          setVoiceFullscreen(false);
           break;
         case 'audio:progress':
           if (msg.payload?.chunk && msg.payload?.total) {
@@ -250,6 +252,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           Alert.alert('Transkription fehlgeschlagen', msg.payload?.message ?? 'Unbekannter Fehler');
           setMicState('idle');
           setRecordingDuration(0);
+          setVoiceFullscreen(false);
           break;
       }
     };
@@ -297,6 +300,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   const [ttsLoading, setTtsLoading] = useState<Set<string>>(new Set());
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [voiceFullscreen, setVoiceFullscreen] = useState(false);
 
   const spotlightRef = useRef<MultiSpotlightRef>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -496,62 +500,102 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
   }, []);
 
-  // Mic toggle: tap once to start recording, tap again to stop. Uses the same
-  // wav/16kHz/mono format V1 uses so the server-side Whisper pipeline doesn't
-  // need a separate code path.
-  const handleMicPress = useCallback(async () => {
-    if (micState === 'recording') {
+  // Mic flow split into start / stop+send / cancel so the fullscreen overlay can
+  // drive each independently (✓ button = stopAndSendRecording, ✕ = cancelRecording).
+  // The format (wav, 16 kHz, mono) matches V1 so the server-side Whisper pipeline
+  // is unchanged.
+  const startRecording = useCallback(async () => {
+    try {
+      const { granted } = await Audio.requestPermissionsAsync();
+      if (!granted) {
+        Alert.alert('Mikrofon-Zugriff', 'Bitte erlaube den Mikrofon-Zugriff in den Einstellungen.');
+        return false;
+      }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync({
+        android: { extension: '.wav', outputFormat: 3, audioEncoder: 1, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000 },
+        ios: { extension: '.wav', audioQuality: 96, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
+        web: {},
+      });
+      recordingRef.current = recording;
+      setMicState('recording');
+      setRecordingDuration(0);
+      durationTimerRef.current = setInterval(() => setRecordingDuration((d) => d + 1), 1000);
+      return true;
+    } catch {
+      if (durationTimerRef.current) {
+        clearInterval(durationTimerRef.current);
+        durationTimerRef.current = null;
+      }
+      setMicState('idle');
+      return false;
+    }
+  }, []);
+
+  const stopAndSendRecording = useCallback(async () => {
+    try {
+      if (durationTimerRef.current) {
+        clearInterval(durationTimerRef.current);
+        durationTimerRef.current = null;
+      }
+      const recording = recordingRef.current;
+      if (!recording) return;
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      recordingRef.current = null;
+      setMicState('processing');
+      setRecordingDuration(0);
+      if (!uri) return;
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      await FileSystem.deleteAsync(uri, { idempotent: true });
+      wsService.send({
+        type: 'audio:transcribe',
+        sessionId: 'manager',
+        payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
+      } as any);
+    } catch {
+      setMicState('idle');
+      setVoiceFullscreen(false);
+    }
+  }, [wsService, voicePromptEnhanceEnabled]);
+
+  // Discards the current recording without sending it for transcription.
+  const cancelRecording = useCallback(async () => {
+    if (durationTimerRef.current) {
+      clearInterval(durationTimerRef.current);
+      durationTimerRef.current = null;
+    }
+    const recording = recordingRef.current;
+    recordingRef.current = null;
+    setMicState('idle');
+    setRecordingDuration(0);
+    setVoiceFullscreen(false);
+    if (recording) {
       try {
-        if (durationTimerRef.current) {
-          clearInterval(durationTimerRef.current);
-          durationTimerRef.current = null;
-        }
-        const recording = recordingRef.current;
-        if (!recording) return;
         await recording.stopAndUnloadAsync();
         const uri = recording.getURI();
-        recordingRef.current = null;
-        setMicState('processing');
-        setRecordingDuration(0);
-        if (!uri) return;
-        const base64 = await FileSystem.readAsStringAsync(uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        await FileSystem.deleteAsync(uri, { idempotent: true });
-        wsService.send({
-          type: 'audio:transcribe',
-          sessionId: 'manager',
-          payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
-        } as any);
+        if (uri) await FileSystem.deleteAsync(uri, { idempotent: true });
       } catch {
-        setMicState('idle');
-      }
-    } else {
-      try {
-        const { granted } = await Audio.requestPermissionsAsync();
-        if (!granted) {
-          Alert.alert('Mikrofon-Zugriff', 'Bitte erlaube den Mikrofon-Zugriff in den Einstellungen.');
-          return;
-        }
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-        const { recording } = await Audio.Recording.createAsync({
-          android: { extension: '.wav', outputFormat: 3, audioEncoder: 1, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000 },
-          ios: { extension: '.wav', audioQuality: 96, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
-          web: {},
-        });
-        recordingRef.current = recording;
-        setMicState('recording');
-        setRecordingDuration(0);
-        durationTimerRef.current = setInterval(() => setRecordingDuration((d) => d + 1), 1000);
-      } catch {
-        if (durationTimerRef.current) {
-          clearInterval(durationTimerRef.current);
-          durationTimerRef.current = null;
-        }
-        setMicState('idle');
+        // best-effort cleanup
       }
     }
-  }, [micState, wsService, voicePromptEnhanceEnabled]);
+  }, []);
+
+  // Tapping the mic button opens the fullscreen voice UI and immediately starts
+  // recording. If permission is denied or recording fails, close fullscreen so
+  // the user isn't left staring at an empty overlay.
+  const handleMicPress = useCallback(async () => {
+    if (micState === 'recording' || micState === 'processing') {
+      // If already in voice mode, this re-press should just bring the overlay back.
+      setVoiceFullscreen(true);
+      return;
+    }
+    setVoiceFullscreen(true);
+    const ok = await startRecording();
+    if (!ok) setVoiceFullscreen(false);
+  }, [micState, startRecording]);
 
   // ── Send ──────────────────────────────────────────────────────────────────
   const sendMessage = useCallback(() => {
@@ -1205,6 +1249,15 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       {renderChat()}
       {renderAttachments()}
       {renderInputBar()}
+
+      {/* Fullscreen voice capture — opens when the mic button is tapped */}
+      <VoiceFullscreen
+        visible={voiceFullscreen}
+        state={micState === 'processing' ? 'processing' : 'recording'}
+        duration={Math.max(0, recordingDuration)}
+        onCancel={cancelRecording}
+        onSend={stopAndSendRecording}
+      />
 
       {/* Lightbox — opens on tap of any image thumb in the chat */}
       <Modal
