@@ -747,16 +747,14 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         fitAddon.fit(); reportSize();
         prevValue = shadowInput.value;
         cancelPendingBs();
-        // In tapFocusDisabled mode, fully unlock our shadow input so it can
-        // take focus and show the soft keyboard. The matching blur handler
-        // re-locks it. xtermTa stays locked throughout.
-        if (tapFocusDisabled) {
-          shadowInput.disabled = false;
-          shadowInput.readOnly = false;
-          shadowInput.removeAttribute('inputmode');
-          shadowInput.tabIndex = 0;
-          shadowInput.style.display = '';
-        }
+        // Always make sure the shadow input is in a focusable state — we may
+        // be transitioning out of tapFocusDisabled mode and races on either
+        // side could leave it half-locked.
+        shadowInput.disabled = false;
+        shadowInput.readOnly = false;
+        shadowInput.removeAttribute('inputmode');
+        shadowInput.tabIndex = 0;
+        shadowInput.style.display = '';
         if (!selMode && !userScrolledUp && !externalKbMode) focusShadow();
       }
       else if (msg.type === 'blur')   {

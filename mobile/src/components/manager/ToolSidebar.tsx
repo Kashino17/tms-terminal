@@ -451,13 +451,14 @@ const s = StyleSheet.create({
   },
   pickerCloseText: { color: colors.text, fontSize: 12, fontWeight: '600' },
 
-  // Flyout
+  // Flyout — zIndex must beat the focused-pane overlay (zIndex 99) so the
+  // flyout stays visible when an orb is opened from focus mode.
   flyout: {
     position: 'absolute',
     top: 8,
     bottom: 8,
     width: 230,
-    zIndex: 30,
+    zIndex: 200,
   },
   flyoutInner: {
     flex: 1,
@@ -471,7 +472,7 @@ const s = StyleSheet.create({
     shadowOffset: { width: 0, height: 16 },
     shadowOpacity: 0.55,
     shadowRadius: 40,
-    elevation: 16,
+    elevation: 24,
   },
   flyoutHead: {
     flexDirection: 'row',

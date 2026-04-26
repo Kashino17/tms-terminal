@@ -190,7 +190,10 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
             visible={true}
             fontSize={fontSize}
             disableKeyboardOffset
-            tapFocusDisabled
+            // Focused pane lifts the tap suppression so xterm behaves normally
+            // (cursor positioning, scrolling, keyboard stays). Non-focused panes
+            // keep the suppression so the single-tap-vs-double-tap counter works.
+            tapFocusDisabled={!isFocusedOverlay}
             onTap={() => handlePaneTap(i)}
           />
         </View>

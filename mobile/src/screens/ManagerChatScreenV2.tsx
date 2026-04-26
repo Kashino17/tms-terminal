@@ -234,23 +234,35 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     return wsService.addMessageListener(handler);
   }, [wsService]);
 
-  // Subscribe to audio:* messages addressed to the manager (sessionId='manager').
-  // Server sends `audio:transcription` after Whisper finishes, plus `audio:progress`
-  // for chunk updates and `audio:error` if STT fails.
+  // Subscribe to audio:* messages. Route the result based on voiceTargetSidRef:
+  // - null  → chat input (mic in the input bar)
+  // - sid   → inject into that pane's terminal (mic orb in the sidebar)
   useEffect(() => {
     const handler = (data: unknown) => {
       const msg = data as { type: string; sessionId?: string; payload?: any };
       if (!msg.type?.startsWith('audio:')) return;
-      if (msg.sessionId && msg.sessionId !== 'manager') return;
+      const targetSid = voiceTargetSidRef.current ?? 'manager';
+      if (msg.sessionId && msg.sessionId !== targetSid) return;
 
       switch (msg.type) {
         case 'audio:transcription':
           if (msg.payload?.text) {
-            setInput((prev) => prev + (prev ? ' ' : '') + msg.payload.text);
+            const text: string = msg.payload.text;
+            const targetSid = voiceTargetSidRef.current;
+            if (targetSid) {
+              // Terminal-mic flow: inject text into the target pane (look up
+              // its current slot via the latest panes via ref to avoid stale
+              // closure on this listener).
+              const idx = panesRef.current.indexOf(targetSid);
+              if (idx >= 0) spotlightRef.current?.injectIntoPane(idx, text);
+            } else {
+              setInput((prev) => prev + (prev ? ' ' : '') + text);
+            }
           }
           setMicState('idle');
           setRecordingDuration(0);
           setVoiceFullscreen(false);
+          voiceTargetSidRef.current = null;
           break;
         case 'audio:progress':
           if (msg.payload?.chunk && msg.payload?.total) {
@@ -263,6 +275,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           setMicState('idle');
           setRecordingDuration(0);
           setVoiceFullscreen(false);
+          voiceTargetSidRef.current = null;
           break;
       }
     };
@@ -318,6 +331,14 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   const spotlightRef = useRef<MultiSpotlightRef>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Where the next audio:transcription result should land. null = chat input
+  // (mic in the chat input bar), string = inject into that pane's terminal
+  // (mic orb in the sidebar).
+  const voiceTargetSidRef = useRef<string | null>(null);
+  // Mirror of `panes` that the audio listener can read without re-subscribing
+  // every time the user reshuffles panes (the listener is registered once at
+  // mount, but we still need to find the right slot for transcription injection).
+  const panesRef = useRef<(string | null)[]>([]);
 
   // Re-sync panes when tabs change (e.g. tab closed)
   useEffect(() => {
@@ -325,6 +346,9 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       prev.map((sid) => (sid && tabs.some((t) => t.sessionId === sid) ? sid : null)),
     );
   }, [tabs]);
+
+  // Keep the panes ref in sync for non-React consumers (audio listener).
+  panesRef.current = panes;
 
   // Exit pane-focus mode when the keyboard goes away (hardware back, swipe-down,
   // app-switch, etc). The chat input path doesn't ever set focusedPaneIdx, so
@@ -589,14 +613,19 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
         encoding: FileSystem.EncodingType.Base64,
       });
       await FileSystem.deleteAsync(uri, { idempotent: true });
+      // Use the target sessionId set by whoever started the recording.
+      // Default = 'manager' (chat input mic). Terminal-mic sets it to the
+      // active pane's sessionId so the result lands in the terminal instead.
+      const targetSid = voiceTargetSidRef.current ?? 'manager';
       wsService.send({
         type: 'audio:transcribe',
-        sessionId: 'manager',
+        sessionId: targetSid,
         payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
       } as any);
     } catch {
       setMicState('idle');
       setVoiceFullscreen(false);
+      voiceTargetSidRef.current = null;
     }
   }, [wsService, voicePromptEnhanceEnabled]);
 
@@ -611,6 +640,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     setMicState('idle');
     setRecordingDuration(0);
     setVoiceFullscreen(false);
+    voiceTargetSidRef.current = null;
     if (recording) {
       try {
         await recording.stopAndUnloadAsync();
@@ -622,19 +652,38 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     }
   }, []);
 
-  // Tapping the mic button opens the fullscreen voice UI and immediately starts
-  // recording. If permission is denied or recording fails, close fullscreen so
-  // the user isn't left staring at an empty overlay.
+  // Tapping the mic button in the input bar opens the fullscreen voice UI and
+  // starts recording. The transcription lands in the chat input.
   const handleMicPress = useCallback(async () => {
     if (micState === 'recording' || micState === 'processing') {
-      // If already in voice mode, this re-press should just bring the overlay back.
       setVoiceFullscreen(true);
       return;
     }
+    voiceTargetSidRef.current = null; // chat input target
     setVoiceFullscreen(true);
     const ok = await startRecording();
     if (!ok) setVoiceFullscreen(false);
   }, [micState, startRecording]);
+
+  // Mic ORB (sidebar) → terminal-mic flow. Same fullscreen UI but the
+  // transcription lands in the active pane's terminal as injected text.
+  const handleOrbMic = useCallback(async () => {
+    if (!activeSessionId) {
+      Alert.alert('Kein aktives Terminal', 'Wähle zuerst ein Pane aus.');
+      return;
+    }
+    if (micState === 'recording' || micState === 'processing') {
+      setVoiceFullscreen(true);
+      return;
+    }
+    voiceTargetSidRef.current = activeSessionId;
+    setVoiceFullscreen(true);
+    const ok = await startRecording();
+    if (!ok) {
+      setVoiceFullscreen(false);
+      voiceTargetSidRef.current = null;
+    }
+  }, [activeSessionId, micState, startRecording]);
 
   // ── Orb dispatcher ─────────────────────────────────────────────────────────
   // Tap on a sidebar orb → either fire its action against the active pane
@@ -649,7 +698,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       return;
     }
     if (def.action === 'mic') {
-      handleMicPress();
+      handleOrbMic();
       return;
     }
 
@@ -668,9 +717,9 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       },
       openTools: () => setActiveOrb('tools'),
       toggleDpad: () => setActiveOrb((cur) => (cur === 'dpad' ? null : 'dpad')),
-      openMic: () => handleMicPress(),
+      openMic: () => handleOrbMic(),
     });
-  }, [activeSessionId, wsService, handleMicPress]);
+  }, [activeSessionId, wsService, handleOrbMic]);
 
   // Helper for the dpad flyout — sends an arrow-key escape sequence to the
   // active pane via the same `terminal:input` channel as the orb actions.
@@ -1324,16 +1373,14 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             focusedPaneIndex={focusedPaneIdx}
           />
 
-          {!inFocus && (
-            <ToolFlyout
-              orbId={activeOrb}
-              sidebarState={sidebarState}
-              contextLabel={activeSessionId ? '@' + labelFor(activeSessionId) : undefined}
-              onClose={closeTool}
-            >
-              {renderOrbFlyoutBody()}
-            </ToolFlyout>
-          )}
+          <ToolFlyout
+            orbId={activeOrb}
+            sidebarState={sidebarState}
+            contextLabel={activeSessionId ? '@' + labelFor(activeSessionId) : undefined}
+            onClose={closeTool}
+          >
+            {renderOrbFlyoutBody()}
+          </ToolFlyout>
 
           {/* Floating close-button — only visible while a pane is in focus mode */}
           {inFocus && (
