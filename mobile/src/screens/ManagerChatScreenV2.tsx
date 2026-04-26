@@ -55,6 +55,8 @@ import {
 } from '../components/manager/ToolSidebar';
 import { VoiceFullscreen } from '../components/manager/VoiceFullscreen';
 import { ORB_DEFS, executeOrb } from '../constants/orbDefinitions';
+import { OrbLayer } from '../components/OrbLayer';
+import { Dimensions, type LayoutChangeEvent } from 'react-native';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'ManagerChat'>;
@@ -324,6 +326,14 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   // When non-null, that pane fills the whole stage and the chat UI is hidden.
   // Set by double-tapping a pane; cleared by the close-button or keyboard hide.
   const [focusedPaneIdx, setFocusedPaneIdx] = useState<number | null>(null);
+  // Keyboard tracking + stage size — fed to OrbLayer so it can dock its orbs
+  // above the keyboard and position them correctly inside the stage area.
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [stageSize, setStageSize] = useState({
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
+  });
 
   const spotlightRef = useRef<MultiSpotlightRef>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -347,19 +357,29 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   // Keep the panes ref in sync for non-React consumers (audio listener).
   panesRef.current = panes;
 
-  // Exit pane-focus mode when the keyboard goes away (hardware back, swipe-down,
-  // app-switch, etc). The chat input path doesn't ever set focusedPaneIdx, so
-  // chat-keyboard hides are no-ops here.
+  // Track keyboard visibility + height so OrbLayer can dock its orbs above
+  // it. Also exits pane-focus mode when the keyboard goes away (hardware
+  // back, down-arrow, app-switch). The chat input path doesn't set
+  // focusedPaneIdx, so chat-keyboard hides naturally bypass that branch.
   useEffect(() => {
-    const sub = Keyboard.addListener('keyboardDidHide', () => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardVisible(true);
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
       setFocusedPaneIdx((cur) => {
-        if (cur != null) {
-          spotlightRef.current?.blurPaneKeyboard(cur);
-        }
+        if (cur != null) spotlightRef.current?.blurPaneKeyboard(cur);
         return null;
       });
     });
-    return () => sub.remove();
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+
+  const handleStageLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setStageSize({ width, height });
   }, []);
 
   // Double-tap on a pane → enter fullscreen + focus that terminal's keyboard.
@@ -1309,7 +1329,9 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   // Small floating pill that shows red dot + mm:ss timer + send button while
   // recording, or a spinner + "Transkribiert…" while waiting for Whisper.
   // Positioned just to the right of the ToolSidebar, near the bottom.
+  // Suppressed in focus mode — OrbLayer renders its own equivalent there.
   function renderTerminalMicPill() {
+    if (focusedPaneIdx != null) return null;
     if (micFlow !== 'terminal') return null;
     if (micState !== 'recording' && micState !== 'processing') return null;
     const mm = String(Math.floor(Math.max(0, recordingDuration) / 60)).padStart(2, '0');
@@ -1340,7 +1362,9 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
 
   // ── Render: D-Pad overlay (mirrors V1 OrbLayer.dpadOverlay) ──────────────
   // Compact 3-button cross floating just to the right of the ToolSidebar.
+  // Suppressed in focus mode — OrbLayer's own dpad orb takes over.
   function renderDpadOverlay() {
+    if (focusedPaneIdx != null) return null;
     if (activeOrb !== 'dpad') return null;
     const sidebarOffset = sidebarState === 'expanded' ? 168 : 50;
     return (
@@ -1393,15 +1417,22 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
         />
       )}
 
-      {/* Stage body: ToolSidebar | Multi-Spotlight (with overlay flyout) */}
-      <View style={[s.stageBody, inFocus && { paddingTop: insets.top }]}>
-        <ToolSidebar
-          state={sidebarState}
-          activeOrb={activeOrb}
-          activeSessionId={activeSessionId ?? null}
-          onToggleState={cycleSidebar}
-          onPickOrb={handleOrbPick}
-        />
+      {/* Stage body: ToolSidebar | Multi-Spotlight (with overlay flyout)
+          In focus mode the V1-style OrbLayer takes over so we hide the V2
+          sidebar to give the same look as the terminal screen. */}
+      <View
+        style={[s.stageBody, inFocus && { paddingTop: insets.top }]}
+        onLayout={handleStageLayout}
+      >
+        {!inFocus && (
+          <ToolSidebar
+            state={sidebarState}
+            activeOrb={activeOrb}
+            activeSessionId={activeSessionId ?? null}
+            onToggleState={cycleSidebar}
+            onPickOrb={handleOrbPick}
+          />
+        )}
 
         <View style={{ flex: 1, position: 'relative' }}>
           {!inFocus && renderMultiBar()}
@@ -1428,6 +1459,30 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           >
             {renderOrbFlyoutBody()}
           </ToolFlyout>
+
+          {/* V1-style OrbLayer — replaces the V2 sidebar in focus mode so the
+              user gets the exact same orb dock + tools + mic + dpad they're
+              used to from the terminal screen when its keyboard opens. */}
+          {inFocus && focusedPaneIdx != null && (
+            <OrbLayer
+              sessionId={panes[focusedPaneIdx] ?? undefined}
+              wsService={wsService}
+              onScrollToBottom={() => spotlightRef.current && undefined /* no-op */}
+              onOpenTools={() => { /* TODO: hook ToolMenu in a follow-up */ }}
+              onOpenSpotlight={() => { /* TODO: spotlight in V2 */ }}
+              onOpenManager={() => exitPaneFocus()}
+              onRangeToggle={() => { /* TODO: range select in V2 */ }}
+              rangeActive={false}
+              containerSize={stageSize}
+              keyboardVisible={keyboardVisible}
+              keyboardHeight={keyboardHeight}
+              onTranscription={(text) => {
+                if (focusedPaneIdx != null) {
+                  spotlightRef.current?.injectIntoPane(focusedPaneIdx, text);
+                }
+              }}
+            />
+          )}
 
           {/* Floating close-button — only visible while a pane is in focus mode */}
           {inFocus && (
