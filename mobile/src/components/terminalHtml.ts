@@ -170,6 +170,17 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     if (externalKbMode) return;
     if (tapFocusDisabled) {
       sendToRN({ type: 'tap' });
+      // Aggressively defend against xterm/Android re-focusing the helper textarea
+      // after our handler completes. setTimeout(0) puts us at the end of the tick
+      // so we run after the native focus chain finishes.
+      setTimeout(function() {
+        var ta = document.querySelector('.xterm-helper-textarea');
+        if (ta) ta.blur();
+        if (shadowInput) shadowInput.blur();
+        if (document.activeElement && document.activeElement !== document.body) {
+          try { document.activeElement.blur(); } catch (_) {}
+        }
+      }, 0);
       return;
     }
     focusShadow();
@@ -734,29 +745,29 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       else if (msg.type === 'clear')  term.clear();
       else if (msg.type === 'focus')  {
         fitAddon.fit(); reportSize();
-        // Sync prevValue with the actual shadow input content to prevent
-        // phantom deletions when the diff sees a stale prevValue.
         prevValue = shadowInput.value;
         cancelPendingBs();
-        // In tapFocusDisabled mode, the inputs are hidden+disabled. Re-enable
-        // the shadow input so it can take focus and show the soft keyboard.
-        // Will be re-disabled in the matching blur handler below.
+        // In tapFocusDisabled mode, fully unlock our shadow input so it can
+        // take focus and show the soft keyboard. The matching blur handler
+        // re-locks it. xtermTa stays locked throughout.
         if (tapFocusDisabled) {
           shadowInput.disabled = false;
+          shadowInput.readOnly = false;
+          shadowInput.removeAttribute('inputmode');
+          shadowInput.tabIndex = 0;
           shadowInput.style.display = '';
         }
         if (!selMode && !userScrolledUp && !externalKbMode) focusShadow();
       }
       else if (msg.type === 'blur')   {
-        // Release keyboard focus so keystrokes stop going to this tab
         shadowInput.blur();
-        // Reset input state to prevent stale diffs when re-focused
         shadowInput.value = ''; prevValue = '';
         cancelPendingBs();
-        // Re-disable the shadow input if tap-focus is suppressed, so the next
-        // single tap on the pane doesn't accidentally focus it.
         if (tapFocusDisabled) {
           shadowInput.disabled = true;
+          shadowInput.readOnly = true;
+          shadowInput.setAttribute('inputmode', 'none');
+          shadowInput.tabIndex = -1;
           shadowInput.style.display = 'none';
         }
       }
@@ -824,20 +835,39 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       }
       else if (msg.type === 'setTapFocusDisabled') {
         tapFocusDisabled = !!msg.disabled;
-        // xterm.js maintains its OWN hidden textarea (.xterm-helper-textarea)
-        // that Android focuses on tap so the soft keyboard pops up. Disabling
-        // our shadow input alone isn't enough; we have to disable xterm's too.
-        // Same trick as setExternalKeyboardMode.
+        // Defense in depth — xterm/Android can re-enable hidden inputs and
+        // re-focus them through paths we don't control. Stack multiple barriers:
+        //   1. disabled=true     (form-level — most browsers respect this)
+        //   2. readOnly=true     (Android skips soft kb for readonly inputs)
+        //   3. inputmode=none    (explicitly tells the browser: no virtual kb)
+        //   4. tabIndex=-1       (can't be tab-focused)
+        //   5. display=none      (can't be tap-focused either)
         var xtermTa = document.querySelector('.xterm-helper-textarea');
+        function lock(el) {
+          if (!el) return;
+          el.blur();
+          el.disabled = true;
+          el.readOnly = true;
+          el.setAttribute('inputmode', 'none');
+          el.tabIndex = -1;
+          el.style.display = 'none';
+        }
+        function unlock(el) {
+          if (!el) return;
+          el.disabled = false;
+          el.readOnly = false;
+          el.removeAttribute('inputmode');
+          el.tabIndex = 0;
+          el.style.display = '';
+        }
         if (tapFocusDisabled) {
-          shadowInput.blur();
-          shadowInput.disabled = true;
-          shadowInput.style.display = 'none';
-          if (xtermTa) { xtermTa.disabled = true; xtermTa.style.display = 'none'; }
+          lock(shadowInput);
+          lock(xtermTa);
+          sendToRN({ type: 'log', msg: 'tapFocus locked' });
         } else {
-          shadowInput.disabled = false;
-          shadowInput.style.display = '';
-          if (xtermTa) { xtermTa.disabled = false; xtermTa.style.display = ''; }
+          unlock(shadowInput);
+          unlock(xtermTa);
+          sendToRN({ type: 'log', msg: 'tapFocus unlocked' });
         }
       }
       else if (msg.type === 'setExternalKeyboardMode') {

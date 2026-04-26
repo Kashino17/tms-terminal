@@ -525,6 +525,9 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         }
       } else if (msg.type === 'tap') {
         onTapRef.current?.();
+      } else if (msg.type === 'log') {
+        // WebView-side diagnostic; surfaces in Metro / adb logcat.
+        if (typeof msg.msg === 'string') console.log('[TerminalView]', msg.msg);
       }
     } catch {
       // ignore
