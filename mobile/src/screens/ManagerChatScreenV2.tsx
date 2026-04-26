@@ -12,12 +12,22 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Modal,
+  Animated,
+  PanResponder,
 } from 'react-native';
+import * as Sharing from 'expo-sharing';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../types/navigation.types';
+import Markdown from 'react-native-markdown-display';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
+import { Audio } from 'expo-av';
+import { VoiceMessagePlayer } from '../components/VoiceMessagePlayer';
+import { useSettingsStore } from '../store/settingsStore';
 
 import { colors, fonts, spacing } from '../theme';
 import { useManagerStore } from '../store/managerStore';
@@ -48,6 +58,98 @@ type Props = {
   route: RouteProp<RootStackParamList, 'ManagerChat'>;
 };
 
+// "MM:SS" — used for the recording time pill on the mic button
+function formatMicDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// Markdown styles — kept in sync with V1's mdStyles (ManagerChatScreen.tsx) so
+// assistant messages render identically across V1/V2.
+const mdStyles = {
+  body: { color: '#F8FAFC', fontSize: 13, lineHeight: 20 },
+  heading1: { color: '#F8FAFC', fontSize: 17, fontWeight: '700' as const, marginBottom: 4 },
+  heading2: { color: '#F8FAFC', fontSize: 15, fontWeight: '700' as const, marginBottom: 4 },
+  heading3: { color: '#F8FAFC', fontSize: 13, fontWeight: '700' as const, marginBottom: 2 },
+  strong: { color: '#F8FAFC', fontWeight: '700' as const },
+  em: { color: '#94A3B8', fontStyle: 'italic' as const },
+  bullet_list: { marginVertical: 4 },
+  ordered_list: { marginVertical: 4 },
+  list_item: { marginVertical: 1 },
+  code_inline: { backgroundColor: '#243044', color: '#06B6D4', fontFamily: 'monospace', fontSize: 11, paddingHorizontal: 4, borderRadius: 3 },
+  fence: { backgroundColor: '#243044', padding: 8, borderRadius: 8, marginVertical: 4 },
+  code_block: { color: '#F8FAFC', fontFamily: 'monospace', fontSize: 11 },
+  link: { color: '#3B82F6' },
+  blockquote: { borderLeftColor: '#3B82F6', borderLeftWidth: 3, paddingLeft: 8, marginVertical: 4 },
+  hr: { backgroundColor: '#334155' },
+  paragraph: { marginVertical: 2 },
+};
+
+// Lightbox with swipe-down-to-dismiss. Inlined here (rather than extracting
+// from V1) so V2 can iterate without touching the V1 screen.
+function LightboxContent({ imageUri, onClose, children }: {
+  imageUri: string | null;
+  onClose: () => void;
+  children?: React.ReactNode;
+}) {
+  const translateY = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_e, gs) => Math.abs(gs.dy) > 10,
+      onPanResponderMove: (_e, gs) => {
+        if (gs.dy > 0) {
+          translateY.setValue(gs.dy);
+          opacity.setValue(1 - gs.dy / 400);
+        }
+      },
+      onPanResponderRelease: (_e, gs) => {
+        if (gs.dy > 120 || gs.vy > 0.5) {
+          Animated.parallel([
+            Animated.timing(translateY, { toValue: 600, duration: 200, useNativeDriver: true }),
+            Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+          ]).start(() => {
+            translateY.setValue(0);
+            opacity.setValue(1);
+            onClose();
+          });
+        } else {
+          Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 80 }).start();
+          Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+        }
+      },
+    }),
+  ).current;
+
+  return (
+    <Animated.View style={[lbStyles.overlay, { opacity }]}>
+      <TouchableOpacity style={lbStyles.close} onPress={onClose}>
+        <Feather name="x" size={28} color="#fff" />
+      </TouchableOpacity>
+      <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateY }], width: '100%', alignItems: 'center' }}>
+        {imageUri && <Image source={{ uri: imageUri }} style={lbStyles.image} resizeMode="contain" />}
+      </Animated.View>
+      {children}
+    </Animated.View>
+  );
+}
+
+const lbStyles = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
+  close: { position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 },
+  image: { width: '100%', height: '70%' },
+  actions: { position: 'absolute', bottom: 50, flexDirection: 'row', gap: 24 },
+  btn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 24,
+  },
+  btnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+});
+
 /**
  * Manager Chat Screen V2 — full redesign per `prototype/manager-chat-redesign/v8-tools-direct.html`.
  *
@@ -69,7 +171,7 @@ type Props = {
  */
 export function ManagerChatScreenV2({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
-  const { wsService, serverId } = route.params;
+  const { wsService, serverId, serverHost, serverPort, serverToken } = route.params;
 
   // ── Stores ─────────────────────────────────────────────────────────────────
   const personality = useManagerStore((s) => s.personality);
@@ -77,6 +179,16 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   const activeChat = useManagerStore((s) => s.activeChat);
   const setActiveChat = useManagerStore((s) => s.setActiveChat);
   const delegatedTasks = useManagerStore((s) => s.delegatedTasks);
+  const providers = useManagerStore((s) => s.providers);
+  const activeProvider = useManagerStore((s) => s.activeProvider);
+  const setActiveProviderStore = useManagerStore((s) => s.setActiveProvider);
+  const enabled = useManagerStore((s) => s.enabled);
+  const loading = useManagerStore((s) => s.loading);
+  const setLoading = useManagerStore((s) => s.setLoading);
+  const clearSessionMessages = useManagerStore((s) => s.clearSessionMessages);
+  const addMessage = useManagerStore((s) => s.addMessage);
+  const onboarded = useManagerStore((s) => s.onboarded);
+  const voicePromptEnhanceEnabled = useSettingsStore((s) => s.voicePromptEnhanceEnabled);
 
   const tabs = useTerminalStore((s) => s.tabs[serverId] ?? []);
   const server = useServerStore((s) => s.servers.find((sv) => sv.id === serverId));
@@ -93,6 +205,73 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     if (!paneGroupsLoaded) loadPaneGroups();
   }, [paneGroupsLoaded, loadPaneGroups]);
 
+  // Subscribe to TTS results so the speaker button on assistant messages flips
+  // to a playable VoiceMessagePlayer. Mirrors V1's ttsHandler exactly.
+  useEffect(() => {
+    const handler = (data: unknown) => {
+      const msg = data as { type: string; payload?: any };
+      if (msg.type === 'tts:result' && msg.payload?.messageId && msg.payload?.audio) {
+        setTtsAudio((prev) => ({
+          ...prev,
+          [msg.payload.messageId]: { audio: msg.payload.audio, duration: msg.payload.duration ?? 0 },
+        }));
+        setTtsLoading((prev) => { const n = new Set(prev); n.delete(msg.payload.messageId); return n; });
+      } else if (msg.type === 'tts:error' && msg.payload?.messageId) {
+        setTtsLoading((prev) => { const n = new Set(prev); n.delete(msg.payload.messageId); return n; });
+      }
+    };
+    return wsService.addMessageListener(handler);
+  }, [wsService]);
+
+  // Subscribe to audio:* messages addressed to the manager (sessionId='manager').
+  // Server sends `audio:transcription` after Whisper finishes, plus `audio:progress`
+  // for chunk updates and `audio:error` if STT fails.
+  useEffect(() => {
+    const handler = (data: unknown) => {
+      const msg = data as { type: string; sessionId?: string; payload?: any };
+      if (!msg.type?.startsWith('audio:')) return;
+      if (msg.sessionId && msg.sessionId !== 'manager') return;
+
+      switch (msg.type) {
+        case 'audio:transcription':
+          if (msg.payload?.text) {
+            setInput((prev) => prev + (prev ? ' ' : '') + msg.payload.text);
+          }
+          setMicState('idle');
+          setRecordingDuration(0);
+          break;
+        case 'audio:progress':
+          if (msg.payload?.chunk && msg.payload?.total) {
+            setMicState('processing');
+            setRecordingDuration(-msg.payload.chunk);
+          }
+          break;
+        case 'audio:error':
+          Alert.alert('Transkription fehlgeschlagen', msg.payload?.message ?? 'Unbekannter Fehler');
+          setMicState('idle');
+          setRecordingDuration(0);
+          break;
+      }
+    };
+    return wsService.addMessageListener(handler);
+  }, [wsService]);
+
+  // Stop the recording + timer if the screen unmounts mid-record so we don't
+  // leak the Audio.Recording handle (the OS will eventually reclaim it but
+  // it can leave the mic LED on for a while).
+  useEffect(() => {
+    return () => {
+      if (durationTimerRef.current) {
+        clearInterval(durationTimerRef.current);
+        durationTimerRef.current = null;
+      }
+      if (recordingRef.current) {
+        recordingRef.current.stopAndUnloadAsync().catch(() => {});
+        recordingRef.current = null;
+      }
+    };
+  }, []);
+
   // ── Local state ────────────────────────────────────────────────────────────
   const [mode, setMode] = useState<SpotlightMode>(2);
   const [panes, setPanes] = useState<(string | null)[]>(() => {
@@ -106,8 +285,22 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   const [activeTool, setActiveTool] = useState<ToolId | null>(null);
   const [inputMode, setInputMode] = useState<'chat' | 'terminal'>('chat');
   const [input, setInput] = useState('');
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [providerTab, setProviderTab] = useState<'cloud' | 'local'>('cloud');
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [attachments, setAttachments] = useState<Array<{ uri: string; path?: string }>>([]);
+  const [uploading, setUploading] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [ttsAudio, setTtsAudio] = useState<Record<string, { audio: string; duration: number }>>({});
+  const [ttsLoading, setTtsLoading] = useState<Set<string>>(new Set());
+  const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
+  const [recordingDuration, setRecordingDuration] = useState(0);
 
   const spotlightRef = useRef<MultiSpotlightRef>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Re-sync panes when tabs change (e.g. tab closed)
   useEffect(() => {
@@ -142,6 +335,46 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     () => delegatedTasks.filter((t) => t.status === 'pending' || t.status === 'running').length,
     [delegatedTasks],
   );
+
+  // Active provider — shown in the header pill, switched via the model picker dropdown
+  const activeProviderObj = providers.find((p) => p.id === activeProvider);
+  const activeProviderName = activeProviderObj?.name ?? activeProvider;
+  const activeProviderIsLocal = activeProviderObj?.isLocal ?? false;
+
+  // Default the picker tab to whatever the current provider is
+  useEffect(() => {
+    if (activeProviderObj) setProviderTab(activeProviderObj.isLocal ? 'local' : 'cloud');
+  }, [activeProviderObj?.id]);
+
+  const handleProviderSwitch = useCallback((id: string) => {
+    setActiveProviderStore(id);
+    wsService.send({ type: 'manager:set_provider', payload: { providerId: id } } as any);
+    setShowModelPicker(false);
+  }, [setActiveProviderStore, wsService]);
+
+  // Re-poll the manager when the user picks "Aktualisieren" — mirrors V1's handlePoll
+  const handlePoll = useCallback(() => {
+    setLoading(true);
+    wsService.send({ type: 'manager:poll' } as any);
+  }, [wsService, setLoading]);
+
+  const handleClearChat = useCallback(() => {
+    Alert.alert('Chat löschen?', 'Alle Nachrichten in diesem Chat werden entfernt.', [
+      { text: 'Abbrechen', style: 'cancel' },
+      {
+        text: 'Löschen',
+        style: 'destructive',
+        onPress: () => { clearSessionMessages(activeChat); setLoading(false); },
+      },
+    ]);
+  }, [clearSessionMessages, activeChat, setLoading]);
+
+  // Filter messages by search query (case-insensitive substring on text only)
+  const visibleMessages = useMemo(() => {
+    if (!searchMode || !searchQuery.trim()) return messages;
+    const q = searchQuery.trim().toLowerCase();
+    return messages.filter((m) => m.text.toLowerCase().includes(q));
+  }, [messages, searchMode, searchQuery]);
 
   // ── Group-Tabs callbacks ───────────────────────────────────────────────────
   const onLoadGroup = useCallback((groupId: string) => {
@@ -215,31 +448,161 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     spotlightRef.current?.injectIntoActive(command + '\n');
   }, []);
 
+  // ── Image attachment (mirrors V1 handlePickImage) ────────────────────────
+  // Uploads each picked image as base64 to /upload/screenshot and stores both
+  // the local URI (for thumbs/lightbox) and the server-side path (for the
+  // assistant prompt). Failed uploads still keep the local URI so the user
+  // sees what they attempted to attach.
+  const handlePickImage = useCallback(async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsMultipleSelection: true,
+      selectionLimit: 4,
+    });
+    if (result.canceled || result.assets.length === 0) return;
+
+    setUploading(true);
+    const uploaded: Array<{ uri: string; path?: string }> = [];
+    for (const asset of result.assets) {
+      try {
+        const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const filename = asset.fileName ?? `manager_${Date.now()}.jpg`;
+        const res = await fetch(`http://${serverHost}:${serverPort}/upload/screenshot`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${serverToken}`,
+          },
+          body: JSON.stringify({ filename, data: base64, mimeType: 'image/jpeg' }),
+        });
+        if (res.ok) {
+          const json = (await res.json()) as { path: string };
+          uploaded.push({ uri: asset.uri, path: json.path });
+        } else {
+          uploaded.push({ uri: asset.uri });
+        }
+      } catch {
+        uploaded.push({ uri: asset.uri });
+      }
+    }
+    setAttachments((prev) => [...prev, ...uploaded]);
+    setUploading(false);
+  }, [serverHost, serverPort, serverToken]);
+
+  const removeAttachment = useCallback((idx: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  // Mic toggle: tap once to start recording, tap again to stop. Uses the same
+  // wav/16kHz/mono format V1 uses so the server-side Whisper pipeline doesn't
+  // need a separate code path.
+  const handleMicPress = useCallback(async () => {
+    if (micState === 'recording') {
+      try {
+        if (durationTimerRef.current) {
+          clearInterval(durationTimerRef.current);
+          durationTimerRef.current = null;
+        }
+        const recording = recordingRef.current;
+        if (!recording) return;
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        recordingRef.current = null;
+        setMicState('processing');
+        setRecordingDuration(0);
+        if (!uri) return;
+        const base64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+        wsService.send({
+          type: 'audio:transcribe',
+          sessionId: 'manager',
+          payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
+        } as any);
+      } catch {
+        setMicState('idle');
+      }
+    } else {
+      try {
+        const { granted } = await Audio.requestPermissionsAsync();
+        if (!granted) {
+          Alert.alert('Mikrofon-Zugriff', 'Bitte erlaube den Mikrofon-Zugriff in den Einstellungen.');
+          return;
+        }
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+        const { recording } = await Audio.Recording.createAsync({
+          android: { extension: '.wav', outputFormat: 3, audioEncoder: 1, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000 },
+          ios: { extension: '.wav', audioQuality: 96, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
+          web: {},
+        });
+        recordingRef.current = recording;
+        setMicState('recording');
+        setRecordingDuration(0);
+        durationTimerRef.current = setInterval(() => setRecordingDuration((d) => d + 1), 1000);
+      } catch {
+        if (durationTimerRef.current) {
+          clearInterval(durationTimerRef.current);
+          durationTimerRef.current = null;
+        }
+        setMicState('idle');
+      }
+    }
+  }, [micState, wsService, voicePromptEnhanceEnabled]);
+
   // ── Send ──────────────────────────────────────────────────────────────────
   const sendMessage = useCallback(() => {
     const text = input.trim();
-    if (!text) return;
+    if (!text && attachments.length === 0) return;
+
     if (inputMode === 'terminal') {
       if (!activeSessionId) {
         Alert.alert('Kein aktives Terminal', 'Wähle zuerst ein Pane.');
         return;
       }
+      if (!text) return;
       pushToActivePane(text);
       setInput('');
       return;
     }
-    // Chat mode — fall back to V1 protocol for now.
+
+    // Chat mode — append uploaded paths so the model can read them, mirror
+    // attachments back into the user message for inline thumbnails.
+    const attachmentPaths = attachments.filter((a) => a.path).map((a) => a.path!);
+    const fullText = attachmentPaths.length > 0
+      ? `${text}\n\n[Angehängte Bilder: ${attachmentPaths.join(', ')}]`
+      : text;
+    const userAttachmentUris = attachments.map((a) => a.uri);
+
+    addMessage(
+      {
+        role: 'user',
+        text: text || '(Bild)',
+        targetSessionId: activeChat !== 'alle' ? activeChat : undefined,
+        attachmentUris: userAttachmentUris.length > 0 ? userAttachmentUris : undefined,
+      },
+      activeChat,
+    );
+    setLoading(true);
+
     const targetSessionId = activeChat === 'alle' ? undefined : activeChat;
     wsService.send({
       type: 'manager:chat',
-      payload: { text, targetSessionId, onboarding: false },
+      payload: { text: fullText, targetSessionId, onboarding: !onboarded },
     } as any);
+
     setInput('');
-  }, [input, inputMode, activeSessionId, activeChat, wsService, pushToActivePane]);
+    setAttachments([]);
+  }, [
+    input, attachments, inputMode, activeSessionId, activeChat, onboarded,
+    wsService, pushToActivePane, addMessage, setLoading,
+  ]);
 
   // ── Render: Header ─────────────────────────────────────────────────────────
   function renderHeader() {
-    const modelName = 'Claude 4.7'; // TODO Phase 7: pull from active provider
     return (
       <View style={[s.header, { paddingTop: 6 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
@@ -257,11 +620,11 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           <View style={s.avatarStatusDot} />
         </View>
 
-        <Pressable style={s.center} onPress={() => { /* TODO model dropdown */ }}>
+        <Pressable style={s.center} onPress={() => setShowModelPicker((v) => !v)}>
           <View style={s.titleRow}>
             <Text style={s.name}>{personality.agentName || 'Manager'}</Text>
             <Text style={s.modelMini}>
-              · <Text style={s.model}>{modelName}</Text>
+              · <Text style={s.model}>{activeProviderName}{activeProviderIsLocal ? ' · local' : ''}</Text>
             </Text>
             <Feather name="chevron-down" size={9} color={colors.textDim} />
           </View>
@@ -274,8 +637,163 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           </View>
         )}
 
-        <TouchableOpacity style={s.menuBtn} onPress={() => { /* TODO ⋮ menu */ }}>
+        <TouchableOpacity style={s.menuBtn} onPress={() => setShowHeaderMenu((v) => !v)}>
           <Feather name="more-vertical" size={16} color={colors.textMuted} />
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Render: Model Picker dropdown ─────────────────────────────────────────
+  // Sits below the header as an overlay with a tap-outside-to-close backdrop.
+  // Cloud / Local tab split mirrors V1 settings panel; only the configured rows
+  // are tappable so users see-but-can't-pick unconfigured providers.
+  function renderModelPicker() {
+    if (!showModelPicker) return null;
+    const filtered = providers.filter((p) => (providerTab === 'local' ? !!p.isLocal : !p.isLocal));
+    return (
+      <>
+        <Pressable style={s.mpOverlay} onPress={() => setShowModelPicker(false)} />
+        <View style={[s.mpPanel, { top: insets.top + 56 }]}>
+          <View style={s.mpTabs}>
+            <TouchableOpacity
+              style={[s.mpTab, providerTab === 'cloud' && s.mpTabActive]}
+              onPress={() => setProviderTab('cloud')}
+              activeOpacity={0.7}
+            >
+              <Feather name="cloud" size={11} color={providerTab === 'cloud' ? colors.text : colors.textDim} />
+              <Text style={[s.mpTabText, providerTab === 'cloud' && s.mpTabTextActive]}>Cloud</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.mpTab, providerTab === 'local' && s.mpTabActive]}
+              onPress={() => setProviderTab('local')}
+              activeOpacity={0.7}
+            >
+              <Feather name="hard-drive" size={11} color={providerTab === 'local' ? colors.text : colors.textDim} />
+              <Text style={[s.mpTabText, providerTab === 'local' && s.mpTabTextActive]}>Local</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={{ maxHeight: 320 }}>
+            {filtered.length === 0 ? (
+              <Text style={s.mpEmpty}>
+                {providerTab === 'local' ? 'Kein lokales Modell verfügbar' : 'Keine Cloud-Provider konfiguriert'}
+              </Text>
+            ) : (
+              filtered.map((p) => {
+                const isActive = p.id === activeProvider;
+                return (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={[s.mpRow, isActive && s.mpRowActive]}
+                    onPress={() => handleProviderSwitch(p.id)}
+                    disabled={!p.configured}
+                    activeOpacity={0.6}
+                  >
+                    <View style={[s.mpRadio, isActive && s.mpRadioActive]}>
+                      {isActive && <View style={s.mpRadioDot} />}
+                    </View>
+                    <Text style={[s.mpRowName, !p.configured && { color: colors.textDim }]}>
+                      {p.name}
+                    </Text>
+                    {!p.configured && (
+                      <Text style={s.mpRowMeta}>nicht konfiguriert</Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </ScrollView>
+        </View>
+      </>
+    );
+  }
+
+  // ── Render: ⋮ Header Menu ─────────────────────────────────────────────────
+  function renderHeaderMenu() {
+    if (!showHeaderMenu) return null;
+    return (
+      <>
+        <Pressable style={s.mpOverlay} onPress={() => setShowHeaderMenu(false)} />
+        <View style={[s.menuPanel, { top: insets.top + 56 }]}>
+          <TouchableOpacity
+            style={s.menuItem}
+            onPress={() => { setShowHeaderMenu(false); setSearchMode((v) => !v); }}
+          >
+            <Feather name="search" size={15} color={colors.textMuted} />
+            <Text style={s.menuItemText}>Suche</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.menuItem}
+            onPress={() => {
+              setShowHeaderMenu(false);
+              navigation.navigate('ManagerMemory', { wsService, serverId });
+            }}
+          >
+            <Feather name="database" size={15} color={colors.textMuted} />
+            <Text style={s.menuItemText}>Memory</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.menuItem}
+            onPress={() => {
+              setShowHeaderMenu(false);
+              navigation.navigate('ManagerArtifacts', {
+                serverId,
+                serverHost,
+                serverPort: server?.port ?? serverPort,
+                serverToken: server?.token ?? serverToken,
+              });
+            }}
+          >
+            <Feather name="package" size={15} color={colors.textMuted} />
+            <Text style={s.menuItemText}>Artefakte</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.menuItem}
+            onPress={() => { setShowHeaderMenu(false); handlePoll(); }}
+            disabled={!enabled || loading}
+          >
+            <Feather name="refresh-cw" size={15} color={enabled && !loading ? colors.textMuted : colors.textDim} />
+            <Text style={[s.menuItemText, (!enabled || loading) && { color: colors.textDim }]}>
+              Aktualisieren
+            </Text>
+          </TouchableOpacity>
+          {messages.length > 0 && (
+            <TouchableOpacity
+              style={s.menuItem}
+              onPress={() => { setShowHeaderMenu(false); handleClearChat(); }}
+            >
+              <Feather name="trash-2" size={15} color={colors.destructive} />
+              <Text style={[s.menuItemText, { color: colors.destructive }]}>Chat löschen</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </>
+    );
+  }
+
+  // ── Render: Search bar (above the multi-bar) ─────────────────────────────
+  function renderSearchBar() {
+    if (!searchMode) return null;
+    return (
+      <View style={s.searchBar}>
+        <Feather name="search" size={14} color={colors.textDim} />
+        <TextInput
+          style={s.searchInput}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Nachrichten durchsuchen…"
+          placeholderTextColor={colors.textDim}
+          autoFocus
+        />
+        {searchQuery.length > 0 && (
+          <Text style={s.searchCount}>{visibleMessages.length}</Text>
+        )}
+        <TouchableOpacity
+          onPress={() => { setSearchMode(false); setSearchQuery(''); }}
+          hitSlop={8}
+        >
+          <Feather name="x" size={16} color={colors.textMuted} />
         </TouchableOpacity>
       </View>
     );
@@ -417,12 +935,87 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       <View style={s.chat}>
         <FlatList
           inverted
-          data={messages.slice().reverse()}
+          data={visibleMessages.slice().reverse()}
           keyExtractor={(m) => m.id}
           contentContainerStyle={{ padding: 12 }}
           renderItem={({ item }) => (
             <View style={[s.msg, item.role === 'user' ? s.msgUser : s.msgAssistant]}>
-              <Text style={[s.msgText, item.role === 'user' && s.msgTextUser]}>{item.text}</Text>
+              {item.role === 'assistant' ? (
+                <Markdown style={mdStyles}>{item.text}</Markdown>
+              ) : (
+                <Text style={[s.msgText, s.msgTextUser]}>{item.text}</Text>
+              )}
+
+              {/* TTS player after generation, OR a "Vorlesen" button to start it */}
+              {item.role === 'assistant' && ttsAudio[item.id] && (
+                <VoiceMessagePlayer
+                  audioBase64={ttsAudio[item.id].audio}
+                  duration={ttsAudio[item.id].duration}
+                />
+              )}
+              {item.role === 'assistant' && !ttsAudio[item.id] && item.text.length > 5 && (
+                <TouchableOpacity
+                  style={[s.ttsBtn, ttsLoading.has(item.id) && { opacity: 0.5 }]}
+                  disabled={ttsLoading.has(item.id)}
+                  onPress={() => {
+                    setTtsLoading((prev) => new Set(prev).add(item.id));
+                    wsService.send({
+                      type: 'tts:generate',
+                      payload: { text: item.text, messageId: item.id },
+                    } as any);
+                  }}
+                >
+                  <Feather
+                    name={ttsLoading.has(item.id) ? 'loader' : 'volume-2'}
+                    size={13}
+                    color="#64748B"
+                  />
+                  <Text style={s.ttsBtnText}>
+                    {ttsLoading.has(item.id) ? 'Wird vertont…' : 'Vorlesen'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* User-uploaded attachments — local URIs, full-width thumbs */}
+              {item.attachmentUris && item.attachmentUris.length > 0 && (
+                <View style={{ marginTop: 8, gap: 6 }}>
+                  {item.attachmentUris.map((uri, i) => (
+                    <TouchableOpacity
+                      key={`a-${i}`}
+                      activeOpacity={0.8}
+                      onPress={() => setLightboxImage(uri)}
+                    >
+                      <Image
+                        source={{ uri }}
+                        style={s.msgImg}
+                        resizeMode="cover"
+                      />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {/* Generated images from the assistant (server-served) */}
+              {item.images && item.images.length > 0 && (
+                <View style={{ marginTop: 8, gap: 8 }}>
+                  {item.images.map((img, i) => {
+                    const url = `http://${serverHost}:${serverPort}/generated-images/${encodeURIComponent(img)}?token=${serverToken}`;
+                    return (
+                      <TouchableOpacity
+                        key={`g-${i}`}
+                        activeOpacity={0.8}
+                        onPress={() => setLightboxImage(url)}
+                      >
+                        <Image
+                          source={{ uri: url }}
+                          style={[s.msgImg, { aspectRatio: 1 }]}
+                          resizeMode="contain"
+                        />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
             </View>
           )}
           ListEmptyComponent={
@@ -433,6 +1026,37 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             </View>
           }
         />
+      </View>
+    );
+  }
+
+  // ── Render: Attachment Row (thumbs above the input) ──────────────────────
+  function renderAttachments() {
+    if (attachments.length === 0 && !uploading) return null;
+    return (
+      <View style={s.attachRow}>
+        {attachments.map((att, idx) => (
+          <View key={`${att.uri}-${idx}`} style={s.attachThumb}>
+            <Image source={{ uri: att.uri }} style={s.attachImg} />
+            <TouchableOpacity
+              style={s.attachRemove}
+              onPress={() => removeAttachment(idx)}
+              hitSlop={6}
+            >
+              <Feather name="x" size={11} color="#fff" />
+            </TouchableOpacity>
+            {!att.path && (
+              <View style={s.attachErrorDot}>
+                <Feather name="alert-circle" size={10} color="#fff" />
+              </View>
+            )}
+          </View>
+        ))}
+        {uploading && (
+          <View style={[s.attachThumb, s.attachUploading]}>
+            <Feather name="upload" size={16} color={colors.textMuted} />
+          </View>
+        )}
       </View>
     );
   }
@@ -458,12 +1082,27 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           </Pressable>
         </View>
 
-        <TouchableOpacity style={s.ibBtn} onPress={() => { /* TODO image picker */ }}>
-          <Feather name="image" size={20} color={colors.textMuted} />
+        <TouchableOpacity
+          style={s.ibBtn}
+          onPress={handlePickImage}
+          disabled={isTerminal || uploading}
+        >
+          <Feather name="image" size={20} color={isTerminal ? colors.textDim : colors.textMuted} />
         </TouchableOpacity>
 
-        <TouchableOpacity style={s.ibBtn} onPress={() => { /* TODO mic / transcription */ }}>
-          <Feather name="mic" size={20} color={colors.textMuted} />
+        <TouchableOpacity
+          style={[s.ibBtn, micState === 'recording' && s.ibBtnRecording]}
+          onPress={handleMicPress}
+          disabled={micState === 'processing'}
+        >
+          <Feather
+            name={micState === 'processing' ? 'loader' : micState === 'recording' ? 'square' : 'mic'}
+            size={18}
+            color={micState === 'recording' ? colors.destructive : colors.textMuted}
+          />
+          {micState === 'recording' && recordingDuration > 0 && (
+            <Text style={s.micTime}>{formatMicDuration(recordingDuration)}</Text>
+          )}
         </TouchableOpacity>
 
         <View
@@ -515,6 +1154,10 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
         {renderHeader()}
       </View>
 
+      {renderModelPicker()}
+      {renderHeaderMenu()}
+      {renderSearchBar()}
+
       <GroupTabsBar
         groups={groups}
         activeId={activeGroupId}
@@ -560,7 +1203,39 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
 
       {renderChipBar()}
       {renderChat()}
+      {renderAttachments()}
       {renderInputBar()}
+
+      {/* Lightbox — opens on tap of any image thumb in the chat */}
+      <Modal
+        visible={!!lightboxImage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLightboxImage(null)}
+        statusBarTranslucent
+      >
+        <LightboxContent imageUri={lightboxImage} onClose={() => setLightboxImage(null)}>
+          <View style={lbStyles.actions}>
+            <TouchableOpacity
+              style={lbStyles.btn}
+              onPress={async () => {
+                if (!lightboxImage) return;
+                try {
+                  const filename = `agent_image_${Date.now()}.png`;
+                  const localUri = FileSystem.cacheDirectory + filename;
+                  await FileSystem.downloadAsync(lightboxImage, localUri);
+                  await Sharing.shareAsync(localUri, { mimeType: 'image/png', dialogTitle: 'Bild teilen' });
+                } catch {
+                  Alert.alert('Fehler', 'Bild konnte nicht geteilt werden.');
+                }
+              }}
+            >
+              <Feather name="share-2" size={16} color="#fff" />
+              <Text style={lbStyles.btnText}>Teilen</Text>
+            </TouchableOpacity>
+          </View>
+        </LightboxContent>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -715,6 +1390,12 @@ const s = StyleSheet.create({
   },
   msgText: { color: colors.text, fontSize: 13, lineHeight: 18 },
   msgTextUser: { color: colors.text },
+  msgImg: { width: '100%', aspectRatio: 1.5, borderRadius: 10, backgroundColor: colors.surface },
+  ttsBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    marginTop: 4, paddingVertical: 4,
+  },
+  ttsBtnText: { fontSize: 11, color: '#64748B' },
   empty: {
     paddingTop: 60, alignItems: 'center', gap: 6,
   },
@@ -750,8 +1431,17 @@ const s = StyleSheet.create({
   modeBtnTermActive: { backgroundColor: colors.accent },
 
   ibBtn: {
-    width: 38, height: 38, borderRadius: 8,
-    alignItems: 'center', justifyContent: 'center',
+    minWidth: 38, height: 38, borderRadius: 8,
+    paddingHorizontal: 6,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
+  },
+  ibBtnRecording: {
+    backgroundColor: colors.destructive + '1A',
+    borderWidth: 1, borderColor: colors.destructive + '4D',
+  },
+  micTime: {
+    fontFamily: fonts.mono, fontSize: 10, fontWeight: '700',
+    color: colors.destructive,
   },
   ibInput: {
     flex: 1,
@@ -783,6 +1473,131 @@ const s = StyleSheet.create({
   sendBtn: {
     width: 38, height: 38, borderRadius: 19,
     backgroundColor: colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  // Model picker dropdown
+  mpOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    zIndex: 19,
+  },
+  mpPanel: {
+    position: 'absolute',
+    left: 56, right: 16,
+    zIndex: 20,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: 1, borderColor: colors.border,
+    paddingVertical: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 12,
+  },
+  mpTabs: {
+    flexDirection: 'row',
+    paddingHorizontal: 6, paddingTop: 4, paddingBottom: 6,
+    gap: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  mpTab: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+    paddingVertical: 7, borderRadius: 7,
+  },
+  mpTabActive: { backgroundColor: colors.surfaceAlt },
+  mpTabText: { fontSize: 11, fontWeight: '600', color: colors.textDim },
+  mpTabTextActive: { color: colors.text },
+  mpRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 12, paddingVertical: 10,
+  },
+  mpRowActive: { backgroundColor: colors.primary + '14' },
+  mpRadio: {
+    width: 14, height: 14, borderRadius: 7,
+    borderWidth: 1.5, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  mpRadioActive: { borderColor: colors.primary },
+  mpRadioDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary },
+  mpRowName: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '600' },
+  mpRowMeta: { fontSize: 10, color: colors.textDim, fontStyle: 'italic' },
+  mpEmpty: { paddingVertical: 14, paddingHorizontal: 12, color: colors.textDim, fontSize: 12, textAlign: 'center' },
+
+  // ⋮ Header menu — anchored to the right
+  menuPanel: {
+    position: 'absolute',
+    right: 12,
+    zIndex: 20,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: 1, borderColor: colors.border,
+    paddingVertical: 4,
+    minWidth: 180,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  menuItem: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 11,
+    gap: 10,
+  },
+  menuItemText: { color: colors.text, fontSize: 14 },
+
+  // Search bar — sits between header and groupTabsBar
+  searchBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 12, paddingVertical: 8,
+    backgroundColor: colors.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  searchInput: {
+    flex: 1, color: colors.text, fontSize: 13,
+    paddingVertical: 0,
+  },
+  searchCount: {
+    fontFamily: fonts.mono, fontSize: 10, fontWeight: '700',
+    color: colors.textMuted,
+    paddingHorizontal: 6, paddingVertical: 2,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 5,
+  },
+
+  // Attachment row above the input
+  attachRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingHorizontal: 12, paddingTop: 8,
+    backgroundColor: colors.surface,
+  },
+  attachThumb: {
+    width: 56, height: 56, borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1, borderColor: colors.border,
+    position: 'relative',
+  },
+  attachImg: { width: '100%', height: '100%' },
+  attachRemove: {
+    position: 'absolute', top: 2, right: 2,
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  attachErrorDot: {
+    position: 'absolute', bottom: 2, left: 2,
+    width: 16, height: 16, borderRadius: 8,
+    backgroundColor: colors.destructive,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  attachUploading: {
     alignItems: 'center', justifyContent: 'center',
   },
 });
