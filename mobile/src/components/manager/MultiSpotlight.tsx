@@ -132,11 +132,15 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
 
   function renderPane(sid: string | null, i: number) {
     const isActive = i === activePaneIndex;
+    // In focus mode, only the focused pane is visible. Non-focused panes stay
+    // mounted (preserving WebView/xterm state) but render as 0×0 with display:
+    // 'none' so they don't take grid space — the focused pane expands to fill.
+    const hidden = focusedPaneIndex != null && i !== focusedPaneIndex;
     if (!sid) {
       return (
         <Pressable
           key={`empty-${i}`}
-          style={s.empty}
+          style={[s.empty, hidden && s.hiddenPane]}
           onPress={() => onSelectEmptyPane?.(i)}
         >
           <Feather name="plus" size={16} color={colors.textDim} />
@@ -157,6 +161,7 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
           s.pane,
           { borderLeftColor: tcolor },
           isActive && { ...s.paneActive, shadowColor: tcolor, borderColor: tcolor },
+          hidden && s.hiddenPane,
         ]}
       >
         {/* Header taps activate the pane (no double-tap needed here). */}
@@ -192,32 +197,25 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     );
   }
 
-  // Focus mode — render only the focused pane at full size, but keep all the
-  // other WebViews mounted off-screen so their xterm.js state survives the
-  // round-trip (otherwise re-mounting drops scrollback / requires a re-attach).
-  if (focusedPaneIndex != null && slots[focusedPaneIndex]) {
-    return (
-      <View style={s.grid}>
-        <View style={[s.row, { flex: 1 }]}>
-          {renderPane(slots[focusedPaneIndex], focusedPaneIndex)}
-        </View>
-        <View style={s.offscreen} pointerEvents="none">
-          {slots.map((sid, i) => i !== focusedPaneIndex ? renderPane(sid, i) : null)}
-        </View>
-      </View>
-    );
-  }
+  // Note: focus mode is handled inside renderPane (hides non-focused panes via
+  // display:none so the focused one expands to fill its row). We keep the same
+  // layout tree so the WebViews don't unmount/remount, which would lose xterm
+  // state and cancel the soft keyboard mid-input.
 
   // Mode-4 needs a 2x2 grid → use 2 rows, each holding 2 panes.
   // Doing this with flexWrap on RN is fragile; explicit rows are simpler.
   if (mode === 4) {
+    // Focus mode: hide whichever row doesn't contain the focused pane so the
+    // focused pane's row gets all the vertical space.
+    const row1Hidden = focusedPaneIndex != null && focusedPaneIndex !== 0 && focusedPaneIndex !== 1;
+    const row2Hidden = focusedPaneIndex != null && focusedPaneIndex !== 2 && focusedPaneIndex !== 3;
     return (
       <View style={s.grid}>
-        <View style={s.row}>
+        <View style={[s.row, row1Hidden && s.hiddenPane]}>
           {renderPane(slots[0], 0)}
           {renderPane(slots[1], 1)}
         </View>
-        <View style={s.row}>
+        <View style={[s.row, row2Hidden && s.hiddenPane]}>
           {renderPane(slots[2], 2)}
           {renderPane(slots[3], 3)}
         </View>
@@ -350,13 +348,10 @@ const s = StyleSheet.create({
     fontSize: 9,
     color: colors.textDim,
   },
-  // Park non-focused panes off-screen so their WebViews stay mounted and the
-  // xterm.js state survives a focus-mode roundtrip without remount/re-attach.
-  offscreen: {
-    position: 'absolute',
-    top: 0, left: 0,
-    width: 1, height: 1,
-    overflow: 'hidden',
-    opacity: 0,
+  // Hide a pane (or row) without unmounting it. `display: 'none'` removes it
+  // from the flex layout entirely so siblings expand to take its space, while
+  // React keeps the View + child WebView mounted (xterm state preserved).
+  hiddenPane: {
+    display: 'none',
   },
 });
