@@ -1299,15 +1299,13 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
 
       {/* Stage body: ToolSidebar | Multi-Spotlight (with overlay flyout) */}
       <View style={[s.stageBody, inFocus && { paddingTop: insets.top }]}>
-        {!inFocus && (
-          <ToolSidebar
-            state={sidebarState}
-            activeOrb={activeOrb}
-            activeSessionId={activeSessionId ?? null}
-            onToggleState={cycleSidebar}
-            onPickOrb={handleOrbPick}
-          />
-        )}
+        <ToolSidebar
+          state={sidebarState}
+          activeOrb={activeOrb}
+          activeSessionId={activeSessionId ?? null}
+          onToggleState={cycleSidebar}
+          onPickOrb={handleOrbPick}
+        />
 
         <View style={{ flex: 1, position: 'relative' }}>
           {!inFocus && renderMultiBar()}

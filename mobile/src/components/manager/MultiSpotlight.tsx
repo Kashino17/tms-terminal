@@ -132,15 +132,16 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
 
   function renderPane(sid: string | null, i: number) {
     const isActive = i === activePaneIndex;
-    // In focus mode, only the focused pane is visible. Non-focused panes stay
-    // mounted (preserving WebView/xterm state) but render as 0×0 with display:
-    // 'none' so they don't take grid space — the focused pane expands to fill.
-    const hidden = focusedPaneIndex != null && i !== focusedPaneIndex;
+    // In focus mode the focused pane overlays the grid via absolute positioning.
+    // Non-focused panes stay in their normal flex slot (covered visually by the
+    // overlay). This keeps every WebView at its original React-tree position so
+    // none get detached → no xterm reset, no keyboard cancel.
+    const isFocusedOverlay = focusedPaneIndex != null && i === focusedPaneIndex;
     if (!sid) {
       return (
         <Pressable
           key={`empty-${i}`}
-          style={[s.empty, hidden && s.hiddenPane]}
+          style={[s.empty, isFocusedOverlay && s.focusedOverlay]}
           onPress={() => onSelectEmptyPane?.(i)}
         >
           <Feather name="plus" size={16} color={colors.textDim} />
@@ -151,9 +152,9 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     const tcolor = colorForSession(sid);
     const status: PaneStatus = statusFor?.(sid) ?? 'idle';
     const label = labelFor?.(sid) ?? sid;
-    // Per-mode font size: smaller panes need smaller text so a useful amount
-    // of terminal context fits. Clamped client-side to xterm's MIN_FONT/MAX_FONT.
-    const fontSize = mode === 4 ? 11 : mode === 2 ? 12 : 13;
+    // In focus mode the visible (focused) pane has lots of vertical space so
+    // we can use the largest font even when the underlying mode is 2 or 4.
+    const fontSize = isFocusedOverlay ? 13 : (mode === 4 ? 11 : mode === 2 ? 12 : 13);
     return (
       <View
         key={`${sid}-${i}`}
@@ -161,7 +162,7 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
           s.pane,
           { borderLeftColor: tcolor },
           isActive && { ...s.paneActive, shadowColor: tcolor, borderColor: tcolor },
-          hidden && s.hiddenPane,
+          isFocusedOverlay && s.focusedOverlay,
         ]}
       >
         {/* Header taps activate the pane (no double-tap needed here). */}
@@ -203,19 +204,14 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
   // state and cancel the soft keyboard mid-input.
 
   // Mode-4 needs a 2x2 grid → use 2 rows, each holding 2 panes.
-  // Doing this with flexWrap on RN is fragile; explicit rows are simpler.
   if (mode === 4) {
-    // Focus mode: hide whichever row doesn't contain the focused pane so the
-    // focused pane's row gets all the vertical space.
-    const row1Hidden = focusedPaneIndex != null && focusedPaneIndex !== 0 && focusedPaneIndex !== 1;
-    const row2Hidden = focusedPaneIndex != null && focusedPaneIndex !== 2 && focusedPaneIndex !== 3;
     return (
       <View style={s.grid}>
-        <View style={[s.row, row1Hidden && s.hiddenPane]}>
+        <View style={s.row}>
           {renderPane(slots[0], 0)}
           {renderPane(slots[1], 1)}
         </View>
-        <View style={[s.row, row2Hidden && s.hiddenPane]}>
+        <View style={s.row}>
           {renderPane(slots[2], 2)}
           {renderPane(slots[3], 3)}
         </View>
@@ -256,6 +252,9 @@ const s = StyleSheet.create({
     flex: 1,
     padding: 4,
     gap: 4,
+    // position:relative establishes the containing block for the focused pane's
+    // absolute overlay in focus mode.
+    position: 'relative',
   },
   row: {
     flex: 1,
@@ -348,10 +347,14 @@ const s = StyleSheet.create({
     fontSize: 9,
     color: colors.textDim,
   },
-  // Hide a pane (or row) without unmounting it. `display: 'none'` removes it
-  // from the flex layout entirely so siblings expand to take its space, while
-  // React keeps the View + child WebView mounted (xterm state preserved).
-  hiddenPane: {
-    display: 'none',
+  // Promote the focused pane to a full-grid overlay. Stays in its React tree
+  // position so the WebView is never detached/remounted — only its style flips.
+  // The non-focused panes keep rendering in their flex slots underneath but
+  // are visually covered.
+  focusedOverlay: {
+    position: 'absolute',
+    top: 4, left: 4, right: 4, bottom: 4,
+    zIndex: 99,
+    elevation: 8,
   },
 });
