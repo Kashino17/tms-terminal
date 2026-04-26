@@ -56,6 +56,8 @@ import {
 import { VoiceFullscreen } from '../components/manager/VoiceFullscreen';
 import { ORB_DEFS, executeOrb } from '../constants/orbDefinitions';
 import { OrbLayer } from '../components/OrbLayer';
+import { ToolMenu } from '../components/ToolMenu';
+import { useOrbLayoutStore } from '../store/orbLayoutStore';
 import { Dimensions, type LayoutChangeEvent } from 'react-native';
 
 type Props = {
@@ -334,6 +336,11 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     width: Dimensions.get('window').width,
     height: Dimensions.get('window').height,
   });
+  // V1-style ToolMenu (opens when the focused-pane OrbLayer's Tools orb is tapped)
+  const [toolMenuVisible, setToolMenuVisible] = useState(false);
+  const [toolMenuAnchor, setToolMenuAnchor] = useState({ x: 200, y: 400 });
+  const toolSections = useOrbLayoutStore((s) => s.toolSections);
+  const updateToolSections = useOrbLayoutStore((s) => s.updateToolSections);
 
   const spotlightRef = useRef<MultiSpotlightRef>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -396,6 +403,43 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       return null;
     });
   }, []);
+
+  // ── Tool menu (focus-mode only) ────────────────────────────────────────────
+  const handleOpenTools = useCallback((position: { x: number; y: number }) => {
+    setToolMenuAnchor(position);
+    setToolMenuVisible(true);
+  }, []);
+
+  const handleSelectTool = useCallback((toolId: string) => {
+    setToolMenuVisible(false);
+    // Navigation tools that V2 supports — others get an info alert so the
+    // user knows the tool exists but isn't wired into the chat experience yet.
+    if (toolId === 'manager') { exitPaneFocus(); return; }
+    if (toolId === 'drawing') {
+      navigation.navigate('Drawing', {
+        serverHost,
+        serverPort: server?.port ?? serverPort,
+        serverToken: server?.token ?? serverToken,
+      } as any);
+      return;
+    }
+    if (toolId === 'browser') {
+      const focusedSid = focusedPaneIdx != null ? panes[focusedPaneIdx] : null;
+      const tab = focusedSid ? tabs.find((t) => t.sessionId === focusedSid) : null;
+      if (!tab) { Alert.alert('Browser', 'Kein aktiver Tab.'); return; }
+      navigation.navigate('Browser', {
+        serverHost,
+        serverId,
+        terminalTabId: tab.id,
+      } as any);
+      return;
+    }
+    if (toolId === 'processes') {
+      navigation.navigate('Processes', { wsService } as any);
+      return;
+    }
+    Alert.alert('Tool', `"${toolId}" ist hier im Manager-Chat noch nicht angeschlossen — bitte im Terminal-Screen öffnen.`);
+  }, [exitPaneFocus, navigation, serverHost, server, serverPort, serverToken, serverId, focusedPaneIdx, panes, tabs, wsService]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const messages = useMemo(
@@ -1473,7 +1517,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
                 sessionId={panes[focusedPaneIdx] ?? undefined}
                 wsService={wsService}
                 onScrollToBottom={() => { /* spotlightRef has no scroll yet */ }}
-                onOpenTools={() => { /* TODO: hook ToolMenu in a follow-up */ }}
+                onOpenTools={handleOpenTools}
                 onOpenSpotlight={() => { /* TODO: spotlight in V2 */ }}
                 onOpenManager={() => exitPaneFocus()}
                 onRangeToggle={() => { /* TODO: range select in V2 */ }}
@@ -1520,6 +1564,16 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
 
       {renderTerminalMicPill()}
       {renderDpadOverlay()}
+
+      {/* V1 Tool menu — opens from the focus-mode OrbLayer's Tools orb */}
+      <ToolMenu
+        visible={toolMenuVisible}
+        anchorPosition={toolMenuAnchor}
+        sections={toolSections}
+        onSelectTool={handleSelectTool}
+        onClose={() => setToolMenuVisible(false)}
+        onSectionsChange={updateToolSections}
+      />
 
       {/* Lightbox — opens on tap of any image thumb in the chat */}
       <Modal

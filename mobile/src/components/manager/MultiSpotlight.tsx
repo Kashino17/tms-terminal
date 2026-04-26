@@ -189,7 +189,10 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
             wsService={wsService}
             visible={true}
             fontSize={fontSize}
-            disableKeyboardOffset
+            // In focus mode the focused pane should shrink for the orb dock
+            // (V1 behavior) so the prompt stays visible above it. Non-focused
+            // panes (and the chat-keyboard case) keep the offset disabled.
+            disableKeyboardOffset={!isFocusedOverlay}
             // Focused pane lifts the tap suppression so xterm behaves normally
             // (cursor positioning, scrolling, keyboard stays). Non-focused panes
             // keep the suppression so the single-tap-vs-double-tap counter works.
