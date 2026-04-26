@@ -791,6 +791,15 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         term.options.theme = msg.theme;
         term.refresh(0, term.rows - 1);
       }
+      else if (msg.type === 'setFontSize' && typeof msg.size === 'number') {
+        // Clamp to the same MIN/MAX as pinch-zoom so we don't break layout.
+        var clamped = Math.max(MIN_FONT, Math.min(MAX_FONT, msg.size));
+        if (clamped !== term.options.fontSize) {
+          term.options.fontSize = clamped;
+          baseFontSize = clamped;
+          fitAddon.fit();
+        }
+      }
       else if (msg.type === 'setExternalKeyboardMode') {
         externalKbMode = msg.enabled;
         // xterm.js creates its own hidden textarea (.xterm-helper-textarea)

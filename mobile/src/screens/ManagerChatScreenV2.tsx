@@ -285,22 +285,37 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   function renderMultiBar() {
     return (
       <View style={s.multiBar}>
-        <Text style={s.multiBarLbl}>{mode}</Text>
-        <View style={{ flex: 1 }} />
-        <TouchableOpacity style={s.mbIconBtn} onPress={cycleSidebar}>
-          <Feather name="menu" size={9} color={colors.textMuted} />
-        </TouchableOpacity>
+        {/* View toggle now lives near the LEFT edge so it's reachable with one
+            thumb. Buttons are 36×28 — well above the 44 px Apple HIG target
+            when combined with hitSlop, but visually compact. */}
         <View style={s.viewToggle}>
           {([1, 2, 4] as SpotlightMode[]).map((m) => (
             <Pressable
               key={m}
               style={[s.viewMode, mode === m && s.viewModeActive]}
               onPress={() => onModeChange(m)}
+              hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
             >
               <Text style={[s.viewModeText, mode === m && s.viewModeTextActive]}>{m}</Text>
             </Pressable>
           ))}
         </View>
+        <TouchableOpacity
+          style={s.mbIconBtn}
+          onPress={cycleSidebar}
+          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+        >
+          <Feather name="menu" size={14} color={colors.textMuted} />
+        </TouchableOpacity>
+        <Text style={s.multiBarLbl}>{mode} {mode === 1 ? 'Pane' : 'Panes'}</Text>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          style={s.mbIconBtn}
+          onPress={() => { /* TODO: save layout */ }}
+          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+        >
+          <Feather name="save" size={13} color={colors.textMuted} />
+        </TouchableOpacity>
       </View>
     );
   }
@@ -618,35 +633,42 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
 
-  // Multi bar (above panes)
+  // Multi bar (above panes) — taller for thumb-friendly toggles, controls left-aligned
   multiBar: {
-    height: 22,
-    paddingHorizontal: 5,
+    height: 36,
+    paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
+    gap: 8,
     backgroundColor: colors.surface,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
   multiBarLbl: {
-    fontSize: 9, fontWeight: '700', color: colors.text, fontFamily: fonts.mono, paddingHorizontal: 4,
+    fontSize: 10, fontWeight: '700', color: colors.textMuted, fontFamily: fonts.mono,
   },
   mbIconBtn: {
-    width: 16, height: 16, borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    width: 28, height: 28, borderRadius: 7,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1, borderColor: colors.border,
     alignItems: 'center', justifyContent: 'center',
   },
   viewToggle: {
-    flexDirection: 'row', gap: 1, padding: 1,
-    backgroundColor: colors.surfaceAlt, borderRadius: 3,
+    flexDirection: 'row', gap: 2, padding: 2,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 8,
+    borderWidth: 1, borderColor: colors.border,
   },
   viewMode: {
-    paddingHorizontal: 4, paddingVertical: 1, borderRadius: 2,
-    minWidth: 14, alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 4, borderRadius: 6,
+    minWidth: 32, alignItems: 'center',
   },
-  viewModeActive: { backgroundColor: colors.primary },
-  viewModeText: { fontSize: 8.5, fontWeight: '700', color: colors.textMuted },
+  viewModeActive: {
+    backgroundColor: colors.primary,
+    shadowColor: colors.primary, shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.4, shadowRadius: 2, elevation: 2,
+  },
+  viewModeText: { fontSize: 13, fontWeight: '700', color: colors.textMuted },
   viewModeTextActive: { color: '#fff' },
 
   // Stage body container

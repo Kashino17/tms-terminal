@@ -81,10 +81,16 @@ interface Props {
   onPathClicked?: (path: string) => void;
   /** When true the virtual keyboard is suppressed (e.g. tool panel open). */
   panelOpen?: boolean;
+  /**
+   * Override xterm.js font size (px). Clamped to 8..28 inside the WebView.
+   * Used by the Manager-Chat MultiSpotlight to shrink fonts in 2-up / 4-up panes.
+   * If undefined, the terminal keeps its default (14 px) or the user's pinch-zoom value.
+   */
+  fontSize?: number;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, Props>(function TerminalView(
-  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false }: Props,
+  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false, fontSize }: Props,
   ref,
 ) {
   const webViewRef  = useRef<WebView>(null);
@@ -229,6 +235,16 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     );
   }, [terminalTheme]);
 
+  // Apply font size changes live (used by MultiSpotlight to scale per pane mode).
+  // Re-fires on every prop change so the WebView always reflects the latest mode.
+  useEffect(() => {
+    if (!readyReceivedRef.current || fontSize == null) return;
+    const msg = JSON.stringify({ type: 'setFontSize', size: fontSize });
+    webViewRef.current?.injectJavaScript(
+      `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
+    );
+  }, [fontSize]);
+
   // Sync external keyboard mode into WebView
   useEffect(() => {
     if (!readyReceivedRef.current) return;
@@ -338,6 +354,13 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         webViewRef.current?.injectJavaScript(
           `window.postMessage(${JSON.stringify(themeMsg)}, '*'); true;`,
         );
+        // Apply font-size override if the parent supplied one (Manager-Chat MultiSpotlight).
+        if (fontSize != null) {
+          const fsMsg = JSON.stringify({ type: 'setFontSize', size: fontSize });
+          webViewRef.current?.injectJavaScript(
+            `window.postMessage(${JSON.stringify(fsMsg)}, '*'); true;`,
+          );
+        }
         // Apply external keyboard mode
         const ekMode = useSettingsStore.getState().externalKeyboardMode;
         if (ekMode) {

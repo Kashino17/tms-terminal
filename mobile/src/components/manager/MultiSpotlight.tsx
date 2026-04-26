@@ -103,17 +103,22 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     const tcolor = colorForSession(sid);
     const status: PaneStatus = statusFor?.(sid) ?? 'idle';
     const label = labelFor?.(sid) ?? sid;
+    // Per-mode font size: smaller panes need smaller text so a useful amount
+    // of terminal context fits. Clamped server-side to xterm's MIN_FONT/MAX_FONT.
+    const fontSize = mode === 4 ? 9 : mode === 2 ? 11 : 13;
     return (
-      <Pressable
+      <View
         key={`${sid}-${i}`}
         style={[
           s.pane,
           { borderLeftColor: tcolor },
           isActive && { ...s.paneActive, shadowColor: tcolor, borderColor: tcolor },
         ]}
-        onPress={() => onActivePaneChange(i)}
       >
-        <View style={s.head}>
+        {/* Header is the only "tap = activate pane" surface. The terminal area
+            below is plain View so xterm.js gets all touch events (scroll, tap,
+            text-selection) without our outer Pressable swallowing them. */}
+        <Pressable style={s.head} onPress={() => onActivePaneChange(i)}>
           <View style={[s.dot, { backgroundColor: tcolor, shadowColor: tcolor }]} />
           <Text style={s.name} numberOfLines={1}>{label}</Text>
           <View style={[s.statusBadge, statusBgColor(status)]}>
@@ -123,24 +128,22 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
           </View>
           <TouchableOpacity
             style={s.promoteBtn}
-            onPress={(e) => {
-              e.stopPropagation();
-              onPromote(i);
-            }}
+            onPress={() => onPromote(i)}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           >
             <Feather name="maximize-2" size={9} color={colors.textDim} />
           </TouchableOpacity>
-        </View>
+        </Pressable>
         <View style={s.outWrap}>
           <TerminalView
             ref={(r) => { terminalRefs.current[i] = r; }}
             sessionId={sid}
             wsService={wsService}
             visible={true}
+            fontSize={fontSize}
           />
         </View>
-      </Pressable>
+      </View>
     );
   }
 
