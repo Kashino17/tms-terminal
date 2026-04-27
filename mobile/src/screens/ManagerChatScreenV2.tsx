@@ -1111,7 +1111,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={s.chipBar}
+        style={[s.chipBar, chatFocusKBMode && { paddingTop: insets.top }]}
         contentContainerStyle={s.chipBarContent}
       >
         <Pressable
@@ -1485,17 +1485,17 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {!inFocus && (
+      {!inFocus && !chatKBMode && (
         <View style={{ paddingTop: insets.top, backgroundColor: colors.surface }}>
           {renderHeader()}
         </View>
       )}
 
-      {!inFocus && renderModelPicker()}
-      {!inFocus && renderHeaderMenu()}
-      {!inFocus && renderSearchBar()}
+      {!inFocus && !chatKBMode && renderModelPicker()}
+      {!inFocus && !chatKBMode && renderHeaderMenu()}
+      {!inFocus && !chatKBMode && renderSearchBar()}
 
-      {!inFocus && (
+      {!inFocus && !chatKBMode && (
         <GroupTabsBar
           groups={groups}
           activeId={activeGroupId}
@@ -1514,7 +1514,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       <View
         style={[
           s.stageBody,
-          inFocus && { paddingTop: insets.top },
+          (inFocus || terminalKBMode) && { paddingTop: insets.top },
           chatFocusKBMode && { display: 'none' },
         ]}
         onLayout={handleStageLayout}
