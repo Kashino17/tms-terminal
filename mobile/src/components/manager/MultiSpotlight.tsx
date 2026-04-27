@@ -51,6 +51,14 @@ interface Props {
   onPaneDoubleTap?: (index: number) => void;
   /** When set, only the pane at this index renders (others hidden). */
   focusedPaneIndex?: number | null;
+  /**
+   * If true, the *active* pane gets `disableKeyboardOffset={false}` so its
+   * TerminalView animates a 60-px bottom reserve on keyboard show — matching
+   * V1's smooth single-pane behaviour. Other panes stay disabled (no fit()
+   * cascade across all WebViews). Used by Manager-Chat V2 to leave room for
+   * the orb dock above the keyboard without resizing every pane.
+   */
+  activePaneKeyboardOffset?: boolean;
 }
 
 const STATUS_LABEL: Record<PaneStatus, string> = {
@@ -81,6 +89,7 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     statusFor,
     onPaneDoubleTap,
     focusedPaneIndex,
+    activePaneKeyboardOffset = false,
   },
   ref,
 ) {
@@ -195,10 +204,12 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
             wsService={wsService}
             visible={true}
             fontSize={fontSize}
-            // In focus mode the focused pane should shrink for the orb dock
-            // (V1 behavior) so the prompt stays visible above it. Non-focused
-            // panes (and the chat-keyboard case) keep the offset disabled.
-            disableKeyboardOffset={!isFocusedOverlay}
+            // In focus mode the focused pane shrinks for the orb dock (V1).
+            // In Manager-Chat V2 with `activePaneKeyboardOffset`, the *active*
+            // pane gets the same per-pane animated 60-px bottom reserve so its
+            // prompt stays visible above the dock — without resizing every
+            // pane (which caused fit() cascade lag across all WebViews).
+            disableKeyboardOffset={!isFocusedOverlay && !(activePaneKeyboardOffset && i === activePaneIndex)}
             // Focused pane lifts the tap suppression so xterm behaves normally
             // (cursor positioning, scrolling, keyboard stays). Non-focused panes
             // keep the suppression so the single-tap-vs-double-tap counter works.
