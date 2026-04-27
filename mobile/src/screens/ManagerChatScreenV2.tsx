@@ -1480,6 +1480,12 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     : terminalKBMode
       ? panes[activePaneIdx] ?? undefined
       : undefined;
+  // Bottom-reserve below MultiSpotlight in terminal-keyboard mode so the orb
+  // dock (≤ 2 rows of 42px orbs + 4px bottom margin) doesn't visually overlap
+  // any pane. Applied as paddingBottom on a wrapper *around* MultiSpotlight,
+  // so the absolute-positioned dock floats inside the freed area without
+  // forcing an animated WebView resize per pane.
+  const ORB_DOCK_RESERVE = 100;
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.bg }}
@@ -1521,22 +1527,31 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       >
         <View style={{ flex: 1, position: 'relative' }}>
           {!inFocus && renderMultiBar()}
-          <MultiSpotlight
-            ref={spotlightRef}
-            mode={mode}
-            panes={panes}
-            activePaneIndex={activePaneIdx}
-            onActivePaneChange={(idx) => {
-              setActivePaneIdx(idx);
-              setChatSelected(false);
-            }}
-            onPromote={onPromote}
-            onSelectEmptyPane={onSelectEmptyPane}
-            wsService={wsService}
-            labelFor={labelFor}
-            statusFor={statusFor}
-            focusedPaneIndex={focusedPaneIdx}
-          />
+          {/* Wrapper around MultiSpotlight reserves space for the orb dock at
+              the bottom (terminalKBMode). The absoluteFillObject OrbLayer
+              wrapper below sits in the same coordinate space, so the dock
+              floats inside the reserved gap instead of covering panes. */}
+          <View style={[
+            { flex: 1, minHeight: 0 },
+            terminalKBMode && { paddingBottom: ORB_DOCK_RESERVE },
+          ]}>
+            <MultiSpotlight
+              ref={spotlightRef}
+              mode={mode}
+              panes={panes}
+              activePaneIndex={activePaneIdx}
+              onActivePaneChange={(idx) => {
+                setActivePaneIdx(idx);
+                setChatSelected(false);
+              }}
+              onPromote={onPromote}
+              onSelectEmptyPane={onSelectEmptyPane}
+              wsService={wsService}
+              labelFor={labelFor}
+              statusFor={statusFor}
+              focusedPaneIndex={focusedPaneIdx}
+            />
+          </View>
 
           {/* V1-style OrbLayer — mounted both in fullscreen focus mode AND in
               terminal-keyboard mode (terminal selected, chat input keyboard
