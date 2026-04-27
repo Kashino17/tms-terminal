@@ -398,7 +398,20 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
 
   const handleStageLayout = useCallback((e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
-    setStageSize({ width, height });
+    // Skip the setState when nothing changed — onLayout fires multiple times
+    // during keyboard transitions and re-renders cascade through OrbLayer +
+    // every TerminalView, costing us frames during scroll.
+    setStageSize((prev) =>
+      prev.width === width && prev.height === height ? prev : { width, height },
+    );
+  }, []);
+
+  // Stable handler for MultiSpotlight — avoids creating a new arrow each
+  // render which would re-render every TerminalView (WebViews can't truly
+  // unmount, but prop-diff cost adds up across 2-4 panes).
+  const handleActivePaneChange = useCallback((idx: number) => {
+    setActivePaneIdx(idx);
+    setChatSelected(false);
   }, []);
 
   // Double-tap on a pane → enter fullscreen + focus that terminal's keyboard.
@@ -1526,10 +1539,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             mode={mode}
             panes={panes}
             activePaneIndex={activePaneIdx}
-            onActivePaneChange={(idx) => {
-              setActivePaneIdx(idx);
-              setChatSelected(false);
-            }}
+            onActivePaneChange={handleActivePaneChange}
             onPromote={onPromote}
             onSelectEmptyPane={onSelectEmptyPane}
             wsService={wsService}
@@ -1539,40 +1549,36 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             activePaneKeyboardOffset={terminalKBMode}
           />
 
-          {/* V1-style OrbLayer — mounted both in fullscreen focus mode AND in
-              terminal-keyboard mode (terminal selected, chat input keyboard
-              up). The MultiSpotlight wrapper above reserves vertical space so
-              the dock at bottom:4 doesn't overlap terminals. pointerEvents=
-              "box-none" lets taps fall through where no orb covers. */}
+          {/* V1-style OrbLayer — rendered DIRECTLY (no extra wrapper) so we
+              don't stack two absoluteFillObject + pointerEvents="box-none"
+              Views (each one Android needs to traverse on every touch).
+              OrbLayer's own s.root has absoluteFillObject + zIndex:10 and
+              pointerEvents="box-none" — sufficient since we removed pane
+              focus mode (no zIndex 99 to outrank). */}
           {(inFocus || terminalKBMode) && orbSessionId && (
-            <View
-              style={[StyleSheet.absoluteFillObject, { zIndex: 150 }]}
-              pointerEvents="box-none"
-            >
-              <OrbLayer
-                sessionId={orbSessionId}
-                wsService={wsService}
-                onScrollToBottom={() => {
-                  const idx = focusedPaneIdx ?? activePaneIdx;
-                  spotlightRef.current?.scrollToBottom(idx);
-                }}
-                onOpenTools={handleOpenTools}
-                onOpenSpotlight={() => { /* TODO: spotlight in V2 */ }}
-                onOpenManager={() => exitPaneFocus()}
-                onRangeToggle={() => { /* TODO: range select in V2 */ }}
-                rangeActive={false}
-                containerSize={stageSize}
-                keyboardVisible={keyboardVisible}
-                keyboardHeight={keyboardHeight}
-                onTranscription={(text) => {
-                  if (focusedPaneIdx != null) {
-                    spotlightRef.current?.injectIntoPane(focusedPaneIdx, text);
-                  } else if (terminalKBMode) {
-                    spotlightRef.current?.injectIntoPane(activePaneIdx, text);
-                  }
-                }}
-              />
-            </View>
+            <OrbLayer
+              sessionId={orbSessionId}
+              wsService={wsService}
+              onScrollToBottom={() => {
+                const idx = focusedPaneIdx ?? activePaneIdx;
+                spotlightRef.current?.scrollToBottom(idx);
+              }}
+              onOpenTools={handleOpenTools}
+              onOpenSpotlight={() => { /* TODO: spotlight in V2 */ }}
+              onOpenManager={() => exitPaneFocus()}
+              onRangeToggle={() => { /* TODO: range select in V2 */ }}
+              rangeActive={false}
+              containerSize={stageSize}
+              keyboardVisible={keyboardVisible}
+              keyboardHeight={keyboardHeight}
+              onTranscription={(text) => {
+                if (focusedPaneIdx != null) {
+                  spotlightRef.current?.injectIntoPane(focusedPaneIdx, text);
+                } else if (terminalKBMode) {
+                  spotlightRef.current?.injectIntoPane(activePaneIdx, text);
+                }
+              }}
+            />
           )}
 
           {/* Floating close-button — only visible while a pane is in focus mode */}
