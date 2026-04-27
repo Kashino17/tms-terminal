@@ -305,6 +305,10 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     return initial;
   });
   const [activePaneIdx, setActivePaneIdx] = useState(0);
+  // Chat-as-target selection: tap on the chat to mark it active (subtle top
+  // border) — mirrors the pane-active highlight so the user can tell which
+  // surface their next action will affect.
+  const [chatSelected, setChatSelected] = useState(false);
   const [sidebarState, setSidebarState] = useState<SidebarState>('collapsed');
   const [activeOrb, setActiveOrb] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<'chat' | 'terminal'>('chat');
@@ -1088,13 +1092,6 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             </Pressable>
           ))}
         </View>
-        <TouchableOpacity
-          style={s.mbIconBtn}
-          onPress={cycleSidebar}
-          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-        >
-          <Feather name="menu" size={14} color={colors.textMuted} />
-        </TouchableOpacity>
         <Text style={s.multiBarLbl}>{mode} {mode === 1 ? 'Pane' : 'Panes'}</Text>
         <View style={{ flex: 1 }} />
         <TouchableOpacity
@@ -1183,7 +1180,10 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   // ── Render: Chat (very simple list — full markdown/lightbox/etc. ported later) ──
   function renderChat() {
     return (
-      <View style={s.chat}>
+      <Pressable
+        style={[s.chat, chatSelected && s.chatSelected]}
+        onPress={() => setChatSelected(true)}
+      >
         <FlatList
           inverted
           data={visibleMessages.slice().reverse()}
@@ -1277,7 +1277,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             </View>
           }
         />
-      </View>
+      </Pressable>
     );
   }
 
@@ -1462,6 +1462,24 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
 
   // ── Layout ─────────────────────────────────────────────────────────────────
   const inFocus = focusedPaneIdx != null;
+  // Chat-keyboard mode: keyboard came up via the chat input (no pane focused).
+  // Behavior depends on what the user has selected:
+  //   - terminalKBMode  (a pane is the active selection): hide the chat
+  //     history/chips so the terminals stay visible at full size on top.
+  //   - chatFocusKBMode (chat itself was tapped, chatSelected): hide the
+  //     terminals so the chat takes the screen.
+  // Either way the input bar stays visible — it owns the keyboard.
+  const chatKBMode = keyboardVisible && !inFocus;
+  const terminalKBMode = chatKBMode && !chatSelected;
+  const chatFocusKBMode = chatKBMode && chatSelected;
+  // OrbLayer targets the focused pane in fullscreen mode, the active pane in
+  // terminal-keyboard mode (so Ctrl+C, Esc, mic etc. operate on whatever the
+  // user just selected before opening the chat keyboard).
+  const orbSessionId = focusedPaneIdx != null
+    ? panes[focusedPaneIdx] ?? undefined
+    : terminalKBMode
+      ? panes[activePaneIdx] ?? undefined
+      : undefined;
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.bg }}
@@ -1487,23 +1505,20 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
         />
       )}
 
-      {/* Stage body: ToolSidebar | Multi-Spotlight (with overlay flyout)
-          In focus mode the V1-style OrbLayer takes over so we hide the V2
-          sidebar to give the same look as the terminal screen. */}
+      {/* Stage body: Multi-Spotlight (full width). Only hidden when the user
+          tapped the chat first (chatFocusKBMode) — when a terminal is the
+          selection, the terminals stay visible at full size while the chat
+          collapses below them. We keep it mounted (display: 'none' rather
+          than unmount) so xterm WebView state and the soft keyboard don't
+          reset when the user dismisses the kb. */}
       <View
-        style={[s.stageBody, inFocus && { paddingTop: insets.top }]}
+        style={[
+          s.stageBody,
+          inFocus && { paddingTop: insets.top },
+          chatFocusKBMode && { display: 'none' },
+        ]}
         onLayout={handleStageLayout}
       >
-        {!inFocus && (
-          <ToolSidebar
-            state={sidebarState}
-            activeOrb={activeOrb}
-            activeSessionId={activeSessionId ?? null}
-            onToggleState={cycleSidebar}
-            onPickOrb={handleOrbPick}
-          />
-        )}
-
         <View style={{ flex: 1, position: 'relative' }}>
           {!inFocus && renderMultiBar()}
           <MultiSpotlight
@@ -1511,38 +1526,35 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             mode={mode}
             panes={panes}
             activePaneIndex={activePaneIdx}
-            onActivePaneChange={setActivePaneIdx}
+            onActivePaneChange={(idx) => {
+              setActivePaneIdx(idx);
+              setChatSelected(false);
+            }}
             onPromote={onPromote}
             onSelectEmptyPane={onSelectEmptyPane}
             wsService={wsService}
             labelFor={labelFor}
             statusFor={statusFor}
-            onPaneDoubleTap={handlePaneDoubleTap}
             focusedPaneIndex={focusedPaneIdx}
           />
 
-          <ToolFlyout
-            orbId={activeOrb === 'dpad' ? null : activeOrb}
-            sidebarState={sidebarState}
-            contextLabel={activeSessionId ? '@' + labelFor(activeSessionId) : undefined}
-            onClose={closeTool}
-          >
-            {renderOrbFlyoutBody()}
-          </ToolFlyout>
-
-          {/* V1-style OrbLayer — wrapped in a high-zIndex View so it sits
-              above the focused-pane overlay (zIndex 99 / elevation 8 in
-              MultiSpotlight). pointerEvents="box-none" lets taps fall
-              through to the terminal where no orb is covering. */}
-          {inFocus && focusedPaneIdx != null && (
+          {/* V1-style OrbLayer — mounted both in fullscreen focus mode AND in
+              terminal-keyboard mode (terminal selected, chat input keyboard
+              up). The MultiSpotlight wrapper above reserves vertical space so
+              the dock at bottom:4 doesn't overlap terminals. pointerEvents=
+              "box-none" lets taps fall through where no orb covers. */}
+          {(inFocus || terminalKBMode) && orbSessionId && (
             <View
-              style={[StyleSheet.absoluteFillObject, { zIndex: 150, elevation: 24 }]}
+              style={[StyleSheet.absoluteFillObject, { zIndex: 150 }]}
               pointerEvents="box-none"
             >
               <OrbLayer
-                sessionId={panes[focusedPaneIdx] ?? undefined}
+                sessionId={orbSessionId}
                 wsService={wsService}
-                onScrollToBottom={() => { /* spotlightRef has no scroll yet */ }}
+                onScrollToBottom={() => {
+                  const idx = focusedPaneIdx ?? activePaneIdx;
+                  spotlightRef.current?.scrollToBottom(idx);
+                }}
                 onOpenTools={handleOpenTools}
                 onOpenSpotlight={() => { /* TODO: spotlight in V2 */ }}
                 onOpenManager={() => exitPaneFocus()}
@@ -1554,6 +1566,8 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
                 onTranscription={(text) => {
                   if (focusedPaneIdx != null) {
                     spotlightRef.current?.injectIntoPane(focusedPaneIdx, text);
+                  } else if (terminalKBMode) {
+                    spotlightRef.current?.injectIntoPane(activePaneIdx, text);
                   }
                 }}
               />
@@ -1573,9 +1587,9 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
         </View>
       </View>
 
-      {!inFocus && renderChipBar()}
-      {!inFocus && renderChat()}
-      {!inFocus && renderAttachments()}
+      {!inFocus && !terminalKBMode && renderChipBar()}
+      {!inFocus && !terminalKBMode && renderChat()}
+      {!inFocus && !terminalKBMode && renderAttachments()}
       {!inFocus && renderInputBar()}
 
       {/* Fullscreen voice capture — only for chat-input mic. Terminal mic uses
@@ -1865,6 +1879,12 @@ const s = StyleSheet.create({
 
   // Chat
   chat: { flex: 1.05, minHeight: 0, backgroundColor: colors.bg },
+  // Subtle 1.5px primary line at the top of the chat — same idea as the
+  // pane-active border, but reduced to a single edge to stay minimalist.
+  chatSelected: {
+    borderTopWidth: 1.5,
+    borderTopColor: colors.primary,
+  },
   msg: {
     paddingHorizontal: 12, paddingVertical: 8,
     borderRadius: 14, marginVertical: 4,

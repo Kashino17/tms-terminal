@@ -24,6 +24,8 @@ export interface MultiSpotlightRef {
   focusPaneKeyboard: (index: number) => void;
   /** Close the soft keyboard for the pane at `index`. */
   blurPaneKeyboard: (index: number) => void;
+  /** Scroll the pane at `index` (or the active pane if omitted) to the bottom. */
+  scrollToBottom: (index?: number) => void;
 }
 
 interface Props {
@@ -97,6 +99,10 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     },
     blurPaneKeyboard: (index: number) => {
       terminalRefs.current[index]?.blurKeyboard();
+    },
+    scrollToBottom: (index?: number) => {
+      const i = index ?? activePaneIndex;
+      terminalRefs.current[i]?.scrollToBottom();
     },
   }), [activePaneIndex]);
 
