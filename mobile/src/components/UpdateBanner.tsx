@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, fonts } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
@@ -21,6 +21,7 @@ export function UpdateBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
+    if (Platform.OS === 'ios') return;
     checkForUpdate().then(setUpdate).catch(() => {});
   }, []);
 

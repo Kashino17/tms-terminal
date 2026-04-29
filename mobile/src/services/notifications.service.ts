@@ -72,6 +72,7 @@ export function registerNotificationResponseHandler(): (() => void) {
  * Request Android 13+ POST_NOTIFICATIONS runtime permission.
  */
 export async function requestNotificationPermission(): Promise<boolean> {
+  if (Platform.OS === 'ios') return false;
   if (Platform.OS === 'android') {
     if (Number(Platform.Version) >= 33) {
       const result = await PermissionsAndroid.request(
@@ -92,6 +93,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
  * Returns the FCM registration token for this device.
  */
 export async function getFcmToken(): Promise<string | null> {
+  if (Platform.OS === 'ios') return null;
   try {
     await messaging().registerDeviceForRemoteMessages();
     return await messaging().getToken();
@@ -106,6 +108,7 @@ export async function getFcmToken(): Promise<string | null> {
  * Handles notifications that arrive when the app is backgrounded or killed.
  */
 export function registerBackgroundHandler(): void {
+  if (Platform.OS === 'ios') return;
   messaging().setBackgroundMessageHandler(async (_message) => {
     // OS displays the notification automatically from the FCM payload.
   });
@@ -117,6 +120,7 @@ export function registerBackgroundHandler(): void {
  * we re-post as a local notification via expo-notifications.
  */
 export function registerForegroundHandler(): () => void {
+  if (Platform.OS === 'ios') return () => {};
   return messaging().onMessage(async (remoteMessage) => {
     const title = remoteMessage.notification?.title ?? '\u{1F4A4} Terminal';
     const body = remoteMessage.notification?.body ?? 'Terminal idle';

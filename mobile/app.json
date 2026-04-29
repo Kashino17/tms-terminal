@@ -16,6 +16,17 @@
       },
       "package": "com.tms.terminal"
     },
+    "ios": {
+      "bundleIdentifier": "com.tms.terminal",
+      "buildNumber": "1.21.23",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
     "plugins": [
       "./plugins/withCleartextTraffic",
       "expo-secure-store",

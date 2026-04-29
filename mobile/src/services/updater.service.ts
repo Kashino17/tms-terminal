@@ -44,6 +44,7 @@ export async function checkForUpdate(): Promise<{
   releaseUrl: string;
   size: number;
 } | null> {
+  if (Platform.OS === 'ios') return null;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -86,6 +87,7 @@ export async function checkForPreviousVersion(): Promise<{
   downloadUrl: string;
   size: number;
 } | null> {
+  if (Platform.OS === 'ios') return null;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -131,6 +133,7 @@ export async function checkForPreviousVersion(): Promise<{
  * Android will download the APK and prompt to install it.
  */
 export async function downloadAndInstall(downloadUrl: string): Promise<void> {
+  if (Platform.OS === 'ios') return;
   await Linking.openURL(downloadUrl);
 }
 
@@ -179,6 +182,7 @@ TaskManager.defineTask(BG_UPDATE_TASK, async () => {
  * Android runs this roughly every 15–30 min (OS-controlled).
  */
 export async function registerBackgroundUpdateCheck(): Promise<void> {
+  if (Platform.OS === 'ios') return;
   const isRegistered = await TaskManager.isTaskRegisteredAsync(BG_UPDATE_TASK);
   if (isRegistered) return;
 
