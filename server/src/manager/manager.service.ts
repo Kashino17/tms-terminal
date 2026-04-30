@@ -183,7 +183,7 @@ const MANAGER_TOOLS: ToolDefinition[] = [
           schedule: { type: 'string', description: 'Cron-Ausdruck, z.B. "*/30 * * * *" (alle 30 Min), "0 */2 * * *" (alle 2h), "0 0 * * *" (täglich)' },
           type: { type: 'string', description: '"simple" (Shell-Befehl) oder "claude" (Claude Code Auftrag)' },
           command: { type: 'string', description: 'Der Befehl oder Claude-Auftrag' },
-          target_dir: { type: 'string', description: 'Arbeitsverzeichnis, z.B. "~/Desktop/TMS Terminal"' },
+          target_dir: { type: 'string', description: 'Arbeitsverzeichnis, z.B. "~/Desktop/tms-terminal"' },
         },
         required: ['name', 'schedule', 'type', 'command'],
       },
@@ -364,7 +364,7 @@ const MANAGER_TOOLS: ToolDefinition[] = [
         type: 'object',
         properties: {
           action: { type: 'string', description: '"status", "log" oder "diff"' },
-          directory: { type: 'string', description: 'Git-Verzeichnis, z.B. "~/Desktop/TMS Terminal"' },
+          directory: { type: 'string', description: 'Git-Verzeichnis, z.B. "~/Desktop/tms-terminal"' },
           count: { type: 'string', description: 'Anzahl Log-Einträge (Standard: 5, nur für action=log)' },
         },
         required: ['action', 'directory'],
@@ -4045,7 +4045,7 @@ BEISPIEL:
         }, 8000);
       }
     } else {
-      const dir = job.targetDir ? job.targetDir.replace('~', os.homedir()) : `${os.homedir()}/Desktop/TMS Terminal`;
+      const dir = job.targetDir ? job.targetDir.replace('~', os.homedir()) : `${os.homedir()}/Desktop/tms-terminal`;
       const sessionId = this.onCreateTerminal?.(`Cron: ${job.name}`);
       if (sessionId) {
         setTimeout(() => globalManager.write(sessionId, `cd ${dir} && claude\r`), 800);
