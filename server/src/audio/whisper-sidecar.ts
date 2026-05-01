@@ -13,6 +13,7 @@ interface PendingRequest {
 // Base64 WAV at 16kHz/16bit/mono: ~1.33 MB per minute → ~1.78 MB Base64 per minute.
 const BASE_TIMEOUT_MS = 30_000;
 const TIMEOUT_PER_MB_BASE64 = 10_000; // 10s per MB of Base64 data
+const SIDECAR_START_TIMEOUT_MS = 90_000;
 
 function calcTimeout(base64Length: number): number {
   const mbSize = base64Length / (1024 * 1024);
@@ -59,11 +60,22 @@ function ensureRunning(): Promise<void> {
 
     let resolved = false;
 
+    const startTimer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      logger.warn(`[whisper] Sidecar start timed out after ${SIDECAR_START_TIMEOUT_MS / 1000}s; killing`);
+      try { child.kill('SIGKILL'); } catch {}
+      sidecar = null;
+      startPromise = null;
+      reject(new Error(`Whisper sidecar start timed out (${SIDECAR_START_TIMEOUT_MS / 1000}s)`));
+    }, SIDECAR_START_TIMEOUT_MS);
+
     child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       logger.info(`[whisper] ${text.trim()}`);
       if (!resolved && text.includes('Ready for requests')) {
         resolved = true;
+        clearTimeout(startTimer);
         startPromise = null;
         sidecar = child;
         resolve();
@@ -103,6 +115,7 @@ function ensureRunning(): Promise<void> {
 
     child.on('exit', (code) => {
       logger.warn(`[whisper] Sidecar exited with code ${code}`);
+      clearTimeout(startTimer);
       sidecar = null;
       startPromise = null;
       for (const [, req] of pending) {
@@ -111,15 +124,18 @@ function ensureRunning(): Promise<void> {
       }
       pending.clear();
       if (!resolved) {
+        resolved = true;
         reject(new Error('Whisper sidecar failed to start'));
       }
     });
 
     child.on('error', (err) => {
       logger.error(`[whisper] Failed to spawn sidecar: ${err.message}`);
+      clearTimeout(startTimer);
       sidecar = null;
       startPromise = null;
       if (!resolved) {
+        resolved = true;
         reject(new Error(`Whisper nicht verfuegbar: ${err.message}. Installieren mit: pip3 install openai-whisper torch`));
       }
     });
