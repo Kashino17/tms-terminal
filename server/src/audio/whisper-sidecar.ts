@@ -43,10 +43,35 @@ let requestId = 0;
 const pending = new Map<string, PendingRequest>();
 let startPromise: Promise<void> | null = null;
 
+export type WhisperStatus = { state: 'idle' | 'starting' | 'ready' | 'failed'; message?: string };
+let currentStatus: WhisperStatus = { state: 'idle' };
+const statusListeners = new Set<(s: WhisperStatus) => void>();
+
+export function getWhisperStatus(): WhisperStatus { return currentStatus; }
+
+export function onWhisperStatusChange(listener: (s: WhisperStatus) => void): () => void {
+  statusListeners.add(listener);
+  return () => { statusListeners.delete(listener); };
+}
+
+function setStatus(next: WhisperStatus): void {
+  currentStatus = next;
+  for (const l of statusListeners) {
+    try { l(next); } catch (e) { logger.warn(`[whisper] status listener error: ${e}`); }
+  }
+}
+
+/** Trigger sidecar startup at server boot (non-blocking). */
+export function initialize(): void {
+  if (currentStatus.state !== 'idle') return;
+  ensureRunning().catch(() => {/* status already set to 'failed' */});
+}
+
 function ensureRunning(): Promise<void> {
   if (sidecar && !sidecar.killed) return Promise.resolve();
   if (startPromise) return startPromise;
 
+  setStatus({ state: 'starting' });
   startPromise = new Promise<void>((resolve, reject) => {
     logger.info('[whisper] Starting sidecar...');
 
@@ -67,7 +92,9 @@ function ensureRunning(): Promise<void> {
       try { child.kill('SIGKILL'); } catch {}
       sidecar = null;
       startPromise = null;
-      reject(new Error(`Whisper sidecar start timed out (${SIDECAR_START_TIMEOUT_MS / 1000}s)`));
+      const msg = `Whisper sidecar start timed out (${SIDECAR_START_TIMEOUT_MS / 1000}s)`;
+      setStatus({ state: 'failed', message: msg });
+      reject(new Error(msg));
     }, SIDECAR_START_TIMEOUT_MS);
 
     child.stderr?.on('data', (chunk: Buffer) => {
@@ -78,6 +105,7 @@ function ensureRunning(): Promise<void> {
         clearTimeout(startTimer);
         startPromise = null;
         sidecar = child;
+        setStatus({ state: 'ready' });
         resolve();
       }
     });
@@ -125,7 +153,12 @@ function ensureRunning(): Promise<void> {
       pending.clear();
       if (!resolved) {
         resolved = true;
-        reject(new Error('Whisper sidecar failed to start'));
+        const msg = `Whisper sidecar failed to start (exit ${code})`;
+        setStatus({ state: 'failed', message: msg });
+        reject(new Error(msg));
+      } else {
+        // Sidecar was running, then died — mark as failed so clients re-evaluate
+        setStatus({ state: 'failed', message: `Whisper sidecar exited (code ${code})` });
       }
     });
 
@@ -136,7 +169,9 @@ function ensureRunning(): Promise<void> {
       startPromise = null;
       if (!resolved) {
         resolved = true;
-        reject(new Error(`Whisper nicht verfuegbar: ${err.message}. Installieren mit: pip3 install openai-whisper torch`));
+        const msg = `Whisper nicht verfuegbar: ${err.message}. Installieren mit: pip3 install openai-whisper torch`;
+        setStatus({ state: 'failed', message: msg });
+        reject(new Error(msg));
       }
     });
   });

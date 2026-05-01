@@ -227,17 +227,16 @@ echo "[$(date)] Stopping server..."
 node "${CLI_PATH}" stop 2>/dev/null || true
 sleep 1
 
-# 2. Pull latest code
+# 2. Pull latest code (skip tag fetch — saves minutes on slow networks)
 echo "[$(date)] Pulling latest changes..."
-git pull || { echo "FAILED: git pull"; exit 1; }
+git pull --no-tags || { echo "FAILED: git pull"; exit 1; }
 
 # 3. Install dependencies
 echo "[$(date)] Installing dependencies..."
 npm install --no-audit --no-fund || { echo "FAILED: npm install"; exit 1; }
 
-# 4. Rebuild
+# 4. Rebuild (incremental — relies on .tsbuildinfo from tsconfig)
 echo "[$(date)] Rebuilding..."
-rm -rf "${path.join(ROOT, 'dist')}"
 npx tsc || { echo "FAILED: tsc build"; exit 1; }
 
 # 5. Read new version
@@ -270,6 +269,87 @@ echo "[$(date)] Update complete"
     break;
   }
 
+  // ── tms-terminal audio:doctor ──────────────────────────────────────────
+  case 'audio:doctor': {
+    const SUPPORTED_PYTHON = ['3.10', '3.11', '3.12', '3.13'];
+    const AUDIO_DIR = path.join(ROOT, 'audio');
+    const VENV = path.join(AUDIO_DIR, '.venv');
+    const VENV_PY = path.join(VENV, 'bin', 'python3');
+    const SIDECAR = path.join(AUDIO_DIR, 'whisper_sidecar.py');
+
+    const ok = (msg) => console.log(`\x1b[32m✓\x1b[0m  ${msg}`);
+    const warn = (msg) => console.log(`\x1b[33m!\x1b[0m  ${msg}`);
+    const bad = (msg) => console.log(`\x1b[31m✗\x1b[0m  ${msg}`);
+    const tip = (msg) => console.log(`   \x1b[90m→ ${msg}\x1b[0m`);
+
+    console.log('\n\x1b[1mWhisper Audio Diagnostics\x1b[0m\n');
+
+    // 1. sidecar script exists
+    if (!fs.existsSync(SIDECAR)) {
+      bad('whisper_sidecar.py fehlt');
+      tip(`Erwartet: ${SIDECAR}`);
+      process.exit(1);
+    }
+    ok(`Sidecar Skript gefunden: ${SIDECAR}`);
+
+    // 2. venv exists
+    if (!fs.existsSync(VENV_PY)) {
+      bad('venv fehlt oder kaputt');
+      tip(`Beheben: cd "${AUDIO_DIR}" && python3.13 -m venv .venv && .venv/bin/pip install torch openai-whisper`);
+      process.exit(1);
+    }
+    ok('venv vorhanden');
+
+    // 3. python version inside venv
+    let pyVersion = '?';
+    try {
+      pyVersion = execSync(`"${VENV_PY}" --version`, { encoding: 'utf8' }).trim().replace(/^Python\s+/, '');
+    } catch (e) {
+      bad(`venv Python kann nicht ausgeführt werden: ${e.message}`);
+      process.exit(1);
+    }
+    const major = pyVersion.split('.').slice(0, 2).join('.');
+    if (SUPPORTED_PYTHON.includes(major)) {
+      ok(`Python ${pyVersion} (unterstützt)`);
+    } else {
+      bad(`Python ${pyVersion} ist nicht stabil mit torch (unterstützt: ${SUPPORTED_PYTHON.join(', ')})`);
+      tip(`Beheben: cd "${AUDIO_DIR}" && rm -rf .venv && python3.13 -m venv .venv && .venv/bin/pip install torch openai-whisper`);
+      process.exit(1);
+    }
+
+    // 4. torch + whisper import (10s timeout)
+    process.stdout.write('\x1b[34m⟳\x1b[0m  torch + whisper Import test (max 10s)... ');
+    try {
+      const out = execSync(
+        `"${VENV_PY}" -c "import torch; import whisper; print(torch.__version__, torch.backends.mps.is_available())"`,
+        { encoding: 'utf8', timeout: 10_000 }
+      ).trim();
+      const [torchVer, mpsAvail] = out.split(' ');
+      console.log('\r\x1b[32m✓\x1b[0m  torch ' + torchVer + ' importiert' + (mpsAvail === 'True' ? ' (MPS verfügbar)' : ' (CPU only)'));
+    } catch (e) {
+      console.log('\r\x1b[31m✗\x1b[0m  Import hängt oder schlägt fehl');
+      tip(`Beheben: cd "${AUDIO_DIR}" && rm -rf .venv && python3.13 -m venv .venv && .venv/bin/pip install torch openai-whisper`);
+      tip(`Fehler: ${(e.stderr || e.message || '').toString().split('\n')[0]}`);
+      process.exit(1);
+    }
+
+    // 5. model cache
+    const modelCache = path.join(os.homedir(), '.cache', 'whisper');
+    if (fs.existsSync(modelCache)) {
+      const models = fs.readdirSync(modelCache).filter((f) => f.endsWith('.pt'));
+      if (models.length > 0) {
+        ok(`${models.length} Modell(e) im Cache: ${models.join(', ')}`);
+      } else {
+        warn('Modell-Cache leer — erster Mic-Request lädt Modell (~1.5 GB)');
+      }
+    } else {
+      warn('Kein Modell-Cache — erster Mic-Request lädt Modell (~1.5 GB)');
+    }
+
+    console.log('\n\x1b[32m✓\x1b[0m  Audio-System ist OK.\n');
+    break;
+  }
+
   // ── help ────────────────────────────────────────────────────────────────
   default:
     console.log(`
@@ -282,6 +362,7 @@ echo "[$(date)] Update complete"
   tms-terminal status       Check if server is running
   tms-terminal update       Pull latest code, rebuild, restart
   tms-terminal rebuild      Recompile TypeScript
+  tms-terminal audio:doctor Check Whisper audio setup
   tms-terminal uninstall    Remove everything (config, global command)
 
 \x1b[1mInstall:\x1b[0m
