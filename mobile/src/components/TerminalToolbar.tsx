@@ -9,6 +9,7 @@ import { useResponsive } from '../hooks/useResponsive';
 import { useSettingsStore } from '../store/settingsStore';
 
 export const TOOLBAR_HEIGHT = 44;
+const TRANSCRIPTION_TIMEOUT_MS = 120_000;
 
 interface Props {
   sessionId: string | undefined;
@@ -31,7 +32,15 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   const [recordingDuration, setRecordingDuration] = useState(0);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const transcriptionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  const clearTranscriptionTimer = () => {
+    if (transcriptionTimerRef.current) {
+      clearTimeout(transcriptionTimerRef.current);
+      transcriptionTimerRef.current = null;
+    }
+  };
 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
@@ -64,10 +73,12 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
       const m = msg as { type: string; sessionId?: string; payload?: any };
       if (m.sessionId !== sessionId) return;
       if (m.type === 'audio:transcription') {
+        clearTranscriptionTimer();
         setMicState('idle');
         setMicError(null);
         onTranscription?.(m.payload?.text ?? '');
       } else if (m.type === 'audio:error') {
+        clearTranscriptionTimer();
         setMicState('idle');
         const errMsg = m.payload?.message ?? 'Transkription fehlgeschlagen';
         setMicError(errMsg);
@@ -87,6 +98,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
         clearInterval(durationTimerRef.current);
         durationTimerRef.current = null;
       }
+      clearTranscriptionTimer();
     };
   }, []);
 
@@ -119,6 +131,16 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
           sessionId,
           payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
         });
+
+        clearTranscriptionTimer();
+        transcriptionTimerRef.current = setTimeout(() => {
+          transcriptionTimerRef.current = null;
+          setMicState('idle');
+          const errMsg = `Transkription Timeout (${TRANSCRIPTION_TIMEOUT_MS / 1000}s)`;
+          setMicError(errMsg);
+          setTimeout(() => setMicError(null), 4000);
+          onTranscriptionError?.(errMsg);
+        }, TRANSCRIPTION_TIMEOUT_MS);
       } catch (err) {
         console.warn('[mic] Error stopping recording:', err);
         setMicState('idle');
@@ -175,7 +197,6 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   const sm = ri(14);  // small icon
   const lg = ri(18);  // large icon for prominent buttons
   const fontSz = rf(11);
-  const btnW = rs(40);
 
   // Compact arrow button
   const Arrow = ({ icon, seq }: { icon: string; seq: string }) => (
@@ -187,7 +208,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   // Small key button (flex: 1, for the middle keys)
   const Key = ({ label, seq, icon, action, accent }: { label: string; seq: string; icon?: string; action?: string; accent?: string }) => (
     <TouchableOpacity
-      style={[s.key, { height: h, minWidth: rs(28) }]}
+      style={[s.key, { height: h }]}
       onPress={() => send(seq, action)}
       activeOpacity={0.6}
       accessibilityLabel={label}
@@ -202,7 +223,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   // Large prominent button (fixed width, bigger icon)
   const BigBtn = ({ icon, onPress, color, active, activeColor }: { icon: string; onPress?: () => void; color: string; active?: boolean; activeColor?: string }) => (
     <TouchableOpacity
-      style={[s.bigBtn, { height: h, width: btnW }, active && activeColor ? { backgroundColor: activeColor + '18', borderWidth: StyleSheet.hairlineWidth, borderColor: activeColor } : null]}
+      style={[s.bigBtn, { height: h }, active && activeColor ? { backgroundColor: activeColor + '18', borderWidth: StyleSheet.hairlineWidth, borderColor: activeColor } : null]}
       onPress={onPress}
       activeOpacity={0.6}
     >
@@ -211,7 +232,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   );
 
   return (
-    <Animated.View style={[s.bar, { bottom: bottomAnim, height: rs(TOOLBAR_HEIGHT), paddingHorizontal: rs(5), gap: rs(3) }]} accessibilityRole={'toolbar' as any}>
+    <Animated.View style={[s.bar, { bottom: bottomAnim, height: rs(TOOLBAR_HEIGHT) }]} accessibilityRole={'toolbar' as any}>
       {/* ── D-Pad toggle ─────────────────────────────── */}
       <TouchableOpacity
         style={[s.dpadToggle, { height: h, width: h }, arrowsOpen && s.dpadToggleActive]}
@@ -222,70 +243,67 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
       </TouchableOpacity>
 
       {arrowsOpen && (
-        <View style={[s.arrowGroup, { gap: rs(2) }]}>
+        <View style={s.arrowGroup}>
           <Arrow icon="chevron-up" seq={'\x1b[A'} />
           <Arrow icon="chevron-down" seq={'\x1b[B'} />
           <Arrow icon="chevron-left" seq={'\x1b[D'} />
           <Arrow icon="chevron-right" seq={'\x1b[C'} />
-          <TouchableOpacity
-            style={[s.arrowBtn, { width: h, height: h }, rangeActive && { backgroundColor: colors.accent + '18', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.accent }]}
-            onPress={onRangeToggle}
-            activeOpacity={0.6}
-          >
-            <Feather name="scissors" size={sm} color={rangeActive ? colors.accent : colors.textMuted} />
-          </TouchableOpacity>
         </View>
       )}
 
       <View style={s.sep} />
 
       {/* ── Action keys ──────────────────────────────── */}
-      <View style={[s.actionKeys, { gap: rs(3) }]}>
-        <Key label="Esc" seq={'\x1b'} />
-        <Key label="^C" seq={'\x03'} accent={colors.destructive} />
-        <Key label="" seq="" icon="trash" action="clear" />
-        <Key label="" seq={'\x15'} icon="delete" />
-      </View>
+      <Key label="Esc" seq={'\x1b'} />
+      <Key label="^C" seq={'\x03'} accent={colors.destructive} />
+      <Key label="" seq="" icon="trash" action="clear" />
+      <Key label="" seq={'\x15'} icon="delete" />
 
       <View style={s.sep} />
 
-      {/* ── Prominent buttons: Mic, Scroll, Enter ────── */}
+      {/* ── Prominent buttons: Scissors, Scroll, Enter ─ */}
+      <BigBtn icon="scissors" onPress={onRangeToggle} color={colors.textDim} active={rangeActive} activeColor={colors.accent} />
+      <BigBtn icon="chevrons-down" onPress={onScrollToBottom} color={colors.info} />
+      <BigBtn icon="corner-down-left" onPress={() => send('\r')} color={colors.text} />
+
       {audioInputEnabled && micError && micState === 'idle' && (
         <View style={[s.errorBar, { height: h }]}>
           <Feather name="alert-circle" size={sm} color={colors.destructive} />
           <Text style={[s.keyText, { fontSize: fontSz, color: colors.destructive, flex: 1 }]} numberOfLines={1}>{micError}</Text>
         </View>
       )}
-      {audioInputEnabled && !micError && micState === 'processing' && (
-        <Animated.View style={[s.processingBar, { height: h, opacity: pulseAnim }]}>
-          <ActivityIndicator size="small" color={colors.primary} />
-          <Text style={[s.keyText, { fontSize: fontSz, color: colors.primary }]}>Transkribiert…</Text>
-        </Animated.View>
-      )}
-      {audioInputEnabled && !micError && micState !== 'processing' && (
+      {audioInputEnabled && !micError && (
         <>
-          <Animated.View style={{ opacity: micState === 'recording' ? pulseAnim : 1 }}>
-            <TouchableOpacity
-              style={[
-                s.bigBtn,
-                { height: h, width: btnW },
-                micState === 'recording' && { backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: StyleSheet.hairlineWidth, borderColor: '#ef4444' },
-              ]}
-              onPress={handleMicPress}
-              activeOpacity={0.6}
-            >
-              <Feather name="mic" size={lg} color={micState === 'recording' ? '#ef4444' : colors.textDim} />
-            </TouchableOpacity>
-          </Animated.View>
-          {micState === 'recording' && (
-            <Text style={[s.keyText, { fontSize: fontSz, color: '#ef4444', minWidth: rs(28), textAlign: 'center' }]}>
-              {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
-            </Text>
+          <View style={s.sep} />
+          {micState === 'processing' ? (
+            <Animated.View style={[s.processingBar, { height: h, opacity: pulseAnim }]}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={[s.keyText, { fontSize: fontSz, color: colors.primary }]}>Transkribiert…</Text>
+            </Animated.View>
+          ) : (
+            <>
+              <Animated.View style={{ opacity: micState === 'recording' ? pulseAnim : 1 }}>
+                <TouchableOpacity
+                  style={[
+                    s.bigBtn,
+                    { height: h },
+                    micState === 'recording' && { backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: StyleSheet.hairlineWidth, borderColor: '#ef4444' },
+                  ]}
+                  onPress={handleMicPress}
+                  activeOpacity={0.6}
+                >
+                  <Feather name="mic" size={lg} color={micState === 'recording' ? '#ef4444' : colors.textDim} />
+                </TouchableOpacity>
+              </Animated.View>
+              {micState === 'recording' && (
+                <Text style={[s.keyText, { fontSize: fontSz, color: '#ef4444', minWidth: 28, textAlign: 'center' }]}>
+                  {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
+                </Text>
+              )}
+            </>
           )}
         </>
       )}
-      <BigBtn icon="chevrons-down" onPress={onScrollToBottom} color={colors.info} />
-      <BigBtn icon="corner-down-left" onPress={() => send('\r')} color={colors.text} />
     </Animated.View>
   );
 }
@@ -301,6 +319,8 @@ const s = StyleSheet.create({
     backgroundColor: colors.bg,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
+    paddingHorizontal: 5,
+    gap: 3,
     zIndex: 50,
   },
   dpadToggle: {
@@ -316,13 +336,7 @@ const s = StyleSheet.create({
   },
   arrowGroup: {
     flexDirection: 'row',
-    flexShrink: 1,
-  },
-  actionKeys: {
-    flex: 1,
-    flexShrink: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    gap: 2,
   },
   arrowBtn: {
     alignItems: 'center',
@@ -336,6 +350,7 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 6,
     backgroundColor: colors.surface,
+    minWidth: 32,
   },
   keyText: {
     color: colors.text,
@@ -344,6 +359,7 @@ const s = StyleSheet.create({
     letterSpacing: 0.3,
   },
   bigBtn: {
+    width: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 8,

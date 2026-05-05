@@ -101,7 +101,7 @@ def main():
         return models[model_name]
 
     # Pre-load default model
-    default_model = "large-v3"
+    default_model = "large-v3-turbo"
     get_model(default_model)
 
     sys.stderr.write("[whisper-sidecar] Ready for requests.\n")
