@@ -265,8 +265,13 @@ export class PromptDetector {
     const clean = raw.replace(ANSI_STRIP, '');
     const tail  = clean.slice(-SCAN_TAIL);
 
-    // Check 1: Interactive prompt patterns
-    const matched = PROMPT_PATTERNS.find((p) => p.test(tail));
+    // Check 1: Interactive prompt patterns.
+    // Skip if the fast-path already fired for the currently-active prompt —
+    // _check is the silence-based fallback and would otherwise re-fire as the
+    // buffer tail's hash drifts with each spinner tick.
+    const matched = this.promptActive.get(sessionId)
+      ? undefined
+      : PROMPT_PATTERNS.find((p) => p.test(tail));
 
     // Check 2: AI tool finished (active + enough output + shell prompt returned)
     const aiWasActive    = this.aiActive.get(sessionId) ?? false;
