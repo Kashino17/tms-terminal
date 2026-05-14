@@ -192,6 +192,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         } else {
           logger.info(`Auto-approve: sending Enter for session ${sessionId.slice(0, 8)}`);
           globalManager.write(sessionId, '\r');
+          // Reset detector state so the next prompt fires cleanly without
+          // re-matching residual text from the prompt we just dismissed.
+          promptDetector.noteApproved(sessionId);
           return; // No WS notification needed
         }
       }
