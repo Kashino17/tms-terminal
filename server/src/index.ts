@@ -17,7 +17,6 @@ import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
 import { shutdown as shutdownWhisper } from './audio/whisper-sidecar';
 import { managerService } from './websocket/ws.handler';
-import Busboy from 'busboy';
 
 // ── Global error handlers ────────────────────────────────────────────
 process.on('unhandledRejection', (reason) => {
@@ -57,64 +56,48 @@ function handleTranscribe(
     res.end(JSON.stringify(body));
   };
 
-  const tempPath = path.join(os.tmpdir(), `${Date.now()}_transcribe_audio`);
+  // Accept JSON body: { path: string }
+  let body = '';
+  req.setEncoding('utf8');
+  req.on('data', (chunk: string) => { body += chunk; });
+  req.on('end', () => {
+    let filePath: string | undefined;
+    try {
+      const parsed = JSON.parse(body);
+      filePath = typeof parsed === 'string' ? parsed : parsed.path;
+    } catch {
+      // If not JSON, treat raw body as file path
+      if (body.trim()) filePath = body.trim();
+    }
 
-  let busboy: ReturnType<typeof Busboy>;
-  try {
-    busboy = Busboy({
-      headers: req.headers,
-      limits: { fileSize: 50 * 1024 * 1024 },
-    });
-  } catch {
-    respond(400, { error: 'Invalid multipart request' });
-    return;
-  }
+    if (!filePath) {
+      respond(400, { error: 'Missing file path' });
+      return;
+    }
 
-  busboy.on('part', (stream: NodeJS.ReadableStream & { resume: () => void }, info: { filename?: string; mimeType?: string }) => {
-    const ws = fs.createWriteStream(tempPath);
-    stream.pipe(ws);
-    stream.on('error', () => ws.destroy());
-    ws.on('finish', () => {
-      const filePath = ws.writableEnded ? tempPath : '';
-      if (!filePath) {
-        respond(400, { error: 'Failed to receive audio data' });
+    // Security: prevent path traversal
+    const normalized = path.resolve(path.dirname(filePath), path.basename(filePath));
+    const allowedRoots = [path.join(os.homedir(), '.tms-terminal', 'uploads'), os.tmpdir()];
+    if (!allowedRoots.some((r) => normalized.startsWith(r))) {
+      respond(403, { error: 'Access denied' });
+      return;
+    }
+
+    if (!fs.existsSync(normalized)) {
+      respond(404, { error: 'File not found' });
+      return;
+    }
+
+    transcriptionService.transcribe(normalized).then((result) => {
+      if (result.error) {
+        respond(500, { error: result.error, text: '' });
         return;
       }
-      transcriptionService.transcribe(filePath).then((result) => {
-        try { fs.unlinkSync(tempPath); } catch {}
-        if (result.error) {
-          respond(500, { error: result.error, text: '' });
-          return;
-        }
-        respond(200, { text: result.text, language: result.language });
-      }).catch((err) => {
-        try { fs.unlinkSync(tempPath); } catch {}
-        respond(500, { error: err instanceof Error ? err.message : 'Transcription failed', text: '' });
-      });
-    });
-    ws.on('error', () => {
-      stream.resume();
-      respond(500, { error: 'Write error' });
+      respond(200, { text: result.text, language: result.language });
+    }).catch((err) => {
+      respond(500, { error: err instanceof Error ? err.message : 'Transcription failed', text: '' });
     });
   });
-
-  busboy.on('error', () => {
-    try { fs.unlinkSync(tempPath); } catch {}
-    respond(500, { error: 'Parsing error' });
-  });
-
-  busboy.on('finish', () => {
-    if (!responded) {
-      try { fs.unlinkSync(tempPath); } catch {}
-      respond(400, { error: 'No part received' });
-    }
-  });
-
-  req.on('close', () => {
-    try { fs.unlinkSync(tempPath); } catch {}
-  });
-
-  req.pipe(busboy);
 }
 
 function main(): void {

@@ -391,25 +391,36 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
 
       // Transcribe the uploaded audio
       const transcribeUrl = `http://${serverHost}:${serverPort}/transcribe`;
-      const transcribeRes = await fetch(transcribeUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${serverToken}`,
-        },
-        body: uploadJson.path,
-      });
-      if (!transcribeRes.ok) throw new Error(`Transcription failed: ${transcribeRes.status}`);
-      const transcribeJson = await transcribeRes.json() as { text: string; language?: string };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000);
+      try {
+        const transcribeRes = await fetch(transcribeUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${serverToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ path: uploadJson.path }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!transcribeRes.ok) throw new Error(`Transcription failed: ${transcribeRes.status}`);
+        const transcribeJson = await transcribeRes.json() as { text: string; language?: string };
 
-      // Send transcription as chat message
-      if (sessionId) {
-        wsService.send({ type: 'terminal:input', sessionId, payload: { data: transcribeJson.text } });
+        // Send transcription as chat message
+        if (sessionId) {
+          wsService.send({ type: 'terminal:input', sessionId, payload: { data: transcribeJson.text } });
+        }
+
+        setUploadState('done');
+        setUploadedPaths([transcribeJson.text]);
+        setPreviewUri(null);
+        setPreviewIsVideo(false);
+      } catch {
+        clearTimeout(timeout);
+        setUploadState('error');
+        setErrorMsg(`Transkription fehlgeschlagen: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`);
       }
-
-      setUploadState('done');
-      setUploadedPaths([transcribeJson.text]);
-      setPreviewUri(null);
-      setPreviewIsVideo(false);
     } catch (err: unknown) {
       setUploadState('error');
       setErrorMsg(err instanceof Error ? err.message : 'Transkription fehlgeschlagen');
