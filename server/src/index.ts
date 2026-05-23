@@ -6,6 +6,7 @@ import { config, loadServerConfig, ensureConfigDir } from './config';
 import { handleAuthRequest } from './auth/auth.controller';
 import { handleFileList, handleFileRead, handleFileDownload, handleMkdir, handleMove, handleTrash } from './files/file.handler';
 import { handleUploadRequest, handleDrawingUpload } from './upload/upload.handler';
+import { transcriptionService } from './transcription/transcription.service';
 import { validateToken } from './auth/jwt.service';
 import { createWebSocketServer } from './websocket/ws.server';
 import { isPasswordSet } from './auth/password.service';
@@ -16,6 +17,7 @@ import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
 import { shutdown as shutdownWhisper } from './audio/whisper-sidecar';
 import { managerService } from './websocket/ws.handler';
+import Busboy from 'busboy';
 
 // ── Global error handlers ────────────────────────────────────────────
 process.on('unhandledRejection', (reason) => {
@@ -27,6 +29,93 @@ process.on('uncaughtException', (err) => {
   // Give the logger time to flush, then exit
   setTimeout(() => process.exit(1), 100);
 });
+
+function handleTranscribe(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): void {
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Method not allowed' }));
+    return;
+  }
+
+  // Auth via Bearer token
+  const authHeader = req.headers['authorization'];
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token || !validateToken(token)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unauthorized' }));
+    return;
+  }
+
+  let responded = false;
+  const respond = (status: number, body: object) => {
+    if (responded) return;
+    responded = true;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  };
+
+  const tempPath = path.join(os.tmpdir(), `${Date.now()}_transcribe_audio`);
+
+  let busboy: ReturnType<typeof Busboy>;
+  try {
+    busboy = Busboy({
+      headers: req.headers,
+      limits: { fileSize: 50 * 1024 * 1024 },
+    });
+  } catch {
+    respond(400, { error: 'Invalid multipart request' });
+    return;
+  }
+
+  busboy.on('part', (stream: NodeJS.ReadableStream & { resume: () => void }, info: { filename?: string; mimeType?: string }) => {
+    const ws = fs.createWriteStream(tempPath);
+    stream.pipe(ws);
+    stream.on('error', () => ws.destroy());
+    ws.on('finish', () => {
+      const filePath = ws.writableEnded ? tempPath : '';
+      if (!filePath) {
+        respond(400, { error: 'Failed to receive audio data' });
+        return;
+      }
+      transcriptionService.transcribe(filePath).then((result) => {
+        try { fs.unlinkSync(tempPath); } catch {}
+        if (result.error) {
+          respond(500, { error: result.error, text: '' });
+          return;
+        }
+        respond(200, { text: result.text, language: result.language });
+      }).catch((err) => {
+        try { fs.unlinkSync(tempPath); } catch {}
+        respond(500, { error: err instanceof Error ? err.message : 'Transcription failed', text: '' });
+      });
+    });
+    ws.on('error', () => {
+      stream.resume();
+      respond(500, { error: 'Write error' });
+    });
+  });
+
+  busboy.on('error', () => {
+    try { fs.unlinkSync(tempPath); } catch {}
+    respond(500, { error: 'Parsing error' });
+  });
+
+  busboy.on('finish', () => {
+    if (!responded) {
+      try { fs.unlinkSync(tempPath); } catch {}
+      respond(400, { error: 'No part received' });
+    }
+  });
+
+  req.on('close', () => {
+    try { fs.unlinkSync(tempPath); } catch {}
+  });
+
+  req.pipe(busboy);
+}
 
 function main(): void {
   ensureConfigDir();
@@ -78,6 +167,7 @@ function main(): void {
       handleUploadRequest(req, res);
     } else if (req.url === '/upload/drawing') {
       handleDrawingUpload(req, res);
+<<<<<<< HEAD
     } else if (req.url?.startsWith('/generated-images/')) {
       // Serve generated images (JWT-protected)
       const authHeader = req.headers['authorization'] ?? '';
@@ -132,6 +222,8 @@ function main(): void {
       }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
       fs.createReadStream(filePath).pipe(res);
+    } else if (req.url === '/transcribe') {
+      handleTranscribe(req, res);
     } else if (req.url?.startsWith('/files/')) {
       // JWT-protected file browser endpoints
       // Accept token from Authorization header OR ?token= query param (for Image/download URLs)

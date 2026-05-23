@@ -12,6 +12,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
+import { Recording } from 'expo-av';
 import { WebSocketService } from '../services/websocket.service';
 import { colors, fonts } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
@@ -49,8 +50,11 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const [videoProgress, setVideoProgress] = useState<{ loaded: number; total: number } | null>(null);
-
-  const lastPath = uploadedPaths.length > 0 ? uploadedPaths[uploadedPaths.length - 1] : null;
+  const [recording, setRecording] = useState<Recording | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const recordingRef = useRef<Recording | null>(null);
+  const stopRef = useRef(false);
 
   useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
 
@@ -302,6 +306,121 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
     copyTimerRef.current = setTimeout(() => setPathCopied(false), 1600);
   }, [uploadedPaths]);
 
+  const recordAndTranscribe = useCallback(async () => {
+    setUploadState('picking');
+    setErrorMsg('');
+    setTranscribing(false);
+    stopRef.current = false;
+    try {
+      const perm = await Recording.requestPermissionsAsync();
+      if (!perm.granted) {
+        setUploadState('error');
+        setErrorMsg('Mikrofon-Zugriff verweigert');
+        return;
+      }
+
+      await Recording.setAudioModeAsync({
+        allowsRecording: true,
+        interruptionModeIOS: Recording.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+      });
+
+      const rec = new Recording();
+      await rec.startAsync();
+      setRecording(rec);
+      setIsRecording(true);
+      recordingRef.current = rec;
+
+      // Poll until stopRef.current becomes true
+      await new Promise<void>((resolve) => {
+        const check = setInterval(() => {
+          if (stopRef.current) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 200);
+      });
+    } catch (err: unknown) {
+      setUploadState('error');
+      setErrorMsg(err instanceof Error ? err.message : 'Recording fehlgeschlagen');
+    }
+  }, []);
+
+  const stopRecording = useCallback(async () => {
+    stopRef.current = true;
+    setIsRecording(false);
+    setUploadState('uploading');
+    setTranscribing(true);
+
+    const rec = recordingRef.current;
+    if (!rec) {
+      setUploadState('error');
+      setErrorMsg('Kein Recording verfügbar');
+      return;
+    }
+
+    try {
+      await rec.finishAndSwitchAtPathAsync(`${FileSystem.cacheDirectory}audio_${Date.now()}.m4a`);
+      const uri = rec.getURI();
+      if (!uri) {
+        setUploadState('error');
+        setErrorMsg('Recording URI fehlt');
+        return;
+      }
+
+      // Upload audio to /upload/media
+      const base64Data = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const filename = `recording_${Date.now()}.m4a`;
+      const uploadUrl = `http://${serverHost}:${serverPort}/upload/media`;
+
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${serverToken}`,
+        },
+        body: JSON.stringify({
+          filename,
+          data: base64Data,
+          mimeType: 'audio/mp4',
+        }),
+      });
+      if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
+      const uploadJson = await uploadRes.json() as { path: string };
+
+      // Transcribe the uploaded audio
+      const transcribeUrl = `http://${serverHost}:${serverPort}/transcribe`;
+      const transcribeRes = await fetch(transcribeUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${serverToken}`,
+        },
+        body: uploadJson.path,
+      });
+      if (!transcribeRes.ok) throw new Error(`Transcription failed: ${transcribeRes.status}`);
+      const transcribeJson = await transcribeRes.json() as { text: string; language?: string };
+
+      // Send transcription as chat message
+      if (sessionId) {
+        wsService.send({ type: 'terminal:input', sessionId, payload: { data: transcribeJson.text } });
+      }
+
+      setUploadState('done');
+      setUploadedPaths([transcribeJson.text]);
+      setPreviewUri(null);
+      setPreviewIsVideo(false);
+    } catch (err: unknown) {
+      setUploadState('error');
+      setErrorMsg(err instanceof Error ? err.message : 'Transkription fehlgeschlagen');
+    } finally {
+      setRecording(null);
+      setIsRecording(false);
+      setTranscribing(false);
+      recordingRef.current = null;
+    }
+  }, [recordingRef, serverHost, serverPort, serverToken, sessionId, wsService]);
+
   return (
     <View style={s.container}>
       {/* Header */}
@@ -346,6 +465,21 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
             </View>
           </TouchableOpacity>
 
+          {/* Audio recording button */}
+          <TouchableOpacity
+            style={[s.secondaryBtn, { paddingVertical: rs(12), paddingHorizontal: rs(14), gap: rs(12) }]}
+            onPress={recordAndTranscribe}
+            activeOpacity={0.75}
+            accessibilityLabel="Record audio"
+            accessibilityRole="button"
+          >
+            <Feather name="mic" size={ri(22)} color={colors.textMuted} />
+            <View>
+              <Text style={[s.secondaryBtnLabel, { fontSize: rf(13) }]}>Audio aufnehmen</Text>
+              <Text style={[s.secondaryBtnSub, { fontSize: rf(10) }]}>Sprache → Text</Text>
+            </View>
+          </TouchableOpacity>
+
           {/* Destination hint */}
           <View style={s.destRow}>
             <Text style={s.destLabel}>Ziel</Text>
@@ -357,21 +491,39 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
       {/* Loading */}
       {(uploadState === 'picking' || uploadState === 'uploading') && (
         <View style={s.centered}>
-          <ActivityIndicator color={colors.info} size="large" />
-          <Text style={s.loadingText}>
-            {uploadState === 'picking'
-              ? 'Galerie öffnet…'
-              : videoProgress
-                ? `${(videoProgress.loaded / (1024 * 1024)).toFixed(0)} MB / ${(videoProgress.total / (1024 * 1024)).toFixed(0)} MB`
-                : uploadProgress.total > 1
-                  ? `${uploadProgress.current}/${uploadProgress.total} hochgeladen…`
-                  : 'Wird hochgeladen…'}
-          </Text>
-          {uploadState === 'uploading' && videoProgress && (
-            <TouchableOpacity style={s.cancelBtn} onPress={cancelUpload} activeOpacity={0.75}>
-              <Feather name="x" size={14} color={colors.destructive} />
-              <Text style={s.cancelTxt}>Abbrechen</Text>
-            </TouchableOpacity>
+          {isRecording ? (
+            <>
+              <Feather name="mic" size={36} color={colors.destructive} />
+              <Text style={s.loadingText}>Aufnahme läuft — Tippe zum Stoppen</Text>
+              <TouchableOpacity style={s.stopBtn} onPress={stopRecording} activeOpacity={0.75}>
+                <Feather name="stop" size={16} color="#fff" />
+                <Text style={s.stopTxt}>Stoppen</Text>
+              </TouchableOpacity>
+            </>
+          ) : transcribing ? (
+            <>
+              <ActivityIndicator color={colors.info} size="large" />
+              <Text style={s.loadingText}>Transkribiere…</Text>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator color={colors.info} size="large" />
+              <Text style={s.loadingText}>
+                {uploadState === 'picking'
+                  ? 'Galerie öffnet…'
+                  : videoProgress
+                    ? `${(videoProgress.loaded / (1024 * 1024)).toFixed(0)} MB / ${(videoProgress.total / (1024 * 1024)).toFixed(0)} MB`
+                    : uploadProgress.total > 1
+                      ? `${uploadProgress.current}/${uploadProgress.total} hochgeladen…`
+                      : 'Wird hochgeladen…'}
+              </Text>
+              {uploadState === 'uploading' && videoProgress && (
+                <TouchableOpacity style={s.cancelBtn} onPress={cancelUpload} activeOpacity={0.75}>
+                  <Feather name="x" size={14} color={colors.destructive} />
+                  <Text style={s.cancelTxt}>Abbrechen</Text>
+                </TouchableOpacity>
+              )}
+            </>
           )}
         </View>
       )}
@@ -728,5 +880,20 @@ const s = StyleSheet.create({
     color: colors.destructive,
     fontSize: 11,
     fontWeight: '600',
+  },
+  stopBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    backgroundColor: colors.destructive,
+    borderRadius: 10,
+  },
+  stopTxt: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
