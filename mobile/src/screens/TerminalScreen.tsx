@@ -591,9 +591,16 @@ export function TerminalScreen({ navigation, route }: Props) {
       restoreDismissTimer.current = setTimeout(() => setRestoreState(null), 15_000);
     }
 
-    // Existing tabs: trigger reattach or create using last known dims (or defaults)
+    // Existing tabs: reattach/create — but ONLY with the WebView's real fitted
+    // dims. NEVER fall back to a default like 80×24: that resized the PTY to a
+    // wrong size and then back once the real size arrived, and every PTY resize
+    // makes Claude Code's TUI reprint its whole tree → duplicated scrollback.
+    // If real dims aren't known yet (WebView not mounted/ready), skip here —
+    // handleTabReady fires the create/reattach with correct dims the moment
+    // xterm reports its size, so nothing is lost.
     for (const tab of currentTabs) {
-      const dims = tabDimsRef.current.get(tab.id) ?? { cols: 80, rows: 24 };
+      const dims = tabDimsRef.current.get(tab.id);
+      if (!dims) continue; // no real size yet → handleTabReady will handle it
       if (pendingCreateRef.current.has(tab.id)) {
         pendingCreateRef.current.delete(tab.id);
         wsRef.current.send({ type: 'terminal:create', payload: dims });

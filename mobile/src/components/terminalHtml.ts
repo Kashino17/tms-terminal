@@ -144,6 +144,22 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   }
   function sendKey(seq) { sendToRN({ type: 'input', data: seq }); }
 
+  // ── Enter dedupe ─────────────────────────────────────────────────────
+  // Samsung Galaxy soft-keyboard fires BOTH keydown(Enter) AND
+  // beforeinput(insertLineBreak) for a single press → double Enter sent.
+  // Same pattern as the Backspace fix (see comment above physicalKey()).
+  // 50 ms is short enough not to block intentional double-press for blank
+  // lines, long enough to cover the IME's keydown→beforeinput gap.
+  // Physical-keyboard auto-repeat passes via { force: true } from keydown
+  // when e.repeat is true, so holding Enter still works.
+  var lastEnterAt = 0;
+  function sendEnter(opts) {
+    var now = Date.now();
+    if (!(opts && opts.force) && now - lastEnterAt < 50) return;
+    lastEnterAt = now;
+    sendKey(SEQ.enter);
+  }
+
   /* Terminal tap → focus keyboard (not in select mode) */
   // Use touchstart/touchend to detect a genuine stationary tap (not a scroll).
   // The native 'click' event fires even after small scrolls on mobile,
@@ -240,7 +256,7 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       cancelPendingBs();
       if (isComposing) { isComposing = false; }
       shadowInput.value = ''; prevValue = '';
-      sendKey(SEQ.enter);
+      sendEnter({ force: !!e.repeat });
       return;
     }
     // Skip IME-processed events (keyCode 229 = "handled by IME").
@@ -345,7 +361,7 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       cancelPendingBs();
       isComposing = false;
       shadowInput.value = ''; prevValue = '';
-      sendKey(SEQ.enter);
+      sendEnter();
     } else if (it === 'deleteContentBackward' && shadowInput.value.length === 0) {
       e.preventDefault();
       sendKey(SEQ.bs);
@@ -429,18 +445,42 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     lastReportedRows = term.rows;
     sendToRN({ type: 'resize', cols: term.cols, rows: term.rows });
   }
+  // Min dimensions a pane needs before fit() is meaningful. Below this we
+  // skip — fitting against 0×0 (mid-animation, display:none ancestor, etc.)
+  // sets cols=2/rows=1, then reportSize() tells the PTY to wrap output at
+  // col 2, which corrupts subsequent lines and stays in the view buffer.
+  var MIN_FIT_W = 50;   // ≈ 7 cells @ font 11–13
+  var MIN_FIT_H = 30;   // ≈ 2 rows
+
+  // ── Single debounced fit scheduler ──────────────────────────────────────
+  // EVERY fit() caller routes through here. Two guards kill the resize storm
+  // that made the PTY size oscillate (47x53→52→51→27→29…), each change firing
+  // SIGWINCH and forcing Claude Code's TUI to reprint its whole tree → the
+  // duplicated/tripled scrollback lines:
+  //   1. SETTLE DEBOUNCE (280ms): keyboard / layout / pane-focus animations
+  //      emit dozens of intermediate sizes; only act once the box stops moving.
+  //   2. BOX-UNCHANGED GUARD: if the container is the same size as the last
+  //      successful fit (switching tabs, (re)focusing, blur/focus churn), do
+  //      NOTHING — no fit, no resize message, no SIGWINCH, no reprint. This is
+  //      what makes tab-switching not re-shuffle the terminal.
   var resizeTimer = null;
-  new ResizeObserver(function() {
-    // Debounce: keyboard open/close fires multiple rapid resize events.
-    // Without debounce, each fires fitAddon.fit() + terminal:resize to server,
-    // causing display flicker and line shifting.
+  var lastFitW = 0, lastFitH = 0;
+  function scheduleFit() {
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function() {
       resizeTimer = null;
+      var el = document.getElementById('terminal');
+      if (!el) return;
+      var w = el.clientWidth, h = el.clientHeight;
+      if (w < MIN_FIT_W || h < MIN_FIT_H) return;   // collapsed / mid-animation
+      if (w === lastFitW && h === lastFitH) return;  // box unchanged → no-op
+      lastFitW = w; lastFitH = h;
       fitAddon.fit();
       reportSize();
-    }, 100);
-  }).observe(document.getElementById('terminal'));
+    }, 280);
+  }
+  new ResizeObserver(function() { scheduleFit(); })
+    .observe(document.getElementById('terminal'));
 
   /* ── Pinch-to-Zoom (does NOT block native scroll) ──── */
   var MIN_FONT = 8, MAX_FONT = 28, baseFontSize = 14;
@@ -744,7 +784,10 @@ const TERMINAL_HTML = `<!DOCTYPE html>
       }
       else if (msg.type === 'clear')  term.clear();
       else if (msg.type === 'focus')  {
-        fitAddon.fit(); reportSize();
+        // Route through the debounced scheduler with the box-unchanged guard.
+        // A plain tab switch / refocus does NOT change the container size, so
+        // this becomes a no-op (no resize → no SIGWINCH → no TUI reprint).
+        scheduleFit();
         prevValue = shadowInput.value;
         cancelPendingBs();
         // Always make sure the shadow input is in a focusable state — we may
@@ -828,7 +871,15 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         if (clamped !== term.options.fontSize) {
           term.options.fontSize = clamped;
           baseFontSize = clamped;
-          fitAddon.fit();
+          // Font change → cell size changes → cols/rows change even though the
+          // container size is unchanged. ResizeObserver won't fire (it's keyed
+          // on element box, not content), so we must reportSize ourselves.
+          // Guard against zero-size containers like the ResizeObserver path.
+          var fontEl = document.getElementById('terminal');
+          if (fontEl && fontEl.clientWidth >= MIN_FIT_W && fontEl.clientHeight >= MIN_FIT_H) {
+            fitAddon.fit();
+            reportSize();
+          }
         }
       }
       else if (msg.type === 'setTapFocusDisabled') {
@@ -893,8 +944,15 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   window.addEventListener('message',   function(e) { handleMsg(e.data); });
   document.addEventListener('message', function(e) { handleMsg(e.data); });
 
-  fitAddon.fit();
-  reportSize();
+  // Defer initial fit until the body has real dimensions. If the WebView is
+  // mounted into a still-collapsing layout, fitting now would bake cols=2 and
+  // tell the PTY to wrap there. The ResizeObserver above will trigger as soon
+  // as the body settles, doing the fit + reportSize correctly then.
+  var initialEl = document.getElementById('terminal');
+  if (initialEl && initialEl.clientWidth >= MIN_FIT_W && initialEl.clientHeight >= MIN_FIT_H) {
+    fitAddon.fit();
+    reportSize();
+  }
   sendToRN({ type: 'ready', cols: term.cols, rows: term.rows });
 })();
 </script>
