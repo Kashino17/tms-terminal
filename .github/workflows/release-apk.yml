@@ -2,8 +2,13 @@ name: Build & Release APK
 
 # Builds the signed release APK on a GitHub runner (local Metro bundling hangs
 # headless on the dev Mac) and publishes a GitHub Release so the in-app
-# auto-updater shows the update banner. Triggered manually.
+# auto-updater shows the update banner. Triggered by pushing a vX.Y.Z tag
+# (tag-triggered runs use the workflow file at the tagged commit, so it works
+# from any branch without needing the workflow on the default branch).
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -60,11 +65,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v${{ steps.ver.outputs.version }}"
-          # Idempotent: clean up a partial release/tag so re-runs succeed.
-          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          # The tag already exists (this run was triggered by pushing it), so we
+          # only need to create the release object for it. Delete just a stale
+          # release (not the tag) so re-runs succeed without re-triggering.
+          gh release delete "$TAG" --yes 2>/dev/null || true
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
             --notes "Fix: doppelte/überlappende Terminal-Ausgabe — Single-Writer View-Buffer (geteilte viewBuffers-Map wurde pro Session mehrfach beschrieben), Resize-Delta-Guard (kein redundantes SIGWINCH/Ink-Repaint), WS-connect()-Härtung." \
-            --latest \
-            --target "${{ github.sha }}"
+            --latest
