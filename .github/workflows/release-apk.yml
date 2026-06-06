@@ -1,0 +1,70 @@
+name: Build & Release APK
+
+# Builds the signed release APK on a GitHub runner (local Metro bundling hangs
+# headless on the dev Mac) and publishes a GitHub Release so the in-app
+# auto-updater shows the update banner. Triggered manually.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install JS dependencies
+        working-directory: mobile
+        run: npm ci
+
+      # The release keystore + Firebase config are gitignored, so CI gets them
+      # from base64 repo secrets. Same keystore as local => stable signing key,
+      # so the app updates over the existing install without a reinstall.
+      - name: Restore release keystore
+        run: echo "${{ secrets.ANDROID_RELEASE_KEYSTORE_B64 }}" | base64 -d > mobile/android/app/tms-release.keystore
+
+      - name: Restore google-services.json
+        run: echo "${{ secrets.GOOGLE_SERVICES_JSON_B64 }}" | base64 -d > mobile/android/app/google-services.json
+
+      - name: Build release APK
+        working-directory: mobile/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Read app version
+        id: ver
+        run: echo "version=$(node -e "console.log(require('./mobile/app.json').expo.version)")" >> "$GITHUB_OUTPUT"
+
+      - name: Rename APK
+        run: cp mobile/android/app/build/outputs/apk/release/app-release.apk "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.ver.outputs.version }}"
+          # Idempotent: clean up a partial release/tag so re-runs succeed.
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" \
+            "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
+            --title "TMS Terminal $TAG" \
+            --notes "Fix: doppelte/überlappende Terminal-Ausgabe — Single-Writer View-Buffer (geteilte viewBuffers-Map wurde pro Session mehrfach beschrieben), Resize-Delta-Guard (kein redundantes SIGWINCH/Ink-Repaint), WS-connect()-Härtung." \
+            --latest \
+            --target "${{ github.sha }}"

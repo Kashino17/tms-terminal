@@ -264,6 +264,11 @@ export class TerminalManager {
   resize(sessionId: string, cols: number, rows: number): boolean {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
+    // Delta guard: a no-op resize still raises SIGWINCH, which makes TUI apps
+    // (Claude Code's Ink renderer) reprint their whole live region. On every
+    // reattach the client re-sends the current dims, so without this guard each
+    // reconnect triggered a redundant full reprint that overlapped scrollback.
+    if (session.cols === cols && session.rows === rows) return true;
     session.pty.resize(cols, rows);
     session.cols = cols;
     session.rows = rows;

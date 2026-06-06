@@ -103,6 +103,14 @@ export class WebSocketService {
 
   connect(cfg: WebSocketConfig): void {
     this.config = cfg;
+    // If a healthy socket already exists, don't tear it down. The foreground
+    // app-state check (TerminalScreen) calls connect() defensively; resetting
+    // and reopening a live connection would re-run the on-connect effect and
+    // reattach every tab — a needless reattach storm that corrupts the display.
+    if (this._state === 'connected' && this.ws?.readyState === WebSocket.OPEN) {
+      this.subscribeNetInfo();
+      return;
+    }
     this.reconnectAttempts = 0;
     this.subscribeNetInfo();
     this.doConnect();

@@ -14,6 +14,7 @@ import { useAutoApproveStore } from '../store/autoApproveStore';
 import { getThemeById } from '../constants/terminalThemes';
 import { keywordAlertService } from '../services/keywordAlert.service';
 import { searchCommands, type CommandSuggestion } from '../constants/commandSuggestions';
+import { createThinkingDetector } from '../utils/aiThinkingDetector';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 
@@ -46,6 +47,48 @@ function appendViewBuffer(sessionId: string, data: string) {
 /** Call this when a tab/session is permanently closed (not just navigated away). */
 export function clearViewBuffer(sessionId: string) {
   viewBuffers.delete(sessionId);
+  const rec = bufferRecorders.get(sessionId);
+  if (rec) { rec.unsub(); bufferRecorders.delete(sessionId); }
+}
+
+// ── Single-writer view-buffer recorder ───────────────────────────────────────
+// viewBuffers is module-global, keyed only by sessionId — but the SAME session
+// can be hosted by several TerminalView instances at once: a TerminalScreen tab
+// stays mounted underneath the pushed Manager screen while the Manager's
+// MultiSpotlight renders one (or two) more TerminalViews for that same session.
+// wsService fans every terminal:output chunk out to EVERY instance's listener,
+// so if each instance appended to the shared map the history would accumulate
+// 2-3x and then get replayed 2-3x into any freshly-mounted xterm — this is the
+// duplicated/tripled/overlapping scrollback bug.
+//
+// Fix: exactly ONE listener per sessionId writes to viewBuffers, ref-counted by
+// how many live TerminalView instances reference that session. Each instance
+// still renders output into its OWN xterm via sendToTerminal('output'); it just
+// no longer mutates the shared buffer.
+const bufferRecorders = new Map<string, { count: number; unsub: () => void }>();
+
+function acquireBufferRecorder(wsService: WebSocketService, sessionId: string): () => void {
+  let rec = bufferRecorders.get(sessionId);
+  if (!rec) {
+    const unsub = wsService.addMessageListener((msg: unknown) => {
+      const m = msg as { type: string; sessionId?: string; payload?: { data?: string } };
+      if (m.type === 'terminal:output' && m.sessionId === sessionId && m.payload?.data) {
+        appendViewBuffer(sessionId, m.payload.data);
+      }
+    });
+    rec = { count: 0, unsub };
+    bufferRecorders.set(sessionId, rec);
+  }
+  rec.count += 1;
+  return () => {
+    const r = bufferRecorders.get(sessionId);
+    if (!r) return;
+    r.count -= 1;
+    if (r.count <= 0) {
+      r.unsub();
+      bufferRecorders.delete(sessionId);
+    }
+  };
 }
 
 // ── AI-tool detection ────────────────────────────────────────────────────────
@@ -108,10 +151,17 @@ interface Props {
   tapFocusDisabled?: boolean;
   /** Fires on a stationary tap when `tapFocusDisabled` is true. */
   onTap?: () => void;
+  /**
+   * Fires when the AI CLI inside this terminal flips between "thinking" /
+   * "idle". Detection runs against incoming output and is gated by an idle
+   * timer (~2 s) so transient quiet periods don't bounce the state.
+   * Used by Manager-Chat V2 to drive the per-pane glow animation.
+   */
+  onThinkingChange?: (thinking: boolean) => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, Props>(function TerminalView(
-  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false, fontSize, disableKeyboardOffset = false, tapFocusDisabled = false, onTap }: Props,
+  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false, fontSize, disableKeyboardOffset = false, tapFocusDisabled = false, onTap, onThinkingChange }: Props,
   ref,
 ) {
   const onTapRef = useRef(onTap);
@@ -134,6 +184,22 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   onPathClickedRef.current = onPathClicked;
   const panelOpenRef = useRef(panelOpen);
   panelOpenRef.current = panelOpen;
+  const onThinkingChangeRef = useRef(onThinkingChange);
+  onThinkingChangeRef.current = onThinkingChange;
+
+  // Per-component thinking detector. Lazy-init so we don't pay the cost
+  // for terminals that have no AI CLI; lifecycle tied to component unmount.
+  const thinkingDetectorRef = useRef<ReturnType<typeof createThinkingDetector> | null>(null);
+  useEffect(() => {
+    const d = createThinkingDetector();
+    const unsub = d.onChange((t) => onThinkingChangeRef.current?.(t));
+    thinkingDetectorRef.current = d;
+    return () => {
+      unsub();
+      d.dispose();
+      thinkingDetectorRef.current = null;
+    };
+  }, []);
 
   // ── ?? Command Suggest ────────────────────────────────────────────────────
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
@@ -334,13 +400,22 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     }
   }, []);
 
-  // Route server output to xterm.js AND persist it in the view-buffer
+  // Persist output into the shared view-buffer EXACTLY ONCE per session,
+  // regardless of how many TerminalView instances host this session
+  // (TerminalScreen tab + Manager MultiSpotlight panes). Without this, the
+  // shared buffer accumulates each byte N times and replays N-fold on remount.
+  useEffect(() => {
+    if (!sessionId) return;
+    return acquireBufferRecorder(wsService, sessionId);
+  }, [sessionId, wsService]);
+
+  // Route server output into THIS instance's xterm.js (live render only — the
+  // shared view-buffer is written by the single recorder above, not here).
   useEffect(() => {
     if (!sessionId) return;
     return wsService.addMessageListener((msg: unknown) => {
       const m = msg as { type: string; sessionId?: string; payload?: { data?: string } };
       if (m.type === 'terminal:output' && m.sessionId === sessionId && m.payload?.data) {
-        appendViewBuffer(sessionId, m.payload.data);
         sendToTerminal('output', m.payload.data);
 
         // AI tool detection
@@ -349,6 +424,10 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
           lastAiToolRef.current = detected;
           onAiToolDetectedRef.current?.(detected);
         }
+
+        // Thinking detector — feeds raw chunk; the detector strips ANSI internally
+        // and emits state flips via the ref'd onThinkingChange callback.
+        thinkingDetectorRef.current?.feed(m.payload.data);
 
         // Keyword alert scanning (vibration + sound per category)
         keywordAlertService.scan(m.payload.data);
@@ -434,7 +513,14 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         // terminal:reattach, so history appears instantly and new output appends after.
         if (sessionId) {
           const buffered = viewBuffers.get(sessionId);
-          if (buffered) sendToTerminal('output', buffered);
+          if (buffered) {
+            sendToTerminal('output', buffered);
+            // Feed the cached buffer through the thinking detector too — without
+            // this, opening a pane onto an already-running Claude session leaves
+            // the detector cold and the glow never starts (the verb may not be
+            // reprinted in fresh tick chunks, only the elapsed-time digits).
+            thinkingDetectorRef.current?.feed(buffered);
+          }
         }
         onReadyRef.current?.(msg.cols, msg.rows);
       } else if (msg.type === 'input' && sessionId) {
