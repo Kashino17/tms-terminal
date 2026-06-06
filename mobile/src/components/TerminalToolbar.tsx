@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ActivityIndicator, Animated, Keyboard, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
@@ -9,7 +9,11 @@ import { useResponsive } from '../hooks/useResponsive';
 import { useSettingsStore } from '../store/settingsStore';
 
 export const TOOLBAR_HEIGHT = 44;
-const TRANSCRIPTION_TIMEOUT_MS = 120_000;
+// Inactivity watchdog: reset on every audio:progress message, so a long
+// multi-chunk transcription stays alive but a genuinely stuck one still fails
+// instead of spinning forever. 150s comfortably covers the server-side
+// per-request timeout + prompt-enhance step for one chunk.
+const TRANSCRIPTION_TIMEOUT_MS = 150_000;
 
 interface Props {
   sessionId: string | undefined;
@@ -41,6 +45,20 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
       transcriptionTimerRef.current = null;
     }
   };
+
+  // (Re)arm the inactivity watchdog. Called when audio is sent and again on
+  // every audio:progress, so the spinner can never hang forever.
+  const armTranscriptionTimeout = useCallback(() => {
+    if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
+    transcriptionTimerRef.current = setTimeout(() => {
+      transcriptionTimerRef.current = null;
+      setMicState('idle');
+      const errMsg = `Transkription Timeout (${TRANSCRIPTION_TIMEOUT_MS / 1000}s)`;
+      setMicError(errMsg);
+      setTimeout(() => setMicError(null), 4000);
+      onTranscriptionError?.(errMsg);
+    }, TRANSCRIPTION_TIMEOUT_MS);
+  }, [onTranscriptionError]);
 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
@@ -77,6 +95,11 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
         setMicState('idle');
         setMicError(null);
         onTranscription?.(m.payload?.text ?? '');
+      } else if (m.type === 'audio:progress') {
+        // A chunk finished — transcription is alive; keep waiting and reset
+        // the inactivity watchdog so long multi-chunk audio isn't cut off.
+        setMicState('processing');
+        armTranscriptionTimeout();
       } else if (m.type === 'audio:error') {
         clearTranscriptionTimer();
         setMicState('idle');
@@ -86,7 +109,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
         onTranscriptionError?.(errMsg);
       }
     });
-  }, [wsService, sessionId, onTranscription, onTranscriptionError]);
+  }, [wsService, sessionId, onTranscription, onTranscriptionError, armTranscriptionTimeout]);
 
   useEffect(() => {
     return () => {
@@ -132,15 +155,7 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
           payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
         });
 
-        clearTranscriptionTimer();
-        transcriptionTimerRef.current = setTimeout(() => {
-          transcriptionTimerRef.current = null;
-          setMicState('idle');
-          const errMsg = `Transkription Timeout (${TRANSCRIPTION_TIMEOUT_MS / 1000}s)`;
-          setMicError(errMsg);
-          setTimeout(() => setMicError(null), 4000);
-          onTranscriptionError?.(errMsg);
-        }, TRANSCRIPTION_TIMEOUT_MS);
+        armTranscriptionTimeout();
       } catch (err) {
         console.warn('[mic] Error stopping recording:', err);
         setMicState('idle');
