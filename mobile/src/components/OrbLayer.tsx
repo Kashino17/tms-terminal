@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
+  Alert,
   Animated,
   ActivityIndicator,
   Modal,
@@ -269,7 +270,6 @@ export function OrbLayer({
   const toggleGroupOrientation = useOrbLayoutStore((s) => s.toggleGroupOrientation);
   const removeOrb = useOrbLayoutStore((s) => s.removeOrb);
   const restoreOrb = useOrbLayoutStore((s) => s.restoreOrb);
-  const restoreMissingOrbs = useOrbLayoutStore((s) => s.restoreMissingOrbs);
   const createGroup = useOrbLayoutStore((s) => s.createGroup);
   const addOrbToGroup = useOrbLayoutStore((s) => s.addOrbToGroup);
   const removeOrbFromGroup = useOrbLayoutStore((s) => s.removeOrbFromGroup);
@@ -277,6 +277,7 @@ export function OrbLayer({
   const reorderDock = useOrbLayoutStore((s) => s.reorderDock);
   const addToDock = useOrbLayoutStore((s) => s.addToDock);
   const removeFromDock = useOrbLayoutStore((s) => s.removeFromDock);
+  const resetLayout = useOrbLayoutStore((s) => s.resetLayout);
 
   // ── Local state ──────────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false);
@@ -286,13 +287,6 @@ export function OrbLayer({
   const [dropTargetOrbId, setDropTargetOrbId] = useState<string | null>(null);
   const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
   const [dpadOpen, setDpadOpen] = useState(false);
-
-  // One-time recovery: re-float any catalog orb that went missing from the
-  // saved layout (e.g. the mic orb stranded by an earlier state bug) so it's
-  // usable again without manual re-adding.
-  useEffect(() => {
-    restoreMissingOrbs(Object.keys(ORB_DEFINITIONS));
-  }, [restoreMissingOrbs]);
 
   // ── Mic recording state (fully internal) ────────────────────────────────
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
@@ -746,6 +740,23 @@ export function OrbLayer({
             >
               <Feather name="plus-circle" size={16} color={colors.primary} />
               <Text style={s.editBarBtnText}>Orb</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={s.editBarBtn}
+              onPress={() =>
+                Alert.alert(
+                  'Orbs zurücksetzen?',
+                  'Alle Orbs werden auf die Standard-Anordnung zurückgesetzt (z.B. holt das ein verschwundenes Mikrofon zurück). Server & Einstellungen bleiben unberührt.',
+                  [
+                    { text: 'Abbrechen', style: 'cancel' },
+                    { text: 'Zurücksetzen', style: 'destructive', onPress: () => { resetLayout(); setPickerVisible(false); setEditMode(false); } },
+                  ],
+                )
+              }
+              activeOpacity={0.7}
+            >
+              <Feather name="rotate-ccw" size={16} color={colors.warning} />
+              <Text style={s.editBarBtnText}>Reset</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={s.editBarDoneBtn}

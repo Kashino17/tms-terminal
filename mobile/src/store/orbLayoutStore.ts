@@ -162,10 +162,13 @@ export const useOrbLayoutStore = create<OrbLayoutState>()(
 
       restoreMissingOrbs(catalogIds) {
         const state = get();
+        // "Reachable as a floating orb" = free or in a group. The dock is a
+        // separate surface, so an orb that's only in the dock (or nowhere) and
+        // wasn't explicitly removed should still be re-floated — that's exactly
+        // how the mic orb went invisible.
         const placed = new Set<string>([
           ...Object.keys(state.freeOrbs),
           ...state.groups.flatMap((g) => g.orbIds),
-          ...state.dockOrder,
           ...state.removedOrbIds,
         ]);
         const missing = catalogIds.filter((id) => !placed.has(id));
@@ -279,6 +282,13 @@ export const useOrbLayoutStore = create<OrbLayoutState>()(
     {
       name: 'tms-orb-layout',
       storage: createJSONStorage(() => AsyncStorage),
+      // Recover missing orbs AFTER the saved (possibly corrupted) state has
+      // been loaded. Doing this in a component mount effect raced ahead of the
+      // async hydration and ran against the defaults (nothing missing) — so the
+      // mic orb stayed gone. DEFAULT_DOCK_ORDER lists every catalog orb id.
+      onRehydrateStorage: () => (state) => {
+        state?.restoreMissingOrbs(DEFAULT_DOCK_ORDER);
+      },
     },
   ),
 );
