@@ -269,6 +269,7 @@ export function OrbLayer({
   const toggleGroupOrientation = useOrbLayoutStore((s) => s.toggleGroupOrientation);
   const removeOrb = useOrbLayoutStore((s) => s.removeOrb);
   const restoreOrb = useOrbLayoutStore((s) => s.restoreOrb);
+  const restoreMissingOrbs = useOrbLayoutStore((s) => s.restoreMissingOrbs);
   const createGroup = useOrbLayoutStore((s) => s.createGroup);
   const addOrbToGroup = useOrbLayoutStore((s) => s.addOrbToGroup);
   const removeOrbFromGroup = useOrbLayoutStore((s) => s.removeOrbFromGroup);
@@ -285,6 +286,13 @@ export function OrbLayer({
   const [dropTargetOrbId, setDropTargetOrbId] = useState<string | null>(null);
   const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
   const [dpadOpen, setDpadOpen] = useState(false);
+
+  // One-time recovery: re-float any catalog orb that went missing from the
+  // saved layout (e.g. the mic orb stranded by an earlier state bug) so it's
+  // usable again without manual re-adding.
+  useEffect(() => {
+    restoreMissingOrbs(Object.keys(ORB_DEFINITIONS));
+  }, [restoreMissingOrbs]);
 
   // ── Mic recording state (fully internal) ────────────────────────────────
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');

@@ -30,6 +30,9 @@ interface OrbLayoutState {
   toggleGroupOrientation: (groupId: string) => void;
   removeOrb: (id: string) => void;
   restoreOrb: (id: string, pos: OrbPosition) => void;
+  /** Re-float any catalog orb that is nowhere (not free/grouped/docked) and was
+   *  not explicitly removed — recovers orbs lost to earlier state bugs. */
+  restoreMissingOrbs: (catalogIds: string[]) => void;
   createGroup: (orbId1: string, orbId2: string, position: OrbPosition) => void;
   addOrbToGroup: (groupId: string, orbId: string) => void;
   removeOrbFromGroup: (groupId: string, orbId: string) => void;
@@ -155,6 +158,25 @@ export const useOrbLayoutStore = create<OrbLayoutState>()(
           removedOrbIds: get().removedOrbIds.filter((o) => o !== id),
           freeOrbs: { ...get().freeOrbs, [id]: pos },
         });
+      },
+
+      restoreMissingOrbs(catalogIds) {
+        const state = get();
+        const placed = new Set<string>([
+          ...Object.keys(state.freeOrbs),
+          ...state.groups.flatMap((g) => g.orbIds),
+          ...state.dockOrder,
+          ...state.removedOrbIds,
+        ]);
+        const missing = catalogIds.filter((id) => !placed.has(id));
+        if (missing.length === 0) return;
+        const newFree = { ...state.freeOrbs };
+        missing.forEach((id, i) => {
+          // Prefer the orb's default spot; stagger fallbacks so several
+          // recovered orbs don't stack on the exact same point.
+          newFree[id] = DEFAULT_FREE_ORBS[id] ?? { xPct: 0.45, yPct: 0.4 + i * 0.06 };
+        });
+        set({ freeOrbs: newFree });
       },
 
       createGroup(orbId1, orbId2, position) {

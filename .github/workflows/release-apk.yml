@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fix: Verschwundene Orbs (z.B. das Mikrofon) lassen sich wieder hinzufügen. Der 'Orb hinzufügen'-Picker im Bearbeitungsmodus zeigt jetzt jeden Orb an, der gerade nicht platziert ist — vorher meldete er 'Alle Orbs sind platziert', obwohl ein Orb verwaist (weder sichtbar noch in der Liste) war. Enthält zusätzlich die Fixes aus v1.21.26 (Transkription hängt nicht mehr, Screenshot-Pfad landet im Terminal, gelöschte Dock-Orbs wieder hinzufügbar)." \
+            --notes "Fix: Verschwundene Orbs (z.B. das Mikrofon) kommen jetzt beim App-Start automatisch zurück — kein manuelles Hinzufügen nötig. Zusätzlich zeigt der 'Orb hinzufügen'-Picker jeden nicht platzierten Orb an. Enthält die Fixes aus v1.21.26/27 (Transkription hängt nicht mehr, Screenshot-Pfad landet im Terminal, gelöschte Dock-Orbs wieder hinzufügbar)." \
             --latest
