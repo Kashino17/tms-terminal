@@ -611,17 +611,19 @@ export function OrbLayer({
     [restoreOrb],
   );
 
-  const pickerOrbs = useMemo(
-    () =>
-      removedOrbIds
-        .map((id) => {
-          const def = ORB_DEFINITIONS[id];
-          if (!def) return null;
-          return { id, ...def };
-        })
-        .filter(Boolean) as (OrbDefinition & { id: string })[],
-    [removedOrbIds],
-  );
+  // Offer every catalog orb that isn't currently placed as a floating orb
+  // (free or in a group). Keying off removedOrbIds alone stranded any orb that
+  // went missing WITHOUT being recorded there — e.g. the mic orb, which then
+  // showed "Alle Orbs sind platziert" while being nowhere on screen.
+  const pickerOrbs = useMemo(() => {
+    const placed = new Set<string>([
+      ...Object.keys(freeOrbs),
+      ...groups.flatMap((g) => g.orbIds),
+    ]);
+    return Object.keys(ORB_DEFINITIONS)
+      .filter((id) => !placed.has(id))
+      .map((id) => ({ id, ...ORB_DEFINITIONS[id] })) as (OrbDefinition & { id: string })[];
+  }, [freeOrbs, groups]);
 
   // ── Dock separator logic ─────────────────────────────────────────────────
   // Insert separators between logical groups in dock based on original layout:

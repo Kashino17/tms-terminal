@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fixes: (1) Transkription bleibt nicht mehr auf 'Verarbeiten' hängen — Antwort wird auch bei Tab-/Session-Wechsel zugestellt; Rewriter-Sidecar bekommt einen Start-Timeout, damit 'Enhance' nie ewig blockiert. (2) Screenshot-Upload schreibt den Pfad jetzt zuverlässig ins aktive Terminal (vorher ging er bei fehlender Session verloren). (3) Gelöschte Dock-Orbs lassen sich wieder über die 'Zum Dock hinzufügen'-Liste hinzufügen." \
+            --notes "Fix: Verschwundene Orbs (z.B. das Mikrofon) lassen sich wieder hinzufügen. Der 'Orb hinzufügen'-Picker im Bearbeitungsmodus zeigt jetzt jeden Orb an, der gerade nicht platziert ist — vorher meldete er 'Alle Orbs sind platziert', obwohl ein Orb verwaist (weder sichtbar noch in der Liste) war. Enthält zusätzlich die Fixes aus v1.21.26 (Transkription hängt nicht mehr, Screenshot-Pfad landet im Terminal, gelöschte Dock-Orbs wieder hinzufügbar)." \
             --latest
