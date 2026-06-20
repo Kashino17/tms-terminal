@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fix: doppelte/überlappende Terminal-Ausgabe — Single-Writer View-Buffer (geteilte viewBuffers-Map wurde pro Session mehrfach beschrieben), Resize-Delta-Guard (kein redundantes SIGWINCH/Ink-Repaint), WS-connect()-Härtung." \
+            --notes "Fixes: (1) Transkription bleibt nicht mehr auf 'Verarbeiten' hängen — Antwort wird auch bei Tab-/Session-Wechsel zugestellt; Rewriter-Sidecar bekommt einen Start-Timeout, damit 'Enhance' nie ewig blockiert. (2) Screenshot-Upload schreibt den Pfad jetzt zuverlässig ins aktive Terminal (vorher ging er bei fehlender Session verloren). (3) Gelöschte Dock-Orbs lassen sich wieder über die 'Zum Dock hinzufügen'-Liste hinzufügen." \
             --latest
