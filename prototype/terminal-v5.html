@@ -1,0 +1,1266 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TMS Terminal – v5 · Orbs + Groups + Tool Panels</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;user-select:none}
+  body{background:#080C14;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;color:#F8FAFC;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:20px 20px 60px}
+  .header{text-align:center;padding:12px 0 16px}
+  .header h1{font-size:20px;font-weight:700}
+  .header p{font-size:11px;color:#64748B;margin-top:4px;max-width:600px;line-height:1.5}
+  .wrap{display:flex;gap:32px;flex-wrap:wrap;justify-content:center;align-items:flex-start}
+  .col{display:flex;flex-direction:column;align-items:center;gap:6px}
+  .col-label{font-size:11px;color:#94A3B8;font-weight:600;letter-spacing:1px;text-transform:uppercase}
+  .col-sub{font-size:10px;color:#475569;max-width:400px;text-align:center;line-height:1.4;margin-bottom:4px}
+
+  /* Phone */
+  .phone{width:400px;height:880px;background:#0F172A;border-radius:36px;overflow:hidden;position:relative;border:3px solid #1E293B;box-shadow:0 25px 60px rgba(0,0,0,.6);flex-shrink:0}
+  .sbar{height:28px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;font-size:11px;color:#64748B}
+  .term{font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.55;color:#E2E8F0;padding:8px 12px;overflow-y:auto}
+  .term .p{color:#22C55E}.term .c{color:#F8FAFC}.term .o{color:#94A3B8}.term .d{color:#475569}.term .ai{color:#A78BFA}.term .b{color:#3B82F6}.term .w{color:#F59E0B}.term .g{color:#22C55E}
+
+  .glass{background:rgba(15,23,42,.78);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,.06)}
+  .glass-strong{background:rgba(15,23,42,.92);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);border:1px solid rgba(255,255,255,.08)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  @keyframes scaleIn{from{transform:scale(.94);opacity:0}to{transform:scale(1);opacity:1}}
+  @keyframes wobble{0%{transform:rotate(0)}25%{transform:rotate(-1.5deg)}50%{transform:rotate(0)}75%{transform:rotate(1.5deg)}100%{transform:rotate(0)}}
+  @keyframes glow{0%,100%{box-shadow:0 0 8px rgba(59,130,246,.2)}50%{box-shadow:0 0 18px rgba(59,130,246,.5)}}
+  @keyframes rec-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.9)}}
+  @keyframes panelSlide{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+  .toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.2);backdrop-filter:blur(16px);border-radius:14px;padding:8px 18px;font-size:12px;color:#93C5FD;white-space:nowrap;opacity:0;transition:opacity .2s;pointer-events:none;z-index:200}
+  .toast.show{opacity:1}
+
+  /* Island */
+  .island{position:absolute;top:32px;left:50%;transform:translateX(-50%);z-index:20;border-radius:20px;padding:5px 14px;display:flex;align-items:center;gap:8px;cursor:pointer;transition:all .4s cubic-bezier(.34,1.56,.64,1);min-width:160px;justify-content:center}
+  .island.exp{border-radius:16px;padding:8px 10px;min-width:370px;flex-wrap:wrap;gap:4px}
+  .island .i-back{color:#3B82F6;flex-shrink:0;display:none;cursor:pointer}
+  .island.exp .i-back{display:flex}
+  .island .i-title{font-size:12px;font-weight:600;font-family:'SF Mono',monospace}
+  .island .i-dot{width:6px;height:6px;border-radius:50%;background:#22C55E;animation:pulse 2s infinite;flex-shrink:0}
+  .island .i-rtt{font-size:9px;color:#22C55E;margin-left:-4px}
+  .i-tabs{display:none;width:100%;gap:4px;padding-top:4px}
+  .island.exp .i-tabs{display:flex}
+  .i-tab{flex:1;padding:5px 6px;border-radius:12px;font-size:10px;font-family:'SF Mono',monospace;text-align:center;cursor:pointer;transition:all .2s;color:#64748B;background:rgba(255,255,255,.03);border:1px solid transparent;position:relative}
+  .i-tab:hover{color:#94A3B8;background:rgba(255,255,255,.06)}
+  .i-tab.active{color:#F8FAFC;background:rgba(59,130,246,.15);border-color:rgba(59,130,246,.2)}
+  .i-tab.ai.active{background:rgba(167,139,250,.15);border-color:rgba(167,139,250,.25)}
+  .i-tab-badge{position:absolute;top:-2px;right:-2px;min-width:12px;height:12px;border-radius:6px;background:#EF4444;font-size:7px;display:flex;align-items:center;justify-content:center;font-weight:700;padding:0 3px}
+  .i-browser-badge{display:none;width:28px;height:28px;border-radius:8px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.25);align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:all .2s}
+  .i-browser-badge:hover{background:rgba(34,197,94,.2);transform:scale(1.1)}
+  .i-browser-badge.active{display:flex}
+
+  /* Orb */
+  .orb{
+    position:absolute;z-index:12;width:44px;height:44px;border-radius:22px;
+    background:radial-gradient(ellipse at 30% 20%,rgba(255,255,255,.12) 0%,rgba(15,23,42,.8) 70%);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,.1);
+    box-shadow:0 4px 16px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.08);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:transform .2s,box-shadow .2s;
+    font-size:11px;font-family:'SF Mono',monospace;font-weight:700;color:#94A3B8;
+  }
+  .orb:hover{transform:scale(1.1);box-shadow:0 6px 24px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.12)}
+  .orb:active{transform:scale(.92)}
+  .orb.dragging{transition:none;animation:glow 1s infinite;z-index:100;transform:scale(1.15)}
+  .orb.editing{animation:wobble .4s infinite}
+  .orb .orb-label{position:absolute;bottom:-14px;font-size:8px;color:#475569;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}
+  .orb:hover .orb-label,.orb.editing .orb-label{opacity:1}
+  .orb .orb-remove{position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:8px;background:#EF4444;display:none;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff;cursor:pointer;border:2px solid #0F172A}
+  .orb.editing .orb-remove{display:flex}
+
+  /* Orb recording state */
+  .orb.recording{border-color:rgba(239,68,68,.5);box-shadow:0 0 20px rgba(239,68,68,.3)}
+  .orb.recording .rec-dot{animation:rec-pulse 1s infinite}
+
+  /* Orb Group */
+  .orb-group{
+    position:absolute;z-index:12;border-radius:16px;padding:4px;
+    background:radial-gradient(ellipse at 30% 20%,rgba(255,255,255,.08) 0%,rgba(15,23,42,.75) 70%);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,.08);
+    box-shadow:0 4px 16px rgba(0,0,0,.3);
+    display:flex;gap:3px;transition:all .25s;
+  }
+  .orb-group:hover{box-shadow:0 6px 24px rgba(0,0,0,.4);border-color:rgba(255,255,255,.12)}
+  .orb-group.editing{animation:wobble .4s infinite}
+  .orb-group.vertical{flex-direction:column}
+  .orb-group.vertical .grp-label{bottom:auto;left:auto;right:-40px;top:50%;transform:translateY(-50%) rotate(0);white-space:nowrap}
+  .orb-group .grp-rotate{position:absolute;top:-10px;right:-10px;width:20px;height:20px;border-radius:10px;background:#3B82F6;display:none;align-items:center;justify-content:center;cursor:pointer;z-index:3;border:2px solid #0F172A;transition:transform .2s}
+  .orb-group .grp-rotate:hover{transform:scale(1.15)}
+  .orb-group .grp-rotate:active{transform:scale(.9)}
+  .orb-group.editing .grp-rotate{display:flex}
+  .orb-group.drop-target{border-color:rgba(59,130,246,.5);box-shadow:0 0 20px rgba(59,130,246,.3)}
+  .orb-group .grp-label{position:absolute;bottom:-14px;left:50%;transform:translateX(-50%);font-size:8px;color:#475569;white-space:nowrap;opacity:0;transition:opacity .2s}
+  .orb-group:hover .grp-label,.orb-group.editing .grp-label{opacity:1}
+  .om{width:38px;height:38px;border-radius:19px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;font-size:16px;font-family:'SF Mono',monospace;color:#94A3B8}
+  .om:hover{background:rgba(255,255,255,.08);transform:scale(1.08)}
+  .om:active{transform:scale(.92)}
+  .om{position:relative}
+  .om .om-remove{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:7px;background:#EF4444;display:none;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;cursor:pointer;border:2px solid #0F172A;z-index:2}
+  .orb-group.editing .om .om-remove{display:flex}
+
+  /* Edit bar */
+  .edit-bar{position:absolute;top:0;left:0;right:0;z-index:100;display:none;align-items:center;justify-content:space-between;padding:6px 12px;background:rgba(59,130,246,.08);backdrop-filter:blur(12px);border-bottom:1px solid rgba(59,130,246,.15)}
+  .edit-bar.show{display:flex}
+  .edit-bar span{font-size:11px;color:#93C5FD}
+  .edit-bar .edit-actions{display:flex;gap:6px}
+  .edit-bar button{background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:4px 12px;color:#93C5FD;font-size:11px;cursor:pointer;font-family:inherit;transition:all .15s}
+  .edit-bar button:hover{background:rgba(59,130,246,.25)}
+
+  /* Spotlight */
+  .spot-overlay{position:absolute;inset:0;z-index:89;background:rgba(0,0,0,.5);display:none}
+  .spot-overlay.open{display:block}
+  .spot{position:absolute;top:80px;left:20px;right:20px;z-index:90;border-radius:16px;padding:8px;display:none;animation:scaleIn .18s ease}
+  .spot.open{display:block}
+  .spot-input{width:100%;background:#0F172A;border:1px solid #334155;border-radius:10px;padding:10px 14px;color:#F8FAFC;font-size:13px;font-family:'SF Mono',monospace;outline:none}
+  .spot-input:focus{border-color:#3B82F6}
+  .spot-input::placeholder{color:#475569}
+  .spot-results{margin-top:6px;max-height:320px;overflow-y:auto}
+  .spot-cat{padding:6px 12px 3px;font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:.8px;font-weight:700}
+  .spot-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;cursor:pointer;transition:background .1s;font-size:13px}
+  .spot-item:hover{background:rgba(59,130,246,.1)}
+  .spot-item .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .spot-item .lbl{flex:1}
+  .spot-item .key{font-size:9px;color:#475569;background:#1B2336;border:1px solid #243044;padding:1px 5px;border-radius:4px;font-family:monospace;font-weight:600}
+  .spot-sep{height:1px;background:#1E293B;margin:4px 0}
+
+  /* Tool Ring */
+  /* Tool Menu (categorized, editable) */
+  .tmenu{position:absolute;z-index:40;border-radius:18px;padding:10px;display:none;width:300px;max-height:480px;overflow-y:auto;animation:scaleIn .2s ease;scrollbar-width:none}
+  .tmenu::-webkit-scrollbar{display:none}
+  .tmenu.open{display:block}
+  .tmenu-section{margin-bottom:8px}
+  .tmenu-section:last-child{margin-bottom:0}
+  .tmenu-section-head{display:flex;align-items:center;padding:2px 6px 4px;gap:6px}
+  .tmenu-section-title{font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:.8px;font-weight:700;flex:1}
+  .tmenu-section-edit{display:none;cursor:pointer;font-size:9px;color:#3B82F6;font-weight:600}
+  .tmenu.editing .tmenu-section-edit{display:block}
+  .tmenu-grid{display:flex;flex-wrap:wrap;gap:4px}
+  .tmenu-item{width:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:8px 2px;border-radius:12px;cursor:pointer;transition:all .15s;font-size:8px;color:#94A3B8;position:relative}
+  .tmenu-item:hover{background:rgba(255,255,255,.06);transform:scale(1.06)}
+  .tmenu-item:active{transform:scale(.94)}
+  .tmenu.editing .tmenu-item{animation:wobble .4s infinite}
+  .tmenu-item .ti-remove{position:absolute;top:-2px;right:0px;width:14px;height:14px;border-radius:7px;background:#EF4444;display:none;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;cursor:pointer;border:2px solid #0F172A;z-index:2}
+  .tmenu.editing .tmenu-item .ti-remove{display:flex}
+  .tmenu-edit-bar{display:none;align-items:center;justify-content:space-between;padding:6px 8px;margin-bottom:6px;border-radius:10px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.12)}
+  .tmenu.editing .tmenu-edit-bar{display:flex}
+  .tmenu-edit-bar span{font-size:10px;color:#93C5FD}
+  .tmenu-edit-bar button{background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.25);border-radius:6px;padding:3px 10px;color:#93C5FD;font-size:10px;cursor:pointer;font-family:inherit}
+  .tmenu-edit-bar button:hover{background:rgba(59,130,246,.25)}
+  .tmenu-add-section{display:none;text-align:center;padding:6px;margin-top:4px;border-radius:8px;font-size:10px;color:#3B82F6;cursor:pointer;border:1px dashed rgba(59,130,246,.2);transition:background .15s}
+  .tmenu.editing .tmenu-add-section{display:block}
+  .tmenu-add-section:hover{background:rgba(59,130,246,.06)}
+  /* Rename input for section titles */
+  .tmenu-rename{background:transparent;border:none;border-bottom:1px solid #3B82F6;color:#F8FAFC;font-size:9px;text-transform:uppercase;letter-spacing:.8px;font-weight:700;width:80px;outline:none;padding:0 2px}
+
+  /* Legacy ring compat */
+  .ring{display:none}
+  .ring.open{display:none}
+
+  /* ═══════════════════════════════════════
+     TOOL PANELS — the new panel design
+     ═══════════════════════════════════════ */
+  .panel-overlay{position:absolute;inset:0;z-index:50;display:none}
+  .panel-overlay.open{display:flex;flex-direction:column}
+  .panel-overlay-bg{flex:1;background:rgba(0,0,0,.3);cursor:pointer}
+  .panel-sheet{border-radius:20px 20px 0 0;max-height:65%;overflow:hidden;display:flex;flex-direction:column;animation:panelSlide .3s cubic-bezier(.25,1,.5,1)}
+  .panel-handle{width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,.12);margin:8px auto 0}
+  .panel-head{display:flex;align-items:center;padding:12px 16px 8px;gap:10px}
+  .panel-head-icon{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center}
+  .panel-head-info{flex:1}
+  .panel-head-title{font-size:14px;font-weight:700}
+  .panel-head-sub{font-size:10px;color:#64748B;margin-top:1px}
+  .panel-head-close{cursor:pointer;color:#64748B;padding:4px;border-radius:8px;transition:all .15s}
+  .panel-head-close:hover{background:rgba(255,255,255,.05);color:#94A3B8}
+  .panel-body{flex:1;overflow-y:auto;padding:0 16px 16px}
+
+  /* Panel content styles */
+  .panel-section{margin-top:12px}
+  .panel-section-title{font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:6px}
+  .panel-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;transition:background .15s;cursor:pointer}
+  .panel-row:hover{background:rgba(255,255,255,.03)}
+  .panel-row-icon{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .panel-row-info{flex:1}
+  .panel-row-title{font-size:13px;font-weight:500}
+  .panel-row-sub{font-size:10px;color:#64748B;margin-top:1px}
+  .panel-row-action{font-size:11px;color:#3B82F6;font-weight:600}
+  .panel-toggle{width:40px;height:22px;border-radius:11px;background:#243044;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0}
+  .panel-toggle.on{background:#22C55E}
+  .panel-toggle::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:9px;background:#F8FAFC;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .panel-toggle.on::after{transform:translateX(18px)}
+  .panel-card{background:#1B2336;border:1px solid #243044;border-radius:12px;padding:10px 12px;margin-top:6px}
+  .panel-card-row{display:flex;align-items:center;gap:8px;padding:4px 0}
+  .panel-card-row .dot{width:6px;height:6px;border-radius:3px;flex-shrink:0}
+  .panel-card-row span{font-size:12px;flex:1}
+  .panel-card-row .val{font-size:11px;color:#64748B;font-family:'SF Mono',monospace}
+
+  .panel-file{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;transition:background .1s;cursor:pointer}
+  .panel-file:hover{background:rgba(255,255,255,.03)}
+  .panel-file-icon{color:#F59E0B;flex-shrink:0}
+  .panel-file-name{font-size:12px;font-family:'SF Mono',monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .panel-file-size{font-size:10px;color:#475569}
+  .panel-file-dir{color:#3B82F6}
+
+  .panel-empty{text-align:center;padding:24px;color:#475569;font-size:12px}
+
+  /* Mic recording overlay */
+  .mic-overlay{position:absolute;bottom:80px;left:50%;transform:translateX(-50%);z-index:60;border-radius:20px;padding:16px 24px;display:none;align-items:center;gap:12px;animation:scaleIn .2s ease}
+  .mic-overlay.open{display:flex}
+  .mic-dot{width:10px;height:10px;border-radius:5px;background:#EF4444;animation:rec-pulse 1s infinite}
+  .mic-timer{font-size:16px;font-family:'SF Mono',monospace;font-weight:700;color:#EF4444}
+  .mic-stop{padding:6px 16px;border-radius:10px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.25);color:#EF4444;font-size:12px;cursor:pointer;font-weight:600;transition:all .15s}
+  .mic-stop:hover{background:rgba(239,68,68,.25)}
+
+  /* ═══════════════════════════════════
+     KEYBOARD SIMULATION
+     ═══════════════════════════════════ */
+  .kb-toggle{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);z-index:200;padding:5px 14px;border-radius:10px;font-size:10px;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:5px;color:#475569;font-family:'SF Mono',monospace}
+  .kb-toggle:hover{color:#94A3B8;background:rgba(255,255,255,.04)}
+
+  .keyboard{position:absolute;bottom:0;left:0;right:0;z-index:25;height:0;overflow:hidden;transition:height .35s cubic-bezier(.25,1,.5,1);background:#1a1a1a;border-top:1px solid #333}
+  .keyboard.open{height:280px}
+  .kb-row{display:flex;justify-content:center;gap:4px;padding:4px 4px}
+  .kb-key{height:42px;border-radius:6px;background:#3a3a3a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-family:-apple-system,sans-serif;flex:1;max-width:36px;box-shadow:0 1px 0 #1a1a1a;cursor:pointer;transition:background .1s}
+  .kb-key:active{background:#555}
+  .kb-key.wide{max-width:52px;font-size:11px;background:#2a2a2a}
+  .kb-key.space{max-width:180px;background:#3a3a3a}
+  .kb-bar{display:flex;justify-content:space-between;padding:6px 12px;gap:8px}
+  .kb-bar-btn{font-size:12px;color:#3B82F6;cursor:pointer;padding:4px 8px}
+  .kb-suggest{display:flex;gap:1px;padding:0 4px 2px;background:#2a2a2a}
+  .kb-suggest span{flex:1;text-align:center;padding:8px;font-size:13px;color:#fff;cursor:pointer;background:#2a2a2a;border-right:1px solid #333}
+  .kb-suggest span:last-child{border:none}
+
+  /* Orb dock — when keyboard is open, orbs collect into a dock strip */
+  .orb-dock{position:absolute;left:0;right:0;z-index:24;display:none;align-items:center;justify-content:center;gap:6px;padding:6px 12px;flex-wrap:wrap;transition:all .3s cubic-bezier(.25,1,.5,1)}
+  .orb-dock.open{display:flex}
+  .orb-dock .dock-orb{
+    width:40px;height:40px;border-radius:20px;
+    background:radial-gradient(ellipse at 30% 20%,rgba(255,255,255,.1) 0%,rgba(15,23,42,.75) 70%);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,.08);
+    box-shadow:0 2px 10px rgba(0,0,0,.3);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:all .2s cubic-bezier(.34,1.56,.64,1);
+    font-size:14px;font-family:'SF Mono',monospace;font-weight:700;color:#94A3B8;
+    animation:dockPop .3s cubic-bezier(.34,1.56,.64,1) both;
+  }
+  .orb-dock .dock-orb:hover{transform:scale(1.12)}
+  .orb-dock .dock-orb:active{transform:scale(.9)}
+  .orb-dock .dock-sep{width:1px;height:24px;background:rgba(255,255,255,.06);flex-shrink:0}
+  .orb-dock.dock-editing .dock-orb{animation:wobble .4s infinite}
+  .orb-dock.dock-editing .dock-orb.dock-dragging{animation:none;opacity:.4;transform:scale(.85)}
+  .orb-dock.dock-editing .dock-orb.dock-drop-target{transform:scale(1.2);box-shadow:0 0 16px rgba(59,130,246,.4);border-color:rgba(59,130,246,.5)}
+  .orb-dock .dock-orb .dock-remove{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:7px;background:#EF4444;display:none;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;cursor:pointer;border:2px solid #1a1a1a;z-index:2}
+  .orb-dock.dock-editing .dock-orb .dock-remove{display:flex}
+  .orb-dock .dock-orb{position:relative}
+  @keyframes dockPop{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>TMS Terminal – v5 · Orbs + Groups + Tool Panels</h1>
+  <p>Finale Iteration: Orbs mit Gruppen, Mikrofon, und die neuen Tool-Panels im gleichen Design · Long-Press (0.8s) auf Orbs startet Edit-Modus</p>
+</div>
+
+<div class="wrap">
+
+<!-- ══════════════════════════════════════
+     MAIN PHONE: Orbs + Groups
+     ══════════════════════════════════════ -->
+<div class="col">
+<span class="col-label">Hauptansicht</span>
+<span class="col-sub">Orbs + Groups · Long-Press für Edit · Tap Tools/Spotlight · Mikrofon Orb</span>
+<div class="phone" id="phone">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <div style="position:absolute;inset:28px 0 0;overflow-y:auto" class="term" id="mainTerm">
+    <div class="d">Last login: Fri Apr 10 19:37:14 on ttys001</div>
+    <div><span class="p">ayysir@MacBook-Pro</span> <span class="d">TMS Banking %</span> <span class="c">claude</span></div>
+    <div class="o" style="margin-top:4px"><div class="ai">╭─ Claude Code v1.0.32</div><div class="ai">╰─ Type /help for commands</div></div>
+    <div style="margin-top:8px"><span class="p">❯</span> <span class="c">Implementiere die Mashreq Bank Verknüpfung</span></div>
+    <div class="o" style="margin-top:4px">
+      <div>● Analyzing codebase...</div><div class="g">✓ Found 3 relevant files</div>
+      <div style="margin-top:4px">Creating Mashreq Bank integration...</div>
+      <div style="margin-top:8px" class="b">┌ Creating auth.ts · <span class="g">✓</span> (48 lines)<br>└</div>
+      <div style="margin-top:4px" class="w">⚡ Writing to banking.service.ts...</div>
+      <div style="margin-top:8px" class="b">┌ Creating transactions.ts<br>│ Implementing transfer API...<br>│ Adding balance check...<br>│ <span class="g">✓ Created</span> (92 lines)<br>└</div>
+      <div style="margin-top:4px">Updating service layer...</div>
+    </div>
+  </div>
+
+  <!-- Island -->
+  <div class="island glass" id="island" onclick="toggleIsland()">
+    <svg class="i-back" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="event.stopPropagation();toast('Zurück')"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <span class="i-title" id="iTitle">TMS Banking</span>
+    <span class="i-dot"></span><span class="i-rtt">12ms</span>
+    <!-- Browser badge (visible when browser is active) -->
+    <span class="i-browser-badge" id="iBrowser" onclick="event.stopPropagation();toggleBrowserView()" title="Browser öffnen">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+    </span>
+    <div class="i-tabs">
+      <div class="i-tab ai active" onclick="event.stopPropagation();iTab(this,'TMS Banking')"><span style="color:#A78BFA;font-size:8px">●</span> Banking</div>
+      <div class="i-tab" onclick="event.stopPropagation();iTab(this,'TMS Terminal')">Terminal</div>
+      <div class="i-tab" onclick="event.stopPropagation();iTab(this,'ayysir')">ayysir<span class="i-tab-badge">2</span></div>
+    </div>
+  </div>
+
+  <!-- Edit bar -->
+  <div class="edit-bar" id="editBar">
+    <span>Bearbeitungsmodus</span>
+    <div class="edit-actions">
+      <button onclick="openOrbPicker()">+ Orb</button>
+      <button onclick="toggleEdit()">Fertig</button>
+    </div>
+  </div>
+
+  <!-- Orb Picker (add removed orbs back) -->
+  <div class="panel-overlay" id="orbPicker">
+    <div class="panel-overlay-bg" onclick="closeOrbPicker()"></div>
+    <div class="panel-sheet glass-strong">
+      <div class="panel-handle"></div>
+      <div class="panel-head">
+        <div class="panel-head-icon" style="background:rgba(59,130,246,.15)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></div>
+        <div class="panel-head-info"><div class="panel-head-title">Orb hinzufügen</div><div class="panel-head-sub">Shortcut als freien Orb platzieren</div></div>
+        <div class="panel-head-close" onclick="closeOrbPicker()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-row" onclick="addOrb('Esc','Esc','#94A3B8')"><div class="panel-row-icon" style="background:rgba(255,255,255,.05)"><span style="font-size:12px;font-family:monospace;font-weight:700;color:#94A3B8">Esc</span></div><div class="panel-row-info"><div class="panel-row-title">Escape</div></div></div>
+        <div class="panel-row" onclick="addOrb('^C','^C','#EF4444')"><div class="panel-row-icon" style="background:rgba(239,68,68,.1)"><span style="font-size:12px;font-family:monospace;font-weight:700;color:#EF4444">^C</span></div><div class="panel-row-info"><div class="panel-row-title">Ctrl+C</div></div></div>
+        <div class="panel-row" onclick="addOrb('⌫','Delete','#94A3B8')"><div class="panel-row-icon" style="background:rgba(255,255,255,.05)"><span style="font-size:16px;color:#94A3B8">⌫</span></div><div class="panel-row-info"><div class="panel-row-title">Delete</div></div></div>
+        <div class="panel-row" onclick="addOrb('↵','Enter','#94A3B8')"><div class="panel-row-icon" style="background:rgba(255,255,255,.05)"><span style="font-size:16px;color:#94A3B8">↵</span></div><div class="panel-row-info"><div class="panel-row-title">Enter</div></div></div>
+        <div class="panel-row" onclick="addOrb('⇊','Scroll','#06B6D4')"><div class="panel-row-icon" style="background:rgba(6,182,212,.1)"><span style="font-size:16px;color:#06B6D4">⇊</span></div><div class="panel-row-info"><div class="panel-row-title">Scroll Down</div></div></div>
+        <div class="panel-row" onclick="addOrbSvg('clear','Clear','trash')"><div class="panel-row-icon" style="background:rgba(255,255,255,.05)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div><div class="panel-row-info"><div class="panel-row-title">Clear Terminal</div></div></div>
+        <div class="panel-row" onclick="addOrbSvg('dpad','D-Pad','dpad')"><div class="panel-row-icon" style="background:rgba(59,130,246,.1)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/></svg></div><div class="panel-row-info"><div class="panel-row-title">D-Pad</div></div></div>
+        <div class="panel-row" onclick="addOrbSvg('mic','Mikrofon','mic')"><div class="panel-row-icon" style="background:rgba(255,255,255,.05)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div><div class="panel-row-info"><div class="panel-row-title">Mikrofon</div></div></div>
+        <div class="panel-row" onclick="addOrbSvg('scissors','Ausschneiden','scissors')"><div class="panel-row-icon" style="background:rgba(255,255,255,.05)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg></div><div class="panel-row-info"><div class="panel-row-title">Ausschneiden</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LEFT GROUP: Actions -->
+  <div class="orb-group" style="left:10px;bottom:68px" id="grpActions">
+    <span class="grp-rotate" onclick="event.stopPropagation();rotateGroup(this)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></span>
+    <div class="om" style="color:#EF4444" data-label="Ctrl+C" onclick="toast('^C gesendet')">^C<span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span></div>
+    <div class="om" data-label="Escape" onclick="toast('Esc gesendet')">Esc<span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span></div>
+    <div class="om" data-label="Clear" onclick="toast('Terminal cleared')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span></div>
+    <div class="om" data-label="Delete" onclick="toast('⌫ Delete')">⌫<span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span></div>
+    <div class="om" data-label="Ausschneiden" onclick="toast('✂ Range Select')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg><span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span></div>
+    <span class="grp-label">Aktionen</span>
+  </div>
+
+  <!-- RIGHT GROUP: Navigation -->
+  <div class="orb-group" style="right:10px;bottom:68px" id="grpNav">
+    <span class="grp-rotate" onclick="event.stopPropagation();rotateGroup(this)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></span>
+    <div class="om" style="color:#06B6D4" data-label="Scroll" onclick="toast('⇊ Scroll')">⇊<span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span></div>
+    <div class="om" data-label="Enter" onclick="toast('↵ Enter')">↵<span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span></div>
+    <div class="om" data-label="Tools" onclick="openRing(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span></div>
+    <div class="om" data-label="Spotlight" onclick="toggleSpot()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span></div>
+    <span class="grp-label">Navigation</span>
+  </div>
+
+  <!-- FREE ORBS -->
+  <div class="orb" style="left:10px;bottom:120px;color:#3B82F6" id="orbDpad" onclick="toast('⌘ D-Pad')">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/><line x1="12" y1="22" x2="12" y2="15.5"/><polyline points="22 8.5 12 15.5 2 8.5"/></svg>
+    <span class="orb-label">D-Pad</span>
+    <span class="orb-remove" onclick="event.stopPropagation();removeOrb(this)">✕</span>
+  </div>
+
+  <!-- MANAGER ORB -->
+  <div class="orb" style="left:60px;bottom:120px" id="orbManager" onclick="toast('Manager Agent')">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>
+    <span class="orb-label">Manager</span>
+    <span class="orb-remove" onclick="event.stopPropagation();removeOrb(this)">✕</span>
+  </div>
+
+  <!-- MICROPHONE ORB -->
+  <div class="orb" style="right:10px;bottom:120px" id="orbMic" onclick="toggleMic()">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" class="mic-icon"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+    <span class="orb-label">Mikrofon</span>
+    <span class="orb-remove" onclick="event.stopPropagation();removeOrb(this)">✕</span>
+  </div>
+
+  <!-- Mic recording overlay -->
+  <div class="mic-overlay glass-strong" id="micOverlay">
+    <div class="mic-dot"></div>
+    <span class="mic-timer" id="micTimer">00:00</span>
+    <div class="mic-stop" onclick="toggleMic()">Stopp</div>
+  </div>
+
+  <!-- Tool Menu (categorized) -->
+  <div class="tmenu glass-strong" id="toolRing" style="bottom:120px;right:20px">
+    <div class="tmenu-edit-bar">
+      <span>Tools bearbeiten</span>
+      <div style="display:flex;gap:4px">
+        <button onclick="toggleToolEdit()">Fertig</button>
+      </div>
+    </div>
+
+    <div class="tmenu-section" data-section="monitoring">
+      <div class="tmenu-section-head">
+        <span class="tmenu-section-title" onclick="renameSection(this)">Monitoring</span>
+        <span class="tmenu-section-edit" onclick="removeSection(this)">✕</span>
+      </div>
+      <div class="tmenu-grid">
+        <div class="tmenu-item" onclick="tmAction('Ports')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>Ports<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+        <div class="tmenu-item" onclick="tmAction('Prozesse')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Prozesse<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+      </div>
+    </div>
+
+    <div class="tmenu-section" data-section="infra">
+      <div class="tmenu-section-head">
+        <span class="tmenu-section-title" onclick="renameSection(this)">Cloud & Daten</span>
+        <span class="tmenu-section-edit" onclick="removeSection(this)">✕</span>
+      </div>
+      <div class="tmenu-grid">
+        <div class="tmenu-item" onclick="tmAction('SQL')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>SQL<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+        <div class="tmenu-item" onclick="tmAction('Render')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>Render<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+        <div class="tmenu-item" onclick="tmAction('Vercel')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="2"><path d="M12 2L2 19.5h20L12 2z"/></svg>Vercel<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+        <div class="tmenu-item" onclick="tmAction('Supabase')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3ECF8E" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>Supabase<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+      </div>
+    </div>
+
+    <div class="tmenu-section" data-section="ai">
+      <div class="tmenu-section-head">
+        <span class="tmenu-section-title" onclick="renameSection(this)">AI & Workflow</span>
+        <span class="tmenu-section-edit" onclick="removeSection(this)">✕</span>
+      </div>
+      <div class="tmenu-grid">
+        <div class="tmenu-item" onclick="tmAction('approve','openPanel')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Approve<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+        <div class="tmenu-item" onclick="tmAction('snippets','openPanel')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Snippets<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+        <div class="tmenu-item" onclick="tmAction('Autopilot')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>Autopilot<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+        <div class="tmenu-item" onclick="tmAction('Watchers')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Watchers<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+      </div>
+    </div>
+
+    <div class="tmenu-section" data-section="files">
+      <div class="tmenu-section-head">
+        <span class="tmenu-section-title" onclick="renameSection(this)">Dateien & Medien</span>
+        <span class="tmenu-section-edit" onclick="removeSection(this)">✕</span>
+      </div>
+      <div class="tmenu-grid">
+        <div class="tmenu-item" onclick="tmAction('files','openPanel')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>Dateien<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+        <div class="tmenu-item" onclick="tmAction('shots','openPanel')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/></svg>Shots<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+        <div class="tmenu-item" onclick="tmAction('Zeichnen')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Zeichnen<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+        <div class="tmenu-item" onclick="tmAction('Browser')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Browser<span class="ti-remove" onclick="event.stopPropagation();this.closest('.tmenu-item').remove()">✕</span></div>
+      </div>
+    </div>
+
+    <div class="tmenu-add-section" onclick="addSection()">+ Neue Kategorie</div>
+  </div>
+
+  <!-- Spotlight -->
+  <div class="spot-overlay" id="spotBg" onclick="toggleSpot()"></div>
+  <div class="spot glass-strong" id="spotPanel">
+    <input class="spot-input" placeholder="Suchen..." id="spotInput" oninput="filterSpot(this.value)">
+    <div class="spot-results" id="spotResults">
+      <div class="spot-cat">Tabs</div>
+      <div class="spot-item" onclick="sa('TMS Banking')"><div class="dot" style="background:#A78BFA"></div><span class="lbl">TMS Banking</span><span class="key">aktiv</span></div>
+      <div class="spot-item" onclick="sa('TMS Terminal')"><div class="dot" style="background:#3B82F6"></div><span class="lbl">TMS Terminal</span></div>
+      <div class="spot-item" onclick="sa('ayysir')"><div class="dot" style="background:#3B82F6"></div><span class="lbl">ayysir</span><span class="key" style="background:#EF4444;border-color:#EF4444;color:#fff">2</span></div>
+      <div class="spot-sep"></div>
+      <div class="spot-cat">Tools</div>
+      <div class="spot-item" onclick="closeSpot();openPanel('approve')"><div class="dot" style="background:#22C55E"></div><span class="lbl">Auto Approve</span></div>
+      <div class="spot-item" onclick="closeSpot();openPanel('snippets')"><div class="dot" style="background:#F59E0B"></div><span class="lbl">Snippets</span></div>
+      <div class="spot-item" onclick="closeSpot();openPanel('files')"><div class="dot" style="background:#F59E0B"></div><span class="lbl">Dateien</span></div>
+      <div class="spot-item" onclick="closeSpot();openPanel('shots')"><div class="dot" style="background:#06B6D4"></div><span class="lbl">Screenshots</span></div>
+      <div class="spot-item" onclick="sa('Autopilot')"><div class="dot" style="background:#A78BFA"></div><span class="lbl">Autopilot</span></div>
+      <div class="spot-item" onclick="sa('Watchers')"><div class="dot" style="background:#F59E0B"></div><span class="lbl">Watchers</span></div>
+      <div class="spot-item" onclick="sa('Ports')"><div class="dot" style="background:#10B981"></div><span class="lbl">Ports</span></div>
+      <div class="spot-item" onclick="sa('SQL')"><div class="dot" style="background:#3B82F6"></div><span class="lbl">SQL</span></div>
+      <div class="spot-item" onclick="sa('Render')"><div class="dot" style="background:#6366F1"></div><span class="lbl">Render</span></div>
+      <div class="spot-item" onclick="sa('Vercel')"><div class="dot" style="background:#F8FAFC"></div><span class="lbl">Vercel</span></div>
+      <div class="spot-item" onclick="sa('Supabase')"><div class="dot" style="background:#3ECF8E"></div><span class="lbl">Supabase</span></div>
+      <div class="spot-sep"></div>
+      <div class="spot-cat">Navigation</div>
+      <div class="spot-item" onclick="sa('Browser')"><div class="dot" style="background:#22C55E"></div><span class="lbl">Browser</span></div>
+      <div class="spot-item" onclick="sa('Manager')"><div class="dot" style="background:#A78BFA"></div><span class="lbl">Manager Agent</span></div>
+      <div class="spot-item" onclick="sa('Zeichnen')"><div class="dot" style="background:#F59E0B"></div><span class="lbl">Zeichnen</span></div>
+      <div class="spot-item" onclick="sa('Prozesse')"><div class="dot" style="background:#06B6D4"></div><span class="lbl">Prozesse</span></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════
+       TOOL PANELS (Bottom Sheets)
+       ═══════════════════════════════════ -->
+
+  <!-- Auto Approve Panel -->
+  <div class="panel-overlay" id="panel-approve">
+    <div class="panel-overlay-bg" onclick="closePanel()"></div>
+    <div class="panel-sheet glass-strong">
+      <div class="panel-handle"></div>
+      <div class="panel-head">
+        <div class="panel-head-icon" style="background:rgba(34,197,94,.15)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+        <div class="panel-head-info"><div class="panel-head-title">Auto Approve</div><div class="panel-head-sub">Automatische Bestätigung für AI-Aktionen</div></div>
+        <div class="panel-head-close" onclick="closePanel()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-section">
+          <div class="panel-row"><div class="panel-row-info"><div class="panel-row-title">Auto Approve aktiv</div><div class="panel-row-sub">Alle Dateiänderungen automatisch bestätigen</div></div><div class="panel-toggle on" onclick="this.classList.toggle('on')"></div></div>
+          <div class="panel-row"><div class="panel-row-info"><div class="panel-row-title">Nur lesen erlauben</div><div class="panel-row-sub">Schreibzugriffe weiterhin bestätigen</div></div><div class="panel-toggle" onclick="this.classList.toggle('on')"></div></div>
+          <div class="panel-row"><div class="panel-row-info"><div class="panel-row-title">Shell-Befehle auto-approven</div><div class="panel-row-sub">Befehle ohne Bestätigung ausführen</div></div><div class="panel-toggle" onclick="this.classList.toggle('on')"></div></div>
+        </div>
+        <div class="panel-section">
+          <div class="panel-section-title">Letzte Aktionen</div>
+          <div class="panel-card">
+            <div class="panel-card-row"><div class="dot" style="background:#22C55E"></div><span>auth.ts erstellt</span><span class="val">vor 2m</span></div>
+            <div class="panel-card-row"><div class="dot" style="background:#22C55E"></div><span>transactions.ts erstellt</span><span class="val">vor 30s</span></div>
+            <div class="panel-card-row"><div class="dot" style="background:#F59E0B"></div><span>banking.service.ts geändert</span><span class="val">jetzt</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Files Panel -->
+  <div class="panel-overlay" id="panel-files">
+    <div class="panel-overlay-bg" onclick="closePanel()"></div>
+    <div class="panel-sheet glass-strong">
+      <div class="panel-handle"></div>
+      <div class="panel-head">
+        <div class="panel-head-icon" style="background:rgba(245,158,11,.15)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
+        <div class="panel-head-info"><div class="panel-head-title">Dateien</div><div class="panel-head-sub">~/Desktop/TMS Banking</div></div>
+        <div class="panel-head-close" onclick="closePanel()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span class="panel-file-name panel-file-dir">src/</span></div>
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span class="panel-file-name panel-file-dir">src/api/</span></div>
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span class="panel-file-name panel-file-dir">src/api/mashreq/</span></div>
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span class="panel-file-name">auth.ts</span><span class="panel-file-size">48 lines · <span class="g">neu</span></span></div>
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span class="panel-file-name">transactions.ts</span><span class="panel-file-size">92 lines · <span class="g">neu</span></span></div>
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span class="panel-file-name">banking.service.ts</span><span class="panel-file-size">241 lines · <span class="w">geändert</span></span></div>
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span class="panel-file-name">package.json</span><span class="panel-file-size">1.2 KB</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Snippets Panel -->
+  <div class="panel-overlay" id="panel-snippets">
+    <div class="panel-overlay-bg" onclick="closePanel()"></div>
+    <div class="panel-sheet glass-strong">
+      <div class="panel-handle"></div>
+      <div class="panel-head">
+        <div class="panel-head-icon" style="background:rgba(245,158,11,.15)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
+        <div class="panel-head-info"><div class="panel-head-title">Snippets</div><div class="panel-head-sub">Schnelle Textbausteine einfügen</div></div>
+        <div class="panel-head-close" onclick="closePanel()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-row" onclick="toast('Snippet eingefügt')"><div class="panel-row-icon" style="background:rgba(59,130,246,.1)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div><div class="panel-row-info"><div class="panel-row-title">git add -A && git commit -m ""</div><div class="panel-row-sub">Quick commit</div></div></div>
+        <div class="panel-row" onclick="toast('Snippet eingefügt')"><div class="panel-row-icon" style="background:rgba(59,130,246,.1)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div><div class="panel-row-info"><div class="panel-row-title">npm run build && npm start</div><div class="panel-row-sub">Build & Start</div></div></div>
+        <div class="panel-row" onclick="toast('Snippet eingefügt')"><div class="panel-row-icon" style="background:rgba(59,130,246,.1)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div><div class="panel-row-info"><div class="panel-row-title">cd ~/Desktop/TMS\ Terminal</div><div class="panel-row-sub">Projekt-Verzeichnis</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Screenshots Panel -->
+  <div class="panel-overlay" id="panel-shots">
+    <div class="panel-overlay-bg" onclick="closePanel()"></div>
+    <div class="panel-sheet glass-strong">
+      <div class="panel-handle"></div>
+      <div class="panel-head">
+        <div class="panel-head-icon" style="background:rgba(6,182,212,.15)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/></svg></div>
+        <div class="panel-head-info"><div class="panel-head-title">Screenshots</div><div class="panel-head-sub">Terminal-Aufnahmen</div></div>
+        <div class="panel-head-close" onclick="closePanel()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-row" onclick="toast('Screenshot erstellt')"><div class="panel-row-icon" style="background:rgba(6,182,212,.1)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div><div class="panel-row-info"><div class="panel-row-title">Jetzt aufnehmen</div><div class="panel-row-sub">Screenshot vom aktiven Terminal</div></div><span class="panel-row-action">⌘S</span></div>
+        <div class="panel-section"><div class="panel-section-title">Letzte Screenshots</div></div>
+        <div class="panel-empty">Noch keine Screenshots aufgenommen</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard Toggle -->
+  <div class="kb-toggle glass" onclick="toggleKeyboard()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="8"/><line x1="10" y1="8" x2="10" y2="8"/><line x1="14" y1="8" x2="14" y2="8"/><line x1="18" y1="8" x2="18" y2="8"/><line x1="6" y1="12" x2="6" y2="12"/><line x1="10" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="14" y2="12"/><line x1="18" y1="12" x2="18" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg>
+    Tastatur Demo
+  </div>
+
+  <!-- Orb Dock (appears above keyboard) -->
+  <div class="orb-dock" id="orbDock"></div>
+
+  <!-- Virtual Keyboard -->
+  <div class="keyboard" id="vKeyboard">
+    <div class="kb-suggest">
+      <span>the</span><span>I</span><span>to</span>
+    </div>
+    <div class="kb-row">
+      <div class="kb-key">q</div><div class="kb-key">w</div><div class="kb-key">e</div><div class="kb-key">r</div><div class="kb-key">t</div><div class="kb-key">y</div><div class="kb-key">u</div><div class="kb-key">i</div><div class="kb-key">o</div><div class="kb-key">p</div>
+    </div>
+    <div class="kb-row">
+      <div class="kb-key">a</div><div class="kb-key">s</div><div class="kb-key">d</div><div class="kb-key">f</div><div class="kb-key">g</div><div class="kb-key">h</div><div class="kb-key">j</div><div class="kb-key">k</div><div class="kb-key">l</div>
+    </div>
+    <div class="kb-row">
+      <div class="kb-key wide">⇧</div><div class="kb-key">z</div><div class="kb-key">x</div><div class="kb-key">c</div><div class="kb-key">v</div><div class="kb-key">b</div><div class="kb-key">n</div><div class="kb-key">m</div><div class="kb-key wide">⌫</div>
+    </div>
+    <div class="kb-row">
+      <div class="kb-key wide">123</div><div class="kb-key wide">🌐</div><div class="kb-key space">space</div><div class="kb-key wide">return</div>
+    </div>
+  </div>
+
+  <div class="toast" id="mainToast"></div>
+</div>
+</div>
+
+<!-- ══════════════════════════════════════
+     PANEL SHOWCASE
+     ══════════════════════════════════════ -->
+<div class="col">
+<span class="col-label">Panel Design</span>
+<span class="col-sub">So sehen die Tool-Panels aus — als Bottom Sheets mit Glaseffekt. Tap auf die Buttons um verschiedene Panels zu öffnen.</span>
+<div class="phone" id="phone2">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <div style="position:absolute;inset:28px 0 0;overflow-y:auto" class="term">
+    <div class="d">Tool-Panel Demo — Tap die Buttons unten</div>
+    <div style="margin-top:20px;display:flex;flex-direction:column;gap:8px;padding:0 20px">
+      <div style="padding:12px 16px;border-radius:12px;background:#1B2336;border:1px solid #243044;cursor:pointer;display:flex;align-items:center;gap:10px" onclick="openPanel2('approve')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <div><div style="font-size:13px;font-weight:600">Auto Approve</div><div style="font-size:10px;color:#64748B">Toggles, letzte Aktionen</div></div>
+      </div>
+      <div style="padding:12px 16px;border-radius:12px;background:#1B2336;border:1px solid #243044;cursor:pointer;display:flex;align-items:center;gap:10px" onclick="openPanel2('files')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <div><div style="font-size:13px;font-weight:600">Dateien</div><div style="font-size:10px;color:#64748B">Datei-Browser, Ordnerstruktur</div></div>
+      </div>
+      <div style="padding:12px 16px;border-radius:12px;background:#1B2336;border:1px solid #243044;cursor:pointer;display:flex;align-items:center;gap:10px" onclick="openPanel2('snippets')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <div><div style="font-size:13px;font-weight:600">Snippets</div><div style="font-size:10px;color:#64748B">Textbausteine einfügen</div></div>
+      </div>
+      <div style="padding:12px 16px;border-radius:12px;background:#1B2336;border:1px solid #243044;cursor:pointer;display:flex;align-items:center;gap:10px" onclick="openPanel2('shots')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/></svg>
+        <div><div style="font-size:13px;font-weight:600">Screenshots</div><div style="font-size:10px;color:#64748B">Terminal aufnehmen</div></div>
+      </div>
+      <div style="margin-top:16px;padding:16px;border-radius:14px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.12)">
+        <div style="font-size:12px;font-weight:600;color:#93C5FD;margin-bottom:6px">Design-Prinzip</div>
+        <div style="font-size:11px;color:#94A3B8;line-height:1.6">Panels erscheinen als <strong style="color:#F8FAFC">Bottom Sheets</strong> mit Glaseffekt — gleiche Sprache wie Island und Orbs. Handle zum Schließen, farbiges Icon-Badge im Header, Inhalte darunter. Tap außerhalb schließt.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panels for phone2 (duplicated with phone2 scope) -->
+  <div class="panel-overlay" id="p2-panel-approve">
+    <div class="panel-overlay-bg" onclick="closePanel2()"></div>
+    <div class="panel-sheet glass-strong">
+      <div class="panel-handle"></div>
+      <div class="panel-head">
+        <div class="panel-head-icon" style="background:rgba(34,197,94,.15)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+        <div class="panel-head-info"><div class="panel-head-title">Auto Approve</div><div class="panel-head-sub">Automatische Bestätigung</div></div>
+        <div class="panel-head-close" onclick="closePanel2()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-row"><div class="panel-row-info"><div class="panel-row-title">Auto Approve aktiv</div><div class="panel-row-sub">Alle Dateiänderungen bestätigen</div></div><div class="panel-toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="panel-row"><div class="panel-row-info"><div class="panel-row-title">Nur lesen erlauben</div><div class="panel-row-sub">Schreibzugriffe bestätigen</div></div><div class="panel-toggle" onclick="this.classList.toggle('on')"></div></div>
+        <div class="panel-row"><div class="panel-row-info"><div class="panel-row-title">Shell-Befehle auto-approven</div></div><div class="panel-toggle" onclick="this.classList.toggle('on')"></div></div>
+        <div class="panel-section"><div class="panel-section-title">Letzte Aktionen</div><div class="panel-card">
+          <div class="panel-card-row"><div class="dot" style="background:#22C55E"></div><span>auth.ts erstellt</span><span class="val">vor 2m</span></div>
+          <div class="panel-card-row"><div class="dot" style="background:#F59E0B"></div><span>banking.service.ts geändert</span><span class="val">jetzt</span></div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-overlay" id="p2-panel-files">
+    <div class="panel-overlay-bg" onclick="closePanel2()"></div>
+    <div class="panel-sheet glass-strong">
+      <div class="panel-handle"></div>
+      <div class="panel-head">
+        <div class="panel-head-icon" style="background:rgba(245,158,11,.15)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
+        <div class="panel-head-info"><div class="panel-head-title">Dateien</div><div class="panel-head-sub">~/Desktop/TMS Banking</div></div>
+        <div class="panel-head-close" onclick="closePanel2()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span><span class="panel-file-name panel-file-dir">src/api/mashreq/</span></div>
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span class="panel-file-name">auth.ts</span><span class="panel-file-size">48 lines · <span class="g">neu</span></span></div>
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span class="panel-file-name">transactions.ts</span><span class="panel-file-size">92 lines · <span class="g">neu</span></span></div>
+        <div class="panel-file"><span class="panel-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span class="panel-file-name">banking.service.ts</span><span class="panel-file-size"><span class="w">geändert</span></span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-overlay" id="p2-panel-snippets">
+    <div class="panel-overlay-bg" onclick="closePanel2()"></div>
+    <div class="panel-sheet glass-strong">
+      <div class="panel-handle"></div>
+      <div class="panel-head">
+        <div class="panel-head-icon" style="background:rgba(245,158,11,.15)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
+        <div class="panel-head-info"><div class="panel-head-title">Snippets</div><div class="panel-head-sub">Schnelle Textbausteine</div></div>
+        <div class="panel-head-close" onclick="closePanel2()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+      </div>
+      <div class="panel-body">
+        <div class="panel-row" onclick="toast2('Snippet eingefügt')"><div class="panel-row-icon" style="background:rgba(59,130,246,.1)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div><div class="panel-row-info"><div class="panel-row-title">git add -A && git commit</div><div class="panel-row-sub">Quick commit</div></div></div>
+        <div class="panel-row" onclick="toast2('Snippet eingefügt')"><div class="panel-row-icon" style="background:rgba(59,130,246,.1)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div><div class="panel-row-info"><div class="panel-row-title">npm run build</div><div class="panel-row-sub">Build</div></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-overlay" id="p2-panel-shots">
+    <div class="panel-overlay-bg" onclick="closePanel2()"></div>
+    <div class="panel-sheet glass-strong">
+      <div class="panel-handle"></div>
+      <div class="panel-head">
+        <div class="panel-head-icon" style="background:rgba(6,182,212,.15)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/></svg></div>
+        <div class="panel-head-info"><div class="panel-head-title">Screenshots</div><div class="panel-head-sub">Terminal-Aufnahmen</div></div>
+        <div class="panel-head-close" onclick="closePanel2()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+      </div>
+      <div class="panel-body"><div class="panel-empty">Noch keine Screenshots</div></div>
+    </div>
+  </div>
+  <div class="toast" id="toast2"></div>
+</div>
+</div>
+
+</div>
+
+<script>
+// Toast
+function toast(text){const t=document.getElementById('mainToast');t.textContent=text;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1200)}
+function toast2(text){const t=document.getElementById('toast2');t.textContent=text;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1200)}
+
+// Island
+function toggleIsland(){document.getElementById('island').classList.toggle('exp')}
+function iTab(el,name){el.parentElement.querySelectorAll('.i-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');document.getElementById('iTitle').textContent=name;toast(name)}
+
+// Spotlight
+function toggleSpot(){const s=document.getElementById('spotPanel'),bg=document.getElementById('spotBg');const o=s.classList.toggle('open');bg.classList.toggle('open',o);if(o){document.getElementById('spotInput').value='';filterSpot('');setTimeout(()=>document.getElementById('spotInput').focus(),100)}}
+function filterSpot(q){document.querySelectorAll('#spotResults .spot-item').forEach(i=>{i.style.display=q&&!i.textContent.toLowerCase().includes(q.toLowerCase())?'none':'flex'})}
+function sa(text){toast(text);toggleSpot()}
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();toggleSpot()}if(e.key==='Escape'){document.getElementById('spotPanel').classList.remove('open');document.getElementById('spotBg').classList.remove('open');closePanel();closePanel2()}})
+
+// Tool Menu
+let toolEditMode=false;
+function openRing(){document.getElementById('toolRing').classList.add('open')}
+function closeRing(){document.getElementById('toolRing').classList.remove('open');toolEditMode=false;document.getElementById('toolRing').classList.remove('editing')}
+document.addEventListener('click',e=>{if(!e.target.closest('.tmenu')&&!e.target.closest('.om'))closeRing()})
+
+function tmAction(name,type){
+  if(toolEditMode)return;
+  closeRing();
+  if(type==='openPanel')openPanel(name);
+  else toast(name);
+}
+
+function toggleToolEdit(){
+  toolEditMode=!toolEditMode;
+  document.getElementById('toolRing').classList.toggle('editing',toolEditMode);
+}
+
+function renameSection(el){
+  if(!toolEditMode)return;
+  const current=el.textContent;
+  const input=document.createElement('input');
+  input.className='tmenu-rename';
+  input.value=current;
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+  const finish=()=>{
+    const span=document.createElement('span');
+    span.className='tmenu-section-title';
+    span.textContent=input.value||current;
+    span.onclick=()=>renameSection(span);
+    input.replaceWith(span);
+  };
+  input.onblur=finish;
+  input.onkeydown=e=>{if(e.key==='Enter')finish()};
+}
+
+function removeSection(btn){
+  const section=btn.closest('.tmenu-section');
+  section.style.transition='all .2s';section.style.opacity='0';section.style.transform='scaleY(0)';
+  setTimeout(()=>section.remove(),200);
+  toast('Kategorie entfernt');
+}
+
+function addSection(){
+  const menu=document.getElementById('toolRing');
+  const count=menu.querySelectorAll('.tmenu-section').length;
+  if(count>=5){toast('Max 5 Kategorien');return}
+  const section=document.createElement('div');
+  section.className='tmenu-section';
+  section.innerHTML=`
+    <div class="tmenu-section-head">
+      <span class="tmenu-section-title" onclick="renameSection(this)">Neue Kategorie</span>
+      <span class="tmenu-section-edit" onclick="removeSection(this)" style="display:block">✕</span>
+    </div>
+    <div class="tmenu-grid" style="min-height:40px;border:1px dashed rgba(255,255,255,.08);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#475569;font-size:9px">Tools hierher ziehen</div>
+  `;
+  menu.querySelector('.tmenu-add-section').before(section);
+  toast('Kategorie erstellt — Titel antippen zum Umbenennen');
+}
+
+// Long-press on tool item to enter edit mode
+let toolLpTimer=null;
+document.addEventListener('pointerdown',e=>{
+  const item=e.target.closest('.tmenu-item');
+  if(!item)return;
+  toolLpTimer=setTimeout(()=>{
+    if(!toolEditMode)toggleToolEdit();
+  },600);
+});
+document.addEventListener('pointerup',()=>clearTimeout(toolLpTimer));
+
+// Drag reorder tool items between sections
+let toolDragEl=null;
+document.addEventListener('pointerdown',e=>{
+  if(!toolEditMode)return;
+  const item=e.target.closest('.tmenu-item');
+  if(!item||e.target.closest('.ti-remove'))return;
+  toolDragEl=item;
+  item.style.opacity='.4';
+  e.preventDefault();
+});
+document.addEventListener('pointermove',e=>{
+  if(!toolDragEl)return;
+  // Find hovered grid or item
+  document.querySelectorAll('.tmenu-item').forEach(i=>i.style.borderColor='');
+  const hovered=document.elementFromPoint(e.clientX,e.clientY);
+  const targetItem=hovered?.closest('.tmenu-item');
+  if(targetItem&&targetItem!==toolDragEl)targetItem.style.borderColor='rgba(59,130,246,.5)';
+});
+document.addEventListener('pointerup',e=>{
+  if(!toolDragEl)return;
+  const hovered=document.elementFromPoint(e.clientX,e.clientY);
+  const targetItem=hovered?.closest('.tmenu-item');
+  const targetGrid=hovered?.closest('.tmenu-grid');
+
+  if(targetItem&&targetItem!==toolDragEl){
+    // Insert before or after target
+    const parent=targetItem.parentElement;
+    const items=[...parent.children];
+    const tIdx=items.indexOf(targetItem);
+    const dIdx=items.indexOf(toolDragEl);
+    if(dIdx<0){
+      // Different section — move to target section
+      targetItem.before(toolDragEl);
+    } else if(dIdx<tIdx){
+      targetItem.after(toolDragEl);
+    } else {
+      targetItem.before(toolDragEl);
+    }
+    toast('Verschoben');
+  } else if(targetGrid&&!targetGrid.contains(toolDragEl)){
+    // Dropped into a different section's grid
+    targetGrid.appendChild(toolDragEl);
+    toast('In Kategorie verschoben');
+  }
+
+  document.querySelectorAll('.tmenu-item').forEach(i=>{i.style.opacity='';i.style.borderColor=''});
+  toolDragEl=null;
+})
+
+// Panels (phone 1)
+function openPanel(id){closeRing();closeSpot();document.getElementById('panel-'+id).classList.add('open')}
+function closeSpot(){document.getElementById('spotPanel').classList.remove('open');document.getElementById('spotBg').classList.remove('open')}
+function closePanel(){document.querySelectorAll('#phone .panel-overlay').forEach(p=>p.classList.remove('open'))}
+
+// Panels (phone 2)
+function openPanel2(id){document.getElementById('p2-panel-'+id).classList.add('open')}
+function closePanel2(){document.querySelectorAll('#phone2 .panel-overlay').forEach(p=>p.classList.remove('open'))}
+
+// Edit mode
+let editMode=false;
+function toggleEdit(){
+  editMode=!editMode;
+  document.getElementById('editBar').classList.toggle('show',editMode);
+  document.querySelectorAll('#phone .orb, #phone .orb-group').forEach(o=>o.classList.toggle('editing',editMode));
+}
+function removeOrb(btn){const orb=btn.closest('.orb');orb.style.transition='all .3s';orb.style.transform='scale(0)';orb.style.opacity='0';setTimeout(()=>orb.remove(),300)}
+function removeMini(btn){const mini=btn.closest('.om');mini.style.transition='all .2s';mini.style.transform='scale(0)';mini.style.opacity='0';setTimeout(()=>mini.remove(),200);toast('Orb entfernt')}
+function rotateGroup(btn){const grp=btn.closest('.orb-group');grp.classList.toggle('vertical');toast(grp.classList.contains('vertical')?'Vertikal':'Horizontal')}
+
+// Orb Picker
+function openOrbPicker(){document.getElementById('orbPicker').classList.add('open')}
+function closeOrbPicker(){document.getElementById('orbPicker').classList.remove('open')}
+
+const SVG_TEMPLATES={
+  trash:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  dpad:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/><line x1="12" y1="22" x2="12" y2="15.5"/><polyline points="22 8.5 12 15.5 2 8.5"/></svg>',
+  mic:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" class="mic-icon"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
+  scissors:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>',
+};
+
+function orbExists(label){
+  // Check free orbs
+  for(const o of document.querySelectorAll('#phone .orb .orb-label')){if(o.textContent===label)return true}
+  // Check mini orbs in groups (by matching text or title)
+  for(const o of document.querySelectorAll('#phone .om')){if(o.dataset.label===label)return true}
+  return false;
+}
+
+function addOrb(symbol,label,color){
+  if(orbExists(label)){toast(label+' ist bereits platziert');closeOrbPicker();return}
+  closeOrbPicker();
+  const orb=document.createElement('div');
+  orb.className='orb editing';
+  orb.style.cssText='left:180px;bottom:200px;color:'+color;
+  orb.innerHTML='<span style="font-size:16px">'+symbol+'</span><span class="orb-label">'+label+'</span><span class="orb-remove" onclick="event.stopPropagation();removeOrb(this)">✕</span>';
+  orb.onclick=()=>toast(label);
+  document.getElementById('phone').appendChild(orb);
+  toast(label+' hinzugefügt');
+}
+
+function addOrbSvg(type,label,svgKey){
+  if(orbExists(label)){toast(label+' ist bereits platziert');closeOrbPicker();return}
+  closeOrbPicker();
+  const orb=document.createElement('div');
+  orb.className='orb editing';
+  orb.style.cssText='left:180px;bottom:200px';
+  orb.innerHTML=(SVG_TEMPLATES[svgKey]||'?')+'<span class="orb-label">'+label+'</span><span class="orb-remove" onclick="event.stopPropagation();removeOrb(this)">✕</span>';
+  if(svgKey==='mic'){orb.id='orbMic';orb.onclick=toggleMic;}
+  else orb.onclick=()=>toast(label);
+  document.getElementById('phone').appendChild(orb);
+  toast(label+' hinzugefügt');
+}
+
+// Long press for edit mode
+let lpTimer=null;
+document.addEventListener('pointerdown',e=>{const orb=e.target.closest('.orb,.orb-group');if(!orb||!orb.closest('#phone'))return;lpTimer=setTimeout(()=>{if(!editMode)toggleEdit()},800)});
+document.addEventListener('pointerup',()=>clearTimeout(lpTimer));
+document.addEventListener('pointermove',()=>clearTimeout(lpTimer));
+
+// Browser badge toggle
+let browserActive=true; // demo: browser is active
+document.getElementById('iBrowser').classList.toggle('active',browserActive);
+function toggleBrowserView(){
+  browserActive=!browserActive;
+  document.getElementById('iBrowser').classList.toggle('active',browserActive);
+  toast(browserActive?'Browser geöffnet':'Browser geschlossen');
+}
+
+// Drag & Drop — free orbs + mini orb reorder within groups
+let dragEl=null,dragType=null,dragOff={x:0,y:0},dragPlaceholder=null;
+
+document.addEventListener('pointerdown',e=>{
+  if(!editMode)return;
+  if(e.target.closest('.om-remove')||e.target.closest('.orb-remove')||e.target.closest('.grp-rotate'))return;
+
+  // Dragging a free orb
+  const orb=e.target.closest('.orb');
+  if(orb&&orb.closest('#phone')){
+    const r=orb.getBoundingClientRect();
+    dragOff.x=e.clientX-r.left;dragOff.y=e.clientY-r.top;
+    dragEl=orb;dragType='orb';orb.classList.add('dragging');orb.style.transition='none';
+    e.preventDefault();return;
+  }
+
+  // Dragging a mini orb inside a group (reorder)
+  const mini=e.target.closest('.om');
+  if(mini&&mini.closest('#phone')&&mini.closest('.orb-group')){
+    dragEl=mini;dragType='mini';
+    dragEl.style.opacity='.5';
+    e.preventDefault();return;
+  }
+
+  // Dragging an entire group
+  const grp=e.target.closest('.orb-group');
+  if(grp&&grp.closest('#phone')){
+    const r=grp.getBoundingClientRect();
+    dragOff.x=e.clientX-r.left;dragOff.y=e.clientY-r.top;
+    dragEl=grp;dragType='group';grp.style.transition='none';grp.style.opacity='.85';grp.style.zIndex='100';
+    e.preventDefault();return;
+  }
+});
+
+document.addEventListener('pointermove',e=>{
+  if(!dragEl)return;
+
+  if(dragType==='orb'){
+    const pr=document.getElementById('phone').getBoundingClientRect();
+    dragEl.style.left=Math.max(0,Math.min(e.clientX-pr.left-dragOff.x,pr.width-48))+'px';
+    dragEl.style.top=Math.max(28,Math.min(e.clientY-pr.top-dragOff.y,pr.height-48))+'px';
+    dragEl.style.right='auto';dragEl.style.bottom='auto';
+    // Highlight group drop targets
+    document.querySelectorAll('#phone .orb-group').forEach(g=>{
+      const gr=g.getBoundingClientRect();
+      g.classList.toggle('drop-target',e.clientX>=gr.left&&e.clientX<=gr.right&&e.clientY>=gr.top-20&&e.clientY<=gr.bottom+20);
+    });
+    // Highlight other free orbs as merge targets
+    document.querySelectorAll('#phone > .orb').forEach(o=>{
+      if(o===dragEl)return;
+      const r=o.getBoundingClientRect();
+      const over=e.clientX>=r.left-8&&e.clientX<=r.right+8&&e.clientY>=r.top-8&&e.clientY<=r.bottom+8;
+      o.classList.toggle('drop-target',over);
+      o.style.transform=over?'scale(1.2)':'';
+      o.style.boxShadow=over?'0 0 20px rgba(59,130,246,.4)':'';
+    });
+  }
+
+  if(dragType==='group'){
+    const pr=document.getElementById('phone').getBoundingClientRect();
+    const elW=dragEl.getBoundingClientRect().width;
+    const elH=dragEl.getBoundingClientRect().height;
+    dragEl.style.left=Math.max(0,Math.min(e.clientX-pr.left-dragOff.x,pr.width-elW))+'px';
+    dragEl.style.top=Math.max(28,Math.min(e.clientY-pr.top-dragOff.y,pr.height-elH))+'px';
+    dragEl.style.right='auto';dragEl.style.bottom='auto';
+  }
+
+  if(dragType==='mini'){
+    const grp=dragEl.closest('.orb-group');
+    const siblings=[...grp.querySelectorAll('.om')];
+    const hovered=siblings.find(s=>{
+      if(s===dragEl)return false;
+      const r=s.getBoundingClientRect();
+      return e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom;
+    });
+    if(hovered){
+      const grpLabel=grp.querySelector('.grp-label');
+      const allOms=[...grp.querySelectorAll('.om')];
+      const dragIdx=allOms.indexOf(dragEl);
+      const hoverIdx=allOms.indexOf(hovered);
+      if(dragIdx<hoverIdx) hovered.after(dragEl);
+      else grp.insertBefore(dragEl,hovered);
+    }
+  }
+});
+
+document.addEventListener('pointerup',e=>{
+  if(!dragEl)return;
+
+  if(dragType==='orb'){
+    let handled=false;
+
+    // Check if dropped on another free orb → create new group
+    const targetOrb=document.querySelector('#phone > .orb.drop-target');
+    if(targetOrb&&targetOrb!==dragEl){
+      // Create a new group from both orbs
+      const grp=document.createElement('div');
+      grp.className='orb-group editing';
+      grp.style.cssText=targetOrb.getAttribute('style');
+      grp.style.position='absolute';grp.style.animation='';
+
+      function orbToMini(orb){
+        const m=document.createElement('div');m.className='om';
+        const svg=orb.querySelector('svg');
+        if(svg){const c=svg.cloneNode(true);c.setAttribute('width','16');c.setAttribute('height','16');m.appendChild(c)}
+        else{const t=orb.childNodes[0]?.textContent?.trim()||'?';m.textContent=t;if(orb.style.color)m.style.color=orb.style.color}
+        const label=orb.querySelector('.orb-label')?.textContent||'';
+        m.dataset.label=label;
+        m.innerHTML+='<span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span>';
+        m.onclick=()=>toast(label);
+        return m;
+      }
+      grp.appendChild(orbToMini(targetOrb));
+      grp.appendChild(orbToMini(dragEl));
+
+      const rotBtn=document.createElement('span');
+      rotBtn.className='grp-rotate';
+      rotBtn.innerHTML='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+      rotBtn.onclick=e=>{e.stopPropagation();rotateGroup(rotBtn)};
+      grp.appendChild(rotBtn);
+
+      const lbl=document.createElement('span');lbl.className='grp-label';lbl.textContent='Neue Gruppe';
+      grp.appendChild(lbl);
+
+      document.getElementById('phone').appendChild(grp);
+      targetOrb.remove();dragEl.remove();
+      toast('Neue Gruppe erstellt');handled=true;
+    }
+
+    // Check if dropped on an existing group
+    if(!handled){
+      const groups=document.querySelectorAll('#phone .orb-group.drop-target');
+      if(groups.length>0){
+        const grp=groups[0];
+        const mini=document.createElement('div');mini.className='om';
+        const svg=dragEl.querySelector('svg');
+        if(svg){const c=svg.cloneNode(true);c.setAttribute('width','16');c.setAttribute('height','16');mini.appendChild(c)}
+        else{const t=dragEl.childNodes[0]?.textContent?.trim()||'?';mini.textContent=t;if(dragEl.style.color)mini.style.color=dragEl.style.color}
+        const label=dragEl.querySelector('.orb-label')?.textContent||'';
+        mini.dataset.label=label;
+        mini.innerHTML+='<span class="om-remove" onclick="event.stopPropagation();removeMini(this)">✕</span>';
+        mini.onclick=()=>toast(label);
+        grp.insertBefore(mini,grp.querySelector('.grp-label'));
+        if(editMode)mini.querySelector('.om-remove').style.display='flex';
+        dragEl.remove();toast('Zur Gruppe hinzugefügt');handled=true;
+      }
+    }
+
+    // Clean up all highlights
+    document.querySelectorAll('.orb-group,.orb').forEach(g=>{g.classList.remove('drop-target');g.style.transform='';g.style.boxShadow=''});
+    if(dragEl){dragEl.classList.remove('dragging');dragEl.style.transition=''}
+  }
+
+  if(dragType==='group'){
+    dragEl.style.opacity='';dragEl.style.zIndex='';dragEl.style.transition='';
+  }
+
+  if(dragType==='mini'){
+    dragEl.style.opacity='1';
+  }
+
+  dragEl=null;dragType=null;
+});
+
+// Microphone
+let micRecording=false,micInterval=null,micSecs=0;
+function toggleMic(){
+  micRecording=!micRecording;
+  const orb=document.getElementById('orbMic');
+  const overlay=document.getElementById('micOverlay');
+  if(micRecording){
+    orb.classList.add('recording');
+    orb.querySelector('.mic-icon').setAttribute('stroke','#EF4444');
+    overlay.classList.add('open');
+    micSecs=0;
+    micInterval=setInterval(()=>{micSecs++;const m=String(Math.floor(micSecs/60)).padStart(2,'0');const s=String(micSecs%60).padStart(2,'0');document.getElementById('micTimer').textContent=m+':'+s},1000);
+  } else {
+    orb.classList.remove('recording');
+    orb.querySelector('.mic-icon').setAttribute('stroke','#94A3B8');
+    overlay.classList.remove('open');
+    clearInterval(micInterval);
+    toast('Transkribiert... ('+micSecs+'s Audio)');
+  }
+}
+
+// ═══════════════════════════════════════
+// KEYBOARD SIMULATION
+// ═══════════════════════════════════════
+// KEYBOARD + DOCK
+// ═══════════════════════════════════════
+let kbOpen=false;
+let savedOrbStates=[];
+let dockEditMode=false;
+
+function makeDockOrb(content,color,label,delay){
+  const d=document.createElement('div');
+  d.className='dock-orb';
+  d.style.animationDelay=delay+'ms';
+  d.dataset.label=label||'';
+  if(typeof content==='string'){
+    d.textContent=content;
+    if(color)d.style.color=color;
+  } else {
+    const c=content.cloneNode(true);
+    c.setAttribute('width','16');c.setAttribute('height','16');
+    d.appendChild(c);
+  }
+  // Remove button (hidden until dock-editing)
+  const rm=document.createElement('span');
+  rm.className='dock-remove';rm.textContent='✕';
+  rm.onclick=e=>{e.stopPropagation();d.style.transition='all .2s';d.style.transform='scale(0)';d.style.opacity='0';setTimeout(()=>d.remove(),200);toast('Entfernt')};
+  d.appendChild(rm);
+  d.onclick=()=>{if(!dockEditMode)toast(label||d.textContent)};
+  return d;
+}
+
+function toggleKeyboard(){
+  kbOpen=!kbOpen;
+  const kb=document.getElementById('vKeyboard');
+  const dock=document.getElementById('orbDock');
+  const phone=document.getElementById('phone');
+
+  if(kbOpen){
+    dockEditMode=false;
+    dock.classList.remove('dock-editing');
+    savedOrbStates=[];
+    const orbs=phone.querySelectorAll(':scope > .orb, :scope > .orb-group');
+    orbs.forEach(el=>savedOrbStates.push({el,style:el.getAttribute('style')}));
+
+    dock.innerHTML='';
+    let delay=0;
+    orbs.forEach(el=>{
+      if(el.classList.contains('orb-group')){
+        if(dock.children.length>0){const s=document.createElement('div');s.className='dock-sep';dock.appendChild(s)}
+        el.querySelectorAll('.om').forEach(m=>{
+          const svg=m.querySelector('svg');
+          const d=makeDockOrb(svg||m.childNodes[0]?.textContent?.trim()||'?',m.style.color,m.dataset.label||'',delay);
+          delay+=40;dock.appendChild(d);
+        });
+      } else {
+        if(dock.children.length>0&&!dock.lastElementChild?.classList.contains('dock-sep')){const s=document.createElement('div');s.className='dock-sep';dock.appendChild(s)}
+        const svg=el.querySelector('svg');
+        const label=el.querySelector('.orb-label')?.textContent||'';
+        const d=makeDockOrb(svg||el.childNodes[0]?.textContent?.trim()||'?',el.style.color,label,delay);
+        delay+=40;dock.appendChild(d);
+      }
+    });
+
+    orbs.forEach(el=>{el.style.transition='all .25s';el.style.opacity='0';el.style.transform='scale(0.5)';
+      setTimeout(()=>{el.style.display='none'},250)});
+    setTimeout(()=>{kb.classList.add('open');dock.style.bottom='284px';dock.classList.add('open')},200);
+  } else {
+    dockEditMode=false;
+    dock.classList.remove('dock-editing','open');
+    kb.classList.remove('open');
+    setTimeout(()=>{
+      dock.innerHTML='';
+      savedOrbStates.forEach(({el,style})=>{
+        el.setAttribute('style',style);
+        el.style.transition='all .3s cubic-bezier(.34,1.56,.64,1)';
+        el.style.opacity='0';el.style.transform='scale(0.5)';el.style.display='';
+        requestAnimationFrame(()=>requestAnimationFrame(()=>{el.style.opacity='1';el.style.transform='scale(1)'}));
+      });
+      savedOrbStates=[];
+    },350);
+  }
+}
+
+// Dock edit mode — long press on dock orbs
+let dockLpTimer=null;
+document.addEventListener('pointerdown',e=>{
+  const dOrb=e.target.closest('.dock-orb');
+  if(!dOrb)return;
+  dockLpTimer=setTimeout(()=>{
+    dockEditMode=!dockEditMode;
+    document.getElementById('orbDock').classList.toggle('dock-editing',dockEditMode);
+    toast(dockEditMode?'Reihenfolge ändern':'Fertig');
+  },600);
+});
+document.addEventListener('pointerup',()=>clearTimeout(dockLpTimer));
+document.addEventListener('pointermove',e=>{
+  if(!dockDragEl)return; // only cancel if not already dragging
+  // Small movement threshold before canceling long-press
+  clearTimeout(dockLpTimer);
+});
+
+// Dock drag reorder
+let dockDragEl=null;
+document.addEventListener('pointerdown',e=>{
+  if(!dockEditMode)return;
+  const dOrb=e.target.closest('.dock-orb');
+  if(!dOrb||e.target.closest('.dock-remove'))return;
+  dockDragEl=dOrb;
+  dOrb.classList.add('dock-dragging');
+  e.preventDefault();
+});
+
+document.addEventListener('pointermove',e=>{
+  if(!dockDragEl)return;
+  const dock=document.getElementById('orbDock');
+  const orbs=[...dock.querySelectorAll('.dock-orb')];
+
+  // Find which orb we're hovering over
+  orbs.forEach(o=>o.classList.remove('dock-drop-target'));
+  const hovered=orbs.find(o=>{
+    if(o===dockDragEl)return false;
+    const r=o.getBoundingClientRect();
+    return e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom;
+  });
+  if(hovered)hovered.classList.add('dock-drop-target');
+});
+
+document.addEventListener('pointerup',e=>{
+  if(!dockDragEl)return;
+  const dock=document.getElementById('orbDock');
+  const target=dock.querySelector('.dock-drop-target');
+
+  if(target){
+    // Swap positions
+    const allChildren=[...dock.children];
+    const dragIdx=allChildren.indexOf(dockDragEl);
+    const targetIdx=allChildren.indexOf(target);
+
+    if(dragIdx<targetIdx) target.after(dockDragEl);
+    else dock.insertBefore(dockDragEl,target);
+
+    toast('Verschoben');
+  }
+
+  dock.querySelectorAll('.dock-orb').forEach(o=>o.classList.remove('dock-dragging','dock-drop-target'));
+  dockDragEl=null;
+});
+</script>
+
+</body>
+</html>

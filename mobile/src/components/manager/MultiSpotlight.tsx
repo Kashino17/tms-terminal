@@ -5,12 +5,14 @@ import {
   TouchableOpacity,
   StyleSheet,
   Pressable,
+  Animated,
+  Easing,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, fonts } from '../../theme';
 import { TerminalView, type TerminalViewRef } from '../TerminalView';
 import { WebSocketService } from '../../services/websocket.service';
-import { colorForSession } from '../../utils/terminalColors';
+import { colorForSession, lighten } from '../../utils/terminalColors';
 
 export type SpotlightMode = 1 | 2 | 4;
 export type PaneStatus = 'run' | 'idle' | 'wait' | 'err' | 'done';
@@ -49,6 +51,23 @@ interface Props {
    * Single taps still drive `onActivePaneChange` as usual.
    */
   onPaneDoubleTap?: (index: number) => void;
+  /**
+   * Fires when the user long-presses a pane header (~500 ms hold). Parent uses
+   * this to open a per-pane settings sheet (e.g. rename). Empty pane slots
+   * never fire this — the head only renders for occupied panes.
+   */
+  onPaneLongPress?: (index: number) => void;
+  /**
+   * Returns whether the AI CLI in this pane is currently "thinking". When
+   * true, the pane wrapper pulses with a soft glow + gentle border-color
+   * modulation. Cheap when false (no animator running).
+   */
+  thinkingFor?: (sessionId: string) => boolean;
+  /**
+   * Bubble-up channel for thinking-state changes. Wired to each TerminalView's
+   * `onThinkingChange`; parent uses it to maintain `thinkingFor`'s source.
+   */
+  onPaneThinkingChange?: (sessionId: string, thinking: boolean) => void;
   /** When set, only the pane at this index renders (others hidden). */
   focusedPaneIndex?: number | null;
   /**
@@ -88,6 +107,9 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     labelFor,
     statusFor,
     onPaneDoubleTap,
+    onPaneLongPress,
+    thinkingFor,
+    onPaneThinkingChange,
     focusedPaneIndex,
     activePaneKeyboardOffset = false,
   },
@@ -95,6 +117,62 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
 ) {
   // One TerminalViewRef per pane index, kept stable across re-renders.
   const terminalRefs = useRef<Array<TerminalViewRef | null>>([]);
+
+  // Per-pane pulse animator for the AI-thinking glow. Lazy-init: each pane
+  // only allocates an Animated.Value the first time it renders. The loop is
+  // only running while the pane's thinking flag is true — no idle CPU cost.
+  const pulseRefs = useRef<Animated.Value[]>([]);
+  const loopRefs = useRef<Array<Animated.CompositeAnimation | null>>([]);
+  const getPulse = (i: number): Animated.Value => {
+    if (!pulseRefs.current[i]) pulseRefs.current[i] = new Animated.Value(0);
+    return pulseRefs.current[i];
+  };
+
+  // Drive each pane's pulse loop based on its thinking state. Effect re-runs
+  // whenever panes change (mount/unmount/swap) or thinkingFor identity flips.
+  useEffect(() => {
+    panes.forEach((sid, i) => {
+      const thinking = sid ? !!thinkingFor?.(sid) : false;
+      const pulse = getPulse(i);
+      const existing = loopRefs.current[i];
+      if (thinking && !existing) {
+        const loop = Animated.loop(
+          Animated.sequence([
+            Animated.timing(pulse, {
+              toValue: 1,
+              duration: 800,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: false,
+            }),
+            Animated.timing(pulse, {
+              toValue: 0,
+              duration: 800,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: false,
+            }),
+          ]),
+        );
+        loopRefs.current[i] = loop;
+        loop.start();
+      } else if (!thinking && existing) {
+        existing.stop();
+        loopRefs.current[i] = null;
+        // Smooth fade-out so the glow doesn't snap-cut.
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 300,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: false,
+        }).start();
+      }
+    });
+  }, [panes, thinkingFor]);
+
+  // Stop every loop on unmount so leftover animators don't keep ticking.
+  useEffect(() => () => {
+    loopRefs.current.forEach((l) => l?.stop());
+    loopRefs.current = [];
+  }, []);
 
   useImperativeHandle(ref, () => ({
     injectIntoActive: (text: string) => {
@@ -156,8 +234,19 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
       return (
         <Pressable
           key={`empty-${i}`}
-          style={[s.empty, isFocusedOverlay && s.focusedOverlay]}
-          onPress={() => onSelectEmptyPane?.(i)}
+          style={[
+            s.empty,
+            isActive && s.emptyActive,
+            focusedPaneIndex != null && i !== focusedPaneIndex && s.paneHiddenInFocus,
+          ]}
+          onPress={() => {
+            // Tap on an empty pane both activates it (so the user sees the
+            // selection highlight) and notifies the parent to start the
+            // pick-a-terminal flow. Without the activate step, the user got
+            // no feedback that their tap registered.
+            onActivePaneChange(i);
+            onSelectEmptyPane?.(i);
+          }}
         >
           <Feather name="plus" size={16} color={colors.textDim} />
           <Text style={s.emptyText}>Pane {i + 1} leer</Text>
@@ -170,18 +259,54 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
     // In focus mode the visible (focused) pane has lots of vertical space so
     // we can use the largest font even when the underlying mode is 2 or 4.
     const fontSize = isFocusedOverlay ? 13 : (mode === 4 ? 11 : mode === 2 ? 12 : 13);
+
+    // Thinking glow: pulse the shadow + border color when the AI CLI is busy.
+    // Values are pumped up vs. the original design — Android ignores most of
+    // the iOS shadow* properties and only honors `elevation`, and the original
+    // 12 % lighten + elev 2→6 was barely perceptible on Galaxy Fold-class
+    // devices. The wider ranges make the glow obvious without being jarring.
+    const pulse = getPulse(i);
+    const tcolorLit = lighten(tcolor, 0.30);
+    const glowShadowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] });
+    const glowShadowRadius = pulse.interpolate({ inputRange: [0, 1], outputRange: [4, 18] });
+    const glowElevation = pulse.interpolate({ inputRange: [0, 1], outputRange: [0, 14] });
+    const glowBorderColor = pulse.interpolate({
+      inputRange: [0, 1],
+      outputRange: [tcolor, tcolorLit],
+    });
+    const thinking = !!thinkingFor?.(sid);
+
     return (
-      <View
+      <Animated.View
         key={`${sid}-${i}`}
         style={[
           s.pane,
           { borderLeftColor: tcolor },
           isActive && { ...s.paneActive, shadowColor: tcolor, borderColor: tcolor },
-          isFocusedOverlay && s.focusedOverlay,
+          // Thinking glow overrides static shadow during the pulse. Border
+          // color animates between full saturation and a +12% tint (option B
+          // from the design — pulse + light color modulation).
+          thinking && {
+            shadowColor: tcolor,
+            shadowOffset: { width: 0, height: 0 },
+            shadowOpacity: glowShadowOpacity,
+            shadowRadius: glowShadowRadius,
+            elevation: glowElevation as unknown as number,
+            borderColor: glowBorderColor,
+          },
+          // Non-focused panes are visually hidden so the focused one expands
+          // (flex:1) to fill whatever container is left. WebViews stay mounted
+          // (display:none keeps the React tree intact), so xterm state survives.
+          focusedPaneIndex != null && i !== focusedPaneIndex && s.paneHiddenInFocus,
         ]}
       >
         {/* Header taps activate the pane (no double-tap needed here). */}
-        <Pressable style={s.head} onPress={() => onActivePaneChange(i)}>
+        <Pressable
+          style={s.head}
+          onPress={() => onActivePaneChange(i)}
+          onLongPress={() => onPaneLongPress?.(i)}
+          delayLongPress={500}
+        >
           <View style={[s.dot, { backgroundColor: tcolor, shadowColor: tcolor }]} />
           <Text style={s.name} numberOfLines={1}>{label}</Text>
           <View style={[s.statusBadge, statusBgColor(status)]}>
@@ -194,7 +319,11 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
             onPress={() => onPromote(i)}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           >
-            <Feather name="maximize-2" size={9} color={colors.textDim} />
+            <Feather
+              name={isFocusedOverlay ? 'minimize-2' : 'maximize-2'}
+              size={9}
+              color={isFocusedOverlay ? colors.primary : colors.textDim}
+            />
           </TouchableOpacity>
         </Pressable>
         <View style={s.outWrap}>
@@ -215,9 +344,10 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
             // keep the suppression so the single-tap-vs-double-tap counter works.
             tapFocusDisabled={!isFocusedOverlay}
             onTap={() => handlePaneTap(i)}
+            onThinkingChange={(t) => onPaneThinkingChange?.(sid, t)}
           />
         </View>
-      </View>
+      </Animated.View>
     );
   }
 
@@ -227,14 +357,21 @@ export const MultiSpotlight = forwardRef<MultiSpotlightRef, Props>(function Mult
   // state and cancel the soft keyboard mid-input.
 
   // Mode-4 needs a 2x2 grid → use 2 rows, each holding 2 panes.
+  // When focused, the row that does NOT contain the focused pane is hidden
+  // entirely so the remaining row gets the full grid height. Combined with
+  // hiding the non-focused pane in the active row, the focused pane fills
+  // the whole grid even though it's nested two layers deep.
   if (mode === 4) {
+    const row0HasFocus = focusedPaneIndex === 0 || focusedPaneIndex === 1;
+    const row1HasFocus = focusedPaneIndex === 2 || focusedPaneIndex === 3;
+    const focusActive = focusedPaneIndex != null;
     return (
       <View style={s.grid}>
-        <View style={s.row}>
+        <View style={[s.row, focusActive && !row0HasFocus && s.rowHiddenInFocus]}>
           {renderPane(slots[0], 0)}
           {renderPane(slots[1], 1)}
         </View>
-        <View style={s.row}>
+        <View style={[s.row, focusActive && !row1HasFocus && s.rowHiddenInFocus]}>
           {renderPane(slots[2], 2)}
           {renderPane(slots[3], 3)}
         </View>
@@ -366,9 +503,27 @@ const s = StyleSheet.create({
     gap: 3,
     padding: 8,
   },
+  // Soft selection highlight for empty panes — solid 1.5px white-ish border
+  // with a hairline inner glow so the user sees their tap registered, before
+  // they pick a terminal to fill it. Stays subtle (no theme accent) since
+  // an empty pane is a transient picking state, not a styled surface.
+  emptyActive: {
+    borderStyle: 'solid',
+    borderColor: 'rgba(255,255,255,0.55)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
   emptyText: {
     fontSize: 9,
     color: colors.textDim,
+  },
+  // Display:none for non-focused panes / row containers when expanding one
+  // pane to fill the grid. Keeps the React tree (and WebViews) mounted —
+  // toggling display:none doesn't unmount, so xterm state survives.
+  paneHiddenInFocus: {
+    display: 'none',
+  },
+  rowHiddenInFocus: {
+    display: 'none',
   },
   // Promote the focused pane to a full-grid overlay. Stays in its React tree
   // position so the WebView is never detached/remounted — only its style flips.

@@ -73,6 +73,12 @@ export class TerminalManager {
     this.closeCallbacks.set(id, onClose);
 
     pty.onData((data: string) => {
+      // ── TEMP DIAGNOSTIC TAP (remove after debugging terminal duplication) ──
+      try {
+        require('fs').appendFileSync('/tmp/tms-tap.log',
+          `[${new Date().toISOString()}] OUT ${id.slice(0, 8)} len=${data.length} ${JSON.stringify(data.replace(/\r/g, '\\r').replace(/\n/g, '\\n').slice(0, 160))}\n`);
+      } catch { /* ignore */ }
+      // ───────────────────────────────────────────────────────────────────────
       const existing = this.outputBuffers.get(id) || '';
       const combined = existing + data;
       this.outputBuffers.set(id, combined);
@@ -264,6 +270,13 @@ export class TerminalManager {
   resize(sessionId: string, cols: number, rows: number): boolean {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
+    // ── TEMP DIAGNOSTIC TAP (remove after debugging) ──
+    try {
+      const changed = !(session.cols === cols && session.rows === rows);
+      require('fs').appendFileSync('/tmp/tms-tap.log',
+        `[${new Date().toISOString()}] RESIZE ${sessionId.slice(0, 8)} ${cols}x${rows} ${changed ? 'CHANGED→SIGWINCH' : '(no-op, skipped)'}\n`);
+    } catch { /* ignore */ }
+    // ──────────────────────────────────────────────────
     // Delta guard: a no-op resize still raises SIGWINCH, which makes TUI apps
     // (Claude Code's Ink renderer) reprint their whole live region. On every
     // reattach the client re-sends the current dims, so without this guard each

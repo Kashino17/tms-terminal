@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>V3 — Timeline mit Kontext</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0F172A;color:#F8FAFC}
+
+.phone{width:380px;height:760px;margin:20px auto;border:3px solid #334155;border-radius:32px;overflow:hidden;position:relative;background:#0F172A;box-shadow:0 20px 60px rgba(0,0,0,.6);display:flex;flex-direction:column}
+@media(max-width:420px){.phone{width:100%;height:100%;margin:0;border:none;border-radius:0}}
+
+.header{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(51,65,85,.5);background:#0F172A;flex-shrink:0;gap:10px}
+.header .back{color:#94A3B8;font-size:20px;cursor:pointer;border:none;background:none;padding:4px}
+.header .title{flex:1;font-size:16px;font-weight:700}
+.header .badge{background:rgba(59,130,246,.15);color:#60A5FA;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px}
+
+/* Search bar */
+.search-bar{padding:10px 16px;flex-shrink:0}
+.search-input{width:100%;background:#1B2336;border:1px solid #334155;border-radius:12px;padding:10px 14px 10px 36px;color:#F8FAFC;font-size:13px;outline:none;position:relative}
+.search-wrap{position:relative}
+.search-wrap::before{content:'🔍';position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:14px;z-index:1}
+
+/* Timeline */
+.timeline{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 16px 16px}
+
+/* Day header */
+.day{padding:12px 0 8px;display:flex;align-items:center;gap:8px}
+.day .label{font-size:12px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.5px}
+.day .line{flex:1;height:1px;background:#1E293B}
+
+/* Timeline item */
+.tl-item{display:flex;gap:12px;margin-bottom:2px;position:relative}
+
+/* Timeline rail */
+.tl-rail{width:24px;display:flex;flex-direction:column;align-items:center;flex-shrink:0}
+.tl-dot{width:10px;height:10px;border-radius:5px;background:#3B82F6;z-index:1;flex-shrink:0;margin-top:16px}
+.tl-dot.green{background:#22C55E}
+.tl-dot.purple{background:#A78BFA}
+.tl-dot.amber{background:#F59E0B}
+.tl-line{width:2px;flex:1;background:#1E293B;min-height:8px}
+
+/* Content card */
+.tl-card{flex:1;background:#1B2336;border:1px solid #334155;border-radius:14px;padding:12px;margin-bottom:8px;cursor:pointer;transition:all .15s}
+.tl-card:active{background:#1E293B;transform:scale(.98)}
+
+.tl-card .top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.tl-card .top .type{font-size:14px}
+.tl-card .top .name{flex:1;font-size:13px;font-weight:600;color:#F8FAFC;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-card .top .time{font-size:10px;color:#475569;flex-shrink:0}
+
+/* Context — what triggered the artifact */
+.tl-card .context{background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.1);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#94A3B8;line-height:1.4}
+.tl-card .context .trigger{color:#60A5FA;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px}
+
+.tl-card .desc{font-size:12px;color:#94A3B8;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+.tl-card .tags{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.tl-card .tag{font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px;text-transform:uppercase;letter-spacing:.3px}
+.tag.slides{background:rgba(59,130,246,.12);color:#60A5FA}
+.tag.size{background:rgba(51,65,85,.5);color:#64748B}
+.tag.approved{background:rgba(34,197,94,.12);color:#4ADE80}
+.tag.critical{background:rgba(239,68,68,.12);color:#F87171}
+
+/* Quick actions */
+.tl-card .actions{display:flex;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(51,65,85,.4)}
+.tl-card .action-btn{flex:1;padding:6px;border-radius:8px;text-align:center;font-size:11px;font-weight:600;cursor:pointer;border:1px solid #334155;color:#94A3B8;background:none;transition:all .15s}
+.tl-card .action-btn:active{background:rgba(59,130,246,.1);border-color:rgba(59,130,246,.3);color:#60A5FA}
+.tl-card .action-btn.primary{background:rgba(59,130,246,.1);border-color:rgba(59,130,246,.2);color:#60A5FA}
+
+.label-top{position:fixed;top:8px;left:50%;transform:translateX(-50%);background:#22C55E;color:#fff;font-size:11px;font-weight:700;padding:4px 12px;border-radius:12px;z-index:100;letter-spacing:.5px;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="label-top">V3 — Timeline mit Kontext</div>
+<div class="phone">
+  <div class="header">
+    <button class="back">←</button>
+    <span class="title">Artefakte</span>
+    <span class="badge">7</span>
+  </div>
+
+  <div class="search-bar">
+    <div class="search-wrap">
+      <input class="search-input" placeholder="Artefakte durchsuchen..." />
+    </div>
+  </div>
+
+  <div class="timeline">
+    <!-- Today -->
+    <div class="day">
+      <span class="label">Heute</span>
+      <div class="line"></div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-rail"><div class="tl-dot"></div><div class="tl-line"></div></div>
+      <div class="tl-card">
+        <div class="top">
+          <span class="type">📊</span>
+          <span class="name">Sicherheitsaudit — TMS Shops</span>
+          <span class="time">13:15</span>
+        </div>
+        <div class="context">
+          <div class="trigger">Ausgelöst durch</div>
+          Du: "Analysiere alle 3 Projekte und erstelle Präsentationen" → Multi-Projekt Audit Task
+        </div>
+        <div class="desc">Kritische SQL Injection, API-Keys im Repo, fehlende Rate-Limits. Fix-Prioritäten und Architektur-Empfehlung.</div>
+        <div class="tags">
+          <span class="tag slides">6 Slides</span>
+          <span class="tag critical">7 Kritisch</span>
+          <span class="tag size">21 KB</span>
+        </div>
+        <div class="actions">
+          <button class="action-btn primary">📊 Öffnen</button>
+          <button class="action-btn">↗ Teilen</button>
+          <button class="action-btn">💬 Nachfrage</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-rail"><div class="tl-dot"></div><div class="tl-line"></div></div>
+      <div class="tl-card">
+        <div class="top">
+          <span class="type">📊</span>
+          <span class="name">Sprint Dashboard — Sprint 14</span>
+          <span class="time">12:40</span>
+        </div>
+        <div class="context">
+          <div class="trigger">Ausgelöst durch</div>
+          Du: "/ppt Projekt-Status" → Wizard → Kompakt & Daten Stil
+        </div>
+        <div class="desc">84% Features fertig, 142/168 Tests, Team-Velocity steigend.</div>
+        <div class="tags">
+          <span class="tag slides">4 Slides</span>
+          <span class="tag size">20 KB</span>
+        </div>
+        <div class="actions">
+          <button class="action-btn primary">📊 Öffnen</button>
+          <button class="action-btn">↗ Teilen</button>
+          <button class="action-btn">💬 Nachfrage</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-rail"><div class="tl-dot"></div><div class="tl-line"></div></div>
+      <div class="tl-card">
+        <div class="top">
+          <span class="type">📊</span>
+          <span class="name">API-Dokumentation — TMS Banking</span>
+          <span class="time">11:30</span>
+        </div>
+        <div class="desc">12 REST-Endpoints, OAuth2 Auth, Konten- und Transaktions-API.</div>
+        <div class="tags">
+          <span class="tag slides">3 Slides</span>
+          <span class="tag size">21 KB</span>
+        </div>
+        <div class="actions">
+          <button class="action-btn primary">📊 Öffnen</button>
+          <button class="action-btn">↗ Teilen</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Yesterday -->
+    <div class="day">
+      <span class="label">Gestern</span>
+      <div class="line"></div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-rail"><div class="tl-dot green"></div><div class="tl-line"></div></div>
+      <div class="tl-card">
+        <div class="top">
+          <span class="type">🖼️</span>
+          <span class="name">Logo-Entwurf TMS Terminal</span>
+          <span class="time">18:22</span>
+        </div>
+        <div class="context">
+          <div class="trigger">Ausgelöst durch</div>
+          Du: "Erstell ein Logo für TMS Terminal — dunkel, minimalistisch, Terminal-Stil"
+        </div>
+        <div class="tags">
+          <span class="tag slides">1024×1024</span>
+          <span class="tag size">340 KB</span>
+        </div>
+        <div class="actions">
+          <button class="action-btn primary">🖼️ Anzeigen</button>
+          <button class="action-btn">💾 Speichern</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Earlier -->
+    <div class="day">
+      <span class="label">Letzte Woche</span>
+      <div class="line"></div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-rail"><div class="tl-dot purple"></div><div class="tl-line"></div></div>
+      <div class="tl-card">
+        <div class="top">
+          <span class="type">⚡</span>
+          <span class="name">png-to-webp</span>
+          <span class="time">12.04.</span>
+        </div>
+        <div class="context">
+          <div class="trigger">Ausgelöst durch</div>
+          Du: "Konvertiere die Screenshots zu WebP" → Skill automatisch erstellt und getestet
+        </div>
+        <div class="tags">
+          <span class="tag approved">Approved</span>
+          <span class="tag size">Shell Script</span>
+        </div>
+        <div class="actions">
+          <button class="action-btn primary">⚡ Ausführen</button>
+          <button class="action-btn">📝 Bearbeiten</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-rail"><div class="tl-dot"></div><div class="tl-line" style="background:transparent"></div></div>
+      <div class="tl-card">
+        <div class="top">
+          <span class="type">📊</span>
+          <span class="name">Multi-Projekt Audit</span>
+          <span class="time">11.04.</span>
+        </div>
+        <div class="desc">Vergleich Shops, Terminal, Banking: Sicherheit, Qualität, Dependencies.</div>
+        <div class="tags">
+          <span class="tag slides">8 Slides</span>
+          <span class="tag size">24 KB</span>
+        </div>
+        <div class="actions">
+          <button class="action-btn primary">📊 Öffnen</button>
+          <button class="action-btn">↗ Teilen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -32,6 +32,8 @@ interface PaneGroupsState {
   setActive: (serverId: string, groupId: string | null) => void;
   /** Save the current pane layout as a new group. Returns the new group's ID. */
   saveGroup: (serverId: string, name: string, terminals: (string | null)[]) => string;
+  /** Replace the terminals of an existing group (auto-save while active). */
+  updateGroup: (serverId: string, groupId: string, terminals: (string | null)[]) => void;
   removeGroup: (serverId: string, groupId: string) => void;
   renameGroup: (serverId: string, groupId: string, name: string) => void;
 }
@@ -96,6 +98,26 @@ export const usePaneGroupsStore = create<PaneGroupsState>((set, get) => ({
     set({ groups, activeId });
     persist({ groups, activeId });
     return id;
+  },
+
+  updateGroup(serverId, groupId, terminals) {
+    const groups = { ...get().groups };
+    const list = groups[serverId] || [];
+    let changed = false;
+    const next = list.map((g) => {
+      if (g.id !== groupId) return g;
+      // Skip writes that wouldn't change anything (avoids persist churn).
+      if (
+        g.terminals.length === terminals.length &&
+        g.terminals.every((t, i) => t === terminals[i])
+      ) return g;
+      changed = true;
+      return { ...g, terminals: [...terminals] };
+    });
+    if (!changed) return;
+    groups[serverId] = next;
+    set({ groups });
+    persist({ groups, activeId: get().activeId });
   },
 
   removeGroup(serverId, groupId) {

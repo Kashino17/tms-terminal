@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Variante 1 — Aktuelles Design (Bottom-Sheet Overlay)</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0F172A;color:#F8FAFC}
+
+/* Phone frame */
+.phone{width:380px;height:760px;margin:20px auto;border:3px solid #334155;border-radius:32px;overflow:hidden;position:relative;background:#0F172A;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+@media(max-width:420px){.phone{width:100%;height:100%;margin:0;border:none;border-radius:0}}
+
+/* Header */
+.viewer-header{display:flex;align-items:center;padding:12px;border-bottom:1px solid rgba(148,163,184,.06);background:#0F172A;z-index:10}
+.viewer-header .btn{width:36px;height:36px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#F8FAFC;font-size:18px;cursor:pointer;border:none;background:none}
+.viewer-header .title{flex:1;text-align:center;font-size:14px;font-weight:600;color:#F8FAFC}
+
+/* Slide area */
+.slide-area{flex:1;padding:16px 20px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+
+/* Presentation content styles */
+h2{font-size:20px;font-weight:700;margin-bottom:12px;color:#F8FAFC}
+.severity-critical{background:rgba(239,68,68,.1);border-left:3px solid #EF4444;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:outline .15s}
+.severity-critical strong{color:#F87171}
+.severity-warning{background:rgba(245,158,11,.1);border-left:3px solid #F59E0B;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:outline .15s}
+.severity-warning strong{color:#FBBF24}
+.severity-info{background:rgba(59,130,246,.1);border-left:3px solid #3B82F6;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:8px;cursor:pointer}
+.severity-info strong{color:#60A5FA}
+details{background:#1B2336;border:1px solid #334155;border-radius:8px;margin-bottom:8px;overflow:hidden}
+summary{padding:10px 12px;cursor:pointer;font-weight:600;font-size:14px;color:#F8FAFC;list-style:none;display:flex;align-items:center;gap:8px}
+summary::-webkit-details-marker{display:none}
+summary::before{content:'▸';color:#3B82F6;font-size:12px;transition:transform .2s}
+details[open] summary::before{transform:rotate(90deg)}
+details[open] summary{border-bottom:1px solid #334155}
+.detail-content{padding:12px;color:#CBD5E1;font-size:13px;line-height:1.65}
+p{font-size:14px;line-height:1.6;color:#CBD5E1;margin-bottom:6px}
+code{font-family:'SF Mono',monospace;font-size:12px;background:#1E293B;padding:2px 5px;border-radius:3px;color:#06B6D4}
+
+/* Tap highlight */
+.tapped{outline:2px solid #3B82F6 !important;outline-offset:2px;border-radius:4px}
+
+/* Selected (multi) */
+.selected{outline:2px solid #F59E0B !important;outline-offset:2px;border-radius:4px}
+
+/* Slide counter */
+.counter{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.8);backdrop-filter:blur(8px);color:#94A3B8;font-size:12px;font-weight:600;padding:6px 16px;border-radius:20px;z-index:10}
+
+/* Loading banner */
+.loading-banner{position:absolute;bottom:48px;align-self:center;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:8px;background:rgba(15,23,42,.9);border:1px solid rgba(59,130,246,.3);padding:8px 14px;border-radius:20px;z-index:20;font-size:12px;color:#94A3B8;white-space:nowrap;max-width:85%;transition:all .3s}
+.loading-banner .spinner{width:14px;height:14px;border:2px solid rgba(59,130,246,.3);border-top-color:#3B82F6;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Answer overlay (bottom sheet) */
+.answer-overlay{position:absolute;bottom:0;left:0;right:0;max-height:55%;background:rgba(15,23,42,.95);border-top:1px solid rgba(59,130,246,.3);border-top-left-radius:16px;border-top-right-radius:16px;padding:12px 16px 24px;z-index:30;display:flex;flex-direction:column;transform:translateY(100%);transition:transform .35s cubic-bezier(.32,.72,.24,1.02);overflow:hidden}
+.answer-overlay.visible{transform:translateY(0)}
+.answer-header{display:flex;align-items:flex-start;gap:10px;padding-bottom:8px;border-bottom:1px solid rgba(51,65,85,.5);margin-bottom:8px}
+.answer-question{color:#3B82F6;font-size:13px;font-weight:600;font-family:'SF Mono',monospace;flex:1}
+.answer-close{color:#94A3B8;cursor:pointer;font-size:18px;padding:2px 6px;border:none;background:none}
+.answer-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;color:#CBD5E1;font-size:13px;line-height:1.65}
+.answer-body strong{color:#F8FAFC}
+.answer-body code{background:#1E293B;padding:1px 4px;border-radius:3px;color:#06B6D4;font-size:12px}
+
+/* Multi-select button */
+.ask-btn{position:absolute;bottom:50px;right:16px;z-index:40;background:#3B82F6;color:#fff;border:none;border-radius:24px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(59,130,246,.4);cursor:pointer;display:none;transition:all .2s}
+.ask-btn:active{transform:scale(.95)}
+
+/* Description labels */
+.demo-label{position:fixed;top:8px;left:50%;transform:translateX(-50%);background:#3B82F6;color:#fff;font-size:11px;font-weight:700;padding:4px 12px;border-radius:12px;z-index:100;letter-spacing:.5px;text-transform:uppercase}
+
+.phone{display:flex;flex-direction:column}
+</style>
+</head>
+<body>
+<div class="demo-label">V1 — Aktuell: Bottom-Sheet Overlay</div>
+<div class="phone">
+  <div class="viewer-header">
+    <button class="btn">✕</button>
+    <span class="title">Sicherheitsaudit — TMS Shops</span>
+    <button class="btn">↗</button>
+  </div>
+
+  <div class="slide-area" id="slideArea">
+    <h2>Kritische Sicherheitslücken</h2>
+
+    <div class="severity-critical" id="item1" onclick="tapItem(this, 'SQL Injection in User-Query — Die Suche nutzt Raw SQL ohne Prepared Statements, Angreifer kann beliebige Queries ausführen')">
+      <strong>SQL Injection in User-Query</strong><br>
+      <p>Die Suche nutzt Raw SQL ohne Prepared Statements — Angreifer kann beliebige DB-Queries ausführen</p>
+    </div>
+
+    <div class="severity-critical" id="item2" onclick="tapItem(this, 'API-Keys im Git-Repository — Stripe Live Key und Supabase Service Key committed')">
+      <strong>API-Keys im Git-Repository</strong><br>
+      <p>Stripe Live Key und Supabase Service Key in .env.example committed — jeder mit Repo-Zugriff hat vollen API-Zugang</p>
+    </div>
+
+    <div class="severity-warning" id="item3" onclick="tapItem(this, 'Keine Rate-Limiting — API-Endpoints ohne Limit, Brute-Force möglich')">
+      <strong>Keine Rate-Limiting</strong><br>
+      <p>API-Endpoints haben kein Rate-Limit — Brute-Force auf Login möglich (~1000 Req/s)</p>
+    </div>
+
+    <details>
+      <summary onclick="event.stopPropagation()">Details zur SQL Injection</summary>
+      <div class="detail-content">
+        <p>Betroffen: <code>src/api/search.ts:42</code></p>
+        <p>Der Parameter wird direkt interpoliert ohne Escaping.</p>
+        <p><strong>Fix:</strong> Prepared Statements nutzen.</p>
+      </div>
+    </details>
+
+    <div class="severity-info" id="item4" onclick="tapItem(this, 'CSP Header fehlt — Content Security Policy nicht konfiguriert')">
+      <strong>Verbesserung:</strong> CSP Header fehlt komplett — keine Kontrolle welche Scripte geladen werden
+    </div>
+  </div>
+
+  <div class="counter" id="counter">2 / 5</div>
+  <div class="loading-banner" id="loadingBanner" style="display:none">
+    <div class="spinner"></div>
+    <span id="loadingText">Frage: "..."</span>
+  </div>
+
+  <div class="answer-overlay" id="answerOverlay">
+    <div class="answer-header">
+      <span class="answer-question" id="answerQuestion"></span>
+      <button class="answer-close" onclick="closeAnswer()">✕</button>
+    </div>
+    <div class="answer-body" id="answerBody"></div>
+  </div>
+
+  <button class="ask-btn" id="askBtn" onclick="sendMulti()">Frage stellen (0)</button>
+</div>
+
+<script>
+var selectedEls = [];
+var mode = 'tap'; // 'tap' or 'multi'
+
+function tapItem(el, text) {
+  if (mode === 'multi') {
+    toggleSelect(el);
+    return;
+  }
+  // Single tap → show loading, then answer
+  el.classList.add('tapped');
+  setTimeout(function() { el.classList.remove('tapped'); }, 1500);
+
+  document.getElementById('counter').style.display = 'none';
+  document.getElementById('loadingBanner').style.display = 'flex';
+  document.getElementById('loadingText').textContent = 'Frage: "' + text.slice(0, 50) + '..."';
+
+  // Simulate AI response after 2s
+  setTimeout(function() {
+    document.getElementById('loadingBanner').style.display = 'none';
+    document.getElementById('answerQuestion').textContent = text.slice(0, 80);
+    document.getElementById('answerBody').innerHTML = getAnswer(text);
+    document.getElementById('answerOverlay').classList.add('visible');
+  }, 2000);
+}
+
+function closeAnswer() {
+  document.getElementById('answerOverlay').classList.remove('visible');
+  setTimeout(function() {
+    document.getElementById('counter').style.display = '';
+  }, 350);
+}
+
+function toggleSelect(el) {
+  var idx = selectedEls.indexOf(el);
+  if (idx >= 0) {
+    selectedEls.splice(idx, 1);
+    el.classList.remove('selected');
+  } else {
+    selectedEls.push(el);
+    el.classList.add('selected');
+  }
+  var btn = document.getElementById('askBtn');
+  if (selectedEls.length > 0) {
+    btn.textContent = 'Frage stellen (' + selectedEls.length + ')';
+    btn.style.display = 'block';
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+function sendMulti() {
+  var texts = selectedEls.map(function(el) { return el.querySelector('strong')?.textContent || el.textContent.trim().slice(0, 50); });
+  selectedEls.forEach(function(el) { el.classList.remove('selected'); });
+  selectedEls = [];
+  document.getElementById('askBtn').style.display = 'none';
+
+  document.getElementById('loadingBanner').style.display = 'flex';
+  document.getElementById('loadingText').textContent = 'Frage zu ' + texts.length + ' Punkten...';
+  document.getElementById('counter').style.display = 'none';
+
+  setTimeout(function() {
+    document.getElementById('loadingBanner').style.display = 'none';
+    document.getElementById('answerQuestion').textContent = texts.join(' + ');
+    document.getElementById('answerBody').innerHTML = '<strong>Zusammenhang dieser ' + texts.length + ' Punkte:</strong><br><br>Alle genannten Probleme hängen zusammen: Die SQL Injection ermöglicht Datenzugriff, und die fehlenden API-Key-Rotationen bedeuten dass Angreifer auch nach Entdeckung weiter Zugang haben. <strong>Empfehlung:</strong> Zuerst Keys rotieren (1h), dann SQL Injection fixen (2h), dann Rate-Limiting aktivieren.';
+    document.getElementById('answerOverlay').classList.add('visible');
+  }, 2500);
+}
+
+// Long-press simulation: hold items for 500ms activates multi-select
+document.querySelectorAll('.severity-critical,.severity-warning,.severity-info').forEach(function(el) {
+  var timer;
+  el.addEventListener('mousedown', function() {
+    timer = setTimeout(function() { mode = 'multi'; toggleSelect(el); }, 500);
+  });
+  el.addEventListener('mouseup', function() { clearTimeout(timer); });
+  el.addEventListener('mouseleave', function() { clearTimeout(timer); });
+});
+
+function getAnswer(text) {
+  if (text.includes('SQL Injection')) return '<strong>SQL Injection — Detaillierte Erklärung:</strong><br><br>In <code>src/api/search.ts:42</code> wird der User-Input direkt in den SQL-String eingefügt:<br><br><code>SELECT * FROM products WHERE name LIKE \'%${query}%\'</code><br><br>Ein Angreifer kann z.B. eingeben: <code>\'; DROP TABLE users; --</code><br><br><strong>Impact:</strong> Kompletter Datenbank-Zugriff, Daten löschen, Passwörter auslesen.<br><br><strong>Fix:</strong> Prepared Statements nutzen — der Parameter wird escaped und kann keinen SQL-Code injizieren.';
+  if (text.includes('API-Keys')) return '<strong>API-Keys im Repository:</strong><br><br>Gefunden in <code>.env.example</code>:<br>• <code>STRIPE_LIVE_KEY=sk_live_...</code><br>• <code>SUPABASE_SERVICE_KEY=eyJ...</code><br><br><strong>Sofortmaßnahmen:</strong><br>1. Keys sofort rotieren in Stripe/Supabase Dashboard<br>2. <code>.env.example</code> nur mit Platzhaltern committen<br>3. <code>git filter-branch</code> um Keys aus Git-History zu entfernen';
+  if (text.includes('Rate-Limiting')) return '<strong>Rate-Limiting fehlt:</strong><br><br>Aktuell: Kein Limit auf <code>/api/auth/login</code>. Ein Angreifer kann 1000+ Login-Versuche/Sekunde machen.<br><br><strong>Fix:</strong> <code>express-rate-limit</code> mit 5 Versuche/Minute pro IP auf Auth-Endpoints.';
+  return '<strong>Details:</strong><br><br>Dieser Punkt betrifft die grundlegende Sicherheitskonfiguration des Projekts. Ohne diese Maßnahme ist die Anwendung anfällig für verschiedene Angriffsarten.';
+}
+</script>
+</body>
+</html>

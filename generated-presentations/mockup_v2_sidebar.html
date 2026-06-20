@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Variante 2 — Side-Panel (Split View)</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0F172A;color:#F8FAFC}
+
+.phone{width:380px;height:760px;margin:20px auto;border:3px solid #334155;border-radius:32px;overflow:hidden;position:relative;background:#0F172A;box-shadow:0 20px 60px rgba(0,0,0,.6);display:flex;flex-direction:column}
+@media(max-width:420px){.phone{width:100%;height:100%;margin:0;border:none;border-radius:0}}
+
+.viewer-header{display:flex;align-items:center;padding:12px;border-bottom:1px solid rgba(148,163,184,.06);background:#0F172A;flex-shrink:0}
+.viewer-header .btn{width:36px;height:36px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#F8FAFC;font-size:18px;cursor:pointer;border:none;background:none}
+.viewer-header .title{flex:1;text-align:center;font-size:14px;font-weight:600}
+
+/* Split view container */
+.split-container{flex:1;display:flex;flex-direction:row;overflow:hidden;position:relative}
+
+/* Slide panel (left) */
+.slide-panel{flex:1;padding:16px 20px;overflow-y:auto;-webkit-overflow-scrolling:touch;transition:flex .3s ease}
+.slide-panel.shrunk{flex:0.45}
+
+/* Answer panel (right) */
+.answer-panel{width:0;overflow:hidden;background:#111827;border-left:1px solid #334155;display:flex;flex-direction:column;transition:width .35s cubic-bezier(.32,.72,.24,1.02)}
+.answer-panel.open{width:55%}
+.answer-panel-header{display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid #334155;gap:8px;flex-shrink:0}
+.answer-panel-header .question{flex:1;font-size:11px;font-weight:600;color:#3B82F6;font-family:'SF Mono',monospace;line-height:1.3}
+.answer-panel-header .close{color:#94A3B8;cursor:pointer;font-size:16px;border:none;background:none;padding:4px}
+.answer-panel-body{flex:1;padding:12px;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:12px;line-height:1.6;color:#CBD5E1}
+.answer-panel-body strong{color:#F8FAFC}
+.answer-panel-body code{background:#1E293B;padding:1px 4px;border-radius:3px;color:#06B6D4;font-size:11px}
+
+/* Content styles */
+h2{font-size:18px;font-weight:700;margin-bottom:10px}
+.severity-critical{background:rgba(239,68,68,.1);border-left:3px solid #EF4444;border-radius:0 8px 8px 0;padding:9px 10px;margin-bottom:7px;cursor:pointer;transition:all .2s;font-size:13px}
+.severity-critical strong{color:#F87171}
+.severity-warning{background:rgba(245,158,11,.1);border-left:3px solid #F59E0B;border-radius:0 8px 8px 0;padding:9px 10px;margin-bottom:7px;cursor:pointer;font-size:13px}
+.severity-warning strong{color:#FBBF24}
+.severity-info{background:rgba(59,130,246,.1);border-left:3px solid #3B82F6;border-radius:0 8px 8px 0;padding:9px 10px;margin-bottom:7px;cursor:pointer;font-size:13px}
+.severity-info strong{color:#60A5FA}
+p{font-size:13px;line-height:1.5;color:#CBD5E1;margin-bottom:4px}
+code{font-family:'SF Mono',monospace;font-size:12px;background:#1E293B;padding:2px 5px;border-radius:3px;color:#06B6D4}
+
+.tapped{outline:2px solid #3B82F6;outline-offset:2px;border-radius:4px}
+.active-item{background:rgba(59,130,246,.15) !important;border-left-color:#3B82F6 !important}
+
+/* Counter + loading */
+.counter{position:absolute;bottom:12px;left:16px;background:rgba(15,23,42,.8);color:#94A3B8;font-size:11px;font-weight:600;padding:4px 12px;border-radius:16px;z-index:10}
+.loading-dot{display:inline-block;width:6px;height:6px;background:#3B82F6;border-radius:50%;margin-left:6px;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+
+.demo-label{position:fixed;top:8px;left:50%;transform:translateX(-50%);background:#A78BFA;color:#fff;font-size:11px;font-weight:700;padding:4px 12px;border-radius:12px;z-index:100;letter-spacing:.5px;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="demo-label">V2 — Side-Panel (Split View)</div>
+<div class="phone">
+  <div class="viewer-header">
+    <button class="btn">✕</button>
+    <span class="title">Sicherheitsaudit — TMS Shops</span>
+    <button class="btn">↗</button>
+  </div>
+
+  <div class="split-container">
+    <div class="slide-panel" id="slidePanel">
+      <h2>Kritische Sicherheitslücken</h2>
+
+      <div class="severity-critical" id="i1" onclick="openSide(this,'SQL Injection in User-Query','<strong>SQL Injection — Details:</strong><br><br>In <code>src/api/search.ts:42</code> wird User-Input direkt in SQL eingefügt.<br><br>Ein Angreifer kann: <code>\\'\\'; DROP TABLE users; --</code><br><br><strong>Impact:</strong> Voller DB-Zugriff<br><br><strong>Fix:</strong> Prepared Statements')">
+        <strong>SQL Injection in User-Query</strong>
+        <p>Raw SQL ohne Prepared Statements — Angreifer kann beliebige Queries ausführen</p>
+      </div>
+
+      <div class="severity-critical" id="i2" onclick="openSide(this,'API-Keys im Git-Repository','<strong>Gefundene Keys:</strong><br>• <code>STRIPE_LIVE_KEY=sk_live_...</code><br>• <code>SUPABASE_SERVICE_KEY=eyJ...</code><br><br><strong>Sofort:</strong><br>1. Keys rotieren<br>2. .env.example säubern<br>3. Git-History bereinigen')">
+        <strong>API-Keys im Git-Repository</strong>
+        <p>Stripe + Supabase Keys committed — voller Zugang für jeden mit Repo-Zugriff</p>
+      </div>
+
+      <div class="severity-warning" id="i3" onclick="openSide(this,'Keine Rate-Limiting','<strong>Problem:</strong><br>Kein Limit auf <code>/api/auth/login</code>.<br><br>Angreifer: 1000+ Versuche/Sek<br><br><strong>Fix:</strong> <code>express-rate-limit</code> mit 5 Versuche/Min pro IP')">
+        <strong>Keine Rate-Limiting</strong>
+        <p>API ohne Limit — Brute-Force auf Login möglich</p>
+      </div>
+
+      <div class="severity-warning" id="i4" onclick="openSide(this,'CORS zu offen','<strong>Aktuell:</strong><br><code>Access-Control-Allow-Origin: *</code><br><br>Erlaubt Requests von jeder Domain.<br><br><strong>Fix:</strong> Nur eigene Domains erlauben:<br><code>origin: [\"https://app.tms-shops.de\"]</code>')">
+        <strong>CORS zu offen</strong>
+        <p><code>Allow-Origin: *</code> — Requests von jeder Domain erlaubt</p>
+      </div>
+
+      <div class="severity-info" id="i5" onclick="openSide(this,'CSP Header fehlt','<strong>Content Security Policy</strong> definiert welche Scripte/Styles der Browser laden darf.<br><br>Ohne CSP: XSS-Angriffe einfacher.<br><br><strong>Fix:</strong> <code>helmet()</code> Middleware in Express')">
+        <strong>CSP Header fehlt</strong>
+        <p>Keine Content Security Policy — XSS-Angriffe erleichtert</p>
+      </div>
+    </div>
+
+    <div class="answer-panel" id="answerPanel">
+      <div class="answer-panel-header">
+        <span class="question" id="panelQuestion"></span>
+        <button class="close" onclick="closeSide()">✕</button>
+      </div>
+      <div class="answer-panel-body" id="panelBody"></div>
+    </div>
+  </div>
+
+  <div class="counter">2 / 5</div>
+</div>
+
+<script>
+var activeEl = null;
+
+function openSide(el, question, answer) {
+  // Highlight active item
+  if (activeEl) activeEl.classList.remove('active-item');
+  el.classList.add('active-item');
+  activeEl = el;
+
+  // Show loading briefly
+  document.getElementById('panelQuestion').innerHTML = question + '<span class="loading-dot"></span>';
+  document.getElementById('panelBody').innerHTML = '<p style="color:#64748B;font-style:italic">Wird geladen...</p>';
+
+  // Open panel
+  document.getElementById('answerPanel').classList.add('open');
+  document.getElementById('slidePanel').classList.add('shrunk');
+
+  // Simulate answer
+  setTimeout(function() {
+    document.getElementById('panelQuestion').textContent = question;
+    document.getElementById('panelBody').innerHTML = answer;
+  }, 1200);
+}
+
+function closeSide() {
+  document.getElementById('answerPanel').classList.remove('open');
+  document.getElementById('slidePanel').classList.remove('shrunk');
+  if (activeEl) activeEl.classList.remove('active-item');
+  activeEl = null;
+}
+</script>
+</body>
+</html>

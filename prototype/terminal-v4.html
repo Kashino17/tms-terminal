@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TMS Terminal – Redesign v4</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;user-select:none}
+  body{background:#080C14;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;color:#F8FAFC;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:20px 20px 140px}
+  .page-header{text-align:center;padding:16px 0 8px}
+  .page-header h1{font-size:22px;font-weight:700}
+  .page-header p{font-size:12px;color:#64748B;margin-top:4px;max-width:700px;line-height:1.6}
+  .phones{display:flex;gap:40px;flex-wrap:wrap;justify-content:center;margin-top:20px}
+  .phone{width:400px;height:880px;background:#0F172A;border-radius:36px;overflow:hidden;position:relative;border:3px solid #1E293B;box-shadow:0 25px 60px rgba(0,0,0,.6);flex-shrink:0}
+  .phone-label{text-align:center;color:#94A3B8;font-size:12px;margin-bottom:4px;font-weight:600;letter-spacing:1px;text-transform:uppercase}
+  .phone-sub{text-align:center;color:#475569;font-size:10px;margin-bottom:10px;max-width:400px;line-height:1.5}
+  .sbar{height:28px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;font-size:11px;color:#64748B}
+  .term{font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.55;color:#E2E8F0;padding:8px 12px;overflow-y:auto}
+  .term .p{color:#22C55E}.term .c{color:#F8FAFC}.term .o{color:#94A3B8}.term .d{color:#475569}.term .ai{color:#A78BFA}.term .b{color:#3B82F6}.term .w{color:#F59E0B}.term .g{color:#22C55E}
+  .glass{background:rgba(15,23,42,.78);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,.06)}
+  .glass-strong{background:rgba(15,23,42,.92);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);border:1px solid rgba(255,255,255,.08)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  @keyframes scaleIn{from{transform:scale(.94);opacity:0}to{transform:scale(1);opacity:1}}
+  @keyframes wobble{0%,100%{transform:rotate(0)}25%{transform:rotate(-2deg)}75%{transform:rotate(2deg)}}
+  @keyframes glow-pulse{0%,100%{box-shadow:0 0 8px rgba(59,130,246,.2)}50%{box-shadow:0 0 16px rgba(59,130,246,.4)}}
+
+  .toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.2);backdrop-filter:blur(16px);border-radius:14px;padding:8px 18px;font-size:12px;color:#93C5FD;white-space:nowrap;opacity:0;transition:opacity .2s;pointer-events:none;z-index:200}
+  .toast.show{opacity:1}
+
+  /* ── Island (shared) ── */
+  .island{position:absolute;top:32px;left:50%;transform:translateX(-50%);z-index:20;border-radius:20px;padding:5px 14px;display:flex;align-items:center;gap:8px;cursor:pointer;transition:all .4s cubic-bezier(.34,1.56,.64,1);min-width:160px;justify-content:center}
+  .island.expanded{border-radius:16px;padding:8px 10px;min-width:360px;flex-wrap:wrap;gap:4px}
+  .island .i-back{color:#3B82F6;flex-shrink:0;display:none;cursor:pointer}
+  .island.expanded .i-back{display:flex}
+  .island .i-title{font-size:12px;font-weight:600;font-family:'SF Mono',monospace}
+  .island .i-dot{width:6px;height:6px;border-radius:50%;background:#22C55E;animation:pulse 2s infinite;flex-shrink:0}
+  .island .i-rtt{font-size:9px;color:#22C55E;margin-left:-4px}
+  .i-tabs{display:none;width:100%;gap:4px;padding-top:4px}
+  .island.expanded .i-tabs{display:flex}
+  .i-tab{flex:1;padding:5px 6px;border-radius:12px;font-size:10px;font-family:'SF Mono',monospace;text-align:center;cursor:pointer;transition:all .2s;color:#64748B;background:rgba(255,255,255,.03);border:1px solid transparent;position:relative;white-space:nowrap}
+  .i-tab:hover{color:#94A3B8;background:rgba(255,255,255,.06)}
+  .i-tab.active{color:#F8FAFC;background:rgba(59,130,246,.15);border-color:rgba(59,130,246,.2)}
+  .i-tab.ai.active{background:rgba(167,139,250,.15);border-color:rgba(167,139,250,.25)}
+  .i-tab-badge{position:absolute;top:-2px;right:-2px;min-width:12px;height:12px;border-radius:6px;background:#EF4444;font-size:7px;display:flex;align-items:center;justify-content:center;font-weight:700;padding:0 3px}
+
+  /* ── Spotlight (shared) ── */
+  .spot-overlay{position:absolute;inset:0;z-index:89;background:rgba(0,0,0,.5);display:none}
+  .spot-overlay.open{display:block}
+  .spot{position:absolute;top:80px;left:20px;right:20px;z-index:90;border-radius:16px;padding:8px;display:none;animation:scaleIn .18s ease}
+  .spot.open{display:block}
+  .spot-input{width:100%;background:#0F172A;border:1px solid #334155;border-radius:10px;padding:10px 14px;color:#F8FAFC;font-size:13px;font-family:'SF Mono',monospace;outline:none}
+  .spot-input:focus{border-color:#3B82F6}
+  .spot-input::placeholder{color:#475569}
+  .spot-results{margin-top:6px;max-height:320px;overflow-y:auto}
+  .spot-cat{padding:6px 12px 3px;font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:.8px;font-weight:700}
+  .spot-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;cursor:pointer;transition:background .1s;font-size:13px}
+  .spot-item:hover{background:rgba(59,130,246,.1)}
+  .spot-item .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .spot-item .lbl{flex:1}
+  .spot-item .key{font-size:9px;color:#475569;background:#1B2336;border:1px solid #243044;padding:1px 5px;border-radius:4px;font-family:monospace;font-weight:600}
+  .spot-sep{height:1px;background:#1E293B;margin:4px 0}
+
+  /* ═══════════════════════════════════════════
+     LIQUID GLASS ORBS — the magic
+     ═══════════════════════════════════════════ */
+  .orb{
+    position:absolute;z-index:12;
+    width:44px;height:44px;border-radius:22px;
+    background:radial-gradient(ellipse at 30% 20%, rgba(255,255,255,.12) 0%, rgba(15,23,42,.8) 70%);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,.1);
+    box-shadow:0 4px 16px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.08);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:transform .2s, box-shadow .2s;
+    font-size:11px;font-family:'SF Mono',monospace;font-weight:700;color:#94A3B8;
+  }
+  .orb:hover{transform:scale(1.1);box-shadow:0 6px 24px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.12)}
+  .orb:active{transform:scale(.92)}
+  .orb.dragging{transition:none;animation:glow-pulse 1s infinite;z-index:100;transform:scale(1.15)}
+  .orb.editing{animation:wobble .3s infinite}
+  .orb .orb-label{position:absolute;bottom:-14px;font-size:8px;color:#475569;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}
+  .orb:hover .orb-label{opacity:1}
+
+  /* Orb group (folder) */
+  .orb-group{
+    position:absolute;z-index:12;
+    border-radius:16px;padding:4px;
+    background:radial-gradient(ellipse at 30% 20%, rgba(255,255,255,.08) 0%, rgba(15,23,42,.75) 70%);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,.08);
+    box-shadow:0 4px 16px rgba(0,0,0,.3);
+    display:flex;gap:3px;
+    cursor:pointer;transition:all .25s;
+  }
+  .orb-group:hover{box-shadow:0 6px 24px rgba(0,0,0,.4);border-color:rgba(255,255,255,.12)}
+  .orb-group .orb-mini{
+    width:34px;height:34px;border-radius:17px;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:all .15s;font-size:10px;font-family:'SF Mono',monospace;color:#94A3B8;
+  }
+  .orb-group .orb-mini:hover{background:rgba(255,255,255,.08);transform:scale(1.08)}
+  .orb-group .orb-mini:active{transform:scale(.92)}
+  .orb-group .grp-label{position:absolute;bottom:-14px;left:50%;transform:translateX(-50%);font-size:8px;color:#475569;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}
+  .orb-group:hover .grp-label{opacity:1}
+
+  /* Edit mode overlay */
+  .edit-bar{position:absolute;top:0;left:0;right:0;z-index:100;display:none;align-items:center;justify-content:center;padding:6px;gap:8px;background:rgba(59,130,246,.1);backdrop-filter:blur(12px);border-bottom:1px solid rgba(59,130,246,.2)}
+  .edit-bar.show{display:flex}
+  .edit-bar span{font-size:11px;color:#93C5FD}
+  .edit-bar button{background:rgba(59,130,246,.2);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:4px 12px;color:#93C5FD;font-size:11px;cursor:pointer;font-family:inherit}
+  .edit-bar button:hover{background:rgba(59,130,246,.3)}
+
+  /* ── Tool Ring ── */
+  .ring{position:absolute;z-index:40;border-radius:16px;padding:8px;display:none;animation:scaleIn .2s ease;flex-wrap:wrap;gap:4px;max-width:240px;justify-content:center}
+  .ring.open{display:flex}
+  .ring-item{width:48px;height:48px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;transition:all .15s;font-size:8px;color:#94A3B8}
+  .ring-item:hover{background:rgba(255,255,255,.06);transform:scale(1.08)}
+
+  /* ── Bottom Pill ── */
+  .bpill{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);z-index:15;border-radius:22px;padding:4px 6px;display:flex;gap:2px;align-items:center}
+  .bp{height:32px;min-width:32px;padding:0 6px;border-radius:16px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:11px;font-family:'SF Mono',monospace;color:#64748B;transition:all .15s}
+  .bp:hover{background:rgba(255,255,255,.08);color:#F8FAFC}
+  .bp:active{transform:scale(.9)}
+  .bp.red{color:#EF4444}.bp.blue{color:#3B82F6}.bp.cyan{color:#06B6D4}
+  .bp-sep{width:1px;height:16px;background:rgba(255,255,255,.06)}
+
+  .notes{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);border-radius:16px;padding:14px 20px;max-width:1260px;width:94%;z-index:1000}
+  .notes h3{font-size:13px;margin-bottom:6px;color:#3B82F6}
+  .notes ul{font-size:11px;color:#94A3B8;line-height:1.9;padding-left:16px}
+  .notes li strong{color:#F8FAFC}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>TMS Terminal – Redesign v4</h1>
+  <p>Island + Spotlight + Liquid Glass Orbs · Shortcuts als frei platzierbare Glaskugeln im Terminal</p>
+</div>
+
+<div class="phones">
+
+<!-- ══════════════════════════════════════
+     V1: FREE ORBS
+     Einzelne Orbs frei platzierbar
+     ══════════════════════════════════════ -->
+<div>
+<p class="phone-label">Free Orbs</p>
+<p class="phone-sub">Jeder Shortcut ist eine einzelne Glaskugel, frei im Terminal platzierbar. Long-Press (2s) aktiviert den Edit-Modus — dann drag & drop. Die Kugeln sind halbtransparent und stören den Terminal-Output nicht.</p>
+<div class="phone" id="p1">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <div style="position:absolute;inset:28px 0 0;overflow-y:auto" class="term" id="t1">
+    <div class="d">Last login: Fri Apr 10 19:37:14 on ttys001</div>
+    <div><span class="p">ayysir@MacBook-Pro</span> <span class="d">TMS Banking %</span> <span class="c">claude</span></div>
+    <div class="o" style="margin-top:4px"><div class="ai">╭─ Claude Code v1.0.32</div><div class="ai">╰─ Type /help for commands</div></div>
+    <div style="margin-top:8px"><span class="p">❯</span> <span class="c">Implementiere die Mashreq Bank Verknüpfung</span></div>
+    <div class="o" style="margin-top:4px">
+      <div>● Analyzing codebase...</div><div class="g">✓ Found 3 relevant files</div>
+      <div style="margin-top:4px">I'll implement the Mashreq Bank integration.</div>
+      <div style="margin-top:8px" class="b">┌ Creating src/api/mashreq/auth.ts<br>│ <span class="g">✓ Created</span> (48 lines)<br>└</div>
+      <div style="margin-top:4px" class="w">⚡ Writing to banking.service.ts...</div>
+      <div style="margin-top:12px">Creating transaction handler...</div>
+      <div style="margin-top:8px" class="b">┌ Creating transactions.ts<br>│ <span class="g">✓ Created</span> (92 lines)<br>└</div>
+    </div>
+  </div>
+
+  <!-- Island -->
+  <div class="island glass" id="island1" onclick="toggleIsland('island1')">
+    <svg class="i-back" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="event.stopPropagation();toast(this,'Zurück')"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <span class="i-title" id="ititle1">TMS Banking</span>
+    <span class="i-dot"></span><span class="i-rtt">12ms</span>
+    <div class="i-tabs">
+      <div class="i-tab ai active" onclick="event.stopPropagation();iTab(this,'ititle1','TMS Banking')"><span style="color:#A78BFA;font-size:8px">●</span> Banking</div>
+      <div class="i-tab" onclick="event.stopPropagation();iTab(this,'ititle1','TMS Terminal')">Terminal</div>
+      <div class="i-tab" onclick="event.stopPropagation();iTab(this,'ititle1','ayysir')">ayysir<span class="i-tab-badge">2</span></div>
+    </div>
+  </div>
+
+  <!-- Edit mode bar -->
+  <div class="edit-bar" id="ebar1">
+    <span>Orbs verschieben — Drag & Drop</span>
+    <button onclick="toggleEdit('p1')">Fertig</button>
+  </div>
+
+  <!-- Free floating orbs -->
+  <div class="orb" style="left:12px;bottom:70px;color:#EF4444" data-phone="p1" onclick="toast(this,'^C')"><span>^C</span><span class="orb-label">Ctrl+C</span></div>
+  <div class="orb" style="left:12px;bottom:120px" data-phone="p1" onclick="toast(this,'Esc')"><span>Esc</span><span class="orb-label">Escape</span></div>
+  <div class="orb" style="left:64px;bottom:70px;color:#06B6D4" data-phone="p1" onclick="toast(this,'↵')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+    <span class="orb-label">Enter</span>
+  </div>
+  <div class="orb" style="right:12px;bottom:70px" data-phone="p1" onclick="toast(this,'⇊ Scroll')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><polyline points="7 13 12 18 17 13"/><polyline points="7 6 12 11 17 6"/></svg>
+    <span class="orb-label">Scroll ↓</span>
+  </div>
+  <div class="orb" style="right:12px;bottom:120px" data-phone="p1" onclick="toast(this,'Clear')">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    <span class="orb-label">Clear</span>
+  </div>
+  <div class="orb" style="right:64px;bottom:70px" data-phone="p1" onclick="toggleRing('ring1',this)">
+    <span style="font-size:14px">◉</span><span class="orb-label">Tools</span>
+  </div>
+  <div class="orb" style="right:64px;bottom:120px" data-phone="p1" onclick="toggleSpot('s1')">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <span class="orb-label">⌘K</span>
+  </div>
+
+  <!-- Tool Ring -->
+  <div class="ring glass-strong" id="ring1" style="bottom:180px;right:20px">
+    <div class="ring-item" onclick="toast(this,'Approve');toggleRing('ring1')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Approve</div>
+    <div class="ring-item" onclick="toast(this,'Dateien');toggleRing('ring1')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>Dateien</div>
+    <div class="ring-item" onclick="toast(this,'Snippets');toggleRing('ring1')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Snippets</div>
+    <div class="ring-item" onclick="toast(this,'Shots');toggleRing('ring1')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/></svg>Shots</div>
+    <div class="ring-item" onclick="toast(this,'Browser');toggleRing('ring1')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>Browser</div>
+    <div class="ring-item" onclick="toast(this,'Manager');toggleRing('ring1')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>Manager</div>
+  </div>
+
+  <!-- Spotlight -->
+  <div class="spot-overlay" id="s1bg" onclick="toggleSpot('s1')"></div>
+  <div class="spot glass-strong" id="s1">
+    <input class="spot-input" placeholder="Suchen..." id="s1input" oninput="filterSpot('s1',this.value)">
+    <div class="spot-results" id="s1results">
+      <div class="spot-cat">Tools</div>
+      <div class="spot-item" onclick="sa(this,'Auto Approve','s1')"><div class="dot" style="background:#22C55E"></div><span class="lbl">Auto Approve</span></div>
+      <div class="spot-item" onclick="sa(this,'Snippets','s1')"><div class="dot" style="background:#F59E0B"></div><span class="lbl">Snippets</span></div>
+      <div class="spot-item" onclick="sa(this,'Dateien','s1')"><div class="dot" style="background:#F59E0B"></div><span class="lbl">Dateien</span></div>
+      <div class="spot-item" onclick="sa(this,'Screenshots','s1')"><div class="dot" style="background:#06B6D4"></div><span class="lbl">Screenshots</span></div>
+      <div class="spot-item" onclick="sa(this,'Autopilot','s1')"><div class="dot" style="background:#A78BFA"></div><span class="lbl">Autopilot</span></div>
+      <div class="spot-sep"></div>
+      <div class="spot-cat">Navigation</div>
+      <div class="spot-item" onclick="sa(this,'Browser','s1')"><div class="dot" style="background:#22C55E"></div><span class="lbl">Browser</span></div>
+      <div class="spot-item" onclick="sa(this,'Manager','s1')"><div class="dot" style="background:#A78BFA"></div><span class="lbl">Manager Agent</span></div>
+      <div class="spot-item" onclick="sa(this,'SQL','s1')"><div class="dot" style="background:#3B82F6"></div><span class="lbl">SQL</span></div>
+    </div>
+  </div>
+  <div class="toast" id="toast1"></div>
+</div>
+</div>
+
+<!-- ══════════════════════════════════════
+     V2: ORBS + GROUPS
+     Orbs mit gruppierbaren Ordnern
+     ══════════════════════════════════════ -->
+<div>
+<p class="phone-label">Orbs + Groups</p>
+<p class="phone-sub">Einzelne Orbs + gruppierbare Ordner-Bars. Long-Press aktiviert Edit-Modus: verschieben, Orbs zu Gruppen zusammenführen. Gruppen klappen per Tap auf/zu. Die Standard-Anordnung: links unten Aktionen, rechts unten Navigation.</p>
+<div class="phone" id="p2">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <div style="position:absolute;inset:28px 0 0;overflow-y:auto" class="term">
+    <div class="d">Last login: Fri Apr 10 19:37:14 on ttys001</div>
+    <div><span class="p">ayysir@MacBook-Pro</span> <span class="d">TMS Banking %</span> <span class="c">claude</span></div>
+    <div class="o" style="margin-top:4px"><div class="ai">╭─ Claude Code v1.0.32</div><div class="ai">╰─ Type /help for commands</div></div>
+    <div style="margin-top:8px"><span class="p">❯</span> <span class="c">Implementiere die Mashreq Bank Verknüpfung</span></div>
+    <div class="o" style="margin-top:4px">
+      <div>● Analyzing codebase...</div><div class="g">✓ Found 3 relevant files</div>
+      <div style="margin-top:4px">Creating Mashreq Bank integration...</div>
+      <div style="margin-top:8px" class="b">┌ Creating auth.ts · <span class="g">✓</span> (48 lines)<br>└</div>
+      <div style="margin-top:4px" class="w">⚡ Writing to banking.service.ts...</div>
+      <div style="margin-top:8px" class="b">┌ Creating transactions.ts · <span class="g">✓</span> (92 lines)<br>└</div>
+    </div>
+  </div>
+
+  <!-- Island -->
+  <div class="island glass" id="island2" onclick="toggleIsland('island2')">
+    <svg class="i-back" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="event.stopPropagation();toast(this,'Zurück')"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <span class="i-title" id="ititle2">TMS Banking</span>
+    <span class="i-dot"></span><span class="i-rtt">12ms</span>
+    <div class="i-tabs">
+      <div class="i-tab ai active" onclick="event.stopPropagation();iTab(this,'ititle2','TMS Banking')"><span style="color:#A78BFA;font-size:8px">●</span> Banking</div>
+      <div class="i-tab" onclick="event.stopPropagation();iTab(this,'ititle2','TMS Terminal')">Terminal</div>
+      <div class="i-tab" onclick="event.stopPropagation();iTab(this,'ititle2','ayysir')">ayysir<span class="i-tab-badge">2</span></div>
+    </div>
+  </div>
+
+  <div class="edit-bar" id="ebar2"><span>Orbs verschieben — Drag & Drop</span><button onclick="toggleEdit('p2')">Fertig</button></div>
+
+  <!-- LEFT: Action group (collapsed = one bar) -->
+  <div class="orb-group" style="left:10px;bottom:68px" data-phone="p2" id="grp-actions" onclick="toggleGroup(this)">
+    <div class="orb-mini" style="color:#EF4444" onclick="event.stopPropagation();toast(this,'^C')">^C</div>
+    <div class="orb-mini" onclick="event.stopPropagation();toast(this,'Esc')">Esc</div>
+    <div class="orb-mini" onclick="event.stopPropagation();toast(this,'Clear')">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </div>
+    <div class="orb-mini" onclick="event.stopPropagation();toast(this,'Delete')">⌫</div>
+    <span class="grp-label">Aktionen</span>
+  </div>
+
+  <!-- RIGHT: Nav/utility group -->
+  <div class="orb-group" style="right:10px;bottom:68px" data-phone="p2">
+    <div class="orb-mini" style="color:#06B6D4" onclick="event.stopPropagation();toast(this,'Scroll ↓')">⇊</div>
+    <div class="orb-mini" onclick="event.stopPropagation();toast(this,'Enter')">↵</div>
+    <div class="orb-mini" onclick="event.stopPropagation();toggleRing('ring2',this)">◉</div>
+    <div class="orb-mini" onclick="event.stopPropagation();toggleSpot('s2')">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    </div>
+    <span class="grp-label">Navigation</span>
+  </div>
+
+  <!-- Single orb (ungrouped, positioned freely) -->
+  <div class="orb" style="right:10px;bottom:120px;color:#3B82F6" data-phone="p2" onclick="toast(this,'⌘ D-Pad')">⌘<span class="orb-label">D-Pad</span></div>
+
+  <div class="ring glass-strong" id="ring2" style="bottom:120px;right:50px">
+    <div class="ring-item" onclick="toast(this,'Approve');toggleRing('ring2')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Approve</div>
+    <div class="ring-item" onclick="toast(this,'Dateien');toggleRing('ring2')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>Dateien</div>
+    <div class="ring-item" onclick="toast(this,'Snippets');toggleRing('ring2')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Snippets</div>
+    <div class="ring-item" onclick="toast(this,'Browser');toggleRing('ring2')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>Browser</div>
+    <div class="ring-item" onclick="toast(this,'Manager');toggleRing('ring2')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>Manager</div>
+    <div class="ring-item" onclick="toast(this,'SQL');toggleRing('ring2')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>SQL</div>
+  </div>
+
+  <div class="spot-overlay" id="s2bg" onclick="toggleSpot('s2')"></div>
+  <div class="spot glass-strong" id="s2">
+    <input class="spot-input" placeholder="Suchen..." id="s2input" oninput="filterSpot('s2',this.value)">
+    <div class="spot-results" id="s2results">
+      <div class="spot-cat">Tools</div>
+      <div class="spot-item" onclick="sa(this,'Auto Approve','s2')"><div class="dot" style="background:#22C55E"></div><span class="lbl">Auto Approve</span></div>
+      <div class="spot-item" onclick="sa(this,'Snippets','s2')"><div class="dot" style="background:#F59E0B"></div><span class="lbl">Snippets</span></div>
+      <div class="spot-item" onclick="sa(this,'Dateien','s2')"><div class="dot" style="background:#F59E0B"></div><span class="lbl">Dateien</span></div>
+      <div class="spot-item" onclick="sa(this,'Screenshots','s2')"><div class="dot" style="background:#06B6D4"></div><span class="lbl">Screenshots</span></div>
+      <div class="spot-sep"></div>
+      <div class="spot-cat">Navigation</div>
+      <div class="spot-item" onclick="sa(this,'Browser','s2')"><div class="dot" style="background:#22C55E"></div><span class="lbl">Browser</span></div>
+      <div class="spot-item" onclick="sa(this,'Manager','s2')"><div class="dot" style="background:#A78BFA"></div><span class="lbl">Manager</span></div>
+      <div class="spot-item" onclick="sa(this,'SQL','s2')"><div class="dot" style="background:#3B82F6"></div><span class="lbl">SQL</span></div>
+    </div>
+  </div>
+  <div class="toast" id="toast2"></div>
+</div>
+</div>
+
+<!-- ══════════════════════════════════════
+     V3: ORBIT
+     Orbs schweben in einer Umlaufbahn
+     ══════════════════════════════════════ -->
+<div>
+<p class="phone-label">Orbit</p>
+<p class="phone-sub">Orbs docken am unteren Rand in einer sanften Kurve an. Drag nach oben löst sie und macht sie frei platzierbar. Zwei getrennte Zonen: links Aktionen, rechts Navigation. Die Kurve passt sich dynamisch an die Anzahl der Orbs an.</p>
+<div class="phone" id="p3">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <div style="position:absolute;inset:28px 0 0;overflow-y:auto" class="term">
+    <div class="d">Last login: Fri Apr 10 19:37:14 on ttys001</div>
+    <div><span class="p">ayysir@MacBook-Pro</span> <span class="d">TMS Banking %</span> <span class="c">claude</span></div>
+    <div class="o" style="margin-top:4px"><div class="ai">╭─ Claude Code v1.0.32</div><div class="ai">╰─ Type /help for commands</div></div>
+    <div style="margin-top:8px"><span class="p">❯</span> <span class="c">Implementiere die Mashreq Bank Verknüpfung</span></div>
+    <div class="o" style="margin-top:4px">
+      <div>● Analyzing codebase...</div><div class="g">✓ Found 3 relevant files</div>
+      <div style="margin-top:4px">Creating Mashreq Bank integration...</div>
+      <div style="margin-top:8px" class="b">┌ Creating auth.ts · <span class="g">✓</span> (48 lines)<br>└</div>
+      <div style="margin-top:4px" class="w">⚡ Writing to banking.service.ts...</div>
+      <div style="margin-top:8px" class="b">┌ Creating transactions.ts · <span class="g">✓</span> (92 lines)<br>└</div>
+    </div>
+  </div>
+
+  <!-- Island -->
+  <div class="island glass" id="island3" onclick="toggleIsland('island3')">
+    <svg class="i-back" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="event.stopPropagation();toast(this,'Zurück')"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <span class="i-title" id="ititle3">TMS Banking</span>
+    <span class="i-dot"></span><span class="i-rtt">12ms</span>
+    <div class="i-tabs">
+      <div class="i-tab ai active" onclick="event.stopPropagation();iTab(this,'ititle3','TMS Banking')"><span style="color:#A78BFA;font-size:8px">●</span> Banking</div>
+      <div class="i-tab" onclick="event.stopPropagation();iTab(this,'ititle3','TMS Terminal')">Terminal</div>
+      <div class="i-tab" onclick="event.stopPropagation();iTab(this,'ititle3','ayysir')">ayysir<span class="i-tab-badge">2</span></div>
+    </div>
+  </div>
+
+  <div class="edit-bar" id="ebar3"><span>Orbs verschieben — Drag & Drop</span><button onclick="toggleEdit('p3')">Fertig</button></div>
+
+  <!-- Orbit curve: left cluster (actions) -->
+  <div class="orb" style="left:16px;bottom:100px;color:#EF4444" data-phone="p3" onclick="toast(this,'^C')">^C<span class="orb-label">Ctrl+C</span></div>
+  <div class="orb" style="left:50px;bottom:62px" data-phone="p3" onclick="toast(this,'Esc')">Esc<span class="orb-label">Escape</span></div>
+  <div class="orb" style="left:100px;bottom:42px" data-phone="p3" onclick="toast(this,'Clear')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span class="orb-label">Clear</span></div>
+  <div class="orb" style="left:155px;bottom:32px;color:#3B82F6" data-phone="p3" onclick="toast(this,'⌘')">⌘<span class="orb-label">D-Pad</span></div>
+
+  <!-- Orbit curve: right cluster (nav) -->
+  <div class="orb" style="right:155px;bottom:32px" data-phone="p3" onclick="toast(this,'⌫')">⌫<span class="orb-label">Delete</span></div>
+  <div class="orb" style="right:100px;bottom:42px;color:#06B6D4" data-phone="p3" onclick="toast(this,'⇊')">⇊<span class="orb-label">Scroll</span></div>
+  <div class="orb" style="right:50px;bottom:62px" data-phone="p3" onclick="toast(this,'↵')">↵<span class="orb-label">Enter</span></div>
+  <div class="orb" style="right:16px;bottom:100px" data-phone="p3" onclick="toggleRing('ring3',this)">◉<span class="orb-label">Tools</span></div>
+
+  <!-- Free orb above (detached from orbit) -->
+  <div class="orb" style="right:16px;bottom:155px" data-phone="p3" onclick="toggleSpot('s3')">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <span class="orb-label">⌘K</span>
+  </div>
+
+  <div class="ring glass-strong" id="ring3" style="bottom:170px;right:40px">
+    <div class="ring-item" onclick="toast(this,'Approve');toggleRing('ring3')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Approve</div>
+    <div class="ring-item" onclick="toast(this,'Dateien');toggleRing('ring3')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>Dateien</div>
+    <div class="ring-item" onclick="toast(this,'Snippets');toggleRing('ring3')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Snippets</div>
+    <div class="ring-item" onclick="toast(this,'Browser');toggleRing('ring3')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>Browser</div>
+    <div class="ring-item" onclick="toast(this,'Manager');toggleRing('ring3')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>Manager</div>
+    <div class="ring-item" onclick="toast(this,'SQL');toggleRing('ring3')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>SQL</div>
+  </div>
+
+  <div class="spot-overlay" id="s3bg" onclick="toggleSpot('s3')"></div>
+  <div class="spot glass-strong" id="s3">
+    <input class="spot-input" placeholder="Suchen..." id="s3input" oninput="filterSpot('s3',this.value)">
+    <div class="spot-results" id="s3results">
+      <div class="spot-cat">Tools</div>
+      <div class="spot-item" onclick="sa(this,'Auto Approve','s3')"><div class="dot" style="background:#22C55E"></div><span class="lbl">Auto Approve</span></div>
+      <div class="spot-item" onclick="sa(this,'Snippets','s3')"><div class="dot" style="background:#F59E0B"></div><span class="lbl">Snippets</span></div>
+      <div class="spot-item" onclick="sa(this,'Dateien','s3')"><div class="dot" style="background:#F59E0B"></div><span class="lbl">Dateien</span></div>
+      <div class="spot-item" onclick="sa(this,'Screenshots','s3')"><div class="dot" style="background:#06B6D4"></div><span class="lbl">Screenshots</span></div>
+      <div class="spot-sep"></div>
+      <div class="spot-cat">Navigation</div>
+      <div class="spot-item" onclick="sa(this,'Browser','s3')"><div class="dot" style="background:#22C55E"></div><span class="lbl">Browser</span></div>
+      <div class="spot-item" onclick="sa(this,'Manager','s3')"><div class="dot" style="background:#A78BFA"></div><span class="lbl">Manager</span></div>
+      <div class="spot-item" onclick="sa(this,'SQL','s3')"><div class="dot" style="background:#3B82F6"></div><span class="lbl">SQL</span></div>
+    </div>
+  </div>
+  <div class="toast" id="toast3"></div>
+</div>
+</div>
+
+</div>
+
+<div class="notes glass-strong">
+  <h3>Alle: Island + Spotlight + Liquid Glass Orbs · Unterschied: wie die Orbs organisiert werden</h3>
+  <ul>
+    <li><strong>Free Orbs:</strong> Jeder Shortcut ist eine einzelne freie Kugel. Scatter-Layout — du platzierst sie wo du willst. Maximum Freiheit, aber potenziell chaotisch. Long-Press (2s) startet Edit-Modus mit Wobble-Animation.</li>
+    <li><strong>Orbs + Groups:</strong> Orbs können in <strong>Gruppen-Bars</strong> zusammengefasst werden. Links: Aktions-Gruppe (^C, Esc, Clear, ⌫). Rechts: Nav-Gruppe (⇊, ↵, ◉ Tools, 🔍 Spotlight). Einzelne Orbs bleiben frei. Beste Balance aus Ordnung und Flexibilität.</li>
+    <li><strong>Orbit:</strong> Orbs docken in einer <strong>U-förmigen Kurve</strong> am unteren Rand. Links Aktionen, rechts Navigation — die Kurve folgt dem Daumen-Radius. Einzelne Orbs können rausgezogen und frei platziert werden (wie der 🔍 Spotlight-Orb oben rechts).</li>
+  </ul>
+</div>
+
+<script>
+function toast(el,text){const p=el.closest('.phone'),t=p.querySelector('.toast');t.textContent=text;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1200)}
+
+// ── Island ──
+function toggleIsland(id){document.getElementById(id).classList.toggle('expanded')}
+function iTab(el,titleId,name){el.parentElement.querySelectorAll('.i-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');document.getElementById(titleId).textContent=name;toast(el,name)}
+
+// ── Spotlight ──
+function toggleSpot(id){const s=document.getElementById(id),bg=document.getElementById(id+'bg');const open=s.classList.toggle('open');bg.classList.toggle('open',open);if(open){const inp=document.getElementById(id+'input');inp.value='';filterSpot(id,'');setTimeout(()=>inp.focus(),100)}}
+function filterSpot(id,q){document.querySelectorAll('#'+id+'results .spot-item').forEach(i=>{i.style.display=q&&!i.textContent.toLowerCase().includes(q.toLowerCase())?'none':'flex'})}
+function sa(el,text,id){toast(el,text);toggleSpot(id)}
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();['s1','s2','s3'].forEach(id=>toggleSpot(id))}if(e.key==='Escape')['s1','s2','s3'].forEach(id=>{document.getElementById(id)?.classList.remove('open');document.getElementById(id+'bg')?.classList.remove('open')})})
+
+// ── Tool Ring ──
+function toggleRing(id){document.getElementById(id).classList.toggle('open')}
+
+// ── Edit Mode (long press simulation) ──
+function toggleEdit(phoneId){
+  const phone=document.getElementById(phoneId);
+  const editing=phone.classList.toggle('editing-mode');
+  phone.querySelector('.edit-bar').classList.toggle('show',editing);
+  phone.querySelectorAll('.orb,.orb-group').forEach(o=>o.classList.toggle('editing',editing));
+}
+
+// Long press to enter edit mode
+let longPressTimer=null;
+document.addEventListener('pointerdown',e=>{
+  const orb=e.target.closest('.orb,.orb-group');
+  if(!orb)return;
+  longPressTimer=setTimeout(()=>{
+    const phone=orb.closest('.phone');
+    if(phone&&!phone.classList.contains('editing-mode'))toggleEdit(phone.id);
+  },800);
+});
+document.addEventListener('pointerup',()=>clearTimeout(longPressTimer));
+document.addEventListener('pointermove',()=>clearTimeout(longPressTimer));
+
+// ── Drag & Drop (edit mode) ──
+let dragOrb=null,dragOff={x:0,y:0};
+document.addEventListener('pointerdown',e=>{
+  const orb=e.target.closest('.orb');
+  if(!orb||!orb.closest('.phone')?.classList.contains('editing-mode'))return;
+  const rect=orb.getBoundingClientRect();
+  dragOff.x=e.clientX-rect.left;dragOff.y=e.clientY-rect.top;
+  dragOrb=orb;orb.classList.add('dragging');
+  orb.style.transition='none';
+  e.preventDefault();
+});
+document.addEventListener('pointermove',e=>{
+  if(!dragOrb)return;
+  const phone=dragOrb.closest('.phone');
+  const pr=phone.getBoundingClientRect();
+  const x=e.clientX-pr.left-dragOff.x;
+  const y=e.clientY-pr.top-dragOff.y;
+  dragOrb.style.left=Math.max(0,Math.min(x,pr.width-48))+'px';
+  dragOrb.style.top=Math.max(28,Math.min(y,pr.height-48))+'px';
+  dragOrb.style.right='auto';dragOrb.style.bottom='auto';
+});
+document.addEventListener('pointerup',()=>{
+  if(dragOrb){dragOrb.classList.remove('dragging');dragOrb.style.transition='';dragOrb=null}
+});
+</script>
+
+</body>
+</html>

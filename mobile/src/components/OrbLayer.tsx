@@ -294,19 +294,51 @@ export function OrbLayer({
   const audioInputEnabled = useSettingsStore((s) => (s as any).audioInputEnabled ?? true);
   const voicePromptEnhanceEnabled = useSettingsStore((s) => s.voicePromptEnhanceEnabled);
 
+  // Transcription inactivity watchdog — without it the mic stays stuck on
+  // 'processing' forever if the result never arrives (lost response / error /
+  // server hang). Reset on every audio:progress so long audio isn't cut off.
+  const transcriptionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Session the in-flight transcription was sent for. The listener also accepts
+  // replies matching this ref, so a transient change of the `sessionId` prop
+  // while recording/processing can't make us drop our own result (→ stuck mic).
+  const txSessionRef = useRef<string | undefined>(undefined);
+  const clearTxTimer = useCallback(() => {
+    if (transcriptionTimerRef.current) { clearTimeout(transcriptionTimerRef.current); transcriptionTimerRef.current = null; }
+  }, []);
+  const armTxTimer = useCallback(() => {
+    clearTxTimer();
+    transcriptionTimerRef.current = setTimeout(() => {
+      transcriptionTimerRef.current = null;
+      setMicState('idle');
+      console.warn('[mic] transcription timeout — reset to idle');
+    }, 150_000);
+  }, [clearTxTimer]);
+
   // Listen for transcription result from server
   useEffect(() => {
     if (!wsService) return;
     const handler = (msg: unknown) => {
       const m = msg as { type: string; sessionId?: string; payload?: any };
-      if (m.sessionId !== sessionId) return;
+      // Accept replies for the current tab OR for the in-flight request, so a
+      // mid-recording prop change doesn't strand the result.
+      if (m.sessionId !== sessionId && m.sessionId !== txSessionRef.current) return;
       if (m.type === 'audio:transcription') {
+        clearTxTimer();
+        txSessionRef.current = undefined;
         setMicState('idle');
         onTranscription?.(m.payload?.text ?? '');
+      } else if (m.type === 'audio:progress') {
+        setMicState('processing');
+        armTxTimer();
+      } else if (m.type === 'audio:error') {
+        clearTxTimer();
+        txSessionRef.current = undefined;
+        setMicState('idle');
+        console.warn('[mic] transcription error:', m.payload?.message);
       }
     };
     return wsService.addMessageListener(handler);
-  }, [wsService, sessionId, onTranscription]);
+  }, [wsService, sessionId, onTranscription, clearTxTimer, armTxTimer]);
 
   const handleMicPress = useCallback(async () => {
     if (micState === 'processing') return;
@@ -324,9 +356,12 @@ export function OrbLayer({
         if (!uri || !sessionId) { setMicState('idle'); return; }
         const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         await FileSystem.deleteAsync(uri, { idempotent: true });
+        txSessionRef.current = sessionId;
         wsService?.send({ type: 'audio:transcribe', sessionId, payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled } });
+        armTxTimer();
       } catch (err) {
         console.warn('[mic] stop error:', err);
+        clearTxTimer();
         setMicState('idle');
       }
       return;
@@ -350,18 +385,19 @@ export function OrbLayer({
       console.warn('[mic] start error:', err);
       setMicState('idle');
     }
-  }, [micState, sessionId, wsService]);
+  }, [micState, sessionId, wsService, armTxTimer, clearTxTimer]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (micTimerRef.current) clearInterval(micTimerRef.current);
+      clearTxTimer();
       if (recordingRef.current) {
         recordingRef.current.stopAndUnloadAsync().catch(() => {});
         recordingRef.current = null;
       }
     };
-  }, []);
+  }, [clearTxTimer]);
 
   // ── Helper: find orb position (works for both free and in-group) ────────
   const findOrbPosition = useCallback((orbId: string): { x: number; y: number } | null => {
@@ -713,8 +749,13 @@ export function OrbLayer({
       )}
 
       {/* ── Keyboard Dock ─────────────────────────────────────────────────── */}
+      {/* pointerEvents="box-none" — let touches on the dock background
+          (between orbs) pass through to the terminal underneath. Without
+          this, V2 multi-pane terminals can't be scrolled in their bottom
+          ~100px because the dock View captures touches there. Children
+          (TouchableOpacity orbs) still capture taps normally. */}
       {keyboardVisible && (
-        <View style={[s.dock, { bottom: 4 }]}>
+        <View style={[s.dock, { bottom: 4 }]} pointerEvents="box-none">
           {/* Dock edit bar */}
           {dockEditMode && (
             <View style={s.dockEditBar}>
@@ -779,7 +820,11 @@ export function OrbLayer({
             <Text style={[s.pickerTitle, { paddingHorizontal: 14, paddingBottom: 6 }]}>Zum Dock hinzufügen</Text>
             <ScrollView style={{ maxHeight: 200 }} contentContainerStyle={{ paddingHorizontal: 10, paddingBottom: 8 }}>
               {(() => {
-                const notInDock = Object.keys(ORB_DEFINITIONS).filter(id => !dockOrder.includes(id));
+                // Offer every catalog orb that isn't currently *visible* in the
+                // dock. availableDockOrbs already accounts for both dockOrder and
+                // removedOrbIds, so an orb hidden by either path is offered here
+                // (raw dockOrder would hide orbs that were removed via removeOrb).
+                const notInDock = Object.keys(ORB_DEFINITIONS).filter(id => !availableDockOrbs.includes(id));
                 if (notInDock.length === 0) {
                   return <Text style={s.pickerEmptyText}>Alle Orbs sind im Dock</Text>;
                 }

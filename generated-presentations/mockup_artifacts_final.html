@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Artefakte — Final Design</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0F172A;color:#F8FAFC}
+
+.phone{width:390px;height:800px;margin:20px auto;border:3px solid #334155;border-radius:32px;overflow:hidden;position:relative;background:#0F172A;box-shadow:0 20px 60px rgba(0,0,0,.6);display:flex;flex-direction:column}
+@media(max-width:420px){.phone{width:100%;height:100%;margin:0;border:none;border-radius:0}}
+
+/* ── Header ─────────────────────────────────── */
+.header{display:flex;align-items:center;padding:14px 16px;background:#0F172A;flex-shrink:0;gap:12px;border-bottom:1px solid rgba(51,65,85,.4)}
+.header .back-btn{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:none;background:rgba(30,41,59,.6)}
+.header .back-btn svg{width:18px;height:18px;stroke:#94A3B8;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.header .title-group{flex:1}
+.header .title{font-size:17px;font-weight:700;color:#F8FAFC;letter-spacing:-.2px}
+.header .subtitle{font-size:11px;color:#64748B;margin-top:1px}
+.header .count-badge{background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.15);color:#60A5FA;font-size:12px;font-weight:700;padding:4px 12px;border-radius:10px;font-variant-numeric:tabular-nums}
+
+/* ── Filter Bar ─────────────────────────────── */
+.filter-bar{display:flex;padding:10px 16px;gap:6px;border-bottom:1px solid rgba(51,65,85,.25);flex-shrink:0;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.filter-bar::-webkit-scrollbar{display:none}
+.chip{display:flex;align-items:center;gap:5px;padding:6px 13px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid #334155;color:#94A3B8;background:rgba(30,41,59,.3);white-space:nowrap;transition:all .15s;-webkit-tap-highlight-color:transparent}
+.chip:active{transform:scale(.96)}
+.chip.active{background:rgba(59,130,246,.1);border-color:rgba(59,130,246,.25);color:#60A5FA}
+.chip svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.chip .num{opacity:.5;font-size:11px}
+
+/* ── List ────────────────────────────────────── */
+.list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:6px 0}
+
+/* ── Section Label ──────────────────────────── */
+.section-label{padding:12px 16px 6px;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.6px}
+
+/* ── Artifact Row ───────────────────────────── */
+.artifact{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;transition:background .12s;-webkit-tap-highlight-color:transparent;border-bottom:1px solid rgba(51,65,85,.15)}
+.artifact:active{background:rgba(59,130,246,.04)}
+
+/* Icon */
+.art-icon{width:42px;height:42px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.art-icon svg{width:20px;height:20px;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;fill:none}
+.art-icon.pres{background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.12)}
+.art-icon.pres svg{stroke:#3B82F6}
+.art-icon.image{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.12)}
+.art-icon.image svg{stroke:#22C55E}
+.art-icon.skill{background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.12)}
+.art-icon.skill svg{stroke:#A78BFA}
+
+/* Info */
+.art-info{flex:1;min-width:0}
+.art-name{font-size:14px;font-weight:600;color:#F8FAFC;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.1px}
+.art-meta{display:flex;align-items:center;gap:6px;margin-top:3px}
+.art-meta span{font-size:11px;color:#64748B}
+.art-meta .sep{width:3px;height:3px;border-radius:50%;background:#334155;flex-shrink:0}
+.art-desc{font-size:12px;color:#94A3B8;line-height:1.4;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+/* Right side — type badge + arrow */
+.art-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.type-tag{font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;letter-spacing:.3px;text-transform:uppercase}
+.type-tag.pres{background:rgba(59,130,246,.08);color:#60A5FA}
+.type-tag.image{background:rgba(34,197,94,.08);color:#4ADE80}
+.type-tag.skill{background:rgba(167,139,250,.08);color:#C4B5FD}
+.arrow-icon{width:16px;height:16px;stroke:#334155;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* ── Empty State ────────────────────────────── */
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:40px}
+.empty svg{width:48px;height:48px;stroke:#334155;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.empty .msg{font-size:13px;color:#475569;text-align:center}
+</style>
+</head>
+<body>
+<div class="phone">
+  <!-- ── Header ──────────────────────────────── -->
+  <div class="header">
+    <button class="back-btn">
+      <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <div class="title-group">
+      <div class="title">Artefakte</div>
+      <div class="subtitle">Präsentationen, Bilder & Skills</div>
+    </div>
+    <span class="count-badge">7</span>
+  </div>
+
+  <!-- ── Filter Chips ────────────────────────── -->
+  <div class="filter-bar">
+    <div class="chip active" onclick="filterAll(this)">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 12l2 2 4-4"/></svg>
+      Alle <span class="num">7</span>
+    </div>
+    <div class="chip" onclick="toggle(this)">
+      <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+      Präsentationen <span class="num">4</span>
+    </div>
+    <div class="chip" onclick="toggle(this)">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+      Bilder <span class="num">2</span>
+    </div>
+    <div class="chip" onclick="toggle(this)">
+      <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      Skills <span class="num">1</span>
+    </div>
+  </div>
+
+  <!-- ── List ────────────────────────────────── -->
+  <div class="list">
+
+    <!-- Today -->
+    <div class="section-label">Heute</div>
+
+    <div class="artifact" onclick="this.style.background='rgba(59,130,246,.06)';setTimeout(()=>this.style.background='',300)">
+      <div class="art-icon pres">
+        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+      </div>
+      <div class="art-info">
+        <div class="art-name">Sicherheitsaudit — TMS Shops</div>
+        <div class="art-meta">
+          <span>6 Slides</span>
+          <div class="sep"></div>
+          <span>13:15</span>
+          <div class="sep"></div>
+          <span>21 KB</span>
+        </div>
+        <div class="art-desc">Kritische SQL Injection, API-Keys im Repo, fehlende Rate-Limits und CORS-Konfiguration. Fix-Prioritäten mit Aufwandsschätzung.</div>
+      </div>
+      <div class="art-right">
+        <span class="type-tag pres">PPT</span>
+        <svg class="arrow-icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+
+    <div class="artifact">
+      <div class="art-icon pres">
+        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+      </div>
+      <div class="art-info">
+        <div class="art-name">Sprint Dashboard — Sprint 14</div>
+        <div class="art-meta">
+          <span>4 Slides</span>
+          <div class="sep"></div>
+          <span>12:40</span>
+          <div class="sep"></div>
+          <span>20 KB</span>
+        </div>
+        <div class="art-desc">84% Features fertig, 142/168 Tests bestanden, Team-Velocity steigend. Bar-, Doughnut- und Line-Charts.</div>
+      </div>
+      <div class="art-right">
+        <span class="type-tag pres">PPT</span>
+        <svg class="arrow-icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+
+    <div class="artifact">
+      <div class="art-icon pres">
+        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+      </div>
+      <div class="art-info">
+        <div class="art-name">API-Dokumentation — TMS Banking</div>
+        <div class="art-meta">
+          <span>3 Slides</span>
+          <div class="sep"></div>
+          <span>11:30</span>
+          <div class="sep"></div>
+          <span>21 KB</span>
+        </div>
+        <div class="art-desc">12 REST-Endpoints, OAuth2/JWT Auth, Daten-API für Konten und Überweisungen.</div>
+      </div>
+      <div class="art-right">
+        <span class="type-tag pres">PPT</span>
+        <svg class="arrow-icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+
+    <!-- Yesterday -->
+    <div class="section-label">Gestern</div>
+
+    <div class="artifact">
+      <div class="art-icon image">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+      </div>
+      <div class="art-info">
+        <div class="art-name">Logo-Entwurf TMS Terminal</div>
+        <div class="art-meta">
+          <span>1024 × 1024</span>
+          <div class="sep"></div>
+          <span>18:22</span>
+          <div class="sep"></div>
+          <span>340 KB</span>
+        </div>
+        <div class="art-desc">Terminal-Icon im Dark Mode Stil, blau-lila Gradient mit Konsolen-Cursor-Symbol.</div>
+      </div>
+      <div class="art-right">
+        <span class="type-tag image">IMG</span>
+        <svg class="arrow-icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+
+    <!-- Last Week -->
+    <div class="section-label">Letzte Woche</div>
+
+    <div class="artifact">
+      <div class="art-icon skill">
+        <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </div>
+      <div class="art-info">
+        <div class="art-name">png-to-webp</div>
+        <div class="art-meta">
+          <span>Shell Script</span>
+          <div class="sep"></div>
+          <span>12.04.</span>
+          <div class="sep"></div>
+          <span style="color:#4ADE80;font-weight:600">Approved</span>
+        </div>
+        <div class="art-desc">Konvertiert PNG-Bilder zu WebP mit einstellbarer Qualität. Nutzt sharp für schnelle Verarbeitung.</div>
+      </div>
+      <div class="art-right">
+        <span class="type-tag skill">SKILL</span>
+        <svg class="arrow-icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+
+    <div class="artifact">
+      <div class="art-icon pres">
+        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+      </div>
+      <div class="art-info">
+        <div class="art-name">Multi-Projekt Audit</div>
+        <div class="art-meta">
+          <span>8 Slides</span>
+          <div class="sep"></div>
+          <span>11.04.</span>
+          <div class="sep"></div>
+          <span>24 KB</span>
+        </div>
+        <div class="art-desc">Vergleich aller 3 Projekte: Shops, Terminal, Banking. Sicherheit, Code-Qualität, Abhängigkeiten.</div>
+      </div>
+      <div class="art-right">
+        <span class="type-tag pres">PPT</span>
+        <svg class="arrow-icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+
+    <div class="artifact">
+      <div class="art-icon image">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+      </div>
+      <div class="art-info">
+        <div class="art-name">Architektur-Diagramm</div>
+        <div class="art-meta">
+          <span>1536 × 1024</span>
+          <div class="sep"></div>
+          <span>10.04.</span>
+          <div class="sep"></div>
+          <span>520 KB</span>
+        </div>
+        <div class="art-desc">System-Architektur: Server, Mobile App, WebSocket, Firebase Push, Tailscale VPN.</div>
+      </div>
+      <div class="art-right">
+        <span class="type-tag image">IMG</span>
+        <svg class="arrow-icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function toggle(el) {
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+}
+function filterAll(el) {
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+}
+</script>
+</body>
+</html>

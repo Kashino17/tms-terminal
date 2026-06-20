@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TMS Terminal – Server List Redesign</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;user-select:none}
+  body{background:#080C14;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;color:#F8FAFC;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:20px 20px 40px}
+  .page-header{text-align:center;padding:12px 0 20px}
+  .page-header h1{font-size:22px;font-weight:700}
+  .page-header p{font-size:12px;color:#64748B;margin-top:4px;max-width:700px;line-height:1.5}
+  .phones{display:flex;gap:32px;flex-wrap:wrap;justify-content:center}
+  .col{display:flex;flex-direction:column;align-items:center;gap:6px}
+  .col-label{font-size:11px;color:#94A3B8;font-weight:600;letter-spacing:1px;text-transform:uppercase}
+  .col-sub{font-size:10px;color:#475569;max-width:400px;text-align:center;line-height:1.4;margin-bottom:6px}
+
+  .phone{width:400px;height:880px;background:#0F172A;border-radius:36px;overflow:hidden;position:relative;border:3px solid #1E293B;box-shadow:0 25px 60px rgba(0,0,0,.6);flex-shrink:0;display:flex;flex-direction:column}
+  .sbar{height:28px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;font-size:11px;color:#64748B;flex-shrink:0}
+
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+
+  .toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.2);backdrop-filter:blur(16px);border-radius:14px;padding:8px 18px;font-size:12px;color:#93C5FD;opacity:0;transition:opacity .2s;pointer-events:none;z-index:200}
+  .toast.show{opacity:1}
+
+  /* ═══════════════════════════════════════
+     SHARED COMPONENTS
+     ═══════════════════════════════════════ */
+
+  /* Server card base */
+  .card{border-radius:16px;padding:16px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
+  .card:hover{transform:translateY(-1px)}
+  .card:active{transform:scale(.98)}
+
+  .avatar{width:44px;height:44px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;flex-shrink:0}
+
+  .status-dot{width:8px;height:8px;border-radius:4px;flex-shrink:0}
+  .status-dot.online{background:#22C55E;animation:pulse 2s infinite}
+  .status-dot.offline{background:#475569}
+
+  .latency{font-size:10px;font-family:'SF Mono',monospace;font-weight:600}
+  .latency.good{color:#22C55E}
+  .latency.fair{color:#F59E0B}
+
+  /* FAB */
+  .fab{position:absolute;bottom:24px;right:20px;width:56px;height:56px;border-radius:28px;background:#3B82F6;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 16px rgba(59,130,246,.4);transition:all .2s;z-index:10;font-size:24px;color:#fff;font-weight:300}
+  .fab:hover{transform:scale(1.08);box-shadow:0 6px 24px rgba(59,130,246,.5)}
+  .fab:active{transform:scale(.95)}
+
+  /* Settings gear */
+  .gear{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;color:#64748B}
+  .gear:hover{background:rgba(255,255,255,.04);color:#94A3B8}
+
+  /* ═══════════════════════════════════════
+     VARIANT 1: GLASS CARDS
+     ═══════════════════════════════════════ */
+
+  .v1-header{padding:16px 20px 8px;display:flex;align-items:center;gap:12px}
+  .v1-header h2{flex:1;font-size:20px;font-weight:700}
+  .v1-header .server-count{font-size:12px;color:#475569;font-weight:600;background:#1B2336;padding:3px 10px;border-radius:10px}
+
+  .v1-card{background:#1B2336;border:1px solid #243044;margin:6px 16px}
+  .v1-card-row{display:flex;align-items:center;gap:12px}
+  .v1-card .avatar{background:linear-gradient(135deg,#3B82F6 0%,#6366F1 100%)}
+  .v1-card-info{flex:1;min-width:0}
+  .v1-card-name{font-size:15px;font-weight:600;display:flex;align-items:center;gap:6px}
+  .v1-card-host{font-size:11px;color:#64748B;font-family:'SF Mono',monospace;margin-top:2px}
+  .v1-card-status{display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #243044}
+  .v1-card-status span{font-size:10px;color:#94A3B8}
+  .v1-card-actions{display:flex;gap:6px;margin-top:8px}
+  .v1-action-chip{padding:5px 10px;border-radius:8px;font-size:10px;background:#243044;color:#94A3B8;border:1px solid #334155;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .15s}
+  .v1-action-chip:hover{background:#334155;color:#F8FAFC}
+
+  /* ═══════════════════════════════════════
+     VARIANT 2: MINIMAL LIST
+     ═══════════════════════════════════════ */
+
+  .v2-header{padding:20px 20px 4px}
+  .v2-header h2{font-size:28px;font-weight:800;letter-spacing:-0.5px}
+  .v2-header p{font-size:12px;color:#475569;margin-top:2px}
+  .v2-header-row{display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-bottom:8px}
+  .v2-filter{display:flex;gap:6px}
+  .v2-filter-btn{padding:5px 12px;border-radius:20px;font-size:11px;color:#64748B;cursor:pointer;transition:all .15s;border:1px solid transparent}
+  .v2-filter-btn:hover{color:#94A3B8}
+  .v2-filter-btn.active{color:#3B82F6;background:rgba(59,130,246,.08);border-color:rgba(59,130,246,.15)}
+
+  .v2-card{background:transparent;border-bottom:1px solid #1E293B;border-radius:0;margin:0 16px;padding:14px 4px}
+  .v2-card:last-child{border-bottom:none}
+  .v2-card:hover{background:rgba(255,255,255,.02)}
+  .v2-card-row{display:flex;align-items:center;gap:14px}
+  .v2-card .avatar{border-radius:12px;width:40px;height:40px;font-size:14px}
+  .v2-card-info{flex:1}
+  .v2-card-top{display:flex;align-items:center;gap:8px}
+  .v2-card-name{font-size:14px;font-weight:600;flex:1}
+  .v2-card-host{font-size:10px;color:#475569;font-family:'SF Mono',monospace;margin-top:1px}
+  .v2-card-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+  .v2-chevron{color:#334155;font-size:16px}
+
+  /* ═══════════════════════════════════════
+     VARIANT 3: HERO CARDS
+     ═══════════════════════════════════════ */
+
+  .v3-header{padding:20px 20px 12px;display:flex;align-items:flex-end;justify-content:space-between}
+  .v3-header h2{font-size:22px;font-weight:700}
+  .v3-header-actions{display:flex;gap:6px}
+
+  .v3-card{margin:8px 16px;border:1px solid #243044;background:linear-gradient(145deg,#1B2336 0%,#0F172A 100%);padding:0;overflow:hidden}
+  .v3-card-top{padding:16px 16px 12px;display:flex;align-items:center;gap:12px}
+  .v3-card .avatar{width:48px;height:48px;border-radius:14px;font-size:18px}
+  .v3-card-info{flex:1}
+  .v3-card-name{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .v3-card-host{font-size:11px;color:#64748B;font-family:'SF Mono',monospace;margin-top:2px}
+  .v3-card-meta{display:flex;gap:16px;padding:10px 16px;border-top:1px solid #1E293B;background:rgba(0,0,0,.15)}
+  .v3-meta-item{display:flex;flex-direction:column;gap:2px}
+  .v3-meta-label{font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+  .v3-meta-value{font-size:12px;font-family:'SF Mono',monospace;font-weight:600}
+  .v3-card-actions{display:flex;gap:6px;padding:0 16px 14px}
+  .v3-action-btn{flex:1;padding:8px;border-radius:10px;text-align:center;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:5px}
+  .v3-btn-primary{background:rgba(59,130,246,.12);color:#3B82F6;border:1px solid rgba(59,130,246,.2)}
+  .v3-btn-primary:hover{background:rgba(59,130,246,.2)}
+  .v3-btn-secondary{background:#243044;color:#94A3B8;border:1px solid #334155}
+  .v3-btn-secondary:hover{background:#334155;color:#F8FAFC}
+
+  /* Quick settings bar */
+  .v3-quick-settings{margin:0 16px;padding:12px;border-radius:14px;background:#1B2336;border:1px solid #243044;display:flex;align-items:center;gap:10px;margin-top:8px}
+  .v3-qs-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .v3-qs-info{flex:1}
+  .v3-qs-title{font-size:12px;font-weight:600}
+  .v3-qs-sub{font-size:10px;color:#475569}
+  .v3-toggle{width:40px;height:22px;border-radius:11px;background:#243044;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0}
+  .v3-toggle.on{background:#22C55E}
+  .v3-toggle::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:9px;background:#F8FAFC;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .v3-toggle.on::after{transform:translateX(18px)}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>TMS Terminal – Server List Redesign</h1>
+  <p>3 Varianten der Hauptseite (Verbindungsübersicht) · Klick auf die Elemente zum Testen</p>
+</div>
+
+<div class="phones">
+
+<!-- ═══════════════════════════════════════
+     V1: GLASS CARDS
+     ═══════════════════════════════════════ -->
+<div class="col">
+<span class="col-label">Glass Cards</span>
+<span class="col-sub">Glasartige Cards mit subtilen Aktions-Chips. Status-Informationen und Quick-Actions direkt sichtbar. Kompakt aber informativ.</span>
+<div class="phone" id="p1">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <div class="v1-header">
+    <h2>Server</h2>
+    <span class="server-count">3 Geräte</span>
+    <div class="gear" onclick="toast(this,'Einstellungen')">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </div>
+  </div>
+
+  <div style="flex:1;overflow-y:auto;padding-bottom:80px">
+    <!-- Card 1: Online -->
+    <div class="card v1-card" onclick="toast(this,'Verbinden...')">
+      <div class="v1-card-row">
+        <div class="avatar" style="background:linear-gradient(135deg,#3B82F6,#6366F1)">MP</div>
+        <div class="v1-card-info">
+          <div class="v1-card-name">MacBook-Pro <div class="status-dot online"></div></div>
+          <div class="v1-card-host">100.86.75.71:8767</div>
+        </div>
+        <span class="latency good">12ms</span>
+      </div>
+      <div class="v1-card-status">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span>Verbunden · 3 Shells aktiv · Claude Code läuft</span>
+      </div>
+      <div class="v1-card-actions">
+        <div class="v1-action-chip" onclick="event.stopPropagation();toast(this,'Terminal')">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          Terminal
+        </div>
+        <div class="v1-action-chip" onclick="event.stopPropagation();toast(this,'Manager')">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>
+          Manager
+        </div>
+        <div class="v1-action-chip" onclick="event.stopPropagation();toast(this,'Bearbeiten')">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Edit
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 2: Online -->
+    <div class="card v1-card" onclick="toast(this,'Verbinden...')">
+      <div class="v1-card-row">
+        <div class="avatar" style="background:linear-gradient(135deg,#22C55E,#10B981)">WS</div>
+        <div class="v1-card-info">
+          <div class="v1-card-name">Work-Station <div class="status-dot online"></div></div>
+          <div class="v1-card-host">192.168.1.50:8767</div>
+        </div>
+        <span class="latency good">3ms</span>
+      </div>
+      <div class="v1-card-status">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span>Verbunden · 1 Shell aktiv · Idle</span>
+      </div>
+    </div>
+
+    <!-- Card 3: Offline -->
+    <div class="card v1-card" style="opacity:.6" onclick="toast(this,'Server offline')">
+      <div class="v1-card-row">
+        <div class="avatar" style="background:linear-gradient(135deg,#F59E0B,#EF4444)">RP</div>
+        <div class="v1-card-info">
+          <div class="v1-card-name">Raspberry Pi <div class="status-dot offline"></div></div>
+          <div class="v1-card-host">100.92.10.5:8767</div>
+        </div>
+        <span class="latency" style="color:#475569">—</span>
+      </div>
+      <div class="v1-card-status">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        <span style="color:#475569">Offline · Zuletzt vor 2h gesehen</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="fab" onclick="toast(this,'+')">+</div>
+  <div class="toast" id="t1"></div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     V2: MINIMAL LIST
+     ═══════════════════════════════════════ -->
+<div class="col">
+<span class="col-label">Minimal List</span>
+<span class="col-sub">Ultra-clean — große Typografie, keine Borders, nur Trennlinien. Filter-Chips oben. Apple-Settings-Feeling. Fokus auf Klarheit.</span>
+<div class="phone" id="p2">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <div class="v2-header">
+    <h2>Terminal</h2>
+    <p>3 Server · 2 online</p>
+    <div class="v2-header-row">
+      <div class="v2-filter">
+        <div class="v2-filter-btn active">Alle</div>
+        <div class="v2-filter-btn" onclick="this.parentElement.querySelector('.active')?.classList.remove('active');this.classList.add('active')">Online</div>
+        <div class="v2-filter-btn" onclick="this.parentElement.querySelector('.active')?.classList.remove('active');this.classList.add('active')">Offline</div>
+      </div>
+      <div class="gear" onclick="toast(this,'Einstellungen')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:1;overflow-y:auto;padding-bottom:80px">
+    <div class="card v2-card" onclick="toast(this,'Verbinden...')">
+      <div class="v2-card-row">
+        <div class="avatar" style="background:linear-gradient(135deg,#3B82F6,#6366F1);border-radius:12px;width:40px;height:40px;font-size:14px">MP</div>
+        <div class="v2-card-info">
+          <div class="v2-card-top">
+            <span class="v2-card-name">MacBook-Pro</span>
+          </div>
+          <div class="v2-card-host">100.86.75.71:8767</div>
+        </div>
+        <div class="v2-card-right">
+          <div style="display:flex;align-items:center;gap:4px">
+            <div class="status-dot online"></div>
+            <span class="latency good">12ms</span>
+          </div>
+          <span style="font-size:9px;color:#475569">3 Shells</span>
+        </div>
+        <span class="v2-chevron">›</span>
+      </div>
+    </div>
+
+    <div class="card v2-card" onclick="toast(this,'Verbinden...')">
+      <div class="v2-card-row">
+        <div class="avatar" style="background:linear-gradient(135deg,#22C55E,#10B981);border-radius:12px;width:40px;height:40px;font-size:14px">WS</div>
+        <div class="v2-card-info">
+          <div class="v2-card-top">
+            <span class="v2-card-name">Work-Station</span>
+          </div>
+          <div class="v2-card-host">192.168.1.50:8767</div>
+        </div>
+        <div class="v2-card-right">
+          <div style="display:flex;align-items:center;gap:4px">
+            <div class="status-dot online"></div>
+            <span class="latency good">3ms</span>
+          </div>
+          <span style="font-size:9px;color:#475569">1 Shell</span>
+        </div>
+        <span class="v2-chevron">›</span>
+      </div>
+    </div>
+
+    <div class="card v2-card" style="opacity:.5" onclick="toast(this,'Offline')">
+      <div class="v2-card-row">
+        <div class="avatar" style="background:linear-gradient(135deg,#F59E0B,#EF4444);border-radius:12px;width:40px;height:40px;font-size:14px">RP</div>
+        <div class="v2-card-info">
+          <div class="v2-card-top">
+            <span class="v2-card-name">Raspberry Pi</span>
+          </div>
+          <div class="v2-card-host">100.92.10.5:8767</div>
+        </div>
+        <div class="v2-card-right">
+          <div style="display:flex;align-items:center;gap:4px">
+            <div class="status-dot offline"></div>
+            <span style="font-size:10px;color:#475569">Offline</span>
+          </div>
+          <span style="font-size:9px;color:#334155">vor 2h</span>
+        </div>
+        <span class="v2-chevron">›</span>
+      </div>
+    </div>
+
+    <!-- Quick Settings inline -->
+    <div style="padding:20px 16px 0">
+      <div style="font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:8px;padding-left:4px">Schnelleinstellungen</div>
+      <div style="background:#1B2336;border-radius:14px;border:1px solid #243044;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid #1E293B">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span style="flex:1;font-size:12px">App Lock</span>
+          <div class="v3-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid #1E293B">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/></svg>
+          <span style="flex:1;font-size:12px">Benachrichtigungen</span>
+          <div class="v3-toggle on" onclick="this.classList.toggle('on')"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>
+          <span style="flex:1;font-size:12px">Manager Agent</span>
+          <span style="font-size:10px;color:#22C55E">GLM aktiv</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fab" onclick="toast(this,'+')">+</div>
+  <div class="toast" id="t2"></div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     V3: HERO CARDS
+     ═══════════════════════════════════════ -->
+<div class="col">
+<span class="col-label">Hero Cards</span>
+<span class="col-sub">Große Cards mit Gradient-Hintergrund, Metadaten-Leiste und Action-Buttons. Dashboard-Feeling. Jede Info auf einen Blick.</span>
+<div class="phone" id="p3">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <div class="v3-header">
+    <div>
+      <h2>Server</h2>
+      <span style="font-size:11px;color:#475569">2 von 3 online</span>
+    </div>
+    <div class="v3-header-actions">
+      <div class="gear" onclick="toast(this,'Einstellungen')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:1;overflow-y:auto;padding-bottom:80px">
+    <!-- Card 1 -->
+    <div class="card v3-card" onclick="toast(this,'Verbinden...')">
+      <div class="v3-card-top">
+        <div class="avatar" style="background:linear-gradient(135deg,#3B82F6,#6366F1);width:48px;height:48px;font-size:18px">MP</div>
+        <div class="v3-card-info">
+          <div class="v3-card-name">
+            MacBook-Pro
+            <div class="status-dot online"></div>
+          </div>
+          <div class="v3-card-host">100.86.75.71:8767</div>
+        </div>
+        <span class="latency good" style="font-size:12px">12ms</span>
+      </div>
+      <div class="v3-card-meta">
+        <div class="v3-meta-item">
+          <span class="v3-meta-label">Shells</span>
+          <span class="v3-meta-value" style="color:#F8FAFC">3 aktiv</span>
+        </div>
+        <div class="v3-meta-item">
+          <span class="v3-meta-label">Platform</span>
+          <span class="v3-meta-value" style="color:#94A3B8">darwin</span>
+        </div>
+        <div class="v3-meta-item">
+          <span class="v3-meta-label">AI</span>
+          <span class="v3-meta-value" style="color:#A78BFA">Claude Code</span>
+        </div>
+        <div class="v3-meta-item">
+          <span class="v3-meta-label">Uptime</span>
+          <span class="v3-meta-value" style="color:#94A3B8">4h 23m</span>
+        </div>
+      </div>
+      <div class="v3-card-actions">
+        <div class="v3-action-btn v3-btn-primary" onclick="event.stopPropagation();toast(this,'Verbinden')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          Verbinden
+        </div>
+        <div class="v3-action-btn v3-btn-secondary" onclick="event.stopPropagation();toast(this,'Manager')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>
+          Manager
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 2 -->
+    <div class="card v3-card" onclick="toast(this,'Verbinden...')">
+      <div class="v3-card-top">
+        <div class="avatar" style="background:linear-gradient(135deg,#22C55E,#10B981);width:48px;height:48px;font-size:18px">WS</div>
+        <div class="v3-card-info">
+          <div class="v3-card-name">
+            Work-Station
+            <div class="status-dot online"></div>
+          </div>
+          <div class="v3-card-host">192.168.1.50:8767</div>
+        </div>
+        <span class="latency good" style="font-size:12px">3ms</span>
+      </div>
+      <div class="v3-card-meta">
+        <div class="v3-meta-item">
+          <span class="v3-meta-label">Shells</span>
+          <span class="v3-meta-value" style="color:#F8FAFC">1 aktiv</span>
+        </div>
+        <div class="v3-meta-item">
+          <span class="v3-meta-label">Platform</span>
+          <span class="v3-meta-value" style="color:#94A3B8">linux</span>
+        </div>
+        <div class="v3-meta-item">
+          <span class="v3-meta-label">Status</span>
+          <span class="v3-meta-value" style="color:#22C55E">Idle</span>
+        </div>
+      </div>
+      <div class="v3-card-actions">
+        <div class="v3-action-btn v3-btn-primary" onclick="event.stopPropagation()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          Verbinden
+        </div>
+        <div class="v3-action-btn v3-btn-secondary" onclick="event.stopPropagation()">Bearbeiten</div>
+      </div>
+    </div>
+
+    <!-- Card 3: Offline -->
+    <div class="card v3-card" style="opacity:.55" onclick="toast(this,'Server offline')">
+      <div class="v3-card-top">
+        <div class="avatar" style="background:linear-gradient(135deg,#F59E0B,#EF4444);width:48px;height:48px;font-size:18px">RP</div>
+        <div class="v3-card-info">
+          <div class="v3-card-name">
+            Raspberry Pi
+            <div class="status-dot offline"></div>
+          </div>
+          <div class="v3-card-host">100.92.10.5:8767</div>
+        </div>
+        <span style="font-size:10px;color:#475569">Offline</span>
+      </div>
+      <div class="v3-card-meta">
+        <div class="v3-meta-item">
+          <span class="v3-meta-label">Zuletzt online</span>
+          <span class="v3-meta-value" style="color:#475569">vor 2 Stunden</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick settings -->
+    <div class="v3-quick-settings" onclick="toast(this,'App Lock')">
+      <div class="v3-qs-icon" style="background:rgba(59,130,246,.12)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      </div>
+      <div class="v3-qs-info">
+        <div class="v3-qs-title">Sicherheit</div>
+        <div class="v3-qs-sub">App Lock aktiv · PIN geschützt</div>
+      </div>
+      <div class="v3-toggle on" onclick="event.stopPropagation();this.classList.toggle('on')"></div>
+    </div>
+
+    <div class="v3-quick-settings" onclick="toast(this,'Manager')">
+      <div class="v3-qs-icon" style="background:rgba(167,139,250,.12)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>
+      </div>
+      <div class="v3-qs-info">
+        <div class="v3-qs-title">Manager Agent</div>
+        <div class="v3-qs-sub">GLM 5.0 Turbo · Rem</div>
+      </div>
+      <span style="font-size:10px;color:#22C55E">● Aktiv</span>
+    </div>
+  </div>
+
+  <div class="fab" onclick="toast(this,'+')">+</div>
+  <div class="toast" id="t3"></div>
+</div>
+</div>
+
+</div>
+
+<script>
+function toast(el,text){
+  const p=el.closest('.phone');
+  const t=p.querySelector('.toast');
+  t.textContent=text;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),1200);
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>V2 — Visual Grid mit Thumbnails</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0F172A;color:#F8FAFC}
+
+.phone{width:380px;height:760px;margin:20px auto;border:3px solid #334155;border-radius:32px;overflow:hidden;position:relative;background:#0F172A;box-shadow:0 20px 60px rgba(0,0,0,.6);display:flex;flex-direction:column}
+@media(max-width:420px){.phone{width:100%;height:100%;margin:0;border:none;border-radius:0}}
+
+.header{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(51,65,85,.5);background:#0F172A;flex-shrink:0;gap:10px}
+.header .back{color:#94A3B8;font-size:20px;cursor:pointer;border:none;background:none;padding:4px}
+.header .title{flex:1;font-size:16px;font-weight:700}
+.header .badge{background:rgba(59,130,246,.15);color:#60A5FA;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px}
+
+/* Section headers */
+.section{padding:16px 16px 8px;display:flex;align-items:center;gap:8px}
+.section .label{font-size:13px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.5px}
+.section .count{font-size:11px;color:#475569}
+.section .line{flex:1;height:1px;background:#1E293B}
+
+/* Grid */
+.content{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 16px 16px}
+
+/* Presentation card (grid) */
+.pres-card{background:#1B2336;border:1px solid #334155;border-radius:14px;overflow:hidden;cursor:pointer;transition:transform .15s}
+.pres-card:active{transform:scale(.96)}
+.pres-thumb{height:100px;background:linear-gradient(135deg,#1E3A5F 0%,#0F172A 50%,#1B2336 100%);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.pres-thumb .slide-preview{font-size:10px;color:#475569;text-align:center;padding:8px;line-height:1.4}
+.pres-thumb .slide-count{position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.6);color:#94A3B8;font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px}
+.pres-thumb .type-icon{position:absolute;top:8px;left:8px;font-size:16px}
+.pres-info{padding:10px 12px}
+.pres-info .name{font-size:12px;font-weight:600;color:#F8FAFC;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pres-info .date{font-size:10px;color:#64748B}
+
+/* Image card */
+.img-card{background:#1B2336;border:1px solid #334155;border-radius:14px;overflow:hidden;cursor:pointer;transition:transform .15s}
+.img-card:active{transform:scale(.96)}
+.img-thumb{height:100px;background:linear-gradient(135deg,#064E3B 0%,#1B2336 100%);display:flex;align-items:center;justify-content:center;font-size:32px}
+.img-info{padding:10px 12px}
+.img-info .name{font-size:12px;font-weight:600;color:#F8FAFC;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.img-info .date{font-size:10px;color:#64748B}
+
+/* Skill card (full width) */
+.skills-list{padding:0 16px 16px;display:flex;flex-direction:column;gap:8px}
+.skill-card{background:#1B2336;border:1px solid #334155;border-radius:12px;padding:12px;display:flex;align-items:center;gap:10px;cursor:pointer}
+.skill-card:active{background:#1E293B}
+.skill-icon{width:36px;height:36px;border-radius:10px;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.2);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.skill-card .name{font-size:13px;font-weight:600;color:#F8FAFC}
+.skill-card .status{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:auto}
+.skill-card .status.approved{background:rgba(34,197,94,.15);color:#4ADE80}
+.skill-card .status.testing{background:rgba(245,158,11,.15);color:#FBBF24}
+
+.label-top{position:fixed;top:8px;left:50%;transform:translateX(-50%);background:#A78BFA;color:#fff;font-size:11px;font-weight:700;padding:4px 12px;border-radius:12px;z-index:100;letter-spacing:.5px;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="label-top">V2 — Visual Grid mit Thumbnails</div>
+<div class="phone">
+  <div class="header">
+    <button class="back">←</button>
+    <span class="title">Artefakte</span>
+    <span class="badge">7</span>
+  </div>
+
+  <div class="content">
+    <!-- Presentations Section -->
+    <div class="section">
+      <span class="label">📊 Präsentationen</span>
+      <span class="count">4</span>
+      <div class="line"></div>
+    </div>
+    <div class="grid">
+      <div class="pres-card">
+        <div class="pres-thumb" style="background:linear-gradient(135deg,#7F1D1D,#1B2336)">
+          <span class="type-icon">📊</span>
+          <div class="slide-preview">
+            <strong style="color:#F87171;font-size:11px">7 Kritisch</strong><br>
+            <span style="color:#64748B">12 Warnungen</span>
+          </div>
+          <span class="slide-count">6 Slides</span>
+        </div>
+        <div class="pres-info">
+          <div class="name">Sicherheitsaudit — TMS Shops</div>
+          <div class="date">Heute, 13:15</div>
+        </div>
+      </div>
+
+      <div class="pres-card">
+        <div class="pres-thumb" style="background:linear-gradient(135deg,#1E3A5F,#1B2336)">
+          <span class="type-icon">📊</span>
+          <div class="slide-preview">
+            <strong style="color:#60A5FA;font-size:18px">84%</strong><br>
+            <span style="color:#64748B">Sprint 14</span>
+          </div>
+          <span class="slide-count">4 Slides</span>
+        </div>
+        <div class="pres-info">
+          <div class="name">Sprint Dashboard</div>
+          <div class="date">Heute, 12:40</div>
+        </div>
+      </div>
+
+      <div class="pres-card">
+        <div class="pres-thumb" style="background:linear-gradient(135deg,#312E81,#1B2336)">
+          <span class="type-icon">📊</span>
+          <div class="slide-preview">
+            <strong style="color:#A78BFA;font-size:11px">12 Endpoints</strong><br>
+            <span style="color:#64748B">REST API v2.1</span>
+          </div>
+          <span class="slide-count">3 Slides</span>
+        </div>
+        <div class="pres-info">
+          <div class="name">API-Dokumentation</div>
+          <div class="date">Heute, 11:30</div>
+        </div>
+      </div>
+
+      <div class="pres-card">
+        <div class="pres-thumb" style="background:linear-gradient(135deg,#064E3B,#1B2336)">
+          <span class="type-icon">📊</span>
+          <div class="slide-preview">
+            <strong style="color:#4ADE80;font-size:11px">3 Projekte</strong><br>
+            <span style="color:#64748B">Vergleich</span>
+          </div>
+          <span class="slide-count">8 Slides</span>
+        </div>
+        <div class="pres-info">
+          <div class="name">Multi-Projekt Audit</div>
+          <div class="date">11.04.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Images Section -->
+    <div class="section">
+      <span class="label">🖼️ Bilder</span>
+      <span class="count">2</span>
+      <div class="line"></div>
+    </div>
+    <div class="grid">
+      <div class="img-card">
+        <div class="img-thumb">🎨</div>
+        <div class="img-info">
+          <div class="name">Logo-Entwurf</div>
+          <div class="date">Gestern, 18:22</div>
+        </div>
+      </div>
+      <div class="img-card">
+        <div class="img-thumb" style="background:linear-gradient(135deg,#164E63,#1B2336)">🏗️</div>
+        <div class="img-info">
+          <div class="name">Architektur-Diagramm</div>
+          <div class="date">10.04.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skills Section -->
+    <div class="section">
+      <span class="label">⚡ Skills</span>
+      <span class="count">1</span>
+      <div class="line"></div>
+    </div>
+    <div class="skills-list">
+      <div class="skill-card">
+        <div class="skill-icon">⚡</div>
+        <span class="name">png-to-webp</span>
+        <span class="status approved">APPROVED</span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

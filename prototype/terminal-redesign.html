@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TMS Terminal – UI Redesign Prototype</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#111; font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif; color:#F8FAFC; overflow-x:hidden; display:flex; justify-content:center; align-items:flex-start; min-height:100vh; padding:20px; gap:40px; flex-wrap:wrap; }
+
+  /* ── Phone Frame ── */
+  .phone { width:400px; height:880px; background:#0F172A; border-radius:36px; overflow:hidden; position:relative; border:3px solid #1E293B; box-shadow: 0 25px 60px rgba(0,0,0,0.6); flex-shrink:0; }
+  .phone-label { text-align:center; color:#94A3B8; font-size:13px; margin-bottom:8px; font-weight:600; letter-spacing:1px; text-transform:uppercase; }
+
+  /* ── Status Bar (system) ── */
+  .status-bar { height:28px; background:#0F172A; display:flex; align-items:center; justify-content:space-between; padding:0 20px; font-size:11px; color:#94A3B8; }
+
+  /* ── Header ── */
+  .header { display:flex; align-items:center; padding:6px 12px; border-bottom:1px solid #1E293B; background:#0F172A; gap:8px; min-height:44px; transition: all 0.3s ease; }
+  .header.minimal { padding:4px 12px; min-height:36px; border-bottom-color: transparent; }
+  .header .back { color:#3B82F6; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:2px; flex-shrink:0; }
+  .header .back svg { width:16px; height:16px; }
+  .header .title-area { flex:1; text-align:center; }
+  .header .title { font-size:14px; font-weight:700; font-family:'SF Mono',monospace; }
+  .header .subtitle { font-size:10px; color:#64748B; }
+  .header .conn-dot { width:7px; height:7px; border-radius:50%; background:#22C55E; animation: pulse 2s infinite; flex-shrink:0; }
+  .header .actions { display:flex; gap:6px; flex-shrink:0; }
+  .header .action-btn { width:28px; height:28px; border-radius:7px; background:#243044; border:1px solid #334155; display:flex; align-items:center; justify-content:center; cursor:pointer; transition: all 0.2s; }
+  .header .action-btn:hover { background:#334155; }
+  .header .action-btn svg { width:14px; height:14px; color:#94A3B8; }
+
+  /* ── Tabs ── */
+  .tabs { display:flex; overflow-x:auto; background:#0F172A; border-bottom:1px solid #1E293B; scrollbar-width:none; transition: all 0.3s ease; }
+  .tabs::-webkit-scrollbar { display:none; }
+  .tabs.hidden { height:0; overflow:hidden; border:none; opacity:0; }
+  .tab { padding:8px 14px; font-size:12px; font-family:'SF Mono',monospace; color:#64748B; cursor:pointer; white-space:nowrap; border-bottom:2px solid transparent; transition: all 0.2s; position:relative; flex-shrink:0; }
+  .tab:hover { color:#94A3B8; background:rgba(255,255,255,0.02); }
+  .tab.active { color:#F8FAFC; border-bottom-color:#3B82F6; background:#243044; }
+  .tab.ai { border-left:3px solid #A78BFA; }
+  .tab.ai.active { border-bottom-color:#A78BFA; }
+  .tab .close { display:none; margin-left:6px; color:#64748B; font-size:10px; }
+  .tab:hover .close, .tab.active .close { display:inline; }
+  .tab .notif { position:absolute; top:4px; right:4px; width:14px; height:14px; border-radius:50%; background:#EF4444; font-size:8px; display:flex; align-items:center; justify-content:center; font-weight:700; }
+  .tab-add { padding:8px 10px; cursor:pointer; color:#3B82F6; font-size:16px; display:flex; align-items:center; }
+
+  /* ── Terminal Area ── */
+  .terminal-area { flex:1; position:relative; overflow:hidden; background:#0F172A; }
+  .terminal-content { width:100%; height:100%; padding:8px 10px; font-family:'SF Mono','Fira Code',monospace; font-size:12px; line-height:1.5; color:#E2E8F0; overflow-y:auto; }
+  .terminal-content .prompt { color:#22C55E; }
+  .terminal-content .cmd { color:#F8FAFC; }
+  .terminal-content .output { color:#94A3B8; }
+  .terminal-content .error { color:#EF4444; }
+  .terminal-content .dim { color:#475569; }
+
+  /* ── Floating Action Button (replaces tool rail) ── */
+  .fab { position:absolute; right:12px; bottom:56px; width:44px; height:44px; border-radius:22px; background:rgba(59,130,246,0.15); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); border:1px solid rgba(59,130,246,0.25); display:flex; align-items:center; justify-content:center; cursor:pointer; transition: all 0.3s cubic-bezier(0.34,1.56,0.64,1); z-index:10; }
+  .fab:hover { transform:scale(1.08); background:rgba(59,130,246,0.25); }
+  .fab.open { border-radius:16px; width:200px; height:auto; padding:8px; flex-direction:column; align-items:stretch; bottom:56px; }
+  .fab svg { width:20px; height:20px; color:#3B82F6; transition:transform 0.3s; }
+  .fab.open svg.fab-icon { transform:rotate(45deg); }
+
+  /* ── Tool Palette (expanded FAB) ── */
+  .tool-palette { display:none; flex-direction:column; gap:2px; }
+  .fab.open .tool-palette { display:flex; }
+  .fab.open .fab-icon-wrap { display:flex; justify-content:flex-end; padding:4px; }
+  .tool-item { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:10px; cursor:pointer; transition:background 0.15s; }
+  .tool-item:hover { background:rgba(255,255,255,0.06); }
+  .tool-item .tool-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .tool-item span { font-size:13px; font-weight:500; }
+  .tool-item .tool-shortcut { margin-left:auto; font-size:10px; color:#475569; }
+
+  /* ── Tool Panel (slides from right) ── */
+  .tool-panel { position:absolute; top:0; right:0; bottom:44px; width:0; background:#0F172A; border-left:1px solid #1E293B; z-index:8; overflow:hidden; transition: width 0.3s cubic-bezier(0.25,1,0.5,1); }
+  .tool-panel.open { width:260px; }
+  .tool-panel-header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid #1E293B; }
+  .tool-panel-header h3 { font-size:14px; font-weight:600; }
+  .tool-panel-header .close-panel { cursor:pointer; color:#64748B; }
+  .tool-panel-body { padding:12px; font-size:12px; color:#94A3B8; }
+
+  /* ── Bottom Toolbar ── */
+  .toolbar { height:44px; display:flex; align-items:center; padding:0 6px; background:#0F172A; border-top:1px solid #1E293B; gap:2px; z-index:20; position:relative; }
+  .toolbar .key { height:32px; min-width:36px; padding:0 8px; border-radius:8px; background:#1B2336; border:1px solid #2D3A4F; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:11px; font-family:'SF Mono',monospace; color:#94A3B8; transition:all 0.15s; font-weight:600; }
+  .toolbar .key:hover { background:#243044; color:#F8FAFC; }
+  .toolbar .key:active { transform:scale(0.95); }
+  .toolbar .key.destructive { color:#EF4444; border-color: rgba(239,68,68,0.2); }
+  .toolbar .key.destructive:hover { background: rgba(239,68,68,0.1); }
+  .toolbar .key.primary { color:#3B82F6; }
+  .toolbar .sep { width:1px; height:20px; background:#1E293B; margin:0 2px; }
+  .toolbar .spacer { flex:1; }
+
+  /* ── D-Pad (expandable) ── */
+  .dpad-group { display:flex; gap:2px; overflow:hidden; max-width:36px; transition: max-width 0.3s ease; }
+  .dpad-group.open { max-width:220px; }
+  .dpad-group .arrow-keys { display:flex; gap:2px; overflow:hidden; }
+
+  /* ── Gestures hint ── */
+  .gesture-hint { position:absolute; bottom:50px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.7); backdrop-filter:blur(10px); border-radius:20px; padding:6px 14px; font-size:11px; color:#94A3B8; white-space:nowrap; opacity:0; transition:opacity 0.3s; pointer-events:none; z-index:100; }
+  .gesture-hint.show { opacity:1; }
+
+  /* ── Tab Swipe Indicator ── */
+  .swipe-indicator { position:absolute; top:50%; left:0; right:0; display:flex; justify-content:center; pointer-events:none; z-index:15; }
+  .swipe-dot { width:6px; height:6px; border-radius:3px; background:#334155; margin:0 3px; transition:all 0.2s; }
+  .swipe-dot.active { background:#3B82F6; width:18px; }
+
+  /* ── Quick Actions Drawer (pull down from header) ── */
+  .quick-drawer { max-height:0; overflow:hidden; background:#1B2336; transition: max-height 0.3s cubic-bezier(0.25,1,0.5,1); border-bottom:1px solid transparent; }
+  .quick-drawer.open { max-height:120px; border-bottom-color:#1E293B; }
+  .quick-drawer-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:8px; padding:10px 14px; }
+  .quick-drawer-item { display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer; padding:8px 4px; border-radius:10px; transition:background 0.15s; }
+  .quick-drawer-item:hover { background:rgba(255,255,255,0.04); }
+  .quick-drawer-item .qd-icon { width:36px; height:36px; border-radius:10px; background:#243044; display:flex; align-items:center; justify-content:center; }
+  .quick-drawer-item span { font-size:10px; color:#94A3B8; }
+
+  /* ── Animations ── */
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+  @keyframes slideUp { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
+  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+
+  /* ── Variant C: Gesture-First interactive ── */
+  .c-tab-page { position:absolute; inset:0; bottom:0; transition: transform 0.35s cubic-bezier(0.25,1,0.5,1), opacity 0.25s ease; }
+  .c-tab-page:not(.c-tab-active) { display:none !important; }
+
+  .c-edge { position:absolute; top:0; bottom:44px; width:32px; z-index:6; cursor:pointer; display:flex; align-items:center; transition:background 0.2s; }
+  .c-edge:hover { background:rgba(59,130,246,0.06); }
+  .c-edge-left { left:0; justify-content:flex-start; padding-left:4px; border-radius:0 8px 8px 0; }
+  .c-edge-right { right:0; justify-content:flex-end; padding-right:4px; border-radius:8px 0 0 8px; }
+  .c-edge-arrow { color:#334155; font-size:20px; font-weight:300; transition:color 0.2s,transform 0.2s; }
+  .c-edge:hover .c-edge-arrow { color:#3B82F6; }
+  .c-edge-left:hover .c-edge-arrow { transform:translateX(-2px); }
+  .c-edge-right:hover .c-edge-arrow { transform:translateX(2px); }
+
+  .c-dots { position:absolute; bottom:50px; left:50%; transform:translateX(-50%); display:flex; gap:6px; align-items:center; z-index:6; }
+  .c-dot { width:6px; height:6px; border-radius:3px; background:#334155; cursor:pointer; transition:all 0.3s cubic-bezier(0.34,1.56,0.64,1); position:relative; }
+  .c-dot:hover { background:#64748B; transform:scale(1.4); }
+  .c-dot.active { width:20px; background:#3B82F6; }
+  .c-dot-badge { position:absolute; top:-8px; right:-6px; width:12px; height:12px; border-radius:50%; background:#EF4444; font-size:7px; display:flex; align-items:center; justify-content:center; font-weight:700; color:#fff; }
+
+  .c-ctx-menu { display:none; position:absolute; z-index:50; background:#1B2336; border:1px solid #334155; border-radius:12px; padding:6px 0; min-width:200px; box-shadow:0 12px 40px rgba(0,0,0,0.5); animation:fadeIn 0.12s ease; }
+  .c-ctx-menu.open { display:block; }
+  .c-ctx-title { padding:4px 14px 2px; font-size:10px; color:#64748B; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; }
+  .c-ctx-item { display:flex; align-items:center; gap:10px; padding:8px 14px; cursor:pointer; transition:background 0.1s; font-size:13px; }
+  .c-ctx-item:hover { background:rgba(59,130,246,0.1); }
+  .c-ctx-item span:first-of-type { flex:1; }
+  .c-ctx-key { font-size:10px; color:#475569; background:#243044; padding:1px 6px; border-radius:4px; font-family:monospace; font-weight:600; }
+  .c-ctx-sep { height:1px; background:#243044; margin:4px 0; }
+
+  .c-tab-grid { display:none; position:absolute; inset:0; z-index:40; background:#0F172A; flex-direction:column; animation:slideUp 0.3s cubic-bezier(0.25,1,0.5,1); }
+  .c-tab-grid.open { display:flex; }
+  .c-grid-header { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; font-size:14px; font-family:monospace; }
+  .c-grid-cards { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:12px 16px; flex:1; align-content:start; }
+  .c-grid-card { background:#1B2336; border:1px solid #243044; border-radius:12px; padding:10px 12px; cursor:pointer; transition:all 0.2s; display:flex; flex-direction:column; gap:6px; }
+  .c-grid-card:hover { border-color:#3B82F6; transform:scale(1.02); }
+  .c-grid-card.active { border-color:#3B82F6; box-shadow:0 0 0 1px rgba(59,130,246,0.3); }
+  .c-grid-card-header { font-size:12px; font-weight:600; font-family:monospace; }
+  .c-grid-card-preview { font-size:9px; font-family:monospace; color:#64748B; line-height:1.5; background:#0F172A; border-radius:6px; padding:6px 8px; max-height:60px; overflow:hidden; }
+  .c-grid-card-footer { font-size:10px; color:#475569; }
+
+  .c-shortcuts { position:absolute; bottom:6px; left:10px; right:10px; background:rgba(27,35,54,0.95); backdrop-filter:blur(16px); border-radius:14px; padding:12px 16px; border:1px solid #243044; z-index:30; animation:slideUp 0.25s ease; }
+  .c-shortcut-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; }
+  .c-shortcut-row { display:flex; align-items:center; gap:6px; font-size:11px; color:#94A3B8; padding:2px 0; }
+  .c-shortcut-row kbd { background:#243044; border:1px solid #334155; border-radius:4px; padding:1px 5px; font-size:10px; font-family:monospace; color:#F8FAFC; min-width:18px; text-align:center; }
+
+  /* ── Notes Panel ── */
+  .notes { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#1B2336; border:1px solid #334155; border-radius:16px; padding:16px 20px; max-width:800px; width:90%; z-index:1000; }
+  .notes h3 { font-size:14px; margin-bottom:8px; color:#3B82F6; }
+  .notes ul { font-size:12px; color:#94A3B8; line-height:1.8; padding-left:16px; }
+  .notes ul li strong { color:#F8FAFC; }
+
+  /* ── Page header ── */
+  .page-header { width:100%; text-align:center; padding:20px 0 10px; }
+  .page-header h1 { font-size:24px; font-weight:700; color:#F8FAFC; }
+  .page-header p { font-size:13px; color:#64748B; margin-top:4px; }
+
+  /* ── Design Variant Selector ── */
+  .variant-selector { display:flex; gap:8px; justify-content:center; margin:12px 0 20px; flex-wrap:wrap; }
+  .variant-btn { padding:8px 16px; border-radius:20px; background:#1B2336; border:1px solid #334155; color:#94A3B8; font-size:12px; cursor:pointer; transition:all 0.2s; font-weight:600; }
+  .variant-btn:hover { border-color:#3B82F6; color:#F8FAFC; }
+  .variant-btn.active { background:rgba(59,130,246,0.15); border-color:#3B82F6; color:#3B82F6; }
+</style>
+</head>
+<body>
+
+<div class="page-header" style="width:100%">
+  <h1>TMS Terminal – UI Redesign</h1>
+  <p>Interaktiver Prototyp · Tippe auf Elemente um Features zu entdecken</p>
+  <div class="variant-selector">
+    <button class="variant-btn active" onclick="setVariant('clean')">Clean Minimal</button>
+    <button class="variant-btn" onclick="setVariant('floating')">Floating Controls</button>
+    <button class="variant-btn" onclick="setVariant('gesture')">Gesture-First</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- VARIANT A: CLEAN MINIMAL                        -->
+<!-- ═══════════════════════════════════════════════ -->
+
+<div>
+<p class="phone-label">Clean Minimal</p>
+<div class="phone" id="phoneA">
+  <!-- Status Bar -->
+  <div class="status-bar">
+    <span>19:37</span>
+    <span>⚡ 94%</span>
+  </div>
+
+  <!-- Header — compact, only essentials visible -->
+  <div class="header" id="headerA">
+    <div class="back" onclick="showHint('Navigation zurück')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </div>
+    <div class="title-area" onclick="toggleDrawerA()">
+      <div class="title">MacBook-Pro</div>
+      <div class="subtitle" id="headerSubA">3 Shells · LIVE · 12ms ▾</div>
+    </div>
+    <div class="conn-dot"></div>
+  </div>
+
+  <!-- Quick Actions Drawer (hidden, tap header to reveal) -->
+  <div class="quick-drawer" id="drawerA">
+    <div class="quick-drawer-grid">
+      <div class="quick-drawer-item" onclick="showHint('Browser geöffnet')">
+        <div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+        <span>Browser</span>
+      </div>
+      <div class="quick-drawer-item" onclick="showHint('Zeichenbrett geöffnet')">
+        <div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div>
+        <span>Zeichnen</span>
+      </div>
+      <div class="quick-drawer-item" onclick="showHint('Prozesse angezeigt')">
+        <div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+        <span>Prozesse</span>
+      </div>
+      <div class="quick-drawer-item" onclick="showHint('Manager Agent geöffnet')">
+        <div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg></div>
+        <span>Manager</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs — single row, minimal -->
+  <div class="tabs" id="tabsA">
+    <div class="tab ai active">
+      <span style="color:#A78BFA;font-size:9px;margin-right:4px">●</span>
+      TMS Banking
+      <span class="close">✕</span>
+    </div>
+    <div class="tab" onclick="this.parentElement.querySelector('.active')?.classList.remove('active');this.classList.add('active')">
+      TMS Terminal
+      <span class="close">✕</span>
+    </div>
+    <div class="tab" onclick="this.parentElement.querySelector('.active')?.classList.remove('active');this.classList.add('active')">
+      ayysir
+      <span class="close">✕</span>
+      <span class="notif">2</span>
+    </div>
+    <div class="tab-add" onclick="showHint('Neuer Tab erstellt')">+</div>
+  </div>
+
+  <!-- Terminal -->
+  <div class="terminal-area" style="display:flex;flex-direction:column;">
+    <div class="terminal-content" id="termA" style="flex:1">
+      <div class="dim">Last login: Fri Apr 10 19:37:14 on ttys001</div>
+      <div><span class="prompt">ayysir@MacBook-Pro</span> <span class="dim">TMS Banking %</span> <span class="cmd">claude</span></div>
+      <div class="output" style="margin-top:4px">
+        <div style="color:#A78BFA">╭─ Claude Code v1.0.32</div>
+        <div style="color:#A78BFA">╰─ Type /help for commands</div>
+      </div>
+      <div style="margin-top:8px"><span class="prompt">❯</span> <span class="cmd">Implementiere die Mashreq Bank Verknüpfung im TMS Banking Terminal Projekt</span></div>
+      <div class="output" style="margin-top:4px">
+        <div>● Analyzing codebase...</div>
+        <div>● Reading src/services/banking.service.ts</div>
+        <div>● Reading src/api/mashreq/client.ts</div>
+        <div style="color:#22C55E">✓ Found 3 relevant files</div>
+        <div style="margin-top:4px">I'll implement the Mashreq Bank integration. Let me start by creating the API client...</div>
+        <div style="margin-top:8px;color:#3B82F6">
+          ┌ Creating src/api/mashreq/auth.ts<br>
+          │ Setting up OAuth2 flow...<br>
+          │ <span style="color:#22C55E">✓ Created</span> (48 lines)<br>
+          └
+        </div>
+        <div style="margin-top:4px">
+          <span style="color:#F59E0B">⚡ Writing to src/services/banking.service.ts...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Swipe dots (tab indicator) -->
+    <div class="swipe-indicator" style="position:absolute;bottom:50px;">
+      <div class="swipe-dot active"></div>
+      <div class="swipe-dot"></div>
+      <div class="swipe-dot"></div>
+    </div>
+
+    <!-- Floating Tool Button -->
+    <div class="fab" id="fabA" onclick="toggleFabA()">
+      <svg class="fab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      <div class="tool-palette">
+        <div class="tool-item" onclick="event.stopPropagation();showHint('Auto-Approve Panel')">
+          <div class="tool-dot" style="background:#22C55E"></div>
+          <span>Auto Approve</span>
+        </div>
+        <div class="tool-item" onclick="event.stopPropagation();showHint('Snippets Panel')">
+          <div class="tool-dot" style="background:#F59E0B"></div>
+          <span>Snippets</span>
+        </div>
+        <div class="tool-item" onclick="event.stopPropagation();showHint('Dateien Panel')">
+          <div class="tool-dot" style="background:#F59E0B"></div>
+          <span>Dateien</span>
+        </div>
+        <div class="tool-item" onclick="event.stopPropagation();showHint('Screenshots Panel')">
+          <div class="tool-dot" style="background:#06B6D4"></div>
+          <span>Screenshots</span>
+        </div>
+        <div style="height:1px;background:#1E293B;margin:4px 0"></div>
+        <div class="tool-item" onclick="event.stopPropagation();showHint('Autopilot Panel')">
+          <div class="tool-dot" style="background:#A78BFA"></div>
+          <span>Autopilot</span>
+        </div>
+        <div class="tool-item" onclick="event.stopPropagation();showHint('Watchers Panel')">
+          <div class="tool-dot" style="background:#F59E0B"></div>
+          <span>Watchers</span>
+        </div>
+        <div class="tool-item" onclick="event.stopPropagation();showHint('Port Forwarding')">
+          <div class="tool-dot" style="background:#10B981"></div>
+          <span>Ports</span>
+        </div>
+        <div style="height:1px;background:#1E293B;margin:4px 0"></div>
+        <div class="tool-item" onclick="event.stopPropagation();showHint('SQL Panel')">
+          <div class="tool-dot" style="background:#3B82F6"></div>
+          <span>SQL</span>
+        </div>
+        <div class="tool-item" onclick="event.stopPropagation();showHint('Vercel Panel')">
+          <div class="tool-dot" style="background:#F8FAFC"></div>
+          <span>Vercel</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Toolbar -->
+  <div class="toolbar">
+    <div class="dpad-group" id="dpadA">
+      <div class="key" onclick="toggleDpadA()" style="color:#3B82F6">⌘</div>
+      <div class="arrow-keys" id="arrowsA" style="display:none">
+        <div class="key">↑</div>
+        <div class="key">↓</div>
+        <div class="key">←</div>
+        <div class="key">→</div>
+        <div class="key" style="font-size:10px">✂</div>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div class="key">Esc</div>
+    <div class="key destructive">^C</div>
+    <div class="key"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
+    <div class="key"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg></div>
+    <div class="spacer"></div>
+    <div class="key" style="color:#06B6D4"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7 13 12 18 17 13"/><polyline points="7 6 12 11 17 6"/></svg></div>
+    <div class="key"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></div>
+  </div>
+
+  <div class="gesture-hint" id="hintA"></div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- VARIANT B: FLOATING CONTROLS                    -->
+<!-- ═══════════════════════════════════════════════ -->
+
+<div>
+<p class="phone-label">Floating Controls</p>
+<div class="phone" id="phoneB">
+  <div class="status-bar">
+    <span>19:37</span>
+    <span>⚡ 94%</span>
+  </div>
+
+  <!-- Ultra-minimal header — just back + dots menu -->
+  <div class="header minimal">
+    <div class="back">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </div>
+    <div class="title-area">
+      <div class="title" style="font-size:13px">TMS Banking</div>
+    </div>
+    <div class="conn-dot" style="width:6px;height:6px"></div>
+    <div style="cursor:pointer;padding:4px" onclick="toggleDrawerB()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+    </div>
+  </div>
+
+  <!-- Hidden drawer with ALL quick actions -->
+  <div class="quick-drawer" id="drawerB">
+    <div class="quick-drawer-grid">
+      <div class="quick-drawer-item"><div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg></div><span>Browser</span></div>
+      <div class="quick-drawer-item"><div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div><span>Zeichnen</span></div>
+      <div class="quick-drawer-item"><div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><span>Prozesse</span></div>
+      <div class="quick-drawer-item"><div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg></div><span>Manager</span></div>
+      <div class="quick-drawer-item"><div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><span>Approve</span></div>
+      <div class="quick-drawer-item"><div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><span>Snippets</span></div>
+      <div class="quick-drawer-item"><div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div><span>Dateien</span></div>
+      <div class="quick-drawer-item"><div class="qd-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></div><span>SQL</span></div>
+    </div>
+  </div>
+
+  <!-- NO separate tab bar — tabs as floating pills -->
+  <div class="terminal-area" style="display:flex;flex-direction:column">
+    <!-- Floating tab pills at top -->
+    <div style="position:absolute;top:8px;left:8px;right:8px;z-index:5;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:2px">
+      <div style="padding:5px 12px;border-radius:20px;background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3);font-size:11px;font-family:monospace;white-space:nowrap;cursor:pointer;color:#E2E8F0;backdrop-filter:blur(12px)">
+        <span style="color:#A78BFA">●</span> TMS Banking
+      </div>
+      <div style="padding:5px 12px;border-radius:20px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);font-size:11px;font-family:monospace;white-space:nowrap;cursor:pointer;color:#94A3B8;backdrop-filter:blur(12px)">
+        TMS Terminal
+      </div>
+      <div style="padding:5px 12px;border-radius:20px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);font-size:11px;font-family:monospace;white-space:nowrap;cursor:pointer;color:#94A3B8;backdrop-filter:blur(12px);position:relative">
+        ayysir
+        <span style="position:absolute;top:-3px;right:-3px;width:14px;height:14px;border-radius:50%;background:#EF4444;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700">2</span>
+      </div>
+    </div>
+
+    <div class="terminal-content" style="flex:1;padding-top:40px">
+      <div class="dim">Last login: Fri Apr 10 19:37:14 on ttys001</div>
+      <div><span class="prompt">ayysir@MacBook-Pro</span> <span class="dim">TMS Banking %</span> <span class="cmd">claude</span></div>
+      <div class="output" style="margin-top:4px">
+        <div style="color:#A78BFA">╭─ Claude Code v1.0.32</div>
+        <div style="color:#A78BFA">╰─ Type /help for commands</div>
+      </div>
+      <div style="margin-top:8px"><span class="prompt">❯</span> <span class="cmd">Implementiere die Mashreq Bank Verknüpfung</span></div>
+      <div class="output" style="margin-top:4px">
+        <div>● Analyzing codebase...</div>
+        <div style="color:#22C55E">✓ Found 3 relevant files</div>
+        <div style="margin-top:4px">Creating the Mashreq Bank API client...</div>
+        <div style="margin-top:8px;color:#3B82F6">
+          ┌ Creating src/api/mashreq/auth.ts<br>
+          │ <span style="color:#22C55E">✓ Created</span> (48 lines)<br>
+          └
+        </div>
+        <div style="margin-top:4px;color:#F59E0B">⚡ Writing to banking.service.ts...</div>
+      </div>
+    </div>
+
+    <!-- Floating mini tool rail (right edge, semi-transparent) -->
+    <div style="position:absolute;right:6px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:4px;z-index:5">
+      <div style="width:36px;height:36px;border-radius:12px;background:rgba(15,23,42,0.8);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="showHint('Auto Approve')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      </div>
+      <div style="width:36px;height:36px;border-radius:12px;background:rgba(15,23,42,0.8);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="showHint('Dateien')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      </div>
+      <div style="width:36px;height:36px;border-radius:12px;background:rgba(15,23,42,0.8);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="showHint('Screenshots')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- Minimal toolbar -->
+  <div class="toolbar">
+    <div class="key" onclick="toggleDpadB()">⌘</div>
+    <div class="arrow-keys" id="arrowsB" style="display:none;gap:2px;display:none">
+      <div class="key">↑</div><div class="key">↓</div><div class="key">←</div><div class="key">→</div>
+    </div>
+    <div class="sep"></div>
+    <div class="key">Esc</div>
+    <div class="key destructive">^C</div>
+    <div class="spacer"></div>
+    <div class="key" style="color:#06B6D4">⇊</div>
+    <div class="key">↵</div>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- VARIANT C: GESTURE-FIRST (mouse/keyboard enabled) -->
+<!-- ═══════════════════════════════════════════════ -->
+
+<div>
+<p class="phone-label">Gesture-First</p>
+<div class="phone" id="phoneC">
+  <div class="status-bar">
+    <span>19:37</span>
+    <span>⚡ 94%</span>
+  </div>
+
+  <!-- Absolute minimal header — just connection indicator -->
+  <div style="display:flex;align-items:center;padding:6px 14px;gap:8px">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2" style="cursor:pointer"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <div id="cHeaderTitle" style="flex:1;font-size:13px;font-weight:600;font-family:monospace;cursor:pointer" onclick="toggleTabGridC()">TMS Banking</div>
+    <div style="display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;background:rgba(34,197,94,0.1)">
+      <div style="width:5px;height:5px;border-radius:50%;background:#22C55E;animation:pulse 2s infinite"></div>
+      <span style="font-size:10px;color:#22C55E">12ms</span>
+    </div>
+  </div>
+
+  <!-- NO tab bar at all — use swipe gestures or click edges -->
+  <div class="terminal-area" id="termAreaC" style="display:flex;flex-direction:column;position:relative">
+
+    <!-- Terminal pages (only one visible at a time) -->
+    <div class="terminal-content c-tab-page c-tab-active" id="cPage0" style="flex:1">
+      <div class="dim">Last login: Fri Apr 10 19:37:14 on ttys001</div>
+      <div><span class="prompt">ayysir@MacBook-Pro</span> <span class="dim">TMS Banking %</span> <span class="cmd">claude</span></div>
+      <div class="output" style="margin-top:4px">
+        <div style="color:#A78BFA">╭─ Claude Code v1.0.32</div>
+        <div style="color:#A78BFA">╰─ Type /help for commands</div>
+      </div>
+      <div style="margin-top:8px"><span class="prompt">❯</span> <span class="cmd">Implementiere die Mashreq Bank Verknüpfung im TMS Banking Terminal Projekt</span></div>
+      <div class="output" style="margin-top:4px">
+        <div>● Analyzing codebase...</div>
+        <div>● Reading src/services/banking.service.ts</div>
+        <div>● Reading src/api/mashreq/client.ts</div>
+        <div style="color:#22C55E">✓ Found 3 relevant files</div>
+        <div style="margin-top:4px">I'll implement the Mashreq Bank integration.</div>
+        <div style="margin-top:8px;color:#3B82F6">
+          ┌ Creating src/api/mashreq/auth.ts<br>
+          │ Setting up OAuth2 flow...<br>
+          │ <span style="color:#22C55E">✓ Created</span> (48 lines)<br>
+          └
+        </div>
+        <div style="margin-top:4px;color:#F59E0B">⚡ Writing to banking.service.ts...</div>
+      </div>
+    </div>
+
+    <div class="terminal-content c-tab-page" id="cPage1" style="flex:1;display:none">
+      <div class="dim">Last login: Fri Apr 10 18:12:03 on ttys002</div>
+      <div><span class="prompt">ayysir@MacBook-Pro</span> <span class="dim">TMS Terminal %</span> <span class="cmd">npm run build</span></div>
+      <div class="output" style="margin-top:4px">
+        <div>> tms-terminal@1.0.0 build</div>
+        <div>> tsc</div>
+        <div style="margin-top:4px;color:#22C55E">✓ Build successful in 1.2s</div>
+        <div style="margin-top:8px"><span class="prompt">ayysir@MacBook-Pro</span> <span class="dim">TMS Terminal %</span> <span style="animation:pulse 1s infinite">█</span></div>
+      </div>
+    </div>
+
+    <div class="terminal-content c-tab-page" id="cPage2" style="flex:1;display:none">
+      <div class="dim">Last login: Fri Apr 10 17:55:22 on ttys003</div>
+      <div><span class="prompt">ayysir@MacBook-Pro</span> <span class="dim">~ %</span> <span class="cmd">cd Desktop/TMS\ Banking && git status</span></div>
+      <div class="output" style="margin-top:4px">
+        <div>On branch feature/mashreq-integration</div>
+        <div style="color:#22C55E">Changes to be committed:</div>
+        <div style="color:#22C55E">  modified: src/api/mashreq/client.ts</div>
+        <div style="color:#22C55E">  new file: src/api/mashreq/auth.ts</div>
+        <div style="color:#EF4444">Changes not staged:</div>
+        <div style="color:#EF4444">  modified: src/services/banking.service.ts</div>
+      </div>
+    </div>
+
+    <!-- Clickable edge zones for tab switching -->
+    <div class="c-edge c-edge-left" onclick="cSwitchTab(-1)" title="← Vorheriger Tab">
+      <div class="c-edge-arrow">‹</div>
+    </div>
+    <div class="c-edge c-edge-right" onclick="cSwitchTab(1)" title="→ Nächster Tab">
+      <div class="c-edge-arrow">›</div>
+    </div>
+
+    <!-- Bottom tab indicator (clickable page dots) -->
+    <div class="c-dots" id="cDots">
+      <div class="c-dot active" onclick="cGoToTab(0)" title="TMS Banking"></div>
+      <div class="c-dot" onclick="cGoToTab(1)" title="TMS Terminal"></div>
+      <div class="c-dot" onclick="cGoToTab(2)" title="ayysir">
+        <div class="c-dot-badge">2</div>
+      </div>
+    </div>
+
+    <!-- Right-click / long-press context menu for tools -->
+    <div class="c-ctx-menu" id="cCtxMenu">
+      <div class="c-ctx-title">Tools</div>
+      <div class="c-ctx-item" onclick="cCtxAction('Auto Approve')"><div class="tool-dot" style="background:#22C55E"></div><span>Auto Approve</span><span class="c-ctx-key">A</span></div>
+      <div class="c-ctx-item" onclick="cCtxAction('Snippets')"><div class="tool-dot" style="background:#F59E0B"></div><span>Snippets</span><span class="c-ctx-key">S</span></div>
+      <div class="c-ctx-item" onclick="cCtxAction('Dateien')"><div class="tool-dot" style="background:#F59E0B"></div><span>Dateien</span><span class="c-ctx-key">F</span></div>
+      <div class="c-ctx-item" onclick="cCtxAction('Screenshots')"><div class="tool-dot" style="background:#06B6D4"></div><span>Screenshots</span><span class="c-ctx-key">P</span></div>
+      <div class="c-ctx-sep"></div>
+      <div class="c-ctx-item" onclick="cCtxAction('Autopilot')"><div class="tool-dot" style="background:#A78BFA"></div><span>Autopilot</span></div>
+      <div class="c-ctx-item" onclick="cCtxAction('Watchers')"><div class="tool-dot" style="background:#F59E0B"></div><span>Watchers</span></div>
+      <div class="c-ctx-item" onclick="cCtxAction('Ports')"><div class="tool-dot" style="background:#10B981"></div><span>Ports</span></div>
+      <div class="c-ctx-sep"></div>
+      <div class="c-ctx-item" onclick="cCtxAction('SQL')"><div class="tool-dot" style="background:#3B82F6"></div><span>SQL</span></div>
+      <div class="c-ctx-item" onclick="cCtxAction('Vercel')"><div class="tool-dot" style="background:#F8FAFC"></div><span>Vercel</span></div>
+      <div class="c-ctx-sep"></div>
+      <div class="c-ctx-title" style="margin-top:2px">Schnellzugriff</div>
+      <div class="c-ctx-item" onclick="cCtxAction('Browser')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg><span>Browser</span><span class="c-ctx-key">B</span></div>
+      <div class="c-ctx-item" onclick="cCtxAction('Manager')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg><span>Manager</span><span class="c-ctx-key">M</span></div>
+      <div class="c-ctx-item" onclick="cCtxAction('Prozesse')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span>Prozesse</span></div>
+    </div>
+
+    <!-- Tab Grid Overlay (click title or press G) -->
+    <div class="c-tab-grid" id="cTabGrid">
+      <div class="c-grid-header">
+        <span style="cursor:pointer;color:#3B82F6" onclick="toggleTabGridC()">Abbrechen</span>
+        <span style="font-weight:700">3 Terminals</span>
+        <span style="cursor:pointer;color:#3B82F6" onclick="toggleTabGridC()">Fertig</span>
+      </div>
+      <div class="c-grid-cards">
+        <div class="c-grid-card active" onclick="cGoToTab(0);toggleTabGridC()">
+          <div class="c-grid-card-header"><span style="color:#A78BFA">●</span> TMS Banking</div>
+          <div class="c-grid-card-preview">
+            <div style="color:#A78BFA">╭─ Claude Code</div>
+            <div>❯ Implementiere die Mashreq...</div>
+            <div style="color:#F59E0B">⚡ Writing to banking...</div>
+          </div>
+          <div class="c-grid-card-footer">Aktiv · Claude</div>
+        </div>
+        <div class="c-grid-card" onclick="cGoToTab(1);toggleTabGridC()">
+          <div class="c-grid-card-header">TMS Terminal</div>
+          <div class="c-grid-card-preview">
+            <div style="color:#22C55E">✓ Build successful</div>
+            <div>ayysir@MacBook-Pro %</div>
+          </div>
+          <div class="c-grid-card-footer">Idle · 3m</div>
+        </div>
+        <div class="c-grid-card" onclick="cGoToTab(2);toggleTabGridC()">
+          <div class="c-grid-card-header">ayysir <span style="background:#EF4444;border-radius:8px;padding:1px 5px;font-size:9px;margin-left:4px">2</span></div>
+          <div class="c-grid-card-preview">
+            <div>On branch feature/mashreq</div>
+            <div style="color:#22C55E">modified: client.ts</div>
+            <div style="color:#EF4444">modified: banking.service.ts</div>
+          </div>
+          <div class="c-grid-card-footer">Idle · 8m</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Keyboard shortcuts hint (bottom overlay) -->
+    <div class="c-shortcuts" id="cShortcuts">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <span style="font-size:12px;font-weight:600;color:#F8FAFC">Steuerung</span>
+        <span style="margin-left:auto;font-size:10px;color:#475569;cursor:pointer" onclick="document.getElementById('cShortcuts').style.display='none'">✕ Schließen</span>
+      </div>
+      <div class="c-shortcut-grid">
+        <div class="c-shortcut-row"><kbd>←</kbd><kbd>→</kbd><span>Tab wechseln</span></div>
+        <div class="c-shortcut-row"><kbd>G</kbd><span>Tab Grid öffnen</span></div>
+        <div class="c-shortcut-row"><kbd>T</kbd><span>Tools öffnen</span></div>
+        <div class="c-shortcut-row"><kbd>Rechtsklick</kbd><span>Context-Menü</span></div>
+        <div class="c-shortcut-row"><kbd>Klick Rand</kbd><span>Tab wechseln</span></div>
+        <div class="c-shortcut-row"><kbd>Klick Dots</kbd><span>Direkt zu Tab</span></div>
+        <div class="c-shortcut-row"><kbd>Klick Titel</kbd><span>Tab Grid</span></div>
+        <div class="c-shortcut-row"><kbd>?</kbd><span>Diese Hilfe</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ultra-compact toolbar -->
+  <div class="toolbar" style="gap:3px">
+    <div class="key" style="color:#3B82F6">⌘</div>
+    <div class="sep"></div>
+    <div class="key">Esc</div>
+    <div class="key destructive">^C</div>
+    <div class="key">⌫</div>
+    <div class="spacer"></div>
+    <div class="key" style="color:#06B6D4">⇊</div>
+    <div class="key">↵</div>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+
+<div class="notes">
+  <h3>Design-Unterschiede</h3>
+  <ul>
+    <li><strong>Clean Minimal:</strong> Header zeigt Server-Info, Tap darauf öffnet Quick Actions Drawer. Tabs bleiben als einzelne Zeile. Tools über einen Floating Action Button (rechts unten) erreichbar. Alle Features da, aber hinter einem Tap versteckt.</li>
+    <li><strong>Floating Controls:</strong> Noch minimaler — Header hat nur Name + ⋯ Menü. Tabs sind halbtransparente Pills die über dem Terminal schweben. Tool-Buttons sind glasartige Floating-Icons am rechten Rand. Alles über dem Content, kein Platz verschwendet.</li>
+    <li><strong>Gesture-First:</strong> Maximum Terminal-Fläche. Keine Tab-Bar — Dots unten + klickbare Ränder. <strong>Rechtsklick</strong> öffnet Tool-Menü. <strong>Pfeiltasten ← →</strong> wechseln Tabs. <strong>G</strong> = Tab Grid, <strong>T</strong> = Tools, <strong>?</strong> = Hilfe. Klick auf den Titel = Tab Grid.</li>
+  </ul>
+</div>
+
+<script>
+// ── Variant A: Clean Minimal ──
+function toggleDrawerA() {
+  document.getElementById('drawerA').classList.toggle('open');
+}
+
+function toggleFabA() {
+  document.getElementById('fabA').classList.toggle('open');
+}
+
+function toggleDpadA() {
+  const arrows = document.getElementById('arrowsA');
+  const group = document.getElementById('dpadA');
+  if (arrows.style.display === 'none') {
+    arrows.style.display = 'flex';
+    group.classList.add('open');
+  } else {
+    arrows.style.display = 'none';
+    group.classList.remove('open');
+  }
+}
+
+// ── Variant B: Floating Controls ──
+function toggleDrawerB() {
+  document.getElementById('drawerB').classList.toggle('open');
+}
+
+function toggleDpadB() {
+  const arrows = document.getElementById('arrowsB');
+  if (arrows.style.display === 'none') {
+    arrows.style.display = 'flex';
+  } else {
+    arrows.style.display = 'none';
+  }
+}
+
+// ── Hint system ──
+function showHint(text) {
+  // Find the closest phone's hint element
+  const hints = document.querySelectorAll('.gesture-hint');
+  hints.forEach(h => {
+    h.textContent = text;
+    h.classList.add('show');
+    setTimeout(() => h.classList.remove('show'), 1500);
+  });
+}
+
+// ── Variant C: Gesture-First (mouse/keyboard) ──
+const cTabs = [
+  { name: 'TMS Banking', ai: true },
+  { name: 'TMS Terminal', ai: false },
+  { name: 'ayysir', ai: false },
+];
+let cActiveTab = 0;
+
+function cSwitchTab(dir) {
+  cGoToTab((cActiveTab + dir + cTabs.length) % cTabs.length);
+}
+
+function cGoToTab(idx) {
+  if (idx === cActiveTab) return;
+  // Hide all pages
+  document.querySelectorAll('.c-tab-page').forEach(p => { p.classList.remove('c-tab-active'); p.style.display = 'none'; });
+  // Show target
+  const page = document.getElementById('cPage' + idx);
+  if (page) { page.style.display = 'flex'; requestAnimationFrame(() => page.classList.add('c-tab-active')); }
+  // Update dots
+  document.querySelectorAll('.c-dot').forEach((d, i) => d.classList.toggle('active', i === idx));
+  // Update header title
+  document.getElementById('cHeaderTitle').textContent = cTabs[idx].name;
+  cActiveTab = idx;
+  cCloseCtx();
+}
+
+// Context menu (right-click)
+const phoneC = document.getElementById('phoneC');
+const ctxMenu = document.getElementById('cCtxMenu');
+
+phoneC.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  const rect = phoneC.getBoundingClientRect();
+  const x = Math.min(e.clientX - rect.left, 200);
+  const y = Math.min(e.clientY - rect.top, 500);
+  ctxMenu.style.left = x + 'px';
+  ctxMenu.style.top = y + 'px';
+  ctxMenu.classList.add('open');
+});
+
+function cCloseCtx() { ctxMenu.classList.remove('open'); }
+document.addEventListener('click', (e) => { if (!ctxMenu.contains(e.target)) cCloseCtx(); });
+
+function cCtxAction(name) {
+  cCloseCtx();
+  showHintC(name + ' geöffnet');
+}
+
+function showHintC(text) {
+  let hint = document.getElementById('cHint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.id = 'cHint';
+    hint.className = 'gesture-hint';
+    phoneC.appendChild(hint);
+  }
+  hint.textContent = text;
+  hint.classList.add('show');
+  setTimeout(() => hint.classList.remove('show'), 1500);
+}
+
+// Tab grid
+function toggleTabGridC() {
+  document.getElementById('cTabGrid').classList.toggle('open');
+}
+
+// Keyboard shortcuts (only when hovering over phone C)
+let cHovered = false;
+phoneC.addEventListener('mouseenter', () => cHovered = true);
+phoneC.addEventListener('mouseleave', () => cHovered = false);
+
+document.addEventListener('keydown', (e) => {
+  if (!cHovered) return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); cSwitchTab(-1); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); cSwitchTab(1); }
+  if (e.key === 'g' || e.key === 'G') toggleTabGridC();
+  if (e.key === 't' || e.key === 'T') {
+    const rect = phoneC.getBoundingClientRect();
+    ctxMenu.style.left = '100px'; ctxMenu.style.top = '200px';
+    ctxMenu.classList.toggle('open');
+  }
+  if (e.key === '?') {
+    const sh = document.getElementById('cShortcuts');
+    sh.style.display = sh.style.display === 'none' ? 'block' : 'none';
+  }
+  if (e.key === 'Escape') {
+    cCloseCtx();
+    document.getElementById('cTabGrid').classList.remove('open');
+  }
+});
+
+// ── Variant selector ──
+function setVariant(v) {
+  document.querySelectorAll('.variant-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+</script>
+
+</body>
+</html>

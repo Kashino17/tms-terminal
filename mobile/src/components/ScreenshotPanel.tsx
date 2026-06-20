@@ -22,6 +22,14 @@ interface Props {
   serverHost: string;
   serverPort: number;
   serverToken: string;
+  /**
+   * Called with the server path of each successfully uploaded file. The parent
+   * owns delivery into the terminal via a live "active session" lookup, which
+   * is more reliable than the captured `sessionId` prop (that can be undefined
+   * when the active tab isn't in the filtered tab list). If omitted, the panel
+   * falls back to sending via `sessionId`.
+   */
+  onUploaded?: (path: string) => void;
 }
 
 type UploadState = 'idle' | 'picking' | 'uploading' | 'done' | 'error';
@@ -37,7 +45,7 @@ const ALLOWED_VIDEO_MIMES = new Set([
   'video/webm',
 ]);
 
-export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, serverToken }: Props) {
+export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, serverToken, onUploaded }: Props) {
   const { rf, rs, ri } = useResponsive();
   const [uploadState, setUploadState] = useState<UploadState>('idle');
   const [uploadedPaths, setUploadedPaths] = useState<string[]>([]);
@@ -208,7 +216,12 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
           : await uploadSingle(asset);
         if (path) {
           paths.push(path);
-          if (capturedSessionId) {
+          // Deliver the path into the terminal. Prefer the parent-owned
+          // onUploaded (live active-session lookup); fall back to the captured
+          // sessionId so older mount sites keep working.
+          if (onUploaded) {
+            onUploaded(path);
+          } else if (capturedSessionId) {
             wsService.send({ type: 'terminal:input', sessionId: capturedSessionId, payload: { data: path } });
           }
         } else {
@@ -239,7 +252,7 @@ export function ScreenshotPanel({ sessionId, wsService, serverHost, serverPort, 
     } else {
       setUploadState('done');
     }
-  }, [sessionId, wsService, uploadSingle, uploadVideoMultipart, validateVideo]);
+  }, [sessionId, wsService, onUploaded, uploadSingle, uploadVideoMultipart, validateVideo]);
 
   const pickFromGallery = useCallback(async () => {
     setUploadState('picking');

@@ -231,10 +231,15 @@ export const useOrbLayoutStore = create<OrbLayoutState>()(
       },
 
       addToDock(orbId) {
-        const { dockOrder } = get();
-        if (!dockOrder.includes(orbId)) {
-          set({ dockOrder: [...dockOrder, orbId] });
-        }
+        const { dockOrder, removedOrbIds } = get();
+        // Re-adding an orb must also un-remove it: an orb can be hidden from the
+        // dock either by being absent from dockOrder OR by sitting in
+        // removedOrbIds (availableDockOrbs filters by both). Clearing only one
+        // of the two would leave the orb invisible despite "adding" it.
+        set({
+          dockOrder: dockOrder.includes(orbId) ? dockOrder : [...dockOrder, orbId],
+          removedOrbIds: removedOrbIds.filter((id) => id !== orbId),
+        });
       },
 
       removeFromDock(orbId) {

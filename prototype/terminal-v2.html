@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TMS Terminal – Redesign v2 (Floating Controls Richtung)</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#080C14;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;color:#F8FAFC;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:20px 20px 120px}
+  .page-header{text-align:center;padding:16px 0 8px}
+  .page-header h1{font-size:22px;font-weight:700}
+  .page-header p{font-size:12px;color:#64748B;margin-top:4px}
+  .phones{display:flex;gap:40px;flex-wrap:wrap;justify-content:center;margin-top:20px}
+
+  /* ── Phone ── */
+  .phone{width:400px;height:880px;background:#0F172A;border-radius:36px;overflow:hidden;position:relative;border:3px solid #1E293B;box-shadow:0 25px 60px rgba(0,0,0,0.6);flex-shrink:0}
+  .phone-label{text-align:center;color:#94A3B8;font-size:12px;margin-bottom:6px;font-weight:600;letter-spacing:1px;text-transform:uppercase}
+  .phone-sublabel{text-align:center;color:#475569;font-size:10px;margin-bottom:10px;max-width:400px;line-height:1.5}
+
+  /* ── Shared ── */
+  .sbar{height:28px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;font-size:11px;color:#64748B}
+  .term{font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.55;color:#E2E8F0;padding:8px 12px;overflow-y:auto}
+  .term .p{color:#22C55E} .term .c{color:#F8FAFC} .term .o{color:#94A3B8} .term .d{color:#475569} .term .e{color:#EF4444}
+  .term .ai{color:#A78BFA} .term .b{color:#3B82F6} .term .w{color:#F59E0B} .term .g{color:#22C55E}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  @keyframes slideUp{from{transform:translateY(16px);opacity:0}to{transform:translateY(0);opacity:1}}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  @keyframes scaleIn{from{transform:scale(.92);opacity:0}to{transform:scale(1);opacity:1}}
+  .glass{background:rgba(15,23,42,.75);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.06)}
+
+  /* ── Bottom bar shared ── */
+  .bbar{height:44px;display:flex;align-items:center;padding:0 6px;background:#0F172A;border-top:1px solid #1E293B;gap:2px;position:relative;z-index:20}
+  .bk{height:32px;min-width:34px;padding:0 7px;border-radius:8px;background:#1B2336;border:1px solid #243044;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:11px;font-family:'SF Mono',monospace;color:#94A3B8;transition:all .15s;font-weight:600}
+  .bk:hover{background:#243044;color:#F8FAFC}
+  .bk:active{transform:scale(.95)}
+  .bk.red{color:#EF4444;border-color:rgba(239,68,68,.15)}
+  .bk.blue{color:#3B82F6}
+  .bk.cyan{color:#06B6D4}
+  .bsep{width:1px;height:20px;background:#1E293B;margin:0 2px}
+  .bspace{flex:1}
+
+  /* ── Hint Toast ── */
+  .toast{position:absolute;top:40px;left:50%;transform:translateX(-50%);background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.25);backdrop-filter:blur(12px);border-radius:20px;padding:5px 14px;font-size:11px;color:#93C5FD;white-space:nowrap;opacity:0;transition:opacity .2s;pointer-events:none;z-index:100}
+  .toast.show{opacity:1}
+
+  /* ════════════════════════════════════════════════════════
+     VARIANT 1: GLASS LAYER
+     ════════════════════════════════════════════════════════ */
+
+  /* Floating header bar */
+  .v1-header{position:absolute;top:32px;left:10px;right:10px;z-index:10;display:flex;align-items:center;padding:6px 12px;border-radius:14px;gap:8px;transition:all .3s}
+  .v1-header .glass{border-radius:14px}
+  .v1-back{color:#3B82F6;cursor:pointer;display:flex;align-items:center;flex-shrink:0}
+  .v1-title{flex:1;font-size:13px;font-weight:600;font-family:'SF Mono',monospace}
+  .v1-conn{width:6px;height:6px;border-radius:50%;background:#22C55E;animation:pulse 2s infinite;flex-shrink:0}
+  .v1-menu{cursor:pointer;padding:4px;border-radius:8px;transition:background .15s}
+  .v1-menu:hover{background:rgba(255,255,255,.05)}
+
+  /* Floating tab strip */
+  .v1-tabs{position:absolute;top:76px;left:10px;right:10px;z-index:10;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:2px}
+  .v1-tabs::-webkit-scrollbar{display:none}
+  .v1-tab{padding:5px 14px;border-radius:20px;font-size:11px;font-family:'SF Mono',monospace;white-space:nowrap;cursor:pointer;transition:all .25s;position:relative;color:#94A3B8}
+  .v1-tab.glass{border-radius:20px}
+  .v1-tab.active{color:#F8FAFC;background:rgba(59,130,246,.15);border-color:rgba(59,130,246,.3)}
+  .v1-tab.ai.active{background:rgba(167,139,250,.15);border-color:rgba(167,139,250,.3)}
+  .v1-notif{position:absolute;top:-2px;right:-2px;width:14px;height:14px;border-radius:50%;background:#EF4444;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700}
+
+  /* Floating tool capsules (right edge) */
+  .v1-tools{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:6px;z-index:8;transition:opacity .3s}
+  .v1-tool{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .2s}
+  .v1-tool:hover{transform:scale(1.12);border-color:rgba(255,255,255,.12) !important}
+  .v1-tool:active{transform:scale(.95)}
+
+  /* Drawer overlay */
+  .v1-drawer{position:absolute;top:0;left:0;right:0;bottom:0;z-index:30;display:none;flex-direction:column}
+  .v1-drawer.open{display:flex}
+  .v1-drawer-bg{flex:1;background:rgba(0,0,0,.5);cursor:pointer}
+  .v1-drawer-content{border-radius:20px 20px 0 0;padding:8px 0 20px}
+  .v1-drawer-handle{width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,.15);margin:0 auto 12px}
+  .v1-drawer-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:0 16px}
+  .v1-drawer-item{display:flex;flex-direction:column;align-items:center;gap:5px;padding:10px 4px;border-radius:12px;cursor:pointer;transition:background .15s}
+  .v1-drawer-item:hover{background:rgba(255,255,255,.04)}
+  .v1-drawer-icon{width:40px;height:40px;border-radius:12px;background:#243044;display:flex;align-items:center;justify-content:center}
+  .v1-drawer-label{font-size:10px;color:#94A3B8}
+
+  /* ════════════════════════════════════════════════════════
+     VARIANT 2: IMMERSIVE
+     ════════════════════════════════════════════════════════ */
+
+  /* Pull-down header (hidden by default) */
+  .v2-pullzone{position:absolute;top:28px;left:0;right:0;height:20px;z-index:15;cursor:pointer}
+  .v2-pullzone:hover + .v2-header{max-height:90px;opacity:1}
+  .v2-header{position:absolute;top:28px;left:0;right:0;z-index:14;max-height:0;opacity:0;overflow:hidden;transition:all .35s cubic-bezier(.25,1,.5,1);background:linear-gradient(to bottom,rgba(15,23,42,.95) 0%,rgba(15,23,42,.85) 80%,transparent 100%);backdrop-filter:blur(16px)}
+  .v2-header:hover{max-height:90px;opacity:1}
+  .v2-header.pinned{max-height:90px;opacity:1}
+  .v2-header-row{display:flex;align-items:center;padding:8px 14px;gap:8px}
+  .v2-header-tabs{display:flex;gap:4px;padding:0 14px 10px;overflow-x:auto;scrollbar-width:none}
+  .v2-header-tabs::-webkit-scrollbar{display:none}
+  .v2-htab{padding:4px 12px;border-radius:16px;font-size:10px;font-family:'SF Mono',monospace;color:#64748B;cursor:pointer;transition:all .2s;white-space:nowrap;border:1px solid transparent}
+  .v2-htab:hover{color:#94A3B8;background:rgba(255,255,255,.03)}
+  .v2-htab.active{color:#F8FAFC;background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.2)}
+
+  /* Pull-up toolbar (hidden by default) */
+  .v2-pullzone-bottom{position:absolute;bottom:0;left:0;right:0;height:16px;z-index:15;cursor:pointer}
+  .v2-pullzone-bottom:hover ~ .v2-toolbar{max-height:44px;opacity:1}
+  .v2-toolbar{position:absolute;bottom:0;left:0;right:0;z-index:14;max-height:0;opacity:0;overflow:hidden;transition:all .3s cubic-bezier(.25,1,.5,1)}
+  .v2-toolbar:hover{max-height:44px;opacity:1}
+  .v2-toolbar.pinned{max-height:44px;opacity:1}
+
+  /* Floating command palette (center) */
+  .v2-palette{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:40;width:300px;border-radius:16px;padding:8px;display:none;animation:scaleIn .2s ease}
+  .v2-palette.open{display:block}
+  .v2-palette-input{width:100%;background:#0F172A;border:1px solid #334155;border-radius:10px;padding:10px 14px;color:#F8FAFC;font-size:13px;font-family:'SF Mono',monospace;outline:none}
+  .v2-palette-input::placeholder{color:#475569}
+  .v2-palette-results{margin-top:6px;max-height:260px;overflow-y:auto}
+  .v2-palette-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;cursor:pointer;transition:background .1s;font-size:13px}
+  .v2-palette-item:hover{background:rgba(59,130,246,.1)}
+  .v2-palette-item .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .v2-palette-item .label{flex:1}
+  .v2-palette-item .shortcut{font-size:10px;color:#475569;font-family:monospace}
+  .v2-palette-overlay{position:absolute;inset:0;background:rgba(0,0,0,.4);z-index:39;display:none}
+  .v2-palette-overlay.open{display:block}
+
+  /* ════════════════════════════════════════════════════════
+     VARIANT 3: DYNAMIC ISLAND
+     ════════════════════════════════════════════════════════ */
+
+  /* The Island — floating pill at top */
+  .v3-island{position:absolute;top:30px;left:50%;transform:translateX(-50%);z-index:20;border-radius:22px;padding:6px 16px;display:flex;align-items:center;gap:8px;cursor:pointer;transition:all .4s cubic-bezier(.34,1.56,.64,1);min-width:180px;justify-content:center}
+  .v3-island.expanded{border-radius:18px;min-width:340px;padding:10px 14px;flex-direction:column;align-items:stretch;gap:6px}
+  .v3-island-row{display:flex;align-items:center;gap:8px;width:100%}
+  .v3-island-title{font-size:12px;font-weight:600;font-family:'SF Mono',monospace;flex:1;text-align:center}
+  .v3-island-dot{width:6px;height:6px;border-radius:50%;background:#22C55E;animation:pulse 2s infinite;flex-shrink:0}
+  .v3-island-tabs{display:none;gap:4px;width:100%}
+  .v3-island.expanded .v3-island-tabs{display:flex}
+  .v3-itab{flex:1;padding:6px 8px;border-radius:12px;font-size:10px;font-family:'SF Mono',monospace;text-align:center;cursor:pointer;transition:all .2s;color:#64748B;background:rgba(255,255,255,.03);border:1px solid transparent;position:relative}
+  .v3-itab:hover{color:#94A3B8;background:rgba(255,255,255,.06)}
+  .v3-itab.active{color:#F8FAFC;background:rgba(59,130,246,.15);border-color:rgba(59,130,246,.25)}
+  .v3-itab.ai.active{background:rgba(167,139,250,.15);border-color:rgba(167,139,250,.25)}
+  .v3-itab-badge{position:absolute;top:-3px;right:-3px;width:12px;height:12px;border-radius:50%;background:#EF4444;font-size:7px;display:flex;align-items:center;justify-content:center;font-weight:700}
+  .v3-island-tools{display:none;gap:4px;flex-wrap:wrap;width:100%;padding-top:4px;border-top:1px solid rgba(255,255,255,.06)}
+  .v3-island.expanded .v3-island-tools{display:flex}
+  .v3-island-tool{padding:6px 10px;border-radius:10px;font-size:10px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:5px;color:#94A3B8;background:rgba(255,255,255,.03)}
+  .v3-island-tool:hover{background:rgba(255,255,255,.08);color:#F8FAFC}
+
+  /* Bottom floating pill (quick actions) */
+  .v3-bottom-pill{position:absolute;bottom:50px;left:50%;transform:translateX(-50%);z-index:15;border-radius:22px;padding:4px;display:flex;gap:2px}
+  .v3-bp-btn{width:34px;height:34px;border-radius:17px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;font-size:11px;font-family:'SF Mono',monospace;color:#64748B}
+  .v3-bp-btn:hover{background:rgba(255,255,255,.08);color:#F8FAFC}
+  .v3-bp-btn:active{transform:scale(.9)}
+  .v3-bp-btn.red{color:#EF4444}
+  .v3-bp-btn.cyan{color:#06B6D4}
+
+  /* Notes */
+  .notes{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);border-radius:16px;padding:14px 20px;max-width:1200px;width:94%;z-index:1000}
+  .notes h3{font-size:13px;margin-bottom:6px;color:#3B82F6}
+  .notes ul{font-size:11px;color:#94A3B8;line-height:1.8;padding-left:16px;columns:1}
+  .notes li strong{color:#F8FAFC}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>TMS Terminal – Redesign v2</h1>
+  <p>3 Varianten basierend auf "Floating Controls" · Klick auf die Elemente zum Testen</p>
+</div>
+
+<div class="phones">
+
+<!-- ════════════════════════════════════════════════════════
+     VARIANT 1: GLASS LAYER
+     ════════════════════════════════════════════════════════ -->
+<div>
+<p class="phone-label">Glass Layer</p>
+<p class="phone-sublabel">Alles schwebt als Glasfläche über dem Terminal. Header, Tabs und Tools sind halbtransparente Overlays. Tap auf ⋯ zeigt ein Bottom-Sheet mit allen Features.</p>
+<div class="phone" id="p1">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <!-- Full-screen terminal (behind everything) -->
+  <div style="position:absolute;inset:28px 0 44px;overflow-y:auto" class="term" id="t1">
+    <div class="d">Last login: Fri Apr 10 19:37:14 on ttys001</div>
+    <div><span class="p">ayysir@MacBook-Pro</span> <span class="d">TMS Banking %</span> <span class="c">claude</span></div>
+    <div class="o" style="margin-top:4px">
+      <div class="ai">╭─ Claude Code v1.0.32</div>
+      <div class="ai">╰─ Type /help for commands</div>
+    </div>
+    <div style="margin-top:8px"><span class="p">❯</span> <span class="c">Implementiere die Mashreq Bank Verknüpfung im TMS Banking Terminal</span></div>
+    <div class="o" style="margin-top:4px">
+      <div>● Analyzing codebase...</div>
+      <div>● Reading src/services/banking.service.ts</div>
+      <div class="g">✓ Found 3 relevant files</div>
+      <div style="margin-top:4px">I'll implement the Mashreq Bank integration.</div>
+      <div style="margin-top:8px" class="b">┌ Creating src/api/mashreq/auth.ts<br>│ Setting up OAuth2 flow...<br>│ <span class="g">✓ Created</span> (48 lines)<br>└</div>
+      <div style="margin-top:4px" class="w">⚡ Writing to banking.service.ts...</div>
+      <div style="margin-top:12px">Now creating the transaction handler...</div>
+      <div style="margin-top:8px" class="b">┌ Creating src/api/mashreq/transactions.ts<br>│ Implementing transfer API...<br>│ Adding balance check...<br>│ <span class="g">✓ Created</span> (92 lines)<br>└</div>
+    </div>
+  </div>
+
+  <!-- Floating header (glass) -->
+  <div class="v1-header glass" style="top:32px">
+    <div class="v1-back" onclick="toast(this,'Zurück')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </div>
+    <div class="v1-title">MacBook-Pro</div>
+    <div class="v1-conn"></div>
+    <div class="v1-menu" onclick="toggleV1Drawer()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+    </div>
+  </div>
+
+  <!-- Floating tabs (glass pills) -->
+  <div class="v1-tabs" style="top:76px">
+    <div class="v1-tab glass ai active" onclick="v1SetTab(this)"><span style="color:#A78BFA;margin-right:3px">●</span> TMS Banking</div>
+    <div class="v1-tab glass" onclick="v1SetTab(this)">TMS Terminal</div>
+    <div class="v1-tab glass" onclick="v1SetTab(this)">ayysir <span class="v1-notif">2</span></div>
+    <div class="v1-tab glass" style="color:#3B82F6;padding:5px 10px" onclick="toast(this,'Neuer Tab')">+</div>
+  </div>
+
+  <!-- Floating tool capsules (right edge) -->
+  <div class="v1-tools">
+    <div class="v1-tool glass" onclick="toast(this,'Auto Approve')" title="Auto Approve"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+    <div class="v1-tool glass" onclick="toast(this,'Dateien')" title="Dateien"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
+    <div class="v1-tool glass" onclick="toast(this,'Screenshots')" title="Screenshots"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/></svg></div>
+    <div class="v1-tool glass" onclick="toast(this,'Snippets')" title="Snippets"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
+  </div>
+
+  <!-- Bottom toolbar -->
+  <div class="bbar">
+    <div class="bk blue">⌘</div><div class="bsep"></div>
+    <div class="bk">Esc</div><div class="bk red">^C</div>
+    <div class="bk"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
+    <div class="bspace"></div>
+    <div class="bk cyan">⇊</div>
+    <div class="bk">↵</div>
+  </div>
+
+  <!-- Drawer overlay -->
+  <div class="v1-drawer" id="v1drawer">
+    <div class="v1-drawer-bg" onclick="toggleV1Drawer()"></div>
+    <div class="v1-drawer-content glass">
+      <div class="v1-drawer-handle"></div>
+      <div class="v1-drawer-grid">
+        <div class="v1-drawer-item" onclick="toast(this,'Browser');toggleV1Drawer()"><div class="v1-drawer-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg></div><span class="v1-drawer-label">Browser</span></div>
+        <div class="v1-drawer-item" onclick="toast(this,'Zeichnen');toggleV1Drawer()"><div class="v1-drawer-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div><span class="v1-drawer-label">Zeichnen</span></div>
+        <div class="v1-drawer-item" onclick="toast(this,'Prozesse');toggleV1Drawer()"><div class="v1-drawer-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><span class="v1-drawer-label">Prozesse</span></div>
+        <div class="v1-drawer-item" onclick="toast(this,'Manager');toggleV1Drawer()"><div class="v1-drawer-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg></div><span class="v1-drawer-label">Manager</span></div>
+        <div class="v1-drawer-item" onclick="toast(this,'Autopilot');toggleV1Drawer()"><div class="v1-drawer-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></div><span class="v1-drawer-label">Autopilot</span></div>
+        <div class="v1-drawer-item" onclick="toast(this,'Watchers');toggleV1Drawer()"><div class="v1-drawer-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><span class="v1-drawer-label">Watchers</span></div>
+        <div class="v1-drawer-item" onclick="toast(this,'Ports');toggleV1Drawer()"><div class="v1-drawer-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></div><span class="v1-drawer-label">Ports</span></div>
+        <div class="v1-drawer-item" onclick="toast(this,'SQL');toggleV1Drawer()"><div class="v1-drawer-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></div><span class="v1-drawer-label">SQL</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast1"></div>
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     VARIANT 2: IMMERSIVE
+     ════════════════════════════════════════════════════════ -->
+<div>
+<p class="phone-label">Immersive</p>
+<p class="phone-sublabel">Kein sichtbares UI by default — nur Terminal. Header erscheint beim Hover oben, Toolbar beim Hover unten. ⌘K öffnet eine Spotlight-artige Command Palette mit allem.</p>
+<div class="phone" id="p2">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <!-- Pure terminal (fills everything) -->
+  <div style="position:absolute;inset:28px 0 0;overflow-y:auto" class="term">
+    <div class="d">Last login: Fri Apr 10 19:37:14 on ttys001</div>
+    <div><span class="p">ayysir@MacBook-Pro</span> <span class="d">TMS Banking %</span> <span class="c">claude</span></div>
+    <div class="o" style="margin-top:4px">
+      <div class="ai">╭─ Claude Code v1.0.32</div>
+      <div class="ai">╰─ Type /help for commands</div>
+    </div>
+    <div style="margin-top:8px"><span class="p">❯</span> <span class="c">Implementiere die Mashreq Bank Verknüpfung im TMS Banking Terminal</span></div>
+    <div class="o" style="margin-top:4px">
+      <div>● Analyzing codebase...</div>
+      <div>● Reading src/services/banking.service.ts</div>
+      <div class="g">✓ Found 3 relevant files</div>
+      <div style="margin-top:4px">I'll implement the Mashreq Bank integration.</div>
+      <div style="margin-top:8px" class="b">┌ Creating src/api/mashreq/auth.ts<br>│ Setting up OAuth2 flow...<br>│ <span class="g">✓ Created</span> (48 lines)<br>└</div>
+      <div style="margin-top:4px" class="w">⚡ Writing to banking.service.ts...</div>
+      <div style="margin-top:12px">Creating transaction handler...</div>
+      <div style="margin-top:8px" class="b">┌ Creating transactions.ts<br>│ <span class="g">✓ Created</span> (92 lines)<br>└</div>
+    </div>
+  </div>
+
+  <!-- Pull-down zone (hover to reveal header) -->
+  <div class="v2-pullzone" onclick="toggleV2Header()"></div>
+
+  <!-- Reveal header -->
+  <div class="v2-header" id="v2header">
+    <div class="v2-header-row">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2" style="cursor:pointer;flex-shrink:0"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <div style="flex:1;font-size:12px;font-weight:600;font-family:monospace">MacBook-Pro</div>
+      <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:#22C55E"><div style="width:5px;height:5px;border-radius:50%;background:#22C55E;animation:pulse 2s infinite"></div>12ms</div>
+      <div style="cursor:pointer;padding:2px;margin-left:4px" onclick="toggleV2Header()" title="Anpinnen">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+      </div>
+    </div>
+    <div class="v2-header-tabs">
+      <div class="v2-htab active">● TMS Banking</div>
+      <div class="v2-htab" onclick="toast(this,'Tab gewechselt')">TMS Terminal</div>
+      <div class="v2-htab" onclick="toast(this,'Tab gewechselt')">ayysir <span style="background:#EF4444;border-radius:8px;padding:0 4px;font-size:8px;margin-left:2px">2</span></div>
+      <div class="v2-htab" style="color:#3B82F6">+</div>
+    </div>
+  </div>
+
+  <!-- Spotlight hint -->
+  <div style="position:absolute;bottom:50%;left:50%;transform:translate(-50%,50%);z-index:5;text-align:center;pointer-events:none;opacity:.3">
+    <div style="font-size:11px;color:#475569;margin-top:8px">Hover oben/unten für UI · Klick ⌘K für Command Palette</div>
+  </div>
+
+  <!-- ⌘K Button (always visible, small) -->
+  <div style="position:absolute;bottom:8px;right:10px;z-index:16;cursor:pointer;padding:4px 10px;border-radius:8px;font-size:10px;font-family:monospace;color:#475569;background:rgba(36,48,68,.6);border:1px solid #243044;transition:all .2s" onclick="toggleV2Palette()" onmouseenter="this.style.color='#94A3B8'" onmouseleave="this.style.color='#475569'">⌘K</div>
+
+  <!-- Pull-up zone (hover to reveal toolbar) -->
+  <div class="v2-pullzone-bottom" onclick="toggleV2Toolbar()"></div>
+
+  <!-- Reveal toolbar -->
+  <div class="v2-toolbar" id="v2toolbar">
+    <div class="bbar" style="background:rgba(15,23,42,.9);backdrop-filter:blur(16px)">
+      <div class="bk blue">⌘</div><div class="bsep"></div>
+      <div class="bk">Esc</div><div class="bk red">^C</div>
+      <div class="bk"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
+      <div class="bspace"></div>
+      <div class="bk cyan">⇊</div>
+      <div class="bk">↵</div>
+    </div>
+  </div>
+
+  <!-- Command Palette overlay -->
+  <div class="v2-palette-overlay" id="v2palBg" onclick="toggleV2Palette()"></div>
+  <div class="v2-palette glass" id="v2pal">
+    <input class="v2-palette-input" placeholder="Suchen oder Befehl eingeben..." id="v2palInput" oninput="filterV2(this.value)">
+    <div class="v2-palette-results" id="v2palResults">
+      <div class="v2-palette-item" onclick="toast(this,'Tab gewechselt');toggleV2Palette()"><div class="dot" style="background:#A78BFA"></div><span class="label">TMS Banking</span><span class="shortcut">aktiv</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Tab gewechselt');toggleV2Palette()"><div class="dot" style="background:#3B82F6"></div><span class="label">TMS Terminal</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Tab gewechselt');toggleV2Palette()"><div class="dot" style="background:#3B82F6"></div><span class="label">ayysir</span><span class="shortcut" style="background:#EF4444;color:#fff;border-radius:6px;padding:0 4px">2</span></div>
+      <div style="height:1px;background:#243044;margin:4px 0"></div>
+      <div class="v2-palette-item" onclick="toast(this,'Auto Approve');toggleV2Palette()"><div class="dot" style="background:#22C55E"></div><span class="label">Auto Approve</span><span class="shortcut">⌘A</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Snippets');toggleV2Palette()"><div class="dot" style="background:#F59E0B"></div><span class="label">Snippets</span><span class="shortcut">⌘S</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Dateien');toggleV2Palette()"><div class="dot" style="background:#F59E0B"></div><span class="label">Dateien</span><span class="shortcut">⌘F</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Screenshots');toggleV2Palette()"><div class="dot" style="background:#06B6D4"></div><span class="label">Screenshots</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Autopilot');toggleV2Palette()"><div class="dot" style="background:#A78BFA"></div><span class="label">Autopilot</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Watchers');toggleV2Palette()"><div class="dot" style="background:#F59E0B"></div><span class="label">Watchers</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Ports');toggleV2Palette()"><div class="dot" style="background:#10B981"></div><span class="label">Ports</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'SQL');toggleV2Palette()"><div class="dot" style="background:#3B82F6"></div><span class="label">SQL</span></div>
+      <div style="height:1px;background:#243044;margin:4px 0"></div>
+      <div class="v2-palette-item" onclick="toast(this,'Browser');toggleV2Palette()"><div class="dot" style="background:#22C55E"></div><span class="label">Browser öffnen</span><span class="shortcut">⌘B</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Manager');toggleV2Palette()"><div class="dot" style="background:#A78BFA"></div><span class="label">Manager Agent</span><span class="shortcut">⌘M</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Prozesse');toggleV2Palette()"><div class="dot" style="background:#06B6D4"></div><span class="label">Prozesse</span></div>
+      <div class="v2-palette-item" onclick="toast(this,'Zeichnen');toggleV2Palette()"><div class="dot" style="background:#F59E0B"></div><span class="label">Zeichnen</span></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast2"></div>
+</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     VARIANT 3: DYNAMIC ISLAND
+     ════════════════════════════════════════════════════════ -->
+<div>
+<p class="phone-label">Dynamic Island</p>
+<p class="phone-sublabel">Ein einzelner schwebender Pill oben vereint alles: Tap = Tabs + Tools expandieren. Zurückgeklappter Zustand zeigt nur den aktiven Tab-Namen + Connection. Unten ein Mini-Pill mit den wichtigsten Keys.</p>
+<div class="phone" id="p3">
+  <div class="sbar"><span>19:37</span><span>94%</span></div>
+
+  <!-- Full-screen terminal -->
+  <div style="position:absolute;inset:28px 0 0;overflow-y:auto" class="term">
+    <div class="d">Last login: Fri Apr 10 19:37:14 on ttys001</div>
+    <div><span class="p">ayysir@MacBook-Pro</span> <span class="d">TMS Banking %</span> <span class="c">claude</span></div>
+    <div class="o" style="margin-top:4px">
+      <div class="ai">╭─ Claude Code v1.0.32</div>
+      <div class="ai">╰─ Type /help for commands</div>
+    </div>
+    <div style="margin-top:8px"><span class="p">❯</span> <span class="c">Implementiere die Mashreq Bank Verknüpfung im TMS Banking Terminal</span></div>
+    <div class="o" style="margin-top:4px">
+      <div>● Analyzing codebase...</div>
+      <div>● Reading src/services/banking.service.ts</div>
+      <div class="g">✓ Found 3 relevant files</div>
+      <div style="margin-top:4px">I'll implement the Mashreq Bank integration.</div>
+      <div style="margin-top:8px" class="b">┌ Creating src/api/mashreq/auth.ts<br>│ Setting up OAuth2 flow...<br>│ <span class="g">✓ Created</span> (48 lines)<br>└</div>
+      <div style="margin-top:4px" class="w">⚡ Writing to banking.service.ts...</div>
+      <div style="margin-top:12px">Creating transaction handler...</div>
+      <div style="margin-top:8px" class="b">┌ Creating transactions.ts<br>│ Implementing transfer API...<br>│ Adding balance check...<br>│ <span class="g">✓ Created</span> (92 lines)<br>└</div>
+      <div style="margin-top:4px">Now updating the service layer...</div>
+    </div>
+  </div>
+
+  <!-- The Dynamic Island -->
+  <div class="v3-island glass" id="v3island" onclick="toggleV3Island()">
+    <div class="v3-island-row">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2" style="cursor:pointer;flex-shrink:0" onclick="event.stopPropagation();toast(this,'Zurück')"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <div class="v3-island-title" id="v3title">TMS Banking</div>
+      <div class="v3-island-dot"></div>
+    </div>
+    <!-- Expanded: tabs -->
+    <div class="v3-island-tabs">
+      <div class="v3-itab ai active" onclick="event.stopPropagation();v3SetTab(this,'TMS Banking')"><span style="color:#A78BFA;font-size:8px">●</span> Banking</div>
+      <div class="v3-itab" onclick="event.stopPropagation();v3SetTab(this,'TMS Terminal')">Terminal</div>
+      <div class="v3-itab" onclick="event.stopPropagation();v3SetTab(this,'ayysir')">ayysir<span class="v3-itab-badge">2</span></div>
+      <div class="v3-itab" style="color:#3B82F6;max-width:30px" onclick="event.stopPropagation();toast(this,'Neuer Tab')">+</div>
+    </div>
+    <!-- Expanded: tools -->
+    <div class="v3-island-tools">
+      <div class="v3-island-tool" onclick="event.stopPropagation();toast(this,'Auto Approve')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Approve</div>
+      <div class="v3-island-tool" onclick="event.stopPropagation();toast(this,'Dateien')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>Dateien</div>
+      <div class="v3-island-tool" onclick="event.stopPropagation();toast(this,'Snippets')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Snippets</div>
+      <div class="v3-island-tool" onclick="event.stopPropagation();toast(this,'Screenshots')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/></svg>Shots</div>
+      <div class="v3-island-tool" onclick="event.stopPropagation();toast(this,'Browser')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>Browser</div>
+      <div class="v3-island-tool" onclick="event.stopPropagation();toast(this,'Manager')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>Manager</div>
+      <div class="v3-island-tool" onclick="event.stopPropagation();toast(this,'SQL')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>SQL</div>
+      <div class="v3-island-tool" onclick="event.stopPropagation();toast(this,'Mehr...')">···</div>
+    </div>
+  </div>
+
+  <!-- Floating bottom pill (keyboard shortcuts) -->
+  <div class="v3-bottom-pill glass">
+    <div class="v3-bp-btn blue" title="D-Pad">⌘</div>
+    <div style="width:1px;height:18px;background:rgba(255,255,255,.06)"></div>
+    <div class="v3-bp-btn" title="Escape">Esc</div>
+    <div class="v3-bp-btn red" title="Ctrl+C">^C</div>
+    <div class="v3-bp-btn" title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
+    <div style="width:1px;height:18px;background:rgba(255,255,255,.06)"></div>
+    <div class="v3-bp-btn cyan" title="Scroll down">⇊</div>
+    <div class="v3-bp-btn" title="Enter">↵</div>
+  </div>
+
+  <div class="toast" id="toast3"></div>
+</div>
+</div>
+
+</div><!-- .phones -->
+
+<div class="notes glass">
+  <h3>Alle 3 basieren auf "Floating Controls" — hier sind die Unterschiede:</h3>
+  <ul>
+    <li><strong>Glass Layer:</strong> Header + Tabs + Tool-Buttons sind separate Glasflächen die über dem Terminal schweben. ⋯ öffnet ein Bottom-Sheet mit allen Features. Klar getrennte Schichten — du siehst wo alles ist.</li>
+    <li><strong>Immersive:</strong> Zero UI by default — nur Terminal. Header + Toolbar erscheinen beim Hovern über den oberen/unteren Rand. Alles andere via <strong>⌘K Command Palette</strong> (wie VS Code/Spotlight). Maximale Immersion, alles durchsuchbar.</li>
+    <li><strong>Dynamic Island:</strong> Ein einzelner Pill oben vereint Tabs + Tools + Status. <strong>Tap expandiert</strong>, zweiter Tap klappt zu. Unten ein Mini-Pill mit den wichtigsten Keys. Alles in 2 Elementen — kein Header, keine Sidebar, keine Tab-Bar.</li>
+  </ul>
+</div>
+
+<script>
+// ── Toasts ──
+function toast(el, text) {
+  const phone = el.closest('.phone');
+  const t = phone.querySelector('.toast');
+  t.textContent = text;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1200);
+}
+
+// ── V1: Glass Layer ──
+function toggleV1Drawer() { document.getElementById('v1drawer').classList.toggle('open'); }
+function v1SetTab(el) {
+  el.parentElement.querySelectorAll('.v1-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// ── V2: Immersive ──
+function toggleV2Header() { document.getElementById('v2header').classList.toggle('pinned'); }
+function toggleV2Toolbar() { document.getElementById('v2toolbar').classList.toggle('pinned'); }
+function toggleV2Palette() {
+  const pal = document.getElementById('v2pal');
+  const bg = document.getElementById('v2palBg');
+  const open = pal.classList.toggle('open');
+  bg.classList.toggle('open', open);
+  if (open) { document.getElementById('v2palInput').value = ''; filterV2(''); setTimeout(() => document.getElementById('v2palInput').focus(), 100); }
+}
+function filterV2(q) {
+  const items = document.querySelectorAll('#v2palResults .v2-palette-item');
+  items.forEach(item => {
+    const text = item.textContent.toLowerCase();
+    item.style.display = q && !text.includes(q.toLowerCase()) ? 'none' : 'flex';
+  });
+}
+// Keyboard shortcut for ⌘K
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); toggleV2Palette(); }
+  if (e.key === 'Escape') {
+    document.getElementById('v2pal').classList.remove('open');
+    document.getElementById('v2palBg').classList.remove('open');
+  }
+});
+
+// ── V3: Dynamic Island ──
+function toggleV3Island() { document.getElementById('v3island').classList.toggle('expanded'); }
+function v3SetTab(el, name) {
+  el.parentElement.querySelectorAll('.v3-itab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('v3title').textContent = name;
+  toast(el, name);
+}
+</script>
+
+</body>
+</html>

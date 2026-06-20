@@ -10,6 +10,11 @@ interface PendingRequest {
 }
 
 const TIMEOUT_MS = 30_000;
+// Bound sidecar startup. Without this, a hung import / model load leaves
+// ensureRunning() pending forever, which makes `await rewrite()` (and thus the
+// whole enhanced-transcription request) hang — the client mic then sticks on
+// "processing" indefinitely. Whisper's sidecar uses the same guard.
+const START_TIMEOUT_MS = 60_000;
 
 function findServerRoot(): string {
   let dir = __dirname;
@@ -75,11 +80,23 @@ function ensureRunning(): Promise<void> {
 
     let resolved = false;
 
+    // If the sidecar never reports "Ready" (hung import / model load), reject so
+    // callers fall back to the raw transcript instead of awaiting forever.
+    const startTimer = setTimeout(() => {
+      if (resolved) return;
+      logger.warn(`[rewriter] Sidecar start timed out after ${START_TIMEOUT_MS / 1000}s; killing`);
+      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      sidecar = null;
+      startPromise = null;
+      reject(new Error(`Rewriter sidecar start timed out (${START_TIMEOUT_MS / 1000}s)`));
+    }, START_TIMEOUT_MS);
+
     child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       logger.info(`[rewriter] ${text.trim()}`);
       if (!resolved && text.includes('Ready for requests')) {
         resolved = true;
+        clearTimeout(startTimer);
         startPromise = null;
         sidecar = child;
         resolve();
@@ -111,6 +128,7 @@ function ensureRunning(): Promise<void> {
     });
 
     child.on('exit', (code) => {
+      clearTimeout(startTimer);
       logger.warn(`[rewriter] Sidecar exited with code ${code}`);
       const wasResolved = resolved;
       sidecar = null;
@@ -120,6 +138,7 @@ function ensureRunning(): Promise<void> {
     });
 
     child.on('error', (err) => {
+      clearTimeout(startTimer);
       logger.error(`[rewriter] Failed to spawn sidecar: ${err.message}`);
       sidecar = null;
       startPromise = null;

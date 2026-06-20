@@ -801,6 +801,18 @@ export function TerminalScreen({ navigation, route }: Props) {
     return unsubscribe;
   }, [navigation, serverId]);
 
+  // Inject an uploaded file path into whichever terminal tab is currently
+  // active. Uses a live store lookup (getTabs, not the filtered serverTabs) so
+  // the path always lands in the tab the user is looking at — the captured
+  // `activeSession` prop can be undefined when the active tab isn't in the
+  // filtered list, which silently dropped screenshot paths.
+  const injectPathToActiveTerminal = useCallback((path: string) => {
+    const activeTab = useTerminalStore.getState().getTabs(serverId).find((t) => t.active);
+    if (activeTab?.sessionId && wsRef.current.state === 'connected') {
+      wsRef.current.send({ type: 'terminal:input', sessionId: activeTab.sessionId, payload: { data: path } });
+    }
+  }, [serverId]);
+
   // Path link clicked in terminal — open file browser at that path
   const handlePathClicked = useCallback((path: string) => {
     toolRailRef.current?.openFileBrowser(path);
@@ -911,6 +923,7 @@ export function TerminalScreen({ navigation, route }: Props) {
             serverHost={server?.host ?? ''}
             serverPort={server?.port ?? 8767}
             serverToken={server?.token ?? ''}
+            onUploaded={injectPathToActiveTerminal}
           />
         );
       case 'sql':
@@ -928,7 +941,7 @@ export function TerminalScreen({ navigation, route }: Props) {
       default:
         return null;
     }
-  }, [activePanelTool, serverTabs, server, serverId]);
+  }, [activePanelTool, serverTabs, server, serverId, injectPathToActiveTerminal]);
 
   const splitActive = useSplitViewStore((s) => s.active);
 

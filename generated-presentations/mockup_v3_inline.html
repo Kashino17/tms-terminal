@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Variante 3 — Inline Expansion (In-Place)</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0F172A;color:#F8FAFC}
+
+.phone{width:380px;height:760px;margin:20px auto;border:3px solid #334155;border-radius:32px;overflow:hidden;position:relative;background:#0F172A;box-shadow:0 20px 60px rgba(0,0,0,.6);display:flex;flex-direction:column}
+@media(max-width:420px){.phone{width:100%;height:100%;margin:0;border:none;border-radius:0}}
+
+.viewer-header{display:flex;align-items:center;padding:12px;border-bottom:1px solid rgba(148,163,184,.06);background:#0F172A;flex-shrink:0}
+.viewer-header .btn{width:36px;height:36px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#F8FAFC;font-size:18px;cursor:pointer;border:none;background:none}
+.viewer-header .title{flex:1;text-align:center;font-size:14px;font-weight:600}
+
+.slide-area{flex:1;padding:16px 20px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+
+h2{font-size:20px;font-weight:700;margin-bottom:12px}
+p{font-size:14px;line-height:1.6;color:#CBD5E1;margin-bottom:6px}
+code{font-family:'SF Mono',monospace;font-size:12px;background:#1E293B;padding:2px 5px;border-radius:3px;color:#06B6D4}
+
+/* Item cards */
+.item{background:rgba(239,68,68,.08);border-left:3px solid #EF4444;border-radius:0 10px 10px 0;padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:all .3s ease;position:relative}
+.item.warning{background:rgba(245,158,11,.08);border-left-color:#F59E0B}
+.item.info{background:rgba(59,130,246,.08);border-left-color:#3B82F6}
+.item strong{color:#F87171;font-size:14px}
+.item.warning strong{color:#FBBF24}
+.item.info strong{color:#60A5FA}
+.item .desc{font-size:12px;color:#94A3B8;margin-top:2px;line-height:1.4}
+
+/* Tap indicator — small pulsing circle */
+.item::after{content:'⟩';position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#475569;font-size:14px;transition:all .2s}
+.item.expanded::after{content:'⟨';color:#3B82F6}
+
+/* Inline answer block — expands below the item */
+.inline-answer{max-height:0;overflow:hidden;transition:max-height .4s cubic-bezier(.32,.72,.24,1.02),padding .3s,opacity .3s;opacity:0;background:#111827;border-radius:0 0 10px 10px;margin-top:-4px;margin-bottom:8px;border:1px solid transparent;border-top:none}
+.inline-answer.open{max-height:400px;padding:12px;opacity:1;border-color:#1E293B}
+.inline-answer .answer-label{display:flex;align-items:center;gap:6px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #1E293B}
+.inline-answer .answer-label .icon{width:18px;height:18px;border-radius:9px;background:rgba(59,130,246,.2);display:flex;align-items:center;justify-content:center;font-size:10px;color:#3B82F6}
+.inline-answer .answer-label span{font-size:11px;font-weight:700;color:#3B82F6;text-transform:uppercase;letter-spacing:.5px}
+.inline-answer .answer-text{font-size:12px;line-height:1.6;color:#CBD5E1}
+.inline-answer .answer-text strong{color:#F8FAFC}
+.inline-answer .answer-text code{background:#0F172A;font-size:11px}
+
+/* Loading state */
+.inline-answer .loading{display:flex;align-items:center;gap:8px;color:#64748B;font-size:12px;font-style:italic}
+.inline-answer .loading .dot{width:6px;height:6px;border-radius:3px;background:#3B82F6;animation:blink 1.2s infinite}
+.inline-answer .loading .dot:nth-child(2){animation-delay:.2s}
+.inline-answer .loading .dot:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,100%{opacity:.2}50%{opacity:1}}
+
+.counter{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.8);backdrop-filter:blur(8px);color:#94A3B8;font-size:12px;font-weight:600;padding:6px 16px;border-radius:20px;z-index:10}
+.demo-label{position:fixed;top:8px;left:50%;transform:translateX(-50%);background:#22C55E;color:#fff;font-size:11px;font-weight:700;padding:4px 12px;border-radius:12px;z-index:100;letter-spacing:.5px;text-transform:uppercase}
+
+/* Hint */
+.hint{text-align:center;margin-top:16px;padding:8px;border:1px dashed #334155;border-radius:8px;color:#475569;font-size:11px}
+</style>
+</head>
+<body>
+<div class="demo-label">V3 — Inline Expansion (In-Place)</div>
+<div class="phone">
+  <div class="viewer-header">
+    <button class="btn">✕</button>
+    <span class="title">Sicherheitsaudit — TMS Shops</span>
+    <button class="btn">↗</button>
+  </div>
+
+  <div class="slide-area">
+    <h2>Kritische Sicherheitslücken</h2>
+
+    <div class="item" id="item1" onclick="toggleInline(this, 'answer1')">
+      <strong>SQL Injection in User-Query</strong>
+      <div class="desc">Raw SQL ohne Prepared Statements — beliebige Queries möglich</div>
+    </div>
+    <div class="inline-answer" id="answer1">
+      <div class="loading" id="load1"><div class="dot"></div><div class="dot"></div><div class="dot"></div><span>Manager denkt nach...</span></div>
+      <div id="text1" style="display:none">
+        <div class="answer-label"><div class="icon">🤖</div><span>Manager Agent</span></div>
+        <div class="answer-text">
+          <strong>SQL Injection — Details:</strong><br><br>
+          In <code>src/api/search.ts:42</code> wird der User-Input direkt in den SQL-String eingefügt ohne jegliches Escaping.<br><br>
+          <strong>Beispiel-Angriff:</strong> Ein Angreifer gibt <code>'; DROP TABLE users; --</code> als Suchbegriff ein.<br><br>
+          <strong>Impact:</strong> Kompletter Datenbank-Zugriff — lesen, ändern, löschen.<br><br>
+          <strong>Fix (2h):</strong> Prepared Statements nutzen. Der Parameter wird dann automatisch escaped.
+        </div>
+      </div>
+    </div>
+
+    <div class="item" id="item2" onclick="toggleInline(this, 'answer2')">
+      <strong>API-Keys im Git-Repository</strong>
+      <div class="desc">Stripe Live Key + Supabase Service Key committed</div>
+    </div>
+    <div class="inline-answer" id="answer2">
+      <div class="loading" id="load2"><div class="dot"></div><div class="dot"></div><div class="dot"></div><span>Manager denkt nach...</span></div>
+      <div id="text2" style="display:none">
+        <div class="answer-label"><div class="icon">🤖</div><span>Manager Agent</span></div>
+        <div class="answer-text">
+          <strong>Gefundene Keys in .env.example:</strong><br>
+          • <code>STRIPE_LIVE_KEY=sk_live_51N...</code><br>
+          • <code>SUPABASE_SERVICE_KEY=eyJhbG...</code><br><br>
+          <strong>Sofortmaßnahmen:</strong><br>
+          1. Keys jetzt rotieren (Stripe Dashboard + Supabase Settings)<br>
+          2. <code>.env.example</code> nur mit Platzhaltern committen<br>
+          3. Git-History bereinigen mit <code>git filter-branch</code>
+        </div>
+      </div>
+    </div>
+
+    <div class="item warning" id="item3" onclick="toggleInline(this, 'answer3')">
+      <strong>Keine Rate-Limiting</strong>
+      <div class="desc">API-Endpoints ohne Limit — Brute-Force möglich</div>
+    </div>
+    <div class="inline-answer" id="answer3">
+      <div class="loading" id="load3"><div class="dot"></div><div class="dot"></div><div class="dot"></div><span>Manager denkt nach...</span></div>
+      <div id="text3" style="display:none">
+        <div class="answer-label"><div class="icon">🤖</div><span>Manager Agent</span></div>
+        <div class="answer-text">
+          <strong>Problem:</strong> <code>/api/auth/login</code> hat kein Rate-Limit.<br><br>
+          Aktuell: ~1000 Login-Versuche/Sekunde möglich.<br><br>
+          <strong>Fix (3h):</strong> <code>express-rate-limit</code> installieren, 5 Versuche/Minute pro IP auf Auth-Endpoints.
+        </div>
+      </div>
+    </div>
+
+    <div class="item info" id="item4" onclick="toggleInline(this, 'answer4')">
+      <strong>CSP Header fehlt</strong>
+      <div class="desc">Content Security Policy nicht konfiguriert — XSS erleichtert</div>
+    </div>
+    <div class="inline-answer" id="answer4">
+      <div class="loading" id="load4"><div class="dot"></div><div class="dot"></div><div class="dot"></div><span>Manager denkt nach...</span></div>
+      <div id="text4" style="display:none">
+        <div class="answer-label"><div class="icon">🤖</div><span>Manager Agent</span></div>
+        <div class="answer-text">
+          <strong>CSP (Content Security Policy)</strong> definiert welche Scripte und Styles der Browser laden darf.<br><br>
+          Ohne CSP kann ein XSS-Angriff beliebigen Code ausführen.<br><br>
+          <strong>Fix (1h):</strong> <code>helmet()</code> Middleware in Express hinzufügen — setzt CSP + weitere Security-Header automatisch.
+        </div>
+      </div>
+    </div>
+
+    <div class="hint">Tippe auf einen Punkt für Details vom Manager Agent</div>
+  </div>
+
+  <div class="counter">2 / 5</div>
+</div>
+
+<script>
+var openAnswer = null;
+var openItem = null;
+
+function toggleInline(itemEl, answerId) {
+  var answerEl = document.getElementById(answerId);
+  var loadId = 'load' + answerId.replace('answer', '');
+  var textId = 'text' + answerId.replace('answer', '');
+
+  // Close previous
+  if (openAnswer && openAnswer !== answerEl) {
+    openAnswer.classList.remove('open');
+    if (openItem) openItem.classList.remove('expanded');
+  }
+
+  // Toggle
+  if (answerEl.classList.contains('open')) {
+    answerEl.classList.remove('open');
+    itemEl.classList.remove('expanded');
+    openAnswer = null;
+    openItem = null;
+    return;
+  }
+
+  // Open with loading
+  itemEl.classList.add('expanded');
+  answerEl.classList.add('open');
+  document.getElementById(loadId).style.display = 'flex';
+  document.getElementById(textId).style.display = 'none';
+  openAnswer = answerEl;
+  openItem = itemEl;
+
+  // Scroll into view
+  setTimeout(function() {
+    answerEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 100);
+
+  // Simulate AI response
+  setTimeout(function() {
+    document.getElementById(loadId).style.display = 'none';
+    document.getElementById(textId).style.display = 'block';
+    answerEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 1500);
+}
+</script>
+</body>
+</html>

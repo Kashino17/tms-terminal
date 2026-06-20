@@ -884,10 +884,18 @@ export class AiProviderRegistry {
     const glm = new GlmProvider(() => this.config.glmApiKey);
     const getUrl = () => this.config.lmStudioUrl ?? LMSTUDIO_DEFAULT_URL;
     const gemma = new LMStudioProvider('gemma-4', 'Gemma 4 31B', 'google/gemma-4-31b', getUrl);
+    // LM Studio model IDs follow the form "<vendor>/<model>" — these match the
+    // identifiers shown in LM Studio's "Model" column. If the user installs
+    // the models under different IDs, the API call will 404 and we surface
+    // that as a normal request error.
+    const qwen27b = new LMStudioProvider('qwen-3-27b', 'Qwen 3 27B', 'qwen/qwen3-27b', getUrl);
+    const qwen35b = new LMStudioProvider('qwen-3-35b', 'Qwen 3 35B', 'qwen/qwen3-35b', getUrl);
 
     this.providers.set(kimi.id, kimi);
     this.providers.set(glm.id, glm);
     this.providers.set(gemma.id, gemma);
+    this.providers.set(qwen27b.id, qwen27b);
+    this.providers.set(qwen35b.id, qwen35b);
 
     this.activeId = config.activeProvider && this.providers.has(config.activeProvider)
       ? config.activeProvider

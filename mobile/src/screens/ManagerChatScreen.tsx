@@ -53,11 +53,14 @@ const mdStyles = {
   bullet_list: { marginVertical: 4 },
   ordered_list: { marginVertical: 4 },
   list_item: { marginVertical: 1 },
-  code_inline: { backgroundColor: '#243044', color: '#06B6D4', fontFamily: 'monospace', fontSize: 11, paddingHorizontal: 4, borderRadius: 3 },
-  fence: { backgroundColor: '#243044', padding: 8, borderRadius: 8, marginVertical: 4 },
-  code_block: { color: '#F8FAFC', fontFamily: 'monospace', fontSize: 11 },
+  // Library's defaults inject light-grey backgrounds + borders that fight the
+  // dark theme — explicitly override (borderWidth: 0, dark bg) so quoted/code
+  // blocks render readably.
+  code_inline: { backgroundColor: '#243044', color: '#06B6D4', fontFamily: 'monospace', fontSize: 11, paddingHorizontal: 4, borderRadius: 3, borderWidth: 0 },
+  fence: { backgroundColor: '#243044', color: '#F8FAFC', padding: 8, borderRadius: 8, marginVertical: 4, borderWidth: 0 },
+  code_block: { backgroundColor: '#243044', color: '#F8FAFC', fontFamily: 'monospace', fontSize: 11, padding: 8, borderRadius: 8, marginVertical: 4, borderWidth: 0 },
   link: { color: '#3B82F6' },
-  blockquote: { borderLeftColor: '#3B82F6', borderLeftWidth: 3, paddingLeft: 8, marginVertical: 4 },
+  blockquote: { backgroundColor: 'rgba(59,130,246,0.08)', borderLeftColor: '#3B82F6', borderLeftWidth: 3, borderColor: 'transparent', paddingLeft: 10, paddingRight: 8, paddingVertical: 6, marginVertical: 4, marginLeft: 0, borderRadius: 4 },
   hr: { backgroundColor: '#334155' },
   paragraph: { marginVertical: 2 },
 };

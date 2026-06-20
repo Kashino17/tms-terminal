@@ -1794,7 +1794,12 @@ BEISPIEL:
           return !/kann (ich )?(leider )?(keine|nicht).*(?:bild|image|generier)/i.test(m.content ?? '')
             && !/habe keine.*fähigkeit/i.test(m.content ?? '');
         });
-        const chatMessages = [...cleanHistory, { role: 'user' as const, content: onboarding ? text : userMessage }];
+        // The user message was just pushed to chatHistory at line 1756, so it's
+        // also the last entry of cleanHistory. Drop it here — we re-append it
+        // below with the [HINTERGRUND-KONTEXT] block. Without this slice the
+        // LLM sees the user message twice in every prompt → tool calls fire
+        // 2-3× per send because the model interprets the repetition as emphasis.
+        const chatMessages = [...cleanHistory.slice(0, -1), { role: 'user' as const, content: onboarding ? text : userMessage }];
 
         logger.info(`Manager: sending ${MANAGER_TOOLS.length} tools to ${provider.name}: [${MANAGER_TOOLS.map(t => t.function.name).join(', ')}]`);
         logger.info(`Manager: chat history: ${chatMessages.length} messages (${cleanHistory.length} clean, ${this.chatHistory.length - cleanHistory.length} filtered)`);
@@ -1998,9 +2003,11 @@ BEISPIEL:
         nativeToolCalls = [];
         rawToolCalls = [];
       } else {
-        // Kimi: text-only streaming (tags parsed later)
+        // Kimi: text-only streaming (tags parsed later).
+        // Same dedupe as the GLM path — drop the just-pushed user entry from
+        // chatHistory and re-append with [HINTERGRUND-KONTEXT] context block.
         reply = await provider.chatStream(
-          [...this.chatHistory, { role: 'user', content: onboarding ? text : userMessage }],
+          [...this.chatHistory.slice(0, -1), { role: 'user', content: onboarding ? text : userMessage }],
           systemPrompt,
           (token) => this.onStreamChunk?.(token),
         );
@@ -3139,7 +3146,29 @@ BEISPIEL:
   private loadChatHistory(): void {
     try {
       if (!fs.existsSync(ManagerService.CHAT_FILE)) return;
-      this.chatHistory = JSON.parse(fs.readFileSync(ManagerService.CHAT_FILE, 'utf-8'));
+      const raw = JSON.parse(fs.readFileSync(ManagerService.CHAT_FILE, 'utf-8'));
+
+      if (Array.isArray(raw)) {
+        this.chatHistory = raw;
+      } else if (raw && typeof raw === 'object') {
+        // Legacy/corrupt format: bucketed object like {"alle": [...], "<sid>": [...]}
+        // — flatten all message arrays into a single array, sort by an
+        // existing timestamp if present, else keep insertion order. Resets
+        // would otherwise lose the user's history; .push() on an object
+        // crashed the chat handler silently before reaching the provider.
+        const flat: ChatMessage[] = [];
+        for (const v of Object.values(raw)) {
+          if (Array.isArray(v)) flat.push(...(v as ChatMessage[]));
+        }
+        flat.sort((a: any, b: any) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+        this.chatHistory = flat;
+        logger.info(`Manager: migrated legacy bucketed chat-history → ${flat.length} flat messages`);
+      } else {
+        logger.warn(`Manager: chat-history.json has unexpected shape (${typeof raw}), resetting`);
+        this.chatHistory = [];
+        return;
+      }
+
       // Cap restored history to prevent context overflow on first AI call
       if (this.chatHistory.length > 12) {
         this.chatHistory = [this.chatHistory[0], ...this.chatHistory.slice(-6)];

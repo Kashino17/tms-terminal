@@ -14,11 +14,14 @@ import {
   Alert,
   Modal,
   Animated,
+  Easing,
   PanResponder,
   Keyboard,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import * as Sharing from 'expo-sharing';
+import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -28,6 +31,7 @@ import Markdown from 'react-native-markdown-display';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import { Audio } from 'expo-av';
+import * as Haptics from 'expo-haptics';
 import { VoiceMessagePlayer } from '../components/VoiceMessagePlayer';
 import { useSettingsStore } from '../store/settingsStore';
 
@@ -57,8 +61,19 @@ import { VoiceFullscreen } from '../components/manager/VoiceFullscreen';
 import { ORB_DEFS, executeOrb } from '../constants/orbDefinitions';
 import { OrbLayer } from '../components/OrbLayer';
 import { ToolMenu } from '../components/ToolMenu';
+import { ToolPanelSheet } from '../components/ToolPanelSheet';
+import { SnippetsPanel } from '../components/SnippetsPanel';
+import { ScreenshotPanel } from '../components/ScreenshotPanel';
+import { SQLPanel } from '../components/SQLPanel';
+import { AutoApprovePanel } from '../components/AutoApprovePanel';
+import { AutopilotPanel } from '../components/AutopilotPanel';
+import { WatchersPanel } from '../components/WatchersPanel';
+import { FileBrowserPanel } from '../components/FileBrowserPanel';
+import { PortForwardingPanel } from '../components/PortForwardingPanel';
+import { RenderPanel } from '../components/RenderPanel';
+import { VercelPanel } from '../components/VercelPanel';
 import { useOrbLayoutStore } from '../store/orbLayoutStore';
-import { Dimensions, type LayoutChangeEvent } from 'react-native';
+import { type LayoutChangeEvent } from 'react-native';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'ManagerChat'>;
@@ -66,11 +81,295 @@ type Props = {
 };
 
 // "MM:SS" — used for the recording time pill on the mic button
+// ── Provider Capability Badges ────────────────────────────────────────────
+// Mirrors V1 (ManagerChatScreen.tsx) so the model picker shows the same
+// Tools/Vision/Reasoning/Code badges per provider.
+const GEMMA_CAPS_VISION = [
+  { icon: 'tool', label: 'Tools', color: '#60A5FA' },
+  { icon: 'eye', label: 'Vision', color: '#FBBF24' },
+  { icon: 'cpu', label: 'Reasoning', color: '#4ADE80' },
+];
+const GEMMA_CAPS_TEXT = [
+  { icon: 'tool', label: 'Tools', color: '#60A5FA' },
+  { icon: 'cpu', label: 'Reasoning', color: '#4ADE80' },
+];
+const QWEN_CAPS = [
+  { icon: 'tool', label: 'Tools', color: '#60A5FA' },
+  { icon: 'cpu', label: 'Reasoning', color: '#4ADE80' },
+  { icon: 'code', label: 'Code', color: '#A78BFA' },
+];
+const PROVIDER_CAPS: Record<string, Array<{ icon: string; label: string; color: string }>> = {
+  'glm': [
+    { icon: 'tool', label: 'Tools', color: '#60A5FA' },
+    { icon: 'eye', label: 'Vision', color: '#FBBF24' },
+    { icon: 'cpu', label: 'Reasoning', color: '#4ADE80' },
+  ],
+  'kimi': [
+    { icon: 'eye', label: 'Vision', color: '#FBBF24' },
+    { icon: 'cpu', label: 'Reasoning', color: '#4ADE80' },
+    { icon: 'code', label: 'Code', color: '#A78BFA' },
+  ],
+  'gemma-4': GEMMA_CAPS_VISION,
+  'gemma-4-26b': GEMMA_CAPS_TEXT,
+  'gemma-4-31b': GEMMA_CAPS_VISION,
+  'qwen-3-27b': QWEN_CAPS,
+  'qwen-3-35b': QWEN_CAPS,
+};
+function getProviderCaps(id: string): Array<{ icon: string; label: string; color: string }> | undefined {
+  if (PROVIDER_CAPS[id]) return PROVIDER_CAPS[id];
+  if (id.includes('qwen')) return QWEN_CAPS;
+  if (id.includes('gemma')) {
+    if (id.includes('31') || id.includes('27b-it') || !id.includes('26')) return GEMMA_CAPS_VISION;
+    return GEMMA_CAPS_TEXT;
+  }
+  return undefined;
+}
+
+// ── Phase / ThinkingBubble (mirror of V1) ─────────────────────────────────
+// The store fields (`thinking`, `streamingText`, `streamTokenStats`,
+// `requestStartTime`) are populated by the persistent manager:* handler
+// registered in TerminalScreen — no separate listener needed here, V2 just
+// subscribes to the store and renders.
+const PHASE_LABELS: Record<string, string> = {
+  analyzing_terminals: 'Terminals...',
+  building_context: 'Kontext...',
+  calling_ai: 'Sende an AI...',
+  streaming: 'Schreibt...',
+  executing_actions: 'Tools...',
+  tool_response: 'Verarbeite...',
+};
+const PHASE_COLOR_MAP: Record<string, number> = {
+  '__sending': 0,
+  'analyzing_terminals': 1, 'building_context': 1, 'calling_ai': 1, 'streaming_start': 1,
+  'tool_response': 2, 'executing_actions': 2,
+  'streaming': 3,
+};
+const PHASE_COLORS = [colors.textDim, colors.primary, '#C8913A', '#22C55E'];
+const PHASE_TEXT_COLORS = [colors.textDim, colors.textMuted, colors.textMuted, '#4ADE80'];
+
+function ThinkingBubble({ phase, streamingText, onCancel, requestStartTime, tokenStats, mdStyles: mdS }: {
+  phase: string;
+  streamingText: string;
+  onCancel: () => void;
+  requestStartTime: number | null;
+  tokenStats: { completionTokens: number; tps: number } | null;
+  mdStyles: Record<string, any>;
+}) {
+  const bar1 = useRef(new Animated.Value(0.3)).current;
+  const bar2 = useRef(new Animated.Value(0.3)).current;
+  const bar3 = useRef(new Animated.Value(0.3)).current;
+  const [elapsed, setElapsed] = useState(() =>
+    requestStartTime ? (Date.now() - requestStartTime) / 1000 : 0,
+  );
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
+  const isSending = phase === '__sending';
+  const isStreaming = phase === 'streaming' && streamingText.length > 0;
+  const label = isSending ? 'Gesendet...' : (PHASE_LABELS[phase] ?? phase);
+  const tokenCount = tokenStats?.completionTokens ?? 0;
+  const tps = tokenStats?.tps ?? 0;
+  const targetColorIdx = PHASE_COLOR_MAP[phase] ?? 1;
+  const barColor = PHASE_COLORS[targetColorIdx] ?? colors.primary;
+  const textColor = PHASE_TEXT_COLORS[targetColorIdx] ?? colors.textMuted;
+
+  useEffect(() => {
+    const start = requestStartTime ?? Date.now();
+    if (mountedRef.current) setElapsed((Date.now() - start) / 1000);
+    const timer = setInterval(() => {
+      if (mountedRef.current) setElapsed((Date.now() - start) / 1000);
+    }, 100);
+    return () => clearInterval(timer);
+  }, [requestStartTime]);
+
+  useEffect(() => {
+    const animate = (val: Animated.Value, delay: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(val, { toValue: 1, duration: 400, delay, easing: Easing.ease, useNativeDriver: true }),
+          Animated.timing(val, { toValue: 0.3, duration: 400, easing: Easing.ease, useNativeDriver: true }),
+        ]),
+      );
+    const a1 = animate(bar1, 0);
+    const a2 = animate(bar2, 150);
+    const a3 = animate(bar3, 300);
+    a1.start(); a2.start(); a3.start();
+    return () => { a1.stop(); a2.stop(); a3.stop(); };
+  }, [bar1, bar2, bar3]);
+
+  return (
+    <View style={tbStyles.wrap}>
+      <View style={tbStyles.strip}>
+        <View style={tbStyles.main}>
+          <View style={tbStyles.eqWrap}>
+            <Animated.View style={[tbStyles.eqBar, { backgroundColor: barColor, transform: [{ scaleY: bar1 }] }]} />
+            <Animated.View style={[tbStyles.eqBarTall, { backgroundColor: barColor, transform: [{ scaleY: bar2 }] }]} />
+            <Animated.View style={[tbStyles.eqBar, { backgroundColor: barColor, transform: [{ scaleY: bar3 }] }]} />
+          </View>
+          <Text style={[tbStyles.phase, { color: textColor }]}>{label}</Text>
+          <View style={tbStyles.spacer} />
+          {!isSending && (
+            <View style={tbStyles.stats}>
+              {tokenCount > 0 && <Text style={tbStyles.stat}><Text style={tbStyles.statVal}>{tokenCount}</Text> tok</Text>}
+              {tps > 0 && <Text style={tbStyles.stat}><Text style={tbStyles.statVal}>{tps}</Text> t/s</Text>}
+            </View>
+          )}
+          <Text style={tbStyles.time}>{elapsed.toFixed(1)}s</Text>
+        </View>
+        <View style={tbStyles.progressTrack}>
+          <View style={[
+            tbStyles.progressFill,
+            { backgroundColor: barColor },
+            isSending && { width: '2%' },
+            !isSending && !isStreaming && { width: '50%' },
+            isStreaming && { width: '80%' },
+          ]} />
+        </View>
+        {isStreaming && (
+          <ScrollView
+            style={tbStyles.streamWrap}
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+          >
+            <Markdown style={mdS}>{streamingText.length > 2000 ? streamingText.slice(-2000) : streamingText}</Markdown>
+          </ScrollView>
+        )}
+        <TouchableOpacity onPress={onCancel} activeOpacity={0.7}>
+          <Text style={tbStyles.cancel}>Abbrechen</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 function formatMicDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
+
+// ── Wizard Flows (mirror of V1) ────────────────────────────────────────────
+// Multi-step interactive flows triggered by /ppt, /cron, /askill. Each step
+// presents preset options + an optional "custom" fall-through. The final
+// answers are fed into buildPrompt() and sent as a manager:chat message
+// — same prompts V1 uses, so the AI's tool-calling behaviour is unchanged.
+interface WizardOption {
+  icon: string;
+  label: string;
+  hint?: string;
+  value: string;
+}
+interface WizardStep {
+  question: string;
+  options: WizardOption[];
+  allowCustom?: boolean;
+  customPlaceholder?: string;
+}
+interface WizardFlow {
+  cmd: string;
+  title: string;
+  icon: string;
+  steps: WizardStep[];
+  buildPrompt: (answers: string[]) => string;
+}
+const WIZARD_FLOWS: Record<string, WizardFlow> = {
+  '/ppt': {
+    cmd: '/ppt', title: 'Präsentation', icon: '📊',
+    steps: [
+      {
+        question: 'Worüber soll die Präsentation sein?',
+        options: [
+          { icon: '📈', label: 'Projekt-Status', hint: 'Aktueller Stand aller Terminals & Tasks', value: 'Projekt-Status: aktueller Stand aller Terminals, Tasks und Fortschritt' },
+          { icon: '🧠', label: 'Memory & Learnings', hint: 'Was ich gelernt habe', value: 'Memory-Übersicht: alles was du über mich, meine Projekte und Workflows gelernt hast' },
+          { icon: '⚡', label: 'Tech-Stack', hint: 'Technologien & Architektur', value: 'Technologie-Stack und Architektur-Übersicht aller aktiven Projekte' },
+        ],
+        allowCustom: true, customPlaceholder: 'Eigenes Thema...',
+      },
+      {
+        question: 'Welcher Stil?',
+        options: [
+          { icon: '📋', label: 'Kompakt & Daten', hint: 'Charts, Stats, wenig Text', value: 'kompakt und daten-fokussiert mit Charts und Stats' },
+          { icon: '📝', label: 'Ausführlich', hint: 'Mehr Text und Kontext', value: 'ausführlich mit Erklärungen und Kontext' },
+          { icon: '🎨', label: 'Visuell & Creative', hint: 'Gradients, Animationen', value: 'visuell ansprechend mit Gradients und Animationen' },
+        ],
+      },
+    ],
+    buildPrompt: (a) => `[PRÄSENTATION] Erstelle eine Präsentation zum Thema: "${a[0]}". Stil: ${a[1]}. Nutze create_presentation mit 5-8 Slides.`,
+  },
+  '/cron': {
+    cmd: '/cron', title: 'Cron Job', icon: '⏰',
+    steps: [
+      {
+        question: 'Was soll automatisiert werden?',
+        options: [
+          { icon: '🔄', label: 'Git Status Check', hint: 'Alle Repos prüfen', value: 'Git Status in allen Projekt-Verzeichnissen prüfen' },
+          { icon: '🧪', label: 'Tests laufen lassen', hint: 'npm test / pytest', value: 'Automatische Tests laufen lassen' },
+          { icon: '📊', label: 'Status-Report', hint: 'Terminal-Zusammenfassung', value: 'Regelmäßiger Status-Report aller Terminals' },
+        ],
+        allowCustom: true, customPlaceholder: 'Eigene Aufgabe...',
+      },
+      {
+        question: 'Wie oft?',
+        options: [
+          { icon: '⚡', label: 'Alle 15 Min', value: '*/15 * * * *' },
+          { icon: '🕐', label: 'Alle 30 Min', value: '*/30 * * * *' },
+          { icon: '🕑', label: 'Stündlich', value: '0 */1 * * *' },
+          { icon: '📅', label: 'Täglich', value: '0 0 * * *' },
+        ],
+        allowCustom: true, customPlaceholder: 'Eigener Zeitplan (z.B. alle 2h)...',
+      },
+      {
+        question: 'Braucht es Claude oder reicht ein Shell-Befehl?',
+        options: [
+          { icon: '💻', label: 'Shell-Befehl', hint: 'git status, npm test, etc.', value: 'simple' },
+          { icon: '🤖', label: 'Claude Code', hint: 'Für komplexe Aufgaben', value: 'claude' },
+        ],
+      },
+    ],
+    buildPrompt: (a) => `[CRON-SETUP] Erstelle einen Cron Job: Aufgabe="${a[0]}", Zeitplan="${a[1]}", Typ="${a[2]}". Nutze create_cron_job direkt.`,
+  },
+  '/askill': {
+    cmd: '/askill', title: 'Skill erstellen', icon: '⚡',
+    steps: [
+      {
+        question: 'Was für einen Skill brauchst du?',
+        options: [
+          { icon: '🎬', label: 'Media-Konvertierung', hint: 'Video, Audio, Bilder', value: 'Media-Konvertierung (Video, Audio, Bilder umwandeln)' },
+          { icon: '📦', label: 'Daten-Verarbeitung', hint: 'CSV, JSON, APIs', value: 'Daten-Verarbeitung (CSV, JSON, API-Calls, Scraping)' },
+          { icon: '🔧', label: 'System-Automatisierung', hint: 'Cleanup, Backups', value: 'System-Automatisierung (Cleanup, Backups, Monitoring)' },
+        ],
+        allowCustom: true, customPlaceholder: 'Eigene Idee...',
+      },
+      {
+        question: 'Welche Tools/Dependencies?',
+        options: [
+          { icon: '🎥', label: 'ffmpeg', hint: 'Video/Audio', value: 'ffmpeg' },
+          { icon: '🖼️', label: 'ImageMagick', hint: 'Bildverarbeitung', value: 'imagemagick' },
+          { icon: '🐍', label: 'Python', hint: 'Script-basiert', value: 'python3' },
+          { icon: '📦', label: 'Node.js', hint: 'JavaScript', value: 'node' },
+        ],
+        allowCustom: true, customPlaceholder: 'Andere Dependencies...',
+      },
+    ],
+    buildPrompt: (a) => `[SKILL-ERSTELLUNG] Erstelle einen Skill: "${a[0]}". Dependencies: ${a[1]}. Nutze self_education Tool.`,
+  },
+};
+
+// ── Slash Commands (mirror of V1) ─────────────────────────────────────────
+// Mirrors the list in ManagerChatScreen.tsx so V2 has the same quick-actions.
+// Wizard-based commands (/ppt, /cron, /askill) currently fall through and are
+// sent as plain text — the V1 wizard UI hasn't been ported. The simple ones
+// (/sm, /clear, /reset, /memory, /help) execute inline.
+const SLASH_COMMANDS = [
+  { cmd: '/sm', desc: 'Terminal-Zusammenfassung' },
+  { cmd: '/askill', desc: 'Skill erstellen' },
+  { cmd: '/cron', desc: 'Cron Job einrichten' },
+  { cmd: '/ppt', desc: 'Präsentation erstellen' },
+  { cmd: '/reset', desc: 'Agent zurücksetzen' },
+  { cmd: '/clear', desc: 'Chat leeren' },
+  { cmd: '/memory', desc: 'Memory-Viewer öffnen' },
+  { cmd: '/help', desc: 'Befehle anzeigen' },
+];
 
 // Markdown styles — kept in sync with V1's mdStyles (ManagerChatScreen.tsx) so
 // assistant messages render identically across V1/V2.
@@ -84,11 +383,14 @@ const mdStyles = {
   bullet_list: { marginVertical: 4 },
   ordered_list: { marginVertical: 4 },
   list_item: { marginVertical: 1 },
-  code_inline: { backgroundColor: '#243044', color: '#06B6D4', fontFamily: 'monospace', fontSize: 11, paddingHorizontal: 4, borderRadius: 3 },
-  fence: { backgroundColor: '#243044', padding: 8, borderRadius: 8, marginVertical: 4 },
-  code_block: { color: '#F8FAFC', fontFamily: 'monospace', fontSize: 11 },
+  // Override the library's hard-coded light-grey defaults — without these
+  // explicit values, blockquote ends up with #F5F5F5 (white) and our white
+  // body text becomes invisible. Same fix applies for fence/code_block.
+  code_inline: { backgroundColor: '#243044', color: '#06B6D4', fontFamily: 'monospace', fontSize: 11, paddingHorizontal: 4, borderRadius: 3, borderWidth: 0 },
+  fence: { backgroundColor: '#243044', color: '#F8FAFC', padding: 8, borderRadius: 8, marginVertical: 4, borderWidth: 0 },
+  code_block: { backgroundColor: '#243044', color: '#F8FAFC', fontFamily: 'monospace', fontSize: 11, padding: 8, borderRadius: 8, marginVertical: 4, borderWidth: 0 },
   link: { color: '#3B82F6' },
-  blockquote: { borderLeftColor: '#3B82F6', borderLeftWidth: 3, paddingLeft: 8, marginVertical: 4 },
+  blockquote: { backgroundColor: 'rgba(59,130,246,0.08)', borderLeftColor: '#3B82F6', borderLeftWidth: 3, borderColor: 'transparent', paddingLeft: 10, paddingRight: 8, paddingVertical: 6, marginVertical: 4, marginLeft: 0, borderRadius: 4 },
   hr: { backgroundColor: '#334155' },
   paragraph: { marginVertical: 2 },
 };
@@ -144,6 +446,494 @@ function LightboxContent({ imageUri, onClose, children }: {
   );
 }
 
+// Themed confirm-dialog styles. Slate card on a dimmed backdrop, destructive
+// red used only on the confirm CTA so the dialog reads as "warning, not info".
+const cdStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#1B2336',
+    borderRadius: 16,
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 24,
+    elevation: 12,
+  },
+  iconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(239,68,68,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  title: {
+    color: '#F8FAFC',
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    marginBottom: 6,
+  },
+  body: {
+    color: '#94A3B8',
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 18,
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  btn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnCancel: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  btnCancelText: {
+    color: '#94A3B8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  btnConfirm: {
+    backgroundColor: '#EF4444',
+  },
+  btnConfirmText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.1,
+  },
+});
+
+// Wizard-card styles — direct port from V1's wizardStyles. Uses raw hex
+// values for the bubble interior so the look is identical to ManagerChatScreen.
+const ws = StyleSheet.create({
+  wrap: { paddingHorizontal: 12, paddingBottom: 8 },
+  bubble: {
+    backgroundColor: '#1B2336',
+    borderRadius: 16,
+    borderTopLeftRadius: 4,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.04)',
+  },
+  labelRow: { marginBottom: 8 },
+  labelBadge: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.primary,
+    backgroundColor: 'rgba(59,130,246,0.08)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    overflow: 'hidden',
+  },
+  progress: { flexDirection: 'row', gap: 4, marginBottom: 10 },
+  pDot: {
+    height: 3,
+    flex: 1,
+    borderRadius: 2,
+    backgroundColor: 'rgba(148,163,184,0.08)',
+  },
+  pDotActive: { backgroundColor: colors.primary },
+  pDotDone: { backgroundColor: '#22C55E' },
+  question: {
+    fontSize: 14,
+    color: '#CBD5E1',
+    fontWeight: '500',
+    marginBottom: 10,
+    lineHeight: 20,
+  },
+  options: { gap: 6 },
+  optBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 11,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.06)',
+    borderRadius: 10,
+  },
+  optIcon: { fontSize: 16, width: 24, textAlign: 'center' },
+  optText: { flex: 1 },
+  optLabel: { fontSize: 13, color: '#F8FAFC', fontWeight: '500' },
+  optHint: { fontSize: 10, color: '#64748B', marginTop: 1 },
+  cancel: {
+    fontSize: 10,
+    color: colors.textDim,
+    textAlign: 'center',
+    marginTop: 10,
+  },
+});
+
+// ThinkingBubble strip styles — direct port from V1's stripStyles, kept
+// separate from the main `s` sheet because the bubble lives outside the
+// component closure (top-level function).
+const tbStyles = StyleSheet.create({
+  wrap: { paddingHorizontal: 12, paddingBottom: 4 },
+  strip: {
+    backgroundColor: '#1B2336',
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.04)',
+  },
+  main: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 9, gap: 10 },
+  eqWrap: { flexDirection: 'row', alignItems: 'center', gap: 2.5, height: 16 },
+  eqBar: { width: 3, height: 12, borderRadius: 1.5 },
+  eqBarTall: { width: 3, height: 16, borderRadius: 1.5 },
+  phase: { fontSize: 12, color: colors.textMuted, fontWeight: '500' },
+  spacer: { flex: 1 },
+  stats: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  stat: { fontSize: 9, fontFamily: fonts.mono, color: colors.textDim },
+  statVal: { fontWeight: '600', color: colors.textMuted },
+  time: { fontSize: 10, fontFamily: fonts.mono, color: colors.textDim, minWidth: 32, textAlign: 'right' },
+  progressTrack: { height: 2, backgroundColor: 'rgba(59,130,246,0.06)' },
+  progressFill: { height: '100%' as const, backgroundColor: colors.primary },
+  streamWrap: {
+    maxHeight: Dimensions.get('window').height * 0.5,
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 4,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148,163,184,0.04)',
+  },
+  cancel: { fontSize: 10, color: colors.textDim, paddingHorizontal: 14, paddingVertical: 6 },
+});
+
+// Floating task-panel styles. Anchored top-right via absolute, with a tap-
+// outside dismiss layer. Visual lineage: V1's inline taskPanel, restyled
+// for V2's denser top-of-screen chrome.
+const tp = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  panel: {
+    position: 'absolute',
+    right: 12,
+    width: 320,
+    maxWidth: '92%',
+    backgroundColor: '#1B2336',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
+    elevation: 12,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  title: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: -0.1,
+    flex: 1,
+  },
+  headerStats: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+  },
+  headerStat: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontFamily: fonts.mono,
+  },
+  headerStatVal: {
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  progressTrack: {
+    height: 3,
+    backgroundColor: 'rgba(148,163,184,0.08)',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginBottom: 6,
+  },
+  progressFill: {
+    height: '100%' as const,
+    backgroundColor: '#10B981',
+    borderRadius: 2,
+  },
+  empty: {
+    color: colors.textDim,
+    fontSize: 12,
+    textAlign: 'center',
+    paddingVertical: 18,
+    fontStyle: 'italic',
+  },
+  taskGroup: {
+    marginBottom: 8,
+    paddingTop: 4,
+  },
+  groupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
+  groupLabel: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+  },
+  metaMono: {
+    color: colors.textDim,
+    fontSize: 9,
+    fontFamily: fonts.mono,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 3,
+    paddingLeft: 4,
+  },
+  checkbox: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: colors.primary,
+  },
+  stepText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    flex: 1,
+    lineHeight: 15,
+  },
+  runningBadge: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: colors.primary,
+    backgroundColor: colors.primary + '15',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    letterSpacing: 0.5,
+  },
+  nextBadge: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#F59E0B',
+    backgroundColor: 'rgba(245,158,11,0.1)',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    letterSpacing: 0.5,
+  },
+});
+
+// Long-press message menu — bottom sheet with copy/delete actions. Themed
+// to match V2 (slate card on dimmed backdrop, no native Alert chrome).
+const mm = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: '#1B2336',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingTop: 8,
+    paddingHorizontal: 14,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    marginBottom: 12,
+  },
+  heading: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+    paddingHorizontal: 4,
+  },
+  preview: {
+    color: colors.textDim,
+    fontSize: 12,
+    lineHeight: 17,
+    paddingHorizontal: 4,
+    marginBottom: 12,
+  },
+  action: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginBottom: 4,
+  },
+  actionDestructive: {},
+  actionText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  actionDestructiveText: {
+    color: colors.destructive,
+  },
+  cancel: {
+    marginTop: 6,
+    marginBottom: 4,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  cancelText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+});
+
+const rs = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: '#1B2336',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingTop: 8,
+    paddingHorizontal: 14,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    marginBottom: 12,
+  },
+  heading: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '700',
+    paddingHorizontal: 4,
+    marginBottom: 4,
+  },
+  preview: {
+    color: colors.textDim,
+    fontSize: 12,
+    lineHeight: 17,
+    paddingHorizontal: 4,
+    marginBottom: 12,
+  },
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: colors.text,
+    fontSize: 15,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  btnRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 4,
+  },
+  btnSecondary: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  btnSecondaryText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  btnPrimary: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 10,
+    backgroundColor: colors.primary,
+  },
+  btnPrimaryText: {
+    color: '#0B1220',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  resetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    marginTop: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  resetText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+});
+
 const lbStyles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
   close: { position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 },
@@ -182,6 +972,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
 
   // ── Stores ─────────────────────────────────────────────────────────────────
   const personality = useManagerStore((s) => s.personality);
+  const allMessages = useManagerStore((s) => s.messages);
   const sessionMessages = useManagerStore((s) => s.sessionMessages);
   const activeChat = useManagerStore((s) => s.activeChat);
   const setActiveChat = useManagerStore((s) => s.setActiveChat);
@@ -194,23 +985,106 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   const setLoading = useManagerStore((s) => s.setLoading);
   const clearSessionMessages = useManagerStore((s) => s.clearSessionMessages);
   const addMessage = useManagerStore((s) => s.addMessage);
+  const deleteMessage = useManagerStore((s) => s.deleteMessage);
+  const setPersonality = useManagerStore((s) => s.setPersonality);
+  const setOnboarded = useManagerStore((s) => s.setOnboarded);
+  // Thinking / streaming subscriptions — populated by the persistent
+  // manager:* handler in TerminalScreen, rendered as a strip below the chat
+  // history while the AI is processing.
+  const thinking = useManagerStore((s) => s.thinking);
+  const streamingText = useManagerStore((s) => s.streamingText);
+  const streamTokenStats = useManagerStore((s) => s.streamTokenStats);
+  const requestStartTime = useManagerStore((s) => s.requestStartTime);
+  const setThinking = useManagerStore((s) => s.setThinking);
+  const addError = useManagerStore((s) => s.addError);
+
+  // Wizard state — drives the multi-step picker for /ppt /cron /askill.
+  const [wizard, setWizard] = useState<{ flow: WizardFlow; step: number; answers: string[] } | null>(null);
+  // Floating task panel — opens below the active-task badge in the header.
+  const [taskPanelOpen, setTaskPanelOpen] = useState(false);
+  // Long-press message menu — kopieren / löschen for any chat bubble.
+  const [messageMenu, setMessageMenu] = useState<{ id: string; text: string; role: string } | null>(null);
+  // Rename-sheet state — set by long-press on a pane header in MultiSpotlight.
+  // `tabId` identifies the tab being renamed; `value` is the controlled
+  // TextInput state. `null` means the sheet is closed.
+  const [renameSheet, setRenameSheet] = useState<{ tabId: string } | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const onboarded = useManagerStore((s) => s.onboarded);
   const voicePromptEnhanceEnabled = useSettingsStore((s) => s.voicePromptEnhanceEnabled);
 
   const tabs = useTerminalStore((s) => s.tabs[serverId] ?? []);
   const server = useServerStore((s) => s.servers.find((sv) => sv.id === serverId));
 
+  // AI-thinking state per session — set true when a CLI in that pane is busy
+  // (Claude "Contemplating…", "esc to interrupt", etc.). Drives the pane glow.
+  // Only flipped sessions live in the map; idle sessions are pruned to keep
+  // the object stable and re-render-friendly.
+  const [thinkingMap, setThinkingMap] = useState<Record<string, boolean>>({});
+  // Renamed from `setThinking` to avoid collision with the manager-chat
+  // thinking callback that already lives in this component.
+  const setPaneThinking = useCallback((sid: string, thinking: boolean) => {
+    // Diagnostic — remove once the glow is verified working in the wild.
+    // eslint-disable-next-line no-console
+    console.log('[GLOW] setPaneThinking', sid, thinking);
+    setThinkingMap((prev) => {
+      if (prev[sid] === thinking) return prev;
+      if (!thinking) {
+        if (!(sid in prev)) return prev;
+        const { [sid]: _drop, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [sid]: true };
+    });
+  }, []);
+  const thinkingFor = useCallback(
+    (sid: string) => thinkingMap[sid] === true,
+    [thinkingMap],
+  );
+  // Prune entries for sessions that no longer have a tab record (terminal closed).
+  useEffect(() => {
+    setThinkingMap((prev) => {
+      const live = new Set(tabs.map((t) => t.sessionId).filter(Boolean) as string[]);
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const k of Object.keys(prev)) {
+        if (live.has(k)) next[k] = prev[k];
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [tabs]);
+
   const paneGroupsLoaded = usePaneGroupsStore((s) => s.loaded);
   const loadPaneGroups = usePaneGroupsStore((s) => s.load);
   const groups = usePaneGroupsStore((s) => s.groups[serverId] ?? []);
   const activeGroupId = usePaneGroupsStore((s) => s.activeId[serverId] ?? null);
   const saveGroup = usePaneGroupsStore((s) => s.saveGroup);
+  const updateGroup = usePaneGroupsStore((s) => s.updateGroup);
   const removeGroup = usePaneGroupsStore((s) => s.removeGroup);
   const setActiveGroup = usePaneGroupsStore((s) => s.setActive);
 
   useEffect(() => {
     if (!paneGroupsLoaded) loadPaneGroups();
   }, [paneGroupsLoaded, loadPaneGroups]);
+
+  // ── Sync terminal labels to Manager Agent ────────────────────────────────
+  // Mirrors V1's ManagerChatScreen useEffect. Without this, the server-side
+  // AI has no knowledge of which terminals exist (no sessionId list, no
+  // names) and falls back to "answer with text" mode — its tool calls like
+  // write_to_terminal can't target a valid session, so it skips them.
+  // Fires whenever tabs change (open/close/rename/CWD update).
+  useEffect(() => {
+    if (tabs.length === 0) return;
+    const labels = tabs
+      .map((tab, idx) => ({
+        sessionId: tab.sessionId ?? '',
+        name: `Shell ${idx + 1} · ${tabDisplayName(tab)}`,
+      }))
+      .filter((l) => l.sessionId);
+    if (labels.length > 0) {
+      wsService.send({ type: 'manager:sync_labels', payload: { labels } } as any);
+    }
+  }, [tabs, wsService]);
 
   // Subscribe to TTS results so the speaker button on assistant messages flips
   // to a playable VoiceMessagePlayer. Mirrors V1's ttsHandler exactly.
@@ -233,6 +1107,25 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   // Subscribe to audio:* messages. Route the result based on voiceTargetSidRef:
   // - null  → chat input (mic in the input bar)
   // - sid   → inject into that pane's terminal (mic orb in the sidebar)
+  // Transcription inactivity watchdog — without it the mic stays stuck on
+  // 'processing' forever if the result never arrives. Reset on audio:progress.
+  const transcriptionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearTxTimer = useCallback(() => {
+    if (transcriptionTimerRef.current) { clearTimeout(transcriptionTimerRef.current); transcriptionTimerRef.current = null; }
+  }, []);
+  const armTxTimer = useCallback(() => {
+    clearTxTimer();
+    transcriptionTimerRef.current = setTimeout(() => {
+      transcriptionTimerRef.current = null;
+      setMicState('idle');
+      setRecordingDuration(0);
+      setVoiceFullscreen(false);
+      voiceTargetSidRef.current = null;
+      setMicFlow(null);
+      Alert.alert('Transkription Timeout', 'Keine Antwort vom Server – bitte erneut versuchen.');
+    }, 150_000);
+  }, [clearTxTimer]);
+
   useEffect(() => {
     const handler = (data: unknown) => {
       const msg = data as { type: string; sessionId?: string; payload?: any };
@@ -242,6 +1135,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
 
       switch (msg.type) {
         case 'audio:transcription':
+          clearTxTimer();
           if (msg.payload?.text) {
             const text: string = msg.payload.text;
             const targetSid = voiceTargetSidRef.current;
@@ -262,12 +1156,14 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           setMicFlow(null);
           break;
         case 'audio:progress':
+          armTxTimer();
           if (msg.payload?.chunk && msg.payload?.total) {
             setMicState('processing');
             setRecordingDuration(-msg.payload.chunk);
           }
           break;
         case 'audio:error':
+          clearTxTimer();
           Alert.alert('Transkription fehlgeschlagen', msg.payload?.message ?? 'Unbekannter Fehler');
           setMicState('idle');
           setRecordingDuration(0);
@@ -278,7 +1174,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       }
     };
     return wsService.addMessageListener(handler);
-  }, [wsService]);
+  }, [wsService, clearTxTimer, armTxTimer]);
 
   // Stop the recording + timer if the screen unmounts mid-record so we don't
   // leak the Audio.Recording handle (the OS will eventually reclaim it but
@@ -289,6 +1185,10 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
         clearInterval(durationTimerRef.current);
         durationTimerRef.current = null;
       }
+      if (transcriptionTimerRef.current) {
+        clearTimeout(transcriptionTimerRef.current);
+        transcriptionTimerRef.current = null;
+      }
       if (recordingRef.current) {
         recordingRef.current.stopAndUnloadAsync().catch(() => {});
         recordingRef.current = null;
@@ -297,13 +1197,41 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   }, []);
 
   // ── Local state ────────────────────────────────────────────────────────────
-  const [mode, setMode] = useState<SpotlightMode>(2);
+  // Mount-time restore: if an active group exists from a previous session,
+  // start with its panes/mode instead of the default. Otherwise default to
+  // first 2 tabs of this server (or empty slots). Without this, every
+  // remount of ManagerChatV2 would clobber the active group's auto-save
+  // (mount → defaults → useEffect persists defaults to the active group).
+  const [mode, setMode] = useState<SpotlightMode>(() => {
+    const store = usePaneGroupsStore.getState();
+    const activeId = store.activeId[serverId];
+    if (activeId) {
+      const g = (store.groups[serverId] || []).find((x) => x.id === activeId);
+      if (g) {
+        return (g.terminals.length === 1 ? 1 : g.terminals.length === 2 ? 2 : 4) as SpotlightMode;
+      }
+    }
+    return 2;
+  });
   const [panes, setPanes] = useState<(string | null)[]>(() => {
-    // Default: first 2 tabs of this server (or empty slots).
+    const store = usePaneGroupsStore.getState();
+    const activeId = store.activeId[serverId];
+    if (activeId) {
+      const g = (store.groups[serverId] || []).find((x) => x.id === activeId);
+      if (g) return [...g.terminals];
+    }
     const initial = tabs.slice(0, 2).map((t) => t.sessionId ?? null);
     while (initial.length < 2) initial.push(null);
     return initial;
   });
+  // Gate for the auto-save effect. True from the start if the store was
+  // already hydrated at mount (warm path); flipped by the restore effect
+  // below once async hydration finishes (cold path). Without this gate,
+  // a cold start would fire auto-save with default panes BEFORE the saved
+  // active-group state could be restored — silently corrupting the group.
+  const [autoSaveReady, setAutoSaveReady] = useState(
+    () => usePaneGroupsStore.getState().loaded,
+  );
   const [activePaneIdx, setActivePaneIdx] = useState(0);
   // Chat-as-target selection: tap on the chat to mark it active (subtle top
   // border) — mirrors the pane-active highlight so the user can tell which
@@ -349,6 +1277,13 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   // uses an empty deps array to avoid re-subscribing).
   const toolMenuVisibleRef = useRef(false);
   toolMenuVisibleRef.current = toolMenuVisible;
+
+  // Active tool panel (bottom-sheet). Mirrors TerminalScreen.tsx so all
+  // panel tools work the same way in the manager chat.
+  const [activePanelTool, setActivePanelTool] = useState<string | null>(null);
+  // Pane the panel was opened from, captured at open-time so the panel keeps
+  // targeting the right session even if focusedPaneIdx changes mid-flight.
+  const panelTargetSidRef = useRef<string | null>(null);
 
   const spotlightRef = useRef<MultiSpotlightRef>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -429,12 +1364,6 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     });
   }, []);
 
-  // ── Tool menu (focus-mode only) ────────────────────────────────────────────
-  const handleOpenTools = useCallback((position: { x: number; y: number }) => {
-    setToolMenuAnchor(position);
-    setToolMenuVisible(true);
-  }, []);
-
   // Re-open the focused pane's soft keyboard after a child modal closes.
   // setTimeout + requestAnimationFrame gives the layout a chance to settle so
   // Android actually shows the keyboard instead of swallowing the focus call.
@@ -444,10 +1373,96 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     }
   }, [focusedPaneIdx]);
 
+  // ── Rename sheet (long-press a pane header to rename the terminal) ────────
+  const handlePaneLongPress = useCallback((idx: number) => {
+    const sid = panes[idx];
+    if (!sid) return;                                  // empty pane → no-op
+    const tab = tabs.find((t) => t.sessionId === sid);
+    if (!tab) return;                                  // session without tab record
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setRenameValue(tab.title);
+    setRenameSheet({ tabId: tab.id });
+  }, [panes, tabs]);
+
+  const commitRename = useCallback(() => {
+    if (!renameSheet) return;
+    const trimmed = renameValue.trim();
+    if (trimmed.length > 0) {
+      useTerminalStore.getState().updateTab(serverId, renameSheet.tabId, {
+        title: trimmed,
+        customTitle: true,
+      });
+    }
+    setRenameSheet(null);
+    setRenameValue('');
+    refocusFocusedPane();
+  }, [renameSheet, renameValue, serverId, refocusFocusedPane]);
+
+  const resetToAutoName = useCallback(() => {
+    if (!renameSheet) return;
+    useTerminalStore.getState().updateTab(serverId, renameSheet.tabId, {
+      customTitle: false,
+    });
+    setRenameSheet(null);
+    setRenameValue('');
+    refocusFocusedPane();
+  }, [renameSheet, serverId, refocusFocusedPane]);
+
+  const closeRenameSheet = useCallback(() => {
+    setRenameSheet(null);
+    setRenameValue('');
+    refocusFocusedPane();
+  }, [refocusFocusedPane]);
+
+  // ── Header browser shortcut ───────────────────────────────────────────────
+  // Tapping the globe icon in the V2 header opens the per-server browser
+  // screen, scoped to the active pane's terminal (or the first available
+  // tab as fallback). BrowserScreen uses navigation.goBack(), so returning
+  // lands the user back here with no extra wiring.
+  const handleHeaderBrowserPress = useCallback(() => {
+    const activeSid = panes[activePaneIdx];
+    const activeTab = activeSid ? tabs.find((t) => t.sessionId === activeSid) : null;
+    const tab = activeTab ?? tabs[0];
+    if (!tab) {
+      Alert.alert('Browser', 'Kein aktiver Terminal-Tab.');
+      return;
+    }
+    if (!tab.browserOpen) {
+      useTerminalStore.getState().updateTab(serverId, tab.id, { browserOpen: true });
+    }
+    navigation.navigate('Browser', {
+      serverHost,
+      serverId,
+      terminalTabId: tab.id,
+    } as any);
+  }, [panes, activePaneIdx, tabs, serverId, serverHost, navigation]);
+
+  // True when *any* terminal on this server has its browser open. Drives the
+  // header globe icon's tint so the user gets a passive "browser is live"
+  // signal without having to navigate in to check.
+  const anyBrowserOpen = useMemo(() => tabs.some((t) => t.browserOpen), [tabs]);
+
+  // ── Tool menu (focus-mode only) ────────────────────────────────────────────
+  const handleOpenTools = useCallback((position: { x: number; y: number }) => {
+    setToolMenuAnchor(position);
+    setToolMenuVisible(true);
+  }, []);
+
   const handleCloseToolMenu = useCallback(() => {
     setToolMenuVisible(false);
     refocusFocusedPane();
   }, [refocusFocusedPane]);
+
+  // Hoisted above handleSelectTool/renderPanelContent so their useCallback
+  // closures can reference it without hitting TDZ on first render.
+  const activeSessionId = panes[activePaneIdx];
+
+  // Panel tools that mount a child component inside ToolPanelSheet (mirrors
+  // TerminalScreen's panelTools list — keep in sync if you add new panels).
+  const PANEL_TOOLS = useMemo(
+    () => new Set(['autoApprove', 'snippets', 'files', 'screenshots', 'sql', 'autopilot', 'watchers', 'ports', 'render', 'vercel', 'supabase']),
+    [],
+  );
 
   const handleSelectTool = useCallback((toolId: string) => {
     setToolMenuVisible(false);
@@ -476,21 +1491,129 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       navigation.navigate('Processes', { wsService } as any);
       return;
     }
-    // Panel tools that V2 doesn't host yet — show a hint and stay in focus mode.
+    // Panel tools open as a bottom sheet over the spotlight stage.
+    if (PANEL_TOOLS.has(toolId)) {
+      // Capture the focused pane's session at open-time so the panel keeps
+      // targeting it even if the user taps elsewhere while the sheet is up.
+      panelTargetSidRef.current = focusedPaneIdx != null ? panes[focusedPaneIdx] ?? null : activeSessionId ?? null;
+      setActivePanelTool(toolId);
+      return;
+    }
+    // Unknown tool — stay in focus mode and surface the gap.
     Alert.alert(
       'Tool',
-      `"${toolId}" ist hier im Manager-Chat noch nicht angeschlossen — bitte im Terminal-Screen öffnen.`,
+      `"${toolId}" ist nicht verfügbar.`,
       [{ text: 'OK', onPress: refocusFocusedPane }],
     );
-  }, [exitPaneFocus, navigation, serverHost, server, serverPort, serverToken, serverId, focusedPaneIdx, panes, tabs, wsService, refocusFocusedPane]);
+  }, [PANEL_TOOLS, exitPaneFocus, navigation, serverHost, server, serverPort, serverToken, serverId, focusedPaneIdx, panes, tabs, wsService, refocusFocusedPane, activeSessionId]);
+
+  // Panel content factory — same switch as TerminalScreen.tsx but keyed off
+  // the captured pane session (panelTargetSidRef) instead of "active tab".
+  const renderPanelContent = useCallback(() => {
+    if (!activePanelTool) return null;
+    const targetSid = panelTargetSidRef.current ?? activeSessionId ?? undefined;
+    switch (activePanelTool) {
+      case 'autoApprove':
+        return <AutoApprovePanel serverId={serverId} />;
+      case 'snippets':
+        return <SnippetsPanel sessionId={targetSid} wsService={wsService} />;
+      case 'files':
+        return (
+          <FileBrowserPanel
+            serverHost={serverHost}
+            serverPort={server?.port ?? serverPort}
+            serverToken={server?.token ?? serverToken}
+            sessionId={targetSid}
+            wsService={wsService}
+          />
+        );
+      case 'screenshots':
+        return (
+          <ScreenshotPanel
+            sessionId={targetSid}
+            wsService={wsService}
+            serverHost={serverHost}
+            serverPort={server?.port ?? serverPort}
+            serverToken={server?.token ?? serverToken}
+            onUploaded={(path) => {
+              // Deliver to the pane captured when the panel opened, falling back
+              // to the active session — so the path is never silently dropped.
+              const sid = panelTargetSidRef.current ?? activeSessionId;
+              if (sid) wsService.send({ type: 'terminal:input', sessionId: sid, payload: { data: path } });
+            }}
+          />
+        );
+      case 'sql':
+        return <SQLPanel sessionId={targetSid} serverId={serverId} />;
+      case 'autopilot':
+        return <AutopilotPanel sessionId={targetSid} wsService={wsService} serverId={serverId} />;
+      case 'watchers':
+        return <WatchersPanel serverId={serverId} wsService={wsService} />;
+      case 'ports':
+        return <PortForwardingPanel serverId={serverId} />;
+      case 'render':
+        return <RenderPanel />;
+      case 'vercel':
+        return <VercelPanel />;
+      default:
+        return null;
+    }
+  }, [activePanelTool, serverId, serverHost, serverPort, serverToken, server, wsService, activeSessionId]);
+
+  const handleClosePanel = useCallback(() => {
+    setActivePanelTool(null);
+    panelTargetSidRef.current = null;
+    refocusFocusedPane();
+  }, [refocusFocusedPane]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
+  // "Alle" shows the flat global feed; a specific chip shows that pane's
+  // bucket. Previously this returned [] for "Alle" — that's why typing in the
+  // chat did nothing visible (the messages were stored, the FlatList just
+  // wasn't seeing them).
   const messages = useMemo(
-    () => (activeChat === 'alle' ? [] : sessionMessages[activeChat] ?? []),
-    [activeChat, sessionMessages],
+    () => (activeChat === 'alle' ? allMessages : sessionMessages[activeChat] ?? []),
+    [activeChat, allMessages, sessionMessages],
   );
 
-  const activeSessionId = panes[activePaneIdx];
+  // activeSessionId is hoisted above handleSelectTool — see earlier in this file.
+
+  // ── Direct-mode (terminal) input mirroring ───────────────────────────────
+  // In terminal input mode, every keystroke mirrors *immediately* to the
+  // active pane via terminal:input — including backspaces. Enter then sends
+  // a bare \r to execute. Without this, the input was buffered and only
+  // flushed once on submit (with \n which most shells ignore as command
+  // delimiter), so users couldn't iterate or delete typos.
+  const prevTerminalInputRef = useRef('');
+
+  // Reset the diff baseline whenever the user switches modes or active pane.
+  useEffect(() => {
+    prevTerminalInputRef.current = '';
+  }, [inputMode, activeSessionId]);
+
+  const handleInputChange = useCallback((newText: string) => {
+    if (inputMode === 'terminal' && activeSessionId) {
+      // Common-prefix diff: how many chars to backspace, then what to insert.
+      const prev = prevTerminalInputRef.current;
+      let cp = 0;
+      const minLen = Math.min(prev.length, newText.length);
+      while (cp < minLen && prev.charCodeAt(cp) === newText.charCodeAt(cp)) cp++;
+      const toDelete = prev.length - cp;
+      const toInsert = newText.slice(cp);
+      let payload = '';
+      for (let i = 0; i < toDelete; i++) payload += '\x7f'; // DEL = backspace in xterm
+      payload += toInsert;
+      if (payload) {
+        wsService.send({
+          type: 'terminal:input',
+          sessionId: activeSessionId,
+          payload: { data: payload },
+        } as any);
+      }
+      prevTerminalInputRef.current = newText;
+    }
+    setInput(newText);
+  }, [inputMode, activeSessionId, wsService]);
 
   const labelFor = useCallback((sid: string) => {
     const t = tabs.find((x) => x.sessionId === sid);
@@ -561,6 +1684,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     setMode(newMode);
     setPanes(newPanes.slice(0, newMode));
     setActivePaneIdx(0);
+    setExpandedPaneIdx(null);
     setActiveGroup(serverId, groupId);
   }, [groups, serverId, setActiveGroup]);
 
@@ -573,13 +1697,69 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     saveGroup(serverId, name, panes.slice(0, mode));
   }, [serverId, panes, mode, saveGroup]);
 
+  // ── Cold-start restore — if AsyncStorage hydration finished AFTER mount,
+  // pull the active group's panes into local state ONCE, then arm auto-save.
+  useEffect(() => {
+    if (autoSaveReady) return;
+    if (!paneGroupsLoaded) return;
+    const store = usePaneGroupsStore.getState();
+    const activeId = store.activeId[serverId];
+    if (activeId) {
+      const g = (store.groups[serverId] || []).find((x) => x.id === activeId);
+      if (g && g.terminals.length > 0) {
+        const newMode: SpotlightMode = (
+          g.terminals.length === 1 ? 1 : g.terminals.length === 2 ? 2 : 4
+        ) as SpotlightMode;
+        setMode(newMode);
+        setPanes([...g.terminals]);
+        setActivePaneIdx(0);
+      }
+    }
+    setAutoSaveReady(true);
+  }, [paneGroupsLoaded, autoSaveReady, serverId]);
+
+  // ── Auto-save: active group <- live pane layout ───────────────────────────
+  // When a group is active, every pane / mode change persists into that group
+  // so switching between groups round-trips the latest state. Without this,
+  // groups behaved as one-shot snapshots: changes after save were lost on
+  // group switch ("verworfen"). Guarded by autoSaveReady so the lazy-init or
+  // restore step has already populated panes from the store.
+  useEffect(() => {
+    if (!autoSaveReady || !activeGroupId) return;
+    updateGroup(serverId, activeGroupId, panes.slice(0, mode));
+  }, [autoSaveReady, activeGroupId, serverId, panes, mode, updateGroup]);
+
+  // ── Inline group editor (lives in the merged toolbar) ──────────────────────
+  const [groupEditing, setGroupEditing] = useState(false);
+  const [groupEditName, setGroupEditName] = useState('');
+  const groupInputRef = useRef<TextInput>(null);
+  const startGroupEdit = useCallback(() => {
+    setGroupEditName('');
+    setGroupEditing(true);
+    requestAnimationFrame(() => groupInputRef.current?.focus());
+  }, []);
+  const commitGroupEdit = useCallback(() => {
+    const name = groupEditName.trim();
+    if (name) onSaveGroup(name);
+    setGroupEditing(false);
+    setGroupEditName('');
+  }, [groupEditName, onSaveGroup]);
+  const cancelGroupEdit = useCallback(() => {
+    setGroupEditing(false);
+    setGroupEditName('');
+  }, []);
+
   // ── Spotlight callbacks ────────────────────────────────────────────────────
+  // Expand-toggle: instead of mutating mode/panes (which would auto-save into
+  // the active group and lose the other slots), we keep the layout intact
+  // and just overlay the selected pane on top of the grid via the existing
+  // `focusedPaneIndex` mechanism in MultiSpotlight. Second tap = collapse.
+  const [expandedPaneIdx, setExpandedPaneIdx] = useState<number | null>(null);
   const onPromote = useCallback((slot: number) => {
     const sid = panes[slot];
     if (!sid) return;
-    setMode(1);
-    setPanes([sid]);
-    setActivePaneIdx(0);
+    setExpandedPaneIdx((cur) => (cur === slot ? null : slot));
+    setActivePaneIdx(slot);
   }, [panes]);
 
   const onSelectEmptyPane = useCallback((slot: number) => {
@@ -595,6 +1775,9 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       return next;
     });
     if (activePaneIdx >= m) setActivePaneIdx(0);
+    // Mode change exits the expanded view — the user explicitly picked a
+    // different layout, the overlay no longer represents their intent.
+    setExpandedPaneIdx(null);
   }, [activePaneIdx]);
 
   const onChipPress = useCallback((sessionId: string) => {
@@ -604,6 +1787,92 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       return next;
     });
   }, [activePaneIdx]);
+
+  // ── Long-press close: groups (toolbar pills) and terminals (chip bar) ─────
+  // Native Alert.alert clashes with the app's dark slate aesthetic, so we use
+  // a custom themed confirmation modal driven by state. The pending action is
+  // captured in `confirmDialog` and fired on the user's "Bestätigen" tap.
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    body: string;
+    confirmLabel: string;
+    icon: 'trash-2' | 'x-circle' | 'alert-triangle';
+    onConfirm: () => void;
+  } | null>(null);
+
+  const confirmCloseGroup = useCallback((groupId: string, name: string) => {
+    if (groups.length <= 1) return; // mirror onDeleteGroup guard
+    setConfirmDialog({
+      title: 'Gruppe löschen',
+      body: `"${name}" wird unwiderruflich entfernt.`,
+      confirmLabel: 'Löschen',
+      icon: 'trash-2',
+      onConfirm: () => onDeleteGroup(groupId),
+    });
+  }, [groups.length, onDeleteGroup]);
+
+  const confirmCloseTerminal = useCallback((tabId: string, sessionId: string, label: string) => {
+    setConfirmDialog({
+      title: 'Terminal schließen',
+      body: `"${label}" wird beendet — laufende Prozesse werden abgebrochen.`,
+      confirmLabel: 'Schließen',
+      icon: 'x-circle',
+      onConfirm: () => {
+        try { wsService.send({ type: 'terminal:close', sessionId } as any); } catch {}
+        useTerminalStore.getState().removeTab(serverId, tabId);
+      },
+    });
+  }, [wsService, serverId]);
+
+  // ── "+ neuer Terminal" in chip bar ────────────────────────────────────────
+  // Spawns a fresh shell on the server and assigns it to the first empty pane
+  // (or the active pane if all are filled). We track the in-flight tab via
+  // pendingNewTabRef so the terminal:created handler knows which tab to
+  // hydrate with the resulting sessionId — this also avoids races with V1's
+  // listener if TerminalScreen is in the back stack.
+  const pendingNewTabRef = useRef<{ tabId: string; assignToPane: number } | null>(null);
+
+  useEffect(() => {
+    const off = wsService.addMessageListener((data: unknown) => {
+      const msg = data as { type: string; sessionId?: string; payload?: any };
+      if (msg.type !== 'terminal:created' || !msg.sessionId) return;
+      const pending = pendingNewTabRef.current;
+      if (!pending) return; // not from our "+", let other handlers claim it
+      pendingNewTabRef.current = null;
+      useTerminalStore.getState().updateTab(serverId, pending.tabId, { sessionId: msg.sessionId });
+      const newSid = msg.sessionId;
+      setPanes((prev) => {
+        const next = [...prev];
+        if (pending.assignToPane < next.length) next[pending.assignToPane] = newSid;
+        return next;
+      });
+      setActivePaneIdx(pending.assignToPane);
+    });
+    return off;
+  }, [wsService, serverId]);
+
+  const handleAddNewTerminal = useCallback(() => {
+    if ((wsService as any).state && (wsService as any).state !== 'connected') return;
+    const currentTabs = useTerminalStore.getState().getTabs(serverId);
+    const tabId = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    // Pick assignment target: first empty in current mode, else active pane
+    let target = -1;
+    for (let i = 0; i < mode; i++) {
+      if (!panes[i]) { target = i; break; }
+    }
+    if (target === -1) target = activePaneIdx;
+    pendingNewTabRef.current = { tabId, assignToPane: target };
+    useTerminalStore.getState().addTab(serverId, {
+      id: tabId,
+      title: `Shell ${currentTabs.length + 1}`,
+      serverId,
+      active: false,
+    });
+    wsService.send({
+      type: 'terminal:create',
+      payload: { cols: 80, rows: 30 },
+    } as any);
+  }, [wsService, serverId, mode, panes, activePaneIdx]);
 
   // ── Tool callbacks ─────────────────────────────────────────────────────────
   const closeTool = useCallback(() => setActiveOrb(null), []);
@@ -726,13 +1995,14 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
         sessionId: targetSid,
         payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
       } as any);
+      armTxTimer();
     } catch {
       setMicState('idle');
       setVoiceFullscreen(false);
       voiceTargetSidRef.current = null;
       setMicFlow(null);
     }
-  }, [wsService, voicePromptEnhanceEnabled]);
+  }, [wsService, voicePromptEnhanceEnabled, armTxTimer]);
 
   // Discards the current recording without sending it for transcription.
   const cancelRecording = useCallback(async () => {
@@ -840,20 +2110,149 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     wsService.send({ type: 'terminal:input', sessionId: activeSessionId, payload: { data } } as any);
   }, [activeSessionId, wsService]);
 
+  // ── Wizard option select ──────────────────────────────────────────────────
+  // User tapped one of the preset options. Append to answers, advance step,
+  // and on the final step build the prompt + send to manager:chat.
+  const handleWizardSelect = useCallback((value: string) => {
+    if (!wizard) return;
+    const { flow, step, answers } = wizard;
+    const newAnswers = [...answers, value];
+    addMessage({
+      role: 'user',
+      text: value,
+      targetSessionId: activeChat !== 'alle' ? activeChat : undefined,
+    }, activeChat);
+    if (step + 1 < flow.steps.length) {
+      setWizard({ flow, step: step + 1, answers: newAnswers });
+    } else {
+      setWizard(null);
+      const prompt = flow.buildPrompt(newAnswers);
+      setLoading(true);
+      wsService.send({
+        type: 'manager:chat',
+        payload: {
+          text: prompt,
+          targetSessionId: activeChat !== 'alle' ? activeChat : undefined,
+          onboarding: false,
+        },
+      } as any);
+    }
+  }, [wizard, wsService, activeChat, addMessage, setLoading]);
+
   // ── Send ──────────────────────────────────────────────────────────────────
   const sendMessage = useCallback(() => {
-    const text = input.trim();
-    if (!text && attachments.length === 0) return;
-
     if (inputMode === 'terminal') {
       if (!activeSessionId) {
         Alert.alert('Kein aktives Terminal', 'Wähle zuerst ein Pane.');
         return;
       }
-      if (!text) return;
-      pushToActivePane(text);
+      // The command text is already in the terminal (mirrored char-by-char
+      // via handleInputChange). Just send a carriage return to execute it,
+      // then clear the local input field — keyboard stays open thanks to
+      // blurOnSubmit={false} on the TextInput.
+      wsService.send({
+        type: 'terminal:input',
+        sessionId: activeSessionId,
+        payload: { data: '\r' },
+      } as any);
       setInput('');
+      prevTerminalInputRef.current = '';
       return;
+    }
+
+    const text = input.trim();
+    if (!text && attachments.length === 0) return;
+
+    // ── Slash commands (chat-mode only) ─────────────────────────────────
+    // Mirrors V1's handler. Wizard-based commands (/ppt, /cron, /askill)
+    // are not ported; they fall through and get sent to the AI as plain
+    // text so the model can interpret them.
+    if (text.startsWith('/')) {
+      const cmd = text.toLowerCase().split(' ')[0];
+      if (cmd === '/help') {
+        addMessage({ role: 'system', text: 'Verfügbare Befehle:\n/sm — Terminal-Zusammenfassung\n/askill — Neuen Skill erstellen\n/cron — Cron Job einrichten\n/ppt — Präsentation erstellen\n/reset — Agent zurücksetzen\n/clear — Chat leeren\n/memory — Memory-Viewer\n/help — Diese Hilfe' }, activeChat);
+        setInput('');
+        return;
+      }
+      if (cmd === '/clear') {
+        clearSessionMessages(activeChat);
+        setInput('');
+        return;
+      }
+      if (cmd === '/memory') {
+        (navigation as any).navigate('ManagerMemory', { wsService, serverId });
+        setInput('');
+        return;
+      }
+      if (cmd === '/sm') {
+        setLoading(true);
+        wsService.send({
+          type: 'manager:poll',
+          payload: { targetSessionId: activeChat !== 'alle' ? activeChat : undefined },
+        } as any);
+        setInput('');
+        return;
+      }
+      if (cmd === '/reset') {
+        setConfirmDialog({
+          title: 'Agent zurücksetzen',
+          body: 'Memory und Persönlichkeit werden gelöscht. Der Agent startet neu mit dem Onboarding.',
+          confirmLabel: 'Zurücksetzen',
+          icon: 'alert-triangle',
+          onConfirm: () => {
+            wsService.send({ type: 'manager:memory_write', payload: { section: 'user', data: { name: '', role: '', techStack: [], preferences: [], learnedFacts: [] } } } as any);
+            wsService.send({ type: 'manager:memory_write', payload: { section: 'personality', data: { agentName: 'Manager', tone: 'chill', detail: 'balanced', emojis: true, proactive: true, traits: [], sharedHistory: [] } } } as any);
+            wsService.send({ type: 'manager:memory_write', payload: { section: 'projects', data: [] } } as any);
+            wsService.send({ type: 'manager:memory_write', payload: { section: 'insights', data: [] } } as any);
+            clearSessionMessages(activeChat);
+            setPersonality({ agentName: 'Manager', tone: 'chill', detail: 'balanced', emojis: true, proactive: true, customInstruction: '' });
+            setOnboarded(false);
+            addMessage({ role: 'system', text: 'Agent wurde zurückgesetzt. Schreib "Hi" um das Onboarding zu starten.' }, activeChat);
+          },
+        });
+        setInput('');
+        return;
+      }
+      // Wizard commands — open the multi-step picker if no extra description,
+      // or send a fully-built prompt directly if the user wrote one inline.
+      if (cmd === '/askill' || cmd === '/cron' || cmd === '/ppt') {
+        const extra = text.slice(cmd.length).trim();
+        if (extra) {
+          const prompts: Record<string, string> = {
+            '/ppt': `[PRÄSENTATION] Erstelle eine Präsentation: "${extra}". Nutze create_presentation mit 5-8 Slides.`,
+            '/cron': `[CRON-SETUP] Erstelle einen Cron Job: "${extra}". Nutze create_cron_job.`,
+            '/askill': `[SKILL-ERSTELLUNG] Erstelle einen Skill: "${extra}". Nutze self_education Tool.`,
+          };
+          addMessage({
+            role: 'user',
+            text: `${cmd} ${extra}`,
+            targetSessionId: activeChat !== 'alle' ? activeChat : undefined,
+          }, activeChat);
+          setLoading(true);
+          wsService.send({
+            type: 'manager:chat',
+            payload: {
+              text: prompts[cmd],
+              targetSessionId: activeChat !== 'alle' ? activeChat : undefined,
+              onboarding: false,
+            },
+          } as any);
+        } else {
+          const flow = WIZARD_FLOWS[cmd];
+          if (flow) {
+            addMessage({
+              role: 'user',
+              text: cmd,
+              targetSessionId: activeChat !== 'alle' ? activeChat : undefined,
+            }, activeChat);
+            setWizard({ flow, step: 0, answers: [] });
+          }
+        }
+        setInput('');
+        Keyboard.dismiss();
+        return;
+      }
+      // Unknown commands fall through and get sent to the AI as plain text.
     }
 
     // Chat mode — append uploaded paths so the model can read them, mirror
@@ -886,6 +2285,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   }, [
     input, attachments, inputMode, activeSessionId, activeChat, onboarded,
     wsService, pushToActivePane, addMessage, setLoading,
+    clearSessionMessages, setPersonality, setOnboarded, navigation, serverId,
   ]);
 
   // ── Render: Header ─────────────────────────────────────────────────────────
@@ -907,22 +2307,39 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           <View style={s.avatarStatusDot} />
         </View>
 
-        <Pressable style={s.center} onPress={() => setShowModelPicker((v) => !v)}>
-          <View style={s.titleRow}>
-            <Text style={s.name}>{personality.agentName || 'Manager'}</Text>
-            <Text style={s.modelMini}>
-              · <Text style={s.model}>{activeProviderName}{activeProviderIsLocal ? ' · local' : ''}</Text>
-            </Text>
-            <Feather name="chevron-down" size={9} color={colors.textDim} />
+        <Pressable style={s.titleStack} onPress={() => setShowModelPicker((v) => !v)}>
+          <View style={s.titleNameRow}>
+            <Text style={s.titleName}>{personality.agentName || 'Manager'}</Text>
+            <Feather name="chevron-down" size={10} color={colors.textDim} />
           </View>
+          <Text style={s.titleSub} numberOfLines={1}>
+            {activeProviderName}{activeProviderIsLocal ? ' · local' : ''}
+          </Text>
         </Pressable>
 
         {activeTaskCount > 0 && (
-          <View style={s.tasksMini}>
+          <Pressable
+            style={({ pressed }) => [s.tasksMini, pressed && { opacity: 0.7 }]}
+            onPress={() => setTaskPanelOpen((v) => !v)}
+            hitSlop={6}
+          >
             <View style={s.tasksDot} />
             <Text style={s.tasksText}>{activeTaskCount}</Text>
-          </View>
+          </Pressable>
         )}
+
+        <TouchableOpacity
+          style={s.menuBtn}
+          onPress={handleHeaderBrowserPress}
+          accessibilityLabel="Browser öffnen"
+          hitSlop={6}
+        >
+          <Feather
+            name="globe"
+            size={16}
+            color={anyBrowserOpen ? '#22C55E' : colors.textMuted}
+          />
+        </TouchableOpacity>
 
         <TouchableOpacity style={s.menuBtn} onPress={() => setShowHeaderMenu((v) => !v)}>
           <Feather name="more-vertical" size={16} color={colors.textMuted} />
@@ -969,6 +2386,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             ) : (
               filtered.map((p) => {
                 const isActive = p.id === activeProvider;
+                const caps = getProviderCaps(p.id);
                 return (
                   <TouchableOpacity
                     key={p.id}
@@ -980,9 +2398,21 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
                     <View style={[s.mpRadio, isActive && s.mpRadioActive]}>
                       {isActive && <View style={s.mpRadioDot} />}
                     </View>
-                    <Text style={[s.mpRowName, !p.configured && { color: colors.textDim }]}>
-                      {p.name}
-                    </Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.mpRowName, !p.configured && { color: colors.textDim }]}>
+                        {p.name}
+                      </Text>
+                      {caps && (
+                        <View style={s.mpCapsRow}>
+                          {caps.map((cap, i) => (
+                            <View key={i} style={s.mpCapBadge}>
+                              <Feather name={cap.icon as any} size={9} color={cap.color} />
+                              <Text style={[s.mpCapText, { color: cap.color }]}>{cap.label}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </View>
                     {!p.configured && (
                       <Text style={s.mpRowMeta}>nicht konfiguriert</Text>
                     )}
@@ -1089,10 +2519,8 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   // ── Render: View-Mode toggle (1/2/4) ──────────────────────────────────────
   function renderMultiBar() {
     return (
-      <View style={s.multiBar}>
-        {/* View toggle now lives near the LEFT edge so it's reachable with one
-            thumb. Buttons are 36×28 — well above the 44 px Apple HIG target
-            when combined with hitSlop, but visually compact. */}
+      <View style={s.toolbar}>
+        {/* Mode segmented (1/2/4) */}
         <View style={s.viewToggle}>
           {([1, 2, 4] as SpotlightMode[]).map((m) => (
             <Pressable
@@ -1105,15 +2533,71 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             </Pressable>
           ))}
         </View>
-        <Text style={s.multiBarLbl}>{mode} {mode === 1 ? 'Pane' : 'Panes'}</Text>
-        <View style={{ flex: 1 }} />
-        <TouchableOpacity
-          style={s.mbIconBtn}
-          onPress={() => { /* TODO: save layout */ }}
-          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+
+        {/* Group pills — scroll horizontally, fills the space between the
+            segmented mode picker and the right edge. */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.tbGroupRow}
+          style={{ flex: 1 }}
         >
-          <Feather name="save" size={13} color={colors.textMuted} />
-        </TouchableOpacity>
+          {groups.map((g) => {
+            const active = g.id === activeGroupId;
+            const filled = g.terminals.filter((t): t is string => !!t);
+            return (
+              <Pressable
+                key={g.id}
+                style={({ pressed }) => [
+                  s.tbPill,
+                  active && s.tbPillActive,
+                  pressed && { opacity: 0.7 },
+                ]}
+                onPress={() => onLoadGroup(g.id)}
+                onLongPress={() => confirmCloseGroup(g.id, g.name)}
+                delayLongPress={450}
+              >
+                <View style={s.tbPillDots}>
+                  {filled.slice(0, 4).map((sid, i) => (
+                    <View
+                      key={`${sid}-${i}`}
+                      style={[s.tbPillDot, { backgroundColor: colorForSession(sid) }]}
+                    />
+                  ))}
+                </View>
+                <Text style={[s.tbPillText, active && s.tbPillTextActive]} numberOfLines={1}>
+                  {g.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+
+          {groupEditing ? (
+            <View style={[s.tbPill, s.tbPillActive, { paddingRight: 6 }]}>
+              <TextInput
+                ref={groupInputRef}
+                style={s.tbPillInput}
+                value={groupEditName}
+                onChangeText={setGroupEditName}
+                placeholder="Name…"
+                placeholderTextColor={colors.textDim}
+                onSubmitEditing={commitGroupEdit}
+                onBlur={commitGroupEdit}
+                returnKeyType="done"
+                maxLength={20}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity onPress={cancelGroupEdit} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                <Feather name="x" size={11} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity style={s.tbAdd} onPress={startGroupEdit} activeOpacity={0.7}>
+              <Feather name="plus" size={11} color={colors.textDim} />
+            </TouchableOpacity>
+          )}
+        </ScrollView>
       </View>
     );
   }
@@ -1139,6 +2623,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
           if (!sid) return null;
           const inPane = panes.includes(sid);
           const tcolor = colorForSession(sid);
+          const label = tabDisplayName(t);
           return (
             <Pressable
               key={sid}
@@ -1147,14 +2632,24 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
                 inPane && { backgroundColor: tcolor + '26', borderColor: tcolor + '4D' },
               ]}
               onPress={() => onChipPress(sid)}
+              onLongPress={() => confirmCloseTerminal(t.id, sid, label)}
+              delayLongPress={500}
             >
               <View style={[s.chipDot, { backgroundColor: tcolor }]} />
               <Text style={[s.chipText, inPane && { color: tcolor }]}>
-                S{i + 1}·{tabDisplayName(t)}
+                S{i + 1}·{label}
               </Text>
             </Pressable>
           );
         })}
+        {/* Spawn a new terminal and auto-assign to first empty / active pane. */}
+        <TouchableOpacity
+          style={s.chipAdd}
+          onPress={handleAddNewTerminal}
+          activeOpacity={0.7}
+        >
+          <Feather name="plus" size={12} color={colors.textDim} />
+        </TouchableOpacity>
       </ScrollView>
     );
   }
@@ -1193,17 +2688,24 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   // ── Render: Chat (very simple list — full markdown/lightbox/etc. ported later) ──
   function renderChat() {
     return (
-      <Pressable
-        style={[s.chat, chatSelected && s.chatSelected]}
-        onPress={() => setChatSelected(true)}
-      >
+      // Plain View — Pressable around FlatList intercepted the scroll-pan
+      // responder on Android, blocking vertical scrolling of chat history.
+      // The chat-selected highlight is now driven elsewhere (or unused).
+      <View style={[s.chat, chatSelected && s.chatSelected]}>
         <FlatList
           inverted
           data={visibleMessages.slice().reverse()}
           keyExtractor={(m) => m.id}
           contentContainerStyle={{ padding: 12 }}
           renderItem={({ item }) => (
-            <View style={[s.msg, item.role === 'user' ? s.msgUser : s.msgAssistant]}>
+            <Pressable
+              style={({ pressed }) => [
+                s.msg,
+                item.role === 'user' ? s.msgUser : s.msgAssistant,
+                pressed && { opacity: 0.85 },
+              ]}
+              onLongPress={() => setMessageMenu({ id: item.id, text: item.text, role: item.role })}
+              delayLongPress={400}>
               {item.role === 'assistant' ? (
                 <Markdown style={mdStyles}>{item.text}</Markdown>
               ) : (
@@ -1280,7 +2782,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
                   })}
                 </View>
               )}
-            </View>
+            </Pressable>
           )}
           ListEmptyComponent={
             <View style={s.empty}>
@@ -1290,7 +2792,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             </View>
           }
         />
-      </Pressable>
+      </View>
     );
   }
 
@@ -1375,7 +2877,7 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             isTerminal && {
               backgroundColor: '#0B1220',
               borderColor: targetColor + '4D',
-              borderRadius: 8,
+              borderRadius: 14,
             },
           ]}
         >
@@ -1388,13 +2890,30 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
             </View>
           )}
           <TextInput
-            style={[s.ibInputText, isTerminal && s.ibInputTextTerm]}
+            style={[
+              s.ibInputText,
+              isTerminal && s.ibInputTextTerm,
+            ]}
             value={input}
-            onChangeText={setInput}
+            onChangeText={handleInputChange}
             placeholder={isTerminal ? 'Befehl eingeben…' : 'Nachricht…'}
             placeholderTextColor={colors.textDim}
             onSubmitEditing={sendMessage}
             returnKeyType="send"
+            // Multiline so the field can show several typed lines while the
+            // keyboard is open. submitBehavior='submit' makes Enter still
+            // dispatch onSubmitEditing without inserting a newline (default
+            // for multiline would be 'newline'). 'blurAndSubmit' in chat
+            // mode also closes the keyboard, matching pre-multiline UX.
+            multiline
+            // RN 0.73 supports submitBehavior at runtime but the bundled TS
+            // types only declare blurOnSubmit — cast keeps the prop usable.
+            {...({ submitBehavior: isTerminal ? 'submit' : 'blurAndSubmit' } as any)}
+            textAlignVertical="top"
+            // Disable autocorrect/capitalization in terminal mode so commands
+            // aren't mangled before they reach the shell.
+            autoCorrect={!isTerminal}
+            autoCapitalize={isTerminal ? 'none' : 'sentences'}
           />
         </View>
 
@@ -1483,8 +3002,13 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
   //     terminals so the chat takes the screen.
   // Either way the input bar stays visible — it owns the keyboard.
   const chatKBMode = keyboardVisible && !inFocus;
-  const terminalKBMode = chatKBMode && !chatSelected;
-  const chatFocusKBMode = chatKBMode && chatSelected;
+  // Layout is driven by `inputMode` (the 💬 / > toggle in the input bar) so
+  // that typing in chat mode keeps the chat visible (the user can see their
+  // message land in history). Terminal mode hides the chat and reserves
+  // dock space below the panes — same as before. `chatSelected` is now only
+  // a visual border affordance (no longer drives layout).
+  const terminalKBMode = chatKBMode && inputMode === 'terminal';
+  const chatFocusKBMode = chatKBMode && inputMode === 'chat' && chatSelected;
   // OrbLayer targets the focused pane in fullscreen mode, the active pane in
   // terminal-keyboard mode (so Ctrl+C, Esc, mic etc. operate on whatever the
   // user just selected before opening the chat keyboard).
@@ -1493,6 +3017,13 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
     : terminalKBMode
       ? panes[activePaneIdx] ?? undefined
       : undefined;
+  // Bottom reserve below MultiSpotlight in terminalKBMode so the orb dock
+  // (≤2 rows × ~48px = ~108px + 4px margin) sits in its own area instead of
+  // overlapping the terminal content. The lag previously attributed to this
+  // wrapper turned out to be the dock's pointerEvents capturing scroll
+  // touches — once the dock's pointerEvents="box-none" landed, this layout
+  // shift is back to being cheap.
+  const ORB_DOCK_RESERVE = 120;
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.bg }}
@@ -1508,15 +3039,8 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       {!inFocus && !chatKBMode && renderHeaderMenu()}
       {!inFocus && !chatKBMode && renderSearchBar()}
 
-      {!inFocus && !chatKBMode && (
-        <GroupTabsBar
-          groups={groups}
-          activeId={activeGroupId}
-          onLoad={onLoadGroup}
-          onDelete={onDeleteGroup}
-          onSave={onSaveGroup}
-        />
-      )}
+      {/* Group tabs are now inlined in renderMultiBar to keep top-of-screen
+          chrome to a single toolbar row. */}
 
       {/* Stage body: Multi-Spotlight (full width). Only hidden when the user
           tapped the chat first (chatFocusKBMode) — when a terminal is the
@@ -1534,27 +3058,35 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
       >
         <View style={{ flex: 1, position: 'relative' }}>
           {!inFocus && renderMultiBar()}
-          <MultiSpotlight
-            ref={spotlightRef}
-            mode={mode}
-            panes={panes}
-            activePaneIndex={activePaneIdx}
-            onActivePaneChange={handleActivePaneChange}
-            onPromote={onPromote}
-            onSelectEmptyPane={onSelectEmptyPane}
-            wsService={wsService}
-            labelFor={labelFor}
-            statusFor={statusFor}
-            focusedPaneIndex={focusedPaneIdx}
-            activePaneKeyboardOffset={terminalKBMode}
-          />
+          {/* Wrapper reserves vertical space for the orb dock in
+              terminalKBMode. The dock floats inside the freed gap (its own
+              absolute-positioned layer) instead of covering terminal content. */}
+          <View style={[
+            { flex: 1, minHeight: 0 },
+            terminalKBMode && { paddingBottom: ORB_DOCK_RESERVE },
+          ]}>
+            <MultiSpotlight
+              ref={spotlightRef}
+              mode={mode}
+              panes={panes}
+              activePaneIndex={activePaneIdx}
+              onActivePaneChange={handleActivePaneChange}
+              onPromote={onPromote}
+              onSelectEmptyPane={onSelectEmptyPane}
+              wsService={wsService}
+              labelFor={labelFor}
+              statusFor={statusFor}
+              focusedPaneIndex={expandedPaneIdx}
+              onPaneDoubleTap={handlePaneDoubleTap}
+              onPaneLongPress={handlePaneLongPress}
+              thinkingFor={thinkingFor}
+              onPaneThinkingChange={setPaneThinking}
+            />
+          </View>
 
-          {/* V1-style OrbLayer — rendered DIRECTLY (no extra wrapper) so we
-              don't stack two absoluteFillObject + pointerEvents="box-none"
-              Views (each one Android needs to traverse on every touch).
-              OrbLayer's own s.root has absoluteFillObject + zIndex:10 and
-              pointerEvents="box-none" — sufficient since we removed pane
-              focus mode (no zIndex 99 to outrank). */}
+          {/* OrbLayer mounted directly (no extra wrapper) so we don't stack
+              two absoluteFillObject + box-none Views. Mounted in fullscreen
+              focus mode AND terminal-keyboard mode. */}
           {(inFocus || terminalKBMode) && orbSessionId && (
             <OrbLayer
               sessionId={orbSessionId}
@@ -1596,7 +3128,108 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
 
       {!inFocus && !terminalKBMode && renderChipBar()}
       {!inFocus && !terminalKBMode && renderChat()}
+      {/* AI thinking / streaming strip — same component V1 uses, populated
+          by the persistent manager:* handler. Shows immediately on send so
+          the user sees feedback even before the model starts streaming. */}
+      {!inFocus && !terminalKBMode && (loading || (thinking && thinking.phase !== '')) && (
+        <ThinkingBubble
+          phase={thinking?.phase || '__sending'}
+          streamingText={streamingText}
+          requestStartTime={requestStartTime}
+          tokenStats={streamTokenStats}
+          mdStyles={mdStyles}
+          onCancel={() => {
+            wsService.send({ type: 'manager:cancel' } as any);
+            setLoading(false);
+            setThinking('', undefined, undefined);
+            addError('Anfrage abgebrochen', activeChat);
+          }}
+        />
+      )}
       {!inFocus && !terminalKBMode && renderAttachments()}
+      {/* Wizard card — multi-step picker for /ppt /cron /askill. Mirrors V1's
+          ManagerChatScreen wizard. Lives between attachments and input bar. */}
+      {!inFocus && wizard && (
+        <View style={ws.wrap}>
+          <View style={ws.bubble}>
+            <View style={ws.labelRow}>
+              <Text style={ws.labelBadge}>{wizard.flow.icon} {wizard.flow.title}</Text>
+            </View>
+            <View style={ws.progress}>
+              {wizard.flow.steps.map((_, i) => (
+                <View
+                  key={i}
+                  style={[
+                    ws.pDot,
+                    i < wizard.step && ws.pDotDone,
+                    i === wizard.step && ws.pDotActive,
+                  ]}
+                />
+              ))}
+            </View>
+            <Text style={ws.question}>{wizard.flow.steps[wizard.step].question}</Text>
+            <View style={ws.options}>
+              {wizard.flow.steps[wizard.step].options.map((opt, i) => (
+                <TouchableOpacity
+                  key={i}
+                  style={ws.optBtn}
+                  activeOpacity={0.7}
+                  onPress={() => handleWizardSelect(opt.value)}
+                >
+                  <Text style={ws.optIcon}>{opt.icon}</Text>
+                  <View style={ws.optText}>
+                    <Text style={ws.optLabel}>{opt.label}</Text>
+                    {opt.hint ? <Text style={ws.optHint}>{opt.hint}</Text> : null}
+                  </View>
+                  <Feather name="chevron-right" size={14} color="#334155" />
+                </TouchableOpacity>
+              ))}
+              {wizard.flow.steps[wizard.step].allowCustom && (
+                <TouchableOpacity
+                  style={[ws.optBtn, { borderStyle: 'dashed' }]}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    const cmd = wizard.flow.cmd;
+                    setWizard(null);
+                    setInput(cmd + ' ');
+                  }}
+                >
+                  <Text style={ws.optIcon}>✏️</Text>
+                  <View style={ws.optText}>
+                    <Text style={ws.optLabel}>Eigene Eingabe...</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            </View>
+            <TouchableOpacity onPress={() => setWizard(null)}>
+              <Text style={ws.cancel}>Abbrechen</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+      {/* Slash command picker — only in chat mode (terminal mode mirrors
+          keystrokes char-by-char so a popup would be useless). */}
+      {!inFocus && !wizard && inputMode === 'chat' && input.startsWith('/') && (() => {
+        const filtered = SLASH_COMMANDS.filter((c) =>
+          c.cmd.startsWith(input.toLowerCase().split(' ')[0]),
+        );
+        if (filtered.length === 0) return null;
+        return (
+          <View style={s.slashPicker}>
+            {filtered.map((c) => (
+              <TouchableOpacity
+                key={c.cmd}
+                style={s.slashPickerItem}
+                onPress={() => setInput(c.cmd + ' ')}
+                activeOpacity={0.7}
+              >
+                <Text style={s.slashPickerCmd}>{c.cmd}</Text>
+                <Text style={s.slashPickerDesc}>{c.desc}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        );
+      })()}
       {!inFocus && renderInputBar()}
 
       {/* Fullscreen voice capture — only for chat-input mic. Terminal mic uses
@@ -1621,6 +3254,325 @@ export function ManagerChatScreenV2({ navigation, route }: Props) {
         onClose={handleCloseToolMenu}
         onSectionsChange={updateToolSections}
       />
+
+      {/* Tool Panel Sheet — bottom sheet for panel tools (files, snippets,
+          render, vercel, sql, ports, screenshots, autopilot, watchers,
+          autoApprove). Mirrors TerminalScreen.tsx so all the tools that
+          worked there now work in the manager chat too. */}
+      <ToolPanelSheet
+        visible={!!activePanelTool}
+        toolId={activePanelTool}
+        onClose={handleClosePanel}
+      >
+        {renderPanelContent()}
+      </ToolPanelSheet>
+
+      {/* Long-press message menu — themed action sheet anchored to the
+          bottom of the screen with safe-area aware insets. Replaces V1's
+          native Alert.alert flow so the dropdown matches the app aesthetic. */}
+      <Modal
+        visible={!!messageMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMessageMenu(null)}
+        statusBarTranslucent
+      >
+        <Pressable style={mm.backdrop} onPress={() => setMessageMenu(null)}>
+          <Pressable
+            style={[mm.sheet, { paddingBottom: insets.bottom + 8 }]}
+            onPress={() => { /* swallow */ }}
+          >
+            <View style={mm.handle} />
+            <Text style={mm.heading} numberOfLines={1}>
+              {messageMenu?.role === 'user' ? 'Deine Nachricht' : messageMenu?.role === 'system' ? 'System-Nachricht' : 'Agent-Nachricht'}
+            </Text>
+            <Text style={mm.preview} numberOfLines={3}>
+              {messageMenu?.text}
+            </Text>
+            <Pressable
+              style={({ pressed }) => [mm.action, pressed && { backgroundColor: 'rgba(255,255,255,0.06)' }]}
+              onPress={async () => {
+                if (messageMenu) {
+                  try { await Clipboard.setStringAsync(messageMenu.text); } catch {}
+                }
+                setMessageMenu(null);
+              }}
+            >
+              <Feather name="copy" size={16} color={colors.text} />
+              <Text style={mm.actionText}>Kopieren</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [mm.action, mm.actionDestructive, pressed && { backgroundColor: 'rgba(239,68,68,0.12)' }]}
+              onPress={() => {
+                if (messageMenu) deleteMessage(messageMenu.id);
+                setMessageMenu(null);
+              }}
+            >
+              <Feather name="trash-2" size={16} color={colors.destructive} />
+              <Text style={[mm.actionText, mm.actionDestructiveText]}>Löschen</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [mm.cancel, pressed && { opacity: 0.7 }]}
+              onPress={() => setMessageMenu(null)}
+            >
+              <Text style={mm.cancelText}>Abbrechen</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Rename-sheet — opens on long-press of a pane header. Themed bottom
+          sheet with TextInput + Save/Cancel + (conditional) reset-to-auto. */}
+      <Modal
+        visible={!!renameSheet}
+        transparent
+        animationType="fade"
+        onRequestClose={closeRenameSheet}
+        statusBarTranslucent
+      >
+        <Pressable style={rs.backdrop} onPress={closeRenameSheet}>
+          <Pressable
+            style={[
+              rs.sheet,
+              {
+                // Float the sheet above the keyboard. statusBarTranslucent
+                // disables Android's automatic window-resize, so we add the
+                // keyboard height as inner bottom padding — the sheet's own
+                // bottom stays at the screen edge but its content (TextInput
+                // + buttons) is pushed up out from under the keyboard.
+                paddingBottom: insets.bottom + 8 + (keyboardVisible ? keyboardHeight : 0),
+              },
+            ]}
+            onPress={() => { /* swallow */ }}
+          >
+            <View style={rs.handle} />
+            <Text style={rs.heading}>Terminal umbenennen</Text>
+            {(() => {
+              const tab = renameSheet ? tabs.find((t) => t.id === renameSheet.tabId) : null;
+              const currentName = tab ? tab.title : '';
+              const hasCustom = tab?.customTitle === true;
+              return (
+                <>
+                  <Text style={rs.preview} numberOfLines={1}>
+                    {`Aktuell: ${currentName}`}
+                  </Text>
+                  <TextInput
+                    accessibilityLabel="Terminal-Name"
+                    style={rs.input}
+                    value={renameValue}
+                    onChangeText={setRenameValue}
+                    placeholder="Neuer Name"
+                    placeholderTextColor={colors.textDim}
+                    autoFocus
+                    selectTextOnFocus
+                    returnKeyType="done"
+                    blurOnSubmit
+                    onSubmitEditing={commitRename}
+                    maxLength={40}
+                  />
+                  <View style={rs.btnRow}>
+                    <Pressable
+                      style={({ pressed }) => [rs.btnSecondary, pressed && { opacity: 0.7 }]}
+                      onPress={closeRenameSheet}
+                    >
+                      <Text style={rs.btnSecondaryText}>Abbrechen</Text>
+                    </Pressable>
+                    <Pressable
+                      style={({ pressed }) => [rs.btnPrimary, pressed && { opacity: 0.85 }]}
+                      onPress={commitRename}
+                    >
+                      <Text style={rs.btnPrimaryText}>Speichern</Text>
+                    </Pressable>
+                  </View>
+                  {hasCustom && (
+                    <Pressable
+                      style={({ pressed }) => [rs.resetBtn, pressed && { backgroundColor: 'rgba(255,255,255,0.04)' }]}
+                      onPress={resetToAutoName}
+                    >
+                      <Feather name="rotate-ccw" size={14} color={colors.textMuted} />
+                      <Text style={rs.resetText}>Auf Auto-Namen zurücksetzen</Text>
+                    </Pressable>
+                  )}
+                </>
+              );
+            })()}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Floating task panel — opens from the header active-task badge.
+          Anchored top-right under the badge; tap-outside dismiss. Mirrors
+          V1's inline panel content, but as a popover for V2's denser UI. */}
+      <Modal
+        visible={taskPanelOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTaskPanelOpen(false)}
+        statusBarTranslucent
+      >
+        <Pressable style={tp.backdrop} onPress={() => setTaskPanelOpen(false)}>
+          <Pressable
+            style={[tp.panel, { top: insets.top + 56 }]}
+            onPress={() => { /* swallow */ }}
+          >
+            {(() => {
+              const totalSteps = delegatedTasks.reduce((sum, t) => sum + (t.steps?.length ?? 1), 0);
+              const doneSteps = delegatedTasks.reduce((sum, t) =>
+                sum + (t.steps?.filter((s) => s.status === 'done').length ?? (t.status === 'done' ? 1 : 0)), 0);
+              const pct = totalSteps > 0 ? (doneSteps / totalSteps) * 100 : 0;
+              const activeCount = delegatedTasks.filter((t) => t.status !== 'done').length;
+              return (
+                <>
+                  <View style={tp.headerRow}>
+                    <Text style={tp.title}>To-Do</Text>
+                    <View style={tp.headerStats}>
+                      <Text style={tp.headerStat}>
+                        <Text style={tp.headerStatVal}>{activeCount}</Text> aktiv
+                      </Text>
+                      <Text style={tp.headerStat}>
+                        <Text style={tp.headerStatVal}>{Math.round(pct)}%</Text>
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={tp.progressTrack}>
+                    <View style={[tp.progressFill, { width: (pct + '%') as any }]} />
+                  </View>
+                </>
+              );
+            })()}
+            <ScrollView style={{ maxHeight: 360 }} contentContainerStyle={{ paddingVertical: 4 }}>
+              {delegatedTasks.length === 0 && (
+                <Text style={tp.empty}>Keine offenen Aufgaben.</Text>
+              )}
+              {delegatedTasks.map((task) => {
+                const steps = task.steps && task.steps.length > 0
+                  ? task.steps
+                  : [{ label: task.description, status: task.status }];
+                const taskDone = task.status === 'done' || steps.every((s) => s.status === 'done');
+                const taskRunning = steps.some((s) => s.status === 'running');
+                const stepsDone = steps.filter((s) => s.status === 'done').length;
+                const age = Math.round((Date.now() - task.createdAt) / 1000);
+                const ageStr = age > 3600
+                  ? `${Math.round(age / 3600)}h`
+                  : age > 60
+                    ? `${Math.round(age / 60)}min`
+                    : `${age}s`;
+                const runningIdx = steps.findIndex((s) => s.status === 'running');
+                const nextIdx = runningIdx >= 0
+                  ? runningIdx + 1
+                  : steps.findIndex((s) => s.status === 'pending');
+                return (
+                  <View key={task.id} style={[tp.taskGroup, taskDone && { opacity: 0.5 }]}>
+                    <View style={tp.groupHeader}>
+                      <View style={[
+                        tp.statusDot,
+                        taskDone
+                          ? { backgroundColor: '#10B981' }
+                          : taskRunning
+                            ? { backgroundColor: colors.primary }
+                            : { backgroundColor: colors.textDim },
+                      ]} />
+                      <Text style={[tp.groupLabel, taskDone && { color: colors.textDim }]} numberOfLines={1}>
+                        {task.sessionLabel}
+                      </Text>
+                      <Text style={tp.metaMono}>{stepsDone}/{steps.length}</Text>
+                      <Text style={tp.metaMono}>{ageStr}</Text>
+                    </View>
+                    {steps.map((step, i) => {
+                      const isDone = step.status === 'done';
+                      const isFailed = step.status === 'failed';
+                      const isRunning = step.status === 'running';
+                      const isPending = step.status === 'pending';
+                      const isNext = i === nextIdx && !isDone && !isRunning;
+                      return (
+                        <View key={i} style={[tp.stepRow, isPending && !isNext && { opacity: 0.35 }]}>
+                          <View style={[
+                            tp.checkbox,
+                            {
+                              borderColor: isDone
+                                ? '#10B981'
+                                : isFailed
+                                  ? '#EF4444'
+                                  : isRunning
+                                    ? colors.primary
+                                    : isNext
+                                      ? '#F59E0B'
+                                      : colors.textDim,
+                            },
+                            (isDone || isFailed) && { backgroundColor: isDone ? '#10B981' : '#EF4444' },
+                          ]}>
+                            {isDone && <Feather name="check" size={10} color="#fff" />}
+                            {isFailed && <Feather name="x" size={10} color="#fff" />}
+                            {isRunning && <View style={tp.checkboxDot} />}
+                            {isNext && <Feather name="arrow-right" size={8} color="#F59E0B" />}
+                          </View>
+                          <Text
+                            style={[
+                              tp.stepText,
+                              isDone && { textDecorationLine: 'line-through' as const, color: colors.textDim },
+                              isRunning && { color: colors.text, fontWeight: '500' as const },
+                              isNext && { color: '#F59E0B' },
+                            ]}
+                            numberOfLines={2}
+                          >
+                            {step.label}
+                          </Text>
+                          {isRunning && <Text style={tp.runningBadge}>LÄUFT</Text>}
+                          {isNext && <Text style={tp.nextBadge}>NEXT</Text>}
+                        </View>
+                      );
+                    })}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Themed confirm dialog — replaces native Alert.alert so the close
+          flows for groups + terminals look like the rest of the app. */}
+      <Modal
+        visible={!!confirmDialog}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setConfirmDialog(null)}
+        statusBarTranslucent
+      >
+        <Pressable style={cdStyles.backdrop} onPress={() => setConfirmDialog(null)}>
+          <Pressable style={cdStyles.card} onPress={() => { /* swallow */ }}>
+            <View style={cdStyles.iconWrap}>
+              <Feather
+                name={confirmDialog?.icon ?? 'alert-triangle'}
+                size={20}
+                color={colors.destructive}
+              />
+            </View>
+            <Text style={cdStyles.title}>{confirmDialog?.title ?? ''}</Text>
+            <Text style={cdStyles.body}>{confirmDialog?.body ?? ''}</Text>
+            <View style={cdStyles.actions}>
+              <Pressable
+                style={({ pressed }) => [cdStyles.btn, cdStyles.btnCancel, pressed && { opacity: 0.7 }]}
+                onPress={() => setConfirmDialog(null)}
+              >
+                <Text style={cdStyles.btnCancelText}>Abbrechen</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [cdStyles.btn, cdStyles.btnConfirm, pressed && { opacity: 0.85 }]}
+                onPress={() => {
+                  const fn = confirmDialog?.onConfirm;
+                  setConfirmDialog(null);
+                  fn?.();
+                }}
+              >
+                <Text style={cdStyles.btnConfirmText}>
+                  {confirmDialog?.confirmLabel ?? 'OK'}
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Lightbox — opens on tap of any image thumb in the chat */}
       <Modal
@@ -1703,11 +3655,30 @@ const s = StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.surface,
   },
-  center: { flex: 1 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
-  name: { color: colors.text, fontSize: 14.5, fontWeight: '700', lineHeight: 16 },
-  modelMini: { fontSize: 10.5, color: colors.textMuted },
-  model: { color: colors.info, fontWeight: '600' },
+  // Two-line agent identity: bold name on top, muted model subtitle below.
+  titleStack: {
+    flex: 1,
+    paddingLeft: 4,
+    justifyContent: 'center',
+  },
+  titleNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  titleName: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  titleSub: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '500',
+    letterSpacing: 0.15,
+    marginTop: 1,
+  },
 
   tasksMini: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
@@ -1724,43 +3695,115 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
 
-  // Multi bar (above panes) — taller for thumb-friendly toggles, controls left-aligned
-  multiBar: {
-    height: 36,
-    paddingHorizontal: 8,
+  // Single merged toolbar — segmented mode picker + group pills inline.
+  // Replaces the old multiBar (1/2/4 + label + save) and the GroupTabsBar
+  // (SETS label + group pills) so all top-of-screen chrome lives on one row.
+  toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.surface,
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
-  },
-  multiBarLbl: {
-    fontSize: 10, fontWeight: '700', color: colors.textMuted, fontFamily: fonts.mono,
-  },
-  mbIconBtn: {
-    width: 28, height: 28, borderRadius: 7,
-    backgroundColor: colors.surfaceAlt,
-    borderWidth: 1, borderColor: colors.border,
-    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.10)',
   },
   viewToggle: {
-    flexDirection: 'row', gap: 2, padding: 2,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 8,
-    borderWidth: 1, borderColor: colors.border,
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 6,
+    padding: 2,
+    gap: 1,
   },
   viewMode: {
-    paddingHorizontal: 12, paddingVertical: 4, borderRadius: 6,
-    minWidth: 32, alignItems: 'center',
+    width: 24,
+    height: 22,
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   viewModeActive: {
-    backgroundColor: colors.primary,
-    shadowColor: colors.primary, shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.4, shadowRadius: 2, elevation: 2,
+    backgroundColor: colors.primary + '36',
   },
-  viewModeText: { fontSize: 13, fontWeight: '700', color: colors.textMuted },
+  viewModeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textDim,
+    fontFamily: fonts.mono,
+  },
   viewModeTextActive: { color: '#fff' },
+  tbGroupRow: {
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 4,
+  },
+  tbPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    gap: 4,
+    maxWidth: 130,
+  },
+  tbPillActive: {
+    backgroundColor: colors.primary + '20',
+    borderColor: colors.primary + '4D',
+  },
+  tbPillBody: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 1,
+  },
+  tbPillDots: {
+    flexDirection: 'row',
+    gap: 2,
+  },
+  tbPillDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+  },
+  tbPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    fontFamily: fonts.mono,
+    color: colors.textMuted,
+    flexShrink: 1,
+  },
+  tbPillTextActive: {
+    color: colors.primary,
+  },
+  tbPillClose: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tbPillInput: {
+    fontFamily: fonts.mono,
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.text,
+    minWidth: 70,
+    padding: 0,
+  },
+  tbAdd: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   // Stage body container
   stageBody: { flex: 1, flexDirection: 'row', minHeight: 0 },
@@ -1871,6 +3914,35 @@ const s = StyleSheet.create({
     borderTopColor: colors.border,
     flexGrow: 0,
   },
+  // Slash command picker — sits between attachments and input bar, mirrors
+  // V1's ManagerChatScreen.styles.slashPicker visually so users see the
+  // same affordance regardless of which screen they land on.
+  slashPicker: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingVertical: 4,
+    maxHeight: 240,
+  },
+  slashPickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  slashPickerCmd: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: fonts.mono,
+    minWidth: 64,
+  },
+  slashPickerDesc: {
+    color: colors.textMuted,
+    fontSize: 13,
+    flex: 1,
+  },
   chipBarContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6 },
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
@@ -1883,6 +3955,19 @@ const s = StyleSheet.create({
   chipDot: { width: 5, height: 5, borderRadius: 3 },
   chipText: { color: colors.textMuted, fontSize: 11, fontWeight: '600' },
   chipTextActive: { color: colors.primary },
+  // Subtle dashed "+" pill to spawn a new terminal — visually quieter than
+  // the regular session chips so it doesn't compete for attention.
+  chipAdd: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 2,
+  },
 
   // Chat
   chat: { flex: 1.05, minHeight: 0, backgroundColor: colors.bg },
@@ -1964,13 +4049,23 @@ const s = StyleSheet.create({
     fontFamily: fonts.mono, fontSize: 10, fontWeight: '700',
     color: colors.destructive,
   },
+  // Column layout so the prefix pill (terminal mode) sits ABOVE the text
+  // instead of competing for horizontal width — that left a narrow column
+  // on the right where typed text wrapped after 6-8 chars. Column lets the
+  // text use full container width and wrap naturally.
+  // minHeight: 38 keeps the field at button-height when empty; multiline
+  // grows it organically with content up to maxHeight.
   ibInput: {
     flex: 1,
-    minHeight: 38, maxHeight: 100,
+    minHeight: 38,
+    maxHeight: 140,
     backgroundColor: colors.surfaceAlt,
-    borderRadius: 20,
-    paddingHorizontal: 14, paddingVertical: 4,
-    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: 2,
     borderWidth: 1, borderColor: 'transparent',
   },
   prefix: {
@@ -1984,11 +4079,20 @@ const s = StyleSheet.create({
   },
   prefixArrow: { color: colors.textMuted, fontSize: 11 },
   ibInputText: {
-    flex: 1,
-    color: colors.text, fontSize: 13,
+    color: colors.text,
+    fontSize: 13,
+    // Strip the default vertical padding RN's TextInput adds on Android so
+    // the field can sit at the same visual height as the round buttons next
+    // to it when empty (single-line case).
+    paddingTop: 0,
+    paddingBottom: 0,
+    // Reasonable lineHeight so wrapped lines aren't cramped.
+    lineHeight: 18,
   },
   ibInputTextTerm: {
-    fontFamily: fonts.mono, fontSize: 12.5,
+    fontFamily: fonts.mono,
+    fontSize: 12.5,
+    lineHeight: 17,
   },
 
   sendBtn: {
@@ -2043,9 +4147,12 @@ const s = StyleSheet.create({
   },
   mpRadioActive: { borderColor: colors.primary },
   mpRadioDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary },
-  mpRowName: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '600' },
+  mpRowName: { color: colors.text, fontSize: 13, fontWeight: '600' },
   mpRowMeta: { fontSize: 10, color: colors.textDim, fontStyle: 'italic' },
   mpEmpty: { paddingVertical: 14, paddingHorizontal: 12, color: colors.textDim, fontSize: 12, textAlign: 'center' },
+  mpCapsRow: { flexDirection: 'row', gap: 6, marginTop: 3 },
+  mpCapBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  mpCapText: { fontSize: 9, fontWeight: '500' },
 
   // ⋮ Header menu — anchored to the right
   menuPanel: {

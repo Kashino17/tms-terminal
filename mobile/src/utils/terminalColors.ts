@@ -40,3 +40,22 @@ export function colorForSession(sessionId: string): string {
 
 /** Number of colors in the palette (useful for tests or UI hints). */
 export const PALETTE_SIZE = PALETTE.length;
+
+/**
+ * Lighten a #RRGGBB hex color by a 0..1 amount, mixing toward white.
+ * Used by the thinking-glow animation to interpolate the pane border
+ * between full saturation (amount=0) and a brighter tint (amount=0.12 default).
+ */
+export function lighten(hex: string, amount: number): string {
+  const m = /^#?([\da-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 0xff;
+  const g = (n >> 8) & 0xff;
+  const b = n & 0xff;
+  const t = Math.max(0, Math.min(1, amount));
+  const lr = Math.round(r + (255 - r) * t);
+  const lg = Math.round(g + (255 - g) * t);
+  const lb = Math.round(b + (255 - b) * t);
+  return '#' + ((lr << 16) | (lg << 8) | lb).toString(16).padStart(6, '0');
+}
