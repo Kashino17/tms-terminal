@@ -23,6 +23,8 @@ export class TerminalManager {
   private idleTimers = new Map<string, NodeJS.Timeout>();
   private batchIntervals = new Map<string, number>();  // per-session adaptive batch interval (ms)
   private attachGen = new Map<string, number>();       // monotonic generation counter — prevents stale detach
+  private resizeTimers = new Map<string, NodeJS.Timeout>();                 // coalesce SIGWINCH-raising resizes
+  private appliedDims = new Map<string, { cols: number; rows: number }>();  // last size actually sent to the pty
 
   /** Optional callback invoked during detached buffering — allows prompt detector
    *  to keep receiving data for server-side auto-approve and FCM push notifications. */
@@ -73,12 +75,6 @@ export class TerminalManager {
     this.closeCallbacks.set(id, onClose);
 
     pty.onData((data: string) => {
-      // ── TEMP DIAGNOSTIC TAP (remove after debugging terminal duplication) ──
-      try {
-        require('fs').appendFileSync('/tmp/tms-tap.log',
-          `[${new Date().toISOString()}] OUT ${id.slice(0, 8)} len=${data.length} ${JSON.stringify(data.replace(/\r/g, '\\r').replace(/\n/g, '\\n').slice(0, 160))}\n`);
-      } catch { /* ignore */ }
-      // ───────────────────────────────────────────────────────────────────────
       const existing = this.outputBuffers.get(id) || '';
       const combined = existing + data;
       this.outputBuffers.set(id, combined);
@@ -270,21 +266,30 @@ export class TerminalManager {
   resize(sessionId: string, cols: number, rows: number): boolean {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
-    // ── TEMP DIAGNOSTIC TAP (remove after debugging) ──
-    try {
-      const changed = !(session.cols === cols && session.rows === rows);
-      require('fs').appendFileSync('/tmp/tms-tap.log',
-        `[${new Date().toISOString()}] RESIZE ${sessionId.slice(0, 8)} ${cols}x${rows} ${changed ? 'CHANGED→SIGWINCH' : '(no-op, skipped)'}\n`);
-    } catch { /* ignore */ }
-    // ──────────────────────────────────────────────────
-    // Delta guard: a no-op resize still raises SIGWINCH, which makes TUI apps
-    // (Claude Code's Ink renderer) reprint their whole live region. On every
-    // reattach the client re-sends the current dims, so without this guard each
-    // reconnect triggered a redundant full reprint that overlapped scrollback.
-    if (session.cols === cols && session.rows === rows) return true;
-    session.pty.resize(cols, rows);
+    // Record the requested dims immediately so reattach / status reflect intent.
     session.cols = cols;
     session.rows = rows;
+    // ── Coalesce SIGWINCH-raising pty.resize calls ──────────────────────────
+    // A keyboard/layout/pane animation — and several mounted WebViews resizing
+    // in lockstep — fires dozens of resizes with oscillating row counts
+    // (47x53→52→50→33→29…). Each pty.resize raises SIGWINCH, making Claude
+    // Code's Ink renderer reprint its whole live region; when the anchor shifts
+    // the reprint is APPENDED rather than overwritten → the duplicated /
+    // overlapping scrollback the user sees after reconnecting. Only the FINAL
+    // stable size matters, so debounce: wait until the resizes stop, then raise
+    // exactly ONE SIGWINCH — and skip it entirely if the real pty size is
+    // unchanged (the common reattach case: client re-sends the current dims).
+    const existing = this.resizeTimers.get(sessionId);
+    if (existing) clearTimeout(existing);
+    this.resizeTimers.set(sessionId, setTimeout(() => {
+      this.resizeTimers.delete(sessionId);
+      const s = this.sessions.get(sessionId);
+      if (!s) return;
+      const applied = this.appliedDims.get(sessionId);
+      if (applied && applied.cols === s.cols && applied.rows === s.rows) return; // real size unchanged → no SIGWINCH
+      s.pty.resize(s.cols, s.rows);
+      this.appliedDims.set(sessionId, { cols: s.cols, rows: s.rows });
+    }, 200));
     return true;
   }
 
@@ -329,6 +334,9 @@ export class TerminalManager {
     if (t) { clearTimeout(t); this.outputTimers.delete(sessionId); }
     const i = this.idleTimers.get(sessionId);
     if (i) { clearTimeout(i); this.idleTimers.delete(sessionId); }
+    const r = this.resizeTimers.get(sessionId);
+    if (r) { clearTimeout(r); this.resizeTimers.delete(sessionId); }
+    this.appliedDims.delete(sessionId);
   }
 }
 

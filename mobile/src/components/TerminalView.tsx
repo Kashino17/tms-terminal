@@ -158,10 +158,16 @@ interface Props {
    * Used by Manager-Chat V2 to drive the per-pane glow animation.
    */
   onThinkingChange?: (thinking: boolean) => void;
+  /**
+   * Height (px) the terminal should raise its bottom edge by when the soft
+   * keyboard opens, so the floating orb dock never covers the input line.
+   * Measured by OrbLayer (1 row ≈ 68, 2 rows ≈ 116). Falls back to 60.
+   */
+  dockHeight?: number;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, Props>(function TerminalView(
-  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false, fontSize, disableKeyboardOffset = false, tapFocusDisabled = false, onTap, onThinkingChange }: Props,
+  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false, fontSize, disableKeyboardOffset = false, tapFocusDisabled = false, onTap, onThinkingChange, dockHeight = 60 }: Props,
   ref,
 ) {
   const onTapRef = useRef(onTap);
@@ -186,6 +192,11 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   panelOpenRef.current = panelOpen;
   const onThinkingChangeRef = useRef(onThinkingChange);
   onThinkingChangeRef.current = onThinkingChange;
+  // Latest measured dock height + whether the soft keyboard is open, so the
+  // keyboard listeners (installed once) always read the current dock size.
+  const dockHeightRef = useRef(dockHeight);
+  dockHeightRef.current = dockHeight;
+  const kbVisibleRef = useRef(false);
 
   // Per-component thinking detector. Lazy-init so we don't pay the cost
   // for terminals that have no AI CLI; lifecycle tied to component unmount.
@@ -299,7 +310,9 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
 
     // Android: adjustResize handles layout, but we still need to offset
     // bottomAnim to make room for the floating orb dock above the keyboard.
-    const DOCK_HEIGHT = 60;
+    // The dock height is dynamic (1 row vs 2+ rows of orbs), so we use the
+    // measured value (dockHeightRef) instead of a fixed guess — a fixed 60px
+    // left the upper orb row covering the terminal's input line.
     const showSub = Keyboard.addListener('keyboardDidShow', () => {
       // Force-dismiss keyboard when external keyboard mode is active
       if (useSettingsStore.getState().externalKeyboardMode) {
@@ -311,9 +324,10 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         Keyboard.dismiss();
         return;
       }
-      // Add space for the orb dock strip
+      kbVisibleRef.current = true;
+      // Add space for the orb dock strip (measured height)
       Animated.timing(bottomAnim, {
-        toValue: DOCK_HEIGHT,
+        toValue: dockHeightRef.current,
         duration: 200,
         useNativeDriver: false,
       }).start();
@@ -328,6 +342,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
       }, 150);
     });
     const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      kbVisibleRef.current = false;
       Animated.timing(bottomAnim, {
         toValue: 0,
         duration: 200,
@@ -336,6 +351,19 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     });
     return () => { showSub.remove(); hideSub.remove(); };
   }, [disableKeyboardOffset]);
+
+  // If the dock height changes (orbs added/removed, or first measurement lands
+  // after the keyboard already opened) while the keyboard is open, re-animate
+  // the bottom offset so the input line stays clear of the dock.
+  useEffect(() => {
+    if (Platform.OS !== 'android' || disableKeyboardOffset) return;
+    if (!kbVisibleRef.current) return;
+    Animated.timing(bottomAnim, {
+      toValue: dockHeight,
+      duration: 150,
+      useNativeDriver: false,
+    }).start();
+  }, [dockHeight, disableKeyboardOffset]);
 
   // Push the tap-focus flag whenever it changes, and on every 'ready' message
   // (the WebView may have been re-rendered with stale state).

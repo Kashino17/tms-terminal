@@ -103,6 +103,10 @@ export function TerminalScreen({ navigation, route }: Props) {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [termAreaSize, setTermAreaSize] = useState({ width: 400, height: 600 });
+  // Measured height of the orb dock (reported by OrbLayer). Drives how much the
+  // terminal raises its bottom edge so the dock never covers the input line.
+  // Default ≈ one dock row; grows to the real value once OrbLayer measures it.
+  const [dockHeight, setDockHeight] = useState(54);
   // micRecording removed — now handled internally by OrbLayer
   const toolSections = useOrbLayoutStore((s) => s.toolSections);
   const updateToolSections = useOrbLayoutStore((s) => s.updateToolSections);
@@ -1091,6 +1095,8 @@ export function TerminalScreen({ navigation, route }: Props) {
               onRangeClose={() => setRangeActive(false)}
               onPathClicked={handlePathClicked}
               panelOpen={false}
+              // +14 ≈ dock's 4px bottom offset + a 10px breathing gap above it
+              dockHeight={dockHeight + 14}
             />
           ))}
 
@@ -1107,6 +1113,7 @@ export function TerminalScreen({ navigation, route }: Props) {
             containerSize={termAreaSize}
             keyboardVisible={keyboardVisible}
             keyboardHeight={keyboardHeight}
+            onDockHeightChange={setDockHeight}
             onTranscription={(text) => {
               const activeTab = serverTabs.find((t) => t.active);
               if (activeTab) termViewRefs.current.get(activeTab.id)?.injectText(text);

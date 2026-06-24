@@ -38,6 +38,10 @@ interface OrbLayerProps {
   keyboardVisible: boolean;
   keyboardHeight: number;
   onTranscription?: (text: string) => void;
+  /** Reports the measured height (px) of the keyboard dock so the terminal can
+   *  reserve exactly that much space above the keyboard (dock wraps to 1–2+
+   *  rows depending on orb count; a fixed reserve covered the input line). */
+  onDockHeightChange?: (height: number) => void;
 }
 
 interface OrbDefinition {
@@ -259,6 +263,7 @@ export function OrbLayer({
   keyboardVisible,
   keyboardHeight,
   onTranscription,
+  onDockHeightChange,
 }: OrbLayerProps) {
   // ── Store ────────────────────────────────────────────────────────────────
   const freeOrbs = useOrbLayoutStore((s) => s.freeOrbs);
@@ -776,7 +781,11 @@ export function OrbLayer({
           ~100px because the dock View captures touches there. Children
           (TouchableOpacity orbs) still capture taps normally. */}
       {keyboardVisible && (
-        <View style={[s.dock, { bottom: 4 }]} pointerEvents="box-none">
+        <View
+          style={[s.dock, { bottom: 4 }]}
+          pointerEvents="box-none"
+          onLayout={(e) => onDockHeightChange?.(e.nativeEvent.layout.height)}
+        >
           {/* Dock edit bar */}
           {dockEditMode && (
             <View style={s.dockEditBar}>

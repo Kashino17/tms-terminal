@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fix: Auto-Wiederherstellung verschwundener Orbs (z.B. Mikrofon) lief zu früh (vor dem Laden des gespeicherten Layouts) — jetzt korrekt nach der Hydration. Neu: 'Reset'-Button im Bearbeitungsmodus, der das Orb-Layout garantiert auf Standard zurücksetzt (Server & Einstellungen bleiben). Enthält alle Fixes aus v1.21.26–28 (Transkription, Screenshot-Pfad, Dock-/Edit-Orb-Picker)." \
+            --notes "Fix: Terminal-Scrollen wieder möglich — Claude Codes neuer Fullscreen-Renderer (Alt-Screen ohne Scrollback) wird serverseitig auf den klassischen Scrollback-Modus gezwungen (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN). Fix: Keine doppelten/überlappenden Zeilen mehr nach App-Wechsel — der Resize-SIGWINCH-Sturm wird koalesziert (ein Reprint statt vieler). Fix: Scrollen klemmt nicht mehr während Claude streamt — Auto-Scroll kämpft nicht mehr gegen die Finger-Geste. Fix: Eingabezeile wird nicht mehr von der Orb-Leiste verdeckt — die Dock-Höhe wird jetzt dynamisch gemessen. Hinweis: Server muss via 'tms-terminal update' aktualisiert + neugestartet werden, damit die Server-Fixes (Scroll/Duplikate) greifen." \
             --latest

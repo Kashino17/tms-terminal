@@ -776,7 +776,15 @@ const TERMINAL_HTML = `<!DOCTYPE html>
           // Previous snapshot approach (wasAtBottom captured before write)
           // caused stale closures to yank viewport to bottom when the user
           // scrolled up while queued writes were pending.
-          if (!userScrolledUp) {
+          //
+          // ALSO gate on !userIsTouching: during continuous streaming (Claude
+          // Code spinner/thinking) a programmatic scrollToBottom() here fires
+          // onScroll, and because the finger is still down (userIsTouching),
+          // that handler resets userScrolledUp back to false — fighting the
+          // user's scroll-up every frame so scrolling becomes impossible.
+          // While the finger is on the screen we never auto-scroll; we resume
+          // on release (userIsTouching clears 300 ms after touchend).
+          if (!userScrolledUp && !userIsTouching) {
             term.scrollToBottom();
           }
           scheduleSqlScan();

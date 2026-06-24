@@ -54,6 +54,15 @@ export function getTermEnv(): Record<string, string> {
   const env: Record<string, string> = {
     ...filtered,
     COLORTERM: 'truecolor',
+    // Force Claude Code's CLASSIC (scrollback) renderer instead of the new
+    // "fullscreen" mode that draws into the terminal's alternate screen buffer
+    // (like vim/htop). The TMS mobile client renders via xterm.js scrollback and
+    // does NOT forward mouse-wheel events to the PTY, so the alt-screen renderer
+    // leaves the user unable to scroll and breaks every buffer-dependent feature
+    // (two-finger scroll, row range-select, path tap, SQL detection — all read
+    // term.buffer.active). This env var overrides a saved `tui: fullscreen`
+    // setting in ~/.claude/settings.json. See code.claude.com/docs/en/fullscreen.
+    CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1',
   };
 
   if (platform === 'win32') {
