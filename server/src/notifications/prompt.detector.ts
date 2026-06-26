@@ -108,11 +108,19 @@ const STARTUP_GRACE_MS  = 1500;   // Down from 5000 — don't miss the first pro
 const MIN_AI_OUTPUT     = 800;
 const AI_EXPIRE_MS      = 10 * 60 * 1000;
 const DEDUP_COOLDOWN_MS = 2000;   // After firing, same tail-hash is ignored for this long
+// Refractory window after any fire. Prevents a double-fire while the just-approved
+// box tears down (its residual text can momentarily still match with a drifting hash),
+// AND lets a genuinely NEW prompt fire as soon as it elapses — even if the cleaned
+// window never stopped matching in between (the back-to-back agent/workflow case).
+const MIN_REFIRE_MS     = 400;
 // Fast-path window: rolling buffer of POST-ANSI-STRIP text used by the
 // per-chunk detector. Decoupled from BUFFER_MAX (which is raw bytes incl. ANSI)
 // so that heavy TUI redraws can't push the original prompt question out before
-// we get a chance to match it. ~1200 chars fits a full Claude Code prompt UI.
-const FAST_WINDOW       = 1200;
+// we get a chance to match it. Large boxes (multi-hunk Edit diffs, long Bash
+// commands, MCP tool args) can exceed 1200 cleaned chars in one frame, so keep a
+// generous window — and the per-chunk match below catches a box rendered in a
+// single fat frame regardless of window size.
+const FAST_WINDOW       = 4000;
 
 function hashTail(s: string): string {
   // Cheap non-crypto hash — enough to detect "same text" vs "different text"
@@ -121,11 +129,15 @@ function hashTail(s: string): string {
   return h.toString(36);
 }
 
+/** Prompt callback. `context.window` is the cleaned text the match was found in,
+ *  so the caller can decide which keystroke approves it (e.g. Enter vs 'y'). */
+export type PromptCallback = (snippet: string, context?: { window: string }) => void;
+
 export class PromptDetector {
   private buffers        = new Map<string, string>();
   private timers         = new Map<string, NodeJS.Timeout>();
   private immediateTimers = new Map<string, NodeJS.Timeout>();
-  private callbacks      = new Map<string, (snippet: string) => void>();
+  private callbacks      = new Map<string, PromptCallback>();
   private aiActive       = new Map<string, boolean>();
   private aiDetectedAt   = new Map<string, number>();
   private outputLen      = new Map<string, number>();
@@ -133,14 +145,16 @@ export class PromptDetector {
   private watchedAt      = new Map<string, number>();
   private lastFiredHash  = new Map<string, string>();
   private lastFiredAt    = new Map<string, number>();
-  // Fast-path state: rolling clean-text window + rising-edge tracker
+  // Fast-path state: rolling clean-text window
   private fastTail       = new Map<string, string>();
-  private promptActive   = new Map<string, boolean>();
 
-  watch(sessionId: string, onPrompt: (snippet: string) => void): void {
+  /** Injectable clock (defaults to wall time). Lets tests drive time deterministically. */
+  constructor(private now: () => number = () => Date.now()) {}
+
+  watch(sessionId: string, onPrompt: PromptCallback): void {
     this.callbacks.set(sessionId, onPrompt);
     if (!this.watchedAt.has(sessionId)) {
-      this.watchedAt.set(sessionId, Date.now());
+      this.watchedAt.set(sessionId, this.now());
     }
   }
 
@@ -154,7 +168,7 @@ export class PromptDetector {
     if (!this.aiActive.get(sessionId) && AI_ACTIVE_PATTERNS.some(p => p.test(cleanChunk))) {
       console.log(`[PromptDetector] AI tool detected in ${sessionId.slice(0, 8)}`);
       this.aiActive.set(sessionId, true);
-      this.aiDetectedAt.set(sessionId, Date.now());
+      this.aiDetectedAt.set(sessionId, this.now());
       this.aiOutputStart.set(sessionId, newLen);
     }
 
@@ -175,22 +189,21 @@ export class PromptDetector {
     // match prompt patterns on every feed, firing on the rising edge.
     if (cleanChunk) {
       const startedAt = this.watchedAt.get(sessionId) ?? 0;
-      if (Date.now() - startedAt >= STARTUP_GRACE_MS) {
+      if (this.now() - startedAt >= STARTUP_GRACE_MS) {
         const prevFast = this.fastTail.get(sessionId) ?? '';
         const fastWindow = (prevFast + cleanChunk).slice(-FAST_WINDOW);
         this.fastTail.set(sessionId, fastWindow);
 
-        const matched = PROMPT_PATTERNS.find((p) => p.test(fastWindow));
-        const wasActive = this.promptActive.get(sessionId) ?? false;
-        if (matched && !wasActive) {
-          this.promptActive.set(sessionId, true);
+        // Match the rolling window OR this fresh chunk on its own. A freshly
+        // rendered box matches even when a long preceding redraw pushed the
+        // window tail (slice(-FAST_WINDOW)) into the middle of a diff/command.
+        const matched = PROMPT_PATTERNS.find((p) => p.test(fastWindow) || p.test(cleanChunk));
+        if (matched && this._shouldFire(sessionId, hashTail(fastWindow))) {
           console.log(`[PromptDetector] PROMPT (fast) in ${sessionId.slice(0, 8)}: ${matched}`);
           const snippet = this._extractSnippet(fastWindow);
           this.lastFiredHash.set(sessionId, hashTail(fastWindow));
-          this.lastFiredAt.set(sessionId, Date.now());
-          this.callbacks.get(sessionId)?.(snippet);
-        } else if (!matched && wasActive) {
-          this.promptActive.set(sessionId, false);
+          this.lastFiredAt.set(sessionId, this.now());
+          this.callbacks.get(sessionId)?.(snippet, { window: fastWindow });
         }
       }
     }
@@ -217,6 +230,27 @@ export class PromptDetector {
     this.timers.set(sessionId, timer);
   }
 
+  /** Re-bind the callback after a client reattach WITHOUT resetting the startup
+   *  grace or dedup state. unwatch()+watch() would impose a fresh 1.5s blind
+   *  window on every reconnect (common over mobile/Tailscale), dropping any
+   *  prompt that lands in it. Only the stale pending timers and the callback are
+   *  refreshed; the scrollback replayed on reattach is naturally deduped because
+   *  lastFiredHash is preserved. */
+  rewatch(sessionId: string, onPrompt: PromptCallback): void {
+    this.callbacks.set(sessionId, onPrompt);
+    // If the detector wasn't already tracking this session (e.g. server
+    // restarted while the client was away), seed watchedAt in the past so grace
+    // is already elapsed rather than starting a fresh blind window.
+    if (!this.watchedAt.has(sessionId)) {
+      this.watchedAt.set(sessionId, this.now() - STARTUP_GRACE_MS);
+    }
+    // Drop only the stale pending check timers — keep buffers / fastTail / dedup.
+    const t = this.timers.get(sessionId);
+    if (t) { clearTimeout(t); this.timers.delete(sessionId); }
+    const imm = this.immediateTimers.get(sessionId);
+    if (imm) { clearTimeout(imm); this.immediateTimers.delete(sessionId); }
+  }
+
   unwatch(sessionId: string): void {
     this.callbacks.delete(sessionId);
     this.buffers.delete(sessionId);
@@ -228,34 +262,38 @@ export class PromptDetector {
     this.lastFiredHash.delete(sessionId);
     this.lastFiredAt.delete(sessionId);
     this.fastTail.delete(sessionId);
-    this.promptActive.delete(sessionId);
     const t = this.timers.get(sessionId);
     if (t) { clearTimeout(t); this.timers.delete(sessionId); }
     const imm = this.immediateTimers.get(sessionId);
     if (imm) { clearTimeout(imm); this.immediateTimers.delete(sessionId); }
   }
 
-  /** Called after an auto-approve Enter is dispatched — forces a fresh match cycle. */
+  /** Called after an auto-approve Enter is dispatched.
+   *  The fire already recorded lastFiredHash for dedup; we only refresh the
+   *  refractory timer from the moment of approval so the box tearing down AFTER
+   *  Enter (whose residual can momentarily still match) can't trigger a re-fire.
+   *  A genuinely new prompt fires once MIN_REFIRE_MS elapses. */
   noteApproved(sessionId: string): void {
-    // Clear text-bearing state so residual prompt text can't re-fire on the
-    // next spinner tick. Keep promptActive=true: until the cleaned fast-window
-    // actually transitions away from a prompt match, we treat any further
-    // matching content as "still the same prompt being torn down".
-    this.buffers.set(sessionId, '');
-    this.fastTail.set(sessionId, '');
-    this.lastFiredHash.delete(sessionId);
-    this.lastFiredAt.delete(sessionId);
-    this.promptActive.set(sessionId, true);
+    this.lastFiredAt.set(sessionId, this.now());
+  }
+
+  /** Dedup gate shared by the fast-path and the _check fallback.
+   *  Fires only for a DISTINCT prompt (cleaned-window hash changed) and only
+   *  once the post-fire refractory window has elapsed. */
+  private _shouldFire(sessionId: string, windowHash: string): boolean {
+    const lastHash  = this.lastFiredHash.get(sessionId);
+    const sinceFire = this.now() - (this.lastFiredAt.get(sessionId) ?? -Infinity);
+    return windowHash !== lastHash && sinceFire >= MIN_REFIRE_MS;
   }
 
   private _check(sessionId: string): void {
     // ── Guard: startup grace period ──
     const startedAt = this.watchedAt.get(sessionId) ?? 0;
-    if (Date.now() - startedAt < STARTUP_GRACE_MS) return;
+    if (this.now() - startedAt < STARTUP_GRACE_MS) return;
 
     // ── Guard: expire stale AI detection ──
     const aiDetTime = this.aiDetectedAt.get(sessionId) ?? 0;
-    if (this.aiActive.get(sessionId) && aiDetTime > 0 && Date.now() - aiDetTime > AI_EXPIRE_MS) {
+    if (this.aiActive.get(sessionId) && aiDetTime > 0 && this.now() - aiDetTime > AI_EXPIRE_MS) {
       this.aiActive.set(sessionId, false);
       this.aiOutputStart.delete(sessionId);
       this.aiDetectedAt.delete(sessionId);
@@ -264,30 +302,28 @@ export class PromptDetector {
     const raw   = this.buffers.get(sessionId) ?? '';
     const clean = raw.replace(ANSI_STRIP, '');
     const tail  = clean.slice(-SCAN_TAIL);
+    const tailHash = hashTail(tail);
+    // Dedup prompts on the SAME window the fast-path hashes, so the two paths
+    // agree on "same screen" even though they slice different lengths (a large
+    // box would otherwise hash differently here and get re-notified).
+    const promptSig = hashTail(this.fastTail.get(sessionId) ?? tail);
 
-    // Check 1: Interactive prompt patterns.
-    // Skip if the fast-path already fired for the currently-active prompt —
-    // _check is the silence-based fallback and would otherwise re-fire as the
-    // buffer tail's hash drifts with each spinner tick.
-    const matched = this.promptActive.get(sessionId)
-      ? undefined
-      : PROMPT_PATTERNS.find((p) => p.test(tail));
+    // Check 1: Interactive prompt patterns. Shares the fast-path's dedup gate
+    // (_shouldFire) so the silence fallback never double-fires a prompt the
+    // fast-path already handled, and never re-fires as the tail hash drifts.
+    const promptMatch = PROMPT_PATTERNS.find((p) => p.test(tail));
+    const matched = promptMatch && this._shouldFire(sessionId, promptSig) ? promptMatch : undefined;
 
     // Check 2: AI tool finished (active + enough output + shell prompt returned)
     const aiWasActive    = this.aiActive.get(sessionId) ?? false;
     const outputSinceAi  = (this.outputLen.get(sessionId) ?? 0) - (this.aiOutputStart.get(sessionId) ?? 0);
     const hasEnoughOutput = outputSinceAi >= MIN_AI_OUTPUT;
-    const shellReturned   = aiWasActive && hasEnoughOutput && SHELL_PROMPT_PATTERNS.some(p => p.test(tail));
+    const lastHash  = this.lastFiredHash.get(sessionId);
+    const lastFired = this.lastFiredAt.get(sessionId) ?? 0;
+    const shellReturned  = aiWasActive && hasEnoughOutput && SHELL_PROMPT_PATTERNS.some(p => p.test(tail))
+      && !(lastHash === tailHash && this.now() - lastFired < DEDUP_COOLDOWN_MS);
 
     if (!matched && !shellReturned) return;
-
-    // ── Dedup: don't re-fire on the same tail within cooldown window ──
-    const tailHash = hashTail(tail);
-    const lastHash = this.lastFiredHash.get(sessionId);
-    const lastFired = this.lastFiredAt.get(sessionId) ?? 0;
-    if (lastHash === tailHash && Date.now() - lastFired < DEDUP_COOLDOWN_MS) {
-      return;
-    }
 
     if (shellReturned) {
       console.log(`[PromptDetector] AI FINISHED in ${sessionId.slice(0, 8)} (${outputSinceAi} chars)`);
@@ -302,10 +338,10 @@ export class PromptDetector {
     const body = this._extractSnippet(tail) || (shellReturned ? 'Task abgeschlossen' : 'Eingabe erforderlich');
     const snippet = shellReturned ? `✅${body}` : body;
 
-    this.lastFiredHash.set(sessionId, tailHash);
-    this.lastFiredAt.set(sessionId, Date.now());
+    this.lastFiredHash.set(sessionId, shellReturned ? tailHash : promptSig);
+    this.lastFiredAt.set(sessionId, this.now());
 
-    this.callbacks.get(sessionId)?.(snippet);
+    this.callbacks.get(sessionId)?.(snippet, { window: tail });
   }
 
   /** Extract a short, human-readable body from cleaned terminal text. */
