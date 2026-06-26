@@ -8,6 +8,7 @@ import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 import { autopilotService } from '../autopilot/autopilot.service';
+import { computePendingLen, chooseApprovalKey } from './approval.util';
 import { transcribe as whisperTranscribe, getWhisperStatus, onWhisperStatusChange } from '../audio/whisper-sidecar';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
@@ -45,6 +46,10 @@ const serverAutoApprove = new Map<string, boolean>();
 // Updated on every terminal:input message from the client.
 const lastUserInputAt = new Map<string, number>();
 const TYPING_PAUSE_MS = 2000;
+// pendingInputLen is a best-effort estimate from client keystrokes; if no input
+// has arrived for this long, treat any leftover count as stale (desync) and
+// ignore it so a mis-tracked edit key can't permanently block auto-approve.
+const PENDING_STALE_MS = 15_000;
 
 // Track how many characters the user has on the current input line.
 // Auto-approve is blocked if pendingInputLen > 0 (user has unsent text).
@@ -55,32 +60,9 @@ const aiSessions = new Set<string>(); // sessions where AI tool was detected
 const autopilotTimers = new Map<string, NodeJS.Timeout>();
 const AUTOPILOT_IDLE_MS = 60_000; // 1 minute idle before sending next prompt
 
-/** Update pending input tracking from raw terminal input data */
+/** Update pending input tracking from raw terminal input data. See computePendingLen. */
 function trackPendingInput(sessionId: string, data: string): void {
-  let len = pendingInputLen.get(sessionId) ?? 0;
-  for (let i = 0; i < data.length; i++) {
-    const c = data.charCodeAt(i);
-    if (c === 0x0D || c === 0x0A) {        // Enter — line submitted
-      len = 0;
-    } else if (c === 0x03 || c === 0x15) { // Ctrl+C / Ctrl+U — line cancelled/cleared
-      len = 0;
-    } else if (c === 0x7F || c === 0x08) { // Backspace / BS
-      len = Math.max(0, len - 1);
-    } else if (c === 0x1B) {               // Escape sequence (arrow keys etc.) — skip
-      if (i + 1 < data.length) {
-        const next = data.charCodeAt(i + 1);
-        if (next === 0x5B || next === 0x4F) { // CSI [ or SS3 O
-          i += 2;
-          while (i < data.length && data.charCodeAt(i) >= 0x20 && data.charCodeAt(i) <= 0x3F) i++;
-        } else {
-          i++; // Alt+key
-        }
-      }
-    } else if (c >= 0x20) {               // Printable character
-      len++;
-    }
-  }
-  pendingInputLen.set(sessionId, len);
+  pendingInputLen.set(sessionId, computePendingLen(pendingInputLen.get(sessionId) ?? 0, data));
 }
 
 export function handleConnection(ws: WebSocket, ip: string): void {
@@ -102,13 +84,16 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   ws.on('close', () => { unsubscribeWhisper(); });
 
   /** Register a session with the prompt detector for auto-approve (no FCM — idle detector handles that). */
-  const watchSession = (sessionId: string): void => {
-    promptDetector.watch(sessionId, (snippet) => {
-      // Server-side auto-approve: if enabled, send Enter directly to PTY
-      // This works even when the client is backgrounded/disconnected
+  const watchSession = (sessionId: string, reattach = false): void => {
+    const onPrompt = (snippet: string, context?: { window: string }): void => {
+      // Server-side auto-approve: if enabled, send the approving keystroke directly
+      // to the PTY. This works even when the client is backgrounded/disconnected.
       if (serverAutoApprove.get(sessionId)) {
-        const hasPending = (pendingInputLen.get(sessionId) ?? 0) > 0;
-        const isTyping = (Date.now() - (lastUserInputAt.get(sessionId) ?? 0)) < TYPING_PAUSE_MS;
+        const sinceInput = Date.now() - (lastUserInputAt.get(sessionId) ?? 0);
+        // Ignore a stale pending count (a mis-tracked edit key can desync it);
+        // otherwise it would silently block auto-approve forever.
+        const hasPending = (pendingInputLen.get(sessionId) ?? 0) > 0 && sinceInput < PENDING_STALE_MS;
+        const isTyping = sinceInput < TYPING_PAUSE_MS;
 
         if (hasPending) {
           logger.info(`Auto-approve: BLOCKED for session ${sessionId.slice(0, 8)} (unsent text on line)`);
@@ -117,16 +102,33 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           logger.info(`Auto-approve: PAUSED for session ${sessionId.slice(0, 8)} (user typing)`);
           // Fall through to send prompt notification to client instead
         } else {
-          logger.info(`Auto-approve: sending Enter for session ${sessionId.slice(0, 8)}`);
-          globalManager.write(sessionId, '\r');
-          return; // No WS notification needed
+          // Pick the right keystroke for the prompt variant (Enter for the
+          // standard Claude numbered prompt, 'y' for [y/N], or null = don't
+          // auto-press a free-text prompt — notify the user instead).
+          const key = chooseApprovalKey(context?.window ?? snippet);
+          if (key === null) {
+            logger.info(`Auto-approve: NOTIFY-only for session ${sessionId.slice(0, 8)} (free-text prompt)`);
+            // Fall through to notify — let the user answer.
+          } else {
+            logger.info(`Auto-approve: sending ${JSON.stringify(key)} for session ${sessionId.slice(0, 8)}`);
+            globalManager.write(sessionId, key);
+            // Our own keystroke is not user input — clear any stale pending count.
+            pendingInputLen.set(sessionId, 0);
+            // Refresh the detector's refractory so the box teardown can't re-fire.
+            promptDetector.noteApproved(sessionId);
+            return; // No WS notification needed
+          }
         }
       }
 
       // Send in-app badge notification via WebSocket (for auto-approve UI badge)
       const pendingFlag = (pendingInputLen.get(sessionId) ?? 0) > 0;
       send(ws, { type: 'terminal:prompt_detected', sessionId, payload: { snippet, hasPendingInput: pendingFlag } });
-    });
+    };
+    // Reattach must NOT reset the startup grace (rewatch preserves it); a fresh
+    // watch() is only for a brand-new session.
+    if (reattach) promptDetector.rewatch(sessionId, onPrompt);
+    else promptDetector.watch(sessionId, onPrompt);
   };
 
   /** Register a session with the idle detector for FCM push notifications. */
@@ -485,9 +487,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         if (session) {
           ownedSessions.add(session.id);
           sessionGens.set(session.id, globalManager.getAttachGen(session.id));
-          promptDetector.unwatch(session.id); // reset stale timer state before re-watching
+          // rewatch (via reattach=true) keeps the startup grace + dedup state so a
+          // prompt arriving right after reconnect isn't dropped into a fresh blind
+          // window. Clear any stale pending-input count from the previous session.
+          pendingInputLen.set(session.id, 0);
           idleDetector.unwatch(session.id);   // reset stale idle state before re-watching
-          watchSession(session.id);
+          watchSession(session.id, true);
           watchSessionIdle(session.id);
           globalManager.resize(session.id, cols, rows);
           send(ws, {
