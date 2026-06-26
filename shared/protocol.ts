@@ -62,54 +62,6 @@ export interface AudioTranscribeMessage {
   payload: { audio: string; format: 'wav' };
 }
 
-// ── Manager messages (Client → Server) ────────────────────────────
-export interface ManagerChatMessage {
-  type: 'manager:chat';
-  payload: { text: string; targetSessionId?: string };
-}
-export interface ManagerCancelMessage {
-  type: 'manager:cancel';
-}
-export interface ManagerToggleMessage {
-  type: 'manager:toggle';
-  payload: { enabled: boolean };
-}
-export interface ManagerSetProviderMessage {
-  type: 'manager:set_provider';
-  payload: { providerId: string };
-}
-export interface ManagerPollMessage {
-  type: 'manager:poll';
-  payload?: { targetSessionId?: string };
-}
-export interface ManagerSetApiKeyMessage {
-  type: 'manager:set_api_key';
-  payload: { providerId: string; apiKey: string };
-}
-export interface ManagerMemoryReadMessage {
-  type: 'manager:memory_read';
-}
-export interface ManagerMemoryWriteMessage {
-  type: 'manager:memory_write';
-  payload: { section: string; data: unknown };
-}
-
-// ── File Upload (Client → Server) ────────────────────────────────
-export interface FileUploadMessage {
-  type: 'client:file_upload';
-  payload: { filename: string; data: string; /* base64 */ mimeType: string };
-}
-
-// ── App State (Client → Server) ──────────────────────────────────
-export interface AppStateMessage {
-  type: 'client:app_state';
-  payload: { foreground: boolean };
-}
-export interface ActiveTabMessage {
-  type: 'client:active_tab';
-  payload: { tabId: string; sessionId?: string };
-}
-
 export type ClientMessage =
   | TerminalCreateMessage
   | TerminalInputMessage
@@ -126,18 +78,7 @@ export type ClientMessage =
   | WatcherTestMessage
   | SystemSnapshotMessage
   | SystemKillMessage
-  | AudioTranscribeMessage
-  | ManagerChatMessage
-  | ManagerCancelMessage
-  | ManagerToggleMessage
-  | ManagerSetProviderMessage
-  | ManagerPollMessage
-  | ManagerSetApiKeyMessage
-  | ManagerMemoryReadMessage
-  | ManagerMemoryWriteMessage
-  | FileUploadMessage
-  | AppStateMessage
-  | ActiveTabMessage;
+  | AudioTranscribeMessage;
 
 // ── Server → Client ──────────────────────────────────────────────
 
@@ -227,27 +168,18 @@ export interface AudioTranscriptionMessage {
   payload: { text: string };
 }
 
-export interface AudioProgressMessage {
-  type: 'audio:progress';
-  sessionId: string;
-  payload: { chunk: number; total: number; text: string };
-}
-
 export interface AudioErrorMessage {
   type: 'audio:error';
   sessionId: string;
   payload: { message: string };
 }
 
-// ── TTS (Text-to-Speech) ────────────────────────────────
-export interface TTSResultMessage {
-  type: 'tts:result';
-  payload: { messageId: string; audio: string; /* base64 WAV */ duration: number };
-}
-
-export interface TTSErrorMessage {
-  type: 'tts:error';
-  payload: { messageId: string; message: string };
+export interface AudioStatusMessage {
+  type: 'audio:status';
+  payload: {
+    state: 'starting' | 'ready' | 'failed';
+    message?: string;
+  };
 }
 
 // ── System snapshot response (Server → Client) ──────────────────
@@ -273,71 +205,6 @@ export interface SystemSnapshotResponseMessage {
   };
 }
 
-// ── Manager responses (Server → Client) ──────────────────────────
-export interface ManagerSummaryMessage {
-  type: 'manager:summary';
-  payload: {
-    text: string;
-    sessions: Array<{ sessionId: string; label: string; hasActivity: boolean }>;
-    timestamp: number;
-  };
-}
-export interface ManagerResponseMessage {
-  type: 'manager:response';
-  payload: {
-    text: string;
-    actions?: Array<{ type: string; sessionId: string; detail: string }>;
-  };
-}
-export interface ManagerProvidersMessage {
-  type: 'manager:providers';
-  payload: {
-    providers: Array<{ id: string; name: string; configured: boolean }>;
-    active: string;
-  };
-}
-export interface ManagerErrorMessage {
-  type: 'manager:error';
-  payload: { message: string };
-}
-export interface ManagerStatusMessage {
-  type: 'manager:status';
-  payload: { enabled: boolean };
-}
-export interface ManagerMemoryDataMessage {
-  type: 'manager:memory_data';
-  payload: { memory: unknown };
-}
-
-// ── Manager streaming (Server → Client) ──────────────────────────
-export interface PhaseInfo {
-  phase: string;
-  label: string;
-  duration: number;
-}
-
-export interface ManagerThinkingMessage {
-  type: 'manager:thinking';
-  payload: { phase: string; detail?: string; elapsed: number };
-}
-
-export interface ManagerStreamChunkMessage {
-  type: 'manager:stream_chunk';
-  payload: { token: string };
-}
-
-export interface ManagerStreamEndMessage {
-  type: 'manager:stream_end';
-  payload: {
-    text: string;
-    actions?: Array<{ type: string; sessionId: string; detail: string }>;
-    phases: PhaseInfo[];
-    images?: string[];
-    presentations?: string[];
-    tasks?: Array<{ id: string; description: string; sessionLabel: string; status: string }>;
-  };
-}
-
 export type ServerMessage =
   | TerminalCreatedMessage
   | TerminalOutputMessage
@@ -355,12 +222,4 @@ export type ServerMessage =
   | SystemKillResultMessage
   | AudioTranscriptionMessage
   | AudioErrorMessage
-  | ManagerSummaryMessage
-  | ManagerResponseMessage
-  | ManagerProvidersMessage
-  | ManagerErrorMessage
-  | ManagerStatusMessage
-  | ManagerMemoryDataMessage
-  | ManagerThinkingMessage
-  | ManagerStreamChunkMessage
-  | ManagerStreamEndMessage;
+  | AudioStatusMessage;

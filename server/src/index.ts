@@ -15,8 +15,7 @@ import { getPlatform, getDefaultShell } from './utils/platform';
 import { fcmService } from './notifications/fcm.service';
 import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
-import { shutdown as shutdownWhisper } from './audio/whisper-sidecar';
-import { managerService } from './websocket/ws.handler';
+import { shutdown as shutdownWhisper, initialize as initializeWhisper } from './audio/whisper-sidecar';
 
 // ── Global error handlers ────────────────────────────────────────────
 process.on('unhandledRejection', (reason) => {
@@ -130,14 +129,9 @@ function main(): void {
   // Initialize watchers (file/process/keyword monitors with push notifications)
   watcherService.init();
 
-  // Auto-start Manager Agent in headless mode.
-  // The Manager runs autonomously (heartbeat, task tracking, AI calls).
-  // When a client connects, callbacks get wired up for UI streaming.
-  // Until then, messages are buffered and flushed on first connect.
-  if (!managerService.isEnabled()) {
-    managerService.start();
-    logger.info('Manager: auto-started in headless mode (no client needed)');
-  }
+  // Pre-warm Whisper sidecar in the background (non-blocking).
+  // Status changes are broadcast to all connected clients via ws.handler.
+  initializeWhisper();
 
   // TODO: TLS certificates are generated (see config.certFile / config.keyFile) but not yet used.
   // For future HTTPS implementation, create an https.Server using these certs instead of http.
@@ -150,7 +144,6 @@ function main(): void {
       handleUploadRequest(req, res);
     } else if (req.url === '/upload/drawing') {
       handleDrawingUpload(req, res);
-<<<<<<< HEAD
     } else if (req.url?.startsWith('/generated-images/')) {
       // Serve generated images (JWT-protected)
       const authHeader = req.headers['authorization'] ?? '';

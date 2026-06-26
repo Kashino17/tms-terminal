@@ -10,7 +10,8 @@
     "build": "tsc",
     "start": "node dist/server/src/index.js",
     "dev": "ts-node src/index.ts",
-    "setup": "ts-node src/setup.ts"
+    "setup": "ts-node src/setup.ts",
+    "test": "node --require ts-node/register --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

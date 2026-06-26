@@ -26,6 +26,8 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   const bottomAnim = useRef(new Animated.Value(0)).current;
   const [arrowsOpen, setArrowsOpen] = useState(false);
   const audioInputEnabled = useSettingsStore((s) => s.audioInputEnabled);
+  const [whisperStatus, setWhisperStatus] = useState<'idle' | 'starting' | 'ready' | 'failed'>('idle');
+  const [whisperFailMessage, setWhisperFailMessage] = useState<string | null>(null);
   const [micState, setMicState] = useState<'idle' | 'recording' | 'processing'>('idle');
   const [micError, setMicError] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -70,6 +72,15 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
   useEffect(() => {
     return wsService.addMessageListener((msg: unknown) => {
       const m = msg as { type: string; sessionId?: string; payload?: any };
+      // audio:status has no sessionId — handle before the filter
+      if (m.type === 'audio:status') {
+        const next = m.payload?.state as 'starting' | 'ready' | 'failed' | undefined;
+        if (next) {
+          setWhisperStatus(next);
+          setWhisperFailMessage(next === 'failed' ? (m.payload?.message ?? 'Whisper nicht verfügbar') : null);
+        }
+        return;
+      }
       if (m.sessionId !== sessionId) return;
       if (m.type === 'audio:transcription') {
         clearTranscriptionTimer();
@@ -109,6 +120,18 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
 
   const handleMicPress = async () => {
     if (micState === 'processing') return;
+
+    // Whisper not ready — show inline status, don't even start recording
+    if (whisperStatus === 'failed') {
+      setMicError(whisperFailMessage ?? 'Whisper Server-Setup nötig');
+      setTimeout(() => setMicError(null), 4000);
+      return;
+    }
+    if (whisperStatus === 'starting') {
+      setMicError('Whisper startet noch…');
+      setTimeout(() => setMicError(null), 2500);
+      return;
+    }
 
     if (micState === 'recording') {
       // Stop recording and send
@@ -281,17 +304,27 @@ export function TerminalToolbar({ sessionId, wsService, rangeActive = false, onR
             </Animated.View>
           ) : (
             <>
-              <Animated.View style={{ opacity: micState === 'recording' ? pulseAnim : 1 }}>
+              <Animated.View style={{ opacity: micState === 'recording' ? pulseAnim : (whisperStatus === 'starting' ? pulseAnim : 1) }}>
                 <TouchableOpacity
                   style={[
                     s.bigBtn,
                     { height: h },
                     micState === 'recording' && { backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: StyleSheet.hairlineWidth, borderColor: '#ef4444' },
+                    whisperStatus === 'failed' && { backgroundColor: 'rgba(239,68,68,0.08)', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(239,68,68,0.4)' },
                   ]}
                   onPress={handleMicPress}
                   activeOpacity={0.6}
                 >
-                  <Feather name="mic" size={lg} color={micState === 'recording' ? '#ef4444' : colors.textDim} />
+                  <Feather
+                    name={whisperStatus === 'failed' ? 'mic-off' : 'mic'}
+                    size={lg}
+                    color={
+                      micState === 'recording' ? '#ef4444'
+                      : whisperStatus === 'failed' ? 'rgba(239,68,68,0.6)'
+                      : whisperStatus === 'starting' ? colors.textMuted
+                      : colors.textDim
+                    }
+                  />
                 </TouchableOpacity>
               </Animated.View>
               {micState === 'recording' && (
