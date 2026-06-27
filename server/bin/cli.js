@@ -11,6 +11,8 @@ const CONFIG_DIR = path.join(os.homedir(), '.tms-terminal');
 const PID_FILE = path.join(CONFIG_DIR, 'server.pid');
 const DIST_INDEX = path.join(ROOT, 'dist', 'server', 'src', 'index.js');
 const DIST_SETUP = path.join(ROOT, 'dist', 'server', 'src', 'setup.js');
+const DIST_DIR = path.join(ROOT, 'dist');
+const TSBUILDINFO = path.join(ROOT, '.tsbuildinfo');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function getPort() {
@@ -62,10 +64,19 @@ function ensureBuilt() {
       console.log('\x1b[34m⟳\x1b[0m  Installing dependencies...');
       execSync('npm install', { cwd: ROOT, stdio: 'inherit' });
     }
+    // dist is missing here, so force a real emit: a stale .tsbuildinfo would
+    // make `tsc` a no-op (it tracks emit state, not output existence) and the
+    // server would then crash with MODULE_NOT_FOUND. Treat dist + .tsbuildinfo
+    // as a unit.
+    try { fs.unlinkSync(TSBUILDINFO); } catch {}
     try {
       execSync('npx tsc', { cwd: ROOT, stdio: 'inherit' });
     } catch {
       console.error('\x1b[31m✗\x1b[0m  Build failed.');
+      process.exit(1);
+    }
+    if (!fs.existsSync(DIST_INDEX)) {
+      console.error('\x1b[31m✗\x1b[0m  Build produced no output (' + DIST_INDEX + ').');
       process.exit(1);
     }
   }
@@ -235,10 +246,12 @@ git pull || { echo "FAILED: git pull"; exit 1; }
 echo "[$(date)] Installing dependencies..."
 npm install --no-audit --no-fund || { echo "FAILED: npm install"; exit 1; }
 
-# 4. Rebuild
+# 4. Rebuild (clear dist AND the incremental cache — a stale .tsbuildinfo
+#    makes tsc a silent no-op and the server crashes with MODULE_NOT_FOUND)
 echo "[$(date)] Rebuilding..."
-rm -rf "${path.join(ROOT, 'dist')}"
+rm -rf "${DIST_DIR}" "${TSBUILDINFO}"
 npx tsc || { echo "FAILED: tsc build"; exit 1; }
+if [ ! -f "${DIST_INDEX}" ]; then echo "FAILED: tsc produced no output"; exit 1; fi
 
 # 5. Read new version
 VERSION=$(node -e "console.log(require('./package.json').version)" 2>/dev/null || echo "?")
