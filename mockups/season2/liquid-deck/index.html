@@ -246,7 +246,7 @@
 
   /* rail (expanded ≥700px) */
   .rail { display: none; }
-  .rail-item { padding: 10px 12px; margin-bottom: 8px; cursor: grab; transition: transform 300ms var(--spring), border-color 300ms var(--spring); border-radius: var(--radius-md); }
+  .rail-item { padding: 10px 12px; margin-bottom: 8px; cursor: grab; transition: transform 300ms var(--spring), border-color 300ms var(--spring); border-radius: var(--radius-md); touch-action: none; }
   .rail-item.is-active { border-color: rgba(106,168,255,.5); background: rgba(106,168,255,.08); }
   .rail-item.is-dragging { opacity: .35; }
   .rail-item__top { display: flex; align-items: center; gap: 8px; }
@@ -580,7 +580,7 @@
       <h4>Agent-Aktivität</h4>
       <div class="island-activity-feed">${renderBufferLine(lastLine) || '—'}</div>
       <h4>Nächstes Gebet</h4>
-      <div class="island-row"><span class="island-row__dot" style="background:var(--accent-warm)"></span><span class="island-row__name">${np.name} · ${np.time}</span><span class="island-row__meta">in ${np.countdown}</span></div>
+      <div class="island-row"><span class="island-row__dot" style="background:var(--accent-warm)"></span><span class="island-row__name">${escapeHtml(np.name)} · ${escapeHtml(np.time)}</span><span class="island-row__meta">in ${np.countdown}</span></div>
       <h4>Deploy</h4>
       <div class="island-row"><span class="island-row__dot" style="background:var(--warn)"></span><span class="island-row__name">${building ? escapeHtml(building.name) : 'Keine aktiven Builds'}</span><span class="island-row__meta">${building ? 'Build läuft…' : ''}</span></div>
       <div class="island-close-hint">Antippen zum Schließen</div>
@@ -966,11 +966,13 @@
   function wireRailDrag(item) {
     item.addEventListener('pointerdown', e => {
       const startX = e.clientX, startY = e.clientY;
-      let dragging = false, ghost = null;
+      const pointerId = e.pointerId;
+      let dragging = false, ghost = null, cleaned = false;
       const fromId = item.dataset.id;
       const fromIndex = state.order.indexOf(fromId);
       function clearDropTargets() { document.querySelectorAll('.rail-item.drop-target, .stack-pane.drop-target').forEach(el => el.classList.remove('drop-target')); }
       function onMove(ev) {
+        if (ev.pointerId !== pointerId) return;
         const dx = ev.clientX - startX, dy = ev.clientY - startY;
         if (!dragging) {
           if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
@@ -989,21 +991,35 @@
         if (targetItem && targetItem !== item) targetItem.classList.add('drop-target');
         else if (targetPane) targetPane.classList.add('drop-target');
       }
-      function onUp(ev) {
+      function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
         document.removeEventListener('pointermove', onMove);
         document.removeEventListener('pointerup', onUp);
-        if (ghost) ghost.remove();
+        document.removeEventListener('pointercancel', onCancel);
+        item.removeEventListener('lostpointercapture', onLostCapture);
+        try { item.releasePointerCapture(pointerId); } catch (err) { /* already released */ }
+        if (ghost) { ghost.remove(); ghost = null; }
         item.classList.remove('is-dragging');
         clearDropTargets();
-        if (!dragging) return;
+      }
+      function onUp(ev) {
+        const wasDragging = dragging;
+        cleanup();
+        if (!wasDragging) return;
         const under = document.elementFromPoint(ev.clientX, ev.clientY);
         const targetItem = under && under.closest('.rail-item');
         const targetPane = under && under.closest('.stack-pane');
         if (targetItem && targetItem !== item) { swapOrder(fromIndex, Number(targetItem.dataset.index)); toast('Getauscht ✓'); }
         else if (targetPane) { swapOrder(fromIndex, state.activeIndex); toast('Getauscht ✓'); }
       }
+      function onCancel() { cleanup(); }
+      function onLostCapture() { cleanup(); }
+      try { item.setPointerCapture(pointerId); } catch (err) { /* unsupported */ }
       document.addEventListener('pointermove', onMove);
       document.addEventListener('pointerup', onUp);
+      document.addEventListener('pointercancel', onCancel);
+      item.addEventListener('lostpointercapture', onLostCapture);
     });
   }
 
