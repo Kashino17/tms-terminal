@@ -1,4 +1,5 @@
 import { XTERM_CSS, XTERM_XTERM, XTERM_FIT, XTERM_WEBLINKS, XTERM_CANVAS } from '../assets/xtermBundle';
+import { reconcilePredictions } from '../utils/predictionReconcile';
 
 // Build HTML with xterm.js scripts inlined (no CDN dependency).
 // Library scripts are injected via string concatenation to avoid template literal escaping issues.
@@ -55,6 +56,46 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 <script>` + XTERM_CANVAS + `<\/script>
 <script>
 (function() {
+
+  /* ── Predictive echo ────────────────────────────────────────────────
+     reconcilePredictions is defined once in mobile/src/utils/predictionReconcile.js
+     and spliced in here via .toString() so there is a single source of truth
+     that's still unit-testable with plain Node. */
+  var reconcilePredictions = ` + reconcilePredictions.toString() + `;
+  var predictionQueue = [];   // { op: 'insert'|'delete', char?, sentAt }
+  var lastRtt = 1000;         // ms fallback until the RN side pushes a real sample
+
+  function isPredictableInsert(seq) {
+    if (seq.length !== 1) return false;
+    var c = seq.charCodeAt(0);
+    return c >= 0x20 && c <= 0x7e;
+  }
+
+  function predictInsert(ch) {
+    term.write('\\x1b[4m' + ch + '\\x1b[24m');
+    predictionQueue.push({ op: 'insert', char: ch, sentAt: Date.now() });
+  }
+
+  function predictDelete() {
+    // Destructive backspace: move left, blank the cell, move left again.
+    // Known limitation: at a wrapped-line boundary this doesn't cross rows
+    // (terminal BS never does) — self-corrects on the next real output.
+    term.write('\\b \\b');
+    predictionQueue.push({ op: 'delete', sentAt: Date.now() });
+  }
+
+  function pruneConfirmedPredictions() {
+    var result = reconcilePredictions(predictionQueue, lastRtt, Date.now());
+    predictionQueue = result.pending;
+  }
+
+  function rerenderPendingPredictions() {
+    for (var i = 0; i < predictionQueue.length; i++) {
+      var p = predictionQueue[i];
+      if (p.op === 'insert') term.write('\\x1b[4m' + p.char + '\\x1b[24m');
+      else term.write('\\b \\b');
+    }
+  }
 
   var SEQ = {
     esc:   '\\x1b',  tab:   '\\t',    ctrlc: '\\x03',
@@ -142,7 +183,14 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     if (window.ReactNativeWebView)
       window.ReactNativeWebView.postMessage(JSON.stringify(msg));
   }
-  function sendKey(seq) { sendToRN({ type: 'input', data: seq }); }
+  function sendKey(seq) {
+    if (isPredictableInsert(seq)) {
+      predictInsert(seq);
+    } else if (seq === SEQ.bs) {
+      predictDelete();
+    }
+    sendToRN({ type: 'input', data: seq });
+  }
 
   /* Terminal tap → focus keyboard (not in select mode) */
   // Use touchstart/touchend to detect a genuine stationary tap (not a scroll).
@@ -674,18 +722,32 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     try {
       var msg = typeof data === 'string' ? JSON.parse(data) : data;
       if      (msg.type === 'output') {
+        pruneConfirmedPredictions();
         term.write(msg.data, function() {
+          rerenderPendingPredictions();
           // Live-check: only auto-scroll if user hasn't scrolled up.
           // Previous snapshot approach (wasAtBottom captured before write)
           // caused stale closures to yank viewport to bottom when the user
           // scrolled up while queued writes were pending.
-          if (!userScrolledUp) {
+          //
+          // ALSO gate on !userIsTouching: during continuous streaming (Claude
+          // Code spinner/thinking) a programmatic scrollToBottom() here fires
+          // onScroll, and because the finger is still down (userIsTouching),
+          // that handler resets userScrolledUp back to false — fighting the
+          // user's scroll-up every frame so scrolling becomes impossible.
+          // While the finger is on the screen we never auto-scroll; we resume
+          // on release (userIsTouching clears 300 ms after touchend).
+          if (!userScrolledUp && !userIsTouching) {
             term.scrollToBottom();
           }
           scheduleSqlScan();
         });
       }
       else if (msg.type === 'clear')  term.clear();
+      else if (msg.type === 'rtt' && msg.data) {
+        var parsedRtt = parseInt(msg.data, 10);
+        if (!isNaN(parsedRtt) && parsedRtt > 0) lastRtt = parsedRtt;
+      }
       else if (msg.type === 'focus')  {
         fitAddon.fit(); reportSize();
         // Sync prevValue with the actual shadow input content to prevent
