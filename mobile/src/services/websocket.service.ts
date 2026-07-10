@@ -32,6 +32,7 @@ export class WebSocketService {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<MessageHandler>();
+  private rttListeners = new Set<(rtt: number) => void>();
   private onStateChange: StateHandler = () => {};
   private _state: ConnectionState = 'disconnected';
   private netInfoUnsub: (() => void) | null = null;
@@ -84,6 +85,12 @@ export class WebSocketService {
   addMessageListener(handler: MessageHandler): () => void {
     this.listeners.add(handler);
     return () => this.listeners.delete(handler);
+  }
+
+  /** Called with the rounded smoothed RTT (ms) whenever it's recalculated; returns an unsubscribe function */
+  addRttListener(handler: (rtt: number) => void): () => void {
+    this.rttListeners.add(handler);
+    return () => this.rttListeners.delete(handler);
   }
 
   setStateHandler(handler: StateHandler): void {
@@ -265,6 +272,11 @@ export class WebSocketService {
       this._jitter = 0;
       this.reconnectAttempts = 0;
       this.doConnect();
+    }
+
+    if (this._smoothedRtt !== undefined) {
+      const roundedRtt = Math.round(this._smoothedRtt);
+      this.rttListeners.forEach((handler) => handler(roundedRtt));
     }
   }
 

@@ -248,6 +248,14 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     });
   }, [sessionId, wsService, sendToTerminal]);
 
+  // Forward the current RTT estimate into the WebView so predictive echo knows
+  // how long to keep unconfirmed predictions visible.
+  useEffect(() => {
+    return wsService.addRttListener((rtt) => {
+      sendToTerminal('rtt', String(rtt));
+    });
+  }, [wsService, sendToTerminal]);
+
   useEffect(() => {
     if (visible) {
       setTimeout(() => sendToTerminal('focus'), 100);
