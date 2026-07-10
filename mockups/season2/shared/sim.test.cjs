@@ -36,3 +36,14 @@ test('reset() allows replay', () => {
   s.start();
   assert.equal(s.state, 'done');
 });
+
+test('timer mode: autoApprove plays through with ordered payloads', async () => {
+  const s = createSession(SCRIPT, { speed: 4, autoApprove: true, autoApproveDelay: 10 });
+  const out = [];
+  const finished = new Promise(resolve => s.on('done', resolve));
+  s.on('out', d => out.push(d));
+  s.start();
+  await finished;
+  assert.equal(s.state, 'done');
+  assert.equal(out.join(''), 'hello world');
+});
