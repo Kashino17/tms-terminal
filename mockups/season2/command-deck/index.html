@@ -1441,7 +1441,11 @@
       host.innerHTML = TMS_DATA.manager.messages.map(renderChatMessageHtml).join('');
       host.scrollTop = host.scrollHeight;
       wireManagerChatInteractions();
-      TMS_DATA.manager.messages.forEach(scheduleTranscription);
+      // Arm transcription timers only while the Manager screen is visible, so the
+      // seed message's "Transkribiere… → transcript" demo moment plays on first
+      // entry to the screen (via SCREEN_HOOKS.manager) instead of expiring at page init.
+      const screen = document.querySelector('[data-screen="manager"]');
+      if (screen && !screen.hidden) TMS_DATA.manager.messages.forEach(scheduleTranscription);
     }
 
     function wireManagerChatInteractions() {
@@ -1715,7 +1719,14 @@
     function renderLogsTab(host, project) {
       const cardId = cloudLogCardId(project);
       if (!cardState[cardId]) cardState[cardId] = { lines: project.logs.slice(), collapsed: false, selectionMode: false, selection: null };
-      else cardState[cardId].lines = project.logs.slice();
+      else {
+        // The DOM below (Selektieren button + .term-pre classes) is rebuilt fresh,
+        // so reset selection state to match — otherwise flag and UI desync after
+        // a Logs → other tab → Logs round-trip and the first toggle tap is a no-op.
+        cardState[cardId].lines = project.logs.slice();
+        cardState[cardId].selectionMode = false;
+        cardState[cardId].selection = null;
+      }
       host.innerHTML = `
         <div class="log-viewer">
           <div class="log-viewer__tools">
@@ -1837,10 +1848,10 @@
           <div class="settings-group__title">Über</div>
           <div class="settings-row">
             <span class="settings-row__label">Version</span>
-            <span class="settings-row__value">v${TMS_DATA.update.current}</span>
+            <span class="settings-row__value">v${escapeHtml(TMS_DATA.update.current)}</span>
           </div>
           <div class="settings-row is-tap" id="updateHintRow">
-            <span class="settings-row__label">Update verfügbar<small>v${TMS_DATA.update.latest} — ${escapeHtml(TMS_DATA.update.notes)}</small></span>
+            <span class="settings-row__label">Update verfügbar<small>v${escapeHtml(TMS_DATA.update.latest)} — ${escapeHtml(TMS_DATA.update.notes)}</small></span>
             <span class="settings-row__value">›</span>
           </div>
         </div>
