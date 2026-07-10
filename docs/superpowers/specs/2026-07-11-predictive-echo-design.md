@@ -64,9 +64,10 @@ In `terminalHtml.ts`s `handleMsg` wird dieser Typ zusätzlich behandelt und in e
 
 ## 6. Edge Cases
 
-- **WS-Reconnect / Session-Resync:** `predictionQueue` wird geleert, sobald eine Reconnect/Resync-Message eintrifft (z.B. beim erneuten `get_last_lines`/Full-Refresh nach Verbindungsabbruch) — verhindert Ghost-Vorhersagen nach Reconnect.
+- **WS-Reconnect / Session-Resync:** Reconnect läuft über einen frischen WebView-Load → `ready`-Event → gepuffertes Output wird per `sendToTerminal('output', buffered)` replayed, danach `terminal:reattach` angefragt (`TerminalView.tsx:294`). Da die WebView bei einem Reconnect ohnehin neu geladen wird, ist `predictionQueue` automatisch leer (frischer JS-Kontext) — kein expliziter Reset-Hook nötig.
 - **Emoji/Mehrbyte-Zeichen:** Kein Prediction-Pfad (siehe Abschnitt 2) — vermeidet Breiten-Berechnungs-Sonderfälle in xterm.
 - **Feld-Clear bei 60 Zeichen** (bestehender Samsung-Puffer-Schutz in `terminalHtml.ts:376`): Operiert auf dem Shadow-Input-Feld, nicht auf dem Terminal-Buffer — keine Interaktion mit Prediction nötig.
+- **"??"-Command-Suggest-Interception** (`TerminalView.tsx:307–319`): Bei zwei aufeinanderfolgenden `?` fängt die RN-Seite ab und sendet direkt über `wsService.send` (nicht über `sendKey`) ein korrigierendes Backspace am ersten `?`, um eine Vorschlags-UI zu öffnen. Das WebView-seitige Prediction sieht diesen Eingriff nicht und zeigt kurzzeitig `??` unterstrichen an, bis der echte Output die Korrektur zeigt — self-korrigiert über die normale Reconciliation (Abschnitt 4), keine Sonderbehandlung für MVP nötig.
 
 ## 7. Out of Scope
 
