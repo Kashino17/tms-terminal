@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Command Deck — TMS Terminal</title>
+<style>
+  :root {
+    --bg: #0a0a0c; --bg-raised: #131318; --border: #26262e;
+    --text: #e6e6ea; --text-dim: #8b8b96; --accent: #7c6cff;
+    --ok: #3fb950; --warn: #d29922; --err: #f85149;
+    --font-ui: -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', monospace;
+    --radius: 10px; --hairline: 1px solid var(--border);
+
+    /* Extended tokens (execution-quality layer on top of the required set) */
+    --bg-sunken: #060607;
+    --accent-dim: rgba(124, 108, 255, .14);
+    --radius-sm: 6px;
+    --transition: 150ms ease-out;
+    --commandbar-h: 54px;
+    --fs-micro: 11px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: var(--font-ui); font-size: 13.5px;
+    -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column; height: 100dvh;
+    overflow: hidden;
+  }
+  button, input { font-family: inherit; color: inherit; }
+  button { appearance: none; -webkit-appearance: none; background: none; border: none; }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
+
+  /* ---------- Screen shell ---------- */
+  #screens { flex: 1; min-height: 0; position: relative; }
+  section[data-screen] { position: absolute; inset: 0; overflow-y: auto; }
+  section[data-screen="terminals"]:not([hidden]) { overflow-y: hidden; display: flex; flex-direction: column; }
+  .term-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+
+  .screen-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; padding: 20px 16px 12px; }
+  .screen-head__eyebrow { font: 700 var(--fs-micro)/1 var(--font-mono); letter-spacing: .08em; color: var(--text-dim); text-transform: uppercase; }
+  .screen-head__count { font: 500 var(--fs-micro)/1 var(--font-mono); color: var(--text-dim); }
+  .screen-head__subtitle { flex-basis: 100%; margin-top: 4px; font-size: 12.5px; color: var(--text-dim); }
+
+  /* ---------- Update banner ---------- */
+  .update-banner:not([hidden]) { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--accent-dim); border-bottom: var(--hairline); font-size: 12.5px; }
+  .update-banner__text { flex: 1; color: var(--text); }
+  .update-banner__cta { color: var(--accent); font: 600 12.5px var(--font-ui); cursor: pointer; text-decoration: underline; }
+  .update-banner__dismiss { color: var(--text-dim); cursor: pointer; font-size: 14px; padding: 2px 4px; line-height: 1; }
+  .update-banner__dismiss:hover { color: var(--text); }
+
+  /* ---------- Server list ---------- */
+  .server-row { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 14px 16px; border: none; border-top: var(--hairline); text-align: left; cursor: pointer; transition: background var(--transition); }
+  .server-row:first-child { border-top: none; }
+  .server-row:active { background: var(--bg-raised); }
+  .server-row[data-status="offline"] { opacity: .48; }
+  .server-row__top, .server-row__meta { display: flex; align-items: center; gap: 8px; }
+  .server-row__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: 0 0 auto; }
+  .server-row[data-status="offline"] .server-row__dot { background: var(--err); }
+  .server-row__name { font: 600 15px var(--font-ui); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .server-row__latency { font: 12px var(--font-mono); color: var(--text-dim); padding: 2px 7px; border: var(--hairline); border-radius: 20px; flex: 0 0 auto; }
+  .server-row__meta { color: var(--text-dim); }
+  .server-row__addr { font: 13px var(--font-mono); flex: 1; }
+  .server-row__sessions { font: var(--fs-micro) var(--font-mono); flex: 0 0 auto; }
+
+  /* ---------- Terminal stack ---------- */
+  .term-stack { padding: 4px 16px 24px; display: flex; flex-direction: column; gap: 14px; }
+  @media (min-width: 700px) {
+    .term-stack { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  }
+
+  .term-card { position: relative; background: var(--bg-raised); border: var(--hairline); border-radius: var(--radius); padding-left: 4px; overflow: hidden; transition: border-color var(--transition); }
+  .term-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--tag-color, var(--border)); }
+  .term-card.is-active { border-color: var(--accent); }
+
+  .term-card__head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 12px 12px 10px; }
+  .term-card__chevron { flex: 0 0 auto; color: var(--text-dim); font-size: 12px; cursor: pointer; padding: 4px; line-height: 1; transition: transform var(--transition); }
+  .term-card[data-collapsed="true"] .term-card__chevron { transform: rotate(-90deg); }
+  .term-card__title { flex: 1; min-width: 0; }
+  .term-card__name { display: block; width: 100%; background: transparent; border: none; font: 600 15px var(--font-ui); padding: 2px 4px; margin-left: -4px; border-radius: 4px; transition: background var(--transition); }
+  .term-card__name:hover { background: rgba(255, 255, 255, .04); }
+  .term-card__name:focus { background: var(--bg); outline: 2px solid var(--accent); outline-offset: 0; }
+  .term-card__desc { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; padding: 0 4px; }
+  .status-chip { display: inline-flex; align-items: center; gap: 6px; font: 600 10.5px var(--font-mono); letter-spacing: .04em; text-transform: uppercase; color: var(--text-dim); flex: 0 0 auto; padding-top: 3px; white-space: nowrap; }
+  .status-chip__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); }
+  .status-chip[data-status="running"] .status-chip__dot { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+  .status-chip[data-status="waiting"] .status-chip__dot { background: var(--warn); }
+  .status-chip[data-status="done"] .status-chip__dot { background: var(--ok); }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(124, 108, 255, .5); }
+    50% { opacity: .55; box-shadow: 0 0 0 4px rgba(124, 108, 255, 0); }
+  }
+  .term-card__reorder { display: flex; flex-direction: column; gap: 2px; flex: 0 0 auto; }
+  .term-card__reorder button { color: var(--text-dim); font-size: 9px; cursor: pointer; padding: 2px 4px; line-height: 1; transition: color var(--transition); }
+  .term-card__reorder button:hover { color: var(--text); }
+
+  .term-card__body { border-top: var(--hairline); }
+  .term-card[data-collapsed="true"] .term-card__body { display: none; }
+
+  .term-pre {
+    position: relative;
+    font: 13px/1.6 var(--font-mono);
+    color: var(--text);
+    background: var(--bg-sunken);
+    padding: 12px;
+    max-height: min(320px, 42vh);
+    overflow-y: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .term-line { display: block; padding: 1px 4px; margin: 0 -4px; border-radius: 4px; }
+  .term-pre.selection-mode .term-line { cursor: pointer; }
+  .term-pre.selection-mode .term-line:hover { background: rgba(124, 108, 255, .08); }
+  .term-line.is-selected { background: rgba(124, 108, 255, .32); }
+
+  .ans-b { font-weight: 700; }
+  .ans-d { color: var(--text-dim); }
+  .ans-g { color: var(--ok); }
+  .ans-r { color: var(--err); }
+
+  .wrapped-link { color: var(--accent); text-decoration: underline; text-decoration-color: rgba(124, 108, 255, .5); text-underline-offset: 2px; cursor: pointer; transition: color var(--transition); }
+  .wrapped-link:hover { color: #a99bff; }
+
+  .sel-handle { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); transform: translate(-50%, 0); touch-action: none; z-index: 5; }
+  .sel-handle::before { content: ''; position: absolute; left: 50%; bottom: 100%; width: 2px; height: 16px; background: var(--accent); transform: translateX(-50%); }
+  .copy-bubble { position: absolute; transform: translateX(-8px); background: var(--accent); color: #fff; font: 600 12px var(--font-ui); padding: 6px 12px; border-radius: 6px; cursor: pointer; z-index: 6; white-space: nowrap; }
+  .copy-bubble::after { content: ''; position: absolute; left: 16px; top: 100%; border: 5px solid transparent; border-top-color: var(--accent); }
+
+  .prompt-card { margin: 10px 12px; padding: 12px; background: var(--bg); border: var(--hairline); border-left: 2px solid var(--warn); border-radius: var(--radius-sm); transition: border-color var(--transition); }
+  .prompt-card.is-armed { border-left-color: var(--accent); }
+  .prompt-card__row { display: flex; gap: 8px; align-items: baseline; font: 13px var(--font-mono); flex-wrap: wrap; }
+  .prompt-card__tool { font-weight: 700; }
+  .prompt-card__target { color: var(--text-dim); overflow-wrap: anywhere; }
+  .prompt-card__question { margin-top: 6px; font-size: 13px; }
+  .prompt-card__actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .prompt-card__actions button { font: 600 12.5px var(--font-ui); padding: 7px 12px; border-radius: 6px; cursor: pointer; transition: background var(--transition), border-color var(--transition), color var(--transition); }
+  .prompt-card__actions [data-act="yes"] { background: var(--accent); border: 1px solid var(--accent); color: #fff; }
+  .prompt-card__actions [data-act="no"] { border: var(--hairline); }
+  .prompt-card__actions [data-act="auto"] { border: var(--hairline); color: var(--text-dim); margin-left: auto; }
+  .prompt-card__actions [data-act="auto"][aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+
+  .replay-btn:not([hidden]) { display: block; width: calc(100% - 24px); margin: 10px 12px 12px; padding: 10px; border: 1px dashed var(--border); border-radius: var(--radius-sm); color: var(--text-dim); font: 600 12.5px var(--font-ui); cursor: pointer; transition: border-color var(--transition), color var(--transition); }
+  .replay-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ---------- Terminal toolbar ---------- */
+  .term-toolbar-wrap { position: relative; flex: 0 0 auto; border-top: var(--hairline); background: var(--bg-raised); }
+  .key-echo-host { position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); display: flex; gap: 6px; margin-bottom: 6px; pointer-events: none; }
+  .key-echo { background: var(--bg-raised); border: var(--hairline); color: var(--text); font: 600 11px var(--font-mono); padding: 4px 8px; border-radius: 6px; opacity: 0; transform: translateY(4px); transition: opacity var(--transition), transform var(--transition); }
+  .key-echo.show { opacity: 1; transform: translateY(0); }
+  .term-toolbar { display: flex; gap: 6px; padding: 8px 10px; overflow-x: auto; scrollbar-width: none; }
+  .term-toolbar::-webkit-scrollbar { display: none; }
+  .term-toolbar button { flex: 0 0 auto; min-width: 38px; padding: 8px 10px; background: var(--bg); border: var(--hairline); border-radius: 6px; font: 600 12px var(--font-mono); cursor: pointer; transition: border-color var(--transition), color var(--transition); }
+  .term-toolbar button:active { background: var(--bg-sunken); }
+  #selToggleBtn.is-on { border-color: var(--accent); color: var(--accent); }
+
+  /* ---------- Bottom command bar ---------- */
+  #commandbar { flex: 0 0 auto; height: var(--commandbar-h); display: flex; border-top: var(--hairline); background: var(--bg-raised); }
+  #commandbar button { flex: 1; color: var(--text-dim); font: 500 12px var(--font-ui); padding: 10px 4px 8px; cursor: pointer; position: relative; transition: color var(--transition); }
+  #commandbar button.active { color: var(--accent); }
+  #commandbar button.active::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 20px; height: 2px; background: var(--accent); }
+  #commandbar button[data-nav="palette"] { font: 600 16px var(--font-mono); color: var(--text); }
+
+  /* ---------- Command palette ---------- */
+  #palette:not([hidden]) { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-start; justify-content: center; padding-top: min(14vh, 90px); padding-left: 16px; padding-right: 16px; opacity: 0; transition: opacity var(--transition); }
+  #palette.is-open { opacity: 1; }
+  .palette__scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .6); }
+  .palette__panel { position: relative; width: min(560px, 100%); max-height: 70vh; display: flex; flex-direction: column; background: var(--bg-raised); border: var(--hairline); border-radius: var(--radius); transform: translateY(-6px); transition: transform var(--transition); overflow: hidden; }
+  #palette.is-open .palette__panel { transform: translateY(0); }
+  .palette__search { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: var(--hairline); }
+  .palette__icon { color: var(--text-dim); font: 600 14px var(--font-mono); }
+  #paletteInput { flex: 1; border: none; background: none; font: 500 15px var(--font-ui); outline: none; }
+  #paletteInput::placeholder { color: var(--text-dim); }
+  .palette__close { background: var(--bg); border: var(--hairline); color: var(--text-dim); font: var(--fs-micro) var(--font-mono); padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+  .palette__results { overflow-y: auto; padding: 6px; }
+  .palette__row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border-radius: 6px; text-align: left; cursor: pointer; transition: background var(--transition); }
+  .palette__row.is-highlighted, .palette__row:hover { background: var(--bg); }
+  .palette__row-type { flex: 0 0 auto; font: 600 10px var(--font-mono); text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); border: var(--hairline); padding: 2px 6px; border-radius: 20px; }
+  .palette__row-label { font: 500 13.5px var(--font-ui); flex: 0 1 auto; white-space: nowrap; }
+  .palette__row-sub { font: 12px var(--font-mono); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .palette__empty { padding: 20px; text-align: center; color: var(--text-dim); font-size: 13px; }
+
+  /* ---------- Toasts ---------- */
+  #toasts { position: fixed; left: 0; right: 0; bottom: calc(var(--commandbar-h) + 12px); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 1100; pointer-events: none; padding: 0 16px; }
+  .toast { background: var(--bg-raised); border: var(--hairline); font: 500 12.5px var(--font-ui); padding: 9px 14px; border-radius: 8px; opacity: 0; transform: translateY(6px); transition: opacity var(--transition), transform var(--transition); max-width: 88vw; text-align: center; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+  <main id="screens">
+    <section data-screen="servers">
+      <div class="update-banner" id="updateBanner" hidden>
+        <span class="update-banner__text" id="updateBannerText"></span>
+        <button class="update-banner__cta" id="updateCta">Jetzt updaten</button>
+        <button class="update-banner__dismiss" id="updateDismiss" aria-label="Banner schließen">✕</button>
+      </div>
+      <header class="screen-head">
+        <span class="screen-head__eyebrow">Server</span>
+        <span class="screen-head__count" id="serverCount"></span>
+      </header>
+      <div class="server-list" id="serverList"></div>
+    </section>
+
+    <section data-screen="terminals" hidden>
+      <div class="term-scroll">
+        <header class="screen-head">
+          <span class="screen-head__eyebrow">Terminals</span>
+          <span class="screen-head__count" id="terminalCount"></span>
+          <p class="screen-head__subtitle" id="terminalsSubtitle"></p>
+        </header>
+        <div class="term-stack" id="terminalStack"></div>
+      </div>
+      <div class="term-toolbar-wrap">
+        <div class="key-echo-host" id="keyEchoHost"></div>
+        <div class="term-toolbar" id="termToolbar">
+          <button data-key="Esc">Esc</button>
+          <button data-key="↑">↑</button>
+          <button data-key="↓">↓</button>
+          <button data-key="←">←</button>
+          <button data-key="→">→</button>
+          <button data-key="Tab">Tab</button>
+          <button data-key="Ctrl">Ctrl</button>
+          <button data-key="⌘V">⌘V</button>
+          <button id="selToggleBtn" data-key="Aa" aria-pressed="false">Aa</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <nav id="commandbar">
+    <button data-nav="servers">Server</button>
+    <button data-nav="terminals">Terminals</button>
+    <button data-nav="manager">Manager</button>
+    <button data-nav="cloud">Cloud</button>
+    <button data-nav="palette" aria-label="Befehlspalette öffnen">⌘</button>
+  </nav>
+
+  <div id="palette" hidden>
+    <div class="palette__scrim"></div>
+    <div class="palette__panel" role="dialog" aria-modal="true" aria-label="Befehlspalette">
+      <div class="palette__search">
+        <span class="palette__icon">⌘</span>
+        <input id="paletteInput" type="text" placeholder="Suchen…" autocomplete="off" spellcheck="false">
+        <button class="palette__close" id="paletteClose">Esc</button>
+      </div>
+      <div class="palette__results" id="paletteResults"></div>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+
+  <script src="../shared/data.js"></script>
+  <script src="../shared/sim.js"></script>
+  <script>
+    // ============================================================
+    // State
+    // ============================================================
+    const state = { activeCardId: 't1', activeServerName: '' };
+    const cardState = {};
+    TMS_DATA.sessions.forEach(s => {
+      cardState[s.id] = {
+        lines: s.buffer.slice(),
+        collapsed: false,
+        selectionMode: false,
+        selection: null,
+        autoApprove: false,
+        pendingPrompt: null,
+        sim: null,
+        autoTimer: null,
+      };
+    });
+
+    // ============================================================
+    // Utilities: escaping, ANSI rendering, wrapped-link, toast, clipboard
+    // ============================================================
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    }
+
+    // Minimal ANSI SGR renderer: bold(1) dim(2) red(31) green(32) reset(0).
+    // Unknown codes are stripped silently so no raw escapes ever leak into the DOM.
+    function ansiToHtml(str) {
+      const CLASS = { '1': 'ans-b', '2': 'ans-d', '31': 'ans-r', '32': 'ans-g' };
+      let out = '', open = 0, last = 0, m;
+      const re = /\x1b\[(\d+)m/g;
+      while ((m = re.exec(str))) {
+        out += escapeHtml(str.slice(last, m.index));
+        last = re.lastIndex;
+        if (m[1] === '0') { while (open) { out += '</span>'; open--; } }
+        else if (CLASS[m[1]]) { out += `<span class="${CLASS[m[1]]}">`; open++; }
+      }
+      out += escapeHtml(str.slice(last));
+      while (open) { out += '</span>'; open--; }
+      return out;
+    }
+
+    // Renders one buffer line to HTML, special-casing the wrapped deploy link so
+    // it always stays a single inline element (browser wraps it visually, never split in the DOM).
+    function renderBufferLine(line) {
+      const url = TMS_DATA.demo.wrappedLinkUrl;
+      const idx = line.indexOf(url);
+      if (idx === -1) return ansiToHtml(line);
+      const idMatch = url.match(/dpl_\w+/);
+      const shortId = idMatch ? idMatch[0].slice(0, 12) : url.slice(-12);
+      const before = ansiToHtml(line.slice(0, idx));
+      const after = ansiToHtml(line.slice(idx + url.length));
+      const link = `<span class="wrapped-link" data-url="${escapeHtml(url)}" data-short="${escapeHtml(shortId)}" role="link" tabindex="0">${escapeHtml(url)}</span>`;
+      return before + link + after;
+    }
+
+    function toast(message) {
+      const host = document.getElementById('toasts');
+      const el = document.createElement('div');
+      el.className = 'toast';
+      el.textContent = message;
+      host.appendChild(el);
+      requestAnimationFrame(() => el.classList.add('show'));
+      setTimeout(() => {
+        el.classList.remove('show');
+        setTimeout(() => el.remove(), 200);
+      }, 2400);
+    }
+
+    function copyText(text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+          return;
+        }
+      } catch (e) { /* fall through to fallback */ }
+      fallbackCopy(text);
+    }
+    function fallbackCopy(text) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (e) { /* no-op: mockup best-effort copy */ }
+    }
+
+    // ============================================================
+    // Servers screen
+    // ============================================================
+    function renderUpdateBanner() {
+      const u = TMS_DATA.update;
+      const banner = document.getElementById('updateBanner');
+      if (!u || u.current === u.latest) { banner.hidden = true; return; }
+      document.getElementById('updateBannerText').textContent = `v${u.latest} verfügbar —`;
+      banner.hidden = false;
+    }
+
+    function renderServers() {
+      const list = document.getElementById('serverList');
+      list.innerHTML = '';
+      document.getElementById('serverCount').textContent = String(TMS_DATA.servers.length);
+      TMS_DATA.servers.forEach(s => {
+        const row = document.createElement('button');
+        row.className = 'server-row';
+        row.dataset.status = s.status;
+        const latency = s.latency != null ? `${s.latency}ms` : '—';
+        row.innerHTML = `
+          <div class="server-row__top">
+            <span class="server-row__dot"></span>
+            <span class="server-row__name">${escapeHtml(s.name)}</span>
+            <span class="server-row__latency">${latency}</span>
+          </div>
+          <div class="server-row__meta">
+            <span class="server-row__addr">${escapeHtml(s.host)}:${s.port}</span>
+            <span class="server-row__sessions">${s.sessions} Sessions</span>
+          </div>
+        `;
+        row.addEventListener('click', () => {
+          if (s.status === 'online') {
+            state.activeServerName = s.name;
+            updateTerminalsHeader();
+            goToTerminals();
+          } else {
+            toast('Server offline — zuletzt gesehen vor 2 Std');
+          }
+        });
+        list.appendChild(row);
+      });
+    }
+
+    function updateTerminalsHeader() {
+      document.getElementById('terminalsSubtitle').textContent = state.activeServerName ? `Server: ${state.activeServerName}` : '';
+      document.getElementById('terminalCount').textContent = String(TMS_DATA.sessions.length);
+    }
+
+    // ============================================================
+    // Terminal stack
+    // ============================================================
+    function statusLabel(status) {
+      return status === 'done' ? 'done ✓' : status;
+    }
+
+    function updateStatusChip(id, status) {
+      const chip = document.querySelector(`.term-card[data-id="${id}"] .status-chip`);
+      if (!chip) return;
+      chip.dataset.status = status;
+      chip.innerHTML = `<span class="status-chip__dot"></span>${statusLabel(status)}`;
+    }
+
+    function buildCard(s) {
+      const card = document.createElement('article');
+      card.className = 'term-card';
+      card.dataset.id = s.id;
+      card.dataset.collapsed = 'false';
+      card.style.setProperty('--tag-color', s.colorTag);
+      card.innerHTML = `
+        <header class="term-card__head">
+          <button class="term-card__chevron" data-act="toggle" aria-label="Ein-/Ausklappen">⌄</button>
+          <div class="term-card__title">
+            <input class="term-card__name" value="${escapeHtml(s.name)}" data-prev="${escapeHtml(s.name)}" spellcheck="false" aria-label="Terminal-Name">
+            <p class="term-card__desc">${escapeHtml(s.description)}</p>
+          </div>
+          <span class="status-chip" data-status="${s.status}"><span class="status-chip__dot"></span>${statusLabel(s.status)}</span>
+          <div class="term-card__reorder">
+            <button data-act="up" aria-label="Nach oben">▲</button>
+            <button data-act="down" aria-label="Nach unten">▼</button>
+          </div>
+        </header>
+        <div class="term-card__body">
+          <div class="term-pre" data-card-id="${s.id}"></div>
+          <div class="prompt-card" hidden></div>
+          <button class="replay-btn" hidden>▶ Session erneut abspielen</button>
+        </div>
+      `;
+      card.addEventListener('pointerdown', () => setActiveCard(s.id));
+      return card;
+    }
+
+    function renderCardLines(id) {
+      const pre = document.querySelector(`.term-pre[data-card-id="${id}"]`);
+      if (!pre) return;
+      const cs = cardState[id];
+      const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 6;
+      const prevScrollTop = pre.scrollTop;
+      pre.querySelectorAll('.term-line').forEach(l => l.remove());
+      const frag = document.createDocumentFragment();
+      cs.lines.forEach((line, i) => {
+        const div = document.createElement('div');
+        div.className = 'term-line';
+        div.dataset.i = String(i);
+        const span = document.createElement('span');
+        span.className = 'term-line__text';
+        span.innerHTML = renderBufferLine(line) || '&nbsp;';
+        div.appendChild(span);
+        frag.appendChild(div);
+      });
+      pre.insertBefore(frag, pre.firstChild);
+      if (cs.selection) positionHandlesAndBubble(id);
+      pre.scrollTop = atBottom ? pre.scrollHeight : prevScrollTop;
+    }
+
+    function toggleCollapse(id) {
+      const card = document.querySelector(`.term-card[data-id="${id}"]`);
+      const cs = cardState[id];
+      cs.collapsed = !cs.collapsed;
+      card.dataset.collapsed = String(cs.collapsed);
+    }
+
+    function moveCard(id, dir) {
+      const card = document.querySelector(`.term-card[data-id="${id}"]`);
+      if (!card) return;
+      if (dir < 0) {
+        const prev = card.previousElementSibling;
+        if (prev) card.parentNode.insertBefore(card, prev);
+      } else {
+        const next = card.nextElementSibling;
+        if (next) card.parentNode.insertBefore(next, card);
+      }
+    }
+
+    function setActiveCard(id) {
+      state.activeCardId = id;
+      document.querySelectorAll('.term-card').forEach(c => c.classList.toggle('is-active', c.dataset.id === id));
+    }
+
+    function applyResponsiveDefaults() {
+      const w = window.innerWidth;
+      const cards = [...document.querySelectorAll('.term-card')];
+      cards.forEach((card, i) => {
+        const id = card.dataset.id;
+        const shouldCollapse = w < 400 ? i !== 0 : false;
+        cardState[id].collapsed = shouldCollapse;
+        card.dataset.collapsed = String(shouldCollapse);
+      });
+    }
+
+    let stackBuilt = false;
+    function buildTerminalStack() {
+      if (stackBuilt) return;
+      stackBuilt = true;
+      const stackEl = document.getElementById('terminalStack');
+      TMS_DATA.sessions.forEach(s => {
+        const card = buildCard(s);
+        stackEl.appendChild(card);
+        renderCardLines(s.id);
+      });
+      stackEl.addEventListener('click', e => {
+        const btn = e.target.closest('[data-act]');
+        if (!btn) return;
+        const card = btn.closest('.term-card');
+        if (!card) return;
+        const id = card.dataset.id;
+        const act = btn.dataset.act;
+        if (act === 'toggle') toggleCollapse(id);
+        else if (act === 'up') moveCard(id, -1);
+        else if (act === 'down') moveCard(id, 1);
+      });
+      stackEl.addEventListener('keydown', e => {
+        if (e.target.classList.contains('term-card__name') && e.key === 'Enter') e.target.blur();
+      });
+      stackEl.addEventListener('focusout', e => {
+        if (!e.target.classList || !e.target.classList.contains('term-card__name')) return;
+        const input = e.target;
+        if (!input.value.trim()) input.value = input.dataset.prev;
+        else input.dataset.prev = input.value;
+      });
+      setActiveCard(state.activeCardId);
+      initLiveSession();
+    }
+
+    function goToTerminals() {
+      buildTerminalStack();
+      applyResponsiveDefaults();
+      show('terminals');
+    }
+
+    // ============================================================
+    // Live Claude session (TMSSim) — session t1
+    // ============================================================
+    function appendOutChunk(cs, chunk) {
+      const pieces = chunk.split('\n');
+      if (pieces[pieces.length - 1] === '') pieces.pop();
+      cs.lines.push(...pieces);
+    }
+
+    let liveSimStarted = false;
+    function initLiveSession() {
+      if (liveSimStarted) return;
+      liveSimStarted = true;
+      const session = TMS_DATA.sessions.find(s => s.live);
+      if (!session) return;
+      const id = session.id;
+      const cs = cardState[id];
+      const sim = TMSSim.createSession(session.script, { autoApprove: false });
+      cs.sim = sim;
+
+      sim.on('out', chunk => { appendOutChunk(cs, chunk); renderCardLines(id); });
+      sim.on('status', status => updateStatusChip(id, status));
+      sim.on('prompt', data => showPromptCard(id, data));
+      sim.on('done', () => showReplay(id));
+
+      sim.start();
+    }
+
+    function showPromptCard(id, data) {
+      const cs = cardState[id];
+      cs.pendingPrompt = data;
+      const card = document.querySelector(`.term-card[data-id="${id}"]`);
+      if (cs.collapsed) toggleCollapse(id);
+      const box = card.querySelector('.prompt-card');
+      box.hidden = false;
+      box.classList.toggle('is-armed', cs.autoApprove);
+      box.innerHTML = `
+        <div class="prompt-card__row"><span class="prompt-card__tool">${escapeHtml(data.tool)}</span><span class="prompt-card__target">${escapeHtml(data.target || '')}</span></div>
+        <div class="prompt-card__question">${escapeHtml(data.question || 'Erlauben?')}</div>
+        <div class="prompt-card__actions">
+          <button data-act="yes">Ja</button>
+          <button data-act="no">Nein</button>
+          <button data-act="auto" aria-pressed="${cs.autoApprove}">Auto-Approve an</button>
+        </div>
+      `;
+      box.querySelector('[data-act="yes"]').addEventListener('click', () => resolvePrompt(id, true));
+      box.querySelector('[data-act="no"]').addEventListener('click', () => resolvePrompt(id, false));
+      box.querySelector('[data-act="auto"]').addEventListener('click', () => toggleAutoApprove(id));
+      if (cs.autoApprove) armAutoApprove(id);
+    }
+
+    function armAutoApprove(id) {
+      const cs = cardState[id];
+      clearTimeout(cs.autoTimer);
+      cs.autoTimer = setTimeout(() => {
+        if (!cs.pendingPrompt || !cs.sim) return;
+        appendOutChunk(cs, '  ⎿ ✔ Auto-Approve\n');
+        renderCardLines(id);
+        const card = document.querySelector(`.term-card[data-id="${id}"]`);
+        const box = card && card.querySelector('.prompt-card');
+        if (box) { box.hidden = true; box.innerHTML = ''; }
+        cs.pendingPrompt = null;
+        cs.sim.respond();
+      }, 600);
+    }
+
+    function resolvePrompt(id, approved) {
+      const cs = cardState[id];
+      clearTimeout(cs.autoTimer);
+      const card = document.querySelector(`.term-card[data-id="${id}"]`);
+      const box = card.querySelector('.prompt-card');
+      box.hidden = true;
+      box.innerHTML = '';
+      cs.pendingPrompt = null;
+      if (approved) {
+        cs.sim.respond();
+      } else {
+        appendOutChunk(cs, '  ⎿ ✖ Abgelehnt — Aktion gestoppt\n');
+        renderCardLines(id);
+        updateStatusChip(id, 'idle');
+      }
+    }
+
+    function toggleAutoApprove(id) {
+      const cs = cardState[id];
+      cs.autoApprove = !cs.autoApprove;
+      const card = document.querySelector(`.term-card[data-id="${id}"]`);
+      const btn = card.querySelector('.prompt-card [data-act="auto"]');
+      if (btn) btn.setAttribute('aria-pressed', String(cs.autoApprove));
+      const box = card.querySelector('.prompt-card');
+      if (box) box.classList.toggle('is-armed', cs.autoApprove);
+      if (cs.autoApprove && cs.pendingPrompt) armAutoApprove(id);
+      else if (!cs.autoApprove) clearTimeout(cs.autoTimer);
+    }
+
+    function showReplay(id) {
+      const card = document.querySelector(`.term-card[data-id="${id}"]`);
+      const btn = card.querySelector('.replay-btn');
+      btn.hidden = false;
+      btn.onclick = () => replaySession(id);
+    }
+
+    function replaySession(id) {
+      const cs = cardState[id];
+      const session = TMS_DATA.sessions.find(s => s.id === id);
+      clearTimeout(cs.autoTimer);
+      cs.lines = session.buffer.slice();
+      cs.pendingPrompt = null;
+      clearSelection(id);
+      const card = document.querySelector(`.term-card[data-id="${id}"]`);
+      card.querySelector('.replay-btn').hidden = true;
+      const box = card.querySelector('.prompt-card');
+      box.hidden = true; box.innerHTML = '';
+      renderCardLines(id);
+      updateStatusChip(id, session.status);
+      cs.sim.reset();
+      cs.sim.start();
+    }
+
+    // ============================================================
+    // Touch text-selection: handles + copy bubble
+    // ============================================================
+    function handleLineTap(pre, line) {
+      const cardId = pre.dataset.cardId;
+      const cs = cardState[cardId];
+      const i = Number(line.dataset.i);
+      if (cs.selection && cs.selection.start === i && cs.selection.end === i) {
+        clearSelection(cardId);
+        return;
+      }
+      cs.selection = { start: i, end: i };
+      renderSelection(cardId);
+    }
+
+    function renderSelection(cardId) {
+      const pre = document.querySelector(`.term-pre[data-card-id="${cardId}"]`);
+      const cs = cardState[cardId];
+      pre.querySelectorAll('.term-line').forEach(l => {
+        const i = Number(l.dataset.i);
+        l.classList.toggle('is-selected', !!cs.selection && i >= cs.selection.start && i <= cs.selection.end);
+      });
+      positionHandlesAndBubble(cardId);
+    }
+
+    function makeHandle(kind, cardId) {
+      const el = document.createElement('div');
+      el.className = `sel-handle sel-handle--${kind}`;
+      el.addEventListener('pointerdown', e => startDrag(e, cardId, kind));
+      return el;
+    }
+
+    function startDrag(e, cardId, kind) {
+      e.preventDefault(); e.stopPropagation();
+      const pre = document.querySelector(`.term-pre[data-card-id="${cardId}"]`);
+      const handle = e.currentTarget;
+      handle.setPointerCapture(e.pointerId);
+      function onMove(ev) {
+        const rect = pre.getBoundingClientRect();
+        const y = ev.clientY - rect.top + pre.scrollTop;
+        const lines = [...pre.querySelectorAll('.term-line')];
+        if (!lines.length) return;
+        let idx = lines.findIndex(l => y >= l.offsetTop && y <= l.offsetTop + l.offsetHeight);
+        if (idx === -1) idx = y < lines[0].offsetTop ? 0 : lines.length - 1;
+        const cs = cardState[cardId];
+        if (!cs.selection) return;
+        if (kind === 'start') cs.selection.start = Math.min(idx, cs.selection.end);
+        else cs.selection.end = Math.max(idx, cs.selection.start);
+        renderSelection(cardId);
+      }
+      function onUp() {
+        try { handle.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+      }
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+    }
+
+    function makeBubble(cardId) {
+      const el = document.createElement('button');
+      el.className = 'copy-bubble';
+      el.textContent = 'Kopieren';
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        const cs = cardState[cardId];
+        if (!cs.selection) return;
+        const pre = document.querySelector(`.term-pre[data-card-id="${cardId}"]`);
+        const lines = [...pre.querySelectorAll('.term-line')].slice(cs.selection.start, cs.selection.end + 1);
+        const text = lines.map(l => l.querySelector('.term-line__text').textContent).join('\n');
+        copyText(text);
+        toast('Kopiert ✓');
+        clearSelection(cardId);
+      });
+      return el;
+    }
+
+    function positionHandlesAndBubble(cardId) {
+      const pre = document.querySelector(`.term-pre[data-card-id="${cardId}"]`);
+      const cs = cardState[cardId];
+      let handleStart = pre.querySelector('.sel-handle--start');
+      let handleEnd = pre.querySelector('.sel-handle--end');
+      let bubble = pre.querySelector('.copy-bubble');
+      if (!cs.selection) {
+        [handleStart, handleEnd, bubble].forEach(el => el && el.remove());
+        return;
+      }
+      if (!handleStart) { handleStart = makeHandle('start', cardId); pre.appendChild(handleStart); }
+      if (!handleEnd) { handleEnd = makeHandle('end', cardId); pre.appendChild(handleEnd); }
+      if (!bubble) { bubble = makeBubble(cardId); pre.appendChild(bubble); }
+
+      const startLine = pre.querySelector(`.term-line[data-i="${cs.selection.start}"]`);
+      const endLine = pre.querySelector(`.term-line[data-i="${cs.selection.end}"]`);
+      if (!startLine || !endLine) return;
+      const startText = startLine.querySelector('.term-line__text');
+      const endText = endLine.querySelector('.term-line__text');
+
+      handleStart.style.top = (startLine.offsetTop + startLine.offsetHeight) + 'px';
+      handleStart.style.left = startText.offsetLeft + 'px';
+      handleEnd.style.top = (endLine.offsetTop + endLine.offsetHeight) + 'px';
+      handleEnd.style.left = (endText.offsetLeft + endText.offsetWidth) + 'px';
+
+      bubble.style.top = Math.max(0, startLine.offsetTop - 34) + 'px';
+      bubble.style.left = Math.min(startText.offsetLeft, endText.offsetLeft) + 'px';
+    }
+
+    function clearSelection(cardId) {
+      const cs = cardState[cardId];
+      cs.selection = null;
+      const pre = document.querySelector(`.term-pre[data-card-id="${cardId}"]`);
+      if (!pre) return;
+      pre.querySelectorAll('.term-line.is-selected').forEach(l => l.classList.remove('is-selected'));
+      positionHandlesAndBubble(cardId);
+    }
+
+    // Delegated: wrapped-link copy (outside selection mode) + line-tap selection (inside selection mode)
+    document.addEventListener('click', e => {
+      const link = e.target.closest('.wrapped-link');
+      if (link) {
+        const inSelectionMode = link.closest('.term-pre.selection-mode');
+        if (!inSelectionMode) {
+          copyText(link.dataset.url);
+          toast(`Vollständiger Link kopiert ✓ (…${link.dataset.short}…)`);
+          return;
+        }
+      }
+      const pre = e.target.closest('.term-pre.selection-mode');
+      if (pre) {
+        const line = e.target.closest('.term-line');
+        if (line) handleLineTap(pre, line);
+      }
+    });
+
+    // ============================================================
+    // Terminal toolbar
+    // ============================================================
+    function flashKeyEcho(label) {
+      const host = document.getElementById('keyEchoHost');
+      const chip = document.createElement('span');
+      chip.className = 'key-echo';
+      chip.textContent = label;
+      host.appendChild(chip);
+      requestAnimationFrame(() => chip.classList.add('show'));
+      setTimeout(() => {
+        chip.classList.remove('show');
+        setTimeout(() => chip.remove(), 180);
+      }, 500);
+    }
+
+    function toggleSelectionMode() {
+      const id = state.activeCardId;
+      const cs = cardState[id];
+      cs.selectionMode = !cs.selectionMode;
+      document.getElementById('selToggleBtn').classList.toggle('is-on', cs.selectionMode);
+      document.getElementById('selToggleBtn').setAttribute('aria-pressed', String(cs.selectionMode));
+      if (cs.selectionMode && cs.collapsed) toggleCollapse(id);
+      const pre = document.querySelector(`.term-pre[data-card-id="${id}"]`);
+      if (pre) pre.classList.toggle('selection-mode', cs.selectionMode);
+      if (!cs.selectionMode) clearSelection(id);
+    }
+
+    function wireToolbar() {
+      document.querySelectorAll('.term-toolbar [data-key]').forEach(btn => {
+        if (btn.id === 'selToggleBtn') return;
+        btn.addEventListener('click', () => flashKeyEcho(btn.dataset.key));
+      });
+      document.getElementById('selToggleBtn').addEventListener('click', toggleSelectionMode);
+    }
+
+    // ============================================================
+    // Command palette
+    // ============================================================
+    function buildPaletteIndex() {
+      const idx = [];
+      TMS_DATA.sessions.forEach(s => idx.push({
+        type: 'Terminal', label: s.name, sub: s.description,
+        action: () => { goToTerminals(); focusSessionCard(s.id); },
+      }));
+      TMS_DATA.snippets.forEach(sn => idx.push({
+        type: 'Snippet', label: sn.label, sub: sn.cmd,
+        action: () => toast('In Terminal eingefügt'),
+      }));
+      idx.push({ type: 'Screen', label: 'Server', sub: 'Serverliste öffnen', action: () => show('servers') });
+      idx.push({ type: 'Screen', label: 'Terminals', sub: 'Terminal-Stack öffnen', action: () => goToTerminals() });
+      idx.push({ type: 'Aktion', label: 'Neues Terminal', sub: 'Terminal erstellen', action: () => toast('Neues Terminal erstellt (Mockup)') });
+      return idx;
+    }
+
+    function fuzzyScore(query, text) {
+      if (!query) return 0;
+      query = query.toLowerCase();
+      text = (text || '').toLowerCase();
+      let qi = 0, score = 0, lastIndex = -1;
+      for (let i = 0; i < text.length && qi < query.length; i++) {
+        if (text[i] === query[qi]) {
+          score += lastIndex === i - 1 ? 3 : 1;
+          lastIndex = i;
+          qi++;
+        }
+      }
+      return qi === query.length ? score : -1;
+    }
+
+    function focusSessionCard(id) {
+      setActiveCard(id);
+      const cs = cardState[id];
+      if (cs.collapsed) toggleCollapse(id);
+      requestAnimationFrame(() => {
+        const card = document.querySelector(`.term-card[data-id="${id}"]`);
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
+
+    let paletteIndex = [];
+    let paletteFiltered = [];
+    let paletteHighlight = 0;
+
+    function renderPaletteResults(query) {
+      const scored = paletteIndex
+        .map(entry => ({ entry, s: Math.max(fuzzyScore(query, entry.label), fuzzyScore(query, entry.sub || '')) }))
+        .filter(x => query === '' || x.s >= 0);
+      scored.sort((a, b) => b.s - a.s);
+      paletteFiltered = scored.map(x => x.entry).slice(0, 30);
+      paletteHighlight = 0;
+      const host = document.getElementById('paletteResults');
+      if (!paletteFiltered.length) {
+        host.innerHTML = `<div class="palette__empty">Keine Treffer</div>`;
+        return;
+      }
+      host.innerHTML = paletteFiltered.map((entry, i) => `
+        <button class="palette__row${i === 0 ? ' is-highlighted' : ''}" data-idx="${i}">
+          <span class="palette__row-type">${escapeHtml(entry.type)}</span>
+          <span class="palette__row-label">${escapeHtml(entry.label)}</span>
+          <span class="palette__row-sub">${escapeHtml(entry.sub || '')}</span>
+        </button>
+      `).join('');
+    }
+
+    function movePaletteHighlight(dir) {
+      if (!paletteFiltered.length) return;
+      paletteHighlight = (paletteHighlight + dir + paletteFiltered.length) % paletteFiltered.length;
+      document.querySelectorAll('.palette__row').forEach((el, i) => el.classList.toggle('is-highlighted', i === paletteHighlight));
+      const activeEl = document.querySelector('.palette__row.is-highlighted');
+      if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+    }
+
+    function activatePaletteEntry(i) {
+      const entry = paletteFiltered[i];
+      if (!entry) return;
+      closePalette();
+      entry.action();
+    }
+
+    function openPalette() {
+      const paletteEl = document.getElementById('palette');
+      paletteEl.hidden = false;
+      const input = document.getElementById('paletteInput');
+      input.value = '';
+      renderPaletteResults('');
+      requestAnimationFrame(() => {
+        paletteEl.classList.add('is-open');
+        input.focus();
+      });
+    }
+
+    function closePalette() {
+      const paletteEl = document.getElementById('palette');
+      paletteEl.classList.remove('is-open');
+      setTimeout(() => { paletteEl.hidden = true; }, 150);
+    }
+
+    function wirePalette() {
+      paletteIndex = buildPaletteIndex();
+      const input = document.getElementById('paletteInput');
+      input.addEventListener('input', () => renderPaletteResults(input.value));
+      input.addEventListener('keydown', e => {
+        if (e.key === 'ArrowDown') { e.preventDefault(); movePaletteHighlight(1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); movePaletteHighlight(-1); }
+        else if (e.key === 'Enter') { e.preventDefault(); activatePaletteEntry(paletteHighlight); }
+        else if (e.key === 'Escape') { closePalette(); }
+      });
+      document.getElementById('paletteClose').addEventListener('click', closePalette);
+      document.querySelector('.palette__scrim').addEventListener('click', closePalette);
+      document.getElementById('paletteResults').addEventListener('click', e => {
+        const row = e.target.closest('.palette__row');
+        if (row) activatePaletteEntry(Number(row.dataset.idx));
+      });
+    }
+
+    document.addEventListener('keydown', e => {
+      const paletteEl = document.getElementById('palette');
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
+      if (e.key === 'Escape' && !paletteEl.hidden) closePalette();
+    });
+
+    // ============================================================
+    // Bottom command bar + screen router
+    // ============================================================
+    function show(name) {
+      document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
+      document.querySelectorAll('#commandbar [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
+    }
+
+    function wireNav() {
+      document.querySelectorAll('#commandbar [data-nav]').forEach(btn => {
+        const name = btn.dataset.nav;
+        btn.addEventListener('click', () => {
+          if (name === 'palette') { openPalette(); return; }
+          if (name === 'terminals') { goToTerminals(); return; }
+          if (document.querySelector(`[data-screen="${name}"]`)) { show(name); return; }
+          toast('Kommt in Teil 2');
+        });
+      });
+    }
+
+    // ============================================================
+    // Init
+    // ============================================================
+    renderServers();
+    renderUpdateBanner();
+    document.getElementById('updateCta').addEventListener('click', () => toast('Mockup: Update-Vorgang wird nicht simuliert'));
+    document.getElementById('updateDismiss').addEventListener('click', () => { document.getElementById('updateBanner').hidden = true; });
+    state.activeServerName = (TMS_DATA.servers.find(s => s.status === 'online') || {}).name || '';
+    updateTerminalsHeader();
+    wireNav();
+    wirePalette();
+    wireToolbar();
+    show('servers');
+  </script>
+</body>
+</html>
