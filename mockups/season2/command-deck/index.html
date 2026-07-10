@@ -20,6 +20,7 @@
     --transition: 150ms ease-out;
     --commandbar-h: 54px;
     --fs-micro: 11px;
+    --term-font-size: 13px;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -107,7 +108,9 @@
 
   .term-pre {
     position: relative;
-    font: 13px/1.6 var(--font-mono);
+    font-size: var(--term-font-size);
+    line-height: 1.6;
+    font-family: var(--font-mono);
     color: var(--text);
     background: var(--bg-sunken);
     padding: 12px;
@@ -116,6 +119,8 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
+  .term-pre--xxl { max-height: none; height: 100%; }
+  .font-preview { max-height: 56px; }
   .term-line { display: block; padding: 1px 4px; margin: 0 -4px; border-radius: 4px; }
   .term-pre.selection-mode .term-line { cursor: pointer; }
   .term-pre.selection-mode .term-line:hover { background: rgba(124, 108, 255, .08); }
@@ -191,11 +196,243 @@
   #toasts { position: fixed; left: 0; right: 0; bottom: calc(var(--commandbar-h) + 12px); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 1100; pointer-events: none; padding: 0 16px; }
   .toast { background: var(--bg-raised); border: var(--hairline); font: 500 12.5px var(--font-ui); padding: 9px 14px; border-radius: 8px; opacity: 0; transform: translateY(6px); transition: opacity var(--transition), transform var(--transition); max-width: 88vw; text-align: center; }
   .toast.show { opacity: 1; transform: translateY(0); }
+
+  /* ============================================================
+     Task 4 — Tools, Manager, Cloud, Settings, Prayer, Lock
+     ============================================================ */
+
+  /* ---------- Shared: header actions, icon buttons, generic bits ---------- */
+  .screen-head__actions { margin-left: auto; align-self: center; display: flex; gap: 8px; }
+  .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: var(--hairline); border-radius: var(--radius-sm); color: var(--text-dim); font: 600 13px var(--font-mono); cursor: pointer; transition: border-color var(--transition), color var(--transition); flex: 0 0 auto; }
+  .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .mono-text { font: 12.5px var(--font-mono); }
+  .table-scroll { overflow-x: auto; }
+  .btn-primary { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; background: var(--accent); color: #fff; font: 600 12.5px var(--font-ui); border-radius: 6px; cursor: pointer; transition: opacity var(--transition); }
+  .btn-primary:active { opacity: .8; }
+  .btn-secondary { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; border: var(--hairline); color: var(--text); font: 600 12.5px var(--font-ui); border-radius: 6px; cursor: pointer; transition: border-color var(--transition), color var(--transition); background: var(--bg-raised); }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-secondary.is-on { border-color: var(--accent); color: var(--accent); }
+
+  /* Reusable status-chip dataset values for cloud project statuses */
+  .status-chip[data-status="ready"] .status-chip__dot { background: var(--ok); }
+  .status-chip[data-status="live"] .status-chip__dot { background: var(--ok); animation: pulse 1.6s ease-in-out infinite; }
+  .status-chip[data-status="building"] .status-chip__dot { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+  .status-chip[data-status="suspended"] .status-chip__dot { background: var(--text-dim); }
+
+  /* Toggle switch component (ports, watchers, settings) */
+  .switch { position: relative; display: inline-block; width: 38px; height: 22px; flex: 0 0 auto; }
+  .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+  .switch__track { position: absolute; inset: 0; background: var(--bg-sunken); border: var(--hairline); border-radius: 20px; transition: background var(--transition), border-color var(--transition); }
+  .switch__thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-dim); transition: transform var(--transition), background var(--transition); }
+  .switch input:checked + .switch__track { background: var(--accent-dim); border-color: var(--accent); }
+  .switch input:checked + .switch__track .switch__thumb { transform: translateX(16px); background: var(--accent); }
+
+  /* ---------- Tools screen + bottom sheet ---------- */
+  .tool-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 4px 16px 24px; }
+  @media (min-width: 700px) { .tool-grid { grid-template-columns: repeat(5, 1fr); } }
+  .tool-tile { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 8px; background: var(--bg-raised); border: var(--hairline); border-radius: var(--radius); cursor: pointer; transition: border-color var(--transition), background var(--transition); }
+  .tool-tile:hover, .tool-tile:active { border-color: var(--accent); background: var(--bg); }
+  .tool-tile__glyph { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: var(--hairline); border-radius: var(--radius-sm); font: 700 11px var(--font-mono); color: var(--accent); }
+  .tool-tile__label { font: 500 12px var(--font-ui); color: var(--text); text-align: center; }
+
+  #sheet:not([hidden]) { position: fixed; inset: 0; z-index: 1050; display: flex; align-items: flex-end; justify-content: center; opacity: 0; transition: opacity var(--transition); }
+  #sheet.is-open { opacity: 1; }
+  .sheet__scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .6); }
+  .sheet__panel { position: relative; width: 100%; max-width: 720px; max-height: 82vh; display: flex; flex-direction: column; background: var(--bg-raised); border: var(--hairline); border-bottom: none; border-radius: 16px 16px 0 0; transform: translateY(16px); transition: transform var(--transition); overflow: hidden; }
+  #sheet.is-open .sheet__panel { transform: translateY(0); }
+  .sheet__head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: var(--hairline); }
+  .sheet__title { font: 700 14px var(--font-ui); flex: 1; }
+  .sheet__close { color: var(--text-dim); font: 600 var(--fs-micro) var(--font-mono); padding: 4px 8px; border: var(--hairline); border-radius: 6px; cursor: pointer; }
+  .sheet__close:hover { border-color: var(--accent); color: var(--accent); }
+  .sheet__body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px 24px; }
+
+  /* Tool-sheet content primitives */
+  .tool-list { display: flex; flex-direction: column; }
+  .tool-list__row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 2px; border-top: var(--hairline); text-align: left; }
+  .tool-list__row:first-child { border-top: none; }
+  .tool-list__row.is-tap { cursor: pointer; transition: background var(--transition); }
+  .tool-list__row.is-tap:active { background: var(--bg); }
+  .tool-list__icon { font: 12px var(--font-mono); color: var(--text-dim); width: 14px; text-align: center; flex: 0 0 auto; }
+  .tool-list__name { flex: 1; font: 13px var(--font-ui); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-list__meta { font: 12px var(--font-mono); color: var(--text-dim); flex: 0 0 auto; }
+  .tool-list__info { flex: 1; min-width: 0; }
+  .tool-list__title { font: 13px var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-list__sub { margin-top: 2px; font: var(--fs-micro) var(--font-mono); color: var(--text-dim); }
+
+  .sql-query { font: 12.5px/1.6 var(--font-mono); background: var(--bg-sunken); border: var(--hairline); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 14px; color: var(--text); overflow-x: auto; white-space: pre; }
+  .data-table { width: 100%; border-collapse: collapse; font: 12.5px var(--font-mono); }
+  .data-table th, .data-table td { text-align: left; padding: 7px 10px; border-top: var(--hairline); white-space: nowrap; }
+  .data-table th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .data-table tr:first-child td { border-top: none; }
+  .cpu-cell { display: flex; align-items: center; gap: 8px; }
+  .cpu-bar { position: relative; width: 56px; height: 6px; background: var(--bg-sunken); border-radius: 3px; overflow: hidden; flex: 0 0 auto; }
+  .cpu-bar__fill { position: absolute; inset: 0; width: var(--pct, 0%); background: var(--accent); border-radius: 3px; transition: width var(--transition); }
+
+  .notes-grid, .artifact-grid { display: flex; flex-direction: column; gap: 10px; }
+  .note-card, .artifact-card { padding: 12px; background: var(--bg); border: var(--hairline); border-radius: var(--radius-sm); }
+  .note-card__title, .artifact-card__title { font: 600 13px var(--font-ui); margin-bottom: 4px; }
+  .note-card__body { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+  .note-card__time, .artifact-card__meta { margin-top: 6px; font: var(--fs-micro) var(--font-mono); color: var(--text-dim); }
+
+  .shot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .shot-tile { aspect-ratio: 9 / 16; background: linear-gradient(160deg, #1c1c22, #101013); border: var(--hairline); border-radius: var(--radius-sm); }
+  .shot-flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 1200; transition: opacity 90ms ease-out; }
+  .shot-flash.is-flashing { opacity: .85; transition: opacity 40ms ease-out; }
+
+  .browser-bar { padding: 9px 12px; background: var(--bg); border: var(--hairline); border-radius: 20px; font: 12.5px var(--font-mono); color: var(--text-dim); margin-bottom: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .browser-skeleton { display: flex; flex-direction: column; gap: 10px; }
+  .browser-skeleton__block { height: 14px; border-radius: 4px; background: var(--bg); }
+
+  .hit-badge { font: 700 11px var(--font-mono); color: var(--accent); background: var(--accent-dim); padding: 2px 7px; border-radius: 20px; flex: 0 0 auto; }
+
+  /* ---------- Sub-tabs (Manager, Cloud detail) ---------- */
+  .subtabs { display: flex; gap: 6px; padding: 0 16px 12px; flex: 0 0 auto; }
+  .subtabs button { padding: 6px 12px; border: var(--hairline); border-radius: 20px; font: 600 12px var(--font-ui); color: var(--text-dim); cursor: pointer; transition: border-color var(--transition), color var(--transition); }
+  .subtabs button.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+  /* ---------- Manager screen ---------- */
+  section[data-screen="manager"]:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; }
+  .manager-view { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .chat-scroll:not([hidden]), #managerArtifacts:not([hidden]), #managerMemory:not([hidden]) { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 10px; }
+
+  .chat-bubble-row { display: flex; }
+  .chat-bubble-row[data-from="user"] { justify-content: flex-end; }
+  .chat-bubble { max-width: 82%; padding: 10px 12px; border-radius: 12px; font-size: 13px; line-height: 1.5; }
+  .chat-bubble-row[data-from="manager"] .chat-bubble { background: var(--bg-raised); border: var(--hairline); border-bottom-left-radius: 4px; }
+  .chat-bubble-row[data-from="user"] .chat-bubble { background: var(--accent-dim); border: 1px solid rgba(124, 108, 255, .3); border-bottom-right-radius: 4px; }
+  .chat-bubble__time { display: block; margin-top: 4px; font: var(--fs-micro) var(--font-mono); color: var(--text-dim); }
+
+  .voice-pill { display: flex; align-items: center; gap: 8px; min-width: 180px; cursor: pointer; }
+  .voice-pill__play { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+  .voice-pill__wave { flex: 1; display: flex; align-items: center; gap: 2px; height: 20px; color: var(--accent); }
+  .voice-pill__wave span { width: 2px; display: block; background: currentColor; opacity: .5; border-radius: 1px; }
+  .voice-pill__dur { font: 11px var(--font-mono); color: var(--text-dim); flex: 0 0 auto; }
+  .voice-pill.is-playing .voice-pill__wave span { animation: wave .9s ease-in-out infinite; }
+  @keyframes wave { 0%, 100% { transform: scaleY(.4); } 50% { transform: scaleY(1); } }
+  .voice-transcript { margin-top: 8px; font-size: 12.5px; color: var(--text-dim); border-top: var(--hairline); padding-top: 8px; }
+  .voice-transcribing { margin-top: 8px; font: 600 12px var(--font-mono); color: var(--accent); }
+  .voice-transcribing .dots span { display: inline-block; animation: blink 1.2s infinite; opacity: .2; }
+  .voice-transcribing .dots span:nth-child(2) { animation-delay: .2s; }
+  .voice-transcribing .dots span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
+
+  .chat-input-row:not([hidden]) { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: var(--hairline); background: var(--bg-raised); }
+  .chat-input-row input { flex: 1; padding: 9px 12px; background: var(--bg); border: var(--hairline); border-radius: 20px; font: 13px var(--font-ui); }
+  .mic-btn { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; border: var(--hairline); color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: border-color var(--transition), color var(--transition); }
+  .mic-btn.is-recording { border-color: var(--err); color: var(--err); animation: pulse 1s ease-in-out infinite; }
+
+  .memory-row { display: flex; justify-content: space-between; gap: 10px; padding: 10px 2px; border-top: var(--hairline); font-size: 12.5px; }
+  .memory-row:first-child { border-top: none; }
+  .memory-row__time { color: var(--text-dim); font: var(--fs-micro) var(--font-mono); flex: 0 0 auto; white-space: nowrap; }
+
+  /* ---------- Cloud screen ---------- */
+  .cloud-toolbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px 12px; align-items: center; }
+  .chip-group { display: flex; gap: 6px; }
+  .chip-group button { padding: 6px 12px; border: var(--hairline); border-radius: 20px; font: 600 12px var(--font-ui); color: var(--text-dim); cursor: pointer; transition: border-color var(--transition), color var(--transition); }
+  .chip-group button.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+  .cloud-toolbar__spacer { flex: 1; }
+
+  .folder-group__head { display: flex; align-items: center; gap: 8px; padding: 10px 16px; cursor: pointer; }
+  .folder-group__head::before { content: '▾'; font-size: 10px; color: var(--text-dim); transition: transform var(--transition); }
+  .folder-group.is-collapsed .folder-group__head::before { transform: rotate(-90deg); }
+  .folder-group__name { font: 700 var(--fs-micro) var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); flex: 1; }
+  .folder-group__count { font: var(--fs-micro) var(--font-mono); color: var(--text-dim); }
+  .folder-group.is-collapsed .folder-group__rows { display: none; }
+
+  .cloud-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 16px; border-top: var(--hairline); text-align: left; cursor: pointer; transition: background var(--transition); }
+  .cloud-row:active { background: var(--bg-raised); }
+  .provider-glyph { flex: 0 0 auto; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border: var(--hairline); border-radius: 6px; font: 700 11px var(--font-mono); color: var(--text-dim); }
+  .cloud-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .cloud-row__name { font: 600 13.5px var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cloud-row__meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .cloud-row__deploy { font: 11.5px var(--font-mono); color: var(--text-dim); }
+  .fav-btn { flex: 0 0 auto; font-size: 17px; color: var(--border); cursor: pointer; padding: 4px; line-height: 1; transition: color var(--transition); }
+  .fav-btn.is-fav { color: var(--accent); }
+
+  .cloud-detail__head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 8px; }
+  .back-btn { flex: 0 0 auto; color: var(--text-dim); font: 600 13px var(--font-mono); cursor: pointer; padding: 4px 6px; }
+  .back-btn:hover { color: var(--accent); }
+  .cloud-detail__title { font: 700 15px var(--font-ui); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cloud-detail__body { padding: 0 16px 24px; }
+
+  .env-row { padding: 10px 2px; border-top: var(--hairline); }
+  .env-row:first-child { border-top: none; }
+  .env-row__top { display: flex; align-items: center; gap: 8px; }
+  .env-row__key { flex: 1; font: 600 12.5px var(--font-mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .env-row__value { display: block; margin-top: 4px; font: 12.5px var(--font-mono); color: var(--text-dim); cursor: pointer; word-break: break-all; }
+  .env-row__actions { display: flex; gap: 8px; margin-top: 8px; }
+  .env-row__actions button { font: 600 11.5px var(--font-ui); padding: 5px 10px; border: var(--hairline); border-radius: 6px; color: var(--text-dim); cursor: pointer; transition: border-color var(--transition), color var(--transition); }
+  .env-row__actions button:hover { border-color: var(--accent); color: var(--accent); }
+  .env-row__edit { display: flex; gap: 8px; margin-top: 8px; }
+  .env-row__edit input { flex: 1; padding: 7px 9px; background: var(--bg); border: var(--hairline); border-radius: 6px; font: 12.5px var(--font-mono); }
+
+  .log-viewer { display: flex; flex-direction: column; height: min(60vh, 520px); }
+  .log-viewer__tools { display: flex; gap: 8px; padding: 0 0 10px; flex: 0 0 auto; flex-wrap: wrap; }
+  .log-viewer__search { flex: 1; min-width: 120px; padding: 8px 10px; background: var(--bg); border: var(--hairline); border-radius: 6px; font: 12.5px var(--font-mono); }
+  .log-viewer__pre { flex: 1; min-height: 0; border-radius: var(--radius-sm); }
+
+  .deploy-row { display: flex; align-items: center; gap: 10px; padding: 11px 2px; border-top: var(--hairline); }
+  .deploy-row:first-child { border-top: none; }
+  .deploy-row__version { font: 700 12.5px var(--font-mono); width: 40px; flex: 0 0 auto; }
+  .deploy-row__time { flex: 1; font: 12px var(--font-ui); color: var(--text-dim); }
+
+  /* ---------- Settings screen ---------- */
+  .settings-group { padding: 4px 16px 18px; }
+  .settings-group__title { font: 700 var(--fs-micro) var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); padding: 0 0 8px; }
+  .settings-row { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-top: var(--hairline); }
+  .settings-group .settings-row:first-of-type { border-top: none; }
+  .settings-row--stack { flex-direction: column; align-items: stretch; gap: 8px; }
+  .settings-row__label { flex: 1; font-size: 13px; }
+  .settings-row__label small { display: block; margin-top: 2px; color: var(--text-dim); font-size: 11.5px; }
+  .settings-row__value { font: 12.5px var(--font-mono); color: var(--text-dim); }
+  .settings-row.is-tap { cursor: pointer; }
+  .settings-row.is-tap:active { background: var(--bg-raised); }
+  .settings-slider { width: 100%; accent-color: var(--accent); }
+  .settings-pin-edit { display: flex; gap: 8px; padding: 0 0 12px; }
+  .settings-pin-edit input { flex: 1; padding: 8px 10px; background: var(--bg); border: var(--hairline); border-radius: 6px; font: 13px var(--font-mono); letter-spacing: .3em; }
+
+  /* ---------- Prayer screen + Adhan overlay ---------- */
+  .prayer-list { padding: 4px 16px 8px; }
+  .prayer-row { display: flex; justify-content: space-between; align-items: center; padding: 13px 2px; border-top: var(--hairline); transition: color var(--transition); }
+  .prayer-row:first-child { border-top: none; }
+  .prayer-row.is-next { color: var(--accent); }
+  .prayer-row__name { font: 600 14px var(--font-ui); }
+  .prayer-row__time { font: 14px var(--font-mono); }
+  .prayer-next-card { margin: 4px 16px 18px; padding: 16px; background: var(--accent-dim); border: 1px solid rgba(124, 108, 255, .35); border-radius: var(--radius); text-align: center; }
+  .prayer-next-card__label { font: 700 var(--fs-micro) var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  .prayer-next-card__countdown { margin-top: 4px; font: 700 26px var(--font-mono); }
+  .prayer-demo-btn { display: block; margin: 4px 16px 24px; }
+
+  .adhan-overlay:not([hidden]) { position: fixed; inset: 0; z-index: 1300; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: var(--bg); opacity: 0; transition: opacity var(--transition); }
+  .adhan-overlay.is-open { opacity: 1; }
+  .adhan-ring { width: 96px; height: 96px; border-radius: 50%; border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center; font: 700 20px var(--font-mono); color: var(--accent); animation: adhan-pulse 1.6s ease-in-out infinite; }
+  @keyframes adhan-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(124, 108, 255, .4); } 50% { box-shadow: 0 0 0 18px rgba(124, 108, 255, 0); } }
+  .adhan-overlay__name { font: 700 22px var(--font-ui); }
+  .adhan-overlay__sub { color: var(--text-dim); font-size: 13px; }
+  .adhan-overlay__stop { margin-top: 12px; padding: 12px 28px; background: var(--accent); color: #fff; font: 700 14px var(--font-ui); border-radius: 8px; cursor: pointer; }
+
+  /* ---------- Lock screen ---------- */
+  section[data-screen="lock"]:not([hidden]) { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; overflow: hidden; }
+  body.is-locked #commandbar { display: none; }
+  .lock-title { font: 700 var(--fs-micro) var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); }
+  .pin-dots { display: flex; gap: 14px; }
+  .pin-dots span { display: block; width: 12px; height: 12px; border-radius: 50%; border: var(--hairline); transition: background var(--transition), border-color var(--transition); }
+  .pin-dots span.is-filled { background: var(--accent); border-color: var(--accent); }
+  .pin-pad { display: grid; grid-template-columns: repeat(3, 64px); gap: 14px; }
+  .pin-pad button { width: 64px; height: 64px; border-radius: 50%; border: var(--hairline); font: 600 20px var(--font-mono); color: var(--text); cursor: pointer; transition: border-color var(--transition), background var(--transition); }
+  .pin-pad button:active { background: var(--bg-raised); }
+  .pin-pad button[data-key="back"] { font-size: 15px; color: var(--text-dim); border-color: transparent; }
+  .pin-pad__spacer { visibility: hidden; }
+  .lock-shake { animation: pin-shake 400ms ease-in-out; }
+  @keyframes pin-shake {
+    10%, 90% { transform: translateX(-6px); } 20%, 80% { transform: translateX(5px); }
+    30%, 50%, 70% { transform: translateX(-8px); } 40%, 60% { transform: translateX(8px); }
+  }
 </style>
 </head>
-<body>
+<body class="is-locked">
   <main id="screens">
-    <section data-screen="servers">
+    <section data-screen="servers" hidden>
       <div class="update-banner" id="updateBanner" hidden>
         <span class="update-banner__text" id="updateBannerText"></span>
         <button class="update-banner__cta" id="updateCta">Jetzt updaten</button>
@@ -204,6 +441,9 @@
       <header class="screen-head">
         <span class="screen-head__eyebrow">Server</span>
         <span class="screen-head__count" id="serverCount"></span>
+        <div class="screen-head__actions">
+          <button class="icon-btn" id="settingsBtn" aria-label="Einstellungen öffnen">⚙</button>
+        </div>
       </header>
       <div class="server-list" id="serverList"></div>
     </section>
@@ -213,6 +453,9 @@
         <header class="screen-head">
           <span class="screen-head__eyebrow">Terminals</span>
           <span class="screen-head__count" id="terminalCount"></span>
+          <div class="screen-head__actions">
+            <button class="icon-btn" id="termToolsBtn" aria-label="Werkzeuge öffnen">⋯</button>
+          </div>
           <p class="screen-head__subtitle" id="terminalsSubtitle"></p>
         </header>
         <div class="term-stack" id="terminalStack"></div>
@@ -230,6 +473,86 @@
           <button data-key="⌘V">⌘V</button>
           <button id="selToggleBtn" data-key="Aa" aria-pressed="false">Aa</button>
         </div>
+      </div>
+    </section>
+
+    <section data-screen="tools" hidden>
+      <header class="screen-head">
+        <span class="screen-head__eyebrow">Werkzeuge</span>
+        <span class="screen-head__count" id="toolCount"></span>
+      </header>
+      <div class="tool-grid" id="toolGrid"></div>
+    </section>
+
+    <section data-screen="manager" hidden>
+      <header class="screen-head">
+        <span class="screen-head__eyebrow">Manager</span>
+      </header>
+      <div class="subtabs" id="managerTabs">
+        <button data-tab="chat" class="active">Chat</button>
+        <button data-tab="artifacts">Artifacts</button>
+        <button data-tab="memory">Memory</button>
+      </div>
+      <div class="manager-view">
+        <div class="chat-scroll" id="managerChat"></div>
+        <div id="managerArtifacts" hidden></div>
+        <div id="managerMemory" hidden></div>
+        <div class="chat-input-row" id="managerInputRow">
+          <input type="text" id="managerTextInput" placeholder="Nachricht an Manager…" autocomplete="off">
+          <button class="mic-btn" id="managerMicBtn" aria-label="Sprachnachricht aufnehmen">●</button>
+        </div>
+      </div>
+    </section>
+
+    <section data-screen="cloud" hidden>
+      <header class="screen-head">
+        <span class="screen-head__eyebrow">Cloud</span>
+        <span class="screen-head__count" id="cloudCount"></span>
+      </header>
+      <div id="cloudList">
+        <div class="cloud-toolbar">
+          <div class="chip-group" id="cloudProviderFilter">
+            <button data-provider="all" class="active">Alle</button>
+            <button data-provider="vercel">Vercel</button>
+            <button data-provider="render">Render</button>
+          </div>
+          <span class="cloud-toolbar__spacer"></span>
+          <div class="chip-group" id="cloudViewToggle">
+            <button data-view="folder" class="active">Ordner</button>
+            <button data-view="list">Liste</button>
+          </div>
+        </div>
+        <div id="cloudGroups"></div>
+      </div>
+      <div id="cloudDetail" hidden></div>
+    </section>
+
+    <section data-screen="settings" hidden>
+      <header class="screen-head">
+        <span class="screen-head__eyebrow">Einstellungen</span>
+      </header>
+      <div id="settingsBody"></div>
+    </section>
+
+    <section data-screen="prayer" hidden>
+      <header class="screen-head">
+        <span class="screen-head__eyebrow">Gebetszeiten</span>
+      </header>
+      <div id="prayerNextCard"></div>
+      <div class="prayer-list" id="prayerList"></div>
+      <button class="btn-primary prayer-demo-btn" id="adhanDemoBtn">Adhan-Demo</button>
+    </section>
+
+    <section data-screen="lock">
+      <span class="lock-title">TMS Terminal gesperrt</span>
+      <div class="pin-dots" id="pinDots">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div class="pin-pad" id="pinPad">
+        <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
+        <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
+        <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
+        <span class="pin-pad__spacer" aria-hidden="true"></span><button data-key="0">0</button><button data-key="back" aria-label="Löschen">⌫</button>
       </div>
     </section>
   </main>
@@ -254,6 +577,26 @@
     </div>
   </div>
 
+  <div id="sheet" hidden>
+    <div class="sheet__scrim"></div>
+    <div class="sheet__panel" role="dialog" aria-modal="true" aria-label="Werkzeug">
+      <div class="sheet__head">
+        <span class="sheet__title" id="sheetTitle"></span>
+        <button class="sheet__close" id="sheetClose">Schließen</button>
+      </div>
+      <div class="sheet__body" id="sheetBody"></div>
+    </div>
+  </div>
+
+  <div class="adhan-overlay" id="adhanOverlay" hidden>
+    <div class="adhan-ring"><span id="adhanRingCode"></span></div>
+    <div class="adhan-overlay__name" id="adhanName"></div>
+    <div class="adhan-overlay__sub">Adhan-Demo</div>
+    <button class="adhan-overlay__stop" id="adhanStop">Stopp</button>
+  </div>
+
+  <div class="shot-flash" id="shotFlash"></div>
+
   <div id="toasts"></div>
 
   <script src="../shared/data.js"></script>
@@ -262,7 +605,13 @@
     // ============================================================
     // State
     // ============================================================
-    const state = { activeCardId: 't1', activeServerName: '' };
+    const state = {
+      activeCardId: 't1', activeServerName: '',
+      managerTab: 'chat',
+      cloudView: 'folder', cloudProviderFilter: 'all', cloudDetailId: null, cloudDetailTab: 'env', cloudBuildTimer: null,
+      autoLock: false, pushNotif: true, adhanNotif: true, fontSize: 13,
+      pin: TMS_DATA.demo.pin, lockDigits: '',
+    };
     const cardState = {};
     TMS_DATA.sessions.forEach(s => {
       cardState[s.id] = {
@@ -276,6 +625,11 @@
         autoTimer: null,
       };
     });
+
+    // SCREEN_HOOKS: optional per-screen refresh callback, run every time show(name) activates
+    // that screen. Populated by each feature area next to its render functions; declared here
+    // (top-level, before any of those areas run) so their init-time assignments never hit the TDZ.
+    const SCREEN_HOOKS = {};
 
     // ============================================================
     // Utilities: escaping, ANSI rendering, wrapped-link, toast, clipboard
@@ -844,6 +1198,818 @@
     }
 
     // ============================================================
+    // Tools screen + bottom sheet (Dateien, SQL, Ports, Prozesse,
+    // Snippets, Notizen, Screenshots, Browser, Watchers)
+    // ============================================================
+    const TOOL_DEFS = [
+      { id: 'files', code: 'FS', label: 'Dateien' },
+      { id: 'sql', code: 'DB', label: 'SQL' },
+      { id: 'ports', code: 'PT', label: 'Ports' },
+      { id: 'processes', code: 'PS', label: 'Prozesse' },
+      { id: 'snippets', code: 'SN', label: 'Snippets' },
+      { id: 'notes', code: 'NT', label: 'Notizen' },
+      { id: 'screenshots', code: 'SC', label: 'Screenshots' },
+      { id: 'browser', code: 'BR', label: 'Browser' },
+      { id: 'watchers', code: 'WA', label: 'Watchers' },
+    ];
+
+    function renderTools() {
+      const grid = document.getElementById('toolGrid');
+      document.getElementById('toolCount').textContent = String(TOOL_DEFS.length);
+      grid.innerHTML = TOOL_DEFS.map(t => `
+        <button class="tool-tile" data-tool="${t.id}">
+          <span class="tool-tile__glyph">${t.code}</span>
+          <span class="tool-tile__label">${t.label}</span>
+        </button>
+      `).join('');
+      grid.addEventListener('click', e => {
+        const tile = e.target.closest('.tool-tile');
+        if (tile) openToolSheet(tile.dataset.tool);
+      });
+    }
+
+    function openSheet(title, bodyHtml) {
+      document.getElementById('sheetTitle').textContent = title;
+      document.getElementById('sheetBody').innerHTML = bodyHtml;
+      const sheet = document.getElementById('sheet');
+      sheet.hidden = false;
+      requestAnimationFrame(() => sheet.classList.add('is-open'));
+    }
+
+    function closeSheet() {
+      const sheet = document.getElementById('sheet');
+      sheet.classList.remove('is-open');
+      setTimeout(() => { sheet.hidden = true; document.getElementById('sheetBody').innerHTML = ''; }, 150);
+    }
+
+    function openToolSheet(id) {
+      const def = TOOL_DEFS.find(t => t.id === id);
+      const builders = {
+        files: buildFilesSheet, sql: buildSqlSheet, ports: buildPortsSheet, processes: buildProcessesSheet,
+        snippets: buildSnippetsSheet, notes: buildNotesSheet, screenshots: buildScreenshotsSheet,
+        browser: buildBrowserSheet, watchers: buildWatchersSheet,
+      };
+      if (!def || !builders[id]) return;
+      const { html, wire } = builders[id]();
+      openSheet(def.label, html);
+      if (wire) wire();
+    }
+
+    function buildFilesSheet() {
+      const html = `<div class="tool-list">${TMS_DATA.files.map(f => `
+        <div class="tool-list__row">
+          <span class="tool-list__icon">${f.type === 'dir' ? '▸' : '·'}</span>
+          <span class="tool-list__name">${escapeHtml(f.name)}</span>
+          <span class="tool-list__meta">${f.size ? escapeHtml(f.size) : ''}</span>
+        </div>`).join('')}</div>`;
+      return { html };
+    }
+
+    function buildSqlSheet() {
+      const cols = Object.keys(TMS_DATA.sql.rows[0] || {});
+      const html = `
+        <div class="sql-query">${ansiToHtml(TMS_DATA.sql.query)}</div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+            <tbody>${TMS_DATA.sql.rows.map(r => `<tr>${cols.map(c => `<td>${escapeHtml(String(r[c]))}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>
+        </div>`;
+      return { html };
+    }
+
+    function buildPortsSheet() {
+      const html = `<div class="tool-list">${TMS_DATA.ports.map(p => `
+        <div class="tool-list__row" data-port="${p.port}">
+          <span class="tool-list__name">:${p.port} — ${escapeHtml(p.service)}</span>
+          <label class="switch"><input type="checkbox" data-act="forward" ${p.forwarded ? 'checked' : ''}><span class="switch__track"><span class="switch__thumb"></span></span></label>
+        </div>`).join('')}</div>`;
+      const wire = () => {
+        document.querySelectorAll('#sheetBody [data-act="forward"]').forEach(inp => {
+          inp.addEventListener('change', () => {
+            const row = inp.closest('[data-port]');
+            const port = TMS_DATA.ports.find(p => String(p.port) === row.dataset.port);
+            if (!port) return;
+            port.forwarded = inp.checked;
+            toast(port.forwarded ? `Port ${port.port} weitergeleitet` : `Port ${port.port} nicht mehr weitergeleitet`);
+          });
+        });
+      };
+      return { html, wire };
+    }
+
+    function buildProcessesSheet() {
+      const maxCpu = Math.max(...TMS_DATA.processes.map(p => p.cpu), 1);
+      const html = `
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>PID</th><th>Prozess</th><th>CPU</th><th>Mem</th></tr></thead>
+            <tbody>${TMS_DATA.processes.map(p => `
+              <tr>
+                <td>${p.pid}</td>
+                <td>${escapeHtml(p.name)}</td>
+                <td><div class="cpu-cell"><div class="cpu-bar" style="--pct:${Math.round(Math.min(100, (p.cpu / maxCpu) * 100))}%"><div class="cpu-bar__fill"></div></div><span>${p.cpu.toFixed(1)}%</span></div></td>
+                <td>${p.mem} MB</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>`;
+      return { html };
+    }
+
+    function buildSnippetsSheet() {
+      const html = `<div class="tool-list">${TMS_DATA.snippets.map(s => `
+        <button class="tool-list__row is-tap" data-snippet="${s.id}">
+          <span class="tool-list__name">${escapeHtml(s.label)}</span>
+          <span class="tool-list__meta">${escapeHtml(s.cmd)}</span>
+        </button>`).join('')}</div>`;
+      const wire = () => {
+        document.querySelectorAll('#sheetBody [data-snippet]').forEach(btn => {
+          btn.addEventListener('click', () => toast('In Terminal eingefügt'));
+        });
+      };
+      return { html, wire };
+    }
+
+    function buildNotesSheet() {
+      const html = `<div class="notes-grid">${TMS_DATA.notes.map(n => `
+        <div class="note-card">
+          <div class="note-card__title">${escapeHtml(n.title)}</div>
+          <div class="note-card__body">${escapeHtml(n.body)}</div>
+          <div class="note-card__time">${escapeHtml(n.time)}</div>
+        </div>`).join('')}</div>`;
+      return { html };
+    }
+
+    function buildScreenshotsSheet() {
+      const html = `
+        <div class="shot-grid" id="shotGrid">${[1, 2, 3].map(() => '<div class="shot-tile"></div>').join('')}</div>
+        <button class="btn-primary" id="shotCaptureBtn">Aufnehmen</button>`;
+      const wire = () => {
+        document.getElementById('shotCaptureBtn').addEventListener('click', () => {
+          const flash = document.getElementById('shotFlash');
+          flash.classList.add('is-flashing');
+          setTimeout(() => flash.classList.remove('is-flashing'), 160);
+          const grid = document.getElementById('shotGrid');
+          if (grid) grid.insertAdjacentHTML('afterbegin', '<div class="shot-tile"></div>');
+          toast('Screenshot aufgenommen');
+        });
+      };
+      return { html, wire };
+    }
+
+    function buildBrowserSheet() {
+      const html = `
+        <div class="browser-bar">https://vercel.com/kashino17/pinterest-scraper</div>
+        <div class="browser-skeleton">
+          ${[92, 68, 100, 84, 40, 76].map(w => `<div class="browser-skeleton__block" style="width:${w}%"></div>`).join('')}
+        </div>`;
+      return { html };
+    }
+
+    function buildWatchersSheet() {
+      const html = `<div class="tool-list">${TMS_DATA.watchers.map(w => `
+        <div class="tool-list__row" data-watcher="${w.id}">
+          <div class="tool-list__info">
+            <div class="tool-list__title mono-text">${ansiToHtml(w.pattern)}</div>
+            <div class="tool-list__sub">${escapeHtml(w.session)}</div>
+          </div>
+          <span class="hit-badge">${w.hits}</span>
+          <label class="switch"><input type="checkbox" data-act="active" ${w.active ? 'checked' : ''}><span class="switch__track"><span class="switch__thumb"></span></span></label>
+        </div>`).join('')}</div>`;
+      const wire = () => {
+        document.querySelectorAll('#sheetBody [data-act="active"]').forEach(inp => {
+          inp.addEventListener('change', () => {
+            const row = inp.closest('[data-watcher]');
+            const w = TMS_DATA.watchers.find(x => x.id === row.dataset.watcher);
+            if (!w) return;
+            w.active = inp.checked;
+            toast(w.active ? `Watcher aktiv: ${w.pattern}` : `Watcher pausiert: ${w.pattern}`);
+          });
+        });
+      };
+      return { html, wire };
+    }
+
+    // ============================================================
+    // Manager screen (Chat / Artifacts / Memory)
+    // ============================================================
+    function ensureMessageIds() {
+      TMS_DATA.manager.messages.forEach((m, i) => { if (!m._id) m._id = 'msg' + i; });
+    }
+
+    function scheduleTranscription(m) {
+      if (!m.transcribing || m._transcribeScheduled) return;
+      m._transcribeScheduled = true;
+      setTimeout(() => {
+        m.transcribing = false;
+        m.transcript = '(Demo) Transkription abgeschlossen';
+        const screen = document.querySelector('[data-screen="manager"]');
+        if (screen && !screen.hidden) renderManagerChat();
+      }, 2500);
+    }
+
+    function renderChatMessageHtml(m) {
+      if (m.type === 'voice') {
+        const bars = Array.from({ length: 18 }, (_, i) => `<span style="height:${6 + ((i * 37) % 14)}px"></span>`).join('');
+        let inner = '';
+        if (m.transcribing) {
+          inner = `<div class="voice-transcribing">Transkribiere… <span class="dots"><span>●</span><span>●</span><span>●</span></span></div>`;
+        } else if (m.transcript) {
+          inner = `<div class="voice-transcript">${escapeHtml(m.transcript)}</div>`;
+        }
+        return `
+          <div class="chat-bubble-row" data-from="${m.from}">
+            <div class="chat-bubble">
+              <div class="voice-pill" data-act="play">
+                <span class="voice-pill__play">▶</span>
+                <span class="voice-pill__wave">${bars}</span>
+                <span class="voice-pill__dur">0:${String(m.duration).padStart(2, '0')}</span>
+              </div>
+              ${inner}
+              <span class="chat-bubble__time">${escapeHtml(m.time)}</span>
+            </div>
+          </div>`;
+      }
+      return `
+        <div class="chat-bubble-row" data-from="${m.from}">
+          <div class="chat-bubble">${escapeHtml(m.text)}<span class="chat-bubble__time">${escapeHtml(m.time)}</span></div>
+        </div>`;
+    }
+
+    function renderManagerChat() {
+      const host = document.getElementById('managerChat');
+      host.innerHTML = TMS_DATA.manager.messages.map(renderChatMessageHtml).join('');
+      host.scrollTop = host.scrollHeight;
+      wireManagerChatInteractions();
+      TMS_DATA.manager.messages.forEach(scheduleTranscription);
+    }
+
+    function wireManagerChatInteractions() {
+      document.querySelectorAll('#managerChat .voice-pill').forEach(pill => {
+        pill.addEventListener('click', () => {
+          const playing = pill.classList.toggle('is-playing');
+          const playBtn = pill.querySelector('.voice-pill__play');
+          if (playing) {
+            playBtn.textContent = '❚❚';
+            const durText = pill.querySelector('.voice-pill__dur').textContent;
+            const secs = parseInt(durText.split(':')[1], 10) || 5;
+            setTimeout(() => { pill.classList.remove('is-playing'); playBtn.textContent = '▶'; }, Math.min(secs, 6) * 1000);
+          } else {
+            playBtn.textContent = '▶';
+          }
+        });
+      });
+    }
+
+    function renderManagerArtifacts() {
+      const host = document.getElementById('managerArtifacts');
+      host.innerHTML = TMS_DATA.manager.artifacts.map(a => `
+        <div class="artifact-card">
+          <div class="artifact-card__title">${escapeHtml(a.title)}</div>
+          <div class="artifact-card__meta">${escapeHtml(a.kind)} · ${escapeHtml(a.time)}</div>
+        </div>`).join('');
+    }
+
+    function renderManagerMemory() {
+      const host = document.getElementById('managerMemory');
+      host.innerHTML = TMS_DATA.manager.memory.map(m => `
+        <div class="memory-row"><span>${escapeHtml(m.text)}</span><span class="memory-row__time">${escapeHtml(m.time)}</span></div>`).join('');
+    }
+
+    function wireManagerTabs() {
+      document.getElementById('managerTabs').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-tab]');
+        if (!btn) return;
+        const tab = btn.dataset.tab;
+        state.managerTab = tab;
+        document.querySelectorAll('#managerTabs button').forEach(b => b.classList.toggle('active', b === btn));
+        document.getElementById('managerChat').hidden = tab !== 'chat';
+        document.getElementById('managerInputRow').hidden = tab !== 'chat';
+        document.getElementById('managerArtifacts').hidden = tab !== 'artifacts';
+        document.getElementById('managerMemory').hidden = tab !== 'memory';
+      });
+    }
+
+    function wireManagerInput() {
+      const micBtn = document.getElementById('managerMicBtn');
+      micBtn.addEventListener('click', () => {
+        if (micBtn.classList.contains('is-recording')) return;
+        micBtn.classList.add('is-recording');
+        setTimeout(() => {
+          micBtn.classList.remove('is-recording');
+          const now = new Date();
+          const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          const msg = { type: 'voice', from: 'user', time, duration: 8, transcript: null, transcribing: true, _id: 'msg' + TMS_DATA.manager.messages.length };
+          TMS_DATA.manager.messages.push(msg);
+          renderManagerChat();
+        }, 2000);
+      });
+      document.getElementById('managerTextInput').addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        const input = e.target;
+        const text = input.value.trim();
+        if (!text) return;
+        const now = new Date();
+        const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        TMS_DATA.manager.messages.push({ type: 'text', from: 'user', time, text, _id: 'msg' + TMS_DATA.manager.messages.length });
+        input.value = '';
+        renderManagerChat();
+      });
+    }
+
+    SCREEN_HOOKS.manager = renderManagerChat;
+
+    // ============================================================
+    // Cloud screen (Vercel + Render): folders/favorites, Env/Logs/Deploys
+    // ============================================================
+    const FAV_KEY = 'tms-command-deck-cloud-favorites';
+    function loadFavorites() {
+      try {
+        const raw = localStorage.getItem(FAV_KEY);
+        if (!raw) return;
+        const map = JSON.parse(raw);
+        TMS_DATA.cloudProjects.forEach(p => { if (Object.prototype.hasOwnProperty.call(map, p.id)) p.favorite = !!map[p.id]; });
+      } catch (e) { /* corrupt/unavailable storage: keep seed favorites */ }
+    }
+    function saveFavorites() {
+      const map = {};
+      TMS_DATA.cloudProjects.forEach(p => { map[p.id] = p.favorite; });
+      try { localStorage.setItem(FAV_KEY, JSON.stringify(map)); } catch (e) { /* storage unavailable */ }
+    }
+
+    const CLOUD_GLYPH = { vercel: '▲', render: 'R' };
+
+    function cloudFilteredProjects() {
+      return TMS_DATA.cloudProjects.filter(p => state.cloudProviderFilter === 'all' || p.provider === state.cloudProviderFilter);
+    }
+
+    function cloudRowHtml(p) {
+      return `
+        <button class="cloud-row" data-project="${p.id}">
+          <span class="provider-glyph">${CLOUD_GLYPH[p.provider] || '?'}</span>
+          <span class="cloud-row__main">
+            <span class="cloud-row__name">${escapeHtml(p.name)}</span>
+            <span class="cloud-row__meta">
+              <span class="status-chip" data-status="${p.status}"><span class="status-chip__dot"></span>${escapeHtml(p.status)}</span>
+              <span class="cloud-row__deploy">${escapeHtml(p.lastDeploy)}</span>
+            </span>
+          </span>
+          <span class="fav-btn${p.favorite ? ' is-fav' : ''}" data-fav="${p.id}">★</span>
+        </button>`;
+    }
+
+    function renderCloudGroups() {
+      const host = document.getElementById('cloudGroups');
+      const list = cloudFilteredProjects();
+      document.getElementById('cloudCount').textContent = String(list.length);
+      if (state.cloudView === 'list') {
+        const sorted = [...list].sort((a, b) => (b.favorite - a.favorite));
+        host.innerHTML = `<div class="folder-group__rows">${sorted.map(cloudRowHtml).join('')}</div>`;
+        return;
+      }
+      const folders = {};
+      list.forEach(p => { (folders[p.folder] = folders[p.folder] || []).push(p); });
+      const folderNames = Object.keys(folders).sort();
+      host.innerHTML = folderNames.map(name => {
+        const rows = [...folders[name]].sort((a, b) => (b.favorite - a.favorite));
+        return `
+          <div class="folder-group" data-folder="${escapeHtml(name)}">
+            <div class="folder-group__head">
+              <span class="folder-group__name">${escapeHtml(name)}</span>
+              <span class="folder-group__count">${rows.length}</span>
+            </div>
+            <div class="folder-group__rows">${rows.map(cloudRowHtml).join('')}</div>
+          </div>`;
+      }).join('');
+    }
+
+    function wireCloudToolbar() {
+      document.getElementById('cloudProviderFilter').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-provider]');
+        if (!btn) return;
+        state.cloudProviderFilter = btn.dataset.provider;
+        document.querySelectorAll('#cloudProviderFilter button').forEach(b => b.classList.toggle('active', b === btn));
+        renderCloudGroups();
+      });
+      document.getElementById('cloudViewToggle').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-view]');
+        if (!btn) return;
+        state.cloudView = btn.dataset.view;
+        document.querySelectorAll('#cloudViewToggle button').forEach(b => b.classList.toggle('active', b === btn));
+        renderCloudGroups();
+      });
+      document.getElementById('cloudGroups').addEventListener('click', e => {
+        const favBtn = e.target.closest('[data-fav]');
+        if (favBtn) {
+          const p = TMS_DATA.cloudProjects.find(x => x.id === favBtn.dataset.fav);
+          if (p) { p.favorite = !p.favorite; saveFavorites(); renderCloudGroups(); }
+          return;
+        }
+        const folderHead = e.target.closest('.folder-group__head');
+        if (folderHead) { folderHead.closest('.folder-group').classList.toggle('is-collapsed'); return; }
+        const row = e.target.closest('.cloud-row');
+        if (row) openCloudDetail(row.dataset.project, 'env');
+      });
+    }
+
+    function stopCloudBuildTimer() {
+      if (state.cloudBuildTimer) { clearInterval(state.cloudBuildTimer); state.cloudBuildTimer = null; }
+    }
+
+    function showCloudList() {
+      stopCloudBuildTimer();
+      state.cloudDetailId = null;
+      document.getElementById('cloudDetail').hidden = true;
+      document.getElementById('cloudDetail').innerHTML = '';
+      document.getElementById('cloudList').hidden = false;
+    }
+
+    function openCloudDetail(id, tab) {
+      const project = TMS_DATA.cloudProjects.find(p => p.id === id);
+      if (!project) return;
+      state.cloudDetailId = id;
+      state.cloudDetailTab = tab || 'env';
+      document.getElementById('cloudList').hidden = true;
+      document.getElementById('cloudDetail').hidden = false;
+      renderCloudDetail();
+    }
+
+    function renderCloudDetail() {
+      const project = TMS_DATA.cloudProjects.find(p => p.id === state.cloudDetailId);
+      const detail = document.getElementById('cloudDetail');
+      if (!project) return;
+      detail.innerHTML = `
+        <div class="cloud-detail__head">
+          <span class="back-btn" id="cloudBackBtn">← Zurück</span>
+          <span class="cloud-detail__title">${escapeHtml(project.name)}</span>
+        </div>
+        <div class="subtabs" id="cloudDetailTabs">
+          <button data-tab="env" class="${state.cloudDetailTab === 'env' ? 'active' : ''}">Env</button>
+          <button data-tab="logs" class="${state.cloudDetailTab === 'logs' ? 'active' : ''}">Logs</button>
+          <button data-tab="deploys" class="${state.cloudDetailTab === 'deploys' ? 'active' : ''}">Deploys</button>
+        </div>
+        <div class="cloud-detail__body" id="cloudDetailBody"></div>
+      `;
+      document.getElementById('cloudBackBtn').addEventListener('click', showCloudList);
+      document.getElementById('cloudDetailTabs').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-tab]');
+        if (!btn) return;
+        stopCloudBuildTimer();
+        state.cloudDetailTab = btn.dataset.tab;
+        renderCloudDetail();
+      });
+      renderCloudDetailBody(project);
+    }
+
+    function renderCloudDetailBody(project) {
+      const host = document.getElementById('cloudDetailBody');
+      if (state.cloudDetailTab === 'env') renderEnvTab(host, project);
+      else if (state.cloudDetailTab === 'logs') renderLogsTab(host, project);
+      else renderDeploysTab(host, project);
+    }
+
+    function renderEnvTab(host, project) {
+      host.innerHTML = project.env.map((e, i) => `
+        <div class="env-row" data-idx="${i}">
+          <div class="env-row__top">
+            <span class="env-row__key">${escapeHtml(e.key)}</span>
+          </div>
+          <span class="env-row__value" data-act="reveal">${'•'.repeat(10)}</span>
+          <div class="env-row__actions">
+            <button data-act="copy">Kopieren</button>
+            <button data-act="edit">Bearbeiten</button>
+          </div>
+        </div>`).join('');
+      host.querySelectorAll('.env-row').forEach(row => {
+        const idx = Number(row.dataset.idx);
+        const entry = project.env[idx];
+        const valueEl = row.querySelector('[data-act="reveal"]');
+        let revealed = false;
+        valueEl.addEventListener('click', () => {
+          revealed = !revealed;
+          valueEl.textContent = revealed ? entry.value : '•'.repeat(10);
+        });
+        row.querySelector('[data-act="copy"]').addEventListener('click', () => {
+          copyText(entry.value);
+          toast('Kopiert ✓');
+        });
+        row.querySelector('[data-act="edit"]').addEventListener('click', () => {
+          if (row.querySelector('.env-row__edit')) return;
+          const editRow = document.createElement('div');
+          editRow.className = 'env-row__edit';
+          editRow.innerHTML = `<input type="text" value="${escapeHtml(entry.value)}"><button class="btn-secondary" data-act="save">Speichern</button>`;
+          row.appendChild(editRow);
+          editRow.querySelector('input').focus();
+          editRow.querySelector('[data-act="save"]').addEventListener('click', () => {
+            entry.value = editRow.querySelector('input').value;
+            valueEl.textContent = revealed ? entry.value : '•'.repeat(10);
+            editRow.remove();
+            toast('Gespeichert — Redeploy nötig');
+          });
+        });
+      });
+    }
+
+    function cloudLogCardId(project) { return `cloud-${project.id}`; }
+
+    function renderLogsTab(host, project) {
+      const cardId = cloudLogCardId(project);
+      if (!cardState[cardId]) cardState[cardId] = { lines: project.logs.slice(), collapsed: false, selectionMode: false, selection: null };
+      else cardState[cardId].lines = project.logs.slice();
+      host.innerHTML = `
+        <div class="log-viewer">
+          <div class="log-viewer__tools">
+            <input type="text" class="log-viewer__search" id="cloudLogSearch" placeholder="Logs durchsuchen…" autocomplete="off">
+            <button class="btn-secondary" id="cloudLogSelectBtn">Selektieren</button>
+            <button class="btn-secondary" id="cloudLogCopyBtn">Kopieren</button>
+          </div>
+          <div class="term-pre term-pre--xxl log-viewer__pre" data-card-id="${cardId}"></div>
+        </div>`;
+      renderCardLines(cardId);
+      document.getElementById('cloudLogSearch').addEventListener('input', e => {
+        const q = e.target.value.toLowerCase();
+        cardState[cardId].lines = q ? project.logs.filter(l => l.toLowerCase().includes(q)) : project.logs.slice();
+        renderCardLines(cardId);
+      });
+      document.getElementById('cloudLogSelectBtn').addEventListener('click', () => {
+        const cs = cardState[cardId];
+        cs.selectionMode = !cs.selectionMode;
+        document.getElementById('cloudLogSelectBtn').classList.toggle('is-on', cs.selectionMode);
+        const pre = document.querySelector(`.term-pre[data-card-id="${cardId}"]`);
+        pre.classList.toggle('selection-mode', cs.selectionMode);
+        if (!cs.selectionMode) clearSelection(cardId);
+      });
+      document.getElementById('cloudLogCopyBtn').addEventListener('click', () => {
+        copyText(cardState[cardId].lines.join('\n'));
+        toast('Log kopiert ✓');
+      });
+      stopCloudBuildTimer();
+      if (project.status === 'building') {
+        let n = 0;
+        state.cloudBuildTimer = setInterval(() => {
+          n++;
+          const time = new Date().toTimeString().slice(0, 5);
+          const line = `${time} BUILD Verarbeite Modul ${n}…`;
+          project.logs.push(line);
+          const searchInput = document.getElementById('cloudLogSearch');
+          if (searchInput && !searchInput.value) {
+            cardState[cardId].lines.push(line);
+            renderCardLines(cardId);
+          }
+        }, 2000);
+      }
+    }
+
+    function renderDeploysTab(host, project) {
+      const deploys = [
+        { version: 'v12', time: project.lastDeploy, status: project.status === 'building' ? 'building' : 'ready' },
+        { version: 'v11', time: 'vor 2 Tagen', status: 'ready' },
+        { version: 'v10', time: 'vor 5 Tagen', status: project.status === 'suspended' ? 'suspended' : 'ready' },
+      ];
+      host.innerHTML = deploys.map(d => `
+        <div class="deploy-row">
+          <span class="deploy-row__version">${d.version}</span>
+          <span class="deploy-row__time">${escapeHtml(d.time)}</span>
+          <span class="status-chip" data-status="${d.status}"><span class="status-chip__dot"></span>${escapeHtml(d.status)}</span>
+        </div>`).join('');
+    }
+
+    SCREEN_HOOKS.cloud = showCloudList;
+
+    // ============================================================
+    // Settings screen
+    // ============================================================
+    function switchHtml(key, checked) {
+      return `<label class="switch"><input type="checkbox" data-switch="${key}" ${checked ? 'checked' : ''}><span class="switch__track"><span class="switch__thumb"></span></span></label>`;
+    }
+
+    function renderSettings() {
+      const server = TMS_DATA.servers.find(s => s.status === 'online') || TMS_DATA.servers[0];
+      const host = document.getElementById('settingsBody');
+      host.innerHTML = `
+        <div class="settings-group">
+          <div class="settings-group__title">Server</div>
+          <div class="settings-row">
+            <span class="settings-row__label">Aktiver Server<small>${escapeHtml(server.name)}</small></span>
+            <span class="settings-row__value">${escapeHtml(server.host)}:${server.port}</span>
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group__title">Sicherheit</div>
+          <div class="settings-row is-tap" id="pinChangeRow">
+            <span class="settings-row__label">PIN ändern<small>4-stellige Demo-PIN</small></span>
+            <span class="settings-row__value">›</span>
+          </div>
+          <div id="pinEditHost"></div>
+          <div class="settings-row">
+            <span class="settings-row__label">Auto-Lock<small>Sperrt nach Inaktivität</small></span>
+            ${switchHtml('autoLock', state.autoLock)}
+          </div>
+          <div class="settings-row is-tap" id="lockNowRow">
+            <span class="settings-row__label">Jetzt sperren</span>
+            <span class="settings-row__value">›</span>
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group__title">Benachrichtigungen</div>
+          <div class="settings-row">
+            <span class="settings-row__label">Push-Benachrichtigungen</span>
+            ${switchHtml('pushNotif', state.pushNotif)}
+          </div>
+          <div class="settings-row">
+            <span class="settings-row__label">Adhan-Erinnerung</span>
+            ${switchHtml('adhanNotif', state.adhanNotif)}
+          </div>
+          <div class="settings-row is-tap" id="prayerRow">
+            <span class="settings-row__label">Gebetszeiten<small>Heutige Zeiten ansehen</small></span>
+            <span class="settings-row__value">›</span>
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group__title">Terminal</div>
+          <div class="settings-row settings-row--stack">
+            <span class="settings-row__label">Schriftgröße<small id="fontSizeValue">${state.fontSize}px</small></span>
+            <div class="term-pre font-preview" id="fontSizePreview">$ echo "TMS Terminal"</div>
+            <input type="range" class="settings-slider" id="fontSizeSlider" min="11" max="18" value="${state.fontSize}">
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group__title">Über</div>
+          <div class="settings-row">
+            <span class="settings-row__label">Version</span>
+            <span class="settings-row__value">v${TMS_DATA.update.current}</span>
+          </div>
+          <div class="settings-row is-tap" id="updateHintRow">
+            <span class="settings-row__label">Update verfügbar<small>v${TMS_DATA.update.latest} — ${escapeHtml(TMS_DATA.update.notes)}</small></span>
+            <span class="settings-row__value">›</span>
+          </div>
+        </div>
+      `;
+      wireSettingsInteractions();
+    }
+
+    function togglePinEditor() {
+      const editHost = document.getElementById('pinEditHost');
+      if (editHost.innerHTML) { editHost.innerHTML = ''; return; }
+      editHost.innerHTML = `
+        <div class="settings-pin-edit">
+          <input type="text" inputmode="numeric" maxlength="4" id="newPinInput" placeholder="Neue 4-stellige PIN">
+          <button class="btn-secondary" id="savePinBtn">Speichern</button>
+        </div>`;
+      document.getElementById('savePinBtn').addEventListener('click', () => {
+        const val = document.getElementById('newPinInput').value.trim();
+        if (!/^\d{4}$/.test(val)) { toast('PIN muss 4 Ziffern haben'); return; }
+        state.pin = val;
+        editHost.innerHTML = '';
+        toast('PIN geändert ✓');
+      });
+    }
+
+    function wireSettingsInteractions() {
+      document.querySelectorAll('#settingsBody [data-switch]').forEach(inp => {
+        inp.addEventListener('change', () => {
+          state[inp.dataset.switch] = inp.checked;
+          toast(inp.checked ? 'Aktiviert' : 'Deaktiviert');
+        });
+      });
+      document.getElementById('pinChangeRow').addEventListener('click', togglePinEditor);
+      document.getElementById('lockNowRow').addEventListener('click', lockApp);
+      document.getElementById('prayerRow').addEventListener('click', () => show('prayer'));
+      document.getElementById('updateHintRow').addEventListener('click', () => toast(`v${TMS_DATA.update.latest} verfügbar — ${TMS_DATA.update.notes}`));
+      const slider = document.getElementById('fontSizeSlider');
+      slider.addEventListener('input', () => {
+        state.fontSize = Number(slider.value);
+        document.getElementById('fontSizeValue').textContent = `${state.fontSize}px`;
+        document.documentElement.style.setProperty('--term-font-size', state.fontSize + 'px');
+      });
+    }
+
+    // ============================================================
+    // Prayer screen + Adhan overlay
+    // ============================================================
+    function parsePrayerTime(t) {
+      const [h, m] = t.split(':').map(Number);
+      const d = new Date();
+      d.setHours(h, m, 0, 0);
+      return d;
+    }
+
+    function nextPrayer() {
+      const now = new Date();
+      const upcoming = TMS_DATA.prayerTimes.map(p => ({ ...p, date: parsePrayerTime(p.time) })).find(p => p.date > now);
+      if (upcoming) return upcoming;
+      const first = TMS_DATA.prayerTimes[0];
+      const d = parsePrayerTime(first.time);
+      d.setDate(d.getDate() + 1);
+      return { ...first, date: d, tomorrow: true };
+    }
+
+    function renderPrayerList() {
+      const next = nextPrayer();
+      const host = document.getElementById('prayerList');
+      host.innerHTML = TMS_DATA.prayerTimes.map(p => `
+        <div class="prayer-row${p.name === next.name && !next.tomorrow ? ' is-next' : ''}">
+          <span class="prayer-row__name">${escapeHtml(p.name)}</span>
+          <span class="prayer-row__time">${escapeHtml(p.time)}</span>
+        </div>`).join('');
+    }
+
+    let prayerTickTimer = null;
+    function tickPrayerCountdown() {
+      renderPrayerList();
+      const next = nextPrayer();
+      const card = document.getElementById('prayerNextCard');
+      const update = () => {
+        const diffMs = Math.max(0, next.date - new Date());
+        const mins = Math.floor(diffMs / 60000);
+        const h = Math.floor(mins / 60), m = mins % 60;
+        card.innerHTML = `
+          <div class="prayer-next-card">
+            <div class="prayer-next-card__label">Nächstes Gebet — ${escapeHtml(next.name)}${next.tomorrow ? ' (morgen)' : ''}</div>
+            <div class="prayer-next-card__countdown">${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}</div>
+          </div>`;
+      };
+      update();
+      clearInterval(prayerTickTimer);
+      prayerTickTimer = setInterval(update, 30000);
+    }
+
+    function openAdhanOverlay(prayerName) {
+      const overlay = document.getElementById('adhanOverlay');
+      document.getElementById('adhanName').textContent = prayerName;
+      document.getElementById('adhanRingCode').textContent = prayerName.slice(0, 3).toUpperCase();
+      overlay.hidden = false;
+      requestAnimationFrame(() => overlay.classList.add('is-open'));
+    }
+
+    function closeAdhanOverlay() {
+      const overlay = document.getElementById('adhanOverlay');
+      overlay.classList.remove('is-open');
+      setTimeout(() => { overlay.hidden = true; }, 150);
+    }
+
+    function wirePrayer() {
+      document.getElementById('adhanDemoBtn').addEventListener('click', () => openAdhanOverlay(nextPrayer().name));
+      document.getElementById('adhanStop').addEventListener('click', closeAdhanOverlay);
+    }
+
+    SCREEN_HOOKS.prayer = tickPrayerCountdown;
+
+    // ============================================================
+    // Lock screen (PIN pad)
+    // ============================================================
+    function renderPinDots(n) {
+      document.querySelectorAll('#pinDots span').forEach((dot, i) => dot.classList.toggle('is-filled', i < n));
+    }
+
+    function checkPin() {
+      if (state.lockDigits === state.pin) {
+        unlockApp();
+        return;
+      }
+      const section = document.querySelector('[data-screen="lock"]');
+      section.classList.add('lock-shake');
+      setTimeout(() => section.classList.remove('lock-shake'), 400);
+      state.lockDigits = '';
+      setTimeout(() => renderPinDots(0), 400);
+      toast('Falscher PIN');
+    }
+
+    function handlePinKey(key) {
+      if (key === 'back') { state.lockDigits = state.lockDigits.slice(0, -1); renderPinDots(state.lockDigits.length); return; }
+      if (!key || state.lockDigits.length >= 4) return;
+      state.lockDigits += key;
+      renderPinDots(state.lockDigits.length);
+      if (state.lockDigits.length === 4) setTimeout(checkPin, 120);
+    }
+
+    function unlockApp() {
+      document.body.classList.remove('is-locked');
+      state.lockDigits = '';
+      renderPinDots(0);
+      show('servers');
+    }
+
+    function lockApp() {
+      document.body.classList.add('is-locked');
+      state.lockDigits = '';
+      renderPinDots(0);
+      show('lock');
+    }
+
+    function wireLock() {
+      document.getElementById('pinPad').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-key]');
+        if (btn) handlePinKey(btn.dataset.key);
+      });
+      document.addEventListener('keydown', e => {
+        if (!document.body.classList.contains('is-locked')) return;
+        if (/^[0-9]$/.test(e.key)) handlePinKey(e.key);
+        else if (e.key === 'Backspace') handlePinKey('back');
+      });
+    }
+
+    // ============================================================
     // Command palette
     // ============================================================
     function buildPaletteIndex() {
@@ -859,6 +2025,24 @@
       idx.push({ type: 'Screen', label: 'Server', sub: 'Serverliste öffnen', action: () => show('servers') });
       idx.push({ type: 'Screen', label: 'Terminals', sub: 'Terminal-Stack öffnen', action: () => goToTerminals() });
       idx.push({ type: 'Aktion', label: 'Neues Terminal', sub: 'Terminal erstellen', action: () => toast('Neues Terminal erstellt (Mockup)') });
+
+      // Task 4: tools, manager, cloud, settings, prayer, lock
+      TOOL_DEFS.forEach(t => idx.push({
+        type: 'Tool', label: t.label, sub: 'Werkzeug öffnen',
+        action: () => { show('tools'); openToolSheet(t.id); },
+      }));
+      TMS_DATA.cloudProjects.forEach(p => idx.push({
+        type: 'Cloud', label: p.name, sub: `${p.provider} · ${p.folder}`,
+        action: () => { show('cloud'); openCloudDetail(p.id, 'env'); },
+      }));
+      idx.push({ type: 'Screen', label: 'Manager', sub: 'Manager-Chat öffnen', action: () => show('manager') });
+      idx.push({ type: 'Screen', label: 'Cloud', sub: 'Cloud-Projekte öffnen', action: () => show('cloud') });
+      idx.push({ type: 'Screen', label: 'Werkzeuge', sub: 'Tool-Panels öffnen', action: () => show('tools') });
+      idx.push({ type: 'Screen', label: 'Einstellungen', sub: 'Server, Sicherheit, Terminal, Über', action: () => show('settings') });
+      idx.push({ type: 'Screen', label: 'Gebetszeiten', sub: 'Heutige Gebetszeiten', action: () => show('prayer') });
+      idx.push({ type: 'Aktion', label: 'Adhan-Demo', sub: 'Adhan-Alarm testen', action: () => { show('prayer'); openAdhanOverlay(nextPrayer().name); } });
+      idx.push({ type: 'Aktion', label: 'Env kopieren — pinterest-scraper', sub: 'Cloud → Env-Variablen', action: () => { show('cloud'); openCloudDetail('c1', 'env'); } });
+      idx.push({ type: 'Aktion', label: 'App sperren', sub: 'Zur PIN-Sperre zurückkehren', action: () => lockApp() });
       return idx;
     }
 
@@ -964,6 +2148,7 @@
     }
 
     document.addEventListener('keydown', e => {
+      if (document.body.classList.contains('is-locked')) return; // no shortcuts while locked
       const paletteEl = document.getElementById('palette');
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
       if (e.key === 'Escape' && !paletteEl.hidden) closePalette();
@@ -973,13 +2158,16 @@
     // Bottom command bar + screen router
     // ============================================================
     function show(name) {
+      if (name !== 'cloud') stopCloudBuildTimer();
       document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
       document.querySelectorAll('#commandbar [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
+      if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
     }
 
     function wireNav() {
       document.querySelectorAll('#commandbar [data-nav]').forEach(btn => {
         const name = btn.dataset.nav;
+        if (name === 'cloud') { wireCloudNavLongPress(btn); return; }
         btn.addEventListener('click', () => {
           if (name === 'palette') { openPalette(); return; }
           if (name === 'terminals') { goToTerminals(); return; }
@@ -989,19 +2177,65 @@
       });
     }
 
+    // Cloud nav slot: tap → Cloud screen, long-press → Tools screen (brief-specified reach).
+    function wireCloudNavLongPress(btn) {
+      const LONG_PRESS_MS = 550;
+      let timer = null, longPressed = false;
+      btn.addEventListener('pointerdown', () => {
+        longPressed = false;
+        timer = setTimeout(() => { longPressed = true; show('tools'); }, LONG_PRESS_MS);
+      });
+      const cancelTimer = () => clearTimeout(timer);
+      btn.addEventListener('pointerup', cancelTimer);
+      btn.addEventListener('pointerleave', cancelTimer);
+      btn.addEventListener('pointercancel', cancelTimer);
+      btn.addEventListener('click', e => {
+        if (longPressed) { e.preventDefault(); longPressed = false; return; }
+        show('cloud');
+      });
+    }
+
     // ============================================================
     // Init
     // ============================================================
+    ensureMessageIds();
+    loadFavorites();
+
     renderServers();
     renderUpdateBanner();
     document.getElementById('updateCta').addEventListener('click', () => toast('Mockup: Update-Vorgang wird nicht simuliert'));
     document.getElementById('updateDismiss').addEventListener('click', () => { document.getElementById('updateBanner').hidden = true; });
     state.activeServerName = (TMS_DATA.servers.find(s => s.status === 'online') || {}).name || '';
     updateTerminalsHeader();
+
+    renderTools();
+
+    renderManagerArtifacts();
+    renderManagerMemory();
+    wireManagerTabs();
+    wireManagerInput();
+    renderManagerChat();
+
+    renderCloudGroups();
+    wireCloudToolbar();
+
+    renderSettings();
+
+    renderPrayerList();
+    wirePrayer();
+
+    wireLock();
+
     wireNav();
     wirePalette();
     wireToolbar();
-    show('servers');
+
+    document.getElementById('settingsBtn').addEventListener('click', () => show('settings'));
+    document.getElementById('termToolsBtn').addEventListener('click', () => show('tools'));
+    document.getElementById('sheetClose').addEventListener('click', closeSheet);
+    document.querySelector('.sheet__scrim').addEventListener('click', closeSheet);
+
+    show('lock');
   </script>
 </body>
 </html>
