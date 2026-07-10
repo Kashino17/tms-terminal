@@ -65,7 +65,6 @@ export interface ResponsiveValues {
   height: number;
   isExpanded: boolean;
   isCompact: boolean;
-  isLandscape: boolean;
   rf: (size: number) => number;
   rs: (size: number) => number;
   ri: (size: number) => number;
@@ -88,7 +87,6 @@ const ResponsiveCtx = createContext<ResponsiveValues | null>(null);
 export function ResponsiveProvider({ children }: { children: ReactNode }) {
   const { width, height } = useWindowDimensions();
   const bp = getBreakpoint(width);
-  const isLandscape = width > height;
 
   const value = useMemo(() => {
     const scalers = SCALERS[bp];
@@ -99,13 +97,12 @@ export function ResponsiveProvider({ children }: { children: ReactNode }) {
       height,
       isExpanded: bp === 'expanded',
       isCompact: bp === 'compact',
-      isLandscape,
       rf: scalers.rf,
       rs: scalers.rs,
       ri: scalers.ri,
       ...layout,
     };
-  }, [bp, width, height, isLandscape]);
+  }, [bp, width, height]);
 
   return React.createElement(ResponsiveCtx.Provider, { value }, children);
 }
@@ -126,7 +123,6 @@ export function useResponsive(): ResponsiveValues {
     height,
     isExpanded: bp === 'expanded',
     isCompact: bp === 'compact',
-    isLandscape: width > height,
     rf: scalers.rf,
     rs: scalers.rs,
     ri: scalers.ri,

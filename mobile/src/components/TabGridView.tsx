@@ -1,23 +1,22 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList,
-  StyleSheet, Modal, Animated, Platform, StatusBar, Easing,
+  StyleSheet, Modal, Animated, Platform, StatusBar,
 } from 'react-native';
-import { Feather } from '@expo/vector-icons';
 import { TabGridCard } from './TabGridCard';
 import { TerminalTab } from '../types/terminal.types';
 import { colors, fonts } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
 
-const COLUMN_GAP = 8;
-const PADDING = 12;
+const COLUMN_GAP = 7;
+const PADDING = 10;
 
 export interface TabGridViewProps {
   visible: boolean;
   tabs: TerminalTab[];
   outputBuffers: Record<string, string>;
   lastActivity: Record<string, number>;
-  translateY: Animated.Value; // kept for compat but we use our own anims
+  translateY: Animated.Value;
   onClose: () => void;
   onSelectTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => void;
@@ -33,108 +32,26 @@ export function TabGridView({
   onSelectTab,
   onCloseTab,
   onAddTab,
+  translateY,
 }: TabGridViewProps) {
   const responsive = useResponsive();
+  const { rf, rs } = responsive;
 
-  // Liquid morph animation values
-  const morphProgress = useRef(new Animated.Value(0)).current;
-  const contentOpacity = useRef(new Animated.Value(0)).current;
+  const scaledGap = rs(COLUMN_GAP);
+  const scaledPadding = rs(PADDING);
 
-  useEffect(() => {
-    if (visible) {
-      morphProgress.setValue(0);
-      contentOpacity.setValue(0);
-
-      // Phase 1: Morph from island pill to fullscreen (fast spring)
-      Animated.spring(morphProgress, {
-        toValue: 1,
-        tension: 65,
-        friction: 10,
-        useNativeDriver: false,
-      }).start();
-
-      // Phase 2: Content fades in after morph starts
-      Animated.timing(contentOpacity, {
-        toValue: 1,
-        duration: 250,
-        delay: 120,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [visible]);
-
-  const dismiss = useCallback(() => {
-    // Reverse: content fades out first, then morph back
-    Animated.timing(contentOpacity, {
-      toValue: 0,
-      duration: 120,
-      useNativeDriver: true,
-    }).start();
-
-    Animated.timing(morphProgress, {
-      toValue: 0,
-      duration: 280,
-      easing: Easing.in(Easing.cubic),
-      useNativeDriver: false,
-    }).start(() => onClose());
-  }, [onClose]);
-
-  const handleSelect = useCallback((tabId: string) => {
-    // Quick fade then close
-    Animated.timing(contentOpacity, {
-      toValue: 0,
-      duration: 80,
-      useNativeDriver: true,
-    }).start();
-
-    Animated.timing(morphProgress, {
-      toValue: 0,
-      duration: 220,
-      easing: Easing.in(Easing.cubic),
-      useNativeDriver: false,
-    }).start(() => {
-      onSelectTab(tabId);
-      onClose();
-    });
-  }, [onSelectTab, onClose]);
-
-  // Interpolations for the liquid morph effect
-  // Start: small pill at top center (like the island)
-  // End: fullscreen rectangle
-  const morphBorderRadius = morphProgress.interpolate({
-    inputRange: [0, 0.3, 1],
-    outputRange: [22, 16, 0],
-  });
-
-  const morphTop = morphProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [8, 0],
-  });
-
-  const morphHorizontal = morphProgress.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [60, 20, 0],
-  });
-
-  const morphHeight = morphProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [40, 100], // percentage-like, used as flex basis
-  });
-
-  const morphScaleY = morphProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.06, 1],
-  });
-
-  const morphOpacity = morphProgress.interpolate({
-    inputRange: [0, 0.15],
-    outputRange: [0, 1],
-  });
-
-  const bgOpacity = morphProgress.interpolate({
-    inputRange: [0, 0.4],
-    outputRange: [0, 1],
-  });
+  const dynamicStyles = useMemo(() => ({
+    header: { height: rs(50), paddingHorizontal: rs(16) },
+    cancelText: { fontSize: rf(13) },
+    headerTitle: { fontSize: rf(14) },
+    doneBtnPad: { paddingHorizontal: rs(12), paddingVertical: rs(4) },
+    doneText: { fontSize: rf(13) },
+    listContent: { padding: scaledPadding, paddingBottom: 0 },
+    columnWrapper: { gap: scaledGap, marginBottom: scaledGap },
+    bottomBar: { height: rs(48) },
+    newTabBarBtn: { paddingHorizontal: rs(20), paddingVertical: rs(8) },
+    newTabBarText: { fontSize: rf(13) },
+  }), [rf, rs, scaledGap, scaledPadding]);
 
   const renderItem = useCallback(({ item }: { item: TerminalTab }) => {
     return (
@@ -143,13 +60,11 @@ export function TabGridView({
         outputBuffer={outputBuffers[item.id] ?? ''}
         isActive={item.active}
         lastActivityMs={lastActivity[item.id] ?? 0}
-        onSelect={(id) => handleSelect(id)}
+        onSelect={onSelectTab}
         onClose={onCloseTab}
       />
     );
-  }, [outputBuffers, lastActivity, handleSelect, onCloseTab]);
-
-  if (!visible) return null;
+  }, [outputBuffers, lastActivity, onSelectTab, onCloseTab]);
 
   return (
     <Modal
@@ -157,77 +72,65 @@ export function TabGridView({
       transparent={true}
       animationType="none"
       statusBarTranslucent={Platform.OS === 'android'}
-      onRequestClose={dismiss}
+      onRequestClose={onClose}
     >
-      {/* Background fade */}
-      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: colors.bg, opacity: bgOpacity }]} />
-
-      {/* Morphing container — starts as pill, expands to fullscreen */}
-      <Animated.View
-        style={[
-          s.morphContainer,
-          {
-            top: morphTop,
-            left: morphHorizontal,
-            right: morphHorizontal,
-            borderRadius: morphBorderRadius,
-            opacity: morphOpacity,
-            transform: [{ scaleY: morphScaleY }],
-            paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0,
-          },
-        ]}
-      >
+      <Animated.View style={[
+        StyleSheet.absoluteFill,
+        {
+          transform: [{ translateY }],
+          backgroundColor: colors.bg,
+          paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0,
+        },
+      ]}>
         {/* Header */}
-        <Animated.View style={[s.header, { opacity: contentOpacity }]}>
-          <TouchableOpacity onPress={dismiss} style={s.headerBtn}>
-            <Text style={s.cancelText}>Abbrechen</Text>
+        <View style={[styles.header, dynamicStyles.header]}>
+          <TouchableOpacity onPress={onClose} style={styles.headerBtn}>
+            <Text style={[styles.cancelText, dynamicStyles.cancelText]}>Abbrechen</Text>
           </TouchableOpacity>
-          <View style={s.headerCenter}>
-            <Feather name="grid" size={14} color={colors.textDim} />
-            <Text style={s.headerTitle}>{tabs.length} Terminals</Text>
-          </View>
-          <TouchableOpacity onPress={dismiss} style={[s.headerBtn, { alignItems: 'flex-end' }]}>
-            <View style={s.doneBtn}>
-              <Text style={s.doneText}>Fertig</Text>
+          <Text style={[styles.headerTitle, dynamicStyles.headerTitle]}>{tabs.length} Terminals</Text>
+          <TouchableOpacity onPress={onClose} style={[styles.headerBtn, styles.headerBtnRight]}>
+            <View style={[styles.doneBtn, dynamicStyles.doneBtnPad]}>
+              <Text style={[styles.doneText, dynamicStyles.doneText]}>Fertig</Text>
             </View>
           </TouchableOpacity>
-        </Animated.View>
+        </View>
 
         {/* Grid */}
-        <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
-          <FlatList
-            key={String(responsive.gridColumns)}
-            data={tabs}
-            keyExtractor={(item) => item.id}
-            renderItem={renderItem}
-            numColumns={responsive.gridColumns}
-            style={s.list}
-            contentContainerStyle={{ padding: PADDING, paddingBottom: 80 }}
-            columnWrapperStyle={{ gap: COLUMN_GAP, marginBottom: COLUMN_GAP }}
-            showsVerticalScrollIndicator={false}
-          />
-        </Animated.View>
+        <FlatList
+          key={String(responsive.gridColumns)}
+          data={tabs}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          numColumns={responsive.gridColumns}
+          style={styles.list}
+          contentContainerStyle={dynamicStyles.listContent}
+          columnWrapperStyle={dynamicStyles.columnWrapper}
+          showsVerticalScrollIndicator={false}
+          getItemLayout={(_data, index) => {
+            const rowIndex = Math.floor(index / responsive.gridColumns);
+            const itemHeight = rs(104); // header 22 + body 80 + border 2
+            const rowGap = scaledGap;
+            return {
+              length: itemHeight,
+              offset: scaledPadding + rowIndex * (itemHeight + rowGap),
+              index,
+            };
+          }}
+        />
 
         {/* Bottom bar */}
-        <Animated.View style={[s.bottomBar, { opacity: contentOpacity }]}>
-          <TouchableOpacity style={s.addBtn} onPress={onAddTab}>
-            <Feather name="plus" size={16} color={colors.primary} />
-            <Text style={s.addText}>Neuer Tab</Text>
+        <View style={[styles.bottomBar, dynamicStyles.bottomBar]}>
+          <TouchableOpacity style={[styles.newTabBarBtn, dynamicStyles.newTabBarBtn]} onPress={onAddTab}>
+            <Text style={[styles.newTabBarText, dynamicStyles.newTabBarText]}>+ Neuer Tab</Text>
           </TouchableOpacity>
-        </Animated.View>
+        </View>
       </Animated.View>
     </Modal>
   );
 }
 
-const s = StyleSheet.create({
-  morphContainer: {
-    position: 'absolute',
-    bottom: 0,
-    backgroundColor: colors.bg,
-    overflow: 'hidden',
-    transformOrigin: 'top center',
-  },
+const styles = StyleSheet.create({
+  // Header
   header: {
     height: 50,
     flexDirection: 'row',
@@ -235,20 +138,18 @@ const s = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
+    borderBottomColor: colors.border,
+    backgroundColor: colors.bg,
   },
   headerBtn: {
     minWidth: 80,
   },
-  headerCenter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  headerBtnRight: {
+    alignItems: 'flex-end',
   },
   cancelText: {
     fontSize: 13,
     color: colors.primary,
-    fontWeight: '500',
   },
   headerTitle: {
     fontSize: 14,
@@ -261,40 +162,46 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(59,130,246,0.25)',
     borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
   },
   doneText: {
     fontSize: 13,
     color: colors.primary,
     fontWeight: '600',
   },
+  // Grid
   list: {
     flex: 1,
   },
+  listContent: {
+    padding: PADDING,
+    paddingBottom: 0,
+  },
+  columnWrapper: {
+    gap: COLUMN_GAP,
+    marginBottom: COLUMN_GAP,
+  },
+  // Bottom bar
   bottomBar: {
-    height: 52,
+    height: 48,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
+    borderTopColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.bg,
   },
-  addBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  newTabBarBtn: {
     backgroundColor: 'rgba(59,130,246,0.1)',
     borderWidth: 1,
     borderColor: 'rgba(59,130,246,0.2)',
     borderRadius: 20,
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
     paddingVertical: 8,
   },
-  addText: {
+  newTabBarText: {
     fontSize: 13,
-    color: colors.primary,
     fontWeight: '600',
-    fontFamily: fonts.mono,
+    color: colors.primary,
   },
 });

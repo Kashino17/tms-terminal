@@ -54,7 +54,7 @@ export const useAutoApproveStore = create<AutoApproveState>()(
       },
 
       isEnabled(sessionId) {
-        return get().enabled[sessionId] ?? true;
+        return get().enabled[sessionId] ?? false;
       },
 
       setRunning(sessionId, on) {

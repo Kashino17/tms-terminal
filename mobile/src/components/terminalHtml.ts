@@ -163,14 +163,13 @@ const TERMINAL_HTML = `<!DOCTYPE html>
     // Only count as tap if finger barely moved and was brief
     if (Math.abs(t.clientX - tapFocusX) > 10 || Math.abs(t.clientY - tapFocusY) > 10) return;
     if (Date.now() - tapFocusT > 400) return;
-    if (!externalKbMode) focusShadow();
+    focusShadow();
   }, { passive: true });
 
   /* ── Shadow input (soft keyboard) ─────────────────── */
   var shadowInput = document.getElementById('shadow-input');
   var prevValue   = '';
   var isComposing = false;
-  var externalKbMode = false;
 
   function focusShadow() {
     // Use preventScroll to avoid Android WebView haptic feedback on focus
@@ -190,27 +189,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
 
   /* Physical keyboard (emulator / Bluetooth) */
   document.addEventListener('keydown', function(e) {
-    if (externalKbMode) {
-      // External keyboard mode: handle ALL input via keydown.
-      // Shadow input stays unfocused → Android never shows soft keyboard.
-      if (e.key === 'Enter' || e.keyCode === 13) {
-        e.preventDefault(); sendKey(SEQ.enter); return;
-      }
-      if (e.key === 'Backspace') {
-        e.preventDefault(); sendKey(SEQ.bs); return;
-      }
-      if (e.key === 'Delete') {
-        e.preventDefault(); sendKey('\\x1b[3~'); return;
-      }
-      var s = physicalKey(e);
-      if (s) { e.preventDefault(); sendKey(s); return; }
-      // Regular character input (letters, numbers, symbols)
-      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault(); sendKey(e.key); return;
-      }
-      return;
-    }
-    // ── Normal mode (soft keyboard via shadow input) ──
     // Refocus shadowInput if it lost focus — without focus, no input events fire
     if (document.activeElement !== shadowInput && !selMode) {
       shadowInput.focus({ preventScroll: true });
@@ -401,26 +379,11 @@ const TERMINAL_HTML = `<!DOCTYPE html>
   });
 
   /* ── Resize ────────────────────────────────────────── */
-  var lastReportedCols = 0, lastReportedRows = 0;
   function reportSize() {
-    // Only report if dimensions actually changed (prevents duplicate resize messages)
-    if (term.cols === lastReportedCols && term.rows === lastReportedRows) return;
-    lastReportedCols = term.cols;
-    lastReportedRows = term.rows;
     sendToRN({ type: 'resize', cols: term.cols, rows: term.rows });
   }
-  var resizeTimer = null;
-  new ResizeObserver(function() {
-    // Debounce: keyboard open/close fires multiple rapid resize events.
-    // Without debounce, each fires fitAddon.fit() + terminal:resize to server,
-    // causing display flicker and line shifting.
-    if (resizeTimer) clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(function() {
-      resizeTimer = null;
-      fitAddon.fit();
-      reportSize();
-    }, 100);
-  }).observe(document.getElementById('terminal'));
+  new ResizeObserver(function() { fitAddon.fit(); reportSize(); })
+    .observe(document.getElementById('terminal'));
 
   /* ── Pinch-to-Zoom (does NOT block native scroll) ──── */
   var MIN_FONT = 8, MAX_FONT = 28, baseFontSize = 14;
@@ -729,7 +692,7 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         // phantom deletions when the diff sees a stale prevValue.
         prevValue = shadowInput.value;
         cancelPendingBs();
-        if (!selMode && !userScrolledUp && !externalKbMode) focusShadow();
+        if (!selMode && !userScrolledUp) focusShadow();
       }
       else if (msg.type === 'blur')   {
         // Release keyboard focus so keystrokes stop going to this tab
@@ -786,27 +749,6 @@ const TERMINAL_HTML = `<!DOCTYPE html>
         shadow.value = msg.data;
         prevValue = '';
         shadow.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      else if (msg.type === 'setTheme' && msg.theme) {
-        term.options.theme = msg.theme;
-        term.refresh(0, term.rows - 1);
-      }
-      else if (msg.type === 'setExternalKeyboardMode') {
-        externalKbMode = msg.enabled;
-        // xterm.js creates its own hidden textarea (.xterm-helper-textarea)
-        // that Android detects and focuses, triggering the soft keyboard.
-        var xtermTa = document.querySelector('.xterm-helper-textarea');
-        if (msg.enabled) {
-          shadowInput.blur();
-          shadowInput.disabled = true;
-          shadowInput.style.display = 'none';
-          if (xtermTa) { xtermTa.disabled = true; xtermTa.style.display = 'none'; }
-        } else {
-          shadowInput.style.display = '';
-          shadowInput.disabled = false;
-          if (xtermTa) { xtermTa.style.display = ''; xtermTa.disabled = false; }
-          focusShadow();
-        }
       }
     } catch(e) {}
   }

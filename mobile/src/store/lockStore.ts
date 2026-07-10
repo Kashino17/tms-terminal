@@ -23,8 +23,6 @@ interface LockState {
   pinHash: string | null;
   /** Runtime-only — true when the user has authenticated this session. */
   isUnlocked: boolean;
-  /** Timestamp of last successful unlock (ms since epoch). */
-  lastUnlockTime: number;
 
   loadLockConfig: () => Promise<void>;
   enable: (pin: string) => Promise<void>;
@@ -40,7 +38,6 @@ export const useLockStore = create<LockState>((set, get) => ({
   isEnabled: false,
   pinHash: null,
   isUnlocked: true,
-  lastUnlockTime: 0,
 
   async loadLockConfig() {
     const [[, enabled], [, hash]] = await AsyncStorage.multiGet([KEY_ENABLED, KEY_HASH]);
@@ -72,6 +69,6 @@ export const useLockStore = create<LockState>((set, get) => ({
     return hash === pinHash;
   },
 
-  unlock() { set({ isUnlocked: true, lastUnlockTime: Date.now() }); },
+  unlock() { set({ isUnlocked: true }); },
   lock()   { set({ isUnlocked: false }); },
 }));

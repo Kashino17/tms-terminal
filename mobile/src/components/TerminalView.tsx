@@ -79,12 +79,10 @@ interface Props {
   onRangeClose?: () => void;
   railWidth?: Animated.Value;
   onPathClicked?: (path: string) => void;
-  /** When true the virtual keyboard is suppressed (e.g. tool panel open). */
-  panelOpen?: boolean;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, Props>(function TerminalView(
-  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked, panelOpen = false }: Props,
+  { sessionId, wsService, visible, onReady, onAiToolDetected, rangeActive = false, onRangeClose, railWidth, onPathClicked }: Props,
   ref,
 ) {
   const webViewRef  = useRef<WebView>(null);
@@ -93,18 +91,15 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   const [tapStep,   setTapStep]   = useState(1); // 1=tap start  2=tap end  0=done
   const addSQLEntry = useSQLStore((state) => state.addEntry);
   const terminalTheme = useSettingsStore((state) => state.terminalTheme);
-  const externalKeyboardMode = useSettingsStore((state) => state.externalKeyboardMode);
-  // Drives the container's bottom edge so xterm.js stays above the keyboard.
-  // Default is 0 (fullscreen). Grows by keyboard height when keyboard opens.
-  const bottomAnim  = useRef(new Animated.Value(0)).current;
+  // Starts at TOOLBAR_HEIGHT, grows by keyboard height when keyboard opens.
+  // Drives the container's bottom edge so xterm.js always stays above the keyboard.
+  const bottomAnim  = useRef(new Animated.Value(TOOLBAR_HEIGHT)).current;
   // Track last detected AI tool to avoid repeated callbacks
   const lastAiToolRef = useRef<AiToolType>(null);
   const onAiToolDetectedRef = useRef(onAiToolDetected);
   onAiToolDetectedRef.current = onAiToolDetected;
   const onPathClickedRef = useRef(onPathClicked);
   onPathClickedRef.current = onPathClicked;
-  const panelOpenRef = useRef(panelOpen);
-  panelOpenRef.current = panelOpen;
 
   // ── ?? Command Suggest ────────────────────────────────────────────────────
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
@@ -164,14 +159,14 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
       // iOS: manually offset bottom for keyboard height
       const showSub = Keyboard.addListener('keyboardWillShow', (e) => {
         Animated.timing(bottomAnim, {
-          toValue: e.endCoordinates.height,
+          toValue: TOOLBAR_HEIGHT + e.endCoordinates.height,
           duration: e.duration > 0 ? e.duration : 220,
           useNativeDriver: false,
         }).start();
       });
       const hideSub = Keyboard.addListener('keyboardWillHide', (e) => {
         Animated.timing(bottomAnim, {
-          toValue: 0,
+          toValue: TOOLBAR_HEIGHT,
           duration: e.duration > 0 ? e.duration : 220,
           useNativeDriver: false,
         }).start();
@@ -179,29 +174,15 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
       return () => { showSub.remove(); hideSub.remove(); };
     }
 
-    // Android: adjustResize handles layout, but we still need to offset
-    // bottomAnim to make room for the floating orb dock above the keyboard.
-    const DOCK_HEIGHT = 60;
+    // Android: adjustResize handles layout, but xterm.js needs an explicit
+    // scroll-to-bottom after the resize so the cursor stays visible.
     const showSub = Keyboard.addListener('keyboardDidShow', () => {
-      // Force-dismiss keyboard when external keyboard mode is active
-      if (useSettingsStore.getState().externalKeyboardMode) {
-        Keyboard.dismiss();
-        return;
-      }
-      // Suppress keyboard while a tool panel is open
-      if (panelOpenRef.current) {
-        Keyboard.dismiss();
-        return;
-      }
-      // Add space for the orb dock strip
-      Animated.timing(bottomAnim, {
-        toValue: DOCK_HEIGHT,
-        duration: 200,
-        useNativeDriver: false,
-      }).start();
       // Short delay: let the WebView resize + xterm.js reflow finish first
       setTimeout(() => {
         if (webViewRef.current) {
+          // Send 'focus' instead of 'scroll_to_bottom' so the terminal
+          // respects userScrolledUp — if the user is reading scrollback,
+          // opening the keyboard shouldn't yank the viewport to the bottom.
           const msg = JSON.stringify({ type: 'focus' });
           webViewRef.current.injectJavaScript(
             `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
@@ -209,34 +190,17 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         }
       }, 150);
     });
-    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
-      Animated.timing(bottomAnim, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: false,
-      }).start();
-    });
-    return () => { showSub.remove(); hideSub.remove(); };
+    return () => { showSub.remove(); };
   }, []);
 
   // Apply theme changes live (user changes theme in settings while terminal is open)
   useEffect(() => {
     if (!readyReceivedRef.current) return;
     const theme = getThemeById(terminalTheme);
-    const msg = JSON.stringify({ type: 'setTheme', theme: theme.colors });
     webViewRef.current?.injectJavaScript(
-      `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
+      `term.options.theme = ${JSON.stringify(theme.colors)}; true;`,
     );
   }, [terminalTheme]);
-
-  // Sync external keyboard mode into WebView
-  useEffect(() => {
-    if (!readyReceivedRef.current) return;
-    const msg = JSON.stringify({ type: 'setExternalKeyboardMode', enabled: externalKeyboardMode });
-    webViewRef.current?.injectJavaScript(
-      `window.postMessage(${JSON.stringify(msg)}, '*'); true;`,
-    );
-  }, [externalKeyboardMode]);
 
   const copyText = useCallback((text: string) => {
     if (!text) return;
@@ -285,25 +249,14 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   }, [sessionId, wsService, sendToTerminal]);
 
   useEffect(() => {
-    if (visible && !panelOpen) {
+    if (visible) {
       setTimeout(() => sendToTerminal('focus'), 100);
     } else {
       // Blur shadow input in the old tab so the OS keyboard disconnects
       // from it — prevents keystrokes leaking into the wrong session.
       sendToTerminal('blur');
     }
-  }, [visible, panelOpen, sendToTerminal]);
-
-  // Suppress keyboard while a tool panel is open
-  useEffect(() => {
-    if (!visible) return;
-    if (panelOpen) {
-      sendToTerminal('blur');
-      Keyboard.dismiss();
-    } else {
-      setTimeout(() => sendToTerminal('focus'), 100);
-    }
-  }, [panelOpen, visible, sendToTerminal]);
+  }, [visible, sendToTerminal]);
 
   // Sync range-select mode into WebView
   useEffect(() => {
@@ -334,17 +287,9 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         readyReceivedRef.current = true;
         // Apply saved terminal theme
         const theme = getThemeById(useSettingsStore.getState().terminalTheme);
-        const themeMsg = JSON.stringify({ type: 'setTheme', theme: theme.colors });
         webViewRef.current?.injectJavaScript(
-          `window.postMessage(${JSON.stringify(themeMsg)}, '*'); true;`,
+          `term.options.theme = ${JSON.stringify(theme.colors)}; true;`,
         );
-        // Apply external keyboard mode
-        const ekMode = useSettingsStore.getState().externalKeyboardMode;
-        if (ekMode) {
-          webViewRef.current?.injectJavaScript(
-            `window.postMessage(${JSON.stringify({ type: 'setExternalKeyboardMode', enabled: true })}, '*'); true;`,
-          );
-        }
         // Replay saved output into the fresh xterm.js instance BEFORE requesting
         // terminal:reattach, so history appears instantly and new output appends after.
         if (sessionId) {
@@ -476,8 +421,8 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     <Animated.View
       style={
         visible
-          ? [styles.visibleContainer, { bottom: bottomAnim, right: railWidth ?? 0 }]
-          : [styles.hiddenContainer, railWidth ? { right: railWidth } : { right: 0 }]
+          ? [styles.visibleContainer, { bottom: bottomAnim, right: railWidth ?? TOOL_RAIL_WIDTH }]
+          : [styles.hiddenContainer, railWidth ? { right: railWidth } : undefined]
       }
       pointerEvents={visible ? 'auto' : 'none'}
     >
@@ -614,7 +559,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     left: 0,
-    right: 0,
+    right: TOOL_RAIL_WIDTH,
     // bottom is set dynamically via bottomAnim — no static value here
     zIndex: 1,
   },
@@ -622,8 +567,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     left: 0,
-    right: 0,
-    bottom: 0,
+    right: TOOL_RAIL_WIDTH,
+    bottom: TOOLBAR_HEIGHT,
     zIndex: 0,
     opacity: 0,
   },

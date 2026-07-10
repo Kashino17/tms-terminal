@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
-import { AppState, NativeModules, View, StyleSheet, Text, TouchableOpacity, Alert, Pressable, Animated, PanResponder, Easing, useWindowDimensions, Keyboard, LayoutChangeEvent } from 'react-native';
+import { AppState, View, StyleSheet, Text, TouchableOpacity, Alert, Pressable, Animated, PanResponder, Easing, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -9,23 +9,7 @@ import { TerminalToolbar } from '../components/TerminalToolbar';
 import { TerminalView, TerminalViewRef, clearViewBuffer } from '../components/TerminalView';
 import { ConnectionStatus } from '../components/ConnectionStatus';
 import { ReconnectBanner, RestoreState } from '../components/ReconnectBanner';
-import { DynamicIsland } from '../components/DynamicIsland';
-import { OrbLayer } from '../components/OrbLayer';
-import { ToolMenu } from '../components/ToolMenu';
-import { SpotlightPanel } from '../components/SpotlightPanel';
-import { ToolPanelSheet } from '../components/ToolPanelSheet';
-import { useOrbLayoutStore } from '../store/orbLayoutStore';
-import { SnippetsPanel } from '../components/SnippetsPanel';
-import { ScreenshotPanel } from '../components/ScreenshotPanel';
-import { SQLPanel } from '../components/SQLPanel';
-import { AutoApprovePanel } from '../components/AutoApprovePanel';
-import { AutopilotPanel } from '../components/AutopilotPanel';
-import { WatchersPanel } from '../components/WatchersPanel';
-import { FileBrowserPanel } from '../components/FileBrowserPanel';
-import { PortForwardingPanel } from '../components/PortForwardingPanel';
-import { RenderPanel } from '../components/RenderPanel';
-import { VercelPanel } from '../components/VercelPanel';
-import { WebSocketService, getConnection, removeConnection } from '../services/websocket.service';
+import { WebSocketService } from '../services/websocket.service';
 import { useServerStore } from '../store/serverStore';
 import { useTerminalStore } from '../store/terminalStore';
 import { TerminalTab, AiToolType, TabCategory, ServerType } from '../types/terminal.types';
@@ -43,8 +27,6 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useBrowserTabsStore } from '../store/browserTabsStore';
 import { SplitLayout } from '../components/SplitLayout';
 import { useSplitViewStore } from '../store/splitViewStore';
-import { useManagerStore } from '../store/managerStore';
-import { notifyManagerResponse } from '../services/managerNotifications.service';
 import { consumeDrawingResult } from './DrawingScreen';
 import { TabGridView } from '../components/TabGridView';
 import { stripAnsi } from '../utils/stripAnsi';
@@ -66,15 +48,14 @@ type Props = {
 };
 
 export function TerminalScreen({ navigation, route }: Props) {
-  const { serverId, serverName, openManager } = route.params as { serverId: string; serverName: string; openManager?: boolean; [k: string]: any };
+  const { serverId, serverName } = route.params;
   const { height: screenHeight } = useWindowDimensions();
   const screenHeightRef = useRef(screenHeight);
   screenHeightRef.current = screenHeight;
   const server = useServerStore((s) => s.servers.find((sv) => sv.id === serverId));
   const { tabs, addTab, removeTab, setActiveTab, setConnectionState, updateTab, setTabNotification } = useTerminalStore();
-  const wsRef = useRef<WebSocketService>(getConnection(serverId));
-  // Initialize connState from the pool connection's current state (not always 'disconnected')
-  const [connState, setConnState] = useState<ConnectionState>(wsRef.current.state);
+  const wsRef = useRef<WebSocketService>(new WebSocketService());
+  const [connState, setConnState] = useState<ConnectionState>('disconnected');
   const responsive = useResponsive();
   const { rf, rs, ri } = responsive;
 
@@ -94,18 +75,6 @@ export function TerminalScreen({ navigation, route }: Props) {
   const [panelOpen, setPanelOpen] = useState(false);
   // browserOpen flag is now persisted on each TerminalTab in the store
   const railWidthAnim = useRef(new Animated.Value(TOOL_RAIL_WIDTH)).current;
-
-  // ── New UI state (v5 redesign) ────────────────────────────────────────────
-  const [toolMenuVisible, setToolMenuVisible] = useState(false);
-  const [toolMenuAnchor, setToolMenuAnchor] = useState({ x: 200, y: 400 });
-  const [spotlightVisible, setSpotlightVisible] = useState(false);
-  const [activePanelTool, setActivePanelTool] = useState<string | null>(null);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [termAreaSize, setTermAreaSize] = useState({ width: 400, height: 600 });
-  // micRecording removed — now handled internally by OrbLayer
-  const toolSections = useOrbLayoutStore((s) => s.toolSections);
-  const updateToolSections = useOrbLayoutStore((s) => s.updateToolSections);
 
   const autoApproveTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const termViewRefs = useRef<Map<string, TerminalViewRef>>(new Map());
@@ -150,73 +119,25 @@ export function TerminalScreen({ navigation, route }: Props) {
     };
   }, []);
 
-  // Auto-open Manager Chat if navigated with openManager flag
-  const openManagerHandled = useRef(false);
-  useEffect(() => {
-    // Reset flag when openManager changes (new navigation intent)
-    if (!openManager) {
-      openManagerHandled.current = false;
-      return;
-    }
-    if (connState === 'connected' && !openManagerHandled.current) {
-      openManagerHandled.current = true;
-      setTimeout(() => {
-        navigation.navigate('ManagerChat', {
-          wsService: wsRef.current,
-          serverId,
-          serverHost: server?.host ?? '',
-          serverPort: server?.port ?? 8767,
-          serverToken: server?.token ?? '',
-        });
-      }, 0);
-    }
-  }, [openManager, connState, serverId, server, navigation]);
-
-  // Keyboard detection for orb dock
-  useEffect(() => {
-    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
-      setKeyboardVisible(true);
-      setKeyboardHeight(e.endCoordinates.height);
-    });
-    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
-      setKeyboardVisible(false);
-      setKeyboardHeight(0);
-    });
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
-
-  // Track whether app was backgrounded so we can check connection on return
+  // Track whether app was backgrounded so we only reconnect when truly returning from background
   const backgroundedRef = useRef(false);
 
-  // AppState: background/foreground handling — keep connection alive in background,
-  // only reconnect if the connection was lost while backgrounded
+  // AppState: background/foreground handling — detach sessions on background, reconnect on active
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'background') {
         backgroundedRef.current = true;
-        // Report app state to server for context-aware AI responses
-        wsRef.current.send({ type: 'client:app_state', payload: { foreground: false } } as any);
+        // Notify server to detach all sessions, then disconnect immediately
+        // (WebSocket send() buffers the message synchronously before close() is called)
+        wsRef.current.send({ type: 'client:backgrounding' } as any);
+        wsRef.current.disconnect();
       } else if (nextState === 'active' && backgroundedRef.current) {
         backgroundedRef.current = false;
-
-        // Immediate reconnect check — Android may have killed the socket
-        const reconnectIfNeeded = () => {
-          const srv = useServerStore.getState().servers.find((s) => s.id === serverId);
-          if (!srv?.token) return;
-
-          if (wsRef.current.state === 'connected') {
-            // Connection alive — just report foreground
-            wsRef.current.send({ type: 'client:app_state', payload: { foreground: true } } as any);
-          } else {
-            // Connection dropped — reconnect immediately
-            wsRef.current.connect({ host: srv.host, port: srv.port, token: srv.token });
-          }
-        };
-
-        // Check immediately + retry after 1s (socket state may not update instantly)
-        reconnectIfNeeded();
-        setTimeout(reconnectIfNeeded, 1000);
-        setTimeout(reconnectIfNeeded, 3000);
+        // Reconnect WebSocket — read fresh server data from store to avoid stale closure
+        const srv = useServerStore.getState().servers.find((s) => s.id === serverId);
+        if (srv?.token) {
+          wsRef.current.connect({ host: srv.host, port: srv.port, token: srv.token });
+        }
       }
     });
     return () => {
@@ -257,58 +178,32 @@ export function TerminalScreen({ navigation, route }: Props) {
       const m = msg as { type: string; sessionId?: string; payload?: any };
 
       if (m.type === 'terminal:created' && m.sessionId) {
-        const fromManager = m.payload?.fromManager === true;
-        const managerLabel = m.payload?.label as string | undefined;
+        // Assign sessionId to the oldest pending tab
+        const pending = useTerminalStore.getState().getTabs(serverId).find((t) => !t.sessionId);
+        if (pending) {
+          useTerminalStore.getState().updateTab(serverId, pending.id, { sessionId: m.sessionId });
 
-        if (fromManager) {
-          // Manager Agent created a new terminal — add a tab and immediately
-          // mount its WebView so it connects (terminal:reattach) and renders
-          // the full TUI. Without this, the WebView is lazy-mounted only when
-          // the user navigates to the tab, leaving it as a headless PTY.
-          const currentTabs = useTerminalStore.getState().getTabs(serverId);
-          const prevActiveTab = currentTabs.find(t => t.active);
-          const newTab = {
-            id: `mgr-${Date.now()}`,
-            sessionId: m.sessionId,
-            title: managerLabel ?? `Shell ${currentTabs.length + 1}`,
-            serverId,
-            active: false,
-          };
-          addTab(serverId, newTab);
-          // addTab forces active:true on the new tab — restore previous focus
-          // so Manager terminals don't steal the user's current terminal tab.
-          if (prevActiveTab) {
-            setActiveTab(serverId, prevActiveTab.id);
+          // CWD restore: if this tab was recreated from a dead session, cd to last known dir
+          const restoreCwd = pendingRestoreRef.current.get(pending.id);
+          if (restoreCwd) {
+            pendingRestoreRef.current.delete(pending.id);
+            const sid = m.sessionId;
+            // Small delay to let the shell initialize before sending input
+            setTimeout(() => {
+              if (wsRef.current.state === 'connected') {
+                // Use single-quoted path to handle spaces; escape embedded single quotes
+                const quoted = `'${restoreCwd.replace(/'/g, "'\\''")}'`;
+                wsRef.current.send({
+                  type: 'terminal:input',
+                  sessionId: sid,
+                  payload: { data: `cd ${quoted}\r` },
+                });
+              }
+            }, 400);
           }
-          // Immediately mount the WebView so xterm.js loads, connects to the
-          // session, and renders Claude's TUI — even while user stays on ManagerChat.
-          setMountedTabs((prev) => new Set([...prev, newTab.id]));
-        } else {
-          // Normal flow: assign sessionId to the oldest pending tab
-          const pending = useTerminalStore.getState().getTabs(serverId).find((t) => !t.sessionId);
-          if (pending) {
-            useTerminalStore.getState().updateTab(serverId, pending.id, { sessionId: m.sessionId });
 
-            // CWD restore: if this tab was recreated from a dead session, cd to last known dir
-            const restoreCwd = pendingRestoreRef.current.get(pending.id);
-            if (restoreCwd) {
-              pendingRestoreRef.current.delete(pending.id);
-              const sid = m.sessionId;
-              setTimeout(() => {
-                if (wsRef.current.state === 'connected') {
-                  const quoted = `'${restoreCwd.replace(/'/g, "'\\''")}'`;
-                  wsRef.current.send({
-                    type: 'terminal:input',
-                    sessionId: sid,
-                    payload: { data: `cd ${quoted}\r` },
-                  });
-                }
-              }, 400);
-            }
-
-            // Decrement restore counter
-            decrementRestore();
-          }
+          // Decrement restore counter
+          decrementRestore();
         }
       } else if (m.type === 'terminal:reattached' && m.sessionId) {
         // Update lastCwd + lastProcess from server-side snapshot
@@ -326,14 +221,6 @@ export function TerminalScreen({ navigation, route }: Props) {
 
         // Decrement restore counter
         decrementRestore();
-      } else if (m.type === 'terminal:closed' && m.sessionId) {
-        // Terminal was closed (by manager agent or server)
-        const closedTab = useTerminalStore.getState().getTabs(serverId).find(
-          (t) => t.sessionId === m.sessionId,
-        );
-        if (closedTab) {
-          removeTab(serverId, closedTab.id);
-        }
       } else if (m.type === 'terminal:prompt_detected' && m.sessionId) {
         // Auto-approve: send Enter once if enabled for this session
         // BUT skip if user is actively typing or has unsent text on the line
@@ -416,90 +303,15 @@ export function TerminalScreen({ navigation, route }: Props) {
           }
         }
       }
-
     });
 
-    // ── Persistent Manager Agent message handler ─────────────────────────
-    // Registered via setPersistentHandler — survives screen unmount so manager
-    // responses are NEVER lost, even when the app is closed (foreground service
-    // keeps process + WebSocket alive, this handler keeps processing messages).
-    ws.setPersistentHandler((data: unknown) => {
-      const m = data as { type: string; payload?: any };
-      if (!m.type?.startsWith('manager:')) return;
-
-      const store = useManagerStore.getState();
-      const chatKey = m.payload?.targetSessionId ?? store.activeChat;
-      const agentName = store.personality.agentName;
-
-      switch (m.type) {
-        case 'manager:summary':
-          store.addSummary(m.payload.text, m.payload.sessions, m.payload.timestamp, 'alle');
-          notifyManagerResponse(m.payload.text, agentName, store.personality.agentAvatarUri);
-          break;
-        case 'manager:response':
-          store.addResponse(m.payload.text, m.payload.actions, chatKey);
-          notifyManagerResponse(m.payload.text, agentName, store.personality.agentAvatarUri);
-          break;
-        case 'manager:error':
-          store.addError(m.payload.message, chatKey);
-          break;
-        case 'manager:providers':
-          store.setProviders(m.payload.providers, m.payload.active);
-          // Sync persisted provider choice back to server if it differs
-          const persisted = store.activeProvider;
-          if (persisted && persisted !== m.payload.active && m.payload.providers.some((p: any) => p.id === persisted)) {
-            wsRef.current?.send({ type: 'manager:set_provider', payload: { providerId: persisted } } as any);
-          }
-          break;
-        case 'manager:status':
-          store.setEnabled(m.payload.enabled);
-          break;
-        case 'manager:personality_configured':
-          if (m.payload) {
-            store.setPersonality(m.payload);
-            store.setOnboarded(true);
-          }
-          break;
-        case 'manager:thinking':
-          store.setThinking(m.payload.phase, m.payload.detail, m.payload.elapsed, chatKey);
-          break;
-        case 'manager:stream_chunk':
-          store.appendStreamChunk(m.payload.token, m.payload.completionTokens != null ? { completionTokens: m.payload.completionTokens, tps: m.payload.tps ?? 0 } : undefined);
-          break;
-        case 'manager:stream_end':
-          store.finishStream(m.payload.text, m.payload.actions, m.payload.phases, m.payload.images, m.payload.presentations);
-          notifyManagerResponse(m.payload.text, agentName, store.personality.agentAvatarUri);
-          break;
-        case 'manager:tasks':
-          if (Array.isArray(m.payload?.tasks)) {
-            store.setDelegatedTasks(m.payload.tasks);
-          }
-          break;
-      }
-    });
-
-    // Only connect if not already connected (connection persists across screen mounts)
-    if (ws.state !== 'connected' && ws.state !== 'connecting') {
-      ws.connect({ host: server.host, port: server.port, token: server.token });
-    }
-
-    // Start foreground service to keep connection alive when app is closed
-    const persistent = useSettingsStore.getState().persistentConnection;
-    if (persistent) {
-      try { NativeModules.ConnectionService?.start(); } catch {}
-    }
+    ws.connect({ host: server.host, port: server.port, token: server.token });
 
     return () => {
       unsubscribe();
       autoApproveTimers.current.forEach(clearTimeout);
       autoApproveTimers.current.clear();
-
-      // Only disconnect + remove from pool if persistent connection is disabled
-      if (!useSettingsStore.getState().persistentConnection) {
-        try { NativeModules.ConnectionService?.stop(); } catch {}
-        removeConnection(serverId);
-      }
-      // If persistent: ws stays alive in the global pool, foreground service keeps process alive
+      ws.disconnect();
     };
   }, [serverId]);
 
@@ -528,18 +340,6 @@ export function TerminalScreen({ navigation, route }: Props) {
     if (threshold > 0) {
       wsRef.current.send({ type: 'client:set_idle_threshold', payload: { seconds: threshold } } as any);
       console.log(`[Idle] Threshold sent to server: ${threshold}s`);
-    }
-
-    // Sync manager API keys to server
-    const { apiKeys: keys } = useManagerStore.getState();
-    if (keys.kimi) {
-      wsRef.current.send({ type: 'manager:set_api_key', payload: { providerId: 'kimi', apiKey: keys.kimi } } as any);
-    }
-    if (keys.glm) {
-      wsRef.current.send({ type: 'manager:set_api_key', payload: { providerId: 'glm', apiKey: keys.glm } } as any);
-    }
-    if (keys.openai) {
-      wsRef.current.send({ type: 'manager:set_api_key', payload: { providerId: 'openai', apiKey: keys.openai } } as any);
     }
   }, [connState]);
 
@@ -614,9 +414,8 @@ export function TerminalScreen({ navigation, route }: Props) {
       const currentTabs = useTerminalStore.getState().getTabs(serverId);
       for (const tab of currentTabs) {
         if (!tab.sessionId) continue;
-        // Default is true (auto-approve on by default for new terminals)
-        const now = state.enabled[tab.sessionId] ?? true;
-        const prev = prevState.enabled[tab.sessionId] ?? true;
+        const now = state.enabled[tab.sessionId] ?? false;
+        const prev = prevState.enabled[tab.sessionId] ?? false;
         if (now !== prev) {
           wsRef.current.send({
             type: 'client:set_auto_approve',
@@ -626,13 +425,12 @@ export function TerminalScreen({ navigation, route }: Props) {
         }
       }
     });
-    // Sync current state on connect — default is true for all sessions
+    // Sync current state on connect (auto-approve + AI sessions may have been set before reconnect)
     const currentTabs = useTerminalStore.getState().getTabs(serverId);
     const autoState = useAutoApproveStore.getState();
     for (const tab of currentTabs) {
       if (!tab.sessionId) continue;
-      const enabled = autoState.enabled[tab.sessionId] ?? true;
-      if (enabled) {
+      if (autoState.enabled[tab.sessionId]) {
         wsRef.current.send({
           type: 'client:set_auto_approve',
           sessionId: tab.sessionId,
@@ -726,29 +524,36 @@ export function TerminalScreen({ navigation, route }: Props) {
     updateTab(serverId, tabId, { title: newName, customTitle: true });
   }, [serverId, updateTab]);
 
-  // Keep gridTranslateY in sync when screen dimensions change (fold/unfold, rotation)
-  // so the grid doesn't get stuck offscreen or at the wrong offset.
-  useEffect(() => {
-    if (!gridVisible) {
-      gridTranslateY.setValue(screenHeight);
-    }
-  }, [screenHeight, gridVisible, gridTranslateY]);
-
   const openGrid = useCallback(() => {
     setGridVisible(true);
-  }, []);
+    gridTranslateY.setValue(screenHeightRef.current);
+    Animated.spring(gridTranslateY, {
+      toValue: 0,
+      useNativeDriver: true,
+      tension: 80,
+      friction: 12,
+    }).start();
+  }, [gridTranslateY]);
 
   const closeGrid = useCallback(() => {
-    setGridVisible(false);
-    if (pendingTabIdRef.current) {
-      setActiveTab(serverId, pendingTabIdRef.current);
-      pendingTabIdRef.current = null;
-    }
-  }, [serverId, setActiveTab]);
+    Animated.timing(gridTranslateY, {
+      toValue: screenHeightRef.current,
+      duration: 200,
+      useNativeDriver: true,
+      easing: Easing.in(Easing.ease),
+    }).start(() => {
+      setGridVisible(false);
+      if (pendingTabIdRef.current) {
+        setActiveTab(serverId, pendingTabIdRef.current);
+        pendingTabIdRef.current = null;
+      }
+    });
+  }, [gridTranslateY, serverId, setActiveTab]);
 
   const handleGridSelectTab = useCallback((tabId: string) => {
     pendingTabIdRef.current = tabId;
-  }, []);
+    closeGrid();
+  }, [closeGrid]);
 
   const handleGridAddTab = useCallback(() => {
     createNewTab();
@@ -830,98 +635,8 @@ export function TerminalScreen({ navigation, route }: Props) {
       });
       return true;
     }
-    if (toolId === 'manager') {
-      navigation.navigate('ManagerChat', {
-        wsService: wsRef.current,
-        serverId,
-        serverHost: server?.host ?? '',
-        serverPort: server?.port ?? 8767,
-        serverToken: server?.token ?? '',
-      });
-      return true;
-    }
     return false;
   }, [navigation, server, serverId]);
-
-  // ── New UI handlers (v5 redesign) ─────────────────────────────────────────
-
-  const handleOpenTools = useCallback((position: { x: number; y: number }) => {
-    setToolMenuAnchor(position);
-    setToolMenuVisible(true);
-  }, []);
-
-  const handleSelectTool = useCallback((toolId: string) => {
-    setToolMenuVisible(false);
-    setSpotlightVisible(false);
-    // Tools that open panels
-    const panelTools = ['autoApprove', 'snippets', 'files', 'screenshots', 'sql', 'autopilot', 'watchers', 'ports', 'render', 'vercel', 'supabase'];
-    if (panelTools.includes(toolId)) {
-      setActivePanelTool(toolId);
-    } else {
-      handleToolAction(toolId);
-    }
-  }, [handleToolAction]);
-
-  const handleSpotlightNav = useCallback((dest: string) => {
-    setSpotlightVisible(false);
-    handleToolAction(dest);
-  }, [handleToolAction]);
-
-  const handleSpotlightTab = useCallback((tabId: string) => {
-    setSpotlightVisible(false);
-    setActiveTab(serverId, tabId);
-  }, [serverId, setActiveTab]);
-
-  const handleTermAreaLayout = useCallback((e: LayoutChangeEvent) => {
-    const { width, height } = e.nativeEvent.layout;
-    setTermAreaSize({ width, height });
-  }, []);
-
-  // Panel content rendering for ToolPanelSheet
-  const renderPanelContent = useCallback(() => {
-    if (!activePanelTool) return null;
-    const activeSession = serverTabs.find((t) => t.active)?.sessionId;
-    switch (activePanelTool) {
-      case 'autoApprove':
-        return <AutoApprovePanel serverId={serverId} />;
-      case 'snippets':
-        return <SnippetsPanel sessionId={activeSession} wsService={wsRef.current} />;
-      case 'files':
-        return (
-          <FileBrowserPanel
-            serverHost={server?.host ?? ''}
-            serverPort={server?.port ?? 8767}
-            serverToken={server?.token ?? ''}
-            sessionId={activeSession}
-            wsService={wsRef.current}
-          />
-        );
-      case 'screenshots':
-        return (
-          <ScreenshotPanel
-            sessionId={activeSession}
-            wsService={wsRef.current}
-            serverHost={server?.host ?? ''}
-            serverPort={server?.port ?? 8767}
-            serverToken={server?.token ?? ''}
-          />
-        );
-      case 'sql':
-        return <SQLPanel sessionId={activeSession} serverId={serverId} />;
-      case 'autopilot':
-        return <AutopilotPanel sessionId={activeSession} wsService={wsRef.current} serverId={serverId} />;
-      case 'watchers':
-        return <WatchersPanel serverId={serverId} wsService={wsRef.current} />;
-      case 'ports':
-        return <PortForwardingPanel serverId={serverId} />;
-      case 'render':
-        return <RenderPanel />;
-      case 'vercel':
-        return <VercelPanel />;
-      default:
-        return null;
-    }
-  }, [activePanelTool, serverTabs, server, serverId]);
 
   const splitActive = useSplitViewStore((s) => s.active);
 
@@ -974,9 +689,91 @@ export function TerminalScreen({ navigation, route }: Props) {
     },
   }), [serverId, setActiveTab, openGrid]);
 
+  const quickActionSize = ri(28);
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <View style={[styles.statusBar, { paddingHorizontal: rs(12), paddingVertical: rs(6) }]}>
+        <TouchableOpacity
+          style={[styles.backBtn, { paddingVertical: rs(2), paddingRight: rs(12) }]}
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.7}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+        >
+          <Feather name="arrow-left" size={ri(16)} color={colors.primary} />
+          <Text style={[styles.backBtnText, { fontSize: rf(15) }]}> Back</Text>
+        </TouchableOpacity>
+        <View style={styles.serverInfo}>
+          <Feather name="server" size={ri(13)} color={colors.primary} />
+          <Text style={[styles.serverNameText, { fontSize: rf(15) }]} numberOfLines={1}>
+            {serverName}
+          </Text>
+          <ConnectionStatus state={connState} rtt={rtt} quality={quality} jitter={jitter} />
+        </View>
+        <View style={[styles.statusRight, { gap: rs(6) }]}>
+          {activeTabHasBrowser && (
+            <TouchableOpacity
+              style={[
+                styles.quickAction,
+                { width: quickActionSize, height: quickActionSize, borderRadius: rs(7), backgroundColor: colors.accent + '18', borderWidth: 1, borderColor: colors.accent + '50' },
+              ]}
+              onPress={() => {
+                if (!activeTerminalTab) return;
+                navigation.navigate('Browser', {
+                  serverHost: server?.host ?? '',
+                  serverId,
+                  terminalTabId: activeTerminalTab.id,
+                  openDirect: true,
+                });
+              }}
+              activeOpacity={0.65}
+              accessibilityLabel="Browser für diesen Tab"
+              accessibilityRole="button"
+            >
+              <Feather name="globe" size={ri(14)} color={colors.accent} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={[styles.quickAction, { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) }]}
+            onPress={() => handleToolAction('browser')}
+            activeOpacity={0.65}
+            accessibilityLabel="Open browser"
+            accessibilityRole="button"
+          >
+            <Feather name="globe" size={ri(14)} color={colors.textMuted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.quickAction, { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) }]}
+            onPress={() => handleToolAction('drawing')}
+            activeOpacity={0.65}
+            accessibilityLabel="Open drawing"
+            accessibilityRole="button"
+          >
+            <Feather name="edit-2" size={ri(14)} color={colors.textMuted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.quickAction, { width: quickActionSize, height: quickActionSize, borderRadius: rs(7) }]}
+            onPress={() => handleToolAction('processes')}
+            activeOpacity={0.65}
+            accessibilityLabel="Open processes"
+            accessibilityRole="button"
+          >
+            <Feather name="activity" size={ri(14)} color={colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+      </View>
       <ReconnectBanner restoreState={restoreState} />
+      <TerminalTabs
+        tabs={serverTabs}
+        connected={connState === 'connected'}
+        onSelect={(id) => setActiveTab(serverId, id)}
+        onClose={handleCloseTab}
+        onAdd={createNewTab}
+        onRename={handleRenameTab}
+        onOpenGrid={openGrid}
+        onChangeCategory={handleChangeCategory}
+      />
       {splitActive ? (
         <SplitLayout
           serverHost={server?.host ?? ''}
@@ -988,7 +785,7 @@ export function TerminalScreen({ navigation, route }: Props) {
                 <TerminalView
                   key={tab.id}
                   ref={(r) => { if (r) termViewRefs.current.set(tab.id, r); else termViewRefs.current.delete(tab.id); }}
-                  sessionId={tab.sessionId}
+                      sessionId={tab.sessionId}
                   wsService={wsRef.current}
                   visible={tab.active}
                   onReady={(cols, rows) => handleTabReady(tab.id, cols, rows)}
@@ -996,7 +793,6 @@ export function TerminalScreen({ navigation, route }: Props) {
                   rangeActive={tab.active && rangeActive}
                   onRangeClose={() => setRangeActive(false)}
                   onPathClicked={handlePathClicked}
-                  panelOpen={panelOpen}
                 />
               ))}
               <TerminalToolbar
@@ -1014,50 +810,7 @@ export function TerminalScreen({ navigation, route }: Props) {
           }
         />
       ) : (
-        <>
-        {/* Header area for Dynamic Island */}
-        <View style={styles.islandHeader}>
-          <DynamicIsland
-            tabs={serverTabs}
-            activeTabId={activeTerminalTab?.id}
-            connState={connState}
-            rtt={rtt}
-            serverName={serverName}
-            onSelectTab={(id) => {
-              setActiveTab(serverId, id);
-              const tab = serverTabs.find(t => t.id === id);
-              wsRef.current.send({ type: 'client:active_tab', payload: { tabId: id, sessionId: tab?.sessionId } } as any);
-            }}
-            onAddTab={createNewTab}
-            onGoBack={() => navigation.goBack()}
-            onBrowserPress={() => {
-              if (!activeTerminalTab) return;
-              if (!activeTerminalTab.browserOpen) updateTab(serverId, activeTerminalTab.id, { browserOpen: true });
-              navigation.navigate('Browser', {
-                serverHost: server?.host ?? '',
-                serverId,
-                terminalTabId: activeTerminalTab.id,
-                openDirect: true,
-              });
-            }}
-            activeTabHasBrowser={activeTabHasBrowser}
-            onOpenGrid={openGrid}
-            onSwipeTab={(dir) => {
-              if (!activeTerminalTab || serverTabs.length < 2) return;
-              const idx = serverTabs.findIndex(t => t.id === activeTerminalTab.id);
-              if (idx < 0) return;
-              // Swipe left → next tab, swipe right → previous tab (wraps around)
-              const next = dir === 'left'
-                ? (idx + 1) % serverTabs.length
-                : (idx - 1 + serverTabs.length) % serverTabs.length;
-              setActiveTab(serverId, serverTabs[next].id);
-            }}
-          />
-        </View>
-
-        {/* Terminal area */}
-        <View style={styles.terminalArea} onLayout={handleTermAreaLayout} {...tabSwipePanResponder.panHandlers}>
-          {/* Terminal WebViews */}
+        <View style={styles.terminalArea} {...tabSwipePanResponder.panHandlers}>
           {tabsToRender.map((tab) => (
             <TerminalView
               key={tab.id}
@@ -1069,64 +822,41 @@ export function TerminalScreen({ navigation, route }: Props) {
               onAiToolDetected={(tool) => handleAiToolDetected(tab.id, tool)}
               rangeActive={tab.active && rangeActive}
               onRangeClose={() => setRangeActive(false)}
+              railWidth={railWidthAnim}
               onPathClicked={handlePathClicked}
-              panelOpen={false}
             />
           ))}
-
-          {/* Orb Layer — replaces toolbar + tool rail */}
-          <OrbLayer
+          {panelOpen && (
+            <Pressable
+              style={styles.panelBackdrop}
+              onPress={() => toolRailRef.current?.closePanel()}
+            />
+          )}
+          <TerminalToolbar
             sessionId={serverTabs.find((t) => t.active)?.sessionId}
             wsService={wsRef.current}
-            onScrollToBottom={handleScrollToBottom}
-            onOpenTools={handleOpenTools}
-            onOpenSpotlight={() => setSpotlightVisible(true)}
-            onOpenManager={() => handleToolAction('manager')}
-            onRangeToggle={() => setRangeActive((v) => !v)}
             rangeActive={rangeActive}
-            containerSize={termAreaSize}
-            keyboardVisible={keyboardVisible}
-            keyboardHeight={keyboardHeight}
+            onRangeToggle={() => setRangeActive((v) => !v)}
+            onScrollToBottom={handleScrollToBottom}
             onTranscription={(text) => {
               const activeTab = serverTabs.find((t) => t.active);
               if (activeTab) termViewRefs.current.get(activeTab.id)?.injectText(text);
             }}
           />
+          <ToolRail
+            ref={toolRailRef}
+            onPanelChange={setPanelOpen}
+            railWidthAnim={railWidthAnim}
+            onToolAction={handleToolAction}
+            sessionId={serverTabs.find((t) => t.active)?.sessionId}
+            wsService={wsRef.current}
+            serverHost={server?.host ?? ''}
+            serverPort={server?.port ?? 8767}
+            serverToken={server?.token ?? ''}
+            serverId={serverId}
+          />
         </View>
-        </>
       )}
-
-      {/* Tool Menu — dropdown from Tools orb */}
-      <ToolMenu
-        visible={toolMenuVisible}
-        anchorPosition={toolMenuAnchor}
-        sections={toolSections}
-        onSelectTool={handleSelectTool}
-        onClose={() => setToolMenuVisible(false)}
-        onSectionsChange={updateToolSections}
-      />
-
-      {/* Spotlight — ⌘K command palette */}
-      <SpotlightPanel
-        visible={spotlightVisible}
-        tabs={serverTabs}
-        activeTabId={activeTerminalTab?.id}
-        onClose={() => setSpotlightVisible(false)}
-        onSelectTab={handleSpotlightTab}
-        onSelectTool={handleSelectTool}
-        onNavigate={handleSpotlightNav}
-      />
-
-      {/* Tool Panel Sheet — bottom sheet for tool panels */}
-      <ToolPanelSheet
-        visible={!!activePanelTool}
-        toolId={activePanelTool}
-        onClose={() => setActivePanelTool(null)}
-      >
-        {renderPanelContent()}
-      </ToolPanelSheet>
-
-      {/* Tab Grid View — unchanged */}
       <TabGridView
         visible={gridVisible}
         tabs={serverTabs}
@@ -1145,7 +875,7 @@ export function TerminalScreen({ navigation, route }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: colors.surface,
   },
   statusBar: {
     backgroundColor: colors.bg,
@@ -1185,13 +915,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  islandHeader: {
-    backgroundColor: colors.bg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 6,
-    zIndex: 50,
   },
   terminalArea: {
     flex: 1,
