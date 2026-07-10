@@ -19,6 +19,7 @@
     --island-space: 92px;
     --chrome-space: 118px;
     --chrome-space-term: 168px;
+    --term-font-size: 13px;
   }
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -224,7 +225,7 @@
   .status-chip[data-status="idle"] { color: var(--text-dim); background: rgba(255,255,255,.06); }
   .status-chip[data-status="idle"] .dot { background: var(--text-dim); }
 
-  .card-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 8px 8px; border-radius: var(--radius-md); padding: 12px 14px; font: 13px/1.6 var(--font-mono); position: relative; }
+  .card-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 8px 8px; border-radius: var(--radius-md); padding: 12px 14px; font-size: var(--term-font-size); line-height: 1.6; font-family: var(--font-mono); position: relative; }
   .card-body::before { display: none; }
   .term-line { display: block; white-space: pre-wrap; word-break: break-word; padding: 1px 0; border-radius: 4px; }
   .term-line.is-selected { background: rgba(106,168,255,.22); }
@@ -288,9 +289,276 @@
   @media (max-width: 699.98px) {
     .stack-card { max-width: 520px; }
   }
+
+  /* ============================================================
+     Task 6 — Tools, Manager, Cloud, Settings, Prayer, Lock, Spotlight
+     ============================================================ */
+
+  .screen-col { max-width: 640px; margin: 0 auto; }
+  .screen-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .icon-btn { flex: none; width: 38px; height: 38px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 16px; color: var(--text-dim); cursor: pointer; transition: color 200ms var(--spring), background 200ms var(--spring); }
+  .icon-btn:hover, .icon-btn:active { color: var(--accent); }
+  .mono-text { font: 12.5px var(--font-mono); }
+  .table-scroll { overflow-x: auto; }
+
+  /* Toggle switch (ports, watchers) */
+  .switch { position: relative; display: inline-block; width: 40px; height: 24px; flex: none; }
+  .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+  .switch__track { position: absolute; inset: 0; background: rgba(255,255,255,.08); border: 1px solid var(--glass-border); border-radius: 20px; transition: background 250ms var(--spring), border-color 250ms var(--spring); }
+  .switch__thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-dim); transition: transform 250ms var(--spring), background 250ms var(--spring); }
+  .switch input:checked + .switch__track { background: rgba(106,168,255,.25); border-color: rgba(106,168,255,.5); }
+  .switch input:checked + .switch__track .switch__thumb { transform: translateX(16px); background: var(--accent); box-shadow: 0 0 8px rgba(106,168,255,.6); }
+
+  /* Reusable status-chip dataset values for cloud project statuses */
+  .status-chip[data-status="ready"] { color: var(--ok); background: rgba(74,222,128,.14); }
+  .status-chip[data-status="ready"] .dot { background: var(--ok); }
+  .status-chip[data-status="live"] { color: var(--ok); background: rgba(74,222,128,.14); }
+  .status-chip[data-status="live"] .dot { background: var(--ok); animation: islandPulse 1.4s ease-out infinite; }
+  .status-chip[data-status="building"] { color: var(--accent); background: rgba(106,168,255,.14); }
+  .status-chip[data-status="building"] .dot { background: var(--accent); animation: islandPulse 1.4s ease-out infinite; }
+  .status-chip[data-status="suspended"] { color: var(--text-dim); background: rgba(255,255,255,.06); }
+  .status-chip[data-status="suspended"] .dot { background: var(--text-dim); }
+
+  /* ---------- Tools screen + tool sheet ---------- */
+  .tool-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  @media (min-width: 700px) { .tool-grid { grid-template-columns: repeat(5, 1fr); } }
+  .tool-tile { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 18px 8px; cursor: pointer; transition: transform 220ms var(--spring), background 220ms var(--spring); }
+  .tool-tile:active { transform: scale(.95); }
+  .tool-tile__glyph { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 12px; background: rgba(255,255,255,.08); border: 1px solid var(--glass-border); font: 700 11px var(--font-mono); color: var(--accent); }
+  .tool-tile__label { font: 600 12px var(--font-ui); color: var(--text); text-align: center; }
+
+  .sheet-panel--tall { max-width: 640px; max-height: 82vh; display: flex; flex-direction: column; }
+  .sheet-head-row { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .sheet-head-row .sheet-title { flex: 1; margin-bottom: 0; }
+  .sheet-close-btn { flex: none; font: 700 11px var(--font-mono); color: var(--text-dim); padding: 6px 13px; border-radius: 999px; background: rgba(255,255,255,.06); border: 1px solid var(--glass-border); cursor: pointer; transition: color 200ms var(--spring), border-color 200ms var(--spring); }
+  .sheet-close-btn:hover { color: var(--accent); border-color: rgba(106,168,255,.4); }
+  .sheet-scroll-body { overflow-y: auto; flex: 1; min-height: 0; padding-top: 6px; }
+
+  .tool-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 4px; border-top: 1px solid rgba(255,255,255,.08); text-align: left; }
+  .tool-row:first-child { border-top: none; }
+  .tool-row.is-tap { cursor: pointer; border-radius: 10px; transition: background 200ms var(--spring); }
+  .tool-row.is-tap:active { background: rgba(255,255,255,.06); }
+  .tool-row__icon { font: 12px var(--font-mono); color: var(--text-dim); width: 14px; text-align: center; flex: none; }
+  .tool-row__name { flex: 1; font: 13px var(--font-ui); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-row__meta { font: 12px var(--font-mono); color: var(--text-dim); flex: none; }
+  .tool-row__info { flex: 1; min-width: 0; }
+  .tool-row__title { font: 13px var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-row__sub { margin-top: 2px; font: 11px var(--font-mono); color: var(--text-dim); }
+
+  .sql-query { font: 12.5px/1.6 var(--font-mono); background: rgba(0,0,0,.28); border: 1px solid var(--glass-border); border-radius: 12px; padding: 11px 13px; margin-bottom: 14px; overflow-x: auto; white-space: pre; }
+  .data-table { width: 100%; border-collapse: collapse; font: 12.5px var(--font-mono); }
+  .data-table th, .data-table td { text-align: left; padding: 8px 10px; border-top: 1px solid rgba(255,255,255,.08); white-space: nowrap; }
+  .data-table th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .data-table tr:first-child td { border-top: none; }
+  .cpu-cell { display: flex; align-items: center; gap: 8px; }
+  .cpu-bar { position: relative; width: 56px; height: 6px; background: rgba(0,0,0,.3); border-radius: 3px; overflow: hidden; flex: none; }
+  .cpu-bar__fill { position: absolute; inset: 0; width: var(--pct, 0%); background: var(--accent); border-radius: 3px; }
+
+  .notes-grid { display: flex; flex-direction: column; gap: 10px; }
+  .note-card { padding: 13px; background: rgba(255,255,255,.05); border: 1px solid var(--glass-border); border-radius: 14px; }
+  .note-card__title { font: 700 13px var(--font-ui); margin-bottom: 4px; }
+  .note-card__body { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+  .note-card__time { margin-top: 7px; font: 11px var(--font-mono); color: var(--text-dim); }
+
+  .shot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .shot-tile { aspect-ratio: 9 / 16; border-radius: 14px; background: linear-gradient(160deg, rgba(255,255,255,.10), rgba(255,255,255,.02)); border: 1px solid var(--glass-border); }
+  .shot-flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 110; transition: opacity 90ms ease-out; }
+  .shot-flash.is-flashing { opacity: .85; transition: opacity 40ms ease-out; }
+
+  .browser-bar { padding: 10px 15px; background: rgba(255,255,255,.05); border: 1px solid var(--glass-border); border-radius: 999px; font: 12.5px var(--font-mono); color: var(--text-dim); margin-bottom: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .browser-skeleton { display: flex; flex-direction: column; gap: 10px; }
+  .browser-skeleton__block { height: 14px; border-radius: 6px; background: rgba(255,255,255,.06); }
+
+  .hit-badge { font: 700 11px var(--font-mono); color: var(--accent); background: rgba(106,168,255,.16); padding: 3px 8px; border-radius: 999px; flex: none; }
+
+  /* ---------- Sub-tabs (Manager, Cloud detail) ---------- */
+  .subtabs { display: flex; gap: 6px; margin: 4px 0 14px; flex-wrap: wrap; }
+  .subtabs button { padding: 7px 14px; border-radius: 999px; font: 600 12px var(--font-ui); color: var(--text-dim); background: rgba(255,255,255,.05); border: 1px solid var(--glass-border); cursor: pointer; transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
+  .subtabs button.active { color: var(--text); background: rgba(106,168,255,.18); border-color: rgba(106,168,255,.4); }
+
+  /* ---------- Manager screen ---------- */
+  section[data-screen="manager"]:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; }
+  .manager-col { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; max-width: 640px; margin: 0 auto; }
+  .manager-view { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .chat-scroll:not([hidden]) { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 2px 12px; display: flex; flex-direction: column; gap: 10px; }
+  #managerArtifacts:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 0 12px; overflow: hidden; }
+  #managerMemory:not([hidden]) { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 2px 12px; display: flex; flex-direction: column; gap: 4px; }
+
+  .chat-row { display: flex; }
+  .chat-row[data-from="user"] { justify-content: flex-end; }
+  .chat-bubble { max-width: 82%; padding: 10px 13px; border-radius: 18px; font-size: 13px; line-height: 1.5; }
+  .chat-row[data-from="manager"] .chat-bubble { background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); border-bottom-left-radius: 6px; }
+  .chat-row[data-from="user"] .chat-bubble { background: rgba(106,168,255,.22); border: 1px solid rgba(106,168,255,.4); border-bottom-right-radius: 6px; }
+  .chat-bubble__time { display: block; margin-top: 4px; font: 10.5px var(--font-mono); color: var(--text-dim); }
+
+  .voice-pill { display: flex; align-items: center; gap: 9px; min-width: 180px; cursor: pointer; }
+  .voice-pill__play { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #071021; display: flex; align-items: center; justify-content: center; font-size: 10px; box-shadow: 0 0 14px rgba(106,168,255,.5); }
+  .voice-pill__wave { flex: 1; display: flex; align-items: center; gap: 2px; height: 22px; color: var(--accent); }
+  .voice-pill__wave span { width: 2.5px; display: block; background: currentColor; opacity: .5; border-radius: 2px; }
+  .voice-pill.is-playing .voice-pill__wave span { animation: wave .9s ease-in-out infinite; }
+  @keyframes wave { 0%, 100% { transform: scaleY(.4); } 50% { transform: scaleY(1); } }
+  .voice-pill__dur { font: 11px var(--font-mono); color: var(--text-dim); flex: none; }
+  .voice-transcript { margin-top: 8px; font-size: 12.5px; color: var(--text-dim); border-top: 1px solid rgba(255,255,255,.1); padding-top: 8px; }
+  .voice-transcribing { margin-top: 8px; font: 600 12px var(--font-mono); color: var(--accent); }
+  .voice-transcribing .dots span { display: inline-block; animation: blink 1.2s infinite; opacity: .2; }
+  .voice-transcribing .dots span:nth-child(2) { animation-delay: .2s; }
+  .voice-transcribing .dots span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
+
+  .chat-input-row:not([hidden]) { flex: none; display: flex; align-items: center; gap: 10px; padding-top: 10px; }
+  .chat-input-row input { flex: 1; padding: 11px 15px; border-radius: 999px; font: 13px var(--font-ui); background: var(--glass); border: 1px solid var(--glass-border); color: var(--text); }
+  .chat-input-row input::placeholder { color: var(--text-dim); }
+  .mic-btn { flex: none; width: 38px; height: 38px; border-radius: 50%; color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: color 200ms var(--spring), border-color 200ms var(--spring), box-shadow 200ms var(--spring); }
+  .mic-btn.is-recording { border-color: rgba(248,113,113,.6); color: var(--err); box-shadow: 0 0 0 6px rgba(248,113,113,.15); animation: islandPulse 1s ease-in-out infinite; }
+
+  .artifact-carousel { display: flex; gap: 12px; overflow-x: auto; padding: 4px 2px 8px; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
+  .artifact-card { scroll-snap-align: start; flex: 0 0 auto; width: min(78vw, 260px); padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 92px; }
+  .artifact-card__title { font-weight: 700; font-size: 14px; }
+  .artifact-card__meta { font: 11px var(--font-mono); color: var(--text-dim); margin-top: auto; }
+
+  .memory-row { display: flex; justify-content: space-between; gap: 10px; padding: 11px 2px; border-top: 1px solid rgba(255,255,255,.08); font-size: 12.5px; }
+  .memory-row:first-child { border-top: none; }
+  .memory-row__time { color: var(--text-dim); font: 10.5px var(--font-mono); flex: none; white-space: nowrap; }
+
+  /* ---------- Cloud screen ---------- */
+  .cloud-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; }
+  .chip-group { display: flex; gap: 6px; }
+  .chip-group button { padding: 7px 13px; border-radius: 999px; font: 600 12px var(--font-ui); color: var(--text-dim); background: rgba(255,255,255,.05); border: 1px solid var(--glass-border); cursor: pointer; transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
+  .chip-group button.active { color: var(--text); background: rgba(106,168,255,.18); border-color: rgba(106,168,255,.4); }
+  .cloud-toolbar__spacer { flex: 1; }
+
+  .folder-group { padding: 6px 8px 8px; margin-bottom: 14px; }
+  .folder-group__head { display: flex; align-items: center; gap: 8px; padding: 8px 6px; cursor: pointer; }
+  .folder-group__head::before { content: '▾'; font-size: 10px; color: var(--text-dim); transition: transform 200ms var(--spring); }
+  .folder-group.is-collapsed .folder-group__head::before { transform: rotate(-90deg); }
+  .folder-group__name { font: 700 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); flex: 1; }
+  .folder-group__count { font: 11px var(--font-mono); color: var(--text-dim); }
+  .folder-group.is-collapsed .folder-group__rows { display: none; }
+
+  .cloud-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 6px; border-top: 1px solid rgba(255,255,255,.08); text-align: left; cursor: pointer; border-radius: 10px; transition: background 200ms var(--spring); }
+  .folder-group__rows .cloud-row:first-child { border-top: none; }
+  .cloud-row:active { background: rgba(255,255,255,.05); }
+  .provider-glyph { flex: none; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 9px; background: rgba(255,255,255,.07); border: 1px solid var(--glass-border); font: 700 11px var(--font-mono); color: var(--text-dim); }
+  .cloud-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+  .cloud-row__name { font: 700 13.5px var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cloud-row__meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .cloud-row__deploy { font: 11px var(--font-mono); color: var(--text-dim); }
+  .fav-btn { flex: none; font-size: 18px; color: rgba(255,255,255,.25); cursor: pointer; padding: 4px; line-height: 1; transition: color 200ms var(--spring), text-shadow 200ms var(--spring); }
+  .fav-btn.is-fav { color: var(--accent-warm); text-shadow: 0 0 10px rgba(255,159,106,.75), 0 0 20px rgba(255,159,106,.35); }
+
+  .cloud-detail__head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .back-btn { flex: none; color: var(--text-dim); font: 600 13px var(--font-mono); cursor: pointer; padding: 6px 8px; }
+  .back-btn:hover { color: var(--accent); }
+  .cloud-detail__title { font: 700 16px var(--font-ui); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cloud-detail__body { padding: 4px 4px 2px; }
+
+  .env-row { padding: 12px 4px; border-top: 1px solid rgba(255,255,255,.08); }
+  .env-row:first-child { border-top: none; }
+  .env-row__top { display: flex; align-items: center; gap: 8px; }
+  .env-row__key { flex: 1; font: 700 12.5px var(--font-mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .env-row__value { display: block; margin-top: 5px; font: 12.5px var(--font-mono); color: var(--text-dim); cursor: pointer; word-break: break-all; }
+  .env-row__actions { display: flex; gap: 8px; margin-top: 9px; }
+  .env-row__actions button { font: 600 11.5px var(--font-ui); padding: 6px 12px; border-radius: 999px; color: var(--text-dim); background: rgba(255,255,255,.05); border: 1px solid var(--glass-border); cursor: pointer; transition: color 200ms var(--spring), border-color 200ms var(--spring); }
+  .env-row__actions button:hover { border-color: var(--accent); color: var(--accent); }
+  .env-row__edit { display: flex; gap: 8px; margin-top: 9px; }
+  .env-row__edit input { flex: 1; padding: 8px 10px; border-radius: 8px; font: 12.5px var(--font-mono); background: rgba(0,0,0,.25); border: 1px solid var(--glass-border); color: var(--text); }
+
+  .log-viewer { display: flex; flex-direction: column; height: min(60vh, 520px); }
+  .log-viewer__tools { display: flex; gap: 8px; padding-bottom: 10px; flex: none; flex-wrap: wrap; }
+  .log-viewer__search { flex: 1; min-width: 120px; padding: 9px 12px; border-radius: 10px; font: 12.5px var(--font-mono); background: rgba(0,0,0,.25); border: 1px solid var(--glass-border); color: var(--text); }
+  .log-viewer__search::placeholder { color: var(--text-dim); }
+  .log-viewer__pre { flex: 1; min-height: 0; margin: 0; }
+  .btn-chip { font: 600 12px var(--font-ui); padding: 9px 14px; border-radius: 999px; color: var(--text-dim); background: rgba(255,255,255,.05); border: 1px solid var(--glass-border); cursor: pointer; transition: color 200ms var(--spring), border-color 200ms var(--spring), background 200ms var(--spring); flex: none; }
+  .btn-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-chip.is-on { color: var(--accent); background: rgba(106,168,255,.18); border-color: rgba(106,168,255,.4); }
+
+  .deploy-row { display: flex; align-items: center; gap: 10px; padding: 12px 4px; border-top: 1px solid rgba(255,255,255,.08); }
+  .deploy-row:first-child { border-top: none; }
+  .deploy-row__version { font: 700 12.5px var(--font-mono); width: 40px; flex: none; }
+  .deploy-row__time { flex: 1; font: 12px var(--font-ui); color: var(--text-dim); }
+
+  /* ---------- Settings screen ---------- */
+  .settings-group { padding: 16px 18px; margin-bottom: 14px; }
+  .settings-group__title { font: 700 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); padding-bottom: 8px; }
+  .settings-row { display: flex; align-items: center; gap: 10px; padding: 13px 0; border-top: 1px solid rgba(255,255,255,.08); }
+  .settings-group .settings-row:first-of-type { border-top: none; }
+  .settings-row--stack { flex-direction: column; align-items: stretch; gap: 9px; }
+  .settings-row__label { flex: 1; font-size: 13px; }
+  .settings-row__label small { display: block; margin-top: 2px; color: var(--text-dim); font-size: 11.5px; }
+  .settings-row__value { font: 12.5px var(--font-mono); color: var(--text-dim); }
+  .settings-row.is-tap { cursor: pointer; border-radius: 10px; transition: background 200ms var(--spring); }
+  .settings-row.is-tap:active { background: rgba(255,255,255,.06); }
+  .settings-slider { width: 100%; accent-color: var(--accent); }
+  .settings-pin-edit { display: flex; gap: 8px; padding-bottom: 12px; }
+  .settings-pin-edit input { flex: 1; padding: 9px 11px; border-radius: 8px; font: 13px var(--font-mono); letter-spacing: .3em; background: rgba(0,0,0,.25); border: 1px solid var(--glass-border); color: var(--text); }
+  .font-preview { padding: 10px 14px; border-radius: 12px; font-family: var(--font-mono); font-size: var(--term-font-size); max-height: 56px; overflow: hidden; }
+
+  /* ---------- Prayer screen + Adhan overlay ---------- */
+  .prayer-next-card { padding: 24px; text-align: center; margin-bottom: 18px; }
+  .prayer-next-card__label { font: 700 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  .prayer-next-card__countdown { margin-top: 8px; font: 700 36px var(--font-mono); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .prayer-next-card__time { margin-top: 6px; font: 12.5px var(--font-mono); color: var(--text-dim); }
+  .prayer-list-panel { padding: 4px 10px 4px; margin-bottom: 18px; }
+  .prayer-row { display: flex; justify-content: space-between; align-items: center; padding: 13px 6px; border-top: 1px solid rgba(255,255,255,.08); transition: color 250ms var(--spring); }
+  .prayer-list-panel .prayer-row:first-child { border-top: none; }
+  .prayer-row.is-next { color: var(--accent); }
+  .prayer-row__name { font: 600 14px var(--font-ui); }
+  .prayer-row__time { font: 14px var(--font-mono); font-variant-numeric: tabular-nums; }
+  .prayer-demo-btn { display: block; width: 100%; padding: 15px; text-align: center; font: 700 14px var(--font-ui); color: var(--accent); border-radius: 999px; cursor: pointer; }
+
+  .adhan-overlay:not([hidden]) { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; background: rgba(6,9,18,.72); -webkit-backdrop-filter: blur(40px) saturate(160%); backdrop-filter: blur(40px) saturate(160%); opacity: 0; transition: opacity 350ms var(--spring); }
+  .adhan-overlay.is-open { opacity: 1; }
+  .adhan-ring { width: 104px; height: 104px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font: 700 22px var(--font-mono); color: var(--accent); animation: adhan-pulse 1.8s ease-in-out infinite; }
+  @keyframes adhan-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(106,168,255,.45); } 50% { box-shadow: 0 0 0 22px rgba(106,168,255,0); } }
+  .adhan-overlay__name { font: 700 24px var(--font-ui); }
+  .adhan-overlay__sub { color: var(--text-dim); font-size: 13px; }
+  .adhan-overlay__stop { margin-top: 14px; padding: 13px 32px; border-radius: 999px; background: rgba(106,168,255,.22); border: 1px solid rgba(106,168,255,.4); color: #d9e6ff; font: 700 14px var(--font-ui); cursor: pointer; }
+
+  /* ---------- Lock screen ---------- */
+  section[data-screen="lock"]:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; }
+  body.is-locked #dock, body.is-locked #island, body.is-locked #toolbarHost, body.is-locked #pullHint { display: none !important; }
+  /* Any sheet (permission prompt, Mehr, tool, spotlight) stays fully inert while
+     locked — the live session keeps running in the background and can pop a
+     permission prompt at any time, but it must never be reachable before PIN entry. */
+  body.is-locked .sheet-wrap { display: none !important; }
+  .lock-panel { display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 38px 32px; }
+  .lock-title { font: 700 11px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); }
+  .pin-dots { display: flex; gap: 16px; }
+  .pin-dots span { display: block; width: 13px; height: 13px; border-radius: 50%; border: 1px solid var(--glass-border); background: rgba(255,255,255,.03); transition: background 250ms var(--spring), border-color 250ms var(--spring), box-shadow 250ms var(--spring); }
+  .pin-dots span.is-filled { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px rgba(106,168,255,.7); }
+  .pin-pad { display: grid; grid-template-columns: repeat(3, 68px); gap: 16px; }
+  .pin-pad button { width: 68px; height: 68px; border-radius: 50%; border: 1px solid var(--glass-border); background: rgba(255,255,255,.04); font: 600 22px var(--font-mono); color: var(--text); cursor: pointer; transition: background 200ms var(--spring), transform 200ms var(--spring); }
+  .pin-pad button:active { background: rgba(255,255,255,.14); transform: scale(.94); }
+  .pin-pad button[data-key="back"] { font-size: 16px; color: var(--text-dim); border-color: transparent; background: none; }
+  .pin-pad__spacer { visibility: hidden; }
+  .lock-shake { animation: pin-shake 400ms ease-in-out; }
+  @keyframes pin-shake {
+    10%, 90% { transform: translateX(-6px); } 20%, 80% { transform: translateX(5px); }
+    30%, 50%, 70% { transform: translateX(-8px); } 40%, 60% { transform: translateX(8px); }
+  }
+
+  /* ---------- Spotlight (pull-down / dock long-press universal search) ---------- */
+  .sheet-wrap--top { align-items: flex-start; }
+  .spotlight-panel { width: min(560px, 92vw); margin-top: max(env(safe-area-inset-top, 0px), 14px); display: flex; flex-direction: column; max-height: 70vh; overflow: hidden; transform: translateY(-14px) scale(.97); opacity: 0; transition: transform 380ms var(--spring), opacity 280ms var(--spring); }
+  .sheet-wrap.is-open .spotlight-panel { transform: translateY(0) scale(1); opacity: 1; }
+  .spotlight-search { display: flex; align-items: center; gap: 10px; padding: 6px 6px 14px; border-bottom: 1px solid rgba(255,255,255,.1); flex: none; }
+  .spotlight-icon { color: var(--accent); font-size: 15px; flex: none; }
+  #spotlightInput { flex: 1; border: none; background: none; font: 500 15px var(--font-ui); color: var(--text); outline: none; }
+  #spotlightInput::placeholder { color: var(--text-dim); }
+  .spotlight-close { flex: none; font: 700 11px var(--font-mono); color: var(--text-dim); padding: 6px 11px; border-radius: 999px; background: rgba(255,255,255,.06); border: 1px solid var(--glass-border); cursor: pointer; }
+  .spotlight-results { overflow-y: auto; padding: 8px 2px; flex: 1; min-height: 0; }
+  .spotlight-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 10px; border-radius: 12px; text-align: left; cursor: pointer; transition: background 200ms var(--spring); }
+  .spotlight-row.is-highlighted, .spotlight-row:hover { background: rgba(255,255,255,.07); }
+  .spotlight-row__type { flex: none; font: 600 10px var(--font-mono); text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); background: rgba(255,255,255,.06); border: 1px solid var(--glass-border); padding: 3px 8px; border-radius: 999px; }
+  .spotlight-row__label { font: 500 13.5px var(--font-ui); flex: 0 1 auto; white-space: nowrap; color: var(--text); }
+  .spotlight-row__sub { font: 12px var(--font-mono); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .spotlight-empty { padding: 24px; text-align: center; color: var(--text-dim); font-size: 13px; }
+
+  .pull-hint { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 58px); left: 50%; transform: translateX(-50%) translateY(-8px); z-index: 55; padding: 8px 16px; border-radius: 999px; font-size: 11.5px; font-weight: 700; color: var(--text-dim); opacity: 0; pointer-events: none; transition: opacity 140ms ease-out, transform 140ms ease-out; }
+  .pull-hint.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
-<body>
+<body class="is-locked">
 <div class="atmosphere" aria-hidden="true">
   <div class="blob blob--a"></div>
   <div class="blob blob--b"></div>
@@ -315,9 +583,30 @@
 </div>
 
 <main id="screens">
-  <section data-screen="servers"></section>
+  <section data-screen="servers" hidden></section>
   <section data-screen="terminals" hidden></section>
+  <section data-screen="tools" hidden></section>
+  <section data-screen="manager" hidden></section>
+  <section data-screen="cloud" hidden></section>
+  <section data-screen="settings" hidden></section>
+  <section data-screen="prayer" hidden></section>
+  <section data-screen="lock">
+    <div class="lock-panel glass glass--strong">
+      <span class="lock-title">TMS Terminal gesperrt</span>
+      <div class="pin-dots" id="pinDots">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div class="pin-pad" id="pinPad">
+        <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
+        <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
+        <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
+        <span class="pin-pad__spacer" aria-hidden="true"></span><button data-key="0">0</button><button data-key="back" aria-label="Löschen">⌫</button>
+      </div>
+    </div>
+  </section>
 </main>
+
+<div class="pull-hint glass" id="pullHint" aria-hidden="true">✦ Spotlight</div>
 
 <nav id="dock" class="glass">
   <button class="dock-btn" data-nav="servers">
@@ -397,6 +686,39 @@
   </div>
 </div>
 
+<div class="sheet-wrap" id="toolSheetWrap" hidden>
+  <div class="sheet-backdrop" data-close-tool></div>
+  <div class="sheet-panel sheet-panel--tall glass glass--strong">
+    <div class="sheet-grabber"></div>
+    <div class="sheet-head-row">
+      <div class="sheet-title" id="toolSheetTitle"></div>
+      <button class="sheet-close-btn" id="toolSheetClose">Schließen</button>
+    </div>
+    <div class="sheet-scroll-body" id="toolSheetBody"></div>
+  </div>
+</div>
+
+<div class="sheet-wrap sheet-wrap--top" id="spotlightWrap" hidden>
+  <div class="sheet-backdrop" data-close-spotlight></div>
+  <div class="spotlight-panel glass glass--strong" role="dialog" aria-modal="true" aria-label="Spotlight-Suche">
+    <div class="spotlight-search">
+      <span class="spotlight-icon">✦</span>
+      <input id="spotlightInput" type="text" placeholder="Suchen…" autocomplete="off" spellcheck="false">
+      <button class="spotlight-close" id="spotlightClose">Esc</button>
+    </div>
+    <div class="spotlight-results" id="spotlightResults"></div>
+  </div>
+</div>
+
+<div class="adhan-overlay" id="adhanOverlay" hidden>
+  <div class="adhan-ring glass"><span id="adhanRingCode"></span></div>
+  <div class="adhan-overlay__name" id="adhanName"></div>
+  <div class="adhan-overlay__sub">Adhan-Demo</div>
+  <button class="adhan-overlay__stop" id="adhanStop">Stopp</button>
+</div>
+
+<div class="shot-flash" id="shotFlash"></div>
+
 <div id="toasts"></div>
 
 <script src="../shared/data.js" charset="utf-8"></script>
@@ -448,6 +770,11 @@
     islandOpen: false,
     pendingPromptId: null,
     suppressClick: false,
+    // Task 6
+    managerTab: 'chat',
+    cloudView: 'folder', cloudProviderFilter: 'all', cloudDetailId: null, cloudDetailTab: 'env', cloudBuildTimer: null,
+    autoLock: false, pushNotif: true, adhanNotif: true,
+    pin: TMS_DATA.demo.pin, lockDigits: '',
   };
   const cardState = {}; // id -> { lines, sim, autoApprove, pendingPrompt, autoTimer, selectionMode, selection }
   TMS_DATA.sessions.forEach(s => {
@@ -534,18 +861,28 @@
   }
 
   // ============================================================
-  // Prayer countdown — fixed demo "now" so the mockup is deterministic
+  // Prayer countdown — fixed demo "now" baseline (15:17, so the island
+  // reads exactly "Asr in 2:14h" as established in Task 5) that then
+  // advances with real elapsed time, so the countdown genuinely ticks
+  // down live instead of being frozen — island and Prayer screen always
+  // agree because both call this same function.
   // ============================================================
-  const DEMO_NOW_MIN = 15 * 60 + 17; // 15:17
+  const DEMO_NOW_MIN = 15 * 60 + 17; // 15:17 baseline at page load
+  const PAGE_LOAD_MS = Date.now();
+  function effectiveNowMin() {
+    const elapsedMin = (Date.now() - PAGE_LOAD_MS) / 60000;
+    return (DEMO_NOW_MIN + elapsedMin) % (24 * 60);
+  }
   function toMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
   function nextPrayer() {
+    const nowMin = effectiveNowMin();
     const times = TMS_DATA.prayerTimes.map(p => ({ ...p, min: toMin(p.time) }));
-    let next = times.find(p => p.min > DEMO_NOW_MIN);
+    let next = times.find(p => p.min > nowMin);
     let diff;
-    if (next) diff = next.min - DEMO_NOW_MIN;
-    else { next = times[0]; diff = (next.min + 24 * 60) - DEMO_NOW_MIN; }
-    const h = Math.floor(diff / 60), m = diff % 60;
-    return { name: next.name, time: next.time, countdown: `${h}:${String(m).padStart(2, '0')}h` };
+    if (next) diff = next.min - nowMin;
+    else { next = times[0]; diff = (next.min + 24 * 60) - nowMin; }
+    const h = Math.floor(diff / 60), m = Math.floor(diff % 60);
+    return { name: next.name, time: next.time, countdown: `${h}:${String(m).padStart(2, '0')}h`, diffMin: diff };
   }
 
   // ============================================================
@@ -628,10 +965,20 @@
   document.querySelectorAll('.mehr-item').forEach(btn => {
     btn.addEventListener('click', () => {
       closeSheet(mehrWrap);
-      toast('Kommt in Teil 2');
+      const target = btn.dataset.target;
+      if (target === 'lock') { lockApp(); return; }
+      show(target);
     });
   });
   mehrWrap.querySelector('[data-close-mehr]').addEventListener('click', () => closeSheet(mehrWrap));
+
+  const toolSheetWrap = document.getElementById('toolSheetWrap');
+  document.getElementById('toolSheetClose').addEventListener('click', () => closeSheet(toolSheetWrap));
+  toolSheetWrap.querySelector('[data-close-tool]').addEventListener('click', () => closeSheet(toolSheetWrap));
+
+  const spotlightWrap = document.getElementById('spotlightWrap');
+  spotlightWrap.querySelector('[data-close-spotlight]').addEventListener('click', () => closeSheet(spotlightWrap));
+  document.getElementById('spotlightClose').addEventListener('click', () => closeSheet(spotlightWrap));
 
   const permWrap = document.getElementById('permSheetWrap');
   permWrap.querySelector('[data-close-perm]').addEventListener('click', () => { /* modal — backdrop tap does not dismiss a pending decision */ });
@@ -643,6 +990,8 @@
     terminals() { document.getElementById('toolbarHost').classList.add('is-visible'); },
   };
   function show(name) {
+    if (name !== 'cloud') stopCloudBuildTimer();
+    if (name !== 'prayer') stopPrayerTick();
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
     if (name !== 'terminals') document.getElementById('toolbarHost').classList.remove('is-visible');
@@ -650,13 +999,31 @@
   }
   function goToTerminals() { show('terminals'); }
 
+  function handleDockTap(name) {
+    if (name === 'mehr') { openSheet(mehrWrap); return; }
+    if (document.querySelector(`[data-screen="${name}"]`)) { show(name); return; }
+    toast('Kommt in Teil 2');
+  }
+
+  // Dock buttons: short tap navigates as usual; long-press (550ms) on ANY
+  // dock button opens Spotlight instead — a secondary universal-search
+  // gesture living alongside the primary pull-down-to-search gesture.
   function wireNav() {
+    const LONG_PRESS_MS = 550;
     document.querySelectorAll('#dock [data-nav]').forEach(btn => {
       const name = btn.dataset.nav;
-      btn.addEventListener('click', () => {
-        if (name === 'mehr') { openSheet(mehrWrap); return; }
-        if (document.querySelector(`[data-screen="${name}"]`)) { show(name); return; }
-        toast('Kommt in Teil 2');
+      let timer = null, longPressed = false;
+      btn.addEventListener('pointerdown', () => {
+        longPressed = false;
+        timer = setTimeout(() => { longPressed = true; openSpotlight(); }, LONG_PRESS_MS);
+      });
+      const cancelTimer = () => clearTimeout(timer);
+      btn.addEventListener('pointerup', cancelTimer);
+      btn.addEventListener('pointerleave', cancelTimer);
+      btn.addEventListener('pointercancel', cancelTimer);
+      btn.addEventListener('click', e => {
+        if (longPressed) { e.preventDefault(); longPressed = false; return; }
+        handleDockTap(name);
       });
     });
   }
@@ -684,10 +1051,11 @@
     const host = document.querySelector('[data-screen="servers"]');
     host.innerHTML = '';
     renderUpdateBanner(host);
-    const title = document.createElement('h1');
-    title.className = 'screen-title';
-    title.textContent = 'Server';
-    host.appendChild(title);
+    const titleRow = document.createElement('div');
+    titleRow.className = 'screen-title-row';
+    titleRow.innerHTML = `<h1 class="screen-title">Server</h1><button class="icon-btn glass" id="settingsBtn" aria-label="Einstellungen öffnen">⚙</button>`;
+    host.appendChild(titleRow);
+    titleRow.querySelector('#settingsBtn').addEventListener('click', () => show('settings'));
     const grid = document.createElement('div');
     grid.className = 'server-grid';
     TMS_DATA.servers.forEach(srv => {
@@ -807,7 +1175,10 @@
     }
     positionHandlesAndBubble(id);
     if (atBottom) pre.scrollTop = pre.scrollHeight;
-    refreshPreviews();
+    // Only real terminal sessions feed the rail/overview previews — this same
+    // function is reused for Cloud's XXL log viewer (id "cloud-<projectId>"),
+    // whose 2s building-log appends would otherwise re-render the rail for nothing.
+    if (TMS_DATA.sessions.some(s => s.id === id)) refreshPreviews();
   }
 
   function updateStatusChip(id, status) {
@@ -1269,14 +1640,20 @@
     requestAnimationFrame(() => chip.classList.add('show'));
     setTimeout(() => { chip.classList.remove('show'); setTimeout(() => chip.remove(), 200); }, 550);
   }
-  function toggleSelectionMode() {
-    const id = state.order[state.activeIndex];
-    const cs = cardState[id];
+  // Generic selection-mode toggle keyed by any cardState id — used by the
+  // terminal toolbar's Aa button (session cards) AND Cloud's XXL log viewer
+  // "Selektieren" button (cloud-<projectId> pseudo-cards), so both share the
+  // exact same handle/copy-bubble machinery instead of two parallel systems.
+  function toggleCardSelectionMode(cardId, btnEl) {
+    const cs = cardState[cardId];
     cs.selectionMode = !cs.selectionMode;
-    document.getElementById('selToggleBtn').classList.toggle('is-on', cs.selectionMode);
-    const pre = document.querySelector(`.card-body[data-card-id="${id}"]`);
+    if (btnEl) btnEl.classList.toggle('is-on', cs.selectionMode);
+    const pre = document.querySelector(`.card-body[data-card-id="${cardId}"]`);
     if (pre) pre.classList.toggle('selection-mode', cs.selectionMode);
-    if (!cs.selectionMode) clearSelection(id);
+    if (!cs.selectionMode) clearSelection(cardId);
+  }
+  function toggleSelectionMode() {
+    toggleCardSelectionMode(state.order[state.activeIndex], document.getElementById('selToggleBtn'));
   }
   function wireToolbar() {
     document.querySelectorAll('#toolbarPill button').forEach(btn => {
@@ -1289,14 +1666,1051 @@
   }
 
   // ============================================================
+  // Tools screen + tool sheet (Dateien, SQL, Ports, Prozesse,
+  // Snippets, Notizen, Screenshots, Browser, Watchers)
+  // ============================================================
+  const TOOL_DEFS = [
+    { id: 'files', code: 'FS', label: 'Dateien' },
+    { id: 'sql', code: 'DB', label: 'SQL' },
+    { id: 'ports', code: 'PT', label: 'Ports' },
+    { id: 'processes', code: 'PS', label: 'Prozesse' },
+    { id: 'snippets', code: 'SN', label: 'Snippets' },
+    { id: 'notes', code: 'NT', label: 'Notizen' },
+    { id: 'screenshots', code: 'SC', label: 'Screenshots' },
+    { id: 'browser', code: 'BR', label: 'Browser' },
+    { id: 'watchers', code: 'WA', label: 'Watchers' },
+  ];
+
+  function renderTools() {
+    const host = document.querySelector('[data-screen="tools"]');
+    host.innerHTML = `<h1 class="screen-title">Werkzeuge</h1><div class="screen-col"><div class="tool-grid" id="toolGrid"></div></div>`;
+    const grid = document.getElementById('toolGrid');
+    grid.innerHTML = TOOL_DEFS.map(t => `
+      <button class="tool-tile glass" data-tool="${t.id}">
+        <span class="tool-tile__glyph">${t.code}</span>
+        <span class="tool-tile__label">${t.label}</span>
+      </button>`).join('');
+    grid.addEventListener('click', e => {
+      const tile = e.target.closest('.tool-tile');
+      if (tile) openToolSheet(tile.dataset.tool);
+    });
+  }
+
+  function openToolSheet(id) {
+    const def = TOOL_DEFS.find(t => t.id === id);
+    const builders = {
+      files: buildFilesSheet, sql: buildSqlSheet, ports: buildPortsSheet, processes: buildProcessesSheet,
+      snippets: buildSnippetsSheet, notes: buildNotesSheet, screenshots: buildScreenshotsSheet,
+      browser: buildBrowserSheet, watchers: buildWatchersSheet,
+    };
+    if (!def || !builders[id]) return;
+    const { html, wire } = builders[id]();
+    document.getElementById('toolSheetTitle').textContent = def.label;
+    document.getElementById('toolSheetBody').innerHTML = html;
+    openSheet(document.getElementById('toolSheetWrap'));
+    if (wire) wire();
+  }
+
+  function buildFilesSheet() {
+    const html = `<div class="tool-list">${TMS_DATA.files.map(f => `
+      <div class="tool-row">
+        <span class="tool-row__icon">${f.type === 'dir' ? '▸' : '·'}</span>
+        <span class="tool-row__name">${escapeHtml(f.name)}</span>
+        <span class="tool-row__meta">${f.size ? escapeHtml(f.size) : ''}</span>
+      </div>`).join('')}</div>`;
+    return { html };
+  }
+
+  function buildSqlSheet() {
+    const cols = Object.keys(TMS_DATA.sql.rows[0] || {});
+    const html = `
+      <div class="sql-query">${ansiToHtml(TMS_DATA.sql.query)}</div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+          <tbody>${TMS_DATA.sql.rows.map(r => `<tr>${cols.map(c => `<td>${escapeHtml(String(r[c]))}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>`;
+    return { html };
+  }
+
+  function buildPortsSheet() {
+    const html = `<div class="tool-list">${TMS_DATA.ports.map(p => `
+      <div class="tool-row" data-port="${p.port}">
+        <span class="tool-row__name">:${p.port} — ${escapeHtml(p.service)}</span>
+        <label class="switch"><input type="checkbox" data-act="forward" ${p.forwarded ? 'checked' : ''}><span class="switch__track"><span class="switch__thumb"></span></span></label>
+      </div>`).join('')}</div>`;
+    const wire = () => {
+      document.querySelectorAll('#toolSheetBody [data-act="forward"]').forEach(inp => {
+        inp.addEventListener('change', () => {
+          const row = inp.closest('[data-port]');
+          const port = TMS_DATA.ports.find(p => String(p.port) === row.dataset.port);
+          if (!port) return;
+          port.forwarded = inp.checked;
+          toast(port.forwarded ? `Port ${port.port} weitergeleitet` : `Port ${port.port} nicht mehr weitergeleitet`);
+        });
+      });
+    };
+    return { html, wire };
+  }
+
+  function buildProcessesSheet() {
+    const maxCpu = Math.max(...TMS_DATA.processes.map(p => p.cpu), 1);
+    const html = `
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>PID</th><th>Prozess</th><th>CPU</th><th>Mem</th></tr></thead>
+          <tbody>${TMS_DATA.processes.map(p => `
+            <tr>
+              <td>${p.pid}</td>
+              <td>${escapeHtml(p.name)}</td>
+              <td><div class="cpu-cell"><div class="cpu-bar" style="--pct:${Math.round(Math.min(100, (p.cpu / maxCpu) * 100))}%"><div class="cpu-bar__fill"></div></div><span>${p.cpu.toFixed(1)}%</span></div></td>
+              <td>${p.mem} MB</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>`;
+    return { html };
+  }
+
+  function buildSnippetsSheet() {
+    const html = `<div class="tool-list">${TMS_DATA.snippets.map(s => `
+      <button class="tool-row is-tap" data-snippet="${s.id}">
+        <span class="tool-row__name">${escapeHtml(s.label)}</span>
+        <span class="tool-row__meta">${escapeHtml(s.cmd)}</span>
+      </button>`).join('')}</div>`;
+    const wire = () => {
+      document.querySelectorAll('#toolSheetBody [data-snippet]').forEach(btn => {
+        btn.addEventListener('click', () => toast('In Terminal eingefügt'));
+      });
+    };
+    return { html, wire };
+  }
+
+  function buildNotesSheet() {
+    const html = `<div class="notes-grid">${TMS_DATA.notes.map(n => `
+      <div class="note-card">
+        <div class="note-card__title">${escapeHtml(n.title)}</div>
+        <div class="note-card__body">${escapeHtml(n.body)}</div>
+        <div class="note-card__time">${escapeHtml(n.time)}</div>
+      </div>`).join('')}</div>`;
+    return { html };
+  }
+
+  function buildScreenshotsSheet() {
+    const html = `
+      <div class="shot-grid" id="shotGrid">${[1, 2, 3].map(() => '<div class="shot-tile"></div>').join('')}</div>
+      <button class="btn-chip" id="shotCaptureBtn" style="width:100%;">Aufnehmen</button>`;
+    const wire = () => {
+      document.getElementById('shotCaptureBtn').addEventListener('click', () => {
+        const flash = document.getElementById('shotFlash');
+        flash.classList.add('is-flashing');
+        setTimeout(() => flash.classList.remove('is-flashing'), 160);
+        const grid = document.getElementById('shotGrid');
+        if (grid) grid.insertAdjacentHTML('afterbegin', '<div class="shot-tile"></div>');
+        toast('Screenshot aufgenommen');
+      });
+    };
+    return { html, wire };
+  }
+
+  function buildBrowserSheet() {
+    const html = `
+      <div class="browser-bar">https://vercel.com/kashino17/pinterest-scraper</div>
+      <div class="browser-skeleton">
+        ${[92, 68, 100, 84, 40, 76].map(w => `<div class="browser-skeleton__block" style="width:${w}%"></div>`).join('')}
+      </div>`;
+    return { html };
+  }
+
+  function buildWatchersSheet() {
+    const html = `<div class="tool-list">${TMS_DATA.watchers.map(w => `
+      <div class="tool-row" data-watcher="${w.id}">
+        <div class="tool-row__info">
+          <div class="tool-row__title mono-text">${ansiToHtml(w.pattern)}</div>
+          <div class="tool-row__sub">${escapeHtml(w.session)}</div>
+        </div>
+        <span class="hit-badge">${w.hits}</span>
+        <label class="switch"><input type="checkbox" data-act="active" ${w.active ? 'checked' : ''}><span class="switch__track"><span class="switch__thumb"></span></span></label>
+      </div>`).join('')}</div>`;
+    const wire = () => {
+      document.querySelectorAll('#toolSheetBody [data-act="active"]').forEach(inp => {
+        inp.addEventListener('change', () => {
+          const row = inp.closest('[data-watcher]');
+          const w = TMS_DATA.watchers.find(x => x.id === row.dataset.watcher);
+          if (!w) return;
+          w.active = inp.checked;
+          toast(w.active ? `Watcher aktiv: ${w.pattern}` : `Watcher pausiert: ${w.pattern}`);
+        });
+      });
+    };
+    return { html, wire };
+  }
+
+  // ============================================================
+  // Manager screen (Chat / Artifacts / Memory)
+  // ============================================================
+  function renderManagerShell() {
+    const host = document.querySelector('[data-screen="manager"]');
+    host.innerHTML = `
+      <h1 class="screen-title">Manager</h1>
+      <div class="screen-col manager-col">
+        <div class="subtabs" id="managerTabs">
+          <button data-tab="chat" class="active">Chat</button>
+          <button data-tab="artifacts">Artifacts</button>
+          <button data-tab="memory">Memory</button>
+        </div>
+        <div class="manager-view">
+          <div class="chat-scroll" id="managerChat"></div>
+          <div id="managerArtifacts" hidden></div>
+          <div id="managerMemory" hidden></div>
+          <div class="chat-input-row" id="managerInputRow">
+            <input type="text" id="managerTextInput" placeholder="Nachricht an Manager…" autocomplete="off">
+            <button class="mic-btn glass" id="managerMicBtn" aria-label="Sprachnachricht aufnehmen">●</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function ensureMessageIds() {
+    TMS_DATA.manager.messages.forEach((m, i) => { if (!m._id) m._id = 'msg' + i; });
+  }
+
+  function scheduleTranscription(m) {
+    if (!m.transcribing || m._transcribeScheduled) return;
+    m._transcribeScheduled = true;
+    setTimeout(() => {
+      m.transcribing = false;
+      m.transcript = '(Demo) Transkription abgeschlossen';
+      const screen = document.querySelector('[data-screen="manager"]');
+      if (screen && !screen.hidden) renderManagerChat();
+    }, 2500);
+  }
+
+  function renderChatMessageHtml(m) {
+    if (m.type === 'voice') {
+      const bars = Array.from({ length: 18 }, (_, i) => `<span style="height:${6 + ((i * 37) % 14)}px"></span>`).join('');
+      let inner = '';
+      if (m.transcribing) inner = `<div class="voice-transcribing">Transkribiere… <span class="dots"><span>●</span><span>●</span><span>●</span></span></div>`;
+      else if (m.transcript) inner = `<div class="voice-transcript">${escapeHtml(m.transcript)}</div>`;
+      return `
+        <div class="chat-row" data-from="${m.from}">
+          <div class="chat-bubble">
+            <div class="voice-pill" data-act="play">
+              <span class="voice-pill__play">▶</span>
+              <span class="voice-pill__wave">${bars}</span>
+              <span class="voice-pill__dur">0:${String(m.duration).padStart(2, '0')}</span>
+            </div>
+            ${inner}
+            <span class="chat-bubble__time">${escapeHtml(m.time)}</span>
+          </div>
+        </div>`;
+    }
+    return `
+      <div class="chat-row" data-from="${m.from}">
+        <div class="chat-bubble">${escapeHtml(m.text)}<span class="chat-bubble__time">${escapeHtml(m.time)}</span></div>
+      </div>`;
+  }
+
+  function renderManagerChat() {
+    const host = document.getElementById('managerChat');
+    if (!host) return;
+    host.innerHTML = TMS_DATA.manager.messages.map(renderChatMessageHtml).join('');
+    host.scrollTop = host.scrollHeight;
+    wireManagerChatInteractions();
+    // Arm transcription timers only while the Manager screen is visible, so the
+    // seed message's "Transkribiere… → transcript" demo moment plays on first
+    // entry to the screen (via SCREEN_HOOKS.manager) instead of expiring
+    // silently at page init before the user ever looks.
+    const screen = document.querySelector('[data-screen="manager"]');
+    if (screen && !screen.hidden) TMS_DATA.manager.messages.forEach(scheduleTranscription);
+  }
+
+  function wireManagerChatInteractions() {
+    document.querySelectorAll('#managerChat .voice-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        const playing = pill.classList.toggle('is-playing');
+        const playBtn = pill.querySelector('.voice-pill__play');
+        if (playing) {
+          playBtn.textContent = '❚❚';
+          const durText = pill.querySelector('.voice-pill__dur').textContent;
+          const secs = parseInt(durText.split(':')[1], 10) || 5;
+          setTimeout(() => { pill.classList.remove('is-playing'); playBtn.textContent = '▶'; }, Math.min(secs, 6) * 1000);
+        } else {
+          playBtn.textContent = '▶';
+        }
+      });
+    });
+  }
+
+  function renderManagerArtifacts() {
+    const host = document.getElementById('managerArtifacts');
+    if (!host) return;
+    host.innerHTML = `<div class="artifact-carousel">${TMS_DATA.manager.artifacts.map(a => `
+      <div class="artifact-card glass">
+        <div class="artifact-card__title">${escapeHtml(a.title)}</div>
+        <div class="artifact-card__meta">${escapeHtml(a.kind)} · ${escapeHtml(a.time)}</div>
+      </div>`).join('')}</div>`;
+  }
+
+  function renderManagerMemory() {
+    const host = document.getElementById('managerMemory');
+    if (!host) return;
+    host.innerHTML = TMS_DATA.manager.memory.map(m => `
+      <div class="memory-row"><span>${escapeHtml(m.text)}</span><span class="memory-row__time">${escapeHtml(m.time)}</span></div>`).join('');
+  }
+
+  function wireManagerTabs() {
+    document.getElementById('managerTabs').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-tab]');
+      if (!btn) return;
+      const tab = btn.dataset.tab;
+      state.managerTab = tab;
+      document.querySelectorAll('#managerTabs button').forEach(b => b.classList.toggle('active', b === btn));
+      document.getElementById('managerChat').hidden = tab !== 'chat';
+      document.getElementById('managerInputRow').hidden = tab !== 'chat';
+      document.getElementById('managerArtifacts').hidden = tab !== 'artifacts';
+      document.getElementById('managerMemory').hidden = tab !== 'memory';
+    });
+  }
+
+  function wireManagerInput() {
+    const micBtn = document.getElementById('managerMicBtn');
+    micBtn.addEventListener('click', () => {
+      if (micBtn.classList.contains('is-recording')) return;
+      micBtn.classList.add('is-recording');
+      setTimeout(() => {
+        micBtn.classList.remove('is-recording');
+        const now = new Date();
+        const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        TMS_DATA.manager.messages.push({ type: 'voice', from: 'user', time, duration: 8, transcript: null, transcribing: true, _id: 'msg' + TMS_DATA.manager.messages.length });
+        renderManagerChat();
+      }, 2000);
+    });
+    document.getElementById('managerTextInput').addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      const input = e.target;
+      const text = input.value.trim();
+      if (!text) return;
+      const now = new Date();
+      const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      TMS_DATA.manager.messages.push({ type: 'text', from: 'user', time, text, _id: 'msg' + TMS_DATA.manager.messages.length });
+      input.value = '';
+      renderManagerChat();
+    });
+  }
+
+  function initManagerScreen() {
+    renderManagerShell();
+    wireManagerTabs();
+    wireManagerInput();
+    renderManagerArtifacts();
+    renderManagerMemory();
+    renderManagerChat();
+  }
+
+  SCREEN_HOOKS.manager = renderManagerChat;
+
+  // ============================================================
+  // Cloud screen (Vercel + Render): folders/favorites, Env/Logs/Deploys
+  // ============================================================
+  function renderCloudShell() {
+    const host = document.querySelector('[data-screen="cloud"]');
+    host.innerHTML = `
+      <h1 class="screen-title">Cloud</h1>
+      <div class="screen-col">
+        <div id="cloudList">
+          <div class="cloud-toolbar">
+            <div class="chip-group" id="cloudProviderFilter">
+              <button data-provider="all" class="active">Alle</button>
+              <button data-provider="vercel">Vercel</button>
+              <button data-provider="render">Render</button>
+            </div>
+            <span class="cloud-toolbar__spacer"></span>
+            <div class="chip-group" id="cloudViewToggle">
+              <button data-view="folder" class="active">Ordner</button>
+              <button data-view="list">Liste</button>
+            </div>
+          </div>
+          <div id="cloudGroups"></div>
+        </div>
+        <div id="cloudDetail" hidden></div>
+      </div>
+    `;
+  }
+
+  const FAV_KEY = 'tms-liquid-deck-cloud-favorites';
+  function loadFavorites() {
+    try {
+      const raw = localStorage.getItem(FAV_KEY);
+      if (!raw) return;
+      const map = JSON.parse(raw);
+      TMS_DATA.cloudProjects.forEach(p => { if (Object.prototype.hasOwnProperty.call(map, p.id)) p.favorite = !!map[p.id]; });
+    } catch (e) { /* corrupt/unavailable storage: keep seed favorites */ }
+  }
+  function saveFavorites() {
+    const map = {};
+    TMS_DATA.cloudProjects.forEach(p => { map[p.id] = p.favorite; });
+    try { localStorage.setItem(FAV_KEY, JSON.stringify(map)); } catch (e) { /* storage unavailable */ }
+  }
+
+  const CLOUD_GLYPH = { vercel: '▲', render: 'R' };
+
+  function cloudFilteredProjects() {
+    return TMS_DATA.cloudProjects.filter(p => state.cloudProviderFilter === 'all' || p.provider === state.cloudProviderFilter);
+  }
+
+  function cloudRowHtml(p) {
+    return `
+      <button class="cloud-row" data-project="${p.id}">
+        <span class="provider-glyph">${CLOUD_GLYPH[p.provider] || '?'}</span>
+        <span class="cloud-row__main">
+          <span class="cloud-row__name">${escapeHtml(p.name)}</span>
+          <span class="cloud-row__meta">
+            <span class="status-chip" data-status="${p.status}"><span class="dot"></span><span class="status-chip__label">${escapeHtml(p.status)}</span></span>
+            <span class="cloud-row__deploy">${escapeHtml(p.lastDeploy)}</span>
+          </span>
+        </span>
+        <span class="fav-btn${p.favorite ? ' is-fav' : ''}" data-fav="${p.id}">★</span>
+      </button>`;
+  }
+
+  function renderCloudGroups() {
+    const host = document.getElementById('cloudGroups');
+    const list = cloudFilteredProjects();
+    if (state.cloudView === 'list') {
+      const sorted = [...list].sort((a, b) => (b.favorite - a.favorite));
+      host.innerHTML = `<div class="folder-group glass"><div class="folder-group__rows">${sorted.map(cloudRowHtml).join('')}</div></div>`;
+      return;
+    }
+    const folders = {};
+    list.forEach(p => { (folders[p.folder] = folders[p.folder] || []).push(p); });
+    const folderNames = Object.keys(folders).sort();
+    host.innerHTML = folderNames.map(name => {
+      const rows = [...folders[name]].sort((a, b) => (b.favorite - a.favorite));
+      return `
+        <div class="folder-group glass" data-folder="${escapeHtml(name)}">
+          <div class="folder-group__head">
+            <span class="folder-group__name">${escapeHtml(name)}</span>
+            <span class="folder-group__count">${rows.length}</span>
+          </div>
+          <div class="folder-group__rows">${rows.map(cloudRowHtml).join('')}</div>
+        </div>`;
+    }).join('');
+  }
+
+  function wireCloudToolbar() {
+    document.getElementById('cloudProviderFilter').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-provider]');
+      if (!btn) return;
+      state.cloudProviderFilter = btn.dataset.provider;
+      document.querySelectorAll('#cloudProviderFilter button').forEach(b => b.classList.toggle('active', b === btn));
+      renderCloudGroups();
+    });
+    document.getElementById('cloudViewToggle').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-view]');
+      if (!btn) return;
+      state.cloudView = btn.dataset.view;
+      document.querySelectorAll('#cloudViewToggle button').forEach(b => b.classList.toggle('active', b === btn));
+      renderCloudGroups();
+    });
+    document.getElementById('cloudGroups').addEventListener('click', e => {
+      const favBtn = e.target.closest('[data-fav]');
+      if (favBtn) {
+        e.stopPropagation();
+        const p = TMS_DATA.cloudProjects.find(x => x.id === favBtn.dataset.fav);
+        if (p) { p.favorite = !p.favorite; saveFavorites(); renderCloudGroups(); }
+        return;
+      }
+      const folderHead = e.target.closest('.folder-group__head');
+      if (folderHead) { folderHead.closest('.folder-group').classList.toggle('is-collapsed'); return; }
+      const row = e.target.closest('.cloud-row');
+      if (row) openCloudDetail(row.dataset.project, 'env');
+    });
+  }
+
+  function stopCloudBuildTimer() {
+    if (state.cloudBuildTimer) { clearInterval(state.cloudBuildTimer); state.cloudBuildTimer = null; }
+  }
+
+  function showCloudList() {
+    stopCloudBuildTimer();
+    state.cloudDetailId = null;
+    document.getElementById('cloudDetail').hidden = true;
+    document.getElementById('cloudDetail').innerHTML = '';
+    document.getElementById('cloudList').hidden = false;
+  }
+
+  function openCloudDetail(id, tab) {
+    const project = TMS_DATA.cloudProjects.find(p => p.id === id);
+    if (!project) return;
+    state.cloudDetailId = id;
+    state.cloudDetailTab = tab || 'env';
+    document.getElementById('cloudList').hidden = true;
+    document.getElementById('cloudDetail').hidden = false;
+    renderCloudDetail();
+  }
+
+  function renderCloudDetail() {
+    const project = TMS_DATA.cloudProjects.find(p => p.id === state.cloudDetailId);
+    const detail = document.getElementById('cloudDetail');
+    if (!project) return;
+    detail.innerHTML = `
+      <div class="cloud-detail glass">
+        <div class="cloud-detail__head">
+          <span class="back-btn" id="cloudBackBtn">← Zurück</span>
+          <span class="cloud-detail__title">${escapeHtml(project.name)}</span>
+        </div>
+        <div class="subtabs" id="cloudDetailTabs">
+          <button data-tab="env" class="${state.cloudDetailTab === 'env' ? 'active' : ''}">Env</button>
+          <button data-tab="logs" class="${state.cloudDetailTab === 'logs' ? 'active' : ''}">Logs</button>
+          <button data-tab="deploys" class="${state.cloudDetailTab === 'deploys' ? 'active' : ''}">Deploys</button>
+        </div>
+        <div class="cloud-detail__body" id="cloudDetailBody"></div>
+      </div>
+    `;
+    document.getElementById('cloudBackBtn').addEventListener('click', showCloudList);
+    document.getElementById('cloudDetailTabs').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-tab]');
+      if (!btn) return;
+      stopCloudBuildTimer();
+      state.cloudDetailTab = btn.dataset.tab;
+      renderCloudDetail();
+    });
+    renderCloudDetailBody(project);
+  }
+
+  function renderCloudDetailBody(project) {
+    const host = document.getElementById('cloudDetailBody');
+    if (state.cloudDetailTab === 'env') renderEnvTab(host, project);
+    else if (state.cloudDetailTab === 'logs') renderLogsTab(host, project);
+    else renderDeploysTab(host, project);
+  }
+
+  function renderEnvTab(host, project) {
+    host.innerHTML = project.env.map((e, i) => `
+      <div class="env-row" data-idx="${i}">
+        <div class="env-row__top"><span class="env-row__key">${escapeHtml(e.key)}</span></div>
+        <span class="env-row__value" data-act="reveal">${'•'.repeat(10)}</span>
+        <div class="env-row__actions">
+          <button data-act="copy">Kopieren</button>
+          <button data-act="edit">Bearbeiten</button>
+        </div>
+      </div>`).join('');
+    host.querySelectorAll('.env-row').forEach(row => {
+      const idx = Number(row.dataset.idx);
+      const entry = project.env[idx];
+      const valueEl = row.querySelector('[data-act="reveal"]');
+      let revealed = false;
+      valueEl.addEventListener('click', () => {
+        revealed = !revealed;
+        valueEl.textContent = revealed ? entry.value : '•'.repeat(10);
+      });
+      row.querySelector('[data-act="copy"]').addEventListener('click', () => {
+        copyText(entry.value);
+        toast('Kopiert ✓');
+      });
+      row.querySelector('[data-act="edit"]').addEventListener('click', () => {
+        if (row.querySelector('.env-row__edit')) return;
+        const editRow = document.createElement('div');
+        editRow.className = 'env-row__edit';
+        editRow.innerHTML = `<input type="text" value="${escapeHtml(entry.value)}"><button class="btn-chip" data-act="save">Speichern</button>`;
+        row.appendChild(editRow);
+        editRow.querySelector('input').focus();
+        editRow.querySelector('[data-act="save"]').addEventListener('click', () => {
+          entry.value = editRow.querySelector('input').value;
+          valueEl.textContent = revealed ? entry.value : '•'.repeat(10);
+          editRow.remove();
+          toast('Gespeichert — Redeploy nötig');
+        });
+      });
+    });
+  }
+
+  function cloudLogCardId(project) { return `cloud-${project.id}`; }
+
+  function renderLogsTab(host, project) {
+    const cardId = cloudLogCardId(project);
+    if (!cardState[cardId]) cardState[cardId] = { lines: project.logs.slice(), selection: null, selectionMode: false };
+    else {
+      // The DOM below (Selektieren button + .card-body classes) is rebuilt
+      // fresh, so reset selection state to match — otherwise flag and UI
+      // desync after a Logs → other tab → Logs round-trip and the first
+      // toggle tap is a no-op.
+      cardState[cardId].lines = project.logs.slice();
+      cardState[cardId].selectionMode = false;
+      cardState[cardId].selection = null;
+    }
+    host.innerHTML = `
+      <div class="log-viewer">
+        <div class="log-viewer__tools">
+          <input type="text" class="log-viewer__search" id="cloudLogSearch" placeholder="Logs durchsuchen…" autocomplete="off">
+          <button class="btn-chip" id="cloudLogSelectBtn">Selektieren</button>
+          <button class="btn-chip" id="cloudLogCopyBtn">Kopieren</button>
+        </div>
+        <div class="card-body glass glass--dark log-viewer__pre" data-card-id="${cardId}"></div>
+      </div>`;
+    renderCardLines(cardId);
+    document.getElementById('cloudLogSearch').addEventListener('input', e => {
+      const q = e.target.value.toLowerCase();
+      cardState[cardId].lines = q ? project.logs.filter(l => l.toLowerCase().includes(q)) : project.logs.slice();
+      renderCardLines(cardId);
+    });
+    document.getElementById('cloudLogSelectBtn').addEventListener('click', () => {
+      toggleCardSelectionMode(cardId, document.getElementById('cloudLogSelectBtn'));
+    });
+    document.getElementById('cloudLogCopyBtn').addEventListener('click', () => {
+      copyText(cardState[cardId].lines.join('\n'));
+      toast('Log kopiert ✓');
+    });
+    stopCloudBuildTimer();
+    if (project.status === 'building') {
+      let n = 0;
+      state.cloudBuildTimer = setInterval(() => {
+        n++;
+        const time = new Date().toTimeString().slice(0, 5);
+        const line = `${time} BUILD Verarbeite Modul ${n}…`;
+        project.logs.push(line);
+        const searchInput = document.getElementById('cloudLogSearch');
+        if (searchInput && !searchInput.value) {
+          cardState[cardId].lines.push(line);
+          renderCardLines(cardId);
+        }
+      }, 2000);
+    }
+  }
+
+  function renderDeploysTab(host, project) {
+    const deploys = [
+      { version: 'v12', time: project.lastDeploy, status: project.status === 'building' ? 'building' : 'ready' },
+      { version: 'v11', time: 'vor 2 Tagen', status: 'ready' },
+      { version: 'v10', time: 'vor 5 Tagen', status: project.status === 'suspended' ? 'suspended' : 'ready' },
+    ];
+    host.innerHTML = deploys.map(d => `
+      <div class="deploy-row">
+        <span class="deploy-row__version">${d.version}</span>
+        <span class="deploy-row__time">${escapeHtml(d.time)}</span>
+        <span class="status-chip" data-status="${d.status}"><span class="dot"></span><span class="status-chip__label">${escapeHtml(d.status)}</span></span>
+      </div>`).join('');
+  }
+
+  SCREEN_HOOKS.cloud = showCloudList;
+
+  // ============================================================
+  // Settings screen
+  // ============================================================
+  let termFontSizePx = 13;
+  function switchHtml(key, checked) {
+    return `<label class="switch"><input type="checkbox" data-switch="${key}" ${checked ? 'checked' : ''}><span class="switch__track"><span class="switch__thumb"></span></span></label>`;
+  }
+
+  function renderSettings() {
+    const server = TMS_DATA.servers.find(s => s.status === 'online') || TMS_DATA.servers[0];
+    const host = document.querySelector('[data-screen="settings"]');
+    host.innerHTML = `
+      <h1 class="screen-title">Einstellungen</h1>
+      <div class="screen-col" id="settingsBody">
+        <div class="settings-group glass">
+          <div class="settings-group__title">Server</div>
+          <div class="settings-row">
+            <span class="settings-row__label">Aktiver Server<small>${escapeHtml(server.name)}</small></span>
+            <span class="settings-row__value">${escapeHtml(server.host)}:${server.port}</span>
+          </div>
+        </div>
+        <div class="settings-group glass">
+          <div class="settings-group__title">Sicherheit</div>
+          <div class="settings-row is-tap" id="pinChangeRow">
+            <span class="settings-row__label">PIN ändern<small>4-stellige Demo-PIN</small></span>
+            <span class="settings-row__value">›</span>
+          </div>
+          <div id="pinEditHost"></div>
+          <div class="settings-row">
+            <span class="settings-row__label">Auto-Lock<small>Sperrt nach Inaktivität</small></span>
+            ${switchHtml('autoLock', state.autoLock)}
+          </div>
+          <div class="settings-row is-tap" id="lockNowRow">
+            <span class="settings-row__label">Jetzt sperren</span>
+            <span class="settings-row__value">›</span>
+          </div>
+        </div>
+        <div class="settings-group glass">
+          <div class="settings-group__title">Benachrichtigungen</div>
+          <div class="settings-row">
+            <span class="settings-row__label">Push-Benachrichtigungen</span>
+            ${switchHtml('pushNotif', state.pushNotif)}
+          </div>
+          <div class="settings-row">
+            <span class="settings-row__label">Adhan-Erinnerung</span>
+            ${switchHtml('adhanNotif', state.adhanNotif)}
+          </div>
+          <div class="settings-row is-tap" id="prayerRow">
+            <span class="settings-row__label">Gebetszeiten<small>Heutige Zeiten ansehen</small></span>
+            <span class="settings-row__value">›</span>
+          </div>
+        </div>
+        <div class="settings-group glass">
+          <div class="settings-group__title">Terminal</div>
+          <div class="settings-row settings-row--stack">
+            <span class="settings-row__label">Schriftgröße<small id="fontSizeValue">${termFontSizePx}px</small></span>
+            <div class="glass glass--dark font-preview" id="fontSizePreview">$ echo "TMS Terminal"</div>
+            <input type="range" class="settings-slider" id="fontSizeSlider" min="11" max="18" value="${termFontSizePx}">
+          </div>
+        </div>
+        <div class="settings-group glass">
+          <div class="settings-group__title">Über</div>
+          <div class="settings-row">
+            <span class="settings-row__label">Version</span>
+            <span class="settings-row__value">v${escapeHtml(TMS_DATA.update.current)}</span>
+          </div>
+          <div class="settings-row is-tap" id="updateHintRow">
+            <span class="settings-row__label">Update verfügbar<small>v${escapeHtml(TMS_DATA.update.latest)} — ${escapeHtml(TMS_DATA.update.notes)}</small></span>
+            <span class="settings-row__value">›</span>
+          </div>
+        </div>
+      </div>
+    `;
+    wireSettingsInteractions();
+  }
+
+  function togglePinEditor() {
+    const editHost = document.getElementById('pinEditHost');
+    if (editHost.innerHTML) { editHost.innerHTML = ''; return; }
+    editHost.innerHTML = `
+      <div class="settings-pin-edit">
+        <input type="text" inputmode="numeric" maxlength="4" id="newPinInput" placeholder="Neue 4-stellige PIN">
+        <button class="btn-chip" id="savePinBtn">Speichern</button>
+      </div>`;
+    document.getElementById('savePinBtn').addEventListener('click', () => {
+      const val = document.getElementById('newPinInput').value.trim();
+      if (!/^\d{4}$/.test(val)) { toast('PIN muss 4 Ziffern haben'); return; }
+      state.pin = val;
+      editHost.innerHTML = '';
+      toast('PIN geändert ✓');
+    });
+  }
+
+  function wireSettingsInteractions() {
+    document.querySelectorAll('#settingsBody [data-switch]').forEach(inp => {
+      inp.addEventListener('change', () => {
+        state[inp.dataset.switch] = inp.checked;
+        toast(inp.checked ? 'Aktiviert' : 'Deaktiviert');
+      });
+    });
+    document.getElementById('pinChangeRow').addEventListener('click', togglePinEditor);
+    document.getElementById('lockNowRow').addEventListener('click', lockApp);
+    document.getElementById('prayerRow').addEventListener('click', () => show('prayer'));
+    document.getElementById('updateHintRow').addEventListener('click', () => toast(`v${TMS_DATA.update.latest} verfügbar — ${TMS_DATA.update.notes}`));
+    const slider = document.getElementById('fontSizeSlider');
+    slider.addEventListener('input', () => {
+      termFontSizePx = Number(slider.value);
+      document.getElementById('fontSizeValue').textContent = `${termFontSizePx}px`;
+      document.documentElement.style.setProperty('--term-font-size', termFontSizePx + 'px');
+    });
+  }
+
+  // ============================================================
+  // Prayer screen + Adhan overlay
+  // ============================================================
+  function renderPrayerShell() {
+    const host = document.querySelector('[data-screen="prayer"]');
+    host.innerHTML = `
+      <h1 class="screen-title">Gebetszeiten</h1>
+      <div class="screen-col">
+        <div id="prayerNextCard"></div>
+        <div id="prayerList"></div>
+        <button class="prayer-demo-btn glass" id="adhanDemoBtn">Adhan-Demo</button>
+      </div>
+    `;
+  }
+
+  function renderPrayerList() {
+    const np = nextPrayer();
+    const host = document.getElementById('prayerList');
+    host.innerHTML = `<div class="prayer-list-panel glass">${TMS_DATA.prayerTimes.map(p => `
+      <div class="prayer-row${p.name === np.name ? ' is-next' : ''}">
+        <span class="prayer-row__name">${escapeHtml(p.name)}</span>
+        <span class="prayer-row__time">${escapeHtml(p.time)}</span>
+      </div>`).join('')}</div>`;
+  }
+
+  function updatePrayerCountdownCard() {
+    const np = nextPrayer();
+    const card = document.getElementById('prayerNextCard');
+    if (!card) return;
+    const hh = Math.floor(np.diffMin / 60), mm = Math.floor(np.diffMin % 60), ss = Math.floor((np.diffMin * 60) % 60);
+    card.innerHTML = `
+      <div class="prayer-next-card glass">
+        <div class="prayer-next-card__label">Nächstes Gebet — ${escapeHtml(np.name)}</div>
+        <div class="prayer-next-card__countdown">${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}</div>
+        <div class="prayer-next-card__time">um ${escapeHtml(np.time)} Uhr</div>
+      </div>`;
+  }
+
+  let prayerTickTimer = null;
+  function stopPrayerTick() { if (prayerTickTimer) { clearInterval(prayerTickTimer); prayerTickTimer = null; } }
+
+  function renderPrayerScreen() {
+    renderPrayerList();
+    updatePrayerCountdownCard();
+  }
+
+  function openAdhanOverlay(name) {
+    document.getElementById('adhanName').textContent = name;
+    document.getElementById('adhanRingCode').textContent = name.slice(0, 3).toUpperCase();
+    const overlay = document.getElementById('adhanOverlay');
+    overlay.hidden = false;
+    requestAnimationFrame(() => overlay.classList.add('is-open'));
+  }
+  function closeAdhanOverlay() {
+    const overlay = document.getElementById('adhanOverlay');
+    overlay.classList.remove('is-open');
+    setTimeout(() => { overlay.hidden = true; }, 350);
+  }
+  function wirePrayer() {
+    document.getElementById('adhanDemoBtn').addEventListener('click', () => openAdhanOverlay(nextPrayer().name));
+    document.getElementById('adhanStop').addEventListener('click', closeAdhanOverlay);
+  }
+
+  SCREEN_HOOKS.prayer = function () {
+    renderPrayerScreen();
+    stopPrayerTick();
+    prayerTickTimer = setInterval(updatePrayerCountdownCard, 1000);
+  };
+
+  // ============================================================
+  // Lock screen (PIN pad)
+  // ============================================================
+  function renderPinDots(n) {
+    document.querySelectorAll('#pinDots span').forEach((dot, i) => dot.classList.toggle('is-filled', i < n));
+  }
+
+  function checkPin() {
+    if (state.lockDigits === state.pin) { unlockApp(); return; }
+    const panel = document.querySelector('[data-screen="lock"] .lock-panel');
+    panel.classList.add('lock-shake');
+    setTimeout(() => panel.classList.remove('lock-shake'), 400);
+    state.lockDigits = '';
+    setTimeout(() => renderPinDots(0), 400);
+    toast('Falscher PIN');
+  }
+
+  function handlePinKey(key) {
+    if (key === 'back') { state.lockDigits = state.lockDigits.slice(0, -1); renderPinDots(state.lockDigits.length); return; }
+    if (!key || state.lockDigits.length >= 4) return;
+    state.lockDigits += key;
+    renderPinDots(state.lockDigits.length);
+    if (state.lockDigits.length === 4) setTimeout(checkPin, 120);
+  }
+
+  function unlockApp() {
+    document.body.classList.remove('is-locked');
+    state.lockDigits = '';
+    renderPinDots(0);
+    show('servers');
+  }
+
+  function lockApp() {
+    document.body.classList.add('is-locked');
+    state.lockDigits = '';
+    renderPinDots(0);
+    show('lock');
+  }
+
+  function wireLock() {
+    document.getElementById('pinPad').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-key]');
+      if (btn) handlePinKey(btn.dataset.key);
+    });
+    document.addEventListener('keydown', e => {
+      if (!document.body.classList.contains('is-locked')) return;
+      if (/^[0-9]$/.test(e.key)) handlePinKey(e.key);
+      else if (e.key === 'Backspace') handlePinKey('back');
+    });
+  }
+
+  // ============================================================
+  // Spotlight — universal search (pull-down gesture + dock long-press)
+  // ============================================================
+  function buildSpotlightIndex() {
+    const idx = [];
+    TMS_DATA.sessions.forEach(s => idx.push({
+      type: 'Terminal', label: s.name, sub: s.description,
+      action: () => { goToTerminals(); setActive(state.order.indexOf(s.id)); },
+    }));
+    TMS_DATA.snippets.forEach(sn => idx.push({
+      type: 'Snippet', label: sn.label, sub: sn.cmd,
+      action: () => toast('In Terminal eingefügt'),
+    }));
+    idx.push({ type: 'Screen', label: 'Server', sub: 'Serverliste öffnen', action: () => show('servers') });
+    idx.push({ type: 'Screen', label: 'Terminals', sub: 'Terminal-Stack öffnen', action: () => goToTerminals() });
+    TOOL_DEFS.forEach(t => idx.push({
+      type: 'Tool', label: t.label, sub: 'Werkzeug öffnen',
+      action: () => { show('tools'); openToolSheet(t.id); },
+    }));
+    TMS_DATA.cloudProjects.forEach(p => idx.push({
+      type: 'Cloud', label: p.name, sub: `${p.provider} · ${p.folder}`,
+      action: () => { show('cloud'); openCloudDetail(p.id, 'env'); },
+    }));
+    idx.push({ type: 'Screen', label: 'Manager', sub: 'Manager-Chat öffnen', action: () => show('manager') });
+    idx.push({ type: 'Screen', label: 'Cloud', sub: 'Cloud-Projekte öffnen', action: () => show('cloud') });
+    idx.push({ type: 'Screen', label: 'Werkzeuge', sub: 'Tool-Panels öffnen', action: () => show('tools') });
+    idx.push({ type: 'Screen', label: 'Einstellungen', sub: 'Server, Sicherheit, Terminal, Über', action: () => show('settings') });
+    idx.push({ type: 'Screen', label: 'Gebetszeiten', sub: 'Heutige Gebetszeiten', action: () => show('prayer') });
+    idx.push({ type: 'Aktion', label: 'Adhan-Demo', sub: 'Adhan-Alarm testen', action: () => { show('prayer'); openAdhanOverlay(nextPrayer().name); } });
+    idx.push({ type: 'Aktion', label: 'Env kopieren — pinterest-scraper', sub: 'Cloud → Env-Variablen', action: () => { show('cloud'); openCloudDetail('c1', 'env'); } });
+    idx.push({ type: 'Aktion', label: 'App sperren', sub: 'Zur PIN-Sperre zurückkehren', action: () => lockApp() });
+    return idx;
+  }
+
+  function fuzzyScore(query, text) {
+    if (!query) return 0;
+    query = query.toLowerCase();
+    text = (text || '').toLowerCase();
+    let qi = 0, score = 0, lastIndex = -1;
+    for (let i = 0; i < text.length && qi < query.length; i++) {
+      if (text[i] === query[qi]) {
+        score += lastIndex === i - 1 ? 3 : 1;
+        lastIndex = i;
+        qi++;
+      }
+    }
+    return qi === query.length ? score : -1;
+  }
+
+  let spotlightIndex = [];
+  let spotlightFiltered = [];
+  let spotlightHighlight = 0;
+
+  function renderSpotlightResults(query) {
+    const scored = spotlightIndex
+      .map(entry => ({ entry, s: Math.max(fuzzyScore(query, entry.label), fuzzyScore(query, entry.sub || '')) }))
+      .filter(x => query === '' || x.s >= 0);
+    scored.sort((a, b) => b.s - a.s);
+    spotlightFiltered = scored.map(x => x.entry).slice(0, 30);
+    spotlightHighlight = 0;
+    const host = document.getElementById('spotlightResults');
+    if (!spotlightFiltered.length) { host.innerHTML = `<div class="spotlight-empty">Keine Treffer</div>`; return; }
+    host.innerHTML = spotlightFiltered.map((entry, i) => `
+      <button class="spotlight-row${i === 0 ? ' is-highlighted' : ''}" data-idx="${i}">
+        <span class="spotlight-row__type">${escapeHtml(entry.type)}</span>
+        <span class="spotlight-row__label">${escapeHtml(entry.label)}</span>
+        <span class="spotlight-row__sub">${escapeHtml(entry.sub || '')}</span>
+      </button>
+    `).join('');
+  }
+
+  function moveSpotlightHighlight(dir) {
+    if (!spotlightFiltered.length) return;
+    spotlightHighlight = (spotlightHighlight + dir + spotlightFiltered.length) % spotlightFiltered.length;
+    document.querySelectorAll('.spotlight-row').forEach((el, i) => el.classList.toggle('is-highlighted', i === spotlightHighlight));
+    const activeEl = document.querySelector('.spotlight-row.is-highlighted');
+    if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+  }
+
+  function activateSpotlightEntry(i) {
+    const entry = spotlightFiltered[i];
+    if (!entry) return;
+    closeSheet(document.getElementById('spotlightWrap'));
+    entry.action();
+  }
+
+  function openSpotlight() {
+    if (document.body.classList.contains('is-locked')) return;
+    spotlightIndex = buildSpotlightIndex();
+    const input = document.getElementById('spotlightInput');
+    input.value = '';
+    renderSpotlightResults('');
+    openSheet(document.getElementById('spotlightWrap'));
+    requestAnimationFrame(() => input.focus());
+  }
+
+  function wireSpotlight() {
+    const input = document.getElementById('spotlightInput');
+    input.addEventListener('input', () => renderSpotlightResults(input.value));
+    input.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); moveSpotlightHighlight(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); moveSpotlightHighlight(-1); }
+      else if (e.key === 'Enter') { e.preventDefault(); activateSpotlightEntry(spotlightHighlight); }
+      else if (e.key === 'Escape') { closeSheet(document.getElementById('spotlightWrap')); }
+    });
+    document.getElementById('spotlightResults').addEventListener('click', e => {
+      const row = e.target.closest('.spotlight-row');
+      if (row) activateSpotlightEntry(Number(row.dataset.idx));
+    });
+    document.addEventListener('keydown', e => {
+      if (document.body.classList.contains('is-locked')) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openSpotlight(); return; }
+      if (e.key === 'Escape') {
+        const tool = document.getElementById('toolSheetWrap');
+        if (!tool.hidden) closeSheet(tool);
+      }
+    });
+  }
+
+  // Pull-down-to-search: on any screen, starting a vertical drag from the
+  // very top of its scroll position (scrollTop === 0) and pulling down past
+  // a threshold opens Spotlight on release — the iOS-style "pull for search"
+  // gesture. Purely additive: passive listeners, no preventDefault, so a
+  // genuine scroll (scrollTop leaves 0 immediately) always wins and cancels
+  // tracking.
+  function wirePullToSpotlight() {
+    const screensEl = document.getElementById('screens');
+    const hint = document.getElementById('pullHint');
+    let tracking = false, pulled = false, startX = 0, startY = 0, sectionEl = null, pointerId = null;
+    screensEl.addEventListener('pointerdown', e => {
+      if (document.body.classList.contains('is-locked')) return;
+      const section = e.target.closest('section[data-screen]:not([hidden])');
+      if (!section || section.scrollTop > 0) return;
+      tracking = true; pulled = false; startX = e.clientX; startY = e.clientY; sectionEl = section; pointerId = e.pointerId;
+    }, { passive: true });
+    screensEl.addEventListener('pointermove', e => {
+      if (!tracking || e.pointerId !== pointerId) return;
+      if (sectionEl.scrollTop > 0) { tracking = false; hint.classList.remove('show'); return; }
+      const dy = e.clientY - startY, dx = e.clientX - startX;
+      if (dy < Math.abs(dx)) { hint.classList.remove('show'); return; }
+      if (dy > 30) hint.classList.add('show'); else hint.classList.remove('show');
+      pulled = dy > 78;
+    }, { passive: true });
+    function endTrack() {
+      if (tracking && pulled) openSpotlight();
+      tracking = false; pulled = false;
+      hint.classList.remove('show');
+    }
+    screensEl.addEventListener('pointerup', endTrack);
+    screensEl.addEventListener('pointercancel', endTrack);
+  }
+
+  // ============================================================
   // Init
   // ============================================================
+  ensureMessageIds();
+  loadFavorites();
+
   renderServers();
   buildTerminalScreen();
+
+  renderTools();
+
+  initManagerScreen();
+
+  renderCloudShell();
+  renderCloudGroups();
+  wireCloudToolbar();
+
+  renderSettings();
+
+  renderPrayerShell();
+  wirePrayer();
+
+  wireLock();
+
   wireNav();
   wireToolbar();
+  wireSpotlight();
+  wirePullToSpotlight();
+
   initLiveSession();
-  show('servers');
+  show('lock');
 </script>
 </body>
 </html>
