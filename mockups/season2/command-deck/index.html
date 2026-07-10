@@ -281,22 +281,33 @@
     // Utilities: escaping, ANSI rendering, wrapped-link, toast, clipboard
     // ============================================================
     function escapeHtml(s) {
-      return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
-    // Minimal ANSI SGR renderer: bold(1) dim(2) red(31) green(32) reset(0).
-    // Unknown codes are stripped silently so no raw escapes ever leak into the DOM.
+    // Minimal ANSI SGR renderer: bold(1) dim(2) red(31) green(32) reset(0),
+    // incl. multi-param sequences like \x1b[1;32m. Every other escape sequence
+    // (non-SGR CSI, OSC, lone ESC) is stripped so no raw escapes ever leak into the DOM.
     function ansiToHtml(str) {
       const CLASS = { '1': 'ans-b', '2': 'ans-d', '31': 'ans-r', '32': 'ans-g' };
       let out = '', open = 0, last = 0, m;
-      const re = /\x1b\[(\d+)m/g;
+      const re = /\x1b\[([0-9;]*)m/g;
+      const emitText = chunk => {
+        chunk = chunk
+          .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC (…BEL or …ESC\)
+          .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '')        // any other CSI
+          .replace(/\x1b./g, '');                            // lone ESC + follow byte
+        out += escapeHtml(chunk);
+      };
       while ((m = re.exec(str))) {
-        out += escapeHtml(str.slice(last, m.index));
+        emitText(str.slice(last, m.index));
         last = re.lastIndex;
-        if (m[1] === '0') { while (open) { out += '</span>'; open--; } }
-        else if (CLASS[m[1]]) { out += `<span class="${CLASS[m[1]]}">`; open++; }
+        for (const code of (m[1] === '' ? '0' : m[1]).split(';')) {
+          const c = code === '' ? '0' : code;
+          if (c === '0') { while (open) { out += '</span>'; open--; } }
+          else if (CLASS[c]) { out += `<span class="${CLASS[c]}">`; open++; }
+        }
       }
-      out += escapeHtml(str.slice(last));
+      emitText(str.slice(last));
       while (open) { out += '</span>'; open--; }
       return out;
     }
@@ -458,7 +469,11 @@
         frag.appendChild(div);
       });
       pre.insertBefore(frag, pre.firstChild);
-      if (cs.selection) positionHandlesAndBubble(id);
+      if (cs.selection) {
+        // Lines were rebuilt: reapply highlight classes; drop the selection if it no longer maps to existing lines
+        if (cs.selection.end >= cs.lines.length) cs.selection = null;
+        renderSelection(id);
+      }
       pre.scrollTop = atBottom ? pre.scrollHeight : prevScrollTop;
     }
 
@@ -532,8 +547,10 @@
     }
 
     function goToTerminals() {
+      const firstBuild = !stackBuilt;
       buildTerminalStack();
-      applyResponsiveDefaults();
+      // Responsive collapse defaults only on first build — re-entry keeps the user's chevron choices
+      if (firstBuild) applyResponsiveDefaults();
       show('terminals');
     }
 
@@ -617,6 +634,7 @@
         appendOutChunk(cs, '  ⎿ ✖ Abgelehnt — Aktion gestoppt\n');
         renderCardLines(id);
         updateStatusChip(id, 'idle');
+        showReplay(id); // sim stays paused at the prompt; replay is the recovery path
       }
     }
 
