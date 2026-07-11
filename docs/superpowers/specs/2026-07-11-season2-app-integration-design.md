@@ -14,7 +14,7 @@ Die Season-2-UI (Liquid Deck) wird als **zweite, vollständig getrennte UI-Versi
 - Bestehender Code wird an exakt DREI additiven Stellen berührt:
   1. `src/store/settingsStore.ts`: neues persistiertes Flag `seasonTwoEnabled` + Setter (Muster: `managerChatRedesignEnabled`, Zeilen 27-29/80-83).
   2. `src/screens/SettingsScreen.tsx`: neue „Design"-Sektion mit dem Toggle (Markup-Klon der Beta-Sektion, Zeilen 400-427).
-  3. `src/App.tsx:116`: Root-Branch `seasonTwoEnabled ? <SeasonTwoRoot/> : <AppNavigator/>` innerhalb desselben `NavigationContainer` (Muster: `ManagerChatRouter`, `AppNavigator.tsx:32-38`).
+  3. `src/navigation/AppNavigator.tsx`: Season 2 als REGISTRIERTE ROUTE im bestehenden Stack (`SeasonTwo`), Startroute + `key` umschaltbar per Flag (Muster: `ManagerChatRouter`). GEÄNDERT ggü. Erstentwurf (App-Root-Branch): nur so behalten die Dock-Bridges Zugriff auf `navigation.navigate` zu allen klassischen Routen. Zusätzlich additiv: `SeasonTwo: undefined` in `navigation.types.ts`.
 - Neue native Dependencies (reanimated ~3.6, gesture-handler ~2.14, svg ~14.1, expo-blur ~12.9 — SDK-50-kompatibel via `npx expo install`) sind additiv; babel.config.js bekommt das Reanimated-Plugin (als letztes Plugin), Root bekommt `GestureHandlerRootView` (umschließt BEIDE UI-Trees, verhält sich für die klassische UI neutral).
 - Default: `seasonTwoEnabled = false` — nach dem Update sieht der User exakt die alte App, bis er umschaltet.
 
