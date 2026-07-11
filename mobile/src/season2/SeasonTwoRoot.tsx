@@ -4,13 +4,16 @@
  * registered in the same stack, so dock bridges can `navigation.navigate`
  * into them until their Season-2 counterparts exist (M2+).
  */
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useSettingsStore } from '../store/settingsStore';
 import { useTerminalStore } from '../store/terminalStore';
+import {
+  getCurrentLocation, fetchPrayerTimes, getNextPrayer, formatRemaining, PrayerTimes,
+} from '../services/prayer.service';
 import { S2ThemeProvider } from './theme/S2ThemeProvider';
 import { useS2Theme } from './theme/tokens';
 import { GlassSurface } from './components/GlassSurface';
@@ -44,6 +47,31 @@ function S2Shell({ navigation }: Props) {
     setToastMsg(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToastMsg(null), 2600);
+  }, []);
+
+  // Prayer countdown for the island — reuses the classic prayer.service
+  // read-only. Times load once; the label re-derives every 30s.
+  const [prayerLabel, setPrayerLabel] = useState<string | null>(null);
+  const prayerTimings = useRef<PrayerTimes | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refreshLabel = () => {
+      if (!prayerTimings.current) return;
+      const next = getNextPrayer(prayerTimings.current);
+      if (next && !cancelled) setPrayerLabel(`${next.name} · ${formatRemaining(next.remainingMs)}`);
+    };
+    (async () => {
+      try {
+        const loc = await getCurrentLocation();
+        if (!loc || cancelled) return;
+        const data = await fetchPrayerTimes(loc.latitude, loc.longitude);
+        if (!data || cancelled) return;
+        prayerTimings.current = data.timings;
+        refreshLabel();
+      } catch { /* prayer segment simply stays hidden */ }
+    })();
+    const t = setInterval(refreshLabel, 30000);
+    return () => { cancelled = true; clearInterval(t); };
   }, []);
 
   const islandSessions: IslandSessionRow[] = useMemo(() => {
@@ -109,7 +137,7 @@ function S2Shell({ navigation }: Props) {
           statusLabel={statusLabel}
           statusKind={statusKind}
           latencyMs={conn.rtt}
-          prayerLabel={null /* M2: Gebets-Countdown via prayer.service */}
+          prayerLabel={prayerLabel}
           sessions={islandSessions}
           onSessionPress={(id) => conn.focusTab(id)}
           onBackToClassic={() => setSeasonTwoEnabled(false)}

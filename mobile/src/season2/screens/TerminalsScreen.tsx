@@ -1,28 +1,35 @@
 /**
- * Season 2 Terminals — M1 core: connect to a real server, list real PTY
- * sessions as glass cards (accordion — one expanded with a live TerminalView),
- * create/close/rename sessions (rename via TRIPLE-tap, user requirement),
- * send commands through an input row. Reuses the classic data layer 1:1:
- * getConnection()/terminalStore/TerminalView — no protocol duplication
- * beyond the minimal terminal:create/close/input wiring.
+ * Season 2 Terminals — M2: connect to a real server, work with real PTY
+ * sessions in TWO views (Liste = accordion cards, Stack = one full-height
+ * card with a session chip strip), ⊞ strict 2-column overview, quick keys
+ * sending real control bytes, per-terminal Auto-Approve wired to the real
+ * `terminal:prompt_detected` detection (glass sheet when Auto is off),
+ * rename via TRIPLE-tap, command input row. Reuses the classic data layer
+ * 1:1: getConnection()/terminalStore/TerminalView/autoApproveStore.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../types/navigation.types';
 import { getConnection, WebSocketService } from '../../services/websocket.service';
 import type { ConnectionState } from '../../types/websocket.types';
 import { storageService, getToken } from '../../services/storage.service';
 import { useTerminalStore } from '../../store/terminalStore';
+import { useAutoApproveStore } from '../../store/autoApproveStore';
 import type { TerminalTab } from '../../types/terminal.types';
-import { TerminalView } from '../../components/TerminalView';
+import { TerminalView, TerminalViewRef } from '../../components/TerminalView';
 import { GlassSurface } from '../components/GlassSurface';
+import { QuickKeys } from '../components/QuickKeys';
+import { PromptSheet, PendingPrompt } from '../components/PromptSheet';
+import { OverviewGrid } from '../components/OverviewGrid';
 import { useS2Theme } from '../theme/tokens';
 import {
   IconPlus, IconTrash, IconSend, IconMic, IconChevronDown, IconChevronRight, IconServer, IconDot,
+  IconList, IconStack, IconGrid,
 } from '../icons';
 
 // ── Season-2 connection state (module store — survives screen remounts) ──
@@ -76,6 +83,8 @@ interface TerminalsScreenProps {
 }
 
 const SESSION_COLORS = ['#e8590c', '#1971c2', '#2f9e44', '#9c36b5', '#c2255c', '#0c8599'];
+const VIEW_KEY = 'tms-s2-terminal-view';
+type S2View = 'list' | 'stack';
 
 export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
   const { theme } = useS2Theme();
@@ -85,6 +94,21 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
   const tabs = useTerminalStore((s) => (conn.server ? s.tabs[conn.server.id] ?? [] : []));
   const [servers, setServers] = useState<S2Server[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [view, setView] = useState<S2View>('list');
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null);
+  const autoTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  // Load persisted view preference once.
+  useEffect(() => {
+    AsyncStorage.getItem(VIEW_KEY).then((v) => {
+      if (v === 'list' || v === 'stack') setView(v);
+    }).catch(() => {});
+  }, []);
+  const switchView = useCallback((v: S2View) => {
+    setView(v);
+    AsyncStorage.setItem(VIEW_KEY, v).catch(() => {});
+  }, []);
 
   // Server list for the picker (when nothing is connected yet).
   useEffect(() => {
@@ -98,25 +122,55 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
   useEffect(() => {
     if (conn.focusTabId) {
       setExpandedId(conn.focusTabId);
+      setOverviewOpen(false);
       conn.focusTab(null);
     }
   }, [conn.focusTabId, conn]);
 
-  // Assign sessionIds arriving from the server to the oldest pending tab
-  // (same contract as the classic TerminalScreen: 'terminal:created').
+  // Server messages: assign sessionIds to pending tabs, drop closed sessions,
+  // and mirror the classic auto-approve contract for detected prompts.
   useEffect(() => {
     if (!conn.wsService || !conn.server) return;
     const serverId = conn.server.id;
-    const unsub = conn.wsService.addMessageListener((msg: any) => {
+    const ws = conn.wsService;
+    const timers = autoTimers.current;
+    const unsub = ws.addMessageListener((msg: any) => {
       if (msg?.type === 'terminal:created' && msg.sessionId) {
         const pending = useTerminalStore.getState().getTabs(serverId).find((t) => !t.sessionId);
         if (pending) useTerminalStore.getState().updateTab(serverId, pending.id, { sessionId: msg.sessionId });
       } else if (msg?.type === 'terminal:closed' && msg.sessionId) {
         const gone = useTerminalStore.getState().getTabs(serverId).find((t) => t.sessionId === msg.sessionId);
         if (gone) useTerminalStore.getState().removeTab(serverId, gone.id);
+      } else if (msg?.type === 'terminal:prompt_detected' && msg.sessionId) {
+        // Same guards as the classic TerminalScreen: skip when the user is
+        // typing or has unsent input, throttle back-to-back prompts.
+        const autoApprove = useAutoApproveStore.getState();
+        const sid = msg.sessionId as string;
+        const hasPendingInput = !!msg.payload?.hasPendingInput;
+        if (autoApprove.isEnabled(sid) && !autoApprove.isRunning(sid) && !autoApprove.isTyping(sid) && !hasPendingInput) {
+          autoApprove.setRunning(sid, true);
+          ws.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
+          const t = setTimeout(() => { autoApprove.setRunning(sid, false); timers.delete(t); }, 500);
+          timers.add(t);
+        } else if (!autoApprove.isEnabled(sid)) {
+          useTerminalStore.getState().setTabNotification(serverId, sid);
+          const tabsNow = useTerminalStore.getState().getTabs(serverId);
+          const idx = tabsNow.findIndex((t) => t.sessionId === sid);
+          if (idx >= 0) {
+            setPendingPrompt({
+              sessionId: sid,
+              title: tabsNow[idx].title || 'Terminal',
+              color: SESSION_COLORS[idx % SESSION_COLORS.length],
+            });
+          }
+        }
       }
     });
-    return unsub;
+    return () => {
+      unsub();
+      timers.forEach(clearTimeout);
+      timers.clear();
+    };
   }, [conn.wsService, conn.server]);
 
   const connectTo = useCallback(async (server: S2Server) => {
@@ -155,6 +209,20 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
     useTerminalStore.getState().removeTab(conn.server.id, tab.id);
   }, [conn.wsService, conn.server]);
 
+  const approvePrompt = useCallback(() => {
+    if (!pendingPrompt || !conn.wsService || !conn.server) return;
+    conn.wsService.send({ type: 'terminal:input', sessionId: pendingPrompt.sessionId, payload: { data: '\r' } });
+    const tab = useTerminalStore.getState().getTabs(conn.server.id).find((t) => t.sessionId === pendingPrompt.sessionId);
+    if (tab) useTerminalStore.getState().updateTab(conn.server.id, tab.id, { notificationCount: 0 });
+    setPendingPrompt(null);
+  }, [pendingPrompt, conn.wsService, conn.server]);
+
+  const enableAutoForPrompt = useCallback(() => {
+    if (!pendingPrompt) return;
+    useAutoApproveStore.getState().setEnabled(pendingPrompt.sessionId, true);
+    approvePrompt();
+  }, [pendingPrompt, approvePrompt]);
+
   // ── Not connected: server picker ──
   if (!conn.server) {
     return (
@@ -192,52 +260,139 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
     );
   }
 
-  // ── Connected: session list (accordion) ──
+  // Stack view keeps exactly one session in focus.
+  const stackTab = tabs.find((t) => t.id === expandedId) ?? tabs[0] ?? null;
+
+  // ── Connected ──
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.headRow}>
         <Text style={[styles.pageTitle, { color: c.text, fontSize: m.font.title }]}>Terminals</Text>
-        <Pressable
-          onPress={createTerminal}
-          accessibilityLabel="Neues Terminal"
-          style={({ pressed }) => [styles.headBtn, { borderColor: c.glassBorder, minWidth: m.touch, minHeight: m.touch }, pressed && styles.pressed]}
-        >
-          <IconPlus size={m.icon.md} color={c.text} />
-        </Pressable>
+        <View style={styles.headActions}>
+          <View style={[styles.viewToggle, { borderColor: c.glassBorder }]}>
+            {(['stack', 'list'] as S2View[]).map((v) => (
+              <Pressable
+                key={v}
+                onPress={() => switchView(v)}
+                accessibilityState={{ selected: view === v }}
+                style={[styles.viewToggleBtn, view === v && { backgroundColor: `rgba(${c.accentRgb},0.16)` }]}
+              >
+                {v === 'stack'
+                  ? <IconStack size={m.icon.sm} color={view === v ? c.text : c.textDim} />
+                  : <IconList size={m.icon.sm} color={view === v ? c.text : c.textDim} />}
+              </Pressable>
+            ))}
+          </View>
+          <Pressable
+            onPress={() => setOverviewOpen(true)}
+            accessibilityLabel="Übersicht"
+            style={({ pressed }) => [styles.headBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+          >
+            <IconGrid size={m.icon.md} color={c.text} />
+          </Pressable>
+          <Pressable
+            onPress={createTerminal}
+            accessibilityLabel="Neues Terminal"
+            style={({ pressed }) => [styles.headBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+          >
+            <IconPlus size={m.icon.md} color={c.text} />
+          </Pressable>
+        </View>
       </View>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: m.dockHeight + 40 }}>
-        {tabs.map((tab, i) => (
-          <SessionCard
-            key={tab.id}
-            tab={tab}
-            color={SESSION_COLORS[i % SESSION_COLORS.length]}
-            expanded={expandedId === tab.id}
-            onToggle={() => setExpandedId(expandedId === tab.id ? null : tab.id)}
-            onClose={() => closeTerminal(tab)}
-            wsService={conn.wsService!}
-            serverId={conn.server!.id}
-            toast={toast}
-          />
-        ))}
-        <Pressable onPress={createTerminal} style={({ pressed }) => [pressed && styles.pressed]}>
-          <GlassSurface radius={m.radius.pill} style={{ marginTop: 6 }}>
-            <View style={styles.addRow}>
-              <IconPlus size={m.icon.sm} color={c.accent} />
-              <Text style={{ color: c.accent, fontSize: m.font.body, fontWeight: '700' }}>Neues Terminal</Text>
+
+      {view === 'stack' && tabs.length > 0 ? (
+        <View style={{ flex: 1, minHeight: 0 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.chipStrip}>
+            {tabs.map((tab, i) => {
+              const isActive = stackTab?.id === tab.id;
+              return (
+                <Pressable
+                  key={tab.id}
+                  onPress={() => setExpandedId(tab.id)}
+                  style={[styles.chip, { borderColor: isActive ? `rgba(${c.accentRgb},0.5)` : c.glassBorder, backgroundColor: isActive ? `rgba(${c.accentRgb},0.14)` : `rgba(${c.overlayRgb},0.05)` }]}
+                >
+                  <IconDot size={8} color={SESSION_COLORS[i % SESSION_COLORS.length]} />
+                  <Text numberOfLines={1} style={{ color: isActive ? c.text : c.textDim, fontSize: m.font.caption, fontWeight: '700', maxWidth: 140 }}>
+                    {tab.title || 'Terminal'}
+                  </Text>
+                  {!!tab.notificationCount && <View style={[styles.badge, { backgroundColor: c.warn }]} />}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+          {stackTab && (
+            <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 16, paddingBottom: m.dockHeight + 34 }}>
+              <SessionCard
+                key={stackTab.id}
+                tab={stackTab}
+                color={SESSION_COLORS[Math.max(0, tabs.findIndex((t) => t.id === stackTab.id)) % SESSION_COLORS.length]}
+                expanded
+                full
+                onToggle={() => {}}
+                onClose={() => closeTerminal(stackTab)}
+                wsService={conn.wsService!}
+                serverId={conn.server!.id}
+                toast={toast}
+              />
             </View>
-          </GlassSurface>
-        </Pressable>
-      </ScrollView>
+          )}
+        </View>
+      ) : (
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: m.dockHeight + 40 }}>
+          {tabs.map((tab, i) => (
+            <SessionCard
+              key={tab.id}
+              tab={tab}
+              color={SESSION_COLORS[i % SESSION_COLORS.length]}
+              expanded={expandedId === tab.id}
+              onToggle={() => setExpandedId(expandedId === tab.id ? null : tab.id)}
+              onClose={() => closeTerminal(tab)}
+              wsService={conn.wsService!}
+              serverId={conn.server!.id}
+              toast={toast}
+            />
+          ))}
+          <Pressable onPress={createTerminal} style={({ pressed }) => [pressed && styles.pressed]}>
+            <GlassSurface radius={m.radius.pill} style={{ marginTop: 6 }}>
+              <View style={styles.addRow}>
+                <IconPlus size={m.icon.sm} color={c.accent} />
+                <Text style={{ color: c.accent, fontSize: m.font.body, fontWeight: '700' }}>Neues Terminal</Text>
+              </View>
+            </GlassSurface>
+          </Pressable>
+        </ScrollView>
+      )}
+
+      {overviewOpen && (
+        <OverviewGrid
+          tabs={tabs}
+          colors={SESSION_COLORS}
+          onSelect={(tabId) => { setExpandedId(tabId); setOverviewOpen(false); }}
+          onClose={() => setOverviewOpen(false)}
+        />
+      )}
+
+      {pendingPrompt && (
+        <PromptSheet
+          prompt={pendingPrompt}
+          onApprove={approvePrompt}
+          onDismiss={() => setPendingPrompt(null)}
+          onEnableAuto={enableAutoForPrompt}
+          bottomOffset={m.dockHeight + 40}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }
 
-// ── Session card (accordion item) ──
+// ── Session card (accordion item / stack focus card) ──
 
 interface SessionCardProps {
   tab: TerminalTab;
   color: string;
   expanded: boolean;
+  /** Stack mode: fill available height instead of the fixed list height. */
+  full?: boolean;
   onToggle: () => void;
   onClose: () => void;
   wsService: WebSocketService;
@@ -245,7 +400,7 @@ interface SessionCardProps {
   toast: (msg: string) => void;
 }
 
-function SessionCard({ tab, color, expanded, onToggle, onClose, wsService, serverId, toast }: SessionCardProps) {
+function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, wsService, serverId, toast }: SessionCardProps) {
   const { theme } = useS2Theme();
   const { c, m } = theme;
   const [editing, setEditing] = useState(false);
@@ -253,6 +408,8 @@ function SessionCard({ tab, color, expanded, onToggle, onClose, wsService, serve
   const [cmd, setCmd] = useState('');
   const tapCount = useRef(0);
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const termRef = useRef<TerminalViewRef>(null);
+  const autoOn = useAutoApproveStore((s) => (tab.sessionId ? s.isEnabled(tab.sessionId) : false));
 
   // TRIPLE-tap on the title opens rename (single/double tap must NOT).
   const handleTitleTap = useCallback(() => {
@@ -275,18 +432,27 @@ function SessionCard({ tab, color, expanded, onToggle, onClose, wsService, serve
     }
   }, [draft, serverId, tab.id, tab.title]);
 
+  const sendRaw = useCallback((data: string) => {
+    if (!tab.sessionId) return;
+    wsService.send({ type: 'terminal:input', sessionId: tab.sessionId, payload: { data } });
+  }, [tab.sessionId, wsService]);
+
   const sendCmd = useCallback(() => {
-    const data = cmd;
-    if (!data.trim() || !tab.sessionId) return;
-    wsService.send({ type: 'terminal:input', sessionId: tab.sessionId, payload: { data: data + '\r' } });
+    if (!cmd.trim() || !tab.sessionId) return;
+    sendRaw(cmd + '\r');
     setCmd('');
-  }, [cmd, tab.sessionId, wsService]);
+  }, [cmd, tab.sessionId, sendRaw]);
+
+  const toggleAuto = useCallback(() => {
+    if (!tab.sessionId) return;
+    useAutoApproveStore.getState().toggle(tab.sessionId);
+  }, [tab.sessionId]);
 
   const statusLabel = tab.aiTool ? tab.aiTool : tab.sessionId ? 'Bereit' : 'Startet…';
 
   return (
-    <GlassSurface strong={expanded} style={{ marginBottom: 12 }}>
-      <Pressable onPress={onToggle} accessibilityRole="button">
+    <GlassSurface strong={expanded} style={full ? { flex: 1, minHeight: 0 } : { marginBottom: 12 }}>
+      <Pressable onPress={full ? undefined : onToggle} accessibilityRole="button" disabled={full}>
         <View style={styles.cardHead}>
           <View style={[styles.colorTag, { backgroundColor: color }]} />
           {editing ? (
@@ -303,6 +469,13 @@ function SessionCard({ tab, color, expanded, onToggle, onClose, wsService, serve
               <Text numberOfLines={1} style={{ color: c.text, fontSize: m.font.section, fontWeight: '700' }}>{tab.title}</Text>
             </Pressable>
           )}
+          <Pressable
+            onPress={toggleAuto}
+            accessibilityLabel="Auto-Approve umschalten"
+            style={[styles.chipBtn, { borderColor: autoOn ? `rgba(${c.accentRgb},0.4)` : c.glassBorder, backgroundColor: autoOn ? `rgba(${c.accentRgb},0.14)` : 'transparent' }]}
+          >
+            <Text style={{ color: autoOn ? c.ok : c.textDim, fontSize: m.font.micro, fontWeight: '800' }}>⚡ AUTO</Text>
+          </Pressable>
           <View style={[styles.chip, { backgroundColor: `rgba(${c.accentRgb},0.10)`, borderColor: c.glassBorder }]}>
             <IconDot size={8} color={tab.sessionId ? c.ok : c.warn} />
             <Text style={{ color: c.textDim, fontSize: m.font.micro, fontWeight: '700' }}>{statusLabel.toUpperCase()}</Text>
@@ -310,15 +483,16 @@ function SessionCard({ tab, color, expanded, onToggle, onClose, wsService, serve
           <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="Terminal schließen" style={({ pressed }) => [pressed && styles.pressed]}>
             <IconTrash size={m.icon.sm} color={c.textDim} />
           </Pressable>
-          <IconChevronDown size={m.icon.sm} color={c.textDim} />
+          {!full && <IconChevronDown size={m.icon.sm} color={c.textDim} />}
         </View>
       </Pressable>
 
       {expanded && (
-        <View>
-          <View style={[styles.termWrap, { backgroundColor: c.termSurface }]}>
+        <View style={full ? { flex: 1, minHeight: 0 } : undefined}>
+          <View style={[styles.termWrap, { backgroundColor: c.termSurface }, full ? { flex: 1, minHeight: 0 } : { height: 340 }]}>
             {tab.sessionId ? (
               <TerminalView
+                ref={termRef}
                 sessionId={tab.sessionId}
                 wsService={wsService}
                 visible={expanded}
@@ -331,6 +505,7 @@ function SessionCard({ tab, color, expanded, onToggle, onClose, wsService, serve
               </View>
             )}
           </View>
+          <QuickKeys onKey={sendRaw} onJumpBottom={() => termRef.current?.scrollToBottom()} />
           <View style={[styles.inputRow, { borderTopColor: `rgba(${c.overlayRgb},0.08)` }]}>
             <Text style={{ color: c.textDim, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }), fontSize: m.font.body }}>$</Text>
             <TextInput
@@ -343,7 +518,7 @@ function SessionCard({ tab, color, expanded, onToggle, onClose, wsService, serve
               autoCorrect={false}
               style={[styles.cmdInput, { color: c.text, fontSize: m.font.body }]}
             />
-            <Pressable onPress={() => toast('Diktat kommt in Meilenstein 2')} hitSlop={6} accessibilityLabel="Diktieren">
+            <Pressable onPress={() => toast('Diktat kommt in Meilenstein 3')} hitSlop={6} accessibilityLabel="Diktieren">
               <IconMic size={m.icon.md} color={c.textDim} />
             </Pressable>
             <Pressable
@@ -367,14 +542,21 @@ const styles = StyleSheet.create({
   serverCard: { marginBottom: 12, padding: 16 },
   serverRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10 },
-  headBtn: { alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: 14 },
+  headActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: 14 },
+  viewToggle: { flexDirection: 'row', borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: 14, overflow: 'hidden' },
+  viewToggleBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  chipStrip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, height: 36, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
+  badge: { width: 8, height: 8, borderRadius: 4 },
   addRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12 },
   colorTag: { width: 10, height: 10, borderRadius: 5 },
   titleInput: { flex: 1, borderBottomWidth: 1, paddingVertical: 2, fontWeight: '700' },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth },
-  termWrap: { height: 340, marginHorizontal: 10, borderRadius: 14, overflow: 'hidden' },
-  termPending: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  chipBtn: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
+  chip2: {},
+  termWrap: { marginHorizontal: 10, borderRadius: 14, overflow: 'hidden' },
+  termPending: { flex: 1, minHeight: 120, alignItems: 'center', justifyContent: 'center' },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
   cmdInput: { flex: 1, paddingVertical: 6, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
   sendBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
