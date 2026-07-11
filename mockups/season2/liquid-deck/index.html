@@ -168,6 +168,15 @@
      Screens / router
      ============================================================ */
   #screens { position: fixed; inset: 0; z-index: 1; }
+  /* Real-touch fix: without this, Chrome/Android claims a downward pull at
+     scrollTop 0 for its own pull-to-refresh (reloading the mockup!) and
+     chains inner-scroller overscroll up to the viewport — both hijack the
+     pull-to-spotlight gesture and end pointer streams mid-gesture. Viewport
+     gets none (kills pull-to-refresh), inner scrollers get contain (their
+     overscroll never leaves them). */
+  html, body { overscroll-behavior-y: none; }
+  section[data-screen], .term-list, .card-body, .overview-grid, .browser-content,
+  .sheet-scroll-body, .chat-scroll, #managerMemory, .spotlight-results, .question-options { overscroll-behavior-y: contain; }
   section[data-screen] {
     position: absolute; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding: var(--top-space) 16px var(--bottom-space);
@@ -3156,9 +3165,15 @@
       try { handle.releasePointerCapture(ev.pointerId); } catch (err) { /* already released */ }
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
     }
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', onUp);
+    // Same teardown on pointercancel — without it an interrupted touch drag
+    // (incoming call, palm rejection, browser gesture claim) leaked the
+    // move/up listeners and stacked a duplicate handler set onto the handle
+    // on every later drag.
+    handle.addEventListener('pointercancel', onUp);
   }
   function makeBubble(cardId) {
     const el = document.createElement('button');
@@ -3387,7 +3402,6 @@
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
       document.removeEventListener('pointercancel', onCancel);
-      surface.removeEventListener('lostpointercapture', onLost);
       try { surface.releasePointerCapture(pointerId); } catch (e) { /* already released */ }
       card.classList.remove('is-swiping');
     }
@@ -3399,6 +3413,9 @@
         if (Math.abs(dx) <= Math.abs(dy)) { cleanup(); return; } // vertical intent → let native scroll win
         decided = true; dragging = true;
         card.classList.add('is-swiping');
+        // Deferred capture (only once horizontal intent is locked) is
+        // deliberate: plain taps never get captured, so click dispatch to
+        // wrapped links / selection lines inside the card stays untouched.
         try { surface.setPointerCapture(pointerId); } catch (e2) { /* unsupported */ }
       }
       const base = wasOpen ? -railW : 0;
@@ -3414,7 +3431,6 @@
       if (-x > railW * 0.4) openListRail(card); else closeListRail(card);
     }
     function onCancel() { const wd = dragging; cleanup(); if (wd) { if (wasOpen) openListRail(card); else closeListRail(card); } }
-    function onLost() { cleanup(); }
     surface.addEventListener('pointerdown', e => {
       // Controls with their own gestures never start a swipe.
       if (e.target.closest('.term-input-row, .card-name, .card-desc, .auto-toggle, .status-chip, .chevron-btn, .replay-pill, .jump-bottom-orb, .keys-panel')) return;
@@ -3422,10 +3438,20 @@
       dragging = false; decided = false; cleaned = false;
       railW = rail.getBoundingClientRect().width || 260;
       wasOpen = listRailState.openCardEl === card;
+      // NOTE (real-touch fix): there is deliberately NO 'lostpointercapture'
+      // cleanup listener here anymore. Touch pointers get implicit capture on
+      // the pointerdown TARGET (a descendant of `surface`, e.g. .card-body);
+      // when onMove later calls surface.setPointerCapture() at the horizontal-
+      // intent threshold, the implicit→explicit hand-off fires a transient
+      // 'lostpointercapture' on that descendant which BUBBLES to `surface`.
+      // The old listener treated it as gesture-over and killed the swipe after
+      // ~10px of travel on every real touch (reproduced with CDP touch
+      // dispatch; synthetic mouse drags never hit it — mouse pointers have no
+      // implicit capture to hand off from). pointerup/pointercancel are fully
+      // sufficient for cleanup: touch streams end in exactly one of the two.
       document.addEventListener('pointermove', onMove);
       document.addEventListener('pointerup', onUp);
       document.addEventListener('pointercancel', onCancel);
-      surface.addEventListener('lostpointercapture', onLost);
     });
   }
   // A plain tap anywhere but the open rail's buttons closes it.
@@ -4941,8 +4967,8 @@
     const screensEl = document.getElementById('screens');
     const hint = document.getElementById('pullHint');
     let tracking = false, pulled = false, startX = 0, startY = 0, scrollEl = null, pointerId = null;
-    screensEl.addEventListener('pointerdown', e => {
-      if (document.body.classList.contains('is-locked')) return;
+    function beginTrack(target, x, y) {
+      if (document.body.classList.contains('is-locked')) return false;
       // The terminals spatial stack + rail own horizontal swipe / drag-reorder
       // gestures, and the ⊞ overview grid is a transient overlay you're
       // actively tapping into — never arm the vertical pull-to-search
@@ -4950,28 +4976,57 @@
       // excluded: findScrollTarget() below resolves #termList as its own
       // nearest scrollable ancestor, so pull-to-search still works exactly
       // like on every other screen (scrolled list ≠ trigger; pull at top does).
-      if (e.target.closest('.workspace, .overview-grid')) return;
-      const section = e.target.closest('section[data-screen]:not([hidden])');
-      if (!section) return;
-      const target = findScrollTarget(e.target, section);
-      if (target.scrollTop > 0) return;
-      tracking = true; pulled = false; startX = e.clientX; startY = e.clientY; scrollEl = target; pointerId = e.pointerId;
-    }, { passive: true });
-    screensEl.addEventListener('pointermove', e => {
-      if (!tracking || e.pointerId !== pointerId) return;
+      if (target.closest('.workspace, .overview-grid')) return false;
+      const section = target.closest('section[data-screen]:not([hidden])');
+      if (!section) return false;
+      const el = findScrollTarget(target, section);
+      if (el.scrollTop > 0) return false;
+      tracking = true; pulled = false; startX = x; startY = y; scrollEl = el;
+      return true;
+    }
+    function moveTrack(x, y) {
+      if (!tracking) return;
       if (scrollEl.scrollTop > 0) { tracking = false; hint.classList.remove('show'); return; }
-      const dy = e.clientY - startY, dx = e.clientX - startX;
+      const dy = y - startY, dx = x - startX;
       if (dy <= 0 || dy < 1.5 * Math.abs(dx)) { hint.classList.remove('show'); return; }
       if (dy > 30) hint.classList.add('show'); else hint.classList.remove('show');
       pulled = dy > 78;
-    }, { passive: true });
+    }
     function endTrack() {
       if (tracking && pulled) openSpotlight();
       tracking = false; pulled = false;
       hint.classList.remove('show');
     }
-    screensEl.addEventListener('pointerup', endTrack);
-    screensEl.addEventListener('pointercancel', endTrack);
+    // Mouse/pen path — pointer events. TOUCH IS EXCLUDED here and handled by
+    // the touch-event listeners below: on a real device the browser claims a
+    // vertical pan for native scrolling after ~10px of slop and kills the
+    // pointer stream with pointercancel, long before the 78px pull threshold —
+    // the tracker never saw a full pull on the phone. Passive touchmove keeps
+    // streaming even while the browser scrolls/overscrolls natively, so the
+    // touch path observes the entire gesture. All tracking state is shared;
+    // a mouse drag and a touch pan cannot be interleaved in practice.
+    screensEl.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'touch') return;
+      if (beginTrack(e.target, e.clientX, e.clientY)) pointerId = e.pointerId;
+    }, { passive: true });
+    screensEl.addEventListener('pointermove', e => {
+      if (e.pointerType === 'touch' || !tracking || e.pointerId !== pointerId) return;
+      moveTrack(e.clientX, e.clientY);
+    }, { passive: true });
+    screensEl.addEventListener('pointerup', e => { if (e.pointerType !== 'touch') endTrack(); });
+    screensEl.addEventListener('pointercancel', e => { if (e.pointerType !== 'touch') endTrack(); });
+    screensEl.addEventListener('touchstart', e => {
+      if (e.touches.length !== 1) { tracking = false; hint.classList.remove('show'); return; }
+      const t = e.touches[0];
+      beginTrack(e.target, t.clientX, t.clientY);
+    }, { passive: true });
+    screensEl.addEventListener('touchmove', e => {
+      if (!tracking || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      moveTrack(t.clientX, t.clientY);
+    }, { passive: true });
+    screensEl.addEventListener('touchend', endTrack, { passive: true });
+    screensEl.addEventListener('touchcancel', endTrack, { passive: true });
   }
 
   // ============================================================
