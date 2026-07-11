@@ -865,28 +865,29 @@
   }
 
   // ============================================================
-  // Prayer countdown — fixed demo "now" baseline (15:17, so the island
-  // reads exactly "Asr in 2:14h" as established in Task 5) that then
-  // advances with real elapsed time, so the countdown genuinely ticks
-  // down live instead of being frozen — island and Prayer screen always
-  // agree because both call this same function.
+  // Prayer countdown — computed from the real current time, same
+  // pattern as command-deck/mission-control: parse each prayer's
+  // HH:MM against today's date, take the first one after "now",
+  // and wrap to Fajr tomorrow once we're past Isha.
   // ============================================================
-  const DEMO_NOW_MIN = 15 * 60 + 17; // 15:17 baseline at page load
-  const PAGE_LOAD_MS = Date.now();
-  function effectiveNowMin() {
-    const elapsedMin = (Date.now() - PAGE_LOAD_MS) / 60000;
-    return (DEMO_NOW_MIN + elapsedMin) % (24 * 60);
+  function parsePrayerTime(t) {
+    const [h, m] = t.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d;
   }
-  function toMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
   function nextPrayer() {
-    const nowMin = effectiveNowMin();
-    const times = TMS_DATA.prayerTimes.map(p => ({ ...p, min: toMin(p.time) }));
-    let next = times.find(p => p.min > nowMin);
-    let diff;
-    if (next) diff = next.min - nowMin;
-    else { next = times[0]; diff = (next.min + 24 * 60) - nowMin; }
-    const h = Math.floor(diff / 60), m = Math.floor(diff % 60);
-    return { name: next.name, time: next.time, countdown: `${h}:${String(m).padStart(2, '0')}h`, diffMin: diff };
+    const now = new Date();
+    const upcoming = TMS_DATA.prayerTimes.map(p => ({ ...p, date: parsePrayerTime(p.time) })).find(p => p.date > now);
+    const next = upcoming || (() => {
+      const first = TMS_DATA.prayerTimes[0];
+      const d = parsePrayerTime(first.time);
+      d.setDate(d.getDate() + 1);
+      return { ...first, date: d, tomorrow: true };
+    })();
+    const diffMin = Math.max(0, next.date - now) / 60000;
+    const h = Math.floor(diffMin / 60), m = Math.floor(diffMin % 60);
+    return { ...next, diffMin, countdown: `${h}:${String(m).padStart(2, '0')}h` };
   }
 
   // ============================================================

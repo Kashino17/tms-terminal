@@ -121,7 +121,7 @@ test('aux data present', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test "mockups/season2/shared/"`
+Run: `node --test mockups/season2/shared/*.test.cjs`
 Expected: FAIL — `Cannot find module './data.js'`
 
 - [ ] **Step 3: Write `data.js`**
@@ -248,7 +248,7 @@ Expected: FAIL — `Cannot find module './data.js'`
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test "mockups/season2/shared/"`
+Run: `node --test mockups/season2/shared/*.test.cjs`
 Expected: PASS (6 tests)
 
 - [ ] **Step 5: Write the chooser page**
@@ -257,7 +257,8 @@ Expected: PASS (6 tests)
 
 - [ ] **Step 6: Serve and verify**
 
-Run (background): `python3 -m http.server 4321 -d "mockups/season2" --bind 0.0.0.0`
+Run (background): `python3 "mockups/season2/serve.py"`
+Note: plain `http.server` omits `charset=utf-8` and garbles the German strings; `serve.py` (added during execution, commit 8dec447) pins it.
 Run: `curl -s -o /dev/null -w '%{http_code}' http://localhost:4321/` → Expected: `200`
 Run: `curl -s http://localhost:4321/shared/data.js | head -c 60` → Expected: starts with `// TMS_DATA`
 Run: `tailscale ip -4 2>/dev/null || /Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4` → note the IP; phone URL is `http://<ip>:4321`.
@@ -340,7 +341,7 @@ test('timer mode: autoApprove plays through with ordered payloads', async () => 
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test "mockups/season2/shared/"`
+Run: `node --test mockups/season2/shared/*.test.cjs`
 Expected: sim tests FAIL (`Cannot find module './sim.js'`), data tests still PASS.
 
 - [ ] **Step 3: Implement `sim.js`**
@@ -395,7 +396,7 @@ Expected: sim tests FAIL (`Cannot find module './sim.js'`), data tests still PAS
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test "mockups/season2/shared/"`
+Run: `node --test mockups/season2/shared/*.test.cjs`
 Expected: PASS (10 tests total)
 
 - [ ] **Step 5: Commit**
@@ -676,7 +677,7 @@ git commit --no-verify -o mockups/season2/mission-control/index.html -m "feat(se
 
 - [ ] **Step 1: Automated smoke**
 
-Run: `node --test "mockups/season2/shared/"` → all PASS.
+Run: `node --test mockups/season2/shared/*.test.cjs` → all PASS.
 Run: `for p in "" command-deck/ liquid-deck/ mission-control/; do curl -s -o /dev/null -w "%{http_code} $p\n" http://localhost:4321/$p; done` → four `200`s.
 Run: `grep -L 'shared/data.js' mockups/season2/*/index.html` → empty (every concept binds shared data).
 
