@@ -23,7 +23,7 @@ type Props = {
 export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
-  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection, voicePromptEnhanceEnabled, setVoicePromptEnhanceEnabled, managerChatRedesignEnabled, setManagerChatRedesignEnabled } = useSettingsStore();
+  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection, voicePromptEnhanceEnabled, setVoicePromptEnhanceEnabled, managerChatRedesignEnabled, setManagerChatRedesignEnabled, seasonTwoEnabled, setSeasonTwoEnabled } = useSettingsStore();
   const { tokens, notificationsEnabled, pollingIntervalMs, setNotificationsEnabled, setPollingIntervalMs, clearPlatform } = useCloudAuthStore();
   const { clearCache } = useCloudProjectsStore();
   const { apiKeys, setApiKey } = useManagerStore();
@@ -392,6 +392,35 @@ export function SettingsScreen({ navigation }: Props) {
                 onValueChange={setVoicePromptEnhanceEnabled}
                 trackColor={{ false: colors.border, true: colors.primary + '88' }}
                 thumbColor={voicePromptEnhanceEnabled ? colors.primary : colors.textDim}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* ── Design ── */}
+        <View style={[styles.section, { marginBottom: rs(28) }]}>
+          <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>Design</Text>
+
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+              onPress={() => setSeasonTwoEnabled(!seasonTwoEnabled)}
+              activeOpacity={0.7}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: seasonTwoEnabled }}
+            >
+              <View style={styles.rowLeft}>
+                <Feather name="droplet" size={ri(18)} color={seasonTwoEnabled ? colors.primary : colors.textMuted} style={{ marginRight: rs(12) }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Season 2 (Liquid Glass)</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Neue Oberfläche — jederzeit umschaltbar</Text>
+                </View>
+              </View>
+              <Switch
+                value={seasonTwoEnabled}
+                onValueChange={setSeasonTwoEnabled}
+                trackColor={{ false: colors.border, true: colors.primary + '88' }}
+                thumbColor={seasonTwoEnabled ? colors.primary : colors.textDim}
               />
             </TouchableOpacity>
           </View>

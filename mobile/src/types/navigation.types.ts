@@ -2,6 +2,7 @@ import type { WebSocketService } from '../services/websocket.service';
 
 export type RootStackParamList = {
   Home: undefined;
+  SeasonTwo: undefined;
   ServerList: undefined;
   PrayerTimes: undefined;
   Hydra: undefined;

@@ -18,6 +18,7 @@ import { ManagerChatScreen } from '../screens/ManagerChatScreen';
 import { ManagerChatScreenV2 } from '../screens/ManagerChatScreenV2';
 import { ManagerMemoryScreen } from '../screens/ManagerMemoryScreen';
 import { ManagerArtifactsScreen } from '../screens/ManagerArtifactsScreen';
+import { SeasonTwoRoot } from '../season2/SeasonTwoRoot';
 import { colors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import type { RootStackParamList } from '../types/navigation.types';
@@ -47,8 +48,22 @@ const screenOptions = {
 };
 
 export function AppNavigator() {
+  // Season-2 (Liquid Glass) UI: same stack, different initial route — classic
+  // screens stay registered so the new UI can bridge into them. The `key`
+  // remounts the navigator when the user toggles the UI version in Settings.
+  const seasonTwoEnabled = useSettingsStore((s) => s.seasonTwoEnabled);
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
+    <Stack.Navigator
+      key={seasonTwoEnabled ? 's2' : 'classic'}
+      initialRouteName={seasonTwoEnabled ? 'SeasonTwo' : 'Home'}
+      screenOptions={screenOptions}
+    >
+      {/* ── Season 2 (Liquid Glass) ──────────────────────────── */}
+      <Stack.Screen
+        name="SeasonTwo"
+        component={SeasonTwoRoot}
+        options={{ headerShown: false, animation: 'fade' }}
+      />
       {/* ── Home (new start screen) ──────────────────────────── */}
       <Stack.Screen
         name="Home"

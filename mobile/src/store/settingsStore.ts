@@ -27,6 +27,9 @@ interface SettingsState {
   /** When true, the redesigned Manager Chat (V2) is used. Beta. Default: false. */
   managerChatRedesignEnabled: boolean;
   setManagerChatRedesignEnabled: (enabled: boolean) => void;
+  /** When true, the app root renders the Season 2 (Liquid Glass) UI instead of the classic navigator. Default: false. */
+  seasonTwoEnabled: boolean;
+  setSeasonTwoEnabled: (enabled: boolean) => void;
 }
 
 export const IDLE_THRESHOLD_OPTIONS = [
@@ -80,6 +83,10 @@ export const useSettingsStore = create<SettingsState>()(
       managerChatRedesignEnabled: false,
       setManagerChatRedesignEnabled(enabled: boolean) {
         set({ managerChatRedesignEnabled: enabled });
+      },
+      seasonTwoEnabled: false,
+      setSeasonTwoEnabled(enabled: boolean) {
+        set({ seasonTwoEnabled: enabled });
       },
     }),
     {

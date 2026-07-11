@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { AppState, View, Linking } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -109,28 +110,30 @@ export default function App() {
   }
 
   return (
-    <ResponsiveProvider>
-      <SafeAreaProvider>
-        <NavigationContainer theme={darkTheme}>
-          <StatusBar style="light" backgroundColor={colors.bg} translucent={false} />
-          <AppNavigator />
-        </NavigationContainer>
-        {isEnabled && !isUnlocked && <LockScreen />}
-        <AdhanAlert
-          visible={!!adhanAlert}
-          prayerName={adhanAlert?.name ?? ''}
-          prayerTime={adhanAlert?.time ?? ''}
-          prayerArabic={adhanAlert?.arabic ?? ''}
-          onLoud={async () => {
-            setAdhanAlert(null);
-            await playAdhan();
-          }}
-          onSilent={() => {
-            setAdhanAlert(null);
-            stopAdhan();
-          }}
-        />
-      </SafeAreaProvider>
-    </ResponsiveProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ResponsiveProvider>
+        <SafeAreaProvider>
+          <NavigationContainer theme={darkTheme}>
+            <StatusBar style="light" backgroundColor={colors.bg} translucent={false} />
+            <AppNavigator />
+          </NavigationContainer>
+          {isEnabled && !isUnlocked && <LockScreen />}
+          <AdhanAlert
+            visible={!!adhanAlert}
+            prayerName={adhanAlert?.name ?? ''}
+            prayerTime={adhanAlert?.time ?? ''}
+            prayerArabic={adhanAlert?.arabic ?? ''}
+            onLoud={async () => {
+              setAdhanAlert(null);
+              await playAdhan();
+            }}
+            onSilent={() => {
+              setAdhanAlert(null);
+              stopAdhan();
+            }}
+          />
+        </SafeAreaProvider>
+      </ResponsiveProvider>
+    </GestureHandlerRootView>
   );
 }
