@@ -1082,7 +1082,7 @@
         <div class="strip-group-title">Aktive Sitzungen</div>
         ${sessionRows}
         <div class="strip-group-title">Verbindung</div>
-        <div class="strip-row"><span class="strip-row__name">${server ? escapeHtml(server.name) : 'Kein Server'}</span><span class="strip-row__meta">${server && server.latency != null ? server.latency + ' ms' : '—'}</span></div>
+        <div class="strip-row"><span class="strip-row__name">${server ? escapeHtml(server.name) : 'Kein Server'}</span><span class="strip-row__meta">${server && latencyValue != null ? latencyValue + ' ms' : '—'}</span></div>
         <div class="strip-group-title">Nächstes Gebet</div>
         <div class="strip-row" data-prayer><span class="strip-row__name">${escapeHtml(np.name)} · ${escapeHtml(np.time)}</span><span class="strip-row__meta">in ${formatCountdown(np)}</span></div>
         <div class="strip-group-title">Deploy</div>
@@ -1124,35 +1124,40 @@
     function stopGlobalTick() { clearInterval(globalTick); globalTick = null; }
 
     // ============================================================
-    // Ping/latency — ONE interval, jitters the online server's latency
-    // ±1–4ms every ~4s. Feeds the status-strip segment, its expanded
-    // card, the workspace header chip, and (trivially) the already-
-    // rendered Server-Zone tile meta. Started on unlock, stopped on
-    // lock — same discipline as stopPrayerTickTimer/stopCloudBuildTimer.
+    // Ping/latency — ONE interval, jitters a LOCAL latency value derived
+    // from a baseline captured once from TMS_DATA (never mutated, unlike
+    // the earlier cumulative-random-walk version). Feeds the status-strip
+    // segment, its expanded card, the workspace header chip, and (trivially)
+    // the already-rendered Server-Zone tile meta. Started on unlock, stopped
+    // on lock — same discipline as stopPrayerTickTimer/stopCloudBuildTimer.
     // ============================================================
     let latencyTimer = null;
+    let latencyBaseline = null;
+    let latencyValue = null;
     function stopLatencyTimer() { if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = null; } }
     function updateLatencyDisplays() {
       const server = TMS_DATA.servers.find(s => s.status === 'online');
-      const text = server && server.latency != null ? `${server.latency} ms` : '—';
+      const text = server && latencyValue != null ? `${latencyValue} ms` : '—';
       const stripEl = document.getElementById('stripLatencyValue');
       if (stripEl) stripEl.textContent = server ? text : '';
       const wsEl = document.getElementById('wsLatencyValue');
       if (wsEl) wsEl.textContent = text;
       if (server) {
         const tileMeta = document.querySelector(`.server-tile[data-id="${server.id}"] .server-tile__meta`);
-        if (tileMeta) tileMeta.textContent = `${server.latency}ms · ${server.sessions} Sessions`;
+        if (tileMeta) tileMeta.textContent = `${latencyValue}ms · ${server.sessions} Sessions`;
       }
       if (state.stripOpen) renderStripExpanded();
     }
     function jitterLatency() {
-      const server = TMS_DATA.servers.find(s => s.status === 'online');
-      if (!server || server.latency == null) return;
+      if (latencyBaseline == null) return;
       const mag = 1 + Math.floor(Math.random() * 4); // 1..4
-      server.latency = Math.max(1, server.latency + (Math.random() < 0.5 ? -mag : mag));
+      latencyValue = Math.max(1, latencyBaseline + (Math.random() < 0.5 ? -mag : mag));
       updateLatencyDisplays();
     }
     function startLatencyTimer() {
+      const server = TMS_DATA.servers.find(s => s.status === 'online');
+      latencyBaseline = server && server.latency != null ? server.latency : null;
+      latencyValue = latencyBaseline;
       updateLatencyDisplays();
       stopLatencyTimer();
       latencyTimer = setInterval(jitterLatency, 4000);
@@ -1736,7 +1741,10 @@
       const micBtn = document.getElementById('termMicBtn');
       const input = document.getElementById('termCmdInput');
       if (micBtn) { micBtn.classList.remove('is-recording', 'is-transcribing'); micBtn.setAttribute('aria-label', 'Diktieren'); }
-      if (input && input.placeholder !== DEFAULT_CMD_PLACEHOLDER) input.placeholder = DEFAULT_CMD_PLACEHOLDER;
+      if (input) {
+        input.disabled = false; // re-enable on every cleanup path (nav away, session switch, lock)
+        if (input.placeholder !== DEFAULT_CMD_PLACEHOLDER) input.placeholder = DEFAULT_CMD_PLACEHOLDER;
+      }
     }
     function startDictation() {
       if (dictationActive) return; // one at a time
@@ -1744,6 +1752,7 @@
       const input = document.getElementById('termCmdInput');
       if (!micBtn || !input) return;
       dictationActive = true;
+      input.disabled = true; // lock the input for the whole recording/transcribing flow
       micBtn.classList.add('is-recording');
       micBtn.setAttribute('aria-label', 'Aufnahme läuft…');
       dictationTimer1 = setTimeout(() => {
@@ -1755,6 +1764,7 @@
           micBtn.classList.remove('is-transcribing');
           micBtn.setAttribute('aria-label', 'Diktieren');
           input.placeholder = DEFAULT_CMD_PLACEHOLDER;
+          input.disabled = false;
           input.value = TMS_DATA.demo.dictation;
           input.focus();
           dictationActive = false;

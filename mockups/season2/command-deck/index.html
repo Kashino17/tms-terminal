@@ -649,6 +649,10 @@
       autoLock: false, pushNotif: true, adhanNotif: true, fontSize: 13,
       pin: TMS_DATA.demo.pin, lockDigits: '',
       pingTimer: null, pingBaseline: null, pingValue: null,
+      // Global single-flight dictation state: ALL cards are visible simultaneously in the
+      // stack (unlike a single-terminal view), so a per-card flag would let two mics run
+      // concurrently. Only one card may dictate at a time, tracked here.
+      dictation: { active: false, cardId: null, phase: null },
     };
     const cardState = {};
     TMS_DATA.sessions.forEach(s => {
@@ -661,8 +665,6 @@
         pendingPrompt: null,
         sim: null,
         autoTimer: null,
-        dictateTimer: null,
-        dictateActive: false,
       };
     });
 
@@ -1267,49 +1269,54 @@
       input.value = '';
     }
 
-    // One dictation at a time per card: recording (~1.8s) → transcribing (~0.7s) → inserted.
+    // ONE dictation at a time GLOBALLY across all cards (all cards are visible at once in
+    // the stack, so a per-card flag would let two mics record concurrently): recording
+    // (~1.8s) → transcribing (~0.7s) → inserted. Timer ids tracked in `dictationTimers` so
+    // stopAllDictationTimers() can clear whichever one is in flight.
+    let dictationTimers = [];
     function startDictation(id) {
-      const cs = cardState[id];
-      if (cs.dictateActive) return; // ignore taps while active
-      cs.dictateActive = true;
+      if (state.dictation.active) return; // ignore taps while another card is dictating
       const micBtn = document.querySelector(`.term-input-row__mic[data-card-id="${id}"]`);
       const input = document.querySelector(`.term-input-row__field[data-card-id="${id}"]`);
-      if (micBtn) micBtn.classList.add('is-recording');
-      if (input) { input.disabled = true; input.placeholder = 'Aufnahme läuft…'; }
-      cs.dictateTimer = setTimeout(() => {
-        if (micBtn) { micBtn.classList.remove('is-recording'); micBtn.classList.add('is-transcribing'); }
-        if (input) input.placeholder = 'Transkribiere…';
-        cs.dictateTimer = setTimeout(() => {
-          cs.dictateActive = false;
-          cs.dictateTimer = null;
-          if (micBtn) micBtn.classList.remove('is-transcribing');
-          if (input) {
-            input.disabled = false;
-            input.placeholder = 'Befehl eingeben…';
-            input.value = TMS_DATA.demo.dictation;
-            input.focus();
-            const len = input.value.length;
-            input.setSelectionRange(len, len);
-          }
+      if (!micBtn || !input) return;
+      state.dictation = { active: true, cardId: id, phase: 'recording' };
+      micBtn.classList.add('is-recording');
+      input.disabled = true;
+      input.placeholder = 'Aufnahme läuft…';
+      const t1 = setTimeout(() => {
+        state.dictation.phase = 'transcribing';
+        micBtn.classList.remove('is-recording');
+        micBtn.classList.add('is-transcribing');
+        input.placeholder = 'Transkribiere…';
+        const t2 = setTimeout(() => {
+          state.dictation = { active: false, cardId: null, phase: null };
+          dictationTimers = [];
+          micBtn.classList.remove('is-transcribing');
+          input.disabled = false;
+          input.placeholder = 'Befehl eingeben…';
+          input.value = TMS_DATA.demo.dictation;
+          input.focus();
+          const len = input.value.length;
+          input.setSelectionRange(len, len);
           toast('Diktat eingefügt');
         }, 700);
+        dictationTimers = [t2];
       }, 1800);
+      dictationTimers = [t1];
     }
 
-    // Clears every in-flight dictation timer + resets the affected mic/input DOM.
+    // Clears the in-flight dictation timer (if any) + resets the affected mic/input DOM.
     // Called on screen exit so recording/transcribing state never leaks across navigation.
     function stopAllDictationTimers() {
-      Object.keys(cardState).forEach(id => {
-        const cs = cardState[id];
-        if (!cs.dictateTimer && !cs.dictateActive) return;
-        clearTimeout(cs.dictateTimer);
-        cs.dictateTimer = null;
-        cs.dictateActive = false;
-        const micBtn = document.querySelector(`.term-input-row__mic[data-card-id="${id}"]`);
-        const input = document.querySelector(`.term-input-row__field[data-card-id="${id}"]`);
-        if (micBtn) micBtn.classList.remove('is-recording', 'is-transcribing');
-        if (input) { input.disabled = false; input.placeholder = 'Befehl eingeben…'; }
-      });
+      if (!state.dictation.active) return;
+      dictationTimers.forEach(t => clearTimeout(t));
+      dictationTimers = [];
+      const { cardId } = state.dictation;
+      const micBtn = document.querySelector(`.term-input-row__mic[data-card-id="${cardId}"]`);
+      const input = document.querySelector(`.term-input-row__field[data-card-id="${cardId}"]`);
+      if (micBtn) micBtn.classList.remove('is-recording', 'is-transcribing');
+      if (input) { input.disabled = false; input.placeholder = 'Befehl eingeben…'; }
+      state.dictation = { active: false, cardId: null, phase: null };
     }
 
     // ============================================================
