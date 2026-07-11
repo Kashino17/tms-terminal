@@ -45,3 +45,12 @@ test('aux data present', () => {
   assert.ok(DATA.processes.length >= 6 && DATA.watchers.length >= 2);
   assert.equal(DATA.update.latest, '2.0.0');
 });
+
+test('per-session notes/todos and dictation demo present', () => {
+  for (const s of DATA.sessions) {
+    assert.ok(Array.isArray(s.notes) && Array.isArray(s.todos));
+    for (const t of s.todos) assert.ok(t.id && t.text && typeof t.done === 'boolean');
+  }
+  assert.ok(DATA.sessions.filter(s => s.todos.length > 0).length >= 3);
+  assert.ok(typeof DATA.demo.dictation === 'string' && DATA.demo.dictation.length > 5);
+});

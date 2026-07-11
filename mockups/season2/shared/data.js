@@ -20,20 +20,28 @@
   ];
 
   const DATA = {
-    demo: { wrappedLinkUrl, pin: '1234' },
+    demo: { wrappedLinkUrl, pin: '1234', dictation: 'npm test && vercel logs pinterest-scraper --follow' },
     servers: [
       { id: 'srv-mac', name: 'Ayysir MacBook', host: '100.64.0.12', port: 8767, status: 'online',  sessions: 4, os: 'macOS 26', latency: 12 },
       { id: 'srv-hetzner', name: 'Hetzner Cloud', host: '100.64.0.31', port: 8767, status: 'offline', sessions: 0, os: 'Ubuntu 24.04', latency: null },
     ],
     sessions: [
       { id: 't1', name: 'Pinterest Scraper', description: 'Claude fixt fehlschlagende Tests', colorTag: '#e8590c', status: 'running', live: true, script: claudeScript,
-        buffer: ['\x1b[2m~/dev/pinterest-scraper\x1b[0m $ claude "fix the failing tests"'] },
+        buffer: ['\x1b[2m~/dev/pinterest-scraper\x1b[0m $ claude "fix the failing tests"'],
+        notes: [ { id: 't1n1', text: 'Parser wirft bei 404 statt leerem Array — Fix in parser.ts:41', time: 'heute' } ],
+        todos: [ { id: 't1d1', text: 'Tests grün bekommen', done: true }, { id: 't1d2', text: 'Preview-Deployment prüfen', done: false } ] },
       { id: 't2', name: 'TMS Server', description: 'Live-Logs des Terminal-Servers', colorTag: '#1971c2', status: 'idle', live: false,
-        buffer: ['\x1b[2m~/Desktop/tms-terminal\x1b[0m $ tms-terminal start', '[ws] listening on :8767', '[fcm] push service ready', '[pty] session t1 attached (120x38)', '[health] audio ok · whisper large-v3-turbo geladen'] },
+        buffer: ['\x1b[2m~/Desktop/tms-terminal\x1b[0m $ tms-terminal start', '[ws] listening on :8767', '[fcm] push service ready', '[pty] session t1 attached (120x38)', '[health] audio ok · whisper large-v3-turbo geladen'],
+        notes: [ { id: 't2n1', text: 'Whisper large-v3-turbo läuft seit Boot stabil', time: 'heute' } ],
+        todos: [ { id: 't2d1', text: 'Log-Rotation einrichten', done: false } ] },
       { id: 't3', name: 'Deploy Watch', description: 'Vercel Deployment beobachten', colorTag: '#2f9e44', status: 'done', live: false,
-        buffer: ['$ vercel logs pinterest-scraper --follow', '2026-07-11 14:02:11  BUILD  Compiled successfully', '2026-07-11 14:02:19  READY  ' + wrappedLinkUrl, '\x1b[32m✓ Deployment ready\x1b[0m'] },
+        buffer: ['$ vercel logs pinterest-scraper --follow', '2026-07-11 14:02:11  BUILD  Compiled successfully', '2026-07-11 14:02:19  READY  ' + wrappedLinkUrl, '\x1b[32m✓ Deployment ready\x1b[0m'],
+        notes: [ { id: 't3n1', text: 'Deploy-Baseline: 68s Build, 27 Tests', time: 'heute' } ],
+        todos: [ { id: 't3d1', text: 'Alte Preview-Deployments aufräumen', done: false } ] },
       { id: 't4', name: 'Scratchpad', description: 'Freies Terminal', colorTag: '#9c36b5', status: 'waiting', live: false,
-        buffer: ['$ htop', 'Warte auf Eingabe…'] },
+        buffer: ['$ htop', 'Warte auf Eingabe…'],
+        notes: [],
+        todos: [ { id: 't4d1', text: 'htop durch btop ersetzen?', done: false } ] },
     ],
     cloudProjects: [
       { id: 'c1', provider: 'vercel', name: 'pinterest-scraper', folder: 'Kunden/Pinterest', favorite: true,  status: 'ready',    lastDeploy: 'vor 8 Min',
