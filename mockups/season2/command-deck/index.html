@@ -102,6 +102,8 @@
   .term-card__reorder { display: flex; flex-direction: column; gap: 2px; flex: 0 0 auto; }
   .term-card__reorder button { color: var(--text-dim); font-size: 9px; cursor: pointer; padding: 2px 4px; line-height: 1; transition: color var(--transition); }
   .term-card__reorder button:hover { color: var(--text); }
+  .term-card__notes-btn { flex: 0 0 auto; align-self: center; color: var(--text-dim); font-size: 14px; cursor: pointer; padding: 4px; line-height: 1; opacity: .8; transition: opacity var(--transition); }
+  .term-card__notes-btn:hover { opacity: 1; }
 
   .term-card__body { border-top: var(--hairline); }
   .term-card[data-collapsed="true"] .term-card__body { display: none; }
@@ -165,6 +167,23 @@
   .term-toolbar button { flex: 0 0 auto; min-width: 38px; padding: 8px 10px; background: var(--bg); border: var(--hairline); border-radius: 6px; font: 600 12px var(--font-mono); cursor: pointer; transition: border-color var(--transition), color var(--transition); }
   .term-toolbar button:active { background: var(--bg-sunken); }
   #selToggleBtn.is-on { border-color: var(--accent); color: var(--accent); }
+
+  /* ---------- Terminal input row (per-card command entry + dictation) ---------- */
+  .term-input-row { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: var(--hairline); }
+  .term-input-row__prompt { flex: 0 0 auto; color: var(--text-dim); font: 600 13px var(--font-mono); }
+  .term-input-row__field { flex: 1; min-width: 0; padding: 7px 9px; background: var(--bg); border: var(--hairline); border-radius: 6px; font: 12.5px var(--font-mono); color: var(--text); }
+  .term-input-row__field::placeholder { color: var(--text-dim); }
+  .term-input-row__field:disabled { opacity: .55; }
+  .term-input-row__send { flex: 0 0 auto; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border: var(--hairline); border-radius: 6px; color: var(--text-dim); font: 600 13px var(--font-mono); cursor: pointer; transition: border-color var(--transition), color var(--transition); }
+  .term-input-row__send:hover { border-color: var(--accent); color: var(--accent); }
+  .term-input-row__mic { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; border: var(--hairline); color: var(--text-dim); display: flex; align-items: center; justify-content: center; font-size: 10px; cursor: pointer; transition: border-color var(--transition), color var(--transition); }
+  .term-input-row__mic.is-recording { border-color: var(--err); color: var(--err); animation: pulse 1s ease-in-out infinite; }
+  .term-input-row__mic.is-transcribing { border-color: var(--accent); color: var(--accent); }
+
+  /* ---------- Ping / connection chip (Terminals header) ---------- */
+  .ping-chip { display: inline-flex; align-items: center; gap: 6px; font: 12px var(--font-mono); color: var(--text-dim); padding: 4px 9px; border: var(--hairline); border-radius: 20px; flex: 0 0 auto; }
+  .ping-chip__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex: 0 0 auto; }
+  .ping-chip[data-state="offline"] .ping-chip__dot { background: var(--warn); }
 
   /* ---------- Bottom command bar ---------- */
   #commandbar { flex: 0 0 auto; height: var(--commandbar-h); display: flex; border-top: var(--hairline); background: var(--bg-raised); }
@@ -273,6 +292,21 @@
   .note-card__title, .artifact-card__title { font: 600 13px var(--font-ui); margin-bottom: 4px; }
   .note-card__body { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
   .note-card__time, .artifact-card__meta { margin-top: 6px; font: var(--fs-micro) var(--font-mono); color: var(--text-dim); }
+
+  /* Grouping for the global Notizen tool panel: "Allgemein" + one group per session with notes */
+  .notes-group { margin-bottom: 18px; }
+  .notes-group:last-child { margin-bottom: 0; }
+  .notes-group__title { font: 700 var(--fs-micro) var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); padding: 0 0 8px; }
+
+  /* Session sheet: add-row (Notiz/Todo hinzufügen…) + todo checklist */
+  .sheet-add-row { display: flex; gap: 8px; margin-top: 12px; }
+  .sheet-add-row input { flex: 1; padding: 9px 12px; background: var(--bg); border: var(--hairline); border-radius: 8px; font: 13px var(--font-ui); }
+  .todo-list { display: flex; flex-direction: column; }
+  .todo-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 2px; border-top: var(--hairline); cursor: pointer; }
+  .todo-list .todo-row:first-child { border-top: none; }
+  .todo-row input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 auto; accent-color: var(--accent); }
+  .todo-row__text { flex: 1; font-size: 13px; }
+  .todo-row__text.is-done { color: var(--text-dim); text-decoration: line-through; }
 
   .shot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
   .shot-tile { aspect-ratio: 9 / 16; background: linear-gradient(160deg, #1c1c22, #101013); border: var(--hairline); border-radius: var(--radius-sm); }
@@ -454,6 +488,9 @@
           <span class="screen-head__eyebrow">Terminals</span>
           <span class="screen-head__count" id="terminalCount"></span>
           <div class="screen-head__actions">
+            <span class="ping-chip" id="pingChip" aria-label="Verbindung zum Server">
+              <span class="ping-chip__dot"></span><span class="ping-chip__value" id="pingValue"></span>
+            </span>
             <button class="icon-btn" id="termToolsBtn" aria-label="Werkzeuge öffnen">⋯</button>
           </div>
           <p class="screen-head__subtitle" id="terminalsSubtitle"></p>
@@ -611,6 +648,7 @@
       cloudView: 'folder', cloudProviderFilter: 'all', cloudDetailId: null, cloudDetailTab: 'env', cloudBuildTimer: null,
       autoLock: false, pushNotif: true, adhanNotif: true, fontSize: 13,
       pin: TMS_DATA.demo.pin, lockDigits: '',
+      pingTimer: null, pingBaseline: null, pingValue: null,
     };
     const cardState = {};
     TMS_DATA.sessions.forEach(s => {
@@ -623,6 +661,8 @@
         pendingPrompt: null,
         sim: null,
         autoTimer: null,
+        dictateTimer: null,
+        dictateActive: false,
       };
     });
 
@@ -789,6 +829,7 @@
             <p class="term-card__desc">${escapeHtml(s.description)}</p>
           </div>
           <span class="status-chip" data-status="${s.status}"><span class="status-chip__dot"></span>${statusLabel(s.status)}</span>
+          <button class="term-card__notes-btn" data-act="notes" aria-label="Notizen &amp; Todos öffnen">📝</button>
           <div class="term-card__reorder">
             <button data-act="up" aria-label="Nach oben">▲</button>
             <button data-act="down" aria-label="Nach unten">▼</button>
@@ -798,6 +839,12 @@
           <div class="term-pre" data-card-id="${s.id}"></div>
           <div class="prompt-card" hidden></div>
           <button class="replay-btn" hidden>▶ Session erneut abspielen</button>
+          <div class="term-input-row">
+            <span class="term-input-row__prompt">$</span>
+            <input type="text" class="term-input-row__field" data-card-id="${s.id}" placeholder="Befehl eingeben…" autocomplete="off" spellcheck="false" aria-label="Befehl eingeben">
+            <button class="term-input-row__send" data-act="send" aria-label="Befehl senden">↵</button>
+            <button class="term-input-row__mic" data-act="mic" data-card-id="${s.id}" aria-label="Diktieren">●</button>
+          </div>
         </div>
       `;
       card.addEventListener('pointerdown', () => setActiveCard(s.id));
@@ -886,9 +933,17 @@
         if (act === 'toggle') toggleCollapse(id);
         else if (act === 'up') moveCard(id, -1);
         else if (act === 'down') moveCard(id, 1);
+        else if (act === 'send') sendTerminalCommand(id);
+        else if (act === 'mic') startDictation(id);
+        else if (act === 'notes') openSessionNotesSheet(id);
       });
       stackEl.addEventListener('keydown', e => {
         if (e.target.classList.contains('term-card__name') && e.key === 'Enter') e.target.blur();
+        if (e.target.classList.contains('term-input-row__field') && e.key === 'Enter') {
+          e.preventDefault();
+          const card = e.target.closest('.term-card');
+          if (card) sendTerminalCommand(card.dataset.id);
+        }
       });
       stackEl.addEventListener('focusout', e => {
         if (!e.target.classList || !e.target.classList.contains('term-card__name')) return;
@@ -1198,6 +1253,92 @@
     }
 
     // ============================================================
+    // Terminal input row: send command + dictation (per card)
+    // ============================================================
+    function sendTerminalCommand(id) {
+      const input = document.querySelector(`.term-input-row__field[data-card-id="${id}"]`);
+      if (!input || input.disabled) return;
+      const cmd = input.value.trim();
+      if (!cmd) return;
+      const cs = cardState[id];
+      cs.lines.push(`\x1b[2m$\x1b[0m ${cmd}`);
+      cs.lines.push('\x1b[2m(Demo) Befehl an PTY gesendet\x1b[0m');
+      renderCardLines(id);
+      input.value = '';
+    }
+
+    // One dictation at a time per card: recording (~1.8s) → transcribing (~0.7s) → inserted.
+    function startDictation(id) {
+      const cs = cardState[id];
+      if (cs.dictateActive) return; // ignore taps while active
+      cs.dictateActive = true;
+      const micBtn = document.querySelector(`.term-input-row__mic[data-card-id="${id}"]`);
+      const input = document.querySelector(`.term-input-row__field[data-card-id="${id}"]`);
+      if (micBtn) micBtn.classList.add('is-recording');
+      if (input) { input.disabled = true; input.placeholder = 'Aufnahme läuft…'; }
+      cs.dictateTimer = setTimeout(() => {
+        if (micBtn) { micBtn.classList.remove('is-recording'); micBtn.classList.add('is-transcribing'); }
+        if (input) input.placeholder = 'Transkribiere…';
+        cs.dictateTimer = setTimeout(() => {
+          cs.dictateActive = false;
+          cs.dictateTimer = null;
+          if (micBtn) micBtn.classList.remove('is-transcribing');
+          if (input) {
+            input.disabled = false;
+            input.placeholder = 'Befehl eingeben…';
+            input.value = TMS_DATA.demo.dictation;
+            input.focus();
+            const len = input.value.length;
+            input.setSelectionRange(len, len);
+          }
+          toast('Diktat eingefügt');
+        }, 700);
+      }, 1800);
+    }
+
+    // Clears every in-flight dictation timer + resets the affected mic/input DOM.
+    // Called on screen exit so recording/transcribing state never leaks across navigation.
+    function stopAllDictationTimers() {
+      Object.keys(cardState).forEach(id => {
+        const cs = cardState[id];
+        if (!cs.dictateTimer && !cs.dictateActive) return;
+        clearTimeout(cs.dictateTimer);
+        cs.dictateTimer = null;
+        cs.dictateActive = false;
+        const micBtn = document.querySelector(`.term-input-row__mic[data-card-id="${id}"]`);
+        const input = document.querySelector(`.term-input-row__field[data-card-id="${id}"]`);
+        if (micBtn) micBtn.classList.remove('is-recording', 'is-transcribing');
+        if (input) { input.disabled = false; input.placeholder = 'Befehl eingeben…'; }
+      });
+    }
+
+    // ============================================================
+    // Ping / connection chip (Terminals header) — single interval, never re-created.
+    // ============================================================
+    function renderPing() {
+      const el = document.getElementById('pingValue');
+      if (el) el.textContent = `${state.pingValue} ms`;
+    }
+
+    function tickPing() {
+      if (document.body.classList.contains('is-locked')) return; // stop while locked
+      if (document.hidden) return; // pause DOM writes when the tab itself is hidden
+      const screen = document.querySelector('[data-screen="terminals"]');
+      if (!screen || screen.hidden) return; // pause DOM writes while off-screen
+      const jitter = (1 + Math.floor(Math.random() * 4)) * (Math.random() < 0.5 ? -1 : 1);
+      state.pingValue = Math.max(1, state.pingBaseline + jitter);
+      renderPing();
+    }
+
+    function initPing() {
+      if (state.pingTimer) return; // guard: never multiply the interval on re-entry
+      state.pingBaseline = (TMS_DATA.servers[0] && TMS_DATA.servers[0].latency) || 12;
+      state.pingValue = state.pingBaseline;
+      renderPing();
+      state.pingTimer = setInterval(tickPing, 4000);
+    }
+
+    // ============================================================
     // Tools screen + bottom sheet (Dateien, SQL, Ports, Prozesse,
     // Snippets, Notizen, Screenshots, Browser, Watchers)
     // ============================================================
@@ -1330,13 +1471,24 @@
       return { html, wire };
     }
 
+    // Global Notizen tool panel: light read-only grouping — "Allgemein" (TMS_DATA.notes)
+    // plus one group per session that currently has notes (mutated in-memory via the
+    // per-session sheet), so additions there show up here too on next open.
     function buildNotesSheet() {
-      const html = `<div class="notes-grid">${TMS_DATA.notes.map(n => `
-        <div class="note-card">
-          <div class="note-card__title">${escapeHtml(n.title)}</div>
-          <div class="note-card__body">${escapeHtml(n.body)}</div>
-          <div class="note-card__time">${escapeHtml(n.time)}</div>
-        </div>`).join('')}</div>`;
+      const groups = [{ label: 'Allgemein', notes: TMS_DATA.notes.map(n => ({ title: n.title, body: n.body, time: n.time })) }];
+      TMS_DATA.sessions.forEach(s => {
+        if (s.notes.length) groups.push({ label: s.name, notes: s.notes.map(n => ({ title: null, body: n.text, time: n.time })) });
+      });
+      const html = groups.map(g => `
+        <div class="notes-group">
+          <div class="notes-group__title">${escapeHtml(g.label)}</div>
+          <div class="notes-grid">${g.notes.map(n => `
+            <div class="note-card">
+              ${n.title ? `<div class="note-card__title">${escapeHtml(n.title)}</div>` : ''}
+              <div class="note-card__body">${escapeHtml(n.body)}</div>
+              <div class="note-card__time">${escapeHtml(n.time)}</div>
+            </div>`).join('')}</div>
+        </div>`).join('');
       return { html };
     }
 
@@ -1388,6 +1540,92 @@
         });
       };
       return { html, wire };
+    }
+
+    // ============================================================
+    // Session notes & todos sheet (per terminal card, 📝 button)
+    // Reuses the global #sheet (openSheet/closeSheet) — joins the same
+    // lock-net + [hidden]/:not([hidden]) discipline as the tool sheets.
+    // ============================================================
+    let sessionSheetId = null;
+    let sessionSheetTab = 'notes';
+
+    function openSessionNotesSheet(id) {
+      const session = TMS_DATA.sessions.find(s => s.id === id);
+      if (!session) return;
+      sessionSheetId = id;
+      sessionSheetTab = 'notes';
+      openSheet(`${session.name} — Notizen & Todos`, `
+        <div class="subtabs" id="sessionSheetTabs">
+          <button data-tab="notes" class="active">Notizen</button>
+          <button data-tab="todos">Todos</button>
+        </div>
+        <div id="sessionSheetBody"></div>
+      `);
+      document.getElementById('sessionSheetTabs').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-tab]');
+        if (!btn) return;
+        sessionSheetTab = btn.dataset.tab;
+        document.querySelectorAll('#sessionSheetTabs button').forEach(b => b.classList.toggle('active', b === btn));
+        renderSessionSheetBody();
+      });
+      renderSessionSheetBody();
+    }
+
+    function renderSessionSheetBody() {
+      const session = TMS_DATA.sessions.find(s => s.id === sessionSheetId);
+      const host = document.getElementById('sessionSheetBody');
+      if (!session || !host) return;
+      if (sessionSheetTab === 'notes') {
+        host.innerHTML = `
+          <div class="notes-grid">${session.notes.length ? session.notes.map(n => `
+            <div class="note-card">
+              <div class="note-card__body">${escapeHtml(n.text)}</div>
+              <div class="note-card__time">${escapeHtml(n.time)}</div>
+            </div>`).join('') : '<div class="palette__empty">Keine Notizen</div>'}</div>
+          <div class="sheet-add-row">
+            <input type="text" id="sessionNoteInput" placeholder="Notiz hinzufügen…" autocomplete="off">
+            <button class="btn-secondary" id="sessionNoteAddBtn">Hinzufügen</button>
+          </div>`;
+        const add = () => {
+          const input = document.getElementById('sessionNoteInput');
+          const text = input.value.trim();
+          if (!text) return;
+          session.notes.push({ id: `${session.id}n${Date.now()}`, text, time: 'gerade eben' });
+          renderSessionSheetBody();
+        };
+        document.getElementById('sessionNoteAddBtn').addEventListener('click', add);
+        document.getElementById('sessionNoteInput').addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+      } else {
+        host.innerHTML = `
+          <div class="todo-list" id="sessionTodoList">${session.todos.length ? session.todos.map(t => `
+            <label class="todo-row" data-todo="${t.id}">
+              <input type="checkbox" ${t.done ? 'checked' : ''}>
+              <span class="todo-row__text${t.done ? ' is-done' : ''}">${escapeHtml(t.text)}</span>
+            </label>`).join('') : '<div class="palette__empty">Keine Todos</div>'}</div>
+          <div class="sheet-add-row">
+            <input type="text" id="sessionTodoInput" placeholder="Todo hinzufügen…" autocomplete="off">
+            <button class="btn-secondary" id="sessionTodoAddBtn">Hinzufügen</button>
+          </div>`;
+        const list = document.getElementById('sessionTodoList');
+        if (list) list.addEventListener('change', e => {
+          const row = e.target.closest('[data-todo]');
+          if (!row) return;
+          const todo = session.todos.find(t => t.id === row.dataset.todo);
+          if (!todo) return;
+          todo.done = e.target.checked;
+          row.querySelector('.todo-row__text').classList.toggle('is-done', todo.done);
+        });
+        const add = () => {
+          const input = document.getElementById('sessionTodoInput');
+          const text = input.value.trim();
+          if (!text) return;
+          session.todos.push({ id: `${session.id}d${Date.now()}`, text, done: false });
+          renderSessionSheetBody();
+        };
+        document.getElementById('sessionTodoAddBtn').addEventListener('click', add);
+        document.getElementById('sessionTodoInput').addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+      }
     }
 
     // ============================================================
@@ -2005,6 +2243,8 @@
       document.body.classList.add('is-locked');
       state.lockDigits = '';
       renderPinDots(0);
+      closeSheet(); // join the lock-net: the fixed-position #sheet must never float above the lock screen
+      closePalette();
       show('lock');
     }
 
@@ -2170,6 +2410,7 @@
     // ============================================================
     function show(name) {
       if (name !== 'cloud') stopCloudBuildTimer();
+      if (name !== 'terminals') stopAllDictationTimers();
       document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
       document.querySelectorAll('#commandbar [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
       if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
@@ -2218,6 +2459,7 @@
     document.getElementById('updateDismiss').addEventListener('click', () => { document.getElementById('updateBanner').hidden = true; });
     state.activeServerName = (TMS_DATA.servers.find(s => s.status === 'online') || {}).name || '';
     updateTerminalsHeader();
+    initPing();
 
     renderTools();
 
