@@ -209,10 +209,22 @@
   /* ============================================================
      Terminal workspace — spatial swipeable stack
      ============================================================ */
-  .term-header { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 12px; flex: none; }
-  .term-header h2 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+  .term-header { display: flex; flex-direction: column; gap: 10px; padding: 0 2px 12px; flex: none; }
+  .term-header__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .term-header__top h2 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+  .term-header__actions { display: flex; align-items: center; gap: 8px; flex: none; }
   .overview-btn { width: 38px; height: 38px; border-radius: 12px; font-size: 17px; display: flex; align-items: center; justify-content: center; }
   .overview-btn.is-on { background: rgba(106,168,255,.2); color: var(--accent); }
+
+  /* Stack ⇄ Liste segmented view toggle */
+  .view-toggle { display: inline-flex; gap: 3px; padding: 4px; border-radius: 999px; align-self: flex-start; }
+  .view-toggle__btn { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; font: 600 12.5px var(--font-ui); color: var(--text-dim); transition: background 220ms var(--spring), color 220ms var(--spring); }
+  .view-toggle__btn svg { width: 15px; height: 15px; flex: none; }
+  .view-toggle__btn[aria-selected="true"] { color: var(--text); background: rgba(106,168,255,.2); }
+
+  .term-body-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .term-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .term-body-wrap.overview-active .term-body { visibility: hidden; }
 
   .workspace { flex: 1; min-height: 0; display: flex; gap: 14px; padding: 0 16px; }
   .stack-pane { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; border-radius: var(--radius-lg); }
@@ -270,15 +282,39 @@
   .rail-item.drop-target, .stack-pane.drop-target { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-md); }
   .overview-tile .status-chip { padding: 4px 6px; }
 
-  /* overview 2x2 grid */
-  .overview-grid { display: none; position: absolute; inset: 0; z-index: 150; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; padding: 4px; }
+  /* overview 2x2 grid — lives above .term-body (either Stack or Liste), a
+     transient third state layered over whichever view is currently active */
+  .overview-grid { display: none; position: absolute; inset: 0; z-index: 150; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(120px, 1fr); gap: 10px; padding: 4px; overflow-y: auto; }
   .overview-grid.is-open { display: grid; }
-  .stack-pane.overview-active .stack { visibility: hidden; }
   .overview-tile { min-width: 0; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 6px; text-align: left; transition: transform 200ms var(--spring); cursor: pointer; }
   .overview-tile:active { transform: scale(.96); }
   .overview-tile__head { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .overview-tile__name { font-size: 12.5px; font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .overview-tile__body { flex: 1; min-width: 0; min-height: 0; overflow: hidden; font: 10px/1.4 var(--font-mono); color: var(--text-dim); word-break: break-word; overflow-wrap: anywhere; }
+
+  /* ============================================================
+     Liste view — vertical terminal stack (Command-Deck ergonomics,
+     Liquid glass styling). Cards reuse .card-header/.card-body/
+     .term-input-row/.card-note-btn verbatim from Stack so both views
+     render off the exact same cardState/TMS_DATA — never a copy.
+     ============================================================ */
+  .term-list { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .term-list__inner { max-width: 640px; margin: 0 auto; padding: 2px 16px calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 14px; }
+  .list-card { display: flex; flex-direction: column; flex: none; }
+  .list-card .card-header { cursor: default; }
+  /* Block, not flex: .card-body inherits flex:1/min-height:0 from the Stack
+     context, which would collapse to ~0px inside an auto-height flex column.
+     max-height below (not flex-grow) is what bounds it here. */
+  .list-card__collapsible { border-top: 1px solid rgba(255,255,255,.08); padding-top: 10px; }
+  .list-card[data-collapsed="true"] .list-card__collapsible { display: none; }
+  .list-card__body { flex: none; max-height: min(300px, 42vh); }
+  .chevron-btn { flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--text-dim); font-size: 12px; transition: transform 220ms var(--spring), color 200ms var(--spring), background 200ms var(--spring); }
+  .chevron-btn:active { background: rgba(255,255,255,.1); }
+  .list-card[data-collapsed="true"] .chevron-btn { transform: rotate(-90deg); }
+
+  .add-terminal-cta { flex: none; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 16px; border-radius: 999px; font: 700 14.5px var(--font-ui); color: var(--accent); margin-top: 2px; transition: background 220ms var(--spring), transform 150ms var(--spring); }
+  .add-terminal-cta:active { transform: scale(.98); background: rgba(106,168,255,.14); }
+  .add-terminal-cta__icon { font-size: 18px; line-height: 1; }
 
   /* toolbar */
   #toolbarHost { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); transform: translateX(-50%); z-index: 45; display: none; flex-direction: column; align-items: center; gap: 6px; }
@@ -837,10 +873,19 @@
   // ============================================================
   // State
   // ============================================================
+  // Phase 2 — Stack ⇄ Liste view preference persists across reloads; the
+  // chosen view is the only piece of terminal-screen state that survives.
+  const TERM_VIEW_KEY = 'tms-liquid-deck-terminal-view';
+  function loadTerminalView() {
+    try { return localStorage.getItem(TERM_VIEW_KEY) === 'list' ? 'list' : 'stack'; } catch (e) { return 'stack'; }
+  }
+
   const state = {
     order: TMS_DATA.sessions.map(s => s.id),   // logical stack position -> session id (mutable via rail swap)
     activeIndex: 0,
     activeFloat: 0,
+    activeCardId: null, // last-interacted-with terminal, kept in sync across Stack + Liste (used by the Aa selection toolbar)
+    terminalView: loadTerminalView(),
     overviewOpen: false,
     islandOpen: false,
     pendingPromptId: null,
@@ -854,10 +899,40 @@
     // be recording/transcribing at a time.
     dictation: { active: false, cardId: null, phase: null },
   };
-  const cardState = {}; // id -> { lines, sim, autoApprove, pendingPrompt, autoTimer, selectionMode, selection }
+  const cardState = {}; // id -> { lines, sim, autoApprove, pendingPrompt, autoTimer, selectionMode, selection, collapsed, showReplay }
   TMS_DATA.sessions.forEach(s => {
-    cardState[s.id] = { lines: s.buffer.slice(), sim: null, autoApprove: false, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null };
+    cardState[s.id] = { lines: s.buffer.slice(), sim: null, autoApprove: false, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
   });
+  state.activeCardId = state.order[0] || null;
+
+  // ============================================================
+  // Requirement 2 — unlimited terminals ("+ Neues Terminal"). New sessions
+  // are pushed straight into TMS_DATA.sessions (in-memory, mockup-only) so
+  // every renderer that already reads TMS_DATA.sessions/state.order picks
+  // them up automatically: Liste, Stack, ⊞ overview, the ≥700px rail and
+  // the Spotlight index all share this exact same array — never a copy.
+  // ============================================================
+  const NEW_TERMINAL_COLORS = ['#e8590c', '#1971c2', '#2f9e44', '#9c36b5', '#0c8599', '#e64980'];
+  let newTerminalCounter = TMS_DATA.sessions.reduce((max, s) => {
+    const m = /^t(\d+)$/.exec(s.id);
+    return m ? Math.max(max, Number(m[1])) : max;
+  }, 0);
+  function createTerminalSession() {
+    newTerminalCounter++;
+    const num = newTerminalCounter;
+    const id = 't' + num;
+    const session = {
+      id, name: 'Terminal ' + num, description: 'Neues Terminal',
+      colorTag: NEW_TERMINAL_COLORS[(num - 1) % NEW_TERMINAL_COLORS.length],
+      status: 'idle', live: false,
+      buffer: ['\x1b[2m~\x1b[0m $ '],
+      notes: [], todos: [],
+    };
+    TMS_DATA.sessions.push(session);
+    state.order.push(id);
+    cardState[id] = { lines: session.buffer.slice(), sim: null, autoApprove: false, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
+    return session;
+  }
 
   // ============================================================
   // Generic helpers
@@ -1010,7 +1085,7 @@
         const id = row.dataset.session;
         closeIsland();
         goToTerminals();
-        setActive(state.order.indexOf(id));
+        focusTerminal(id);
       });
     });
   }
@@ -1207,32 +1282,110 @@
     const host = document.querySelector('[data-screen="terminals"]');
     host.innerHTML = `
       <div class="term-header">
-        <h2>Terminals</h2>
-        <button class="overview-btn glass" id="overviewBtn" aria-label="Übersicht" title="Übersicht">⊞</button>
-      </div>
-      <div class="workspace">
-        <div class="stack-pane">
-          <div class="stack" id="stack"></div>
-          <div class="overview-grid" id="overviewGrid"></div>
+        <div class="term-header__top">
+          <h2>Terminals</h2>
+          <div class="term-header__actions">
+            <button class="overview-btn glass" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">+</button>
+            <button class="overview-btn glass" id="overviewBtn" aria-label="Übersicht" title="Übersicht">⊞</button>
+          </div>
         </div>
-        <div class="rail" id="rail"></div>
+        <div class="view-toggle glass" id="viewToggle" role="tablist" aria-label="Ansicht">
+          <button class="view-toggle__btn" data-view="stack" role="tab" aria-selected="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="7.5" width="13" height="13" rx="2.5" opacity=".5"/><rect x="4.5" y="4.5" width="13" height="13" rx="2.5"/></svg>
+            <span>Stack</span>
+          </button>
+          <button class="view-toggle__btn" data-view="list" role="tab" aria-selected="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="4.2" rx="1.3"/><rect x="4" y="10" width="16" height="4.2" rx="1.3"/><rect x="4" y="15.5" width="16" height="4.2" rx="1.3"/></svg>
+            <span>Liste</span>
+          </button>
+        </div>
+      </div>
+      <div class="term-body-wrap" id="termBodyWrap">
+        <div class="term-body" id="termBody"></div>
+        <div class="overview-grid" id="overviewGrid"></div>
       </div>
     `;
-    buildStack();
-    renderRail();
     document.getElementById('overviewBtn').addEventListener('click', () => toggleOverview());
-    wireStackDrag();
+    document.getElementById('addTerminalBtn').addEventListener('click', () => addTerminal());
+    wireViewToggle();
+    renderTerminalWorkspace();
   }
 
-  function buildStack() {
-    const stackEl = document.getElementById('stack');
-    stackEl.innerHTML = '';
-    state.order.forEach(id => {
-      const session = TMS_DATA.sessions.find(s => s.id === id);
-      const card = document.createElement('div');
-      card.className = 'stack-card glass';
-      card.dataset.id = id;
-      card.innerHTML = `
+  // Renders whichever of Stack / Liste is the current terminalView into
+  // #termBody. Both are pure renderers over the same TMS_DATA.sessions +
+  // cardState — nothing session-shaped is ever duplicated, so toggling is
+  // just "throw the old view's DOM away and repaint the other one from
+  // state", instant at this card count.
+  function renderTerminalWorkspace() {
+    cancelDictation(); // never leave a mic mid-flight pointed at a DOM node we're about to discard
+    const body = document.getElementById('termBody');
+    if (!body) return;
+    if (state.terminalView === 'list') {
+      body.innerHTML = `
+        <div class="term-list" id="termList">
+          <div class="term-list__inner" id="termListCards">
+            <button class="add-terminal-cta glass" id="addTerminalCta" type="button">
+              <span class="add-terminal-cta__icon">+</span><span>Neues Terminal</span>
+            </button>
+          </div>
+        </div>
+      `;
+      buildList();
+      document.getElementById('addTerminalCta').addEventListener('click', () => addTerminal());
+    } else {
+      body.innerHTML = `
+        <div class="workspace">
+          <div class="stack-pane"><div class="stack" id="stack"></div></div>
+          <div class="rail" id="rail"></div>
+        </div>
+      `;
+      buildStack();
+      renderRail();
+      wireStackDrag();
+    }
+    updateViewToggleUI();
+  }
+
+  function wireViewToggle() {
+    const toggle = document.getElementById('viewToggle');
+    if (!toggle) return;
+    toggle.addEventListener('click', e => {
+      const btn = e.target.closest('.view-toggle__btn');
+      if (!btn) return;
+      setTerminalView(btn.dataset.view);
+    });
+  }
+  function setTerminalView(view) {
+    if (view !== 'stack' && view !== 'list') return;
+    if (state.terminalView === view) return;
+    state.terminalView = view;
+    try { localStorage.setItem(TERM_VIEW_KEY, view); } catch (e) { /* storage unavailable */ }
+    if (state.overviewOpen) toggleOverview(false);
+    renderTerminalWorkspace();
+  }
+  function updateViewToggleUI() {
+    document.querySelectorAll('.view-toggle__btn').forEach(btn => {
+      btn.setAttribute('aria-selected', String(btn.dataset.view === state.terminalView));
+    });
+  }
+
+  // Restores the imperative "replay session" pill visibility from cardState
+  // (see showReplay/replaySession) onto a freshly-built card — needed
+  // because a card can be rebuilt fresh (view toggle, new terminal) well
+  // after its session finished, and that pill has no other backing markup.
+  function restoreReplayPill(card, id) {
+    const cs = cardState[id];
+    if (!cs || !cs.showReplay) return;
+    const pill = card.querySelector('.replay-pill');
+    if (pill) { pill.hidden = false; pill.onclick = () => replaySession(id); }
+  }
+
+  function buildOneStackCard(session) {
+    const id = session.id;
+    const card = document.createElement('div');
+    card.className = 'stack-card term-card glass';
+    card.dataset.id = id;
+    card.innerHTML = `
         <div class="card-header">
           <span class="card-tag" style="background:${session.colorTag}"></span>
           <div class="card-name-wrap">
@@ -1251,13 +1404,152 @@
           <button class="term-input-btn term-send-btn" data-act="send" aria-label="Senden">↵</button>
         </div>
       `;
+    wireCardHeader(card, id);
+    wireCardNoteBtn(card, id);
+    wireTerminalInputRow(card, id);
+    restoreReplayPill(card, id);
+    return card;
+  }
+
+  function buildStack() {
+    const stackEl = document.getElementById('stack');
+    if (!stackEl) return;
+    stackEl.innerHTML = '';
+    state.order.forEach(id => {
+      const session = TMS_DATA.sessions.find(s => s.id === id);
+      const card = buildOneStackCard(session);
       stackEl.appendChild(card);
-      wireCardHeader(card, id);
-      wireCardNoteBtn(card, id);
-      wireTerminalInputRow(card, id);
       renderCardLines(id);
     });
     layoutStack(state.activeIndex, { instant: true });
+    state.activeCardId = state.order[state.activeIndex];
+  }
+
+  // ============================================================
+  // Liste view (Requirement 1) — vertical glass terminal cards, Command-
+  // Deck ergonomics (chevron-collapsible, one card per row) rendered with
+  // Liquid Deck's own header/body/input-row markup so every affordance
+  // (name edit, 📝 notes, mic dictation, selection, wrapped links) is
+  // shared code with Stack, not a parallel implementation.
+  // ============================================================
+  function toggleListCardCollapse(id) {
+    const cs = cardState[id];
+    if (!cs) return;
+    cs.collapsed = !cs.collapsed;
+    const card = document.querySelector(`.list-card[data-id="${id}"]`);
+    if (card) card.dataset.collapsed = String(cs.collapsed);
+  }
+
+  function buildOneListCard(session) {
+    const id = session.id;
+    const cs = cardState[id];
+    const card = document.createElement('article');
+    card.className = 'list-card term-card glass';
+    card.dataset.id = id;
+    card.dataset.collapsed = String(!!(cs && cs.collapsed));
+    card.innerHTML = `
+        <div class="card-header list-card__header">
+          <button class="chevron-btn" data-act="toggle" aria-label="Ein-/Ausklappen" title="Ein-/Ausklappen">⌄</button>
+          <span class="card-tag" style="background:${session.colorTag}"></span>
+          <div class="card-name-wrap">
+            <input class="card-name" value="${escapeHtml(session.name)}" readonly>
+            <div class="card-desc">${escapeHtml(session.description)}</div>
+          </div>
+          <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
+          <button class="card-note-btn" data-note-btn aria-label="Notizen & Todos" title="Notizen & Todos">📝</button>
+        </div>
+        <div class="list-card__collapsible">
+          <pre class="card-body glass glass--dark list-card__body" data-card-id="${id}"></pre>
+          <button class="replay-pill" hidden>↻ Session erneut abspielen</button>
+          <div class="term-input-row glass">
+            <span class="term-input-row__prompt">$</span>
+            <input type="text" class="term-input" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben">
+            <button class="term-input-btn term-mic-btn" data-act="mic" aria-label="Diktieren">●</button>
+            <button class="term-input-btn term-send-btn" data-act="send" aria-label="Senden">↵</button>
+          </div>
+        </div>
+      `;
+    wireCardHeader(card, id);
+    wireCardNoteBtn(card, id);
+    wireTerminalInputRow(card, id);
+    restoreReplayPill(card, id);
+    card.querySelector('.chevron-btn').addEventListener('click', e => { e.stopPropagation(); toggleListCardCollapse(id); });
+    // Tapping anywhere in a list card marks it "current" for the floating
+    // Aa selection-mode toolbar — mirrors Stack's setActive()-driven target.
+    card.addEventListener('pointerdown', () => { state.activeCardId = id; });
+    return card;
+  }
+
+  function buildList() {
+    const cardsHost = document.getElementById('termListCards');
+    const cta = document.getElementById('addTerminalCta');
+    if (!cardsHost || !cta) return;
+    state.order.forEach(id => {
+      const session = TMS_DATA.sessions.find(s => s.id === id);
+      const card = buildOneListCard(session);
+      cardsHost.insertBefore(card, cta);
+      renderCardLines(id);
+    });
+    if (!state.activeCardId || state.order.indexOf(state.activeCardId) === -1) state.activeCardId = state.order[0] || null;
+  }
+
+  // Brings a terminal into view regardless of which view is active —
+  // used by Spotlight's "Terminal" entries and the Dynamic Island's
+  // session rows, both of which can fire from Stack or Liste.
+  function focusTerminal(id) {
+    if (state.order.indexOf(id) === -1) return;
+    if (state.terminalView === 'list') {
+      state.activeIndex = state.order.indexOf(id);
+      state.activeFloat = state.activeIndex;
+      state.activeCardId = id;
+      const cs = cardState[id];
+      if (cs && cs.collapsed) toggleListCardCollapse(id);
+      const card = document.querySelector(`.list-card[data-id="${id}"]`);
+      if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } else {
+      setActive(state.order.indexOf(id));
+    }
+  }
+
+  // Requirement 2 — "+ Neues Terminal": pushes a fresh session, paints it
+  // into whichever view is mounted, and drops straight into inline rename
+  // (same click-to-edit flow as an existing card's name field).
+  function addTerminal() {
+    cancelDictation();
+    const session = createTerminalSession();
+    if (state.terminalView === 'list') {
+      const cardsHost = document.getElementById('termListCards');
+      const cta = document.getElementById('addTerminalCta');
+      if (cardsHost && cta) {
+        const card = buildOneListCard(session);
+        cardsHost.insertBefore(card, cta);
+        renderCardLines(session.id);
+      }
+      const scroller = document.getElementById('termList');
+      if (scroller) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+      state.activeCardId = session.id;
+    } else {
+      const stackEl = document.getElementById('stack');
+      if (stackEl) {
+        const card = buildOneStackCard(session);
+        stackEl.appendChild(card);
+        renderCardLines(session.id);
+      }
+      setActive(state.order.length - 1);
+    }
+    renderRail();
+    if (state.overviewOpen) renderOverview();
+    toast(`${session.name} erstellt`);
+    focusRenameForCard(session.id);
+  }
+
+  function focusRenameForCard(id) {
+    const input = document.querySelector(`.term-card[data-id="${id}"] .card-name`);
+    if (!input) return;
+    input.readOnly = false;
+    input.dataset.editing = '1';
+    input.focus();
+    input.select();
   }
 
   function wireCardHeader(card, id) {
@@ -1326,7 +1618,7 @@
   }
   function startDictation(cardId) {
     if (state.dictation.active) return; // one at a time
-    const card = document.querySelector(`.stack-card[data-id="${cardId}"]`);
+    const card = document.querySelector(`.term-card[data-id="${cardId}"]`);
     if (!card) return;
     const input = card.querySelector('.term-input');
     const micBtn = card.querySelector('.term-mic-btn');
@@ -1366,7 +1658,7 @@
     dictationTimers.forEach(t => clearTimeout(t));
     dictationTimers = [];
     const { cardId } = state.dictation;
-    const card = document.querySelector(`.stack-card[data-id="${cardId}"]`);
+    const card = document.querySelector(`.term-card[data-id="${cardId}"]`);
     if (card) {
       const micBtn = card.querySelector('.term-mic-btn');
       const input = card.querySelector('.term-input');
@@ -1480,6 +1772,10 @@
     const cs = cardState[id];
     const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
     pre.innerHTML = cs.lines.map((line, i) => `<span class="term-line" data-i="${i}"><span class="term-line__text">${renderBufferLine(line)}</span></span>`).join('');
+    // A card can be rebuilt fresh (view toggle, new terminal appended) well
+    // after selection mode was toggled on — reapply it from cardState so
+    // Stack ⇄ Liste never desyncs the "Aa" state visually.
+    pre.classList.toggle('selection-mode', !!cs.selectionMode);
     if (cs.selection) {
       if (cs.selection.end >= cs.lines.length) { cs.selection = null; }
       else pre.querySelectorAll('.term-line').forEach((l, i) => l.classList.toggle('is-selected', i >= cs.selection.start && i <= cs.selection.end));
@@ -1495,7 +1791,7 @@
   function updateStatusChip(id, status) {
     const session = TMS_DATA.sessions.find(s => s.id === id);
     session.status = status;
-    const chip = document.querySelector(`.stack-card[data-id="${id}"] .status-chip`);
+    const chip = document.querySelector(`.term-card[data-id="${id}"] .status-chip`);
     if (chip) { chip.dataset.status = status; chip.querySelector('.status-chip__label').textContent = STATUS_LABELS[status] || status; }
     refreshPreviews();
   }
@@ -1508,6 +1804,7 @@
   function layoutStack(floatIndex, opts) {
     opts = opts || {};
     const stackEl = document.getElementById('stack');
+    if (!stackEl) return; // Liste is the active view — nothing to lay out
     if (opts.instant) stackEl.classList.add('is-dragging');
     state.order.forEach((id, i) => {
       const card = stackEl.querySelector(`.stack-card[data-id="${id}"]`);
@@ -1531,6 +1828,7 @@
     index = clamp(index, 0, state.order.length - 1);
     state.activeIndex = index;
     state.activeFloat = index;
+    state.activeCardId = state.order[index];
     layoutStack(index);
     renderRail();
   }
@@ -1585,7 +1883,7 @@
 
   document.addEventListener('keydown', e => {
     const screen = document.querySelector('[data-screen="terminals"]');
-    if (screen.hidden || state.overviewOpen) return;
+    if (screen.hidden || state.overviewOpen || state.terminalView !== 'stack') return;
     if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
     if (e.key === 'ArrowRight') setActive(state.activeIndex + 1);
     else if (e.key === 'ArrowLeft') setActive(state.activeIndex - 1);
@@ -1607,7 +1905,7 @@
         <div class="overview-tile__head"><span class="card-tag" style="background:${session.colorTag}"></span><span class="overview-tile__name">${escapeHtml(session.name)}</span><span class="status-chip" data-status="${session.status}"><span class="dot"></span></span></div>
         <div class="overview-tile__body">${previewLines}</div>
       `;
-      tile.addEventListener('click', () => { toggleOverview(false); setActive(i); });
+      tile.addEventListener('click', () => { toggleOverview(false); focusTerminal(id); });
       grid.appendChild(tile);
     });
   }
@@ -1615,9 +1913,9 @@
     state.overviewOpen = typeof force === 'boolean' ? force : !state.overviewOpen;
     const grid = document.getElementById('overviewGrid');
     const btn = document.getElementById('overviewBtn');
-    const pane = document.querySelector('.stack-pane');
-    if (state.overviewOpen) { renderOverview(); grid.classList.add('is-open'); btn.classList.add('is-on'); pane.classList.add('overview-active'); }
-    else { grid.classList.remove('is-open'); btn.classList.remove('is-on'); pane.classList.remove('overview-active'); }
+    const wrap = document.getElementById('termBodyWrap');
+    if (state.overviewOpen) { renderOverview(); grid.classList.add('is-open'); btn.classList.add('is-on'); if (wrap) wrap.classList.add('overview-active'); }
+    else { grid.classList.remove('is-open'); btn.classList.remove('is-on'); if (wrap) wrap.classList.remove('overview-active'); }
   }
 
   // ============================================================
@@ -1807,7 +2105,9 @@
   document.getElementById('permAutoBtn').addEventListener('click', toggleAutoApprove);
 
   function showReplay(id) {
-    const btn = document.querySelector(`.stack-card[data-id="${id}"] .replay-pill`);
+    const cs = cardState[id];
+    if (cs) cs.showReplay = true; // persisted so a rebuilt card (view toggle) restores this affordance
+    const btn = document.querySelector(`.term-card[data-id="${id}"] .replay-pill`);
     if (!btn) return;
     btn.hidden = false;
     btn.onclick = () => replaySession(id);
@@ -1818,9 +2118,10 @@
     clearTimeout(cs.autoTimer);
     cs.lines = session.buffer.slice();
     cs.pendingPrompt = null;
+    cs.showReplay = false;
     clearSelection(id);
-    const card = document.querySelector(`.stack-card[data-id="${id}"]`);
-    card.querySelector('.replay-pill').hidden = true;
+    const card = document.querySelector(`.term-card[data-id="${id}"]`);
+    if (card) { const pill = card.querySelector('.replay-pill'); if (pill) pill.hidden = true; }
     renderCardLines(id);
     updateStatusChip(id, 'running');
     setIslandActivity('live', `Claude arbeitet · ${session.name}`);
@@ -1964,7 +2265,8 @@
     if (!cs.selectionMode) clearSelection(cardId);
   }
   function toggleSelectionMode() {
-    toggleCardSelectionMode(state.order[state.activeIndex], document.getElementById('selToggleBtn'));
+    const id = state.activeCardId || state.order[state.activeIndex];
+    toggleCardSelectionMode(id, document.getElementById('selToggleBtn'));
   }
   function wireToolbar() {
     document.querySelectorAll('#toolbarPill button').forEach(btn => {
@@ -2857,7 +3159,7 @@
     const idx = [];
     TMS_DATA.sessions.forEach(s => idx.push({
       type: 'Terminal', label: s.name, sub: s.description,
-      action: () => { goToTerminals(); setActive(state.order.indexOf(s.id)); },
+      action: () => { goToTerminals(); focusTerminal(s.id); },
     }));
     TMS_DATA.snippets.forEach(sn => idx.push({
       type: 'Snippet', label: sn.label, sub: sn.cmd,
@@ -3001,8 +3303,13 @@
     screensEl.addEventListener('pointerdown', e => {
       if (document.body.classList.contains('is-locked')) return;
       // The terminals spatial stack + rail own horizontal swipe / drag-reorder
-      // gestures — never arm the vertical pull-to-search tracker there.
-      if (e.target.closest('.workspace')) return;
+      // gestures, and the ⊞ overview grid is a transient overlay you're
+      // actively tapping into — never arm the vertical pull-to-search
+      // tracker there. Liste is a plain vertical scroller and is NOT
+      // excluded: findScrollTarget() below resolves #termList as its own
+      // nearest scrollable ancestor, so pull-to-search still works exactly
+      // like on every other screen (scrolled list ≠ trigger; pull at top does).
+      if (e.target.closest('.workspace, .overview-grid')) return;
       const section = e.target.closest('section[data-screen]:not([hidden])');
       if (!section) return;
       const target = findScrollTarget(e.target, section);
