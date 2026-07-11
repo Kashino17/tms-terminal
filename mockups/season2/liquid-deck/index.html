@@ -223,6 +223,10 @@
   #toasts { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 96px); transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
   .toast { background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); color: var(--text); padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 500; opacity: 0; transform: translateY(8px) scale(.96); transition: opacity 260ms var(--spring), transform 260ms var(--spring); white-space: nowrap; }
   .toast.show { opacity: 1; transform: translateY(0) scale(1); }
+  .toast--undo { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
+  .toast__dash { opacity: .6; }
+  .toast__undo-btn { flex: none; font: 700 12px var(--font-ui); color: var(--accent); background: rgba(var(--accent-rgb),.18); padding: 5px 12px; border-radius: 999px; transition: background 200ms var(--spring); }
+  .toast__undo-btn:active { background: rgba(var(--accent-rgb),.32); }
 
   /* ============================================================
      Glass dock — bottom pill navigation
@@ -340,6 +344,16 @@
 
   .card-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 8px 8px; border-radius: var(--radius-md); padding: 12px 14px; font-size: var(--term-font-size); line-height: 1.6; font-family: var(--font-mono); position: relative; }
   .card-body::before { display: none; }
+
+  /* Shell wraps .card-body + the ⏬ jump-to-bottom orb — the orb lives
+     OUTSIDE the <pre> so renderCardLines()'s innerHTML rewrite (every
+     streamed line) never tears down its listeners/animation state. */
+  .card-body-shell { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .jump-bottom-orb { position: absolute; right: 10px; bottom: 10px; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; color: var(--accent); background: rgba(var(--accent-rgb),.2); border: 1px solid rgba(var(--accent-rgb),.4); box-shadow: 0 6px 18px rgba(0,0,0,.24); opacity: 0; transform: translateY(6px) scale(.9); pointer-events: none; transition: opacity 200ms var(--spring), transform 200ms var(--spring); z-index: 4; }
+  .jump-bottom-orb.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  .jump-bottom-orb:active { transform: scale(.92); }
+  .jump-bottom-orb.pulse { animation: jumpOrbPulse 1.3s ease-in-out infinite; }
+  @keyframes jumpOrbPulse { 0%, 100% { box-shadow: 0 6px 18px rgba(0,0,0,.24), 0 0 0 0 rgba(var(--accent-rgb),.55); } 50% { box-shadow: 0 6px 18px rgba(0,0,0,.24), 0 0 0 9px rgba(var(--accent-rgb),0); } }
   .term-line { display: block; white-space: pre-wrap; word-break: break-word; padding: 1px 0; border-radius: 4px; }
   .term-line.is-selected { background: rgba(var(--accent-rgb),.22); }
   .selection-mode .term-line { cursor: pointer; }
@@ -390,12 +404,12 @@
   .term-list__inner { max-width: 640px; margin: 0 auto; padding: 2px 16px calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 14px; }
   .list-card { display: flex; flex-direction: column; flex: none; }
   .list-card .card-header { cursor: default; }
-  /* Block, not flex: .card-body inherits flex:1/min-height:0 from the Stack
-     context, which would collapse to ~0px inside an auto-height flex column.
-     max-height below (not flex-grow) is what bounds it here. */
+  /* Block, not flex: .card-body-shell inherits flex:1/min-height:0 from the
+     Stack context, which would collapse to ~0px inside an auto-height flex
+     column. max-height below (not flex-grow) is what bounds it here. */
   .list-card__collapsible { border-top: 1px solid rgba(var(--overlay-rgb),.08); padding-top: 10px; }
   .list-card[data-collapsed="true"] .list-card__collapsible { display: none; }
-  .list-card__body { flex: none; max-height: min(300px, 42vh); }
+  .list-card__body-shell { flex: none; max-height: min(300px, 42vh); }
   .chevron-btn { flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--text-dim); font-size: 12px; transition: transform 220ms var(--spring), color 200ms var(--spring), background 200ms var(--spring); }
   .chevron-btn:active { background: rgba(var(--overlay-rgb),.1); }
   .list-card[data-collapsed="true"] .chevron-btn { transform: rotate(-90deg); }
@@ -404,16 +418,46 @@
   .add-terminal-cta:active { transform: scale(.98); background: rgba(var(--accent-rgb),.14); }
   .add-terminal-cta__icon { font-size: 18px; line-height: 1; }
 
-  /* toolbar */
+  /* Orb-Leiste — replaces the old floating Esc/arrows toolbar pill with
+     round glass "orb" quick-access buttons (^C, Esc, ⌫, Tab, cursor
+     popover, clear, tools, Aa-select), horizontally scrollable at
+     narrow widths. Positioned exactly where the old pill lived — a
+     fixed sibling of #screens, above the dock, shown only on the
+     terminals screen and hidden by the shared lock-net rule. */
   #toolbarHost { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); transform: translateX(-50%); z-index: 45; display: none; flex-direction: column; align-items: center; gap: 6px; }
   #toolbarHost.is-visible { display: flex; }
   .key-echo-host { display: flex; gap: 6px; min-height: 0; }
   .key-echo { background: var(--glass-strong); border: 1px solid var(--glass-border); padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; opacity: 0; transform: translateY(4px); transition: opacity 180ms var(--spring), transform 180ms var(--spring); }
   .key-echo.show { opacity: 1; transform: translateY(0); }
-  .toolbar-pill { display: flex; gap: 3px; padding: 6px; border-radius: 999px; }
-  .toolbar-pill button { min-width: 34px; height: 32px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text-dim); transition: background 200ms var(--spring), color 200ms var(--spring); }
-  .toolbar-pill button:active { background: rgba(var(--overlay-rgb),.1); }
-  .toolbar-pill button.is-on { color: var(--accent); background: rgba(var(--accent-rgb),.18); }
+
+  .orb-bar { display: flex; align-items: center; gap: 8px; padding: 7px; border-radius: 999px; max-width: min(94vw, 420px); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .orb-btn { flex: none; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; letter-spacing: -.01em; color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: background 200ms var(--spring), color 200ms var(--spring), transform 150ms var(--spring); }
+  .orb-btn:active { transform: scale(.92); background: rgba(var(--overlay-rgb),.14); }
+  .orb-btn.is-on { color: var(--accent); background: rgba(var(--accent-rgb),.2); }
+  .orb-btn--danger { color: var(--err); background: rgba(var(--err-rgb),.16); border-color: rgba(var(--err-rgb),.34); font-size: 12px; }
+  .orb-btn--danger:active { background: rgba(var(--err-rgb),.28); }
+  .orb-sep { flex: none; width: 1px; height: 26px; background: var(--glass-border); margin: 0 2px; }
+
+  /* ✥ Cursor popover — small radial arrow cluster. Anchored to #toolbarHost
+     (position:fixed, already the nearest positioned ancestor) rather than
+     nested inside .orb-bar: .orb-bar needs overflow-x:auto for horizontal
+     scroll at 380px, which forces overflow-y non-visible too (linked per
+     spec) and would clip a popover living above it. */
+  .cursor-popover { position: absolute; left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%) translateY(6px) scale(.9); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px; border-radius: 22px; opacity: 0; pointer-events: none; transition: opacity 200ms var(--spring), transform 200ms var(--spring); }
+  .cursor-popover.is-open { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0) scale(1); }
+  .cursor-popover__row { display: flex; gap: 6px; }
+
+  /* Schwebende Orb-Pille (OrbGroup) — draggable floating tool launcher.
+     Screen-scoped visibility mirrors #toolbarHost.is-visible exactly;
+     expand/collapse of the strip is a separate .is-open state. */
+  .orb-group { position: fixed; z-index: 46; display: none; flex-direction: column; align-items: center; gap: 8px; touch-action: none; transition: left 280ms var(--spring), right 280ms var(--spring), top 280ms var(--spring); }
+  .orb-group.is-visible { display: flex; }
+  .orb-group.is-dragging { transition: none !important; }
+  .orb-group__toggle { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; color: var(--text-dim); cursor: grab; touch-action: none; transition: transform 200ms var(--spring), background 200ms var(--spring), color 200ms var(--spring); }
+  .orb-group__toggle:active { transform: scale(.92); }
+  .orb-group.is-open .orb-group__toggle { color: var(--accent); background: rgba(var(--accent-rgb),.2); }
+  .orb-group__strip { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-radius: 26px; opacity: 0; transform: translateY(-8px) scale(.9); transform-origin: top center; transition: opacity 220ms var(--spring), transform 220ms var(--spring); pointer-events: none; }
+  .orb-group.is-open .orb-group__strip { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
 
   /* ============================================================
      Breakpoints — compact <400, medium 400-699, expanded >=700
@@ -653,7 +697,7 @@
 
   /* ---------- Lock screen ---------- */
   section[data-screen="lock"]:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; }
-  body.is-locked #dock, body.is-locked #island, body.is-locked #toolbarHost, body.is-locked #pullHint { display: none !important; }
+  body.is-locked #dock, body.is-locked #island, body.is-locked #toolbarHost, body.is-locked #pullHint, body.is-locked #orbGroup { display: none !important; }
   /* Any sheet (permission prompt, Mehr, tool, spotlight) stays fully inert while
      locked — the live session keeps running in the background and can pop a
      permission prompt at any time, but it must never be reachable before PIN entry. */
@@ -816,17 +860,34 @@
 
 <div id="toolbarHost">
   <div class="key-echo-host" id="keyEchoHost"></div>
-  <div class="toolbar-pill glass" id="toolbarPill">
-    <button data-key="Esc">Esc</button>
-    <button data-key="↑">↑</button>
-    <button data-key="↓">↓</button>
-    <button data-key="←">←</button>
-    <button data-key="→">→</button>
-    <button data-key="Tab">Tab</button>
-    <button data-key="Ctrl">Ctrl</button>
-    <button data-key="⌘V">⌘V</button>
-    <button id="selToggleBtn" data-key="Aa">Aa</button>
+  <!-- Positioned relative to #toolbarHost, NOT .orb-bar: .orb-bar needs
+       overflow-x:auto for horizontal scroll at 380px, which forces
+       overflow-y non-visible too (linked per spec) and would clip a
+       popover anchored above it if nested inside. -->
+  <div class="cursor-popover glass glass--strong" id="cursorPopover" hidden role="dialog" aria-label="Cursor-Tasten">
+    <button class="orb-btn" data-key="↑" aria-label="Pfeil nach oben">↑</button>
+    <div class="cursor-popover__row">
+      <button class="orb-btn" data-key="←" aria-label="Pfeil nach links">←</button>
+      <button class="orb-btn" data-key="↓" aria-label="Pfeil nach unten">↓</button>
+      <button class="orb-btn" data-key="→" aria-label="Pfeil nach rechts">→</button>
+    </div>
   </div>
+  <div class="orb-bar glass" id="orbBar" role="toolbar" aria-label="Terminal-Schnellzugriff">
+    <button class="orb-btn orb-btn--danger" data-orb="ctrlc" aria-label="Strg+C senden" title="Strg+C">^C</button>
+    <button class="orb-btn" data-orb="esc" aria-label="Escape" title="Esc">Esc</button>
+    <button class="orb-btn" data-orb="backspace" aria-label="Rücktaste" title="Backspace">⌫</button>
+    <button class="orb-btn" data-orb="tab" aria-label="Tab" title="Tab">Tab</button>
+    <button class="orb-btn" id="cursorOrbBtn" data-orb="cursor" aria-label="Cursor-Tasten" aria-haspopup="true" aria-expanded="false" title="Cursor">✥</button>
+    <button class="orb-btn" data-orb="clear" aria-label="Terminal leeren" title="Leeren">🗑</button>
+    <div class="orb-sep" aria-hidden="true"></div>
+    <button class="orb-btn" data-orb="tools" aria-label="Werkzeuge" title="Werkzeuge">🔧</button>
+    <button class="orb-btn" id="selToggleBtn" data-orb="selectmode" aria-label="Textauswahl" aria-pressed="false" title="Auswahl">Aa</button>
+  </div>
+</div>
+
+<div class="orb-group" id="orbGroup">
+  <button class="orb-group__toggle glass glass--strong" id="orbGroupToggle" aria-label="Werkzeuge-Schnellzugriff" aria-haspopup="true" aria-expanded="false" title="Werkzeuge">⋯</button>
+  <div class="orb-group__strip glass glass--strong" id="orbGroupStrip"></div>
 </div>
 
 <div class="sheet-wrap" id="permSheetWrap" hidden>
@@ -1299,7 +1360,10 @@
   // Router
   // ============================================================
   const SCREEN_HOOKS = {
-    terminals() { document.getElementById('toolbarHost').classList.add('is-visible'); },
+    terminals() {
+      document.getElementById('toolbarHost').classList.add('is-visible');
+      document.getElementById('orbGroup').classList.add('is-visible');
+    },
   };
   function show(name) {
     if (name !== 'cloud') stopCloudBuildTimer();
@@ -1307,7 +1371,12 @@
     if (name !== 'terminals') cancelDictation();
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
-    if (name !== 'terminals') document.getElementById('toolbarHost').classList.remove('is-visible');
+    if (name !== 'terminals') {
+      document.getElementById('toolbarHost').classList.remove('is-visible');
+      document.getElementById('orbGroup').classList.remove('is-visible');
+      closeCursorPopover();
+      collapseOrbGroup();
+    }
     if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
   }
   function goToTerminals() { show('terminals'); }
@@ -1506,6 +1575,18 @@
     if (pill) { pill.hidden = false; pill.onclick = () => replaySession(id); }
   }
 
+  // Shared by Stack + Liste (Requirement 2 — ⏬ Schnell-nach-unten): the
+  // jump-to-bottom orb is a SIBLING of <pre class="card-body">, not a
+  // child, so renderCardLines()'s per-line innerHTML rewrite never tears
+  // it (and its listeners) down.
+  function cardBodyBlockHtml(id, isList) {
+    return `
+        <div class="card-body-shell${isList ? ' list-card__body-shell' : ''}">
+          <pre class="card-body glass glass--dark" data-card-id="${id}"></pre>
+          <button class="jump-bottom-orb" data-jump-btn aria-label="Nach unten springen" title="Neue Ausgabe – nach unten springen">⏬</button>
+        </div>`;
+  }
+
   function buildOneStackCard(session) {
     const id = session.id;
     const card = document.createElement('div');
@@ -1521,7 +1602,7 @@
           <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
           <button class="card-note-btn" data-note-btn aria-label="Notizen & Todos" title="Notizen & Todos">📝</button>
         </div>
-        <pre class="card-body glass glass--dark" data-card-id="${id}"></pre>
+        ${cardBodyBlockHtml(id, false)}
         <button class="replay-pill" hidden>↻ Session erneut abspielen</button>
         <div class="term-input-row glass">
           <span class="term-input-row__prompt">$</span>
@@ -1533,6 +1614,7 @@
     wireCardHeader(card, id);
     wireCardNoteBtn(card, id);
     wireTerminalInputRow(card, id);
+    wireJumpOrb(card, id);
     restoreReplayPill(card, id);
     return card;
   }
@@ -1585,7 +1667,7 @@
           <button class="card-note-btn" data-note-btn aria-label="Notizen & Todos" title="Notizen & Todos">📝</button>
         </div>
         <div class="list-card__collapsible">
-          <pre class="card-body glass glass--dark list-card__body" data-card-id="${id}"></pre>
+          ${cardBodyBlockHtml(id, true)}
           <button class="replay-pill" hidden>↻ Session erneut abspielen</button>
           <div class="term-input-row glass">
             <span class="term-input-row__prompt">$</span>
@@ -1598,6 +1680,7 @@
     wireCardHeader(card, id);
     wireCardNoteBtn(card, id);
     wireTerminalInputRow(card, id);
+    wireJumpOrb(card, id);
     restoreReplayPill(card, id);
     card.querySelector('.chevron-btn').addEventListener('click', e => { e.stopPropagation(); toggleListCardCollapse(id); });
     // Tapping anywhere in a list card marks it "current" for the floating
@@ -1897,6 +1980,12 @@
     if (!pre) return;
     const cs = cardState[id];
     const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+    // Did new lines actually arrive (streamed output), vs. a re-render for
+    // some other reason (selection toggle, view rebuild)? Drives the ⏬
+    // orb's "Neue Ausgabe" pulse below — comparing lengths is enough since
+    // this function always fully re-renders from cs.lines regardless of cause.
+    const grew = cs.lines.length > (cs._renderedLen || 0);
+    cs._renderedLen = cs.lines.length;
     pre.innerHTML = cs.lines.map((line, i) => `<span class="term-line" data-i="${i}"><span class="term-line__text">${renderBufferLine(line)}</span></span>`).join('');
     // A card can be rebuilt fresh (view toggle, new terminal appended) well
     // after selection mode was toggled on — reapply it from cardState so
@@ -1908,10 +1997,49 @@
     }
     positionHandlesAndBubble(id);
     if (atBottom) pre.scrollTop = pre.scrollHeight;
+    // Requirement 2 — Schnell-nach-unten: no-op for ids without a matching
+    // .term-card (e.g. Cloud's XXL log viewer reuses this same function).
+    updateJumpOrb(id, grew && !atBottom);
     // Only real terminal sessions feed the rail/overview previews — this same
     // function is reused for Cloud's XXL log viewer (id "cloud-<projectId>"),
     // whose 2s building-log appends would otherwise re-render the rail for nothing.
     if (TMS_DATA.sessions.some(s => s.id === id)) refreshPreviews();
+  }
+
+  // ============================================================
+  // Requirement 2 — ⏬ Schnell-nach-unten (jump-to-bottom orb, per card in
+  // Liste; active card only in Stack, mirroring how non-active stack cards
+  // already suppress .card-body pointer-events in layoutStack()).
+  // ============================================================
+  function updateJumpOrb(id, pulse) {
+    const card = document.querySelector(`.term-card[data-id="${id}"]`);
+    if (!card) return; // not a terminal session card (e.g. Cloud log viewer) — nothing to do
+    const btn = card.querySelector('.jump-bottom-orb');
+    const pre = card.querySelector('.card-body');
+    if (!btn || !pre) return;
+    if (state.terminalView === 'stack' && state.order[state.activeIndex] !== id) {
+      btn.classList.remove('show', 'pulse');
+      return;
+    }
+    const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+    btn.classList.toggle('show', !atBottom);
+    if (atBottom) btn.classList.remove('pulse');
+    else if (pulse) btn.classList.add('pulse');
+  }
+
+  function wireJumpOrb(card, id) {
+    const pre = card.querySelector('.card-body');
+    const btn = card.querySelector('.jump-bottom-orb');
+    if (!pre || !btn) return;
+    pre.addEventListener('scroll', () => updateJumpOrb(id));
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      btn.classList.remove('pulse');
+      // Auto-follow re-arms itself: renderCardLines() recomputes "atBottom"
+      // fresh from pre.scrollTop on every call, so once this scroll lands,
+      // the next streamed line auto-scrolls again with no separate flag.
+      pre.scrollTo({ top: pre.scrollHeight, behavior: 'smooth' });
+    });
   }
 
   function updateStatusChip(id, status) {
@@ -1957,6 +2085,9 @@
     state.activeCardId = state.order[index];
     layoutStack(index);
     renderRail();
+    // Switching the active card in Stack changes which card's ⏬ orb (if
+    // any) is allowed to show — re-evaluate every card, cheap at this count.
+    state.order.forEach(id => updateJumpOrb(id));
   }
 
   function wireStackDrag() {
@@ -1969,11 +2100,11 @@
       if (!card) return;
       const idx = state.order.indexOf(card.dataset.id);
       const isActiveCard = idx === Math.round(state.activeFloat);
-      if (isActiveCard && e.target.closest('.card-body, .card-name, .status-chip, .replay-pill, .card-note-btn, .term-input-row')) return;
+      if (isActiveCard && e.target.closest('.card-body-shell, .card-name, .status-chip, .replay-pill, .card-note-btn, .term-input-row')) return;
       pointerId = e.pointerId; startX = e.clientX; startY = e.clientY; startFloat = state.activeFloat; moved = false;
       cardWidthPx = card.getBoundingClientRect().width || 300;
       dragging = true;
-      stackEl.setPointerCapture(pointerId);
+      try { stackEl.setPointerCapture(pointerId); } catch (err) { /* unsupported */ }
     });
     stackEl.addEventListener('pointermove', e => {
       if (!dragging || e.pointerId !== pointerId) return;
@@ -2367,7 +2498,8 @@
   });
 
   // ============================================================
-  // Terminal toolbar — floating glass pill above the dock
+  // Orb-Leiste — floating glass orb bar above the dock, replaces the old
+  // Esc/arrows toolbar pill (Requirement 1).
   // ============================================================
   function flashKeyEcho(label) {
     const host = document.getElementById('keyEchoHost');
@@ -2379,28 +2511,270 @@
     setTimeout(() => { chip.classList.remove('show'); setTimeout(() => chip.remove(), 200); }, 550);
   }
   // Generic selection-mode toggle keyed by any cardState id — used by the
-  // terminal toolbar's Aa button (session cards) AND Cloud's XXL log viewer
+  // orb bar's Aa button (session cards) AND Cloud's XXL log viewer
   // "Selektieren" button (cloud-<projectId> pseudo-cards), so both share the
   // exact same handle/copy-bubble machinery instead of two parallel systems.
   function toggleCardSelectionMode(cardId, btnEl) {
     const cs = cardState[cardId];
     cs.selectionMode = !cs.selectionMode;
-    if (btnEl) btnEl.classList.toggle('is-on', cs.selectionMode);
+    if (btnEl) { btnEl.classList.toggle('is-on', cs.selectionMode); btnEl.setAttribute('aria-pressed', String(cs.selectionMode)); }
     const pre = document.querySelector(`.card-body[data-card-id="${cardId}"]`);
     if (pre) pre.classList.toggle('selection-mode', cs.selectionMode);
     if (!cs.selectionMode) clearSelection(cardId);
   }
-  function toggleSelectionMode() {
-    const id = state.activeCardId || state.order[state.activeIndex];
-    toggleCardSelectionMode(id, document.getElementById('selToggleBtn'));
+  // Resolves which terminal session is "current" for orb-bar actions —
+  // last-interacted card in either view, same source of truth the Aa
+  // toggle already relied on before moving into the orb bar.
+  function activeTerminalId() {
+    return state.activeCardId || state.order[state.activeIndex];
   }
-  function wireToolbar() {
-    document.querySelectorAll('#toolbarPill button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const key = btn.dataset.key;
-        if (key === 'Aa') { toggleSelectionMode(); return; }
-        flashKeyEcho(key);
-      });
+  function toggleSelectionMode() {
+    toggleCardSelectionMode(activeTerminalId(), document.getElementById('selToggleBtn'));
+  }
+
+  // ^C orb — appends a dim "^C" line to the active session through the
+  // exact same escapeHtml/ansiToHtml render pipeline every other line uses.
+  function sendCtrlC(id) {
+    const cs = cardState[id];
+    if (!cs) return;
+    cs.lines.push('\x1b[2m^C\x1b[0m');
+    renderCardLines(id);
+    toast('^C gesendet');
+  }
+
+  // 🗑 Clear orb — wipes the active session's visible lines with a 4s
+  // undo toast (Requirement 1).
+  function clearActiveTerminal(id) {
+    const cs = cardState[id];
+    if (!cs || !cs.lines.length) return;
+    const backup = cs.lines.slice();
+    cs.lines = [];
+    cs._renderedLen = 0;
+    renderCardLines(id);
+    toastWithUndo('Geleert', () => {
+      cs.lines = backup;
+      cs._renderedLen = backup.length;
+      renderCardLines(id);
+    });
+  }
+
+  // Toast variant with an inline "Rückgängig" action — mirrors toast()'s
+  // timer hygiene (single setTimeout, cleared on early dismissal) but adds
+  // a tappable undo affordance, so #toasts' otherwise pointer-events:none
+  // backdrop is re-enabled locally on .toast--undo only.
+  function toastWithUndo(message, onUndo, duration) {
+    duration = duration || 4000;
+    const host = document.getElementById('toasts');
+    const el = document.createElement('div');
+    el.className = 'toast toast--undo';
+    el.innerHTML = `<span class="toast__msg">${escapeHtml(message)}</span><span class="toast__dash" aria-hidden="true">—</span><button type="button" class="toast__undo-btn">Rückgängig</button>`;
+    host.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('show'));
+    let dismissed = false;
+    const dismiss = () => {
+      if (dismissed) return;
+      dismissed = true;
+      el.classList.remove('show');
+      setTimeout(() => el.remove(), 220);
+    };
+    const timer = setTimeout(dismiss, duration);
+    el.querySelector('.toast__undo-btn').addEventListener('click', () => {
+      clearTimeout(timer);
+      dismiss();
+      onUndo();
+    });
+  }
+
+  // ✥ Cursor popover — small ↑/←/↓/→ cluster, each tap just a key-echo
+  // flash like Esc/⌫/Tab (the old toolbar never actually drove a fake PTY
+  // for these either — this preserves that behavior).
+  function openCursorPopover() {
+    const pop = document.getElementById('cursorPopover');
+    const btn = document.getElementById('cursorOrbBtn');
+    pop.hidden = false;
+    requestAnimationFrame(() => pop.classList.add('is-open'));
+    btn.setAttribute('aria-expanded', 'true');
+  }
+  function closeCursorPopover() {
+    const pop = document.getElementById('cursorPopover');
+    const btn = document.getElementById('cursorOrbBtn');
+    if (!pop || !pop.classList.contains('is-open')) return;
+    pop.classList.remove('is-open');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    // Guarded against a rapid re-open racing this timeout (same pattern as
+    // collapseOrbGroup below) — only actually hides if still closed.
+    setTimeout(() => { if (!pop.classList.contains('is-open')) pop.hidden = true; }, 220);
+  }
+  function toggleCursorPopover() {
+    const pop = document.getElementById('cursorPopover');
+    if (pop.classList.contains('is-open')) closeCursorPopover(); else openCursorPopover();
+  }
+
+  function wireOrbBar() {
+    document.getElementById('orbBar').addEventListener('click', e => {
+      const btn = e.target.closest('.orb-btn[data-orb]');
+      if (!btn) return;
+      const action = btn.dataset.orb;
+      const id = activeTerminalId();
+      switch (action) {
+        case 'ctrlc': if (id) sendCtrlC(id); break;
+        case 'esc': flashKeyEcho('Esc'); break;
+        case 'backspace': flashKeyEcho('⌫'); break;
+        case 'tab': flashKeyEcho('Tab'); break;
+        case 'cursor': toggleCursorPopover(); break;
+        case 'clear': if (id) clearActiveTerminal(id); break;
+        case 'tools': closeCursorPopover(); openSheet(mehrWrap); break;
+        case 'selectmode': toggleSelectionMode(); break;
+      }
+    });
+    document.getElementById('cursorPopover').addEventListener('click', e => {
+      const btn = e.target.closest('[data-key]');
+      if (!btn) return;
+      flashKeyEcho(btn.dataset.key);
+    });
+  }
+
+  // ============================================================
+  // Schwebende Orb-Pille (OrbGroup, Requirement 3) — draggable floating
+  // quick-tool launcher. Full pointer lifecycle (capture, cancel,
+  // lostpointercapture, pointerId guard, touch-action) mirrors
+  // wireRailDrag() above.
+  // ============================================================
+  const ORB_SIDE_KEY = 'tms-liquid-deck-orb-side';
+  function loadOrbSide() {
+    try { return localStorage.getItem(ORB_SIDE_KEY) === 'left' ? 'left' : 'right'; } catch (e) { return 'right'; }
+  }
+  function saveOrbSide(side) {
+    try { localStorage.setItem(ORB_SIDE_KEY, side); } catch (e) { /* storage unavailable */ }
+  }
+  const orbGroupState = { side: loadOrbSide(), top: null, expanded: false };
+  const ORB_GROUP_TOOL_IDS = ['files', 'sql', 'processes', 'snippets', 'watchers'];
+
+  function renderOrbGroupStrip() {
+    const strip = document.getElementById('orbGroupStrip');
+    strip.innerHTML = ORB_GROUP_TOOL_IDS.map(id => {
+      const def = TOOL_DEFS.find(t => t.id === id);
+      if (!def) return '';
+      const glyph = id === 'files' ? '📁' : def.code;
+      return `<button class="orb-btn" data-quicktool="${id}" aria-label="${escapeHtml(def.label)}" title="${escapeHtml(def.label)}">${glyph}</button>`;
+    }).join('');
+  }
+
+  function applyOrbGroupPosition() {
+    const el = document.getElementById('orbGroup');
+    if (!el) return;
+    el.dataset.side = orbGroupState.side;
+    el.style.left = orbGroupState.side === 'left' ? '10px' : '';
+    el.style.right = orbGroupState.side === 'right' ? '10px' : '';
+    // No drag yet this session — a sane vertical default (persisted drags
+    // override it via orbGroupState.top, set on release below).
+    const top = orbGroupState.top != null ? orbGroupState.top : Math.round(window.innerHeight * 0.4);
+    el.style.top = top + 'px';
+  }
+
+  function collapseOrbGroup() {
+    if (!orbGroupState.expanded) return;
+    orbGroupState.expanded = false;
+    const group = document.getElementById('orbGroup');
+    const toggle = document.getElementById('orbGroupToggle');
+    const strip = document.getElementById('orbGroupStrip');
+    group.classList.remove('is-open');
+    toggle.setAttribute('aria-expanded', 'false');
+    setTimeout(() => { if (!orbGroupState.expanded) strip.hidden = true; }, 260);
+  }
+  function toggleOrbGroup() {
+    const group = document.getElementById('orbGroup');
+    const toggle = document.getElementById('orbGroupToggle');
+    const strip = document.getElementById('orbGroupStrip');
+    orbGroupState.expanded = !orbGroupState.expanded;
+    if (orbGroupState.expanded) {
+      strip.hidden = false;
+      requestAnimationFrame(() => group.classList.add('is-open'));
+      toggle.setAttribute('aria-expanded', 'true');
+    } else {
+      collapseOrbGroup();
+    }
+  }
+
+  function wireOrbGroup() {
+    const group = document.getElementById('orbGroup');
+    const toggle = document.getElementById('orbGroupToggle');
+    const strip = document.getElementById('orbGroupStrip');
+    renderOrbGroupStrip();
+    applyOrbGroupPosition();
+
+    let pointerId = null, dragging = false, cleaned = true, startX = 0, startY = 0, startTop = 0, startLeft = 0;
+
+    function cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onCancel);
+      toggle.removeEventListener('lostpointercapture', onLostCapture);
+      try { toggle.releasePointerCapture(pointerId); } catch (err) { /* already released */ }
+      group.classList.remove('is-dragging');
+    }
+    function onMove(e) {
+      if (e.pointerId !== pointerId) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (!dragging) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        dragging = true;
+        group.classList.add('is-dragging');
+      }
+      const vh = window.innerHeight, vw = window.innerWidth;
+      group.style.top = clamp(startTop + dy, 90, vh - 140) + 'px';
+      group.style.left = clamp(startLeft + dx, 8, vw - 58) + 'px';
+      group.style.right = '';
+    }
+    function onUp(e) {
+      const wasDragging = dragging;
+      cleanup();
+      dragging = false;
+      if (!wasDragging) { toggleOrbGroup(); return; }
+      const vw = window.innerWidth;
+      const rect = group.getBoundingClientRect();
+      const side = (rect.left + rect.width / 2) < vw / 2 ? 'left' : 'right';
+      orbGroupState.side = side;
+      orbGroupState.top = clamp(rect.top, 90, window.innerHeight - 140);
+      saveOrbSide(side);
+      applyOrbGroupPosition();
+    }
+    // A cancelled drag (synthetic or a real OS gesture interruption) must
+    // not leave the pill wherever onMove's last inline left/top happened to
+    // be — snap back to the last COMMITTED position (unlike onUp, this
+    // discards the in-progress delta rather than saving it).
+    function onCancel() {
+      const wasDragging = dragging;
+      cleanup();
+      dragging = false;
+      if (wasDragging) applyOrbGroupPosition();
+    }
+    function onLostCapture() { cleanup(); }
+
+    toggle.addEventListener('pointerdown', e => {
+      pointerId = e.pointerId; startX = e.clientX; startY = e.clientY;
+      const rect = group.getBoundingClientRect();
+      startTop = rect.top; startLeft = rect.left;
+      dragging = false; cleaned = false;
+      try { toggle.setPointerCapture(pointerId); } catch (err) { /* unsupported */ }
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+      document.addEventListener('pointercancel', onCancel);
+      toggle.addEventListener('lostpointercapture', onLostCapture);
+    });
+
+    strip.addEventListener('click', e => {
+      const btn = e.target.closest('[data-quicktool]');
+      if (!btn) return;
+      collapseOrbGroup();
+      openToolSheet(btn.dataset.quicktool);
+    });
+
+    document.addEventListener('pointerdown', e => {
+      if (orbGroupState.expanded && !e.target.closest('#orbGroup')) collapseOrbGroup();
+      if (!e.target.closest('#cursorPopover') && !e.target.closest('#cursorOrbBtn')) closeCursorPopover();
     });
   }
 
@@ -3415,6 +3789,8 @@
       if (e.key === 'Escape') {
         const tool = document.getElementById('toolSheetWrap');
         if (!tool.hidden) closeSheet(tool);
+        closeCursorPopover();
+        collapseOrbGroup();
       }
     });
   }
@@ -3507,7 +3883,8 @@
   wireSessionSheet();
 
   wireNav();
-  wireToolbar();
+  wireOrbBar();
+  wireOrbGroup();
   wireSpotlight();
   wirePullToSpotlight();
 
