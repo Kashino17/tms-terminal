@@ -521,6 +521,10 @@
      locked — the live session keeps running in the background and can pop a
      permission prompt at any time, but it must never be reachable before PIN entry. */
   body.is-locked .sheet-wrap { display: none !important; }
+  /* The Adhan overlay is a standalone fixed layer (not a .sheet-wrap), so the
+     rule above doesn't cover it — without this it would stay reachable/visible
+     on top of the PIN pad if a demo alarm fired while locked. */
+  body.is-locked #adhanOverlay { display: none !important; }
   .lock-panel { display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 38px 32px; }
   .lock-title { font: 700 11px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); }
   .pin-dots { display: flex; gap: 16px; }
@@ -2117,7 +2121,6 @@
     document.getElementById('cloudGroups').addEventListener('click', e => {
       const favBtn = e.target.closest('[data-fav]');
       if (favBtn) {
-        e.stopPropagation();
         const p = TMS_DATA.cloudProjects.find(x => x.id === favBtn.dataset.fav);
         if (p) { p.favorite = !p.favorite; saveFavorites(); renderCloudGroups(); }
         return;
@@ -2648,26 +2651,50 @@
   }
 
   // Pull-down-to-search: on any screen, starting a vertical drag from the
-  // very top of its scroll position (scrollTop === 0) and pulling down past
-  // a threshold opens Spotlight on release — the iOS-style "pull for search"
-  // gesture. Purely additive: passive listeners, no preventDefault, so a
-  // genuine scroll (scrollTop leaves 0 immediately) always wins and cancels
-  // tracking.
+  // very top of its scroll position and pulling down past a threshold opens
+  // Spotlight on release — the iOS-style "pull for search" gesture. Purely
+  // additive: passive listeners, no preventDefault, so a genuine scroll
+  // always wins and cancels tracking.
+  //
+  // Several screens (Manager's chat/memory, Cloud's log viewer) are
+  // `overflow: hidden` at the <section> level with the real vertical scroll
+  // living on a nested element — so "scrollTop === 0" has to be evaluated on
+  // whichever element actually scrolls, not on the section. findScrollTarget
+  // walks up from the touch/click origin to the nearest ancestor (inclusive
+  // of the section as a fallback) that is both overflow-y auto/scroll AND
+  // has scrollable overflow.
+  function findScrollTarget(target, section) {
+    let node = target;
+    while (node && node !== section) {
+      if (node.nodeType === 1) {
+        const oy = getComputedStyle(node).overflowY;
+        if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight) return node;
+      }
+      node = node.parentElement;
+    }
+    return section;
+  }
+
   function wirePullToSpotlight() {
     const screensEl = document.getElementById('screens');
     const hint = document.getElementById('pullHint');
-    let tracking = false, pulled = false, startX = 0, startY = 0, sectionEl = null, pointerId = null;
+    let tracking = false, pulled = false, startX = 0, startY = 0, scrollEl = null, pointerId = null;
     screensEl.addEventListener('pointerdown', e => {
       if (document.body.classList.contains('is-locked')) return;
+      // The terminals spatial stack + rail own horizontal swipe / drag-reorder
+      // gestures — never arm the vertical pull-to-search tracker there.
+      if (e.target.closest('.workspace')) return;
       const section = e.target.closest('section[data-screen]:not([hidden])');
-      if (!section || section.scrollTop > 0) return;
-      tracking = true; pulled = false; startX = e.clientX; startY = e.clientY; sectionEl = section; pointerId = e.pointerId;
+      if (!section) return;
+      const target = findScrollTarget(e.target, section);
+      if (target.scrollTop > 0) return;
+      tracking = true; pulled = false; startX = e.clientX; startY = e.clientY; scrollEl = target; pointerId = e.pointerId;
     }, { passive: true });
     screensEl.addEventListener('pointermove', e => {
       if (!tracking || e.pointerId !== pointerId) return;
-      if (sectionEl.scrollTop > 0) { tracking = false; hint.classList.remove('show'); return; }
+      if (scrollEl.scrollTop > 0) { tracking = false; hint.classList.remove('show'); return; }
       const dy = e.clientY - startY, dx = e.clientX - startX;
-      if (dy < Math.abs(dx)) { hint.classList.remove('show'); return; }
+      if (dy <= 0 || dy < 1.5 * Math.abs(dx)) { hint.classList.remove('show'); return; }
       if (dy > 30) hint.classList.add('show'); else hint.classList.remove('show');
       pulled = dy > 78;
     }, { passive: true });
