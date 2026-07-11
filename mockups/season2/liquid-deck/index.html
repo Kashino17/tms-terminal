@@ -19,14 +19,30 @@
 </script>
 <style>
   :root {
-    /* Structural tokens — identical in both themes */
-    --radius-lg: 24px; --radius-md: 16px; --radius-sm: 12px;
+    /* ===== Metric system (one scale, applied app-wide) =====
+       Corner-radius family, icon ramp, touch target, type ramp and an
+       8pt spacing rhythm — everything downstream resolves through these
+       so nothing is sized ad-hoc. */
+    --radius-lg: 22px; --radius-md: 16px; --radius-sm: 12px; --radius-xs: 10px; --radius-pill: 999px;
     --spring: cubic-bezier(0.34, 1.3, 0.5, 1);
     --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
-    --island-space: 92px;
-    --chrome-space: 118px;
-    --chrome-space-term: 168px;
+    /* Icon ramp — three sizes only */
+    --icon-sm: 16px; --icon-md: 20px; --icon-lg: 24px;
+    /* Touch target — every interactive control is at least this in both axes */
+    --touch: 44px;
+    /* Type ramp — fixed sizes per role */
+    --fs-title: 26px; --fs-h2: 21px; --fs-section: 15px; --fs-body: 14px;
+    --fs-label: 12.5px; --fs-caption: 11px; --fs-micro: 9.5px;
+    /* Control heights on the 8pt rhythm */
+    --chip-h: 26px; --pill-h: 34px;
+    /* Safe areas + chrome bands → drive every screen's padding box */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --header-h: 46px;
+    --dock-h: 64px;
+    --top-space: calc(var(--safe-top) + var(--header-h) + 14px);
+    --bottom-space: calc(var(--safe-bottom) + var(--dock-h) + 24px);
     --term-font-size: 13px;
     /* Modal/sheet scrim + camera-flash white are theme-invariant utility colors —
        tokenized for discipline, not meant to flip with the theme. */
@@ -154,52 +170,53 @@
   #screens { position: fixed; inset: 0; z-index: 1; }
   section[data-screen] {
     position: absolute; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
-    padding: var(--island-space) 16px var(--chrome-space);
+    padding: var(--top-space) 16px var(--bottom-space);
   }
-  section[data-screen="terminals"] { padding-bottom: var(--chrome-space-term); }
   section[data-screen="terminals"]:not([hidden]) { overflow: hidden; display: flex; flex-direction: column; }
 
   ::-webkit-scrollbar { width: 0; height: 0; }
 
   /* ============================================================
-     Dynamic Island — persistent, top center, morphs compact<->open.
+     Status header — global chrome. A full-width strip docked at the
+     very top; it never floats over content (screens reserve --top-space
+     for it). Tap → status detail sheet. Replaces the old floating
+     Dynamic-Island pill; carries the same info: session/agent activity,
+     ping latency, next-prayer countdown.
      ============================================================ */
-  #island { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 10px); left: 50%; transform: translateX(-50%); z-index: 60; }
-  .island-shell {
-    width: 292px; height: 40px; overflow: hidden; cursor: pointer;
-    display: flex; align-items: center;
-    transition: width 380ms var(--spring), height 380ms var(--spring), border-radius 380ms var(--spring), background 380ms var(--spring);
-    border-radius: 20px;
-  }
-  .island-shell.is-open { width: min(92vw, 400px); height: auto; max-height: 74vh; border-radius: var(--radius-lg); cursor: default; align-items: stretch; overflow-y: auto; }
-  .island-compact { display: flex; align-items: center; gap: 10px; padding: 0 14px; width: 100%; white-space: nowrap; transition: opacity 200ms ease, transform 300ms var(--spring); }
-  .island-shell.is-open .island-compact { opacity: 0; transform: translateY(-6px) scale(.94); pointer-events: none; position: absolute; }
-  .island-seg { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .island-seg__label { font-size: 12px; font-weight: 600; letter-spacing: .01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* Activity is the only segment allowed to shrink/ellipsis under pressure —
-     latency + prayer are short, fixed-format readouts and always stay whole. */
-  .island-seg--activity { flex: 1 1 auto; }
-  .island-seg--latency, .island-seg--prayer { flex: none; }
-  .island-seg--latency .island-seg__label { color: var(--ok); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-  .island-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-dim); }
-  .island-dot.is-live { background: var(--accent); box-shadow: 0 0 0 0 rgba(var(--accent-rgb),.6); animation: islandPulse 1.4s ease-out infinite; }
-  .island-dot.is-warn { background: var(--warn); box-shadow: 0 0 0 0 rgba(var(--warn-rgb),.6); animation: islandPulse 1.1s ease-out infinite; }
-  .island-dot.is-ok { background: var(--ok); }
   @keyframes islandPulse { 0% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb),.55); } 70% { box-shadow: 0 0 0 7px rgba(var(--accent-rgb),0); } 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb),0); } }
-  .island-divider { width: 1px; height: 16px; background: var(--glass-border); flex: none; }
-  .island-seg--prayer { color: var(--text-dim); font-variant-numeric: tabular-nums; }
-  .island-moon { flex: none; opacity: .85; }
+  #statusHeader {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 60;
+    display: flex; align-items: center; gap: 10px;
+    height: calc(var(--safe-top) + var(--header-h)); padding: var(--safe-top) 16px 0;
+    border: none; border-bottom: 1px solid var(--glass-border); border-radius: 0;
+    cursor: pointer;
+  }
+  #statusHeader::before { left: 16px; right: 16px; }
+  .status-hd__activity { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; }
+  /* Activity is the only piece allowed to ellipsis under pressure — the two
+     metrics are short, fixed-format readouts and always stay whole. */
+  .status-hd__label { font-size: var(--fs-label); font-weight: 600; letter-spacing: .01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-dim); }
+  .status-dot.is-live { background: var(--accent); animation: islandPulse 1.4s ease-out infinite; }
+  .status-dot.is-warn { background: var(--warn); animation: islandPulse 1.1s ease-out infinite; }
+  .status-dot.is-ok { background: var(--ok); }
+  .status-hd__metrics { display: flex; align-items: center; gap: 10px; flex: none; }
+  .status-hd__metric { display: flex; align-items: center; gap: 5px; font-size: var(--fs-caption); font-weight: 600; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .status-hd__metric .ic { width: var(--icon-sm); height: var(--icon-sm); }
+  .status-hd__metric--latency { color: var(--ok); font-family: var(--font-mono); }
+  .status-hd__divider { width: 1px; height: 15px; background: var(--glass-border); flex: none; }
+  .status-hd__chevron { flex: none; display: flex; align-items: center; color: var(--text-dim); opacity: .75; }
+  .status-hd__chevron .ic { width: var(--icon-sm); height: var(--icon-sm); }
 
-  /* Dictation-in-progress badge — sits OUTSIDE .island-shell (which clips via
-     overflow:hidden) so it can hang off the shell's corner without being cut. */
-  .island-mic-badge { position: absolute; top: -3px; right: -3px; width: 16px; height: 16px; border-radius: 50%;
-    background: var(--err); color: var(--on-err); font-size: 8px; display: flex; align-items: center; justify-content: center;
+  /* Dictation-in-progress badge — pinned to the header's leading edge. */
+  .status-mic-badge { position: absolute; top: calc(var(--safe-top) + 5px); left: 9px; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--err); color: var(--on-err); display: flex; align-items: center; justify-content: center;
     box-shadow: 0 0 10px rgba(var(--err-rgb),.7); animation: islandPulse 1s ease-in-out infinite; z-index: 2; }
-  .island-mic-badge[hidden] { display: none; }
-  .island-shell.is-open ~ .island-mic-badge { display: none; }
+  .status-mic-badge .ic { width: 11px; height: 11px; }
+  .status-mic-badge[hidden] { display: none; }
 
-  .island-expanded { display: none; opacity: 0; padding: 16px 18px 18px; }
-  .island-shell.is-open .island-expanded { display: block; opacity: 1; transition: opacity 320ms var(--spring) 90ms; }
+  /* Status detail sheet body — reuses the .island-* content classes below. */
+  .island-expanded { padding: 2px; }
   .island-expanded h4 { margin: 14px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); font-weight: 600; }
   .island-expanded h4:first-child { margin-top: 0; }
   .island-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid rgba(var(--overlay-rgb),.08); }
@@ -214,7 +231,7 @@
   .island-theme-toggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 2px; border-top: 1px solid rgba(var(--overlay-rgb),.08); color: var(--text); font: 600 13.5px var(--font-ui); text-align: left; cursor: pointer; border-radius: 10px; transition: background 200ms var(--spring); }
   .island-theme-toggle:active { background: rgba(var(--overlay-rgb),.08); }
   .island-theme-toggle__icon { flex: none; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(var(--accent-rgb),.16); color: var(--accent); }
-  .island-theme-toggle__icon svg { width: 13px; height: 13px; }
+  .island-theme-toggle__icon svg { width: var(--icon-sm); height: var(--icon-sm); }
   .island-theme-toggle__meta { margin-left: auto; font-size: 11.5px; color: var(--text-dim); font-weight: 500; }
 
   /* ============================================================
@@ -235,11 +252,15 @@
     display: flex; gap: 2px; padding: 6px; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
     border: 1px solid var(--glass-border); border-radius: 999px; }
   #dock::before { content: ''; position: absolute; left: 14%; right: 14%; top: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(var(--sheen-rgb),var(--sheen-a)), transparent); }
-  .dock-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 58px; padding: 7px 2px 6px; border-radius: 999px; color: var(--text-dim); transition: color 250ms var(--spring), background 250ms var(--spring); }
-  .dock-btn svg { width: 20px; height: 20px; }
-  .dock-btn span { font-size: 9.5px; font-weight: 600; letter-spacing: .01em; }
+  .dock-btn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; width: 58px; padding: 7px 2px 6px; border-radius: var(--radius-pill); color: var(--text-dim); transition: color 250ms var(--spring), background 250ms var(--spring); }
+  .dock-btn svg { width: var(--icon-md); height: var(--icon-md); }
+  .dock-btn span { font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; }
   .dock-btn.active { color: var(--text); background: rgba(var(--accent-rgb),.16); }
   .dock-btn:active { transform: scale(.94); }
+  /* Pending-request badge on the Terminals tab — shown when a permission
+     prompt is waiting while the user is on another screen. */
+  .dock-badge { position: absolute; top: 5px; right: 11px; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--glass), 0 0 8px rgba(var(--warn-rgb),.8); animation: islandPulse 1.3s ease-out infinite; }
+  .dock-badge[hidden] { display: none; }
 
   /* ============================================================
      Bottom sheets (Mehr / permission) — slide up with spring
@@ -253,7 +274,13 @@
     transform: translateY(110%); transition: transform 400ms var(--spring); }
   .sheet-wrap.is-open .sheet-panel { transform: translateY(0); }
   .sheet-grabber { width: 36px; height: 4px; border-radius: 3px; background: var(--glass-border); margin: 4px auto 14px; }
-  .sheet-title { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+  .sheet-title { font-size: var(--fs-section); font-weight: 700; margin-bottom: 12px; }
+
+  /* Permission sheet — anchored ABOVE the dock so the dock stays visible and
+     tappable while a request is pending; its scrim never reaches the dock. */
+  .sheet-wrap--perm { pointer-events: none; }
+  .sheet-wrap--perm .sheet-backdrop { bottom: calc(var(--safe-bottom) + var(--dock-h) + 18px); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+  .sheet-wrap--perm .sheet-panel { margin-bottom: calc(var(--safe-bottom) + var(--dock-h) + 22px); pointer-events: auto; }
 
   .mehr-list { display: flex; flex-direction: column; gap: 4px; }
   .mehr-item { display: flex; align-items: center; gap: 12px; padding: 13px 10px; border-radius: var(--radius-md); text-align: left; transition: background 200ms var(--spring); }
@@ -261,8 +288,14 @@
   .mehr-item svg { width: 19px; height: 19px; color: var(--accent); flex: none; }
   .mehr-item span { font-size: 14.5px; font-weight: 500; }
 
-  .perm-tool-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-  .perm-tool { font-weight: 700; font-size: 15px; }
+  /* Source terminal (session dot + name) the request comes from. */
+  .perm-source { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .perm-source__dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .perm-source__name { font-weight: 700; font-size: var(--fs-body); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .perm-source__badge { flex: none; margin-left: auto; font: 700 var(--fs-micro) var(--font-mono); text-transform: uppercase; letter-spacing: .05em; color: var(--warn); background: rgba(var(--warn-rgb),var(--chip-a)); padding: 3px 8px; border-radius: var(--radius-pill); }
+  .perm-tool-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .perm-tool-row .ic { width: var(--icon-sm); height: var(--icon-sm); color: var(--accent); flex: none; }
+  .perm-tool { font-weight: 700; font-size: var(--fs-section); }
   .perm-target { font: 12.5px var(--font-mono); color: var(--text-dim); background: rgba(var(--well-rgb),var(--well-a)); padding: 2px 7px; border-radius: 6px; }
   .perm-question { color: var(--text-dim); font-size: 13.5px; margin: 8px 0 16px; }
   .perm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -303,15 +336,17 @@
      ============================================================ */
   .term-header { display: flex; flex-direction: column; gap: 10px; padding: 0 2px 12px; flex: none; }
   .term-header__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .term-header__top h2 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
-  .term-header__actions { display: flex; align-items: center; gap: 8px; flex: none; }
-  .overview-btn { width: 38px; height: 38px; border-radius: 12px; font-size: 17px; display: flex; align-items: center; justify-content: center; }
+  .term-header__top h2 { margin: 0; font-size: var(--fs-title); font-weight: 700; letter-spacing: -.01em; }
+  .term-header__actions { display: flex; align-items: center; gap: 6px; flex: none; }
+  .overview-btn { width: var(--touch); height: var(--touch); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color 200ms var(--spring), background 200ms var(--spring), transform 150ms var(--spring); }
+  .overview-btn .ic { width: var(--icon-md); height: var(--icon-md); }
+  .overview-btn:active { transform: scale(.94); }
   .overview-btn.is-on { background: rgba(var(--accent-rgb),.2); color: var(--accent); }
 
   /* Stack ⇄ Liste segmented view toggle */
-  .view-toggle { display: inline-flex; gap: 3px; padding: 4px; border-radius: 999px; align-self: flex-start; }
-  .view-toggle__btn { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; font: 600 12.5px var(--font-ui); color: var(--text-dim); transition: background 220ms var(--spring), color 220ms var(--spring); }
-  .view-toggle__btn svg { width: 15px; height: 15px; flex: none; }
+  .view-toggle { display: inline-flex; gap: 3px; padding: 4px; border-radius: var(--radius-pill); align-self: flex-start; }
+  .view-toggle__btn { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 8px 15px; border-radius: var(--radius-pill); font: 600 var(--fs-label) var(--font-ui); color: var(--text-dim); transition: background 220ms var(--spring), color 220ms var(--spring); }
+  .view-toggle__btn .ic { width: var(--icon-sm); height: var(--icon-sm); flex: none; }
   .view-toggle__btn[aria-selected="true"] { color: var(--text); background: rgba(var(--accent-rgb),.2); }
 
   .term-body-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -325,12 +360,23 @@
 
   .stack-card { position: absolute; inset: 0; margin: 0 auto; width: 100%; max-width: 480px; display: flex; flex-direction: column; overflow: hidden;
     transition: transform 380ms var(--spring), opacity 380ms var(--spring), filter 380ms var(--spring); will-change: transform, opacity; }
-  .card-header { flex: none; display: flex; align-items: center; gap: 10px; padding: 14px 16px 12px; cursor: grab; }
+  .card-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; cursor: grab; }
   .card-tag { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   .card-name-wrap { flex: 1 1 0%; min-width: 0; }
-  .card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 15.5px; font-weight: 700; letter-spacing: -.005em; background: none; border: none; padding: 2px 0; width: 100%; border-bottom: 1px solid transparent; }
-  .card-name[data-editing="1"] { border-bottom: 1px solid var(--accent); outline: none; }
-  .card-desc { font-size: 11.5px; color: var(--text-dim); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Name + description are both readonly inputs; triple-tap unlocks editing
+     (see wireTripleTapEdit) so single taps never pop the keyboard. */
+  .card-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-section); font-weight: 700; letter-spacing: -.005em; background: none; border: none; padding: 1px 0; width: 100%; border-bottom: 1px solid transparent; cursor: default; }
+  .card-desc { display: block; min-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-caption); color: var(--text-dim); margin-top: 1px; background: none; border: none; padding: 1px 0; border-bottom: 1px solid transparent; cursor: default; }
+  .card-name[data-editing="1"], .card-desc[data-editing="1"] { border-bottom: 1px solid var(--accent); outline: none; cursor: text; }
+  .card-name[data-editing="1"] { text-overflow: clip; }
+  .card-desc[data-editing="1"] { text-overflow: clip; }
+
+  /* Per-terminal Auto-Approve — 1-tap header pill, default ON. */
+  .auto-toggle { flex: none; display: flex; align-items: center; gap: 5px; height: 28px; min-width: 44px; padding: 0 10px; border-radius: var(--radius-pill); font: 700 var(--fs-caption) var(--font-ui); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
+  .auto-toggle .ic { width: var(--icon-sm); height: var(--icon-sm); flex: none; }
+  .auto-toggle__label { letter-spacing: .01em; }
+  .auto-toggle.is-on { color: var(--ok); background: rgba(var(--ok-rgb),var(--chip-a)); border-color: rgba(var(--ok-rgb),.4); }
+  .auto-toggle:active { transform: scale(.94); }
   .status-chip { flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .02em; padding: 4px 9px; border-radius: 999px; display: flex; align-items: center; gap: 5px; text-transform: uppercase; }
   .status-chip .dot { width: 6px; height: 6px; border-radius: 50%; }
   .status-chip[data-status="running"] { color: var(--accent); background: rgba(var(--accent-rgb),var(--chip-a)); }
@@ -349,7 +395,8 @@
      OUTSIDE the <pre> so renderCardLines()'s innerHTML rewrite (every
      streamed line) never tears down its listeners/animation state. */
   .card-body-shell { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .jump-bottom-orb { position: absolute; right: 10px; bottom: 10px; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; color: var(--accent); background: rgba(var(--accent-rgb),.2); border: 1px solid rgba(var(--accent-rgb),.4); box-shadow: 0 6px 18px rgba(0,0,0,.24); opacity: 0; transform: translateY(6px) scale(.9); pointer-events: none; transition: opacity 200ms var(--spring), transform 200ms var(--spring); z-index: 4; }
+  .jump-bottom-orb { position: absolute; right: 10px; bottom: 10px; width: var(--touch); height: var(--touch); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--accent); background: rgba(var(--accent-rgb),.2); border: 1px solid rgba(var(--accent-rgb),.4); box-shadow: 0 6px 18px rgba(0,0,0,.24); opacity: 0; transform: translateY(6px) scale(.9); pointer-events: none; transition: opacity 200ms var(--spring), transform 200ms var(--spring); z-index: 4; }
+  .jump-bottom-orb .ic { width: var(--icon-md); height: var(--icon-md); }
   .jump-bottom-orb.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
   .jump-bottom-orb:active { transform: scale(.92); }
   .jump-bottom-orb.pulse { animation: jumpOrbPulse 1.3s ease-in-out infinite; }
@@ -384,9 +431,10 @@
   .rail-item.drop-target, .stack-pane.drop-target { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-md); }
   .overview-tile .status-chip { padding: 4px 6px; }
 
-  /* overview 2x2 grid — lives above .term-body (either Stack or Liste), a
-     transient third state layered over whichever view is currently active */
-  .overview-grid { display: none; position: absolute; inset: 0; z-index: 150; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(120px, 1fr); gap: 10px; padding: 4px; overflow-y: auto; }
+  /* overview grid — strict 2 equal columns of ALL sessions, equal-size tiles,
+     unlimited rows, vertically scrollable. A lone last tile keeps its
+     half-width cell (never stretches). Layered over whichever view is active. */
+  .overview-grid { display: none; position: absolute; inset: 0; z-index: 150; grid-template-columns: 1fr 1fr; grid-auto-rows: 150px; align-content: start; gap: 10px; padding: 2px 2px 8px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .overview-grid.is-open { display: grid; }
   .overview-tile { min-width: 0; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 6px; text-align: left; transition: transform 200ms var(--spring); cursor: pointer; }
   .overview-tile:active { transform: scale(.96); }
@@ -401,8 +449,10 @@
      render off the exact same cardState/TMS_DATA — never a copy.
      ============================================================ */
   .term-list { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-  .term-list__inner { max-width: 640px; margin: 0 auto; padding: 2px 16px calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 14px; }
-  .list-card { display: flex; flex-direction: column; flex: none; }
+  .term-list__inner { max-width: 640px; margin: 0 auto; padding: 2px 16px 8px; display: flex; flex-direction: column; gap: 14px; }
+  /* Container clips the swipe reveal + carries the drop shadow; the glass
+     surface (JS adds .glass) slides over the rail behind it. */
+  .list-card { position: relative; flex: none; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--glass-shadow); }
   .list-card .card-header { cursor: default; }
   /* Block, not flex: .card-body-shell inherits flex:1/min-height:0 from the
      Stack context, which would collapse to ~0px inside an auto-height flex
@@ -418,46 +468,39 @@
   .add-terminal-cta:active { transform: scale(.98); background: rgba(var(--accent-rgb),.14); }
   .add-terminal-cta__icon { font-size: 18px; line-height: 1; }
 
-  /* Orb-Leiste — replaces the old floating Esc/arrows toolbar pill with
-     round glass "orb" quick-access buttons (^C, Esc, ⌫, Tab, cursor
-     popover, clear, tools, Aa-select), horizontally scrollable at
-     narrow widths. Positioned exactly where the old pill lived — a
-     fixed sibling of #screens, above the dock, shown only on the
-     terminals screen and hidden by the shared lock-net rule. */
-  #toolbarHost { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); transform: translateX(-50%); z-index: 45; display: none; flex-direction: column; align-items: center; gap: 6px; }
-  #toolbarHost.is-visible { display: flex; }
-  .key-echo-host { display: flex; gap: 6px; min-height: 0; }
-  .key-echo { background: var(--glass-strong); border: 1px solid var(--glass-border); padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; opacity: 0; transform: translateY(4px); transition: opacity 180ms var(--spring), transform 180ms var(--spring); }
+  /* ===== Global key-echo chip — brief flash for Esc / Tab / cursor keys
+     (no PTY in this mockup). Fixed just above the dock, centered. ===== */
+  #keyEcho { position: fixed; left: 50%; bottom: calc(var(--safe-bottom) + var(--dock-h) + 30px); transform: translateX(-50%); z-index: 58; display: flex; gap: 6px; pointer-events: none; }
+  .key-echo { background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); padding: 6px 14px; border-radius: var(--radius-pill); font: 700 var(--fs-caption) var(--font-mono); color: var(--text); opacity: 0; transform: translateY(6px); transition: opacity 180ms var(--spring), transform 180ms var(--spring); }
   .key-echo.show { opacity: 1; transform: translateY(0); }
 
-  .orb-bar { display: flex; align-items: center; gap: 8px; padding: 7px; border-radius: 999px; max-width: min(94vw, 420px); overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .orb-btn { flex: none; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; letter-spacing: -.01em; color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: background 200ms var(--spring), color 200ms var(--spring), transform 150ms var(--spring); }
-  .orb-btn:active { transform: scale(.92); background: rgba(var(--overlay-rgb),.14); }
-  .orb-btn.is-on { color: var(--accent); background: rgba(var(--accent-rgb),.2); }
-  .orb-btn--danger { color: var(--err); background: rgba(var(--err-rgb),.16); border-color: rgba(var(--err-rgb),.34); font-size: 12px; }
-  .orb-btn--danger:active { background: rgba(var(--err-rgb),.28); }
-  .orb-sep { flex: none; width: 1px; height: 26px; background: var(--glass-border); margin: 0 2px; }
+  /* ===== Liste swipe-action rail (iOS-Mail style). Hidden behind each list
+     card's surface; a leftward swipe reveals a per-card action cluster.
+     Only one open at a time (see wireListSwipe). ===== */
+  .list-card__rail { position: absolute; top: 0; right: 0; bottom: 0; display: flex; align-items: flex-start; gap: 7px; padding: 13px 12px 0 18px; z-index: 0; background: linear-gradient(90deg, transparent, rgba(var(--overlay-rgb),.05) 22%); }
+  .list-swipe-btn { flex: none; width: var(--touch); height: var(--touch); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); background: rgba(var(--overlay-rgb),.09); border: 1px solid var(--glass-border); transition: transform 150ms var(--spring), color 200ms var(--spring), background 200ms var(--spring); }
+  .list-swipe-btn .ic { width: var(--icon-md); height: var(--icon-md); }
+  .list-swipe-btn:active { transform: scale(.9); }
+  .list-swipe-btn--danger { color: var(--err); background: rgba(var(--err-rgb),.16); border-color: rgba(var(--err-rgb),.34); }
+  .list-swipe-btn--accent { color: var(--accent); background: rgba(var(--accent-rgb),.16); border-color: rgba(var(--accent-rgb),.4); }
+  .list-card__surface { position: relative; z-index: 1; display: flex; flex-direction: column; border-radius: inherit; transition: transform 320ms var(--spring); touch-action: pan-y; }
+  .list-card.is-swiping .list-card__surface { transition: none; }
 
-  /* ✥ Cursor popover — small radial arrow cluster. Anchored to #toolbarHost
-     (position:fixed, already the nearest positioned ancestor) rather than
-     nested inside .orb-bar: .orb-bar needs overflow-x:auto for horizontal
-     scroll at 380px, which forces overflow-y non-visible too (linked per
-     spec) and would clip a popover living above it. */
-  .cursor-popover { position: absolute; left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%) translateY(6px) scale(.9); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px; border-radius: 22px; opacity: 0; pointer-events: none; transition: opacity 200ms var(--spring), transform 200ms var(--spring); }
-  .cursor-popover.is-open { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0) scale(1); }
-  .cursor-popover__row { display: flex; gap: 6px; }
-
-  /* Schwebende Orb-Pille (OrbGroup) — draggable floating tool launcher.
-     Screen-scoped visibility mirrors #toolbarHost.is-visible exactly;
-     expand/collapse of the strip is a separate .is-open state. */
-  .orb-group { position: fixed; z-index: 46; display: none; flex-direction: column; align-items: center; gap: 8px; touch-action: none; transition: left 280ms var(--spring), right 280ms var(--spring), top 280ms var(--spring); }
-  .orb-group.is-visible { display: flex; }
-  .orb-group.is-dragging { transition: none !important; }
-  .orb-group__toggle { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; color: var(--text-dim); cursor: grab; touch-action: none; transition: transform 200ms var(--spring), background 200ms var(--spring), color 200ms var(--spring); }
-  .orb-group__toggle:active { transform: scale(.92); }
-  .orb-group.is-open .orb-group__toggle { color: var(--accent); background: rgba(var(--accent-rgb),.2); }
-  .orb-group__strip { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-radius: 26px; opacity: 0; transform: translateY(-8px) scale(.9); transform-origin: top center; transition: opacity 220ms var(--spring), transform 220ms var(--spring); pointer-events: none; }
-  .orb-group.is-open .orb-group__strip { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  /* ===== Terminal tools sheet (🔧, Stack secondary tier + Liste rail „mehr")
+     — keys, cursor pad and tool shortcuts for one terminal. ===== */
+  .tt-group-label { margin: 14px 0 8px; font-size: var(--fs-caption); text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); font-weight: 600; }
+  .tt-group-label:first-child { margin-top: 2px; }
+  .tt-keys { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tt-key { height: var(--touch); min-width: var(--touch); padding: 0 15px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; gap: 7px; font: 700 var(--fs-label) var(--font-ui); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring), transform 150ms var(--spring); }
+  .tt-key .ic { width: var(--icon-sm); height: var(--icon-sm); }
+  .tt-key.is-on { color: var(--accent); background: rgba(var(--accent-rgb),.2); border-color: rgba(var(--accent-rgb),.4); }
+  .tt-key--danger { color: var(--err); background: rgba(var(--err-rgb),.14); border-color: rgba(var(--err-rgb),.34); }
+  .tt-key:active { transform: scale(.96); }
+  .tt-pad { display: grid; grid-template-columns: repeat(3, var(--touch)); grid-template-rows: repeat(2, var(--touch)); gap: 7px; justify-content: center; margin: 2px auto; }
+  .tt-pad button { border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring); }
+  .tt-pad button .ic { width: var(--icon-md); height: var(--icon-md); }
+  .tt-pad button:active { background: rgba(var(--accent-rgb),.18); color: var(--accent); }
+  .tt-pad .tt-pad__spacer { visibility: hidden; border: none; background: none; }
 
   /* ============================================================
      Breakpoints — compact <400, medium 400-699, expanded >=700
@@ -505,7 +548,8 @@
   @media (min-width: 700px) { .tool-grid { grid-template-columns: repeat(5, 1fr); } }
   .tool-tile { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 18px 8px; cursor: pointer; transition: transform 220ms var(--spring), background 220ms var(--spring); }
   .tool-tile:active { transform: scale(.95); }
-  .tool-tile__glyph { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 12px; background: rgba(var(--overlay-rgb),.08); border: 1px solid var(--glass-border); font: 700 11px var(--font-mono); color: var(--accent); }
+  .tool-tile__glyph { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: var(--radius-sm); background: rgba(var(--accent-rgb),.12); border: 1px solid var(--glass-border); color: var(--accent); }
+  .tool-tile__glyph .ic { width: var(--icon-md); height: var(--icon-md); }
   .tool-tile__label { font: 600 12px var(--font-ui); color: var(--text); text-align: center; }
 
   .sheet-panel--tall { max-width: 640px; max-height: 82vh; display: flex; flex-direction: column; }
@@ -697,7 +741,7 @@
 
   /* ---------- Lock screen ---------- */
   section[data-screen="lock"]:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; }
-  body.is-locked #dock, body.is-locked #island, body.is-locked #toolbarHost, body.is-locked #pullHint, body.is-locked #orbGroup { display: none !important; }
+  body.is-locked #dock, body.is-locked #statusHeader, body.is-locked #pullHint, body.is-locked #keyEcho { display: none !important; }
   /* Any sheet (permission prompt, Mehr, tool, spotlight) stays fully inert while
      locked — the live session keeps running in the background and can pop a
      permission prompt at any time, but it must never be reachable before PIN entry. */
@@ -747,19 +791,31 @@
      notes/todos sheet (Feature 4). Latency segment CSS lives up in the
      Dynamic Island block above.
      ============================================================ */
-  .term-input-row { flex: none; display: flex; align-items: center; gap: 6px; margin: 0 8px 10px; padding: 6px 6px 6px 14px; border-radius: 999px; font-family: var(--font-mono); }
-  .term-input-row__prompt { flex: none; color: var(--text-dim); font-size: 13px; font-weight: 700; }
-  .term-input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--text); font: 13px var(--font-mono); padding: 7px 0; }
+  /* ===== Input cluster — one coherent glass row per card. In Stack it also
+     carries the primary quick-keys (^C, Esc) and the 🔧 tools button inline;
+     in Liste it stays lean (input + mic + send) and the quick-keys live in
+     the per-card swipe rail. Replaces the old floating global orb bar. ===== */
+  .term-input-row { flex: none; display: flex; align-items: center; gap: 5px; margin: 0 8px 8px; padding: 5px 6px; border-radius: var(--radius-pill); font-family: var(--font-mono); }
+  .term-input-row__prompt { flex: none; margin: 0 1px 0 7px; color: var(--text-dim); font-size: var(--fs-body); font-weight: 700; }
+  .term-input { flex: 1; min-width: 36px; background: none; border: none; outline: none; color: var(--text); font: var(--fs-body) var(--font-mono); padding: 8px 2px; }
   .term-input::placeholder { color: var(--text-dim); }
   .term-input:disabled { color: var(--text-dim); }
-  .term-input-btn { flex: none; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); font-size: 13px; font-weight: 700; transition: color 200ms var(--spring), background 200ms var(--spring), box-shadow 200ms var(--spring); }
+  /* Quick-key chip (^C / Esc) — mono text label, hit-area ≥34px tall */
+  .term-key { flex: none; height: 34px; min-width: 36px; padding: 0 9px; border-radius: var(--radius-pill); display: flex; align-items: center; justify-content: center; font: 700 var(--fs-caption) var(--font-mono); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: background 200ms var(--spring), color 200ms var(--spring), transform 150ms var(--spring); }
+  .term-key:active { transform: scale(.92); background: rgba(var(--overlay-rgb),.14); }
+  .term-key--danger { color: var(--err); background: rgba(var(--err-rgb),.14); border-color: rgba(var(--err-rgb),.34); }
+  /* Round icon controls (mic / send / tools) */
+  .term-input-btn { flex: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); background: transparent; transition: color 200ms var(--spring), background 200ms var(--spring), box-shadow 200ms var(--spring); }
+  .term-input-btn .ic { width: var(--icon-md); height: var(--icon-md); }
   .term-input-btn:active { background: rgba(var(--overlay-rgb),.1); }
-  .term-send-btn:active { color: var(--accent); }
-  .term-mic-btn.is-recording { color: var(--err); box-shadow: 0 0 0 6px rgba(var(--err-rgb),.15); animation: islandPulse 1s ease-in-out infinite; }
-  .term-mic-btn.is-transcribing { color: var(--accent); box-shadow: 0 0 0 6px rgba(var(--accent-rgb),.15); animation: islandPulse 1s ease-in-out infinite; }
-
-  .card-note-btn { flex: none; width: 30px; height: 30px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 14px; background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); color: var(--text-dim); transition: color 200ms var(--spring), border-color 200ms var(--spring), background 200ms var(--spring); }
-  .card-note-btn:active { background: rgba(var(--accent-rgb),.14); border-color: rgba(var(--accent-rgb),.4); color: var(--accent); }
+  .term-tools-btn:active { color: var(--accent); }
+  .term-send-btn { color: var(--accent); background: rgba(var(--accent-rgb),.16); }
+  .term-send-btn:active { background: rgba(var(--accent-rgb),.3); }
+  /* Mic — recording/transcribing render as an elegant pulsing ring */
+  .term-mic-btn.is-recording { color: var(--err); animation: micRing 1.3s ease-in-out infinite; }
+  .term-mic-btn.is-transcribing { color: var(--accent); animation: micRingA 1.3s ease-in-out infinite; }
+  @keyframes micRing { 0%,100% { box-shadow: 0 0 0 2px rgba(var(--err-rgb),.55); } 50% { box-shadow: 0 0 0 7px rgba(var(--err-rgb),0); } }
+  @keyframes micRingA { 0%,100% { box-shadow: 0 0 0 2px rgba(var(--accent-rgb),.5); } 50% { box-shadow: 0 0 0 7px rgba(var(--accent-rgb),0); } }
 
   .sheet-add-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(var(--overlay-rgb),.08); }
   .sheet-add-row input { flex: 1; min-width: 0; padding: 10px 14px; border-radius: 999px; font: 13px var(--font-ui); background: var(--glass); border: 1px solid var(--glass-border); color: var(--text); }
@@ -777,6 +833,51 @@
 
   .tool-group-title { margin: 14px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); font-weight: 600; }
   .tool-group-title:first-child { margin-top: 0; }
+
+  /* ============================================================
+     Icon-system integration + metric touch-ups (applied app-wide).
+     The .ic class is the inline-SVG unit; sized here per host so every
+     control lands on the icon ramp (16 / 20 / 24) with ≥44px hit areas.
+     ============================================================ */
+  .ic { display: block; flex: none; }
+  /* Terminal body scrolls vertically; horizontal is reserved for the Liste
+     swipe rail (see wireListSwipe). */
+  .card-body { touch-action: pan-y; }
+  /* Replay pill — icon + label, one centered row */
+  .replay-pill { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .replay-pill .ic { width: var(--icon-sm); height: var(--icon-sm); }
+  .replay-pill span { font-size: inherit; }
+  /* ^C label inside the round Liste swipe button */
+  .list-swipe-btn .rail-key { font: 700 12px var(--font-mono); }
+  /* Cursor-pad arrow wrappers */
+  .tt-pad .tt-arrow { align-items: center; justify-content: center; }
+  /* Generic icon-button (settings gear etc.) */
+  .icon-btn { width: var(--touch); height: var(--touch); }
+  .icon-btn .ic { width: var(--icon-md); height: var(--icon-md); }
+  /* Manager mic + voice controls */
+  .mic-btn .ic { width: var(--icon-md); height: var(--icon-md); }
+  .voice-pill__play .ic { width: var(--icon-sm); height: var(--icon-sm); }
+  .add-terminal-cta__icon { display: flex; }
+  .add-terminal-cta__icon .ic { width: var(--icon-md); height: var(--icon-md); }
+  /* Cloud favorites star — outline by default, filled + glowing when active */
+  .fav-btn { display: flex; align-items: center; justify-content: center; width: var(--touch); height: var(--touch); }
+  .fav-btn .ic { width: 20px; height: 20px; }
+  .fav-btn.is-fav .ic { fill: var(--accent-warm); color: var(--accent-warm); filter: drop-shadow(0 0 6px rgba(var(--accent-warm-rgb),.55)); }
+  /* Cloud detail back button (chevron + label) */
+  .back-btn { display: inline-flex; align-items: center; gap: 4px; }
+  .back-btn .ic { width: var(--icon-sm); height: var(--icon-sm); }
+  /* Spotlight + pull-hint leading icons */
+  .spotlight-icon { display: flex; }
+  .spotlight-icon .ic { width: var(--icon-sm); height: var(--icon-sm); }
+  .pull-hint { display: flex; align-items: center; gap: 6px; }
+  .pull-hint .ic { width: 14px; height: 14px; }
+  /* Mehr-sheet + settings icons land on the ramp */
+  .mehr-item svg { width: var(--icon-md); height: var(--icon-md); }
+  /* Update-pill close + PIN backspace */
+  .update-pill button.x { display: flex; align-items: center; justify-content: center; }
+  .update-pill button.x .ic { width: var(--icon-sm); height: var(--icon-sm); }
+  .pin-pad button[data-key="back"] { display: flex; align-items: center; justify-content: center; }
+  .pin-pad button[data-key="back"] .ic { width: 22px; height: 22px; }
 </style>
 </head>
 <body class="is-locked">
@@ -786,28 +887,25 @@
   <div class="blob blob--c"></div>
 </div>
 
-<div id="island">
-  <div class="island-shell glass glass--strong" id="islandShell" role="button" tabindex="0" aria-expanded="false" aria-label="Status öffnen">
-    <div class="island-compact" id="islandCompact">
-      <div class="island-seg island-seg--activity">
-        <span class="island-dot" id="islandDot"></span>
-        <span class="island-seg__label" id="islandActivityLabel">Bereit</span>
-      </div>
-      <div class="island-divider"></div>
-      <div class="island-seg island-seg--latency" id="islandLatencySeg">
-        <span class="island-dot is-ok"></span>
-        <span class="island-seg__label" id="islandLatencyLabel">— ms</span>
-      </div>
-      <div class="island-divider"></div>
-      <div class="island-seg island-seg--prayer">
-        <svg class="island-moon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M14.2 3.1a8.7 8.7 0 1 0 6.7 12.9A7.2 7.2 0 0 1 14.2 3.1z"/></svg>
-        <span class="island-seg__label" id="islandPrayerLabel">—</span>
-      </div>
-    </div>
-    <div class="island-expanded" id="islandExpanded"></div>
-  </div>
-  <span class="island-mic-badge" id="islandMicBadge" hidden aria-hidden="true">●</span>
-</div>
+<header id="statusHeader" class="glass glass--strong" role="button" tabindex="0" aria-expanded="false" aria-label="Status – Details öffnen">
+  <span class="status-hd__activity">
+    <span class="status-dot" id="statusDot"></span>
+    <span class="status-hd__label" id="statusActivityLabel">Bereit</span>
+  </span>
+  <span class="status-hd__metrics">
+    <span class="status-hd__metric status-hd__metric--latency" id="statusLatencySeg">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h.01M8 20v-5M13 20v-9M18 20V6"/></svg>
+      <span id="statusLatencyLabel">— ms</span>
+    </span>
+    <span class="status-hd__divider"></span>
+    <span class="status-hd__metric status-hd__metric--prayer">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+      <span id="statusPrayerLabel">—</span>
+    </span>
+  </span>
+  <span class="status-hd__chevron"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+  <span class="status-mic-badge" id="statusMicBadge" hidden aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg></span>
+</header>
 
 <main id="screens">
   <section data-screen="servers" hidden></section>
@@ -827,74 +925,53 @@
         <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
         <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
         <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
-        <span class="pin-pad__spacer" aria-hidden="true"></span><button data-key="0">0</button><button data-key="back" aria-label="Löschen">⌫</button>
+        <span class="pin-pad__spacer" aria-hidden="true"></span><button data-key="0">0</button><button data-key="back" aria-label="Löschen"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-6-6a1 1 0 0 1 0-1.4Z"/><path d="m17 10-4 4M13 10l4 4"/></svg></button>
       </div>
     </div>
   </section>
 </main>
 
-<div class="pull-hint glass" id="pullHint" aria-hidden="true">✦ Spotlight</div>
+<div class="pull-hint glass" id="pullHint" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Spotlight</span></div>
 
 <nav id="dock" class="glass">
   <button class="dock-btn" data-nav="servers">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><circle cx="7" cy="7" r=".6" fill="currentColor" stroke="none"/><circle cx="7" cy="17" r=".6" fill="currentColor" stroke="none"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
     <span>Server</span>
   </button>
   <button class="dock-btn" data-nav="terminals">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9.5l3 2.5-3 2.5M13 15h4"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>
     <span>Terminals</span>
+    <span class="dock-badge" id="termPendingBadge" hidden aria-hidden="true"></span>
   </button>
   <button class="dock-btn" data-nav="manager">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H8l-4 4V5z"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></svg>
     <span>Manager</span>
   </button>
   <button class="dock-btn" data-nav="cloud">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.6-7.96A5 5 0 0 1 16 8.8 4.5 4.5 0 0 1 17.5 18H7z"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.78A6 6 0 0 0 5 12.5 4 4 0 0 0 6.5 19z"/></svg>
     <span>Cloud</span>
   </button>
   <button class="dock-btn" data-nav="mehr">
-    <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>
     <span>Mehr</span>
   </button>
 </nav>
 
-<div id="toolbarHost">
-  <div class="key-echo-host" id="keyEchoHost"></div>
-  <!-- Positioned relative to #toolbarHost, NOT .orb-bar: .orb-bar needs
-       overflow-x:auto for horizontal scroll at 380px, which forces
-       overflow-y non-visible too (linked per spec) and would clip a
-       popover anchored above it if nested inside. -->
-  <div class="cursor-popover glass glass--strong" id="cursorPopover" hidden role="dialog" aria-label="Cursor-Tasten">
-    <button class="orb-btn" data-key="↑" aria-label="Pfeil nach oben">↑</button>
-    <div class="cursor-popover__row">
-      <button class="orb-btn" data-key="←" aria-label="Pfeil nach links">←</button>
-      <button class="orb-btn" data-key="↓" aria-label="Pfeil nach unten">↓</button>
-      <button class="orb-btn" data-key="→" aria-label="Pfeil nach rechts">→</button>
-    </div>
-  </div>
-  <div class="orb-bar glass" id="orbBar" role="toolbar" aria-label="Terminal-Schnellzugriff">
-    <button class="orb-btn orb-btn--danger" data-orb="ctrlc" aria-label="Strg+C senden" title="Strg+C">^C</button>
-    <button class="orb-btn" data-orb="esc" aria-label="Escape" title="Esc">Esc</button>
-    <button class="orb-btn" data-orb="backspace" aria-label="Rücktaste" title="Backspace">⌫</button>
-    <button class="orb-btn" data-orb="tab" aria-label="Tab" title="Tab">Tab</button>
-    <button class="orb-btn" id="cursorOrbBtn" data-orb="cursor" aria-label="Cursor-Tasten" aria-haspopup="true" aria-expanded="false" title="Cursor">✥</button>
-    <button class="orb-btn" data-orb="clear" aria-label="Terminal leeren" title="Leeren">🗑</button>
-    <div class="orb-sep" aria-hidden="true"></div>
-    <button class="orb-btn" data-orb="tools" aria-label="Werkzeuge" title="Werkzeuge">🔧</button>
-    <button class="orb-btn" id="selToggleBtn" data-orb="selectmode" aria-label="Textauswahl" aria-pressed="false" title="Auswahl">Aa</button>
-  </div>
-</div>
+<div id="keyEcho" aria-hidden="true"></div>
 
-<div class="orb-group" id="orbGroup">
-  <button class="orb-group__toggle glass glass--strong" id="orbGroupToggle" aria-label="Werkzeuge-Schnellzugriff" aria-haspopup="true" aria-expanded="false" title="Werkzeuge">⋯</button>
-  <div class="orb-group__strip glass glass--strong" id="orbGroupStrip"></div>
-</div>
-
-<div class="sheet-wrap" id="permSheetWrap" hidden>
+<div class="sheet-wrap sheet-wrap--perm" id="permSheetWrap" hidden>
   <div class="sheet-backdrop" data-close-perm></div>
   <div class="sheet-panel glass glass--strong">
     <div class="sheet-grabber"></div>
-    <div class="perm-tool-row"><span class="perm-tool" id="permTool"></span><span class="perm-target" id="permTarget"></span></div>
+    <div class="perm-source">
+      <span class="perm-source__dot" id="permSourceDot"></span>
+      <span class="perm-source__name" id="permSourceName"></span>
+      <span class="perm-source__badge">wartet</span>
+    </div>
+    <div class="perm-tool-row">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
+      <span class="perm-tool" id="permTool"></span><span class="perm-target" id="permTarget"></span>
+    </div>
     <div class="perm-question" id="permQuestion"></div>
     <div class="perm-actions">
       <button data-act="yes">Ja</button>
@@ -958,11 +1035,35 @@
   </div>
 </div>
 
+<div class="sheet-wrap" id="statusSheetWrap" hidden>
+  <div class="sheet-backdrop" data-close-status></div>
+  <div class="sheet-panel sheet-panel--tall glass glass--strong">
+    <div class="sheet-grabber"></div>
+    <div class="sheet-head-row">
+      <div class="sheet-title">Status</div>
+      <button class="sheet-close-btn" id="statusSheetClose">Schließen</button>
+    </div>
+    <div class="sheet-scroll-body island-expanded" id="statusDetailBody"></div>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="termToolsSheetWrap" hidden>
+  <div class="sheet-backdrop" data-close-termtools></div>
+  <div class="sheet-panel sheet-panel--tall glass glass--strong">
+    <div class="sheet-grabber"></div>
+    <div class="sheet-head-row">
+      <div class="sheet-title" id="termToolsTitle">Werkzeuge</div>
+      <button class="sheet-close-btn" id="termToolsClose">Schließen</button>
+    </div>
+    <div class="sheet-scroll-body" id="termToolsBody"></div>
+  </div>
+</div>
+
 <div class="sheet-wrap sheet-wrap--top" id="spotlightWrap" hidden>
   <div class="sheet-backdrop" data-close-spotlight></div>
   <div class="spotlight-panel glass glass--strong" role="dialog" aria-modal="true" aria-label="Spotlight-Suche">
     <div class="spotlight-search">
-      <span class="spotlight-icon">✦</span>
+      <span class="spotlight-icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span>
       <input id="spotlightInput" type="text" placeholder="Suchen…" autocomplete="off" spellcheck="false">
       <button class="spotlight-close" id="spotlightClose">Esc</button>
     </div>
@@ -1075,8 +1176,11 @@
     dictation: { active: false, cardId: null, phase: null },
   };
   const cardState = {}; // id -> { lines, sim, autoApprove, pendingPrompt, autoTimer, selectionMode, selection, collapsed, showReplay }
+  // Auto-Approve defaults ON per terminal (Addendum 4): the demo's scripted
+  // prompt now auto-resolves on first run; toggling a terminal OFF + replay
+  // demoes the permission-sheet flow.
   TMS_DATA.sessions.forEach(s => {
-    cardState[s.id] = { lines: s.buffer.slice(), sim: null, autoApprove: false, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
+    cardState[s.id] = { lines: s.buffer.slice(), sim: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
   });
   state.activeCardId = state.order[0] || null;
 
@@ -1105,7 +1209,7 @@
     };
     TMS_DATA.sessions.push(session);
     state.order.push(id);
-    cardState[id] = { lines: session.buffer.slice(), sim: null, autoApprove: false, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
+    cardState[id] = { lines: session.buffer.slice(), sim: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
     return session;
   }
 
@@ -1114,6 +1218,56 @@
   // ============================================================
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ============================================================
+  // Icon system — one consistent inline-SVG stroke language (SF Symbols /
+  // Lucide aesthetic): 24 viewBox, round caps/joins, stroke=currentColor so
+  // both themes just work. Sized via the icon ramp (--icon-sm/md/lg). NO
+  // emoji anywhere in chrome. All self-contained (offline constraint).
+  // ============================================================
+  const ICON_PATHS = {
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
+    stack: '<rect x="6.5" y="6.5" width="13" height="13" rx="2.5" opacity=".45"/><rect x="4.5" y="4.5" width="13" height="13" rx="2.5"/>',
+    list: '<path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
+    mic: '<rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/>',
+    enter: '<path d="M9 10l-4 4 4 4"/><path d="M20 5v5a4 4 0 0 1-4 4H5"/>',
+    trash: '<path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M10 11v6M14 11v6"/>',
+    tools: '<path d="M4 6h9M4 12h5M4 18h13"/><circle cx="17" cy="6" r="2.2"/><circle cx="13" cy="12" r="2.2"/><circle cx="21" cy="18" r="2.2"/>',
+    cursorpad: '<path d="M12 3.5v17M3.5 12h17"/><path d="m9.5 6 2.5-2.5L14.5 6M9.5 18l2.5 2.5 2.5-2.5M6 9.5 3.5 12 6 14.5M18 9.5l2.5 2.5-2.5 2.5"/>',
+    jumpDown: '<path d="m7 7 5 5 5-5M7 13l5 5 5-5"/>',
+    copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    note: '<path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4Z"/>',
+    chevron: '<path d="m6 9 6 6 6-6"/>',
+    chevronRight: '<path d="m9 6 6 6-6 6"/>',
+    star: '<path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 18.3 6.2 21l1.1-6.5L2.6 9.8l6.5-.9Z"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 14.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 14a2 2 0 1 1 0-4a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 11 3.6V3a2 2 0 1 1 4 0a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 .7 2.9H21a2 2 0 1 1 0 4Z"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    folder: '<path d="M4 7a2 2 0 0 1 2-2h3.2a2 2 0 0 1 1.4.6L12 7h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/>',
+    play: '<path d="M7 4.8v14.4l12-7.2Z"/>',
+    pause: '<path d="M8 5v14M16 5v14"/>',
+    replay: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3.2V8h4.8"/>',
+    db: '<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6M4 11.5v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+    processes: '<path d="M3 12h4l2 6 4-15 2.5 9H21"/>',
+    snippet: '<path d="m8 6-6 6 6 6M16 6l6 6-6 6"/>',
+    eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+    ports: '<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M8 8V5a4 4 0 0 1 8 0v3M8 14h.01M12 14h.01M16 14h.01"/>',
+    camera: '<path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h5L16 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><circle cx="12" cy="12.5" r="3.2"/>',
+    browser: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/>',
+    bolt: '<path d="M13 2 4 14h6l-1 8 9-12h-6Z"/>',
+    stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+    x: '<path d="M6 6l12 12M18 6 6 18"/>',
+    check: '<path d="M5 12l4 4L19 7"/>',
+    backspace: '<path d="M9 6h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-6-6a1 1 0 0 1 0-1.4Z"/><path d="m17 10-4 4M13 10l4 4"/>',
+  };
+  function icon(name, size, cls) {
+    const p = ICON_PATHS[name] || '';
+    const s = size || 20;
+    return `<svg class="ic${cls ? ' ' + cls : ''}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
   }
 
   // Minimal ANSI SGR renderer: bold(1) dim(2) red(31) green(32) reset(0), incl. multi-param
@@ -1215,17 +1369,21 @@
   }
 
   // ============================================================
-  // Dynamic Island
+  // Status header (global chrome) + status detail sheet. Replaces the old
+  // floating Dynamic-Island pill but keeps its function names, so every
+  // call-site (live sim, latency ticker, prompt) stays untouched.
+  // state.islandOpen now means "status detail sheet is open".
   // ============================================================
-  const islandShell = document.getElementById('islandShell');
-  const islandDot = document.getElementById('islandDot');
-  const islandActivityLabel = document.getElementById('islandActivityLabel');
-  const islandPrayerLabel = document.getElementById('islandPrayerLabel');
-  const islandExpanded = document.getElementById('islandExpanded');
+  const statusHeaderEl = document.getElementById('statusHeader');
+  const statusDot = document.getElementById('statusDot');
+  const statusActivityLabel = document.getElementById('statusActivityLabel');
+  const statusPrayerLabel = document.getElementById('statusPrayerLabel');
+  const statusDetailBody = document.getElementById('statusDetailBody');
+  const statusSheetWrap = document.getElementById('statusSheetWrap');
 
   function setIslandActivity(kind, label) {
-    islandDot.className = 'island-dot' + (kind === 'live' ? ' is-live' : kind === 'warn' ? ' is-warn' : kind === 'ok' ? ' is-ok' : '');
-    islandActivityLabel.textContent = label;
+    statusDot.className = 'status-dot' + (kind === 'live' ? ' is-live' : kind === 'warn' ? ' is-warn' : kind === 'ok' ? ' is-ok' : '');
+    statusActivityLabel.textContent = label;
   }
 
   function renderIslandExpanded() {
@@ -1239,30 +1397,27 @@
       <div class="island-row" data-session="${s.id}" role="button" tabindex="0">
         <span class="island-row__dot" style="background:${s.colorTag}"></span>
         <span class="island-row__name">${escapeHtml(s.name)}</span>
-        <span class="island-row__meta">${escapeHtml(s.status)}</span>
+        <span class="island-row__meta">${escapeHtml(STATUS_LABELS[s.status] || s.status)}</span>
       </div>`).join('');
-    islandExpanded.innerHTML = `
+    statusDetailBody.innerHTML = `
       <h4>Aktive Sitzungen</h4>
       ${sessionRows}
       <h4>Agent-Aktivität</h4>
       <div class="island-activity-feed">${renderBufferLine(lastLine) || '—'}</div>
       <h4>Verbindung</h4>
-      <div class="island-row"><span class="island-row__dot" style="background:var(--ok)"></span><span class="island-row__name">Verbindung — ${escapeHtml(connSrv.name)} · ${connSrv.latency != null ? connSrv.latency + ' ms' : '—'}</span><span class="island-row__meta">${connSrv.status === 'online' ? 'Online' : 'Offline'}</span></div>
+      <div class="island-row"><span class="island-row__dot" style="background:var(--ok)"></span><span class="island-row__name">${escapeHtml(connSrv.name)} · ${connSrv.latency != null ? connSrv.latency + ' ms' : '—'}</span><span class="island-row__meta">${connSrv.status === 'online' ? 'Online' : 'Offline'}</span></div>
       <h4>Nächstes Gebet</h4>
       <div class="island-row"><span class="island-row__dot" style="background:var(--accent-warm)"></span><span class="island-row__name">${escapeHtml(np.name)} · ${escapeHtml(np.time)}</span><span class="island-row__meta">in ${np.countdown}</span></div>
       <h4>Deploy</h4>
       <div class="island-row"><span class="island-row__dot" style="background:var(--warn)"></span><span class="island-row__name">${building ? escapeHtml(building.name) : 'Keine aktiven Builds'}</span><span class="island-row__meta">${building ? 'Build läuft…' : ''}</span></div>
       <h4>Erscheinungsbild</h4>
       <button class="island-theme-toggle" id="islandThemeToggle" type="button" aria-label="Theme wechseln">
-        <span class="island-theme-toggle__icon">${state.theme === 'dark'
-          ? '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.2 3.1a8.7 8.7 0 1 0 6.7 12.9A7.2 7.2 0 0 1 14.2 3.1z"/></svg>'
-          : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7"/></svg>'}</span>
+        <span class="island-theme-toggle__icon">${state.theme === 'dark' ? icon('moon', 13) : icon('sun', 13)}</span>
         <span>${state.theme === 'dark' ? 'Dunkel' : 'Hell'}</span>
         <span class="island-theme-toggle__meta">Antippen zum Wechseln</span>
       </button>
-      <div class="island-close-hint">Antippen zum Schließen</div>
     `;
-    islandExpanded.querySelectorAll('[data-session]').forEach(row => {
+    statusDetailBody.querySelectorAll('[data-session]').forEach(row => {
       row.addEventListener('click', e => {
         e.stopPropagation();
         const id = row.dataset.session;
@@ -1280,21 +1435,23 @@
   function openIsland() {
     state.islandOpen = true;
     renderIslandExpanded();
-    islandShell.classList.add('is-open');
-    islandShell.setAttribute('aria-expanded', 'true');
+    statusHeaderEl.setAttribute('aria-expanded', 'true');
+    openSheet(statusSheetWrap);
   }
   function closeIsland() {
     state.islandOpen = false;
-    islandShell.classList.remove('is-open');
-    islandShell.setAttribute('aria-expanded', 'false');
+    statusHeaderEl.setAttribute('aria-expanded', 'false');
+    closeSheet(statusSheetWrap);
   }
   function toggleIsland() { state.islandOpen ? closeIsland() : openIsland(); }
 
-  islandShell.addEventListener('click', toggleIsland);
-  islandShell.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleIsland(); } });
+  statusHeaderEl.addEventListener('click', toggleIsland);
+  statusHeaderEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleIsland(); } });
+  document.getElementById('statusSheetClose').addEventListener('click', closeIsland);
+  statusSheetWrap.querySelector('[data-close-status]').addEventListener('click', closeIsland);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.islandOpen) closeIsland(); });
 
-  islandPrayerLabel.textContent = (() => { const np = nextPrayer(); return `${np.name} in ${np.countdown}`; })();
+  statusPrayerLabel.textContent = (() => { const np = nextPrayer(); return `${np.name} · ${np.countdown}`; })();
 
   // ============================================================
   // Ping / connection latency — compact island segment + expanded row.
@@ -1302,12 +1459,14 @@
   // around a stable center instead of drifting. Single global interval,
   // started once at boot (see Init) — never re-armed on screen navigation.
   // ============================================================
-  const islandLatencyLabel = document.getElementById('islandLatencyLabel');
+  const statusLatencyLabel = document.getElementById('statusLatencyLabel');
   function updateLatencyDisplay() {
     const val = TMS_DATA.servers[0].latency;
-    if (islandLatencyLabel) islandLatencyLabel.textContent = (val != null ? val : '—') + ' ms';
+    if (statusLatencyLabel) statusLatencyLabel.textContent = (val != null ? val : '—') + ' ms';
     const chip = document.querySelector(`[data-latency-chip="${TMS_DATA.servers[0].id}"]`);
     if (chip) chip.textContent = (val != null ? val : '—') + ' ms';
+    const np = nextPrayer();
+    if (statusPrayerLabel) statusPrayerLabel.textContent = `${np.name} · ${np.countdown}`;
     if (state.islandOpen) renderIslandExpanded();
   }
   let latencyTickerStarted = false;
@@ -1359,25 +1518,18 @@
   // ============================================================
   // Router
   // ============================================================
-  const SCREEN_HOOKS = {
-    terminals() {
-      document.getElementById('toolbarHost').classList.add('is-visible');
-      document.getElementById('orbGroup').classList.add('is-visible');
-    },
-  };
+  const SCREEN_HOOKS = {};
   function show(name) {
     if (name !== 'cloud') stopCloudBuildTimer();
     if (name !== 'prayer') stopPrayerTick();
-    if (name !== 'terminals') cancelDictation();
+    if (name !== 'terminals') { cancelDictation(); closeAllListRails(); }
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
-    if (name !== 'terminals') {
-      document.getElementById('toolbarHost').classList.remove('is-visible');
-      document.getElementById('orbGroup').classList.remove('is-visible');
-      closeCursorPopover();
-      collapseOrbGroup();
-    }
     if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
+    // A pending permission prompt only shows its sheet on the Terminals screen;
+    // syncPermSheet re-homes/hides it as the user navigates.
+    syncPermSheet();
+    updatePendingBadge();
   }
   function goToTerminals() { show('terminals'); }
 
@@ -1420,7 +1572,7 @@
     pill.innerHTML = `
       <div class="update-pill__text"><b>v${u.latest}</b> verfügbar — ${escapeHtml(u.notes)}</div>
       <button class="cta">Jetzt updaten</button>
-      <button class="x" aria-label="Schließen">✕</button>
+      <button class="x" aria-label="Schließen">${icon('x', 16)}</button>
     `;
     pill.querySelector('.cta').addEventListener('click', () => toast('Mockup: Update-Vorgang wird nicht simuliert'));
     pill.querySelector('.x').addEventListener('click', () => pill.remove());
@@ -1435,7 +1587,7 @@
     renderUpdateBanner(host);
     const titleRow = document.createElement('div');
     titleRow.className = 'screen-title-row';
-    titleRow.innerHTML = `<h1 class="screen-title">Server</h1><button class="icon-btn glass" id="settingsBtn" aria-label="Einstellungen öffnen">⚙</button>`;
+    titleRow.innerHTML = `<h1 class="screen-title">Server</h1><button class="icon-btn glass" id="settingsBtn" aria-label="Einstellungen öffnen">${icon('gear')}</button>`;
     host.appendChild(titleRow);
     titleRow.querySelector('#settingsBtn').addEventListener('click', () => show('settings'));
     const grid = document.createElement('div');
@@ -1480,18 +1632,16 @@
         <div class="term-header__top">
           <h2>Terminals</h2>
           <div class="term-header__actions">
-            <button class="overview-btn glass" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">+</button>
-            <button class="overview-btn glass" id="overviewBtn" aria-label="Übersicht" title="Übersicht">⊞</button>
+            <button class="overview-btn glass" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">${icon('plus')}</button>
+            <button class="overview-btn glass" id="overviewBtn" aria-label="Übersicht" title="Übersicht">${icon('grid')}</button>
           </div>
         </div>
         <div class="view-toggle glass" id="viewToggle" role="tablist" aria-label="Ansicht">
           <button class="view-toggle__btn" data-view="stack" role="tab" aria-selected="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="7.5" width="13" height="13" rx="2.5" opacity=".5"/><rect x="4.5" y="4.5" width="13" height="13" rx="2.5"/></svg>
-            <span>Stack</span>
+            ${icon('stack', 16)}<span>Stack</span>
           </button>
           <button class="view-toggle__btn" data-view="list" role="tab" aria-selected="false">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="4.2" rx="1.3"/><rect x="4" y="10" width="16" height="4.2" rx="1.3"/><rect x="4" y="15.5" width="16" height="4.2" rx="1.3"/></svg>
-            <span>Liste</span>
+            ${icon('list', 16)}<span>Liste</span>
           </button>
         </div>
       </div>
@@ -1520,7 +1670,7 @@
         <div class="term-list" id="termList">
           <div class="term-list__inner" id="termListCards">
             <button class="add-terminal-cta glass" id="addTerminalCta" type="button">
-              <span class="add-terminal-cta__icon">+</span><span>Neues Terminal</span>
+              <span class="add-terminal-cta__icon">${icon('plus')}</span><span>Neues Terminal</span>
             </button>
           </div>
         </div>
@@ -1583,7 +1733,52 @@
     return `
         <div class="card-body-shell${isList ? ' list-card__body-shell' : ''}">
           <pre class="card-body glass glass--dark" data-card-id="${id}"></pre>
-          <button class="jump-bottom-orb" data-jump-btn aria-label="Nach unten springen" title="Neue Ausgabe – nach unten springen">⏬</button>
+          <button class="jump-bottom-orb" data-jump-btn aria-label="Nach unten springen" title="Neue Ausgabe – nach unten springen">${icon('jumpDown')}</button>
+        </div>`;
+  }
+
+  // Shared header markup for Stack + Liste. Name + description are readonly
+  // inputs unlocked by triple-tap (wireTripleTapEdit); the Auto-Approve pill
+  // is a 1-tap per-terminal control (default ON).
+  function cardHeaderHtml(session, id, isList) {
+    const cs = cardState[id];
+    return `
+        <div class="card-header${isList ? ' list-card__header' : ''}">
+          ${isList ? `<button class="chevron-btn" data-act="toggle" aria-label="Ein-/Ausklappen" title="Ein-/Ausklappen">${icon('chevron', 16)}</button>` : ''}
+          <span class="card-tag" style="background:${session.colorTag}"></span>
+          <div class="card-name-wrap">
+            <input class="card-name" value="${escapeHtml(session.name)}" readonly aria-label="Terminal-Name">
+            <input class="card-desc" value="${escapeHtml(session.description)}" readonly aria-label="Beschreibung">
+          </div>
+          <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
+          <button class="auto-toggle${cs.autoApprove ? ' is-on' : ''}" data-act="auto" aria-pressed="${cs.autoApprove}" aria-label="Auto-Approve umschalten" title="Auto-Approve">${icon('bolt', 14)}<span class="auto-toggle__label">Auto</span></button>
+        </div>`;
+  }
+
+  // Stack input cluster — primary tier keys (^C, Esc) + input + mic + send +
+  // 🔧 tools (secondary tier), all in one glass row.
+  function stackInputRowHtml() {
+    return `
+        <div class="term-input-row glass">
+          <button class="term-key term-key--danger" data-key="ctrlc" aria-label="Strg+C senden" title="Strg+C">^C</button>
+          <button class="term-key" data-key="esc" aria-label="Escape" title="Esc">Esc</button>
+          <span class="term-input-row__prompt">$</span>
+          <input type="text" class="term-input" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben">
+          <button class="term-input-btn term-mic-btn" data-act="mic" aria-label="Diktieren">${icon('mic')}</button>
+          <button class="term-input-btn term-send-btn" data-act="send" aria-label="Senden">${icon('enter')}</button>
+          <button class="term-input-btn term-tools-btn" data-act="tools" aria-label="Werkzeuge" title="Werkzeuge">${icon('tools')}</button>
+        </div>`;
+  }
+
+  // Liste input cluster — lean (input + mic + send); quick-keys live in the
+  // per-card swipe rail instead.
+  function listInputRowHtml() {
+    return `
+        <div class="term-input-row glass">
+          <span class="term-input-row__prompt">$</span>
+          <input type="text" class="term-input" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben">
+          <button class="term-input-btn term-mic-btn" data-act="mic" aria-label="Diktieren">${icon('mic')}</button>
+          <button class="term-input-btn term-send-btn" data-act="send" aria-label="Senden">${icon('enter')}</button>
         </div>`;
   }
 
@@ -1593,26 +1788,12 @@
     card.className = 'stack-card term-card glass';
     card.dataset.id = id;
     card.innerHTML = `
-        <div class="card-header">
-          <span class="card-tag" style="background:${session.colorTag}"></span>
-          <div class="card-name-wrap">
-            <input class="card-name" value="${escapeHtml(session.name)}" readonly>
-            <div class="card-desc">${escapeHtml(session.description)}</div>
-          </div>
-          <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
-          <button class="card-note-btn" data-note-btn aria-label="Notizen & Todos" title="Notizen & Todos">📝</button>
-        </div>
+        ${cardHeaderHtml(session, id, false)}
         ${cardBodyBlockHtml(id, false)}
-        <button class="replay-pill" hidden>↻ Session erneut abspielen</button>
-        <div class="term-input-row glass">
-          <span class="term-input-row__prompt">$</span>
-          <input type="text" class="term-input" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben">
-          <button class="term-input-btn term-mic-btn" data-act="mic" aria-label="Diktieren">●</button>
-          <button class="term-input-btn term-send-btn" data-act="send" aria-label="Senden">↵</button>
-        </div>
+        <button class="replay-pill" hidden>${icon('replay', 14)}<span>Session erneut abspielen</span></button>
+        ${stackInputRowHtml()}
       `;
     wireCardHeader(card, id);
-    wireCardNoteBtn(card, id);
     wireTerminalInputRow(card, id);
     wireJumpOrb(card, id);
     restoreReplayPill(card, id);
@@ -1652,40 +1833,41 @@
     const id = session.id;
     const cs = cardState[id];
     const card = document.createElement('article');
-    card.className = 'list-card term-card glass';
+    card.className = 'list-card term-card';
     card.dataset.id = id;
     card.dataset.collapsed = String(!!(cs && cs.collapsed));
     card.innerHTML = `
-        <div class="card-header list-card__header">
-          <button class="chevron-btn" data-act="toggle" aria-label="Ein-/Ausklappen" title="Ein-/Ausklappen">⌄</button>
-          <span class="card-tag" style="background:${session.colorTag}"></span>
-          <div class="card-name-wrap">
-            <input class="card-name" value="${escapeHtml(session.name)}" readonly>
-            <div class="card-desc">${escapeHtml(session.description)}</div>
-          </div>
-          <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
-          <button class="card-note-btn" data-note-btn aria-label="Notizen & Todos" title="Notizen & Todos">📝</button>
+        <div class="list-card__rail" aria-hidden="true">
+          <button class="list-swipe-btn list-swipe-btn--danger" data-rail="ctrlc" aria-label="Strg+C senden" title="Strg+C"><span class="rail-key">^C</span></button>
+          <button class="list-swipe-btn" data-rail="clear" aria-label="Terminal leeren" title="Leeren">${icon('trash')}</button>
+          <button class="list-swipe-btn" data-rail="notes" aria-label="Notizen & Todos" title="Notizen">${icon('note')}</button>
+          <button class="list-swipe-btn list-swipe-btn--accent" data-rail="files" aria-label="Dateien" title="Dateien">${icon('folder')}</button>
+          <button class="list-swipe-btn" data-rail="tools" aria-label="Werkzeuge" title="Werkzeuge">${icon('tools')}</button>
         </div>
-        <div class="list-card__collapsible">
-          ${cardBodyBlockHtml(id, true)}
-          <button class="replay-pill" hidden>↻ Session erneut abspielen</button>
-          <div class="term-input-row glass">
-            <span class="term-input-row__prompt">$</span>
-            <input type="text" class="term-input" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben">
-            <button class="term-input-btn term-mic-btn" data-act="mic" aria-label="Diktieren">●</button>
-            <button class="term-input-btn term-send-btn" data-act="send" aria-label="Senden">↵</button>
+        <div class="list-card__surface glass">
+          ${cardHeaderHtml(session, id, true)}
+          <div class="list-card__collapsible">
+            ${cardBodyBlockHtml(id, true)}
+            <button class="replay-pill" hidden>${icon('replay', 14)}<span>Session erneut abspielen</span></button>
+            ${listInputRowHtml()}
           </div>
         </div>
       `;
     wireCardHeader(card, id);
-    wireCardNoteBtn(card, id);
     wireTerminalInputRow(card, id);
     wireJumpOrb(card, id);
     restoreReplayPill(card, id);
     card.querySelector('.chevron-btn').addEventListener('click', e => { e.stopPropagation(); toggleListCardCollapse(id); });
-    // Tapping anywhere in a list card marks it "current" for the floating
-    // Aa selection-mode toolbar — mirrors Stack's setActive()-driven target.
+    // Tapping anywhere in a list card marks it "current" for orb/tool actions.
     card.addEventListener('pointerdown', () => { state.activeCardId = id; });
+    wireListSwipe(card, id);
+    card.querySelector('.list-card__rail').addEventListener('click', e => {
+      const btn = e.target.closest('[data-rail]');
+      if (!btn) return;
+      e.stopPropagation();
+      handleRailAction(btn.dataset.rail, id);
+      if (btn.dataset.rail !== 'jump') closeListRail(card);
+    });
     return card;
   }
 
@@ -1761,28 +1943,58 @@
     input.select();
   }
 
-  function wireCardHeader(card, id) {
-    const input = card.querySelector('.card-name');
-    const session = TMS_DATA.sessions.find(s => s.id === id);
-    input.addEventListener('click', e => {
+  // Triple-tap (3 taps within ~600ms) unlocks inline editing of a readonly
+  // field; single/double taps do nothing edit-related (double-tap hints).
+  // Movement between taps resets the counter, so it never conflicts with the
+  // Liste swipe-rail drag.
+  function wireTripleTapEdit(el, onTriple) {
+    if (!el) return;
+    let taps = 0, timer = null, downX = 0, downY = 0, moved = false;
+    el.addEventListener('pointerdown', e => { downX = e.clientX; downY = e.clientY; moved = false; });
+    el.addEventListener('pointermove', e => { if (Math.abs(e.clientX - downX) > 8 || Math.abs(e.clientY - downY) > 8) moved = true; });
+    el.addEventListener('click', e => {
+      if (!el.readOnly) return; // already editing — let the tap place the caret
       e.stopPropagation();
-      if (input.readOnly) { input.readOnly = false; input.dataset.editing = '1'; input.focus(); input.select(); }
+      if (moved) { taps = 0; clearTimeout(timer); return; }
+      taps++;
+      clearTimeout(timer);
+      if (taps >= 3) { taps = 0; onTriple(); return; }
+      if (taps === 2) toast('Dreifach tippen zum Umbenennen');
+      timer = setTimeout(() => { taps = 0; }, 600);
     });
-    function commit() {
+  }
+
+  function wireEditableField(input, field, session) {
+    if (!input) return;
+    wireTripleTapEdit(input, () => {
+      input.readOnly = false;
+      input.dataset.editing = '1';
+      input.focus();
+      input.select();
+    });
+    input.addEventListener('blur', () => {
+      if (input.readOnly) return;
       input.readOnly = true;
       delete input.dataset.editing;
       const val = input.value.trim();
-      session.name = val || session.name;
-      input.value = session.name;
+      session[field] = val || session[field];
+      input.value = session[field];
       renderRail();
       if (state.overviewOpen) renderOverview();
-    }
-    input.addEventListener('blur', commit);
+    });
     input.addEventListener('keydown', e => {
       e.stopPropagation();
       if (e.key === 'Enter') input.blur();
-      if (e.key === 'Escape') { input.value = session.name; input.blur(); }
+      if (e.key === 'Escape') { input.value = session[field]; input.blur(); }
     });
+  }
+
+  function wireCardHeader(card, id) {
+    const session = TMS_DATA.sessions.find(s => s.id === id);
+    wireEditableField(card.querySelector('.card-name'), 'name', session);
+    wireEditableField(card.querySelector('.card-desc'), 'description', session);
+    const auto = card.querySelector('.auto-toggle');
+    if (auto) auto.addEventListener('click', e => { e.stopPropagation(); toggleCardAutoApprove(id); });
   }
 
   // ============================================================
@@ -1799,6 +2011,7 @@
 
   function wireTerminalInputRow(card, id) {
     const row = card.querySelector('.term-input-row');
+    if (!row) return;
     const input = row.querySelector('.term-input');
     const sendBtn = row.querySelector('.term-send-btn');
     const micBtn = row.querySelector('.term-mic-btn');
@@ -1814,6 +2027,18 @@
       if (e.key === 'Enter') { e.preventDefault(); doSend(); }
     });
     micBtn.addEventListener('click', e => { e.stopPropagation(); startDictation(id); });
+    // Stack primary-tier inline keys (^C / Esc) + 🔧 tools sheet.
+    row.querySelectorAll('.term-key[data-key]').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); handleTermKey(btn.dataset.key, id); });
+    });
+    const toolsBtn = row.querySelector('.term-tools-btn');
+    if (toolsBtn) toolsBtn.addEventListener('click', e => { e.stopPropagation(); openTermToolsSheet(id); });
+  }
+  function handleTermKey(key, id) {
+    if (key === 'ctrlc') sendCtrlC(id);
+    else if (key === 'esc') flashKeyEcho('Esc');
+    else if (key === 'tab') flashKeyEcho('Tab');
+    else flashKeyEcho(key);
   }
 
   // ============================================================
@@ -1822,7 +2047,7 @@
   // ============================================================
   let dictationTimers = [];
   function setIslandMicBadge(show) {
-    const badge = document.getElementById('islandMicBadge');
+    const badge = document.getElementById('statusMicBadge');
     if (badge) badge.hidden = !show;
   }
   function startDictation(cardId) {
@@ -1879,15 +2104,9 @@
   }
 
   // ============================================================
-  // Feature 4 — per-session Notizen & Todos (📝 in the card header)
+  // Feature 4 — per-session Notizen & Todos. Opened from the Liste swipe
+  // rail (Notizen) and the 🔧 Werkzeuge sheet.
   // ============================================================
-  function wireCardNoteBtn(card, id) {
-    card.querySelector('[data-note-btn]').addEventListener('click', e => {
-      e.stopPropagation();
-      openSessionSheet(id);
-    });
-  }
-
   const sessionSheetState = { sessionId: null, tab: 'notes' };
 
   function renderSessionSheetBody() {
@@ -2100,7 +2319,7 @@
       if (!card) return;
       const idx = state.order.indexOf(card.dataset.id);
       const isActiveCard = idx === Math.round(state.activeFloat);
-      if (isActiveCard && e.target.closest('.card-body-shell, .card-name, .status-chip, .replay-pill, .card-note-btn, .term-input-row')) return;
+      if (isActiveCard && e.target.closest('.card-body-shell, .card-name, .card-desc, .status-chip, .auto-toggle, .replay-pill, .term-input-row')) return;
       pointerId = e.pointerId; startX = e.clientX; startY = e.clientY; startFloat = state.activeFloat; moved = false;
       cardWidthPx = card.getBoundingClientRect().width || 300;
       dragging = true;
@@ -2295,29 +2514,36 @@
     sim.on('status', status => {
       updateStatusChip(id, status);
       if (status === 'running') setIslandActivity('live', `Claude arbeitet · ${session.name}`);
-      else if (status === 'done') setIslandActivity('ok', '✓ Fertig');
+      else if (status === 'done') setIslandActivity('ok', 'Fertig');
       if (state.islandOpen) renderIslandExpanded();
     });
     sim.on('prompt', data => {
-      showPermSheet(id, data);
-      setIslandActivity('warn', `Claude wartet · ${session.name}`);
+      handlePrompt(id, data);
     });
     sim.on('done', () => showReplay(id));
     sim.start();
   }
 
-  function showPermSheet(id, data) {
-    state.pendingPromptId = id;
+  // Prompt lifecycle. A prompt pauses the sim and records the pending request
+  // on the owning card. If that terminal's Auto-Approve is ON it resolves
+  // automatically (with a toast so the user SEES it); otherwise the permission
+  // sheet is shown — but ONLY while the Terminals screen is active. syncPermSheet
+  // re-homes/hides the sheet as the user navigates; the request stays pending.
+  function handlePrompt(id, data) {
     const cs = cardState[id];
+    const session = TMS_DATA.sessions.find(s => s.id === id);
     cs.pendingPrompt = data;
-    document.getElementById('permTool').textContent = data.tool;
-    document.getElementById('permTarget').textContent = data.target || '';
-    document.getElementById('permQuestion').textContent = data.question || 'Erlauben?';
-    document.getElementById('permAutoBtn').setAttribute('aria-pressed', String(cs.autoApprove));
-    openSheet(permWrap);
-    if (cs.autoApprove) armAutoApprove(id);
+    state.pendingPromptId = id;
+    setIslandActivity('warn', `Claude wartet · ${session.name}`);
+    if (cs.autoApprove) {
+      autoApproveResolve(id, data, session);
+    } else {
+      renderPermSheet(id);
+      syncPermSheet();
+      updatePendingBadge();
+    }
   }
-  function armAutoApprove(id) {
+  function autoApproveResolve(id, data, session) {
     const cs = cardState[id];
     clearTimeout(cs.autoTimer);
     cs.autoTimer = setTimeout(() => {
@@ -2325,21 +2551,61 @@
       appendOutChunk(cs, '  ⎿ ✔ Auto-Approve\n');
       renderCardLines(id);
       cs.pendingPrompt = null;
-      closeSheet(permWrap);
-      state.pendingPromptId = null;
+      if (state.pendingPromptId === id) state.pendingPromptId = null;
+      toast(`Auto-Approve: ${data.tool} erlaubt — ${session.name}`);
+      setIslandActivity('live', `Claude arbeitet · ${session.name}`);
+      updatePendingBadge();
       cs.sim.respond();
-    }, 600);
+    }, 700);
+  }
+  function renderPermSheet(id) {
+    const cs = cardState[id];
+    const data = cs && cs.pendingPrompt;
+    if (!data) return;
+    const session = TMS_DATA.sessions.find(s => s.id === id);
+    document.getElementById('permSourceDot').style.background = session ? session.colorTag : 'var(--warn)';
+    document.getElementById('permSourceName').textContent = session ? session.name : '';
+    document.getElementById('permTool').textContent = data.tool;
+    document.getElementById('permTarget').textContent = data.target || '';
+    document.getElementById('permQuestion').textContent = data.question || 'Erlauben?';
+    document.getElementById('permAutoBtn').setAttribute('aria-pressed', String(cs.autoApprove));
+  }
+  // Show the sheet iff a non-auto prompt is pending AND Terminals is active.
+  function syncPermSheet() {
+    const id = state.pendingPromptId;
+    const cs = id ? cardState[id] : null;
+    const termActive = !document.querySelector('[data-screen="terminals"]').hidden;
+    const shouldShow = !!(cs && cs.pendingPrompt && !cs.autoApprove && termActive && !document.body.classList.contains('is-locked'));
+    if (shouldShow) {
+      renderPermSheet(id);
+      if (permWrap.hidden) openSheet(permWrap);
+    } else if (!permWrap.hidden) {
+      closeSheet(permWrap);
+    }
+  }
+  // Subtle pending hint on the dock's Terminals tab when the sheet is hidden
+  // (user is elsewhere) but a request is still waiting.
+  function updatePendingBadge() {
+    const id = state.pendingPromptId;
+    const cs = id ? cardState[id] : null;
+    const pending = !!(cs && cs.pendingPrompt && !cs.autoApprove);
+    const termActive = !document.querySelector('[data-screen="terminals"]').hidden;
+    const badge = document.getElementById('termPendingBadge');
+    if (badge) badge.hidden = !(pending && !termActive);
   }
   function resolvePrompt(approved) {
     const id = state.pendingPromptId;
     if (!id) return;
     const cs = cardState[id];
+    const session = TMS_DATA.sessions.find(s => s.id === id);
     clearTimeout(cs.autoTimer);
     cs.pendingPrompt = null;
     state.pendingPromptId = null;
     closeSheet(permWrap);
+    updatePendingBadge();
     if (approved) {
       cs.sim.respond();
+      setIslandActivity('live', `Claude arbeitet · ${session.name}`);
     } else {
       appendOutChunk(cs, '  ⎿ ✖ Abgelehnt — Aktion gestoppt\n');
       renderCardLines(id);
@@ -2348,18 +2614,31 @@
       showReplay(id);
     }
   }
-  function toggleAutoApprove() {
-    const id = state.pendingPromptId;
-    if (!id) return;
+  // Per-terminal Auto-Approve toggle (header pill + the sheet's Auto button).
+  function updateAutoToggleUI(id) {
+    const on = cardState[id].autoApprove;
+    document.querySelectorAll(`.term-card[data-id="${id}"] .auto-toggle`).forEach(btn => {
+      btn.classList.toggle('is-on', on);
+      btn.setAttribute('aria-pressed', String(on));
+    });
+    const permBtn = document.getElementById('permAutoBtn');
+    if (permBtn && state.pendingPromptId === id) permBtn.setAttribute('aria-pressed', String(on));
+  }
+  function toggleCardAutoApprove(id) {
     const cs = cardState[id];
+    if (!cs) return;
     cs.autoApprove = !cs.autoApprove;
-    document.getElementById('permAutoBtn').setAttribute('aria-pressed', String(cs.autoApprove));
-    if (cs.autoApprove && cs.pendingPrompt) armAutoApprove(id);
-    else clearTimeout(cs.autoTimer);
+    updateAutoToggleUI(id);
+    if (cs.pendingPrompt) {
+      const session = TMS_DATA.sessions.find(s => s.id === id);
+      if (cs.autoApprove) { syncPermSheet(); updatePendingBadge(); autoApproveResolve(id, cs.pendingPrompt, session); }
+      else { clearTimeout(cs.autoTimer); renderPermSheet(id); syncPermSheet(); updatePendingBadge(); }
+    }
+    toast(cs.autoApprove ? 'Auto-Approve an' : 'Auto-Approve aus');
   }
   document.querySelector('#permSheetWrap [data-act="yes"]').addEventListener('click', () => resolvePrompt(true));
   document.querySelector('#permSheetWrap [data-act="no"]').addEventListener('click', () => resolvePrompt(false));
-  document.getElementById('permAutoBtn').addEventListener('click', toggleAutoApprove);
+  document.getElementById('permAutoBtn').addEventListener('click', () => { if (state.pendingPromptId) toggleCardAutoApprove(state.pendingPromptId); });
 
   function showReplay(id) {
     const cs = cardState[id];
@@ -2498,22 +2777,24 @@
   });
 
   // ============================================================
-  // Orb-Leiste — floating glass orb bar above the dock, replaces the old
-  // Esc/arrows toolbar pill (Requirement 1).
+  // Terminal quick actions — key echo, ^C, clear/undo, selection mode.
+  // These operate on an explicit card id (the card the control lives in),
+  // shared by the Stack input cluster, the Liste swipe rail and the 🔧 sheet.
   // ============================================================
+  // Brief on-screen echo for keys with no PTY in this mockup (Esc/Tab/cursor).
   function flashKeyEcho(label) {
-    const host = document.getElementById('keyEchoHost');
+    const host = document.getElementById('keyEcho');
+    if (!host) return;
     const chip = document.createElement('span');
     chip.className = 'key-echo';
     chip.textContent = label;
     host.appendChild(chip);
     requestAnimationFrame(() => chip.classList.add('show'));
-    setTimeout(() => { chip.classList.remove('show'); setTimeout(() => chip.remove(), 200); }, 550);
+    setTimeout(() => { chip.classList.remove('show'); setTimeout(() => chip.remove(), 200); }, 650);
   }
   // Generic selection-mode toggle keyed by any cardState id — used by the
-  // orb bar's Aa button (session cards) AND Cloud's XXL log viewer
-  // "Selektieren" button (cloud-<projectId> pseudo-cards), so both share the
-  // exact same handle/copy-bubble machinery instead of two parallel systems.
+  // per-card Aa control AND Cloud's XXL log viewer "Selektieren" button
+  // (cloud-<projectId> pseudo-cards), sharing one handle/copy-bubble system.
   function toggleCardSelectionMode(cardId, btnEl) {
     const cs = cardState[cardId];
     cs.selectionMode = !cs.selectionMode;
@@ -2522,18 +2803,11 @@
     if (pre) pre.classList.toggle('selection-mode', cs.selectionMode);
     if (!cs.selectionMode) clearSelection(cardId);
   }
-  // Resolves which terminal session is "current" for orb-bar actions —
-  // last-interacted card in either view, same source of truth the Aa
-  // toggle already relied on before moving into the orb bar.
   function activeTerminalId() {
     return state.activeCardId || state.order[state.activeIndex];
   }
-  function toggleSelectionMode() {
-    toggleCardSelectionMode(activeTerminalId(), document.getElementById('selToggleBtn'));
-  }
 
-  // ^C orb — appends a dim "^C" line to the active session through the
-  // exact same escapeHtml/ansiToHtml render pipeline every other line uses.
+  // ^C — appends a dim "^C" line through the same escaped render pipeline.
   function sendCtrlC(id) {
     const cs = cardState[id];
     if (!cs) return;
@@ -2542,8 +2816,7 @@
     toast('^C gesendet');
   }
 
-  // 🗑 Clear orb — wipes the active session's visible lines with a 4s
-  // undo toast (Requirement 1).
+  // Clear — wipes the visible lines with a 4s undo toast.
   function clearActiveTerminal(id) {
     const cs = cardState[id];
     if (!cs || !cs.lines.length) return;
@@ -2558,10 +2831,7 @@
     });
   }
 
-  // Toast variant with an inline "Rückgängig" action — mirrors toast()'s
-  // timer hygiene (single setTimeout, cleared on early dismissal) but adds
-  // a tappable undo affordance, so #toasts' otherwise pointer-events:none
-  // backdrop is re-enabled locally on .toast--undo only.
+  // Toast variant with an inline "Rückgängig" action.
   function toastWithUndo(message, onUndo, duration) {
     duration = duration || 4000;
     const host = document.getElementById('toasts');
@@ -2585,213 +2855,183 @@
     });
   }
 
-  // ✥ Cursor popover — small ↑/←/↓/→ cluster, each tap just a key-echo
-  // flash like Esc/⌫/Tab (the old toolbar never actually drove a fake PTY
-  // for these either — this preserves that behavior).
-  function openCursorPopover() {
-    const pop = document.getElementById('cursorPopover');
-    const btn = document.getElementById('cursorOrbBtn');
-    pop.hidden = false;
-    requestAnimationFrame(() => pop.classList.add('is-open'));
-    btn.setAttribute('aria-expanded', 'true');
-  }
-  function closeCursorPopover() {
-    const pop = document.getElementById('cursorPopover');
-    const btn = document.getElementById('cursorOrbBtn');
-    if (!pop || !pop.classList.contains('is-open')) return;
-    pop.classList.remove('is-open');
-    if (btn) btn.setAttribute('aria-expanded', 'false');
-    // Guarded against a rapid re-open racing this timeout (same pattern as
-    // collapseOrbGroup below) — only actually hides if still closed.
-    setTimeout(() => { if (!pop.classList.contains('is-open')) pop.hidden = true; }, 220);
-  }
-  function toggleCursorPopover() {
-    const pop = document.getElementById('cursorPopover');
-    if (pop.classList.contains('is-open')) closeCursorPopover(); else openCursorPopover();
-  }
-
-  function wireOrbBar() {
-    document.getElementById('orbBar').addEventListener('click', e => {
-      const btn = e.target.closest('.orb-btn[data-orb]');
-      if (!btn) return;
-      const action = btn.dataset.orb;
-      const id = activeTerminalId();
-      switch (action) {
-        case 'ctrlc': if (id) sendCtrlC(id); break;
-        case 'esc': flashKeyEcho('Esc'); break;
-        case 'backspace': flashKeyEcho('⌫'); break;
-        case 'tab': flashKeyEcho('Tab'); break;
-        case 'cursor': toggleCursorPopover(); break;
-        case 'clear': if (id) clearActiveTerminal(id); break;
-        case 'tools': closeCursorPopover(); openSheet(mehrWrap); break;
-        case 'selectmode': toggleSelectionMode(); break;
-      }
-    });
-    document.getElementById('cursorPopover').addEventListener('click', e => {
-      const btn = e.target.closest('[data-key]');
-      if (!btn) return;
-      flashKeyEcho(btn.dataset.key);
-    });
+  function scrollTerminalToBottom(id) {
+    const pre = document.querySelector(`.term-card[data-id="${id}"] .card-body`);
+    if (pre) pre.scrollTo({ top: pre.scrollHeight, behavior: 'smooth' });
   }
 
   // ============================================================
-  // Schwebende Orb-Pille (OrbGroup, Requirement 3) — draggable floating
-  // quick-tool launcher. Full pointer lifecycle (capture, cancel,
-  // lostpointercapture, pointerId guard, touch-action) mirrors
-  // wireRailDrag() above.
+  // Terminal-Werkzeuge sheet (🔧) — Stack secondary tier + Liste rail „mehr".
+  // Keys, cursor pad and tool shortcuts, all acting on one terminal id.
   // ============================================================
-  const ORB_SIDE_KEY = 'tms-liquid-deck-orb-side';
-  function loadOrbSide() {
-    try { return localStorage.getItem(ORB_SIDE_KEY) === 'left' ? 'left' : 'right'; } catch (e) { return 'right'; }
-  }
-  function saveOrbSide(side) {
-    try { localStorage.setItem(ORB_SIDE_KEY, side); } catch (e) { /* storage unavailable */ }
-  }
-  const orbGroupState = { side: loadOrbSide(), top: null, expanded: false };
-  const ORB_GROUP_TOOL_IDS = ['files', 'sql', 'processes', 'snippets', 'watchers'];
-
-  function renderOrbGroupStrip() {
-    const strip = document.getElementById('orbGroupStrip');
-    strip.innerHTML = ORB_GROUP_TOOL_IDS.map(id => {
-      const def = TOOL_DEFS.find(t => t.id === id);
+  const TERM_TOOL_SHORTCUTS = ['files', 'sql', 'processes', 'snippets', 'watchers'];
+  function openTermToolsSheet(id) {
+    const session = TMS_DATA.sessions.find(s => s.id === id);
+    const cs = cardState[id];
+    const wrap = document.getElementById('termToolsSheetWrap');
+    document.getElementById('termToolsTitle').textContent = session ? session.name : 'Werkzeuge';
+    const arrow = (deg) => `<span class="tt-arrow" style="display:flex;transform:rotate(${deg}deg)">${icon('chevron', 20)}</span>`;
+    const tiles = TERM_TOOL_SHORTCUTS.map(tid => {
+      const def = TOOL_DEFS.find(t => t.id === tid);
       if (!def) return '';
-      const glyph = id === 'files' ? '📁' : def.code;
-      return `<button class="orb-btn" data-quicktool="${id}" aria-label="${escapeHtml(def.label)}" title="${escapeHtml(def.label)}">${glyph}</button>`;
+      return `<button class="tool-tile glass" data-tt-tool="${tid}"><span class="tool-tile__glyph">${icon(def.icon || 'tools')}</span><span class="tool-tile__label">${escapeHtml(def.label)}</span></button>`;
     }).join('');
+    document.getElementById('termToolsBody').innerHTML = `
+      <div class="tt-group-label">Tasten</div>
+      <div class="tt-keys">
+        <button class="tt-key" data-tt-key="tab">Tab</button>
+        <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode">Aa Auswahl</button>
+        <button class="tt-key tt-key--danger" data-tt-key="clear">${icon('trash', 15)}<span>Leeren</span></button>
+      </div>
+      <div class="tt-group-label">Cursor</div>
+      <div class="tt-pad">
+        <span class="tt-pad__spacer"></span>
+        <button data-tt-cursor="↑" aria-label="Hoch">${arrow(180)}</button>
+        <span class="tt-pad__spacer"></span>
+        <button data-tt-cursor="←" aria-label="Links">${arrow(90)}</button>
+        <button data-tt-cursor="↓" aria-label="Runter">${arrow(0)}</button>
+        <button data-tt-cursor="→" aria-label="Rechts">${arrow(-90)}</button>
+      </div>
+      <div class="tt-group-label">Werkzeuge</div>
+      <div class="tool-grid">${tiles}</div>
+    `;
+    const body = document.getElementById('termToolsBody');
+    body.querySelectorAll('[data-tt-key]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const k = btn.dataset.ttKey;
+        if (k === 'tab') flashKeyEcho('Tab');
+        else if (k === 'clear') { closeSheet(wrap); clearActiveTerminal(id); }
+        else if (k === 'selectmode') {
+          toggleCardSelectionMode(id, null);
+          const on = cardState[id].selectionMode;
+          btn.classList.toggle('is-on', on);
+          closeSheet(wrap);
+          toast(on ? 'Auswahlmodus an' : 'Auswahlmodus aus');
+        }
+      });
+    });
+    body.querySelectorAll('[data-tt-cursor]').forEach(btn => {
+      btn.addEventListener('click', () => flashKeyEcho(btn.dataset.ttCursor));
+    });
+    body.querySelectorAll('[data-tt-tool]').forEach(btn => {
+      btn.addEventListener('click', () => { closeSheet(wrap); openToolSheet(btn.dataset.ttTool); });
+    });
+    openSheet(wrap);
+  }
+  function wireTermToolsSheet() {
+    const wrap = document.getElementById('termToolsSheetWrap');
+    document.getElementById('termToolsClose').addEventListener('click', () => closeSheet(wrap));
+    wrap.querySelector('[data-close-termtools]').addEventListener('click', () => closeSheet(wrap));
   }
 
-  function applyOrbGroupPosition() {
-    const el = document.getElementById('orbGroup');
-    if (!el) return;
-    el.dataset.side = orbGroupState.side;
-    el.style.left = orbGroupState.side === 'left' ? '10px' : '';
-    el.style.right = orbGroupState.side === 'right' ? '10px' : '';
-    // No drag yet this session — a sane vertical default (persisted drags
-    // override it via orbGroupState.top, set on release below).
-    const top = orbGroupState.top != null ? orbGroupState.top : Math.round(window.innerHeight * 0.4);
-    el.style.top = top + 'px';
+  // ============================================================
+  // Liste swipe-action rail (Addendum 1) — a leftward swipe on a list card
+  // reveals its per-card action cluster. Horizontal-intent detection defers
+  // to native vertical scroll (surface is touch-action: pan-y); full pointer
+  // capture/cancel hygiene; only one rail open at a time.
+  // ============================================================
+  const listRailState = { openCardEl: null };
+  function closeListRail(card) {
+    if (!card) return;
+    const surface = card.querySelector('.list-card__surface');
+    if (surface) surface.style.transform = '';
+    if (listRailState.openCardEl === card) listRailState.openCardEl = null;
   }
-
-  function collapseOrbGroup() {
-    if (!orbGroupState.expanded) return;
-    orbGroupState.expanded = false;
-    const group = document.getElementById('orbGroup');
-    const toggle = document.getElementById('orbGroupToggle');
-    const strip = document.getElementById('orbGroupStrip');
-    group.classList.remove('is-open');
-    toggle.setAttribute('aria-expanded', 'false');
-    setTimeout(() => { if (!orbGroupState.expanded) strip.hidden = true; }, 260);
+  function closeAllListRails() {
+    document.querySelectorAll('.list-card__surface').forEach(s => { s.style.transform = ''; });
+    listRailState.openCardEl = null;
   }
-  function toggleOrbGroup() {
-    const group = document.getElementById('orbGroup');
-    const toggle = document.getElementById('orbGroupToggle');
-    const strip = document.getElementById('orbGroupStrip');
-    orbGroupState.expanded = !orbGroupState.expanded;
-    if (orbGroupState.expanded) {
-      strip.hidden = false;
-      requestAnimationFrame(() => group.classList.add('is-open'));
-      toggle.setAttribute('aria-expanded', 'true');
-    } else {
-      collapseOrbGroup();
+  function openListRail(card) {
+    if (listRailState.openCardEl && listRailState.openCardEl !== card) closeListRail(listRailState.openCardEl);
+    const surface = card.querySelector('.list-card__surface');
+    const rail = card.querySelector('.list-card__rail');
+    const w = rail.getBoundingClientRect().width;
+    surface.style.transform = `translateX(${-w}px)`;
+    listRailState.openCardEl = card;
+  }
+  function handleRailAction(action, id) {
+    switch (action) {
+      case 'ctrlc': sendCtrlC(id); break;
+      case 'jump': scrollTerminalToBottom(id); break;
+      case 'clear': clearActiveTerminal(id); break;
+      case 'notes': openSessionSheet(id); break;
+      case 'files': openToolSheet('files'); break;
+      case 'tools': openTermToolsSheet(id); break;
     }
   }
-
-  function wireOrbGroup() {
-    const group = document.getElementById('orbGroup');
-    const toggle = document.getElementById('orbGroupToggle');
-    const strip = document.getElementById('orbGroupStrip');
-    renderOrbGroupStrip();
-    applyOrbGroupPosition();
-
-    let pointerId = null, dragging = false, cleaned = true, startX = 0, startY = 0, startTop = 0, startLeft = 0;
-
+  function wireListSwipe(card) {
+    const surface = card.querySelector('.list-card__surface');
+    const rail = card.querySelector('.list-card__rail');
+    let pointerId = null, startX = 0, startY = 0, dragging = false, decided = false, railW = 0, wasOpen = false, cleaned = true;
     function cleanup() {
       if (cleaned) return;
       cleaned = true;
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
       document.removeEventListener('pointercancel', onCancel);
-      toggle.removeEventListener('lostpointercapture', onLostCapture);
-      try { toggle.releasePointerCapture(pointerId); } catch (err) { /* already released */ }
-      group.classList.remove('is-dragging');
+      surface.removeEventListener('lostpointercapture', onLost);
+      try { surface.releasePointerCapture(pointerId); } catch (e) { /* already released */ }
+      card.classList.remove('is-swiping');
     }
     function onMove(e) {
       if (e.pointerId !== pointerId) return;
       const dx = e.clientX - startX, dy = e.clientY - startY;
-      if (!dragging) {
-        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
-        dragging = true;
-        group.classList.add('is-dragging');
+      if (!decided) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        if (Math.abs(dx) <= Math.abs(dy)) { cleanup(); return; } // vertical intent → let native scroll win
+        decided = true; dragging = true;
+        card.classList.add('is-swiping');
+        try { surface.setPointerCapture(pointerId); } catch (e2) { /* unsupported */ }
       }
-      const vh = window.innerHeight, vw = window.innerWidth;
-      group.style.top = clamp(startTop + dy, 90, vh - 140) + 'px';
-      group.style.left = clamp(startLeft + dx, 8, vw - 58) + 'px';
-      group.style.right = '';
+      const base = wasOpen ? -railW : 0;
+      const x = clamp(base + dx, -railW, 0);
+      surface.style.transform = `translateX(${x}px)`;
     }
     function onUp(e) {
       const wasDragging = dragging;
       cleanup();
-      dragging = false;
-      if (!wasDragging) { toggleOrbGroup(); return; }
-      const vw = window.innerWidth;
-      const rect = group.getBoundingClientRect();
-      const side = (rect.left + rect.width / 2) < vw / 2 ? 'left' : 'right';
-      orbGroupState.side = side;
-      orbGroupState.top = clamp(rect.top, 90, window.innerHeight - 140);
-      saveOrbSide(side);
-      applyOrbGroupPosition();
+      if (!wasDragging) return;
+      const base = wasOpen ? -railW : 0;
+      const x = clamp(base + (e.clientX - startX), -railW, 0);
+      if (-x > railW * 0.4) openListRail(card); else closeListRail(card);
     }
-    // A cancelled drag (synthetic or a real OS gesture interruption) must
-    // not leave the pill wherever onMove's last inline left/top happened to
-    // be — snap back to the last COMMITTED position (unlike onUp, this
-    // discards the in-progress delta rather than saving it).
-    function onCancel() {
-      const wasDragging = dragging;
-      cleanup();
-      dragging = false;
-      if (wasDragging) applyOrbGroupPosition();
-    }
-    function onLostCapture() { cleanup(); }
-
-    toggle.addEventListener('pointerdown', e => {
+    function onCancel() { const wd = dragging; cleanup(); if (wd) { if (wasOpen) openListRail(card); else closeListRail(card); } }
+    function onLost() { cleanup(); }
+    surface.addEventListener('pointerdown', e => {
+      // Controls with their own gestures never start a swipe.
+      if (e.target.closest('.term-input-row, .card-name, .card-desc, .auto-toggle, .status-chip, .chevron-btn, .replay-pill, .jump-bottom-orb')) return;
       pointerId = e.pointerId; startX = e.clientX; startY = e.clientY;
-      const rect = group.getBoundingClientRect();
-      startTop = rect.top; startLeft = rect.left;
-      dragging = false; cleaned = false;
-      try { toggle.setPointerCapture(pointerId); } catch (err) { /* unsupported */ }
+      dragging = false; decided = false; cleaned = false;
+      railW = rail.getBoundingClientRect().width || 260;
+      wasOpen = listRailState.openCardEl === card;
       document.addEventListener('pointermove', onMove);
       document.addEventListener('pointerup', onUp);
       document.addEventListener('pointercancel', onCancel);
-      toggle.addEventListener('lostpointercapture', onLostCapture);
-    });
-
-    strip.addEventListener('click', e => {
-      const btn = e.target.closest('[data-quicktool]');
-      if (!btn) return;
-      collapseOrbGroup();
-      openToolSheet(btn.dataset.quicktool);
-    });
-
-    document.addEventListener('pointerdown', e => {
-      if (orbGroupState.expanded && !e.target.closest('#orbGroup')) collapseOrbGroup();
-      if (!e.target.closest('#cursorPopover') && !e.target.closest('#cursorOrbBtn')) closeCursorPopover();
+      surface.addEventListener('lostpointercapture', onLost);
     });
   }
+  // A plain tap anywhere but the open rail's buttons closes it.
+  document.addEventListener('click', e => {
+    if (!listRailState.openCardEl) return;
+    if (e.target.closest('.list-card__rail')) return;
+    if (state.suppressClick) return;
+    closeAllListRails();
+  }, true);
 
   // ============================================================
   // Tools screen + tool sheet (Dateien, SQL, Ports, Prozesse,
   // Snippets, Notizen, Screenshots, Browser, Watchers)
   // ============================================================
   const TOOL_DEFS = [
-    { id: 'files', code: 'FS', label: 'Dateien' },
-    { id: 'sql', code: 'DB', label: 'SQL' },
-    { id: 'ports', code: 'PT', label: 'Ports' },
-    { id: 'processes', code: 'PS', label: 'Prozesse' },
-    { id: 'snippets', code: 'SN', label: 'Snippets' },
-    { id: 'notes', code: 'NT', label: 'Notizen' },
-    { id: 'screenshots', code: 'SC', label: 'Screenshots' },
-    { id: 'browser', code: 'BR', label: 'Browser' },
-    { id: 'watchers', code: 'WA', label: 'Watchers' },
+    { id: 'files', code: 'FS', icon: 'folder', label: 'Dateien' },
+    { id: 'sql', code: 'DB', icon: 'db', label: 'SQL' },
+    { id: 'ports', code: 'PT', icon: 'ports', label: 'Ports' },
+    { id: 'processes', code: 'PS', icon: 'processes', label: 'Prozesse' },
+    { id: 'snippets', code: 'SN', icon: 'snippet', label: 'Snippets' },
+    { id: 'notes', code: 'NT', icon: 'note', label: 'Notizen' },
+    { id: 'screenshots', code: 'SC', icon: 'camera', label: 'Screenshots' },
+    { id: 'browser', code: 'BR', icon: 'browser', label: 'Browser' },
+    { id: 'watchers', code: 'WA', icon: 'eye', label: 'Watchers' },
   ];
 
   function renderTools() {
@@ -2800,7 +3040,7 @@
     const grid = document.getElementById('toolGrid');
     grid.innerHTML = TOOL_DEFS.map(t => `
       <button class="tool-tile glass" data-tool="${t.id}">
-        <span class="tool-tile__glyph">${t.code}</span>
+        <span class="tool-tile__glyph">${icon(t.icon || 'tools')}</span>
         <span class="tool-tile__label">${t.label}</span>
       </button>`).join('');
     grid.addEventListener('click', e => {
@@ -2990,7 +3230,7 @@
           <div id="managerMemory" hidden></div>
           <div class="chat-input-row" id="managerInputRow">
             <input type="text" id="managerTextInput" placeholder="Nachricht an Manager…" autocomplete="off">
-            <button class="mic-btn glass" id="managerMicBtn" aria-label="Sprachnachricht aufnehmen">●</button>
+            <button class="mic-btn glass" id="managerMicBtn" aria-label="Sprachnachricht aufnehmen">${icon('mic')}</button>
           </div>
         </div>
       </div>
@@ -3022,7 +3262,7 @@
         <div class="chat-row" data-from="${m.from}">
           <div class="chat-bubble">
             <div class="voice-pill" data-act="play">
-              <span class="voice-pill__play">▶</span>
+              <span class="voice-pill__play">${icon('play', 13)}</span>
               <span class="voice-pill__wave">${bars}</span>
               <span class="voice-pill__dur">0:${String(m.duration).padStart(2, '0')}</span>
             </div>
@@ -3057,12 +3297,12 @@
         const playing = pill.classList.toggle('is-playing');
         const playBtn = pill.querySelector('.voice-pill__play');
         if (playing) {
-          playBtn.textContent = '❚❚';
+          playBtn.innerHTML = icon('pause', 13);
           const durText = pill.querySelector('.voice-pill__dur').textContent;
           const secs = parseInt(durText.split(':')[1], 10) || 5;
-          setTimeout(() => { pill.classList.remove('is-playing'); playBtn.textContent = '▶'; }, Math.min(secs, 6) * 1000);
+          setTimeout(() => { pill.classList.remove('is-playing'); playBtn.innerHTML = icon('play', 13); }, Math.min(secs, 6) * 1000);
         } else {
-          playBtn.textContent = '▶';
+          playBtn.innerHTML = icon('play', 13);
         }
       });
     });
@@ -3196,7 +3436,7 @@
             <span class="cloud-row__deploy">${escapeHtml(p.lastDeploy)}</span>
           </span>
         </span>
-        <span class="fav-btn${p.favorite ? ' is-fav' : ''}" data-fav="${p.id}">★</span>
+        <span class="fav-btn${p.favorite ? ' is-fav' : ''}" data-fav="${p.id}" role="button" aria-label="Favorit">${icon('star')}</span>
       </button>`;
   }
 
@@ -3282,7 +3522,7 @@
     detail.innerHTML = `
       <div class="cloud-detail glass">
         <div class="cloud-detail__head">
-          <span class="back-btn" id="cloudBackBtn">← Zurück</span>
+          <span class="back-btn" id="cloudBackBtn" role="button"><span class="tt-arrow" style="display:flex;transform:rotate(90deg)">${icon('chevron', 16)}</span>Zurück</span>
           <span class="cloud-detail__title">${escapeHtml(project.name)}</span>
         </div>
         <div class="subtabs" id="cloudDetailTabs">
@@ -3789,8 +4029,9 @@
       if (e.key === 'Escape') {
         const tool = document.getElementById('toolSheetWrap');
         if (!tool.hidden) closeSheet(tool);
-        closeCursorPopover();
-        collapseOrbGroup();
+        const tt = document.getElementById('termToolsSheetWrap');
+        if (!tt.hidden) closeSheet(tt);
+        closeAllListRails();
       }
     });
   }
@@ -3883,8 +4124,7 @@
   wireSessionSheet();
 
   wireNav();
-  wireOrbBar();
-  wireOrbGroup();
+  wireTermToolsSheet();
   wireSpotlight();
   wirePullToSpotlight();
 
