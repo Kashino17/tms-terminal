@@ -1618,6 +1618,9 @@
       const status = chipStatusFor(id);
       chip.dataset.status = status;
       chip.innerHTML = `<span class="status-chip__dot"></span>${statusLabel(status)}`;
+      // Keep the Kontext rail's Status row in sync — it renders a snapshot on tab-open
+      // and otherwise goes stale while a session streams/completes in the background.
+      if (state.activeSessionId === id && state.railTab === 'context') renderRailBody();
     }
     function renderSwitcherChips() {
       const host = document.getElementById('wsSwitcher');

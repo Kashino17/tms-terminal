@@ -38,6 +38,13 @@
       font-size: 0.95rem;
       font-weight: 500;
     }
+    .phone-hint {
+      color: #6b7280;
+      font-size: 0.8rem;
+      font-weight: 500;
+      margin-top: 0.6rem;
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    }
     .grid {
       display: grid;
       gap: 1.5rem;
@@ -96,6 +103,7 @@
     <header>
       <h1>TMS Terminal — Season 2</h1>
       <p class="subtitle">Wähle ein Konzept</p>
+      <p class="phone-hint" id="phoneHint" hidden></p>
     </header>
     <div class="grid">
       <a href="./command-deck/" class="card">
@@ -127,5 +135,15 @@
       </a>
     </div>
   </div>
+  <script>
+    // Show where this page is being served from, so the phone user can confirm
+    // they're on the right host (e.g. the Tailscale IP) at a glance. Never hardcode
+    // an address — location.host is already correct however the page was reached.
+    if (location.host) {
+      const hint = document.getElementById('phoneHint');
+      hint.textContent = 'Auf dem Handy: ' + location.protocol + '//' + location.host;
+      hint.hidden = false;
+    }
+  </script>
 </body>
 </html>
