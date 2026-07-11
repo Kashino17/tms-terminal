@@ -20,6 +20,7 @@ import { GlassSurface } from './components/GlassSurface';
 import { Dock, DockItemKey } from './components/Dock';
 import { DynamicIsland, IslandSessionRow } from './components/DynamicIsland';
 import { TerminalsScreen, useS2Connection } from './screens/TerminalsScreen';
+import { CloudScreen } from './screens/CloudScreen';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SeasonTwo'>;
 
@@ -40,6 +41,8 @@ function S2Shell({ navigation }: Props) {
   const setSeasonTwoEnabled = useSettingsStore((s) => s.setSeasonTwoEnabled);
   const tabsByServer = useTerminalStore((s) => s.tabs);
   const conn = useS2Connection();
+  // Internal season2 screens (native ones); everything else bridges to classic.
+  const [screen, setScreen] = useState<'terminals' | 'cloud'>('terminals');
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -90,12 +93,13 @@ function S2Shell({ navigation }: Props) {
   const handleDock = useCallback((key: DockItemKey) => {
     switch (key) {
       case 'terminals':
-        return; // already home
+        setScreen('terminals');
+        return;
       case 'server':
         navigation.navigate('ServerList');
         return;
       case 'cloud':
-        navigation.navigate('Dashboard');
+        setScreen('cloud');
         return;
       case 'mehr':
         navigation.navigate('Settings');
@@ -139,17 +143,21 @@ function S2Shell({ navigation }: Props) {
           latencyMs={conn.rtt}
           prayerLabel={prayerLabel}
           sessions={islandSessions}
-          onSessionPress={(id) => conn.focusTab(id)}
+          onSessionPress={(id) => { setScreen('terminals'); conn.focusTab(id); }}
           onBackToClassic={() => setSeasonTwoEnabled(false)}
         />
       </View>
 
       <View style={styles.content}>
-        <TerminalsScreen navigation={navigation} toast={toast} />
+        {screen === 'terminals' ? (
+          <TerminalsScreen navigation={navigation} toast={toast} />
+        ) : (
+          <CloudScreen toast={toast} onOpenClassicCloud={() => navigation.navigate('Settings')} />
+        )}
       </View>
 
       <View style={[styles.dockZone, { paddingBottom: insets.bottom + 12 }]}>
-        <Dock active="terminals" onSelect={handleDock} />
+        <Dock active={screen} onSelect={handleDock} />
       </View>
 
       {toastMsg != null && (
