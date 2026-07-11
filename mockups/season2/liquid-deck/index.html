@@ -25,6 +25,14 @@
        so nothing is sized ad-hoc. */
     --radius-lg: 22px; --radius-md: 16px; --radius-sm: 12px; --radius-xs: 10px; --radius-pill: 999px;
     --spring: cubic-bezier(0.34, 1.3, 0.5, 1);
+    /* Motion tokens — one spring family for the whole app. Snappy for
+       chrome (dock pill, island, presses), gentle for large surfaces
+       (sheets, morph bodies). Exit curves accelerate out, never bounce. */
+    --spring-snappy: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --spring-gentle: cubic-bezier(0.30, 1.36, 0.52, 1);
+    --dur-snappy: 300ms;
+    --dur-gentle: 450ms;
+    --ease-exit: cubic-bezier(0.4, 0, 0.7, 0.2);
     --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
     /* Icon ramp — three sizes only */
@@ -39,9 +47,9 @@
     /* Safe areas + chrome bands → drive every screen's padding box */
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
-    --header-h: 46px;
+    --header-h: 48px; /* island zone: 8px top offset + 40px pill */
     --dock-h: 64px;
-    --top-space: calc(var(--safe-top) + var(--header-h) + 14px);
+    --top-space: calc(var(--safe-top) + var(--header-h) + 12px);
     --bottom-space: calc(var(--safe-bottom) + var(--dock-h) + 24px);
     --term-font-size: 13px;
     /* Modal/sheet scrim + camera-flash white are theme-invariant utility colors —
@@ -186,21 +194,45 @@
   ::-webkit-scrollbar { width: 0; height: 0; }
 
   /* ============================================================
-     Status header — global chrome. A full-width strip docked at the
-     very top; it never floats over content (screens reserve --top-space
-     for it). Tap → status detail sheet. Replaces the old floating
-     Dynamic-Island pill; carries the same info: session/agent activity,
-     ping latency, next-prayer countdown.
+     Dynamic Island — global chrome. A compact, centered, floating
+     glass pill in a RESERVED top zone (screens keep --top-space free,
+     so it never overlaps content). Tap → the pill itself MORPHS into
+     the expanded detail card (grid-rows + width interpolation on a
+     spring); tap outside or on the compact row → morphs back.
+     Carries: session/agent activity, ping latency, prayer countdown.
      ============================================================ */
   @keyframes islandPulse { 0% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb),.55); } 70% { box-shadow: 0 0 0 7px rgba(var(--accent-rgb),0); } 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb),0); } }
   #statusHeader {
-    position: fixed; top: 0; left: 0; right: 0; z-index: 60;
-    display: flex; align-items: center; gap: 10px;
-    height: calc(var(--safe-top) + var(--header-h)); padding: var(--safe-top) 16px 0;
-    border: none; border-bottom: 1px solid var(--glass-border); border-radius: 0;
-    cursor: pointer;
+    position: fixed; top: calc(var(--safe-top) + 8px); left: 50%; z-index: 60;
+    transform: translateX(-50%);
+    width: min(92vw, 400px);
+    border-radius: 24px; border: 1px solid var(--glass-border);
+    padding: 0; overflow: hidden; cursor: pointer;
+    transition: width var(--dur-snappy) var(--spring-snappy),
+                border-radius var(--dur-snappy) var(--spring-snappy),
+                box-shadow var(--dur-snappy) var(--spring-snappy);
+    will-change: width;
   }
-  #statusHeader::before { left: 16px; right: 16px; }
+  #statusHeader.is-expanded {
+    width: min(94vw, 480px);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 18px 50px rgba(0,0,0,.35);
+  }
+  #statusHeader::before { left: 14%; right: 14%; }
+  .island-compact { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 14px; }
+  .island-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-gentle) var(--spring-gentle); }
+  .island-body__inner {
+    overflow: hidden; min-height: 0;
+    opacity: 0; transform: translateY(-6px);
+    transition: opacity 180ms var(--ease-exit), transform 220ms var(--ease-exit);
+  }
+  #statusHeader.is-expanded .island-body__inner {
+    opacity: 1; transform: none;
+    padding: 2px 16px 14px; max-height: min(58vh, 500px); overflow-y: auto;
+    transition: opacity 240ms ease 90ms, transform 300ms var(--spring-snappy) 90ms;
+  }
+  #islandScrim { position: fixed; inset: 0; z-index: 59; background: rgba(var(--scrim-rgb), .22); opacity: 0; transition: opacity 250ms ease; pointer-events: none; }
+  #islandScrim.is-open { opacity: 1; pointer-events: auto; }
   .status-hd__activity { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; }
   /* Activity is the only piece allowed to ellipsis under pressure — the two
      metrics are short, fixed-format readouts and always stay whole. */
@@ -214,17 +246,15 @@
   .status-hd__metric .ic { width: var(--icon-sm); height: var(--icon-sm); }
   .status-hd__metric--latency { color: var(--ok); font-family: var(--font-mono); }
   .status-hd__divider { width: 1px; height: 15px; background: var(--glass-border); flex: none; }
-  .status-hd__chevron { flex: none; display: flex; align-items: center; color: var(--text-dim); opacity: .75; }
-  .status-hd__chevron .ic { width: var(--icon-sm); height: var(--icon-sm); }
 
   /* Dictation-in-progress badge — pinned to the header's leading edge. */
-  .status-mic-badge { position: absolute; top: calc(var(--safe-top) + 5px); left: 9px; width: 18px; height: 18px; border-radius: 50%;
+  .status-mic-badge { position: absolute; top: 11px; left: -2px; width: 18px; height: 18px; border-radius: 50%;
     background: var(--err); color: var(--on-err); display: flex; align-items: center; justify-content: center;
     box-shadow: 0 0 10px rgba(var(--err-rgb),.7); animation: islandPulse 1s ease-in-out infinite; z-index: 2; }
   .status-mic-badge .ic { width: 11px; height: 11px; }
   .status-mic-badge[hidden] { display: none; }
 
-  /* Status detail sheet body — reuses the .island-* content classes below. */
+  /* Island expanded-body content — the .island-* classes below. */
   .island-expanded { padding: 2px; }
   .island-expanded h4 { margin: 14px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); font-weight: 600; }
   .island-expanded h4:first-child { margin-top: 0; }
@@ -264,8 +294,36 @@
   .dock-btn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; width: 58px; padding: 7px 2px 6px; border-radius: var(--radius-pill); color: var(--text-dim); transition: color 250ms var(--spring), background 250ms var(--spring); }
   .dock-btn svg { width: var(--icon-md); height: var(--icon-md); }
   .dock-btn span { font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; }
-  .dock-btn.active { color: var(--text); background: rgba(var(--accent-rgb),.16); }
+  .dock-btn.active { color: var(--text); }
   .dock-btn:active { transform: scale(.94); }
+  /* The sliding glass pill IS the active-state background. */
+  #dockPill { position: absolute; top: 6px; bottom: 6px; left: 0; width: 58px; border-radius: var(--radius-pill);
+    background: rgba(var(--accent-rgb),.16); border: 1px solid rgba(var(--accent-rgb),.22);
+    opacity: 0; z-index: 0; pointer-events: none;
+    transition: transform var(--dur-snappy) var(--spring-snappy), width var(--dur-snappy) var(--spring-snappy), opacity 200ms ease; }
+  #dockPill.is-ready { opacity: 1; }
+  .dock-btn { z-index: 1; }
+  /* Directional screen transitions — transform/opacity only. */
+  @keyframes screenInL { from { opacity: 0; transform: translateX(26px); } to { opacity: 1; transform: none; } }
+  @keyframes screenInR { from { opacity: 0; transform: translateX(-26px); } to { opacity: 1; transform: none; } }
+  section[data-screen].screen-anim-left:not([hidden]) { animation: screenInL 260ms var(--spring-snappy); }
+  section[data-screen].screen-anim-right:not([hidden]) { animation: screenInR 260ms var(--spring-snappy); }
+  /* Stack⇄Liste cross-morph. */
+  @keyframes viewMorph { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: none; } }
+  .workspace.view-anim { animation: viewMorph 240ms var(--spring-snappy); }
+  /* ⊞ overview tiles stagger in (delay capped via --i, set in JS). */
+  @keyframes tileIn { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: none; } }
+  .overview-grid.is-open .overview-tile { animation: tileIn 300ms var(--spring-snappy) both; animation-delay: calc(var(--i, 0) * 30ms); }
+  /* Keys panel slides in as a keyboard accessory. */
+  @keyframes keysIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .keys-panel:not([hidden]) { animation: keysIn 240ms var(--spring-snappy); }
+  /* Terminal stream lines are exempt from ALL motion — appends must be instant. */
+  .term-line { transition: none !important; animation: none !important; }
+  /* Scoped theme cross-fade — active only for ~400ms around a toggle. */
+  html.theme-anim body, html.theme-anim .glass, html.theme-anim section[data-screen],
+  html.theme-anim .term-pre, html.theme-anim .card-body, html.theme-anim #dock, html.theme-anim #statusHeader {
+    transition: background 320ms ease, background-color 320ms ease, border-color 320ms ease, color 320ms ease !important; }
+  .cloud-row:active, .mehr-item:active { transform: scale(.985); }
   /* Pending-request badge on the Terminals tab — shown when a permission
      prompt is waiting while the user is on another screen. */
   .dock-badge { position: absolute; top: 5px; right: 11px; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--glass), 0 0 8px rgba(var(--warn-rgb),.8); animation: islandPulse 1.3s ease-out infinite; }
@@ -280,8 +338,8 @@
   .sheet-wrap.is-open .sheet-backdrop { background: rgba(var(--scrim-rgb),var(--scrim-a)); }
   .sheet-panel { position: relative; width: 100%; max-width: 480px; margin: 0 10px calc(env(safe-area-inset-bottom, 0px) + 10px); padding: 10px 18px calc(18px + env(safe-area-inset-bottom, 0px));
     background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
-    transform: translateY(110%); transition: transform 400ms var(--spring); }
-  .sheet-wrap.is-open .sheet-panel { transform: translateY(0); }
+    transform: translateY(110%); transition: transform 260ms var(--ease-exit); will-change: transform; }
+  .sheet-wrap.is-open .sheet-panel { transform: translateY(0); transition: transform var(--dur-gentle) var(--spring-gentle); }
   .sheet-grabber { width: 36px; height: 4px; border-radius: 3px; background: var(--glass-border); margin: 4px auto 14px; }
   .sheet-title { font-size: var(--fs-section); font-weight: 700; margin-bottom: 12px; }
 
@@ -859,7 +917,7 @@
 
   /* ---------- Lock screen ---------- */
   section[data-screen="lock"]:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; }
-  body.is-locked #dock, body.is-locked #statusHeader, body.is-locked #pullHint, body.is-locked #keyEcho { display: none !important; }
+  body.is-locked #dock, body.is-locked #statusHeader, body.is-locked #islandScrim, body.is-locked #pullHint, body.is-locked #keyEcho { display: none !important; }
   /* Any sheet (permission prompt, Mehr, tool, spotlight) stays fully inert while
      locked — the live session keeps running in the background and can pop a
      permission prompt at any time, but it must never be reachable before PIN entry. */
@@ -1012,24 +1070,29 @@
 </div>
 
 <header id="statusHeader" class="glass glass--strong" role="button" tabindex="0" aria-expanded="false" aria-label="Status – Details öffnen">
-  <span class="status-hd__activity">
-    <span class="status-dot" id="statusDot"></span>
-    <span class="status-hd__label" id="statusActivityLabel">Bereit</span>
-  </span>
-  <span class="status-hd__metrics">
-    <span class="status-hd__metric status-hd__metric--latency" id="statusLatencySeg">
-      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h.01M8 20v-5M13 20v-9M18 20V6"/></svg>
-      <span id="statusLatencyLabel">— ms</span>
+  <div class="island-compact">
+    <span class="status-hd__activity">
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-hd__label" id="statusActivityLabel">Bereit</span>
     </span>
-    <span class="status-hd__divider"></span>
-    <span class="status-hd__metric status-hd__metric--prayer">
-      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-      <span id="statusPrayerLabel">—</span>
+    <span class="status-hd__metrics">
+      <span class="status-hd__metric status-hd__metric--latency" id="statusLatencySeg">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h.01M8 20v-5M13 20v-9M18 20V6"/></svg>
+        <span id="statusLatencyLabel">— ms</span>
+      </span>
+      <span class="status-hd__divider"></span>
+      <span class="status-hd__metric status-hd__metric--prayer">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        <span id="statusPrayerLabel">—</span>
+      </span>
     </span>
-  </span>
-  <span class="status-hd__chevron"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+  </div>
+  <div class="island-body" aria-hidden="true">
+    <div class="island-body__inner island-expanded" id="statusDetailBody"></div>
+  </div>
   <span class="status-mic-badge" id="statusMicBadge" hidden aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg></span>
 </header>
+<div id="islandScrim" aria-hidden="true"></div>
 
 <main id="screens">
   <section data-screen="servers" hidden></section>
@@ -1059,6 +1122,7 @@
 <div class="pull-hint glass" id="pullHint" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Spotlight</span></div>
 
 <nav id="dock" class="glass">
+  <span id="dockPill" aria-hidden="true"></span>
   <button class="dock-btn" data-nav="servers">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
     <span>Server</span>
@@ -1181,18 +1245,6 @@
       <button data-tab="todos">Todos</button>
     </div>
     <div class="sheet-scroll-body" id="sessionSheetBody"></div>
-  </div>
-</div>
-
-<div class="sheet-wrap" id="statusSheetWrap" hidden>
-  <div class="sheet-backdrop" data-close-status></div>
-  <div class="sheet-panel sheet-panel--tall glass glass--strong">
-    <div class="sheet-grabber"></div>
-    <div class="sheet-head-row">
-      <div class="sheet-title">Status</div>
-      <button class="sheet-close-btn" id="statusSheetClose">Schließen</button>
-    </div>
-    <div class="sheet-scroll-body island-expanded" id="statusDetailBody"></div>
   </div>
 </div>
 
@@ -1341,7 +1393,14 @@
     document.documentElement.setAttribute('data-theme', theme);
     try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* storage unavailable */ }
   }
+  let themeAnimTimer = null;
   function toggleTheme() {
+    // Brief, scoped cross-fade: only chrome colors transition, and only for
+    // the duration of the switch — never a permanent transition storm.
+    const root = document.documentElement;
+    root.classList.add('theme-anim');
+    clearTimeout(themeAnimTimer);
+    themeAnimTimer = setTimeout(() => root.classList.remove('theme-anim'), 400);
     applyTheme(state.theme === 'light' ? 'dark' : 'light');
     // Re-render the two surfaces that show the current theme so they don't
     // go stale until their next natural re-render.
@@ -1588,14 +1647,15 @@
   // Status header (global chrome) + status detail sheet. Replaces the old
   // floating Dynamic-Island pill but keeps its function names, so every
   // call-site (live sim, latency ticker, prompt) stays untouched.
-  // state.islandOpen now means "status detail sheet is open".
+  // state.islandOpen means "the Dynamic Island is morphed open".
   // ============================================================
   const statusHeaderEl = document.getElementById('statusHeader');
   const statusDot = document.getElementById('statusDot');
   const statusActivityLabel = document.getElementById('statusActivityLabel');
   const statusPrayerLabel = document.getElementById('statusPrayerLabel');
   const statusDetailBody = document.getElementById('statusDetailBody');
-  const statusSheetWrap = document.getElementById('statusSheetWrap');
+  const islandScrim = document.getElementById('islandScrim');
+  const islandBody = statusHeaderEl.querySelector('.island-body');
 
   function setIslandActivity(kind, label) {
     statusDot.className = 'status-dot' + (kind === 'live' ? ' is-live' : kind === 'warn' ? ' is-warn' : kind === 'ok' ? ' is-ok' : '');
@@ -1651,20 +1711,28 @@
   function openIsland() {
     state.islandOpen = true;
     renderIslandExpanded();
+    statusHeaderEl.classList.add('is-expanded');
     statusHeaderEl.setAttribute('aria-expanded', 'true');
-    openSheet(statusSheetWrap);
+    islandBody.setAttribute('aria-hidden', 'false');
+    islandScrim.classList.add('is-open');
   }
   function closeIsland() {
     state.islandOpen = false;
+    statusHeaderEl.classList.remove('is-expanded');
     statusHeaderEl.setAttribute('aria-expanded', 'false');
-    closeSheet(statusSheetWrap);
+    islandBody.setAttribute('aria-hidden', 'true');
+    islandScrim.classList.remove('is-open');
   }
   function toggleIsland() { state.islandOpen ? closeIsland() : openIsland(); }
 
-  statusHeaderEl.addEventListener('click', toggleIsland);
+  statusHeaderEl.addEventListener('click', e => {
+    // Taps inside the expanded body operate its content; only the compact
+    // row (or an outside/scrim tap) toggles the island closed.
+    if (state.islandOpen && e.target.closest('.island-body')) return;
+    toggleIsland();
+  });
   statusHeaderEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleIsland(); } });
-  document.getElementById('statusSheetClose').addEventListener('click', closeIsland);
-  statusSheetWrap.querySelector('[data-close-status]').addEventListener('click', closeIsland);
+  islandScrim.addEventListener('click', closeIsland);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.islandOpen) closeIsland(); });
 
   statusPrayerLabel.textContent = (() => { const np = nextPrayer(); return `${np.name} · ${np.countdown}`; })();
@@ -1738,13 +1806,43 @@
   // Router
   // ============================================================
   const SCREEN_HOOKS = {};
+  // Dock indicator pill — a glass highlight that SLIDES to the active item
+  // (FLIP over transform/width; the buttons themselves stay put).
+  const NAV_ORDER = ['servers', 'terminals', 'manager', 'cloud', 'browser', 'tools', 'settings', 'prayer'];
+  let currentScreen = null;
+  const dockPillEl = document.getElementById('dockPill');
+  function positionDockPill() {
+    const active = document.querySelector('#dock .dock-btn.active');
+    if (!active || !active.offsetWidth) { dockPillEl.classList.remove('is-ready'); return; }
+    dockPillEl.style.width = active.offsetWidth + 'px';
+    dockPillEl.style.transform = `translateX(${active.offsetLeft}px)`;
+    requestAnimationFrame(() => dockPillEl.classList.add('is-ready'));
+  }
+  window.addEventListener('resize', positionDockPill);
+
   function show(name) {
     if (name !== 'cloud') stopCloudBuildTimer();
     if (name !== 'prayer') stopPrayerTick();
     if (name !== 'terminals') { cancelDictation(); closeAllListRails(); }
     if (name !== 'browser') stopBrowserProgressTimers();
+    const prev = currentScreen;
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
+    positionDockPill();
+    // Directional slide+fade between tab screens (transform/opacity only;
+    // fires once per navigation, never on content updates or streaming).
+    if (prev && prev !== name && name !== 'lock' && prev !== 'lock') {
+      const to = document.querySelector(`[data-screen="${name}"]`);
+      const iPrev = NAV_ORDER.indexOf(prev), iNext = NAV_ORDER.indexOf(name);
+      if (to && iPrev !== -1 && iNext !== -1) {
+        const cls = iNext > iPrev ? 'screen-anim-left' : 'screen-anim-right';
+        to.classList.remove('screen-anim-left', 'screen-anim-right');
+        void to.offsetWidth;
+        to.classList.add(cls);
+        to.addEventListener('animationend', () => to.classList.remove(cls), { once: true });
+      }
+    }
+    currentScreen = name;
     if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
     // A pending permission/question prompt only shows its sheet on the Terminals
     // screen; syncPromptSheets re-homes/hides it as the user navigates.
@@ -1927,6 +2025,14 @@
     try { localStorage.setItem(TERM_VIEW_KEY, view); } catch (e) { /* storage unavailable */ }
     if (state.overviewOpen) toggleOverview(false);
     renderTerminalWorkspace();
+    // Stack⇄Liste cross-morph: animate the freshly rendered workspace in.
+    const ws = document.querySelector('section[data-screen="terminals"] .workspace');
+    if (ws) {
+      ws.classList.remove('view-anim');
+      void ws.offsetWidth;
+      ws.classList.add('view-anim');
+      ws.addEventListener('animationend', () => ws.classList.remove('view-anim'), { once: true });
+    }
   }
   function updateViewToggleUI() {
     document.querySelectorAll('.view-toggle__btn').forEach(btn => {
@@ -2695,7 +2801,11 @@
     const grid = document.getElementById('overviewGrid');
     const btn = document.getElementById('overviewBtn');
     const wrap = document.getElementById('termBodyWrap');
-    if (state.overviewOpen) { renderOverview(); grid.classList.add('is-open'); btn.classList.add('is-on'); if (wrap) wrap.classList.add('overview-active'); }
+    if (state.overviewOpen) {
+      renderOverview();
+      grid.querySelectorAll('.overview-tile').forEach((t, i) => t.style.setProperty('--i', Math.min(i, 12)));
+      grid.classList.add('is-open'); btn.classList.add('is-on'); if (wrap) wrap.classList.add('overview-active');
+    }
     else { grid.classList.remove('is-open'); btn.classList.remove('is-on'); if (wrap) wrap.classList.remove('overview-active'); }
   }
 
@@ -4792,6 +4902,7 @@
   }
 
   function lockApp() {
+    if (state.islandOpen) closeIsland();
     document.body.classList.add('is-locked');
     state.lockDigits = '';
     renderPinDots(0);
