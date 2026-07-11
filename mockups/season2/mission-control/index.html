@@ -502,7 +502,7 @@
   .spotlight-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border-radius: 8px; text-align: left; transition: background var(--transition); }
   .spotlight-row.is-highlighted, .spotlight-row:hover { background: var(--glass); }
   .spotlight-row__type { flex: 0 0 auto; font: 600 10px var(--font-mono); text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); border: 1px solid var(--glass-border); padding: 2px 6px; border-radius: 20px; }
-  .spotlight-row__label { font: 500 13.5px var(--font-ui); flex: 0 1 auto; white-space: nowrap; }
+  .spotlight-row__label { font: 500 13.5px var(--font-ui); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .spotlight-row__sub { font: 12px var(--font-mono); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
   .spotlight-empty { padding: 20px; text-align: center; color: var(--text-dim); font-size: 13px; }
 </style>
@@ -1647,11 +1647,9 @@
               : '<div class="rail-empty">Keine Watcher für diese Sitzung.</div>'}
           </div>`;
       } else if (state.railTab === 'files') {
-        host.innerHTML = `<div class="tool-list">${TMS_DATA.files.map(f => `
-          <div class="tool-list__row"><span class="tool-list__icon">${f.type === 'dir' ? '▸' : '·'}</span><span class="tool-list__name">${escapeHtml(f.name)}</span><span class="tool-list__meta">${f.size ? escapeHtml(f.size) : ''}</span></div>`).join('')}</div>`;
+        host.innerHTML = buildFilesSheet().html;
       } else if (state.railTab === 'notes') {
-        host.innerHTML = `<div class="notes-grid">${TMS_DATA.notes.map(n => `
-          <div class="note-card"><div class="note-card__title">${escapeHtml(n.title)}</div><div class="note-card__body">${escapeHtml(n.body)}</div><div class="note-card__time">${escapeHtml(n.time)}</div></div>`).join('')}</div>`;
+        host.innerHTML = buildNotesSheet().html;
       } else {
         // 'tools' — full 9-tool grid; each tile opens the shared bottom sheet (glass, elevated moment).
         host.innerHTML = `<div class="tool-grid">${TOOL_DEFS.map(t => `
@@ -2228,6 +2226,9 @@
     }
 
     let prayerTickTimer = null;
+    function stopPrayerTickTimer() {
+      if (prayerTickTimer) { clearInterval(prayerTickTimer); prayerTickTimer = null; }
+    }
     function tickPrayerCountdown() {
       renderPrayerList();
       const next = nextPrayer();
@@ -2240,7 +2241,7 @@
           </div>`;
       };
       update();
-      clearInterval(prayerTickTimer);
+      stopPrayerTickTimer();
       prayerTickTimer = setInterval(update, 30000);
     }
 
@@ -2447,6 +2448,7 @@
       renderPinDots(0);
       stopGlobalTick();
       stopCloudBuildTimer();
+      stopPrayerTickTimer();
       closeStrip();
       closeSpotlight();
       closeToolSheet();
@@ -2471,6 +2473,7 @@
     SCREEN_HOOKS.hub = () => { renderHeuteZone(); updateStripPrayer(); };
     function show(name) {
       if (name !== 'cloud') stopCloudBuildTimer();
+      if (name !== 'prayer') stopPrayerTickTimer();
       document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
       if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
     }
@@ -2513,6 +2516,7 @@
 
     document.getElementById('statusStrip').addEventListener('click', toggleStrip);
     document.getElementById('statusStrip').addEventListener('keydown', e => {
+      if (e.target.closest('#stripSearchBtn')) return; // let the search button's native activation fire
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleStrip(); }
     });
     document.addEventListener('keydown', e => {
