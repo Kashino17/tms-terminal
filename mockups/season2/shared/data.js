@@ -19,8 +19,36 @@
     { t: 100,  type: 'done', data: null },
   ];
 
+  // Continuation script liquid-deck plays for session t1 a few seconds after its
+  // main script (claudeScript) completes, or again on every replay. Same TMSSim
+  // event shape (t/type/data) as claudeScript, but the prompt carries kind:'question'
+  // instead of a tool-permission payload — that's the signal the concept layer
+  // (liquid-deck) uses to route it to the question sheet and to structurally
+  // exempt it from per-terminal Auto-Approve. Only liquid-deck consumes this
+  // export; the command-deck and season2 sibling mockups are untouched.
+  const questionScript = [
+    { t: 500, type: 'out', data: '● Bevor ich das Deployment anstoße, will ich sichergehen, dass die Basis stimmt.\n' },
+    { t: 700, type: 'out', data: '  ⎿ Zuletzt manuell geprüft: vor 3 Tagen\n' },
+    { t: 500, type: 'prompt', data: {
+      kind: 'question',
+      question: 'Welche Checks soll ich vor dem Deploy ausführen?',
+      multiSelect: true,
+      allowComment: true,
+      options: [
+        { id: 'tests', label: 'Tests', description: 'npm test — vollständige Suite' },
+        { id: 'lint', label: 'Lint', description: 'eslint --max-warnings 0' },
+        { id: 'typecheck', label: 'Typecheck', description: 'tsc --noEmit' },
+        { id: 'build', label: 'Build-Preview', description: 'vercel build --local' },
+      ],
+    } },
+    { t: 300, type: 'out', data: '  ⎿ Starte die gewählten Checks…\n' },
+    { t: 1200, type: 'out', data: '  ⎿ \x1b[32m✓ Alle gewählten Checks abgeschlossen\x1b[0m\n' },
+    { t: 300, type: 'status', data: 'done' },
+    { t: 100, type: 'done', data: null },
+  ];
+
   const DATA = {
-    demo: { wrappedLinkUrl, pin: '1234', dictation: 'npm test && vercel logs pinterest-scraper --follow' },
+    demo: { wrappedLinkUrl, pin: '1234', dictation: 'npm test && vercel logs pinterest-scraper --follow', questionScript },
     servers: [
       { id: 'srv-mac', name: 'Ayysir MacBook', host: '100.64.0.12', port: 8767, status: 'online',  sessions: 4, os: 'macOS 26', latency: 12 },
       { id: 'srv-hetzner', name: 'Hetzner Cloud', host: '100.64.0.31', port: 8767, status: 'offline', sessions: 0, os: 'Ubuntu 24.04', latency: null },

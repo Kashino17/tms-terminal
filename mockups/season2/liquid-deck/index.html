@@ -304,6 +304,23 @@
   .perm-actions button[data-act="no"] { color: var(--err); }
   .perm-actions button[data-act="auto"][aria-pressed="true"] { background: rgba(var(--ok-rgb),var(--chip-a)); border-color: rgba(var(--ok-rgb),.4); color: var(--ok); }
 
+  /* Question sheet — same glass/anchoring family as the permission sheet
+     (.sheet-wrap--perm), just with selectable option rows + a free-text field
+     instead of Ja/Nein. Never auto-resolved, see handlePrompt()'s kind guard. */
+  .question-text { font-weight: 600; font-size: 14.5px; margin: 4px 0 14px; }
+  .question-options { display: flex; flex-direction: column; gap: 2px; max-height: 38vh; overflow-y: auto; margin-bottom: 12px; }
+  .question-option-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 6px; border-top: 1px solid rgba(var(--overlay-rgb),.08); cursor: pointer; }
+  .question-option-row:first-child { border-top: none; }
+  .question-option-row input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; margin-top: 1px; }
+  .question-option-row__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .question-option-row__label { font-size: 13.5px; font-weight: 600; }
+  .question-option-row__desc { font-size: 12px; color: var(--text-dim); }
+  .question-comment-row { margin-bottom: 12px; }
+  .question-comment-row textarea { width: 100%; min-height: 52px; padding: 10px 14px; border-radius: 14px; font: 13px var(--font-ui); background: var(--glass); border: 1px solid var(--glass-border); color: var(--text); resize: none; }
+  .question-comment-row textarea::placeholder { color: var(--text-dim); }
+  .perm-actions button[data-act="submit"] { background: rgba(var(--accent-rgb),.22); border-color: rgba(var(--accent-rgb),.4); color: var(--accent-ink); }
+  .perm-actions button[data-act="submit"]:disabled { opacity: .4; pointer-events: none; }
+
   /* ============================================================
      Servers screen
      ============================================================ */
@@ -1084,6 +1101,26 @@
   </div>
 </div>
 
+<div class="sheet-wrap sheet-wrap--perm" id="questionSheetWrap" hidden>
+  <div class="sheet-backdrop" data-close-question></div>
+  <div class="sheet-panel glass glass--strong">
+    <div class="sheet-grabber"></div>
+    <div class="perm-source">
+      <span class="perm-source__dot" id="questionSourceDot"></span>
+      <span class="perm-source__name" id="questionSourceName"></span>
+      <span class="perm-source__badge">Rückfrage</span>
+    </div>
+    <div class="question-text" id="questionText"></div>
+    <div class="question-options" id="questionOptions"></div>
+    <div class="question-comment-row">
+      <textarea id="questionComment" placeholder="Eigene Anmerkung (optional)…" rows="2"></textarea>
+    </div>
+    <div class="perm-actions">
+      <button data-act="submit" id="questionSubmitBtn" disabled>Senden</button>
+    </div>
+  </div>
+</div>
+
 <div class="sheet-wrap" id="mehrSheetWrap" hidden>
   <div class="sheet-backdrop" data-close-mehr></div>
   <div class="sheet-panel glass glass--strong">
@@ -1328,12 +1365,18 @@
     // be recording/transcribing at a time.
     dictation: { active: false, cardId: null, phase: null },
   };
-  const cardState = {}; // id -> { lines, sim, autoApprove, pendingPrompt, autoTimer, selectionMode, selection, collapsed, showReplay }
+  // id -> { lines, sim, mainSim, questionSim, questionTimer, autoApprove,
+  //          pendingPrompt, autoTimer, selectionMode, selection, collapsed, showReplay }
+  // sim always points at whichever TMSSim instance currently drives playback
+  // (mainSim, then questionSim once the question continuation starts);
+  // mainSim/questionSim/questionTimer are only ever populated for the live
+  // session (t1) — see initLiveSession()/startQuestionScript().
+  const cardState = {};
   // Auto-Approve defaults ON per terminal (Addendum 4): the demo's scripted
   // prompt now auto-resolves on first run; toggling a terminal OFF + replay
   // demoes the permission-sheet flow.
   TMS_DATA.sessions.forEach(s => {
-    cardState[s.id] = { lines: s.buffer.slice(), sim: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
+    cardState[s.id] = { lines: s.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
   });
   state.activeCardId = state.order[0] || null;
 
@@ -1362,7 +1405,7 @@
     };
     TMS_DATA.sessions.push(session);
     state.order.push(id);
-    cardState[id] = { lines: session.buffer.slice(), sim: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
+    cardState[id] = { lines: session.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
     return session;
   }
 
@@ -1679,6 +1722,9 @@
   const permWrap = document.getElementById('permSheetWrap');
   permWrap.querySelector('[data-close-perm]').addEventListener('click', () => { /* modal — backdrop tap does not dismiss a pending decision */ });
 
+  const questionWrap = document.getElementById('questionSheetWrap');
+  questionWrap.querySelector('[data-close-question]').addEventListener('click', () => { /* modal — backdrop tap does not dismiss a pending question */ });
+
   // ============================================================
   // Router
   // ============================================================
@@ -1691,9 +1737,9 @@
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
     if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
-    // A pending permission prompt only shows its sheet on the Terminals screen;
-    // syncPermSheet re-homes/hides it as the user navigates.
-    syncPermSheet();
+    // A pending permission/question prompt only shows its sheet on the Terminals
+    // screen; syncPromptSheets re-homes/hides it as the user navigates.
+    syncPromptSheets();
     updatePendingBadge();
   }
   function goToTerminals() { show('terminals'); }
@@ -2755,6 +2801,7 @@
     const id = session.id;
     const cs = cardState[id];
     const sim = TMSSim.createSession(session.script, { autoApprove: false });
+    cs.mainSim = sim;
     cs.sim = sim;
     sim.on('out', chunk => {
       appendOutChunk(cs, chunk);
@@ -2770,26 +2817,79 @@
     sim.on('prompt', data => {
       handlePrompt(id, data);
     });
-    sim.on('done', () => showReplay(id));
+    // The main script's own 'done' both offers the replay affordance and,
+    // a few seconds later, kicks off the question continuation (demo.
+    // questionScript) — this fires on the initial run AND on every replay,
+    // since replaySession() restarts mainSim from scratch (see below).
+    sim.on('done', () => { showReplay(id); scheduleQuestionScript(id); });
     sim.start();
   }
 
+  // A few seconds after t1's main script finishes, play the short follow-up
+  // question continuation (demo.questionScript). Tracked in cs.questionTimer
+  // so re-arming is idempotent (clearTimeout of a stale/previous timer before
+  // scheduling a new one) — replaySession() also clears it outright so a
+  // manual replay never leaves an orphaned timer racing the fresh run.
+  function scheduleQuestionScript(id) {
+    const cs = cardState[id];
+    clearTimeout(cs.questionTimer);
+    cs.questionTimer = setTimeout(() => startQuestionScript(id), 2600);
+  }
+  function startQuestionScript(id) {
+    const cs = cardState[id];
+    cs.questionTimer = null;
+    const session = TMS_DATA.sessions.find(s => s.id === id);
+    const qSim = TMSSim.createSession(TMS_DATA.demo.questionScript, { autoApprove: false });
+    cs.questionSim = qSim;
+    cs.sim = qSim; // now the active driver for respond()/reset()-based helpers
+    qSim.on('out', chunk => {
+      appendOutChunk(cs, chunk);
+      renderCardLines(id);
+      if (state.islandOpen) renderIslandExpanded();
+    });
+    qSim.on('status', status => {
+      updateStatusChip(id, status);
+      if (status === 'running') setIslandActivity('live', `Claude arbeitet · ${session.name}`);
+      else if (status === 'done') setIslandActivity('ok', 'Fertig');
+      if (state.islandOpen) renderIslandExpanded();
+    });
+    qSim.on('prompt', data => handlePrompt(id, data));
+    qSim.on('done', () => showReplay(id));
+    updateStatusChip(id, 'running');
+    setIslandActivity('live', `Claude arbeitet · ${session.name}`);
+    qSim.start();
+  }
+
   // Prompt lifecycle. A prompt pauses the sim and records the pending request
-  // on the owning card. If that terminal's Auto-Approve is ON it resolves
-  // automatically (with a toast so the user SEES it); otherwise the permission
-  // sheet is shown — but ONLY while the Terminals screen is active. syncPermSheet
-  // re-homes/hides the sheet as the user navigates; the request stays pending.
+  // on the owning card.
+  //
+  // kind:'question' prompts are structurally exempt from Auto-Approve — the
+  // check happens here, first, before cs.autoApprove is even consulted, so a
+  // question can never take the auto-approve branch no matter what the
+  // terminal's ⚡ Auto toggle is set to. They always render the question
+  // sheet (or the pending dock badge) instead.
+  //
+  // Tool-permission prompts keep the original behaviour: if that terminal's
+  // Auto-Approve is ON they resolve automatically (with a toast so the user
+  // SEES it); otherwise the permission sheet is shown — but ONLY while the
+  // Terminals screen is active. syncPromptSheets re-homes/hides the relevant
+  // sheet as the user navigates; the request stays pending either way.
   function handlePrompt(id, data) {
     const cs = cardState[id];
     const session = TMS_DATA.sessions.find(s => s.id === id);
     cs.pendingPrompt = data;
     state.pendingPromptId = id;
+    if (data && data.kind === 'question') {
+      setIslandActivity('warn', `Rückfrage · ${session.name}`);
+      syncPromptSheets();
+      updatePendingBadge();
+      return;
+    }
     setIslandActivity('warn', `Claude wartet · ${session.name}`);
     if (cs.autoApprove) {
       autoApproveResolve(id, data, session);
     } else {
-      renderPermSheet(id);
-      syncPermSheet();
+      syncPromptSheets();
       updatePendingBadge();
     }
   }
@@ -2820,12 +2920,14 @@
     document.getElementById('permQuestion').textContent = data.question || 'Erlauben?';
     document.getElementById('permAutoBtn').setAttribute('aria-pressed', String(cs.autoApprove));
   }
-  // Show the sheet iff a non-auto prompt is pending AND Terminals is active.
+  // Show the permission sheet iff a non-auto, non-question prompt is pending
+  // AND Terminals is active.
   function syncPermSheet() {
     const id = state.pendingPromptId;
     const cs = id ? cardState[id] : null;
+    const isQuestion = !!(cs && cs.pendingPrompt && cs.pendingPrompt.kind === 'question');
     const termActive = !document.querySelector('[data-screen="terminals"]').hidden;
-    const shouldShow = !!(cs && cs.pendingPrompt && !cs.autoApprove && termActive && !document.body.classList.contains('is-locked'));
+    const shouldShow = !!(cs && cs.pendingPrompt && !isQuestion && !cs.autoApprove && termActive && !document.body.classList.contains('is-locked'));
     if (shouldShow) {
       renderPermSheet(id);
       if (permWrap.hidden) openSheet(permWrap);
@@ -2833,12 +2935,65 @@
       closeSheet(permWrap);
     }
   }
-  // Subtle pending hint on the dock's Terminals tab when the sheet is hidden
-  // (user is elsewhere) but a request is still waiting.
+  // Show the question sheet iff a question prompt is pending AND Terminals is
+  // active. Only (re-)rendered on the hidden→visible transition so an
+  // in-progress selection/comment survives incidental re-syncs while it's
+  // already open (e.g. a header Auto toggle elsewhere triggering a resync).
+  function syncQuestionSheet() {
+    const id = state.pendingPromptId;
+    const cs = id ? cardState[id] : null;
+    const isQuestion = !!(cs && cs.pendingPrompt && cs.pendingPrompt.kind === 'question');
+    const termActive = !document.querySelector('[data-screen="terminals"]').hidden;
+    const shouldShow = !!(isQuestion && termActive && !document.body.classList.contains('is-locked'));
+    if (shouldShow) {
+      if (questionWrap.hidden) { renderQuestionSheet(id); openSheet(questionWrap); }
+    } else if (!questionWrap.hidden) {
+      closeSheet(questionWrap);
+    }
+  }
+  // The two sheets are mutually exclusive (one prompt pending at a time) but
+  // always reconciled together so navigation/toggle call sites don't need to
+  // know which kind is currently pending.
+  function syncPromptSheets() {
+    syncPermSheet();
+    syncQuestionSheet();
+  }
+  function renderQuestionSheet(id) {
+    const cs = cardState[id];
+    const data = cs && cs.pendingPrompt;
+    if (!data) return;
+    const session = TMS_DATA.sessions.find(s => s.id === id);
+    document.getElementById('questionSourceDot').style.background = session ? session.colorTag : 'var(--warn)';
+    document.getElementById('questionSourceName').textContent = session ? session.name : '';
+    document.getElementById('questionText').textContent = data.question || '';
+    const inputType = data.multiSelect ? 'checkbox' : 'radio';
+    const optionsEl = document.getElementById('questionOptions');
+    optionsEl.innerHTML = (data.options || []).map(o => `
+      <label class="question-option-row">
+        <input type="${inputType}" name="questionOpt" value="${escapeHtml(o.id)}">
+        <span class="question-option-row__text">
+          <span class="question-option-row__label">${escapeHtml(o.label)}</span>
+          ${o.description ? `<span class="question-option-row__desc">${escapeHtml(o.description)}</span>` : ''}
+        </span>
+      </label>`).join('');
+    const submitBtn = document.getElementById('questionSubmitBtn');
+    submitBtn.disabled = true;
+    optionsEl.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('change', () => { submitBtn.disabled = !optionsEl.querySelector('input:checked'); });
+    });
+    const commentEl = document.getElementById('questionComment');
+    commentEl.value = '';
+    commentEl.closest('.question-comment-row').hidden = data.allowComment === false;
+  }
+  // Subtle pending hint on the dock's Terminals tab when the relevant sheet is
+  // hidden (user is elsewhere) but a request is still waiting. Question
+  // prompts are never auto-resolved, so they're always "pending" here
+  // regardless of the terminal's Auto-Approve flag.
   function updatePendingBadge() {
     const id = state.pendingPromptId;
     const cs = id ? cardState[id] : null;
-    const pending = !!(cs && cs.pendingPrompt && !cs.autoApprove);
+    const isQuestion = !!(cs && cs.pendingPrompt && cs.pendingPrompt.kind === 'question');
+    const pending = !!(cs && cs.pendingPrompt && (isQuestion || !cs.autoApprove));
     const termActive = !document.querySelector('[data-screen="terminals"]').hidden;
     const badge = document.getElementById('termPendingBadge');
     if (badge) badge.hidden = !(pending && !termActive);
@@ -2864,6 +3019,36 @@
       showReplay(id);
     }
   }
+  // Answers a pending question prompt: echoes the selection (+ optional
+  // comment) into the owning terminal's stream as a dim line, then resumes
+  // playback. Text goes through appendOutChunk → renderCardLines →
+  // renderBufferLine → ansiToHtml, which escapeHtml()s every non-ANSI
+  // segment — labels and the free-text comment are never trusted as HTML.
+  function submitQuestionAnswer() {
+    const id = state.pendingPromptId;
+    if (!id) return;
+    const cs = cardState[id];
+    const data = cs.pendingPrompt;
+    if (!data) return;
+    const optionsEl = document.getElementById('questionOptions');
+    const checked = Array.from(optionsEl.querySelectorAll('input:checked'));
+    if (!checked.length) return; // Senden stays disabled until ≥1 option is chosen
+    const chosenIds = checked.map(inp => inp.value);
+    const chosenLabels = (data.options || []).filter(o => chosenIds.includes(o.id)).map(o => o.label);
+    const comment = document.getElementById('questionComment').value.trim();
+    const session = TMS_DATA.sessions.find(s => s.id === id);
+    cs.pendingPrompt = null;
+    state.pendingPromptId = null;
+    closeSheet(questionWrap);
+    updatePendingBadge();
+    let echo = `  ⎿ › Antwort: ${chosenLabels.join(', ')}`;
+    if (comment) echo += ` — Anmerkung: "${comment}"`;
+    appendOutChunk(cs, `\x1b[2m${echo}\x1b[0m\n`);
+    renderCardLines(id);
+    setIslandActivity('live', `Claude arbeitet · ${session.name}`);
+    cs.sim.respond();
+  }
+  document.getElementById('questionSubmitBtn').addEventListener('click', () => submitQuestionAnswer());
   // Per-terminal Auto-Approve toggle (header pill + the sheet's Auto button).
   function updateAutoToggleUI(id) {
     const on = cardState[id].autoApprove;
@@ -2879,10 +3064,15 @@
     if (!cs) return;
     cs.autoApprove = !cs.autoApprove;
     updateAutoToggleUI(id);
-    if (cs.pendingPrompt) {
+    // Structural guard, same as handlePrompt(): a pending question prompt is
+    // never touched by an auto-approve arm/disarm — toggling the flag here
+    // only changes what happens to FUTURE tool-permission prompts on this
+    // terminal, it must never resolve (or otherwise react to) an already-open
+    // question sheet.
+    if (cs.pendingPrompt && cs.pendingPrompt.kind !== 'question') {
       const session = TMS_DATA.sessions.find(s => s.id === id);
-      if (cs.autoApprove) { syncPermSheet(); updatePendingBadge(); autoApproveResolve(id, cs.pendingPrompt, session); }
-      else { clearTimeout(cs.autoTimer); renderPermSheet(id); syncPermSheet(); updatePendingBadge(); }
+      if (cs.autoApprove) { syncPromptSheets(); updatePendingBadge(); autoApproveResolve(id, cs.pendingPrompt, session); }
+      else { clearTimeout(cs.autoTimer); renderPermSheet(id); syncPromptSheets(); updatePendingBadge(); }
     }
     toast(cs.autoApprove ? 'Auto-Approve an' : 'Auto-Approve aus');
   }
@@ -2902,6 +3092,14 @@
     const cs = cardState[id];
     const session = TMS_DATA.sessions.find(s => s.id === id);
     clearTimeout(cs.autoTimer);
+    // Cancel/discard anything left over from a previous run's question
+    // continuation so it can never fire into (or drive respond()/reset() for)
+    // the fresh replay: clear the arm-timer, and reset() the abandoned
+    // questionSim itself (bumps its internal epoch) so any of ITS still-live
+    // setTimeout callbacks become no-ops instead of firing late.
+    clearTimeout(cs.questionTimer);
+    cs.questionTimer = null;
+    if (cs.questionSim) { cs.questionSim.reset(); cs.questionSim = null; }
     cs.lines = session.buffer.slice();
     cs.pendingPrompt = null;
     cs.showReplay = false;
@@ -2911,6 +3109,10 @@
     renderCardLines(id);
     updateStatusChip(id, 'running');
     setIslandActivity('live', `Claude arbeitet · ${session.name}`);
+    // Replays always restart the MAIN flow (mainSim), never mid-flight
+    // question playback — mainSim's own 'done' handler re-schedules the
+    // question continuation naturally once this run completes.
+    cs.sim = cs.mainSim;
     cs.sim.reset();
     cs.sim.start();
   }

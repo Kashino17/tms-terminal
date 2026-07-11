@@ -46,6 +46,20 @@ test('aux data present', () => {
   assert.equal(DATA.update.latest, '2.0.0');
 });
 
+test('questionScript: exactly one question prompt with options and a multiSelect flag', () => {
+  const script = DATA.demo.questionScript;
+  assert.ok(Array.isArray(script) && script.length > 3);
+  const prompts = script.filter(e => e.type === 'prompt');
+  assert.equal(prompts.length, 1);
+  const q = prompts[0].data;
+  assert.equal(q.kind, 'question');
+  assert.ok(typeof q.question === 'string' && q.question.length > 5);
+  assert.equal(typeof q.multiSelect, 'boolean');
+  assert.ok(Array.isArray(q.options) && q.options.length >= 3);
+  for (const o of q.options) assert.ok(o.id && o.label);
+  assert.ok(script.some(e => e.type === 'done'));
+});
+
 test('per-session notes/todos and dictation demo present', () => {
   for (const s of DATA.sessions) {
     assert.ok(Array.isArray(s.notes) && Array.isArray(s.todos));
