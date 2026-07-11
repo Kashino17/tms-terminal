@@ -26,10 +26,12 @@ import { GlassSurface } from '../components/GlassSurface';
 import { QuickKeys } from '../components/QuickKeys';
 import { PromptSheet, PendingPrompt } from '../components/PromptSheet';
 import { OverviewGrid } from '../components/OverviewGrid';
+import { NotesSheet } from '../components/NotesSheet';
+import { useDictation } from '../hooks/useDictation';
 import { useS2Theme } from '../theme/tokens';
 import {
   IconPlus, IconTrash, IconSend, IconMic, IconChevronDown, IconChevronRight, IconServer, IconDot,
-  IconList, IconStack, IconGrid,
+  IconList, IconStack, IconGrid, IconEdit,
 } from '../icons';
 
 // ── Season-2 connection state (module store — survives screen remounts) ──
@@ -97,6 +99,7 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
   const [view, setView] = useState<S2View>('list');
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null);
+  const [notesFor, setNotesFor] = useState<{ tabId: string; title: string; color: string } | null>(null);
   const autoTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   // Load persisted view preference once.
@@ -330,6 +333,7 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
                 full
                 onToggle={() => {}}
                 onClose={() => closeTerminal(stackTab)}
+                onNotes={(color) => setNotesFor({ tabId: stackTab.id, title: stackTab.title, color })}
                 wsService={conn.wsService!}
                 serverId={conn.server!.id}
                 toast={toast}
@@ -347,6 +351,7 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
               expanded={expandedId === tab.id}
               onToggle={() => setExpandedId(expandedId === tab.id ? null : tab.id)}
               onClose={() => closeTerminal(tab)}
+              onNotes={(color) => setNotesFor({ tabId: tab.id, title: tab.title, color })}
               wsService={conn.wsService!}
               serverId={conn.server!.id}
               toast={toast}
@@ -381,6 +386,15 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
           bottomOffset={m.dockHeight + 40}
         />
       )}
+
+      {notesFor && (
+        <NotesSheet
+          tabId={notesFor.tabId}
+          title={notesFor.title}
+          color={notesFor.color}
+          onClose={() => setNotesFor(null)}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -395,12 +409,13 @@ interface SessionCardProps {
   full?: boolean;
   onToggle: () => void;
   onClose: () => void;
+  onNotes: (color: string) => void;
   wsService: WebSocketService;
   serverId: string;
   toast: (msg: string) => void;
 }
 
-function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, wsService, serverId, toast }: SessionCardProps) {
+function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, onNotes, wsService, serverId, toast }: SessionCardProps) {
   const { theme } = useS2Theme();
   const { c, m } = theme;
   const [editing, setEditing] = useState(false);
@@ -410,6 +425,14 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, ws
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const termRef = useRef<TerminalViewRef>(null);
   const autoOn = useAutoApproveStore((s) => (tab.sessionId ? s.isEnabled(tab.sessionId) : false));
+  // Real dictation via the server's Whisper pipeline — transcript lands in
+  // the command input, ready to edit and send.
+  const { micState, toggle: toggleMic } = useDictation({
+    wsService,
+    sessionId: tab.sessionId,
+    onText: (text) => setCmd((prev) => (prev ? `${prev} ${text}` : text)),
+    onError: (msg) => toast(msg),
+  });
 
   // TRIPLE-tap on the title opens rename (single/double tap must NOT).
   const handleTitleTap = useCallback(() => {
@@ -470,6 +493,14 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, ws
             </Pressable>
           )}
           <Pressable
+            onPress={() => onNotes(color)}
+            hitSlop={6}
+            accessibilityLabel="Notizen und Todos"
+            style={({ pressed }) => [pressed && styles.pressed]}
+          >
+            <IconEdit size={m.icon.sm} color={c.textDim} />
+          </Pressable>
+          <Pressable
             onPress={toggleAuto}
             accessibilityLabel="Auto-Approve umschalten"
             style={[styles.chipBtn, { borderColor: autoOn ? `rgba(${c.accentRgb},0.4)` : c.glassBorder, backgroundColor: autoOn ? `rgba(${c.accentRgb},0.14)` : 'transparent' }]}
@@ -518,8 +549,20 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, ws
               autoCorrect={false}
               style={[styles.cmdInput, { color: c.text, fontSize: m.font.body }]}
             />
-            <Pressable onPress={() => toast('Diktat kommt in Meilenstein 3')} hitSlop={6} accessibilityLabel="Diktieren">
-              <IconMic size={m.icon.md} color={c.textDim} />
+            <Pressable
+              onPress={toggleMic}
+              hitSlop={6}
+              accessibilityLabel={micState === 'recording' ? 'Aufnahme stoppen' : 'Diktieren'}
+              style={[
+                styles.micBtn,
+                micState === 'recording' && { backgroundColor: 'rgba(239,68,68,0.16)' },
+                micState === 'processing' && { backgroundColor: `rgba(${c.accentRgb},0.16)` },
+              ]}
+            >
+              <IconMic
+                size={m.icon.md}
+                color={micState === 'recording' ? c.err : micState === 'processing' ? c.accent : c.textDim}
+              />
             </Pressable>
             <Pressable
               onPress={sendCmd}
@@ -559,6 +602,7 @@ const styles = StyleSheet.create({
   termPending: { flex: 1, minHeight: 120, alignItems: 'center', justifyContent: 'center' },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
   cmdInput: { flex: 1, paddingVertical: 6, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
+  micBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   sendBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.7, transform: [{ scale: 0.98 }] },
 });
