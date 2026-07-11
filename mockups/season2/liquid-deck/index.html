@@ -590,10 +590,6 @@
   .shot-flash { position: fixed; inset: 0; background: var(--flash); opacity: 0; pointer-events: none; z-index: 110; transition: opacity 90ms ease-out; }
   .shot-flash.is-flashing { opacity: .85; transition: opacity 40ms ease-out; }
 
-  .browser-bar { padding: 10px 15px; background: rgba(var(--overlay-rgb),.05); border: 1px solid var(--glass-border); border-radius: 999px; font: 12.5px var(--font-mono); color: var(--text-dim); margin-bottom: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .browser-skeleton { display: flex; flex-direction: column; gap: 10px; }
-  .browser-skeleton__block { height: 14px; border-radius: 6px; background: rgba(var(--overlay-rgb),.06); }
-
   .hit-badge { font: 700 11px var(--font-mono); color: var(--accent); background: rgba(var(--accent-rgb),var(--chip-a)); padding: 3px 8px; border-radius: 999px; flex: none; }
 
   /* ---------- Sub-tabs (Manager, Cloud detail) ---------- */
@@ -701,6 +697,87 @@
   .deploy-row:first-child { border-top: none; }
   .deploy-row__version { font: 700 12.5px var(--font-mono); width: 40px; flex: none; }
   .deploy-row__time { flex: 1; font: 12px var(--font-ui); color: var(--text-dim); }
+
+  /* ---------- Browser screen (app-wide, every tab incognito) ---------- */
+  section[data-screen="browser"]:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; }
+  .browser-col { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; max-width: 640px; margin: 0 auto; }
+  .browser-chrome { flex: none; }
+  .browser-toolbar { display: flex; align-items: center; gap: 6px; }
+  .browser-nav-btn { flex: none; width: var(--touch); height: var(--touch); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color 200ms var(--spring), background 200ms var(--spring), opacity 200ms var(--spring), transform 150ms var(--spring); }
+  .browser-nav-btn .ic { width: var(--icon-md); height: var(--icon-md); }
+  .browser-nav-btn:active { transform: scale(.92); background: rgba(var(--overlay-rgb),.08); }
+  .browser-nav-btn:disabled { opacity: .3; pointer-events: none; }
+  .browser-tabs-btn { border: 1.6px solid var(--text-dim); border-radius: 8px; }
+  .browser-tabs-btn__count { font: 700 12.5px var(--font-mono); }
+  .browser-address { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 5px 0 11px; border-radius: var(--radius-pill); }
+  .browser-address__incognito { flex: none; display: flex; color: var(--accent); opacity: .85; }
+  .browser-address__incognito .ic { width: 15px; height: 15px; }
+  .browser-address__input { flex: 1; min-width: 0; background: none; border: none; outline: none; font: 13px var(--font-ui); color: var(--text); padding: 4px 0; }
+  .browser-address__input::placeholder { color: var(--text-dim); }
+  .browser-address__reload { flex: none; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color 200ms var(--spring), background 200ms var(--spring); }
+  .browser-address__reload:active { background: rgba(var(--overlay-rgb),.1); color: var(--accent); }
+  .browser-address__reload .ic { width: var(--icon-sm); height: var(--icon-sm); }
+  .browser-progress { height: 3px; margin: 8px 4px 0; border-radius: 3px; overflow: hidden; opacity: 0; transition: opacity 200ms ease-out; }
+  .browser-progress.is-active { opacity: 1; }
+  .browser-progress__bar { height: 100%; width: 0%; border-radius: 3px; background: linear-gradient(90deg, rgba(var(--accent-rgb),.6), var(--accent)); }
+  .browser-content { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; margin-top: 14px; touch-action: pan-y; }
+
+  .newtab-page { display: flex; flex-direction: column; align-items: center; padding: 26px 6px 10px; text-align: center; }
+  .newtab-badge { display: flex; align-items: center; gap: 6px; padding: 6px 13px; border-radius: 999px; background: rgba(var(--accent-rgb),.12); color: var(--accent-ink); font: 600 11px var(--font-ui); margin-bottom: 24px; }
+  .newtab-badge .ic { width: var(--icon-sm); height: var(--icon-sm); color: var(--accent); }
+  .newtab-speed-dial { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; width: 100%; max-width: 320px; }
+  .speed-dial-tile { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 8px; cursor: pointer; transition: transform 220ms var(--spring), background 220ms var(--spring); }
+  .speed-dial-tile:active { transform: scale(.95); }
+  .speed-dial-tile__glyph { width: 38px; height: 38px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; background: rgba(var(--accent-rgb),.12); border: 1px solid var(--glass-border); color: var(--accent); font: 700 13px var(--font-mono); }
+  .speed-dial-tile__label { font: 600 12px var(--font-ui); color: var(--text); }
+  .newtab-hint { margin-top: 26px; max-width: 280px; font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+
+  .sim-page { padding: 4px 2px 20px; }
+  .sim-page__brand { font: 700 15px var(--font-ui); letter-spacing: -.01em; margin-bottom: 16px; display: flex; align-items: center; gap: 6px; }
+  .autofill-chip { display: flex; align-items: center; gap: 7px; width: 100%; margin-bottom: 14px; padding: 10px 14px; border-radius: 999px; background: rgba(var(--accent-rgb),.14); border: 1px solid rgba(var(--accent-rgb),.35); color: var(--accent-ink); font: 600 12.5px var(--font-ui); cursor: pointer; transition: background 200ms var(--spring), transform 150ms var(--spring); }
+  .autofill-chip:active { background: rgba(var(--accent-rgb),.26); transform: scale(.98); }
+  .autofill-chip .ic { width: var(--icon-sm); height: var(--icon-sm); color: var(--accent); flex: none; }
+  .vercel-login-card, .vercel-dashboard { padding: 20px 18px; }
+  .vercel-login-card h2 { margin: 0 0 14px; font-size: 17px; }
+  .sim-field { display: block; margin-bottom: 12px; }
+  .sim-field span { display: block; font: 600 11.5px var(--font-ui); color: var(--text-dim); margin-bottom: 6px; }
+  .sim-field input { width: 100%; padding: 11px 13px; border-radius: 10px; font: 13.5px var(--font-ui); background: rgba(var(--well-rgb),var(--well-a)); border: 1px solid var(--glass-border); color: var(--text); }
+  .vercel-dashboard__session { font-size: 13.5px; margin-bottom: 14px; }
+  .vercel-dashboard__session b { color: var(--accent); }
+
+  .docs-page { padding: 4px 2px 24px; max-width: 560px; }
+  .docs-page h1 { font-size: 22px; margin: 4px 0 14px; letter-spacing: -.01em; }
+  .docs-page h2 { font-size: 15.5px; margin: 24px 0 8px; }
+  .docs-page p { font-size: 13.5px; line-height: 1.65; color: var(--text-dim); margin: 0 0 4px; }
+  .docs-page code { font: 12px var(--font-mono); background: rgba(var(--well-rgb),var(--well-a)); padding: 2px 6px; border-radius: 5px; }
+
+  .unknown-page { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 64px 16px 20px; color: var(--text-dim); }
+  .unknown-page__icon { color: var(--text-dim); opacity: .5; margin-bottom: 14px; }
+  .unknown-page__title { font: 700 15px var(--font-ui); color: var(--text); margin-bottom: 8px; }
+  .unknown-page__url { font: 12.5px var(--font-mono); word-break: break-all; padding: 8px 14px; border-radius: 10px; background: rgba(var(--well-rgb),var(--well-a)); max-width: 320px; }
+  .unknown-page__hint { margin-top: 14px; font-size: 12px; max-width: 260px; line-height: 1.5; }
+
+  .browser-tab-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .browser-tab-card { position: relative; padding: 14px 12px 12px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; transition: transform 200ms var(--spring), border-color 200ms var(--spring); border: 1px solid transparent; }
+  .browser-tab-card:active { transform: scale(.97); }
+  .browser-tab-card.is-active { border-color: rgba(var(--accent-rgb),.5); }
+  .browser-tab-card__close { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color 200ms var(--spring), background 200ms var(--spring); }
+  .browser-tab-card__close .ic { width: 14px; height: 14px; }
+  .browser-tab-card__close:active { background: rgba(var(--overlay-rgb),.1); color: var(--err); }
+  .browser-tab-card__preview { height: 46px; border-radius: 10px; background: rgba(var(--overlay-rgb),.06); display: flex; align-items: center; justify-content: center; font: 700 15px var(--font-mono); color: var(--text-dim); }
+  .browser-tab-card__title { font: 600 12.5px var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 18px; }
+  .browser-tab-card__badge { font: 600 10px var(--font-ui); color: var(--accent); opacity: .8; }
+  .browser-tab-newcard { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 96px; color: var(--accent); font: 600 12.5px var(--font-ui); transition: background 200ms var(--spring), transform 200ms var(--spring); }
+  .browser-tab-newcard:active { transform: scale(.96); }
+  .browser-tab-newcard .ic { width: var(--icon-md); height: var(--icon-md); }
+
+  .pw-row { display: flex; align-items: center; gap: 10px; padding: 13px 4px; border-top: 1px solid rgba(var(--overlay-rgb),.08); }
+  .pw-row:first-child { border-top: none; }
+  .pw-row__info { flex: 1; min-width: 0; }
+  .pw-row__site { font: 700 13.5px var(--font-ui); }
+  .pw-row__user { color: var(--text-dim); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pw-row__pass { margin-top: 3px; letter-spacing: .1em; cursor: pointer; }
+  .pw-row__actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
 
   /* ---------- Settings screen ---------- */
   .settings-group { padding: 16px 18px; margin-bottom: 14px; }
@@ -913,6 +990,7 @@
   <section data-screen="tools" hidden></section>
   <section data-screen="manager" hidden></section>
   <section data-screen="cloud" hidden></section>
+  <section data-screen="browser" hidden></section>
   <section data-screen="settings" hidden></section>
   <section data-screen="prayer" hidden></section>
   <section data-screen="lock">
@@ -950,6 +1028,10 @@
   <button class="dock-btn" data-nav="cloud">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.78A6 6 0 0 0 5 12.5 4 4 0 0 0 6.5 19z"/></svg>
     <span>Cloud</span>
+  </button>
+  <button class="dock-btn" data-nav="browser">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/></svg>
+    <span>Browser</span>
   </button>
   <button class="dock-btn" data-nav="mehr">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>
@@ -1056,6 +1138,52 @@
       <button class="sheet-close-btn" id="termToolsClose">Schließen</button>
     </div>
     <div class="sheet-scroll-body" id="termToolsBody"></div>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="browserTabsSheetWrap" hidden>
+  <div class="sheet-backdrop" data-close-browsertabs></div>
+  <div class="sheet-panel sheet-panel--tall glass glass--strong">
+    <div class="sheet-grabber"></div>
+    <div class="sheet-head-row">
+      <div class="sheet-title">Tabs</div>
+      <button class="sheet-close-btn" id="browserTabsClose">Schließen</button>
+    </div>
+    <div class="sheet-scroll-body" id="browserTabsBody"></div>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="browserMenuSheetWrap" hidden>
+  <div class="sheet-backdrop" data-close-browsermenu></div>
+  <div class="sheet-panel glass glass--strong">
+    <div class="sheet-grabber"></div>
+    <div class="sheet-title">Browser-Menü</div>
+    <div class="mehr-list">
+      <button class="mehr-item" data-browser-menu="hardreload">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3.2V8h4.8"/></svg>
+        <span>Hard Reload</span>
+      </button>
+      <button class="mehr-item" data-browser-menu="clearcache">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M10 11v6M14 11v6"/></svg>
+        <span>Cache komplett leeren</span>
+      </button>
+      <button class="mehr-item" data-browser-menu="passwords">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        <span>Passwörter</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="browserPasswordsSheetWrap" hidden>
+  <div class="sheet-backdrop" data-close-browserpw></div>
+  <div class="sheet-panel sheet-panel--tall glass glass--strong">
+    <div class="sheet-grabber"></div>
+    <div class="sheet-head-row">
+      <div class="sheet-title">Passwörter</div>
+      <button class="sheet-close-btn" id="browserPwClose">Schließen</button>
+    </div>
+    <div class="sheet-scroll-body" id="browserPwBody"></div>
   </div>
 </div>
 
@@ -1263,6 +1391,13 @@
     x: '<path d="M6 6l12 12M18 6 6 18"/>',
     check: '<path d="M5 12l4 4L19 7"/>',
     backspace: '<path d="M9 6h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-6-6a1 1 0 0 1 0-1.4Z"/><path d="m17 10-4 4M13 10l4 4"/>',
+    // Dock/address-bar globe-compass glyph for the app-wide Browser.
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/>',
+    chevronLeft: '<path d="m15 6-6 6 6 6"/>',
+    dots: '<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+    // Incognito "hat + glasses" glyph — address-bar isolation badge + new-tab notice.
+    incognito: '<path d="M5 10Q12 2 19 10"/><path d="M3 10h18"/><circle cx="8" cy="13" r="3"/><circle cx="16" cy="13" r="3"/><path d="M11 13h2"/>',
+    key: '<circle cx="7" cy="17" r="4"/><path d="M10 14 20 4"/><path d="M15 9l3 3"/><path d="M18 6l2.5 2.5"/>',
   };
   function icon(name, size, cls) {
     const p = ICON_PATHS[name] || '';
@@ -1523,6 +1658,7 @@
     if (name !== 'cloud') stopCloudBuildTimer();
     if (name !== 'prayer') stopPrayerTick();
     if (name !== 'terminals') { cancelDictation(); closeAllListRails(); }
+    if (name !== 'browser') stopBrowserProgressTimers();
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
     if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
@@ -3045,7 +3181,12 @@
       </button>`).join('');
     grid.addEventListener('click', e => {
       const tile = e.target.closest('.tool-tile');
-      if (tile) openToolSheet(tile.dataset.tool);
+      if (!tile) return;
+      // Browser is no longer a per-terminal/tool sheet — it's the app-wide
+      // Browser screen (dock item). The tile stays here so there's no dead
+      // end, it just routes straight there instead of opening a sheet.
+      if (tile.dataset.tool === 'browser') { show('browser'); return; }
+      openToolSheet(tile.dataset.tool);
     });
   }
 
@@ -3054,7 +3195,7 @@
     const builders = {
       files: buildFilesSheet, sql: buildSqlSheet, ports: buildPortsSheet, processes: buildProcessesSheet,
       snippets: buildSnippetsSheet, notes: buildNotesSheet, screenshots: buildScreenshotsSheet,
-      browser: buildBrowserSheet, watchers: buildWatchersSheet,
+      watchers: buildWatchersSheet,
     };
     if (!def || !builders[id]) return;
     const { html, wire } = builders[id]();
@@ -3176,15 +3317,6 @@
       });
     };
     return { html, wire };
-  }
-
-  function buildBrowserSheet() {
-    const html = `
-      <div class="browser-bar">https://vercel.com/kashino17/pinterest-scraper</div>
-      <div class="browser-skeleton">
-        ${[92, 68, 100, 84, 40, 76].map(w => `<div class="browser-skeleton__block" style="width:${w}%"></div>`).join('')}
-      </div>`;
-    return { html };
   }
 
   function buildWatchersSheet() {
@@ -3661,6 +3793,462 @@
   SCREEN_HOOKS.cloud = showCloudList;
 
   // ============================================================
+  // Browser screen — app-wide, replaces the old per-terminal Browser tool.
+  // Every tab is incognito by construction: each tab object below carries
+  // its own history + its own session state, nothing is ever read from or
+  // written to another tab. The ONE deliberate cross-tab feature is the
+  // password manager (BROWSER_PASSWORDS) — like a real device keychain,
+  // it survives independently of any tab's incognito state.
+  // ============================================================
+  const BROWSER_PASSWORDS = [
+    { id: 'pw-vercel', site: 'vercel.com', username: 'fateblack12@gmail.com', password: 'Vc9!scrapeDeploy' },
+    { id: 'pw-github', site: 'github.com', username: 'Kashino17', password: 'gh_pat_8f3kD9xQmZ2p' },
+  ];
+  const BROWSER_SPEED_DIAL = [
+    { url: 'vercel.com', label: 'vercel.com', glyph: '▲' },
+    { url: 'render.com', label: 'render.com', glyph: 'R' },
+    { url: 'github.com', label: 'github.com', glyph: 'GH' },
+    { url: 'docs.tms.dev', label: 'docs.tms.dev', glyph: '</>' },
+  ];
+
+  const browserState = { tabs: [], activeId: null, nextId: 1, progressTimer1: null, progressTimer2: null };
+
+  function browserHostOf(raw) {
+    const s = String(raw || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/^www\./, '');
+    const cut = s.search(/[\/?#]/);
+    return cut === -1 ? s : s.slice(0, cut);
+  }
+  // Resolves whatever the user typed/tapped to a page template. Anything
+  // that isn't the two dedicated demo hosts (or an empty new-tab) falls
+  // through to the "Seite simuliert" placeholder — including render.com,
+  // github.com and arbitrary/garbage input. url/display are always the
+  // raw, unescaped user input; every render site MUST escapeHtml() it.
+  function resolveBrowserPage(raw) {
+    const input = String(raw || '').trim();
+    if (!input) return { kind: 'newtab', url: '', display: '' };
+    const host = browserHostOf(input);
+    if (host === 'vercel.com') return { kind: 'vercel', url: input, display: input };
+    if (host === 'docs.tms.dev') return { kind: 'docs', url: input, display: input };
+    return { kind: 'unknown', url: input, display: input };
+  }
+
+  function activeBrowserTab() {
+    return browserState.tabs.find(t => t.id === browserState.activeId) || browserState.tabs[0] || null;
+  }
+  function createBrowserTab(activate) {
+    const id = 'bt' + (browserState.nextId++);
+    const tab = {
+      id,
+      history: [{ kind: 'newtab', url: '', display: '' }],
+      historyIndex: 0,
+      // Per-tab "cookie jar" — the whole point of incognito isolation.
+      session: { vercelLoggedIn: false, vercelEmail: null },
+    };
+    browserState.tabs.push(tab);
+    if (activate !== false) browserState.activeId = id;
+    return tab;
+  }
+  function switchToBrowserTab(id) {
+    if (!browserState.tabs.some(t => t.id === id)) return;
+    browserState.activeId = id;
+    renderBrowserActiveTab({ progress: false });
+  }
+  function closeBrowserTab(id) {
+    const idx = browserState.tabs.findIndex(t => t.id === id);
+    if (idx === -1) return;
+    const wasActive = browserState.activeId === id;
+    browserState.tabs.splice(idx, 1);
+    if (browserState.tabs.length === 0) {
+      createBrowserTab(true); // unlimited tabs, but never zero — a fresh isolated tab replaces the last one
+    } else if (wasActive) {
+      browserState.activeId = browserState.tabs[Math.min(idx, browserState.tabs.length - 1)].id;
+    }
+    renderBrowserTabsOverview();
+    if (wasActive) renderBrowserActiveTab({ progress: false }); else syncBrowserChrome();
+  }
+
+  function browserNavigate(rawInput) {
+    const tab = activeBrowserTab();
+    if (!tab) return;
+    const page = resolveBrowserPage(rawInput);
+    tab.history = tab.history.slice(0, tab.historyIndex + 1); // drop stale forward history
+    tab.history.push(page);
+    tab.historyIndex = tab.history.length - 1;
+    renderBrowserActiveTab();
+  }
+  function browserGoBack() {
+    const tab = activeBrowserTab();
+    if (!tab || tab.historyIndex <= 0) return;
+    tab.historyIndex--;
+    renderBrowserActiveTab();
+  }
+  function browserGoForward() {
+    const tab = activeBrowserTab();
+    if (!tab || tab.historyIndex >= tab.history.length - 1) return;
+    tab.historyIndex++;
+    renderBrowserActiveTab();
+  }
+  function browserReload() { renderBrowserActiveTab(); }
+
+  // ---- Loading progress bar — one pair of timeouts, always cleared before
+  // a new one starts and on screen exit (see show()), so nothing lingers. ----
+  function runBrowserProgress() {
+    const wrap = document.getElementById('browserProgress');
+    const bar = document.getElementById('browserProgressBar');
+    if (!wrap || !bar) return;
+    stopBrowserProgressTimers();
+    wrap.classList.add('is-active');
+    bar.style.transition = 'none';
+    bar.style.width = '0%';
+    void bar.offsetWidth; // reflow — restarts the width transition below
+    bar.style.transition = 'width 560ms cubic-bezier(.3,.6,.4,1)';
+    bar.style.width = '100%';
+    browserState.progressTimer1 = setTimeout(() => {
+      wrap.classList.remove('is-active');
+      browserState.progressTimer1 = null;
+      browserState.progressTimer2 = setTimeout(() => {
+        bar.style.transition = 'none';
+        bar.style.width = '0%';
+        browserState.progressTimer2 = null;
+      }, 220);
+    }, 600);
+  }
+  function stopBrowserProgressTimers() {
+    if (browserState.progressTimer1) { clearTimeout(browserState.progressTimer1); browserState.progressTimer1 = null; }
+    if (browserState.progressTimer2) { clearTimeout(browserState.progressTimer2); browserState.progressTimer2 = null; }
+    const wrap = document.getElementById('browserProgress');
+    const bar = document.getElementById('browserProgressBar');
+    if (wrap) wrap.classList.remove('is-active');
+    if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; }
+  }
+
+  // ---- Page templates (all offline/in-file) ----
+  function browserNewTabHtml() {
+    return `
+      <div class="newtab-page">
+        <div class="newtab-badge">${icon('incognito', 14)}<span>Inkognito · isoliert · keine Cookies</span></div>
+        <div class="newtab-speed-dial">
+          ${BROWSER_SPEED_DIAL.map(s => `
+            <button class="speed-dial-tile glass" data-speed-url="${escapeHtml(s.url)}" type="button">
+              <span class="speed-dial-tile__glyph">${escapeHtml(s.glyph)}</span>
+              <span class="speed-dial-tile__label">${escapeHtml(s.label)}</span>
+            </button>`).join('')}
+        </div>
+        <p class="newtab-hint">Dieser Tab merkt sich nichts. Verlauf, Logins und Cache verschwinden vollständig, sobald du ihn schließt — unabhängig von jedem anderen offenen Tab.</p>
+      </div>`;
+  }
+  function browserVercelHtml(tab) {
+    const s = tab.session;
+    if (!s.vercelLoggedIn) {
+      return `
+        <div class="sim-page vercel-page">
+          <div class="sim-page__brand">▲ vercel</div>
+          <div class="vercel-login-card glass">
+            <button class="autofill-chip" id="vercelAutofillChip" type="button">${icon('key', 15)}<span>vercel.com — ausfüllen</span></button>
+            <h2>Anmelden</h2>
+            <label class="sim-field"><span>E-Mail</span><input type="email" id="vercelEmailInput" autocomplete="off" placeholder="you@example.com"></label>
+            <label class="sim-field"><span>Passwort</span><input type="password" id="vercelPasswordInput" autocomplete="off" placeholder="••••••••"></label>
+            <button class="btn-chip is-on" id="vercelLoginBtn" type="button" style="width:100%;text-align:center;">Anmelden</button>
+          </div>
+        </div>`;
+    }
+    return `
+      <div class="sim-page vercel-page">
+        <div class="sim-page__brand">▲ vercel</div>
+        <div class="vercel-dashboard glass">
+          <div class="vercel-dashboard__session">Eingeloggt als <b>${escapeHtml(s.vercelEmail)}</b></div>
+          <button class="btn-chip" id="vercelLogoutBtn" type="button">Abmelden</button>
+          <div class="tool-group-title">Projekte</div>
+          <div class="tool-list">
+            <div class="tool-row"><span class="tool-row__name">pinterest-scraper</span><span class="status-chip" data-status="ready"><span class="dot"></span><span class="status-chip__label">ready</span></span></div>
+            <div class="tool-row"><span class="tool-row__name">tms-landing</span><span class="status-chip" data-status="ready"><span class="dot"></span><span class="status-chip__label">ready</span></span></div>
+            <div class="tool-row"><span class="tool-row__name">aivertiser-app</span><span class="status-chip" data-status="building"><span class="dot"></span><span class="status-chip__label">building</span></span></div>
+          </div>
+        </div>
+      </div>`;
+  }
+  function browserDocsHtml() {
+    return `
+      <div class="sim-page docs-page">
+        <h1>TMS Terminal — Dokumentation</h1>
+        <p>Diese Seite ist eine simulierte Doku-Seite (docs.tms.dev) — offline, nur zum Testen von Scroll-Verhalten und Dock-Abstand im neuen App-Browser.</p>
+        <h2>Erste Schritte</h2>
+        <p>Installiere den Server auf deinem Mac mit <code>npm install -g tms-terminal</code> und starte ihn mit <code>tms-terminal start</code>. Die Android-App verbindet sich automatisch über Tailscale.</p>
+        <h2>Terminals</h2>
+        <p>Der Terminal-Stack zeigt alle laufenden Sessions als swipeable Karten. Wische horizontal, um zwischen Sessions zu wechseln, oder öffne die Listenansicht über den Umschalter oben rechts.</p>
+        <h2>Auto-Approve</h2>
+        <p>Jedes Terminal hat einen eigenen Auto-Approve-Schalter. Ist er aktiv, werden Freigabe-Anfragen automatisch mit „Ja" beantwortet — praktisch für lange unbeaufsichtigte Läufe.</p>
+        <h2>Manager</h2>
+        <p>Der Manager-Chat läuft im Hintergrund, fasst Ereignisse zusammen, schreibt Notizen in die Memory und lässt sich per Sprachnachricht steuern.</p>
+        <h2>Cloud</h2>
+        <p>Vercel- und Render-Projekte lassen sich direkt aus der App verwalten: Env-Variablen bearbeiten, Live-Logs verfolgen, Deployments einsehen.</p>
+        <h2>Browser</h2>
+        <p>Der App-Browser ist app-weit verfügbar, und jeder Tab läuft komplett isoliert im Inkognito-Modus — kein Tab teilt Cookies oder Login-Status mit einem anderen. Nur der Passwortspeicher ist bewusst geräteweit, genau wie bei einem echten Passwort-Manager.</p>
+        <h2>Gebetszeiten</h2>
+        <p>Die App berechnet die aktuellen Gebetszeiten und kann zur nächsten Gebetszeit einen Adhan-Alarm auslösen — auch im gesperrten Zustand.</p>
+        <h2>Sicherheit</h2>
+        <p>Die App lässt sich per PIN sperren. Im gesperrten Zustand sind Dock, Status-Header und alle Sheets unerreichbar, während Sessions im Hintergrund weiterlaufen.</p>
+        <h2>Letzter Abschnitt</h2>
+        <p>Wenn du das hier lesen kannst, hat der Browser genug Abstand zum Dock gelassen — Ende der Dokumentation.</p>
+      </div>`;
+  }
+  function browserUnknownHtml(url) {
+    return `
+      <div class="sim-page unknown-page">
+        <div class="unknown-page__icon">${icon('globe', 30)}</div>
+        <div class="unknown-page__title">Seite simuliert</div>
+        <div class="unknown-page__url">${escapeHtml(url)}</div>
+        <p class="unknown-page__hint">Diese URL existiert nur als Platzhalter in diesem Mockup — es findet kein echter Seitenaufruf statt.</p>
+      </div>`;
+  }
+  function renderBrowserPageHtml(page, tab) {
+    if (page.kind === 'vercel') return browserVercelHtml(tab);
+    if (page.kind === 'docs') return browserDocsHtml();
+    if (page.kind === 'unknown') return browserUnknownHtml(page.url);
+    return browserNewTabHtml();
+  }
+  function wireBrowserPageInteractions(page, tab) {
+    const content = document.getElementById('browserContent');
+    if (!content) return;
+    if (page.kind === 'newtab') {
+      content.querySelectorAll('[data-speed-url]').forEach(btn => {
+        btn.addEventListener('click', () => browserNavigate(btn.dataset.speedUrl));
+      });
+    } else if (page.kind === 'vercel') {
+      const chip = document.getElementById('vercelAutofillChip');
+      if (chip) chip.addEventListener('click', () => {
+        const cred = BROWSER_PASSWORDS.find(p => p.id === 'pw-vercel');
+        if (!cred) return;
+        const emailInput = document.getElementById('vercelEmailInput');
+        const passInput = document.getElementById('vercelPasswordInput');
+        if (emailInput) emailInput.value = cred.username;
+        if (passInput) passInput.value = cred.password;
+        toast('Zugangsdaten ausgefüllt');
+      });
+      const loginBtn = document.getElementById('vercelLoginBtn');
+      if (loginBtn) loginBtn.addEventListener('click', () => {
+        const email = (document.getElementById('vercelEmailInput').value || '').trim();
+        const pass = document.getElementById('vercelPasswordInput').value || '';
+        if (!email || !pass) { toast('E-Mail und Passwort erforderlich'); return; }
+        tab.session.vercelLoggedIn = true;
+        tab.session.vercelEmail = email;
+        toast('Angemeldet als ' + email);
+        rerenderBrowserContentOnly();
+      });
+      const logoutBtn = document.getElementById('vercelLogoutBtn');
+      if (logoutBtn) logoutBtn.addEventListener('click', () => {
+        tab.session.vercelLoggedIn = false;
+        tab.session.vercelEmail = null;
+        toast('Abgemeldet');
+        rerenderBrowserContentOnly();
+      });
+    }
+  }
+  // In-place re-render for state changes that aren't a navigation (login,
+  // logout, cache clear) — no history mutation, no progress bar.
+  function rerenderBrowserContentOnly() {
+    const tab = activeBrowserTab();
+    if (!tab) return;
+    const page = tab.history[tab.historyIndex] || { kind: 'newtab', url: '', display: '' };
+    const content = document.getElementById('browserContent');
+    if (!content) return;
+    content.innerHTML = renderBrowserPageHtml(page, tab);
+    wireBrowserPageInteractions(page, tab);
+  }
+
+  function renderBrowserActiveTab(opts) {
+    const withProgress = !opts || opts.progress !== false;
+    const tab = activeBrowserTab();
+    if (!tab) return;
+    const page = tab.history[tab.historyIndex] || { kind: 'newtab', url: '', display: '' };
+    if (withProgress) runBrowserProgress();
+    const content = document.getElementById('browserContent');
+    if (content) { content.scrollTop = 0; content.innerHTML = renderBrowserPageHtml(page, tab); }
+    wireBrowserPageInteractions(page, tab);
+    syncBrowserChrome();
+  }
+  // Re-syncs the chrome (back/forward disabled state, tab count, address
+  // text) without touching content — used after tab list mutations and every
+  // time the Browser screen becomes visible again (SCREEN_HOOKS.browser).
+  function syncBrowserChrome() {
+    const tab = activeBrowserTab();
+    const backBtn = document.getElementById('browserBackBtn');
+    const fwdBtn = document.getElementById('browserFwdBtn');
+    const countEl = document.getElementById('browserTabCount');
+    const urlInput = document.getElementById('browserUrlInput');
+    if (backBtn) backBtn.disabled = !tab || tab.historyIndex <= 0;
+    if (fwdBtn) fwdBtn.disabled = !tab || tab.historyIndex >= tab.history.length - 1;
+    if (countEl) countEl.textContent = String(browserState.tabs.length);
+    if (urlInput && tab && document.activeElement !== urlInput) {
+      const page = tab.history[tab.historyIndex];
+      urlInput.value = (page && page.display) || '';
+    }
+  }
+
+  // ---- Tabs overview sheet ----
+  function browserTabTitle(tab) {
+    const page = tab.history[tab.historyIndex];
+    if (!page || page.kind === 'newtab') return 'Neuer Tab';
+    return page.display || page.url;
+  }
+  function browserTabGlyph(tab) {
+    const page = tab.history[tab.historyIndex];
+    if (!page || page.kind === 'newtab') return '+';
+    if (page.kind === 'vercel') return '▲';
+    if (page.kind === 'docs') return '</>';
+    return '?';
+  }
+  function browserTabCardHtml(t) {
+    const active = t.id === browserState.activeId;
+    return `
+      <div class="browser-tab-card glass${active ? ' is-active' : ''}" data-tab-card="${t.id}">
+        <button class="browser-tab-card__close" data-tab-close="${t.id}" aria-label="Tab schließen" type="button">${icon('x', 14)}</button>
+        <div class="browser-tab-card__preview">${escapeHtml(browserTabGlyph(t))}</div>
+        <div class="browser-tab-card__title">${escapeHtml(browserTabTitle(t))}</div>
+        <div class="browser-tab-card__badge">Inkognito · isoliert · keine Cookies</div>
+      </div>`;
+  }
+  function renderBrowserTabsOverview() {
+    const host = document.getElementById('browserTabsBody');
+    if (!host) return;
+    host.innerHTML = `
+      <div class="browser-tab-grid">
+        ${browserState.tabs.map(browserTabCardHtml).join('')}
+        <button class="browser-tab-newcard glass" id="browserNewTabCard" type="button">${icon('plus', 22)}<span>Neuer Tab</span></button>
+      </div>`;
+  }
+  function openBrowserTabsSheet() {
+    renderBrowserTabsOverview();
+    openSheet(document.getElementById('browserTabsSheetWrap'));
+  }
+  function wireBrowserTabsSheet() {
+    const wrap = document.getElementById('browserTabsSheetWrap');
+    wrap.querySelector('[data-close-browsertabs]').addEventListener('click', () => closeSheet(wrap));
+    document.getElementById('browserTabsClose').addEventListener('click', () => closeSheet(wrap));
+    document.getElementById('browserTabsBody').addEventListener('click', e => {
+      if (e.target.closest('#browserNewTabCard')) {
+        createBrowserTab(true);
+        closeSheet(wrap);
+        renderBrowserActiveTab({ progress: false });
+        return;
+      }
+      const closeBtn = e.target.closest('[data-tab-close]');
+      if (closeBtn) { closeBrowserTab(closeBtn.dataset.tabClose); return; }
+      const card = e.target.closest('[data-tab-card]');
+      if (card) { switchToBrowserTab(card.dataset.tabCard); closeSheet(wrap); }
+    });
+  }
+
+  // ---- Overflow menu (⋯) ----
+  function clearAllBrowserCache() {
+    browserState.tabs.forEach(t => { t.session = { vercelLoggedIn: false, vercelEmail: null }; });
+    rerenderBrowserContentOnly();
+    toast('Cache komplett geleert — alle Sitzungen abgemeldet');
+  }
+  function wireBrowserMenuSheet() {
+    const wrap = document.getElementById('browserMenuSheetWrap');
+    wrap.querySelector('[data-close-browsermenu]').addEventListener('click', () => closeSheet(wrap));
+    wrap.addEventListener('click', e => {
+      const btn = e.target.closest('[data-browser-menu]');
+      if (!btn) return;
+      const action = btn.dataset.browserMenu;
+      closeSheet(wrap);
+      if (action === 'hardreload') { browserReload(); toast('Hart neu geladen'); }
+      else if (action === 'clearcache') { clearAllBrowserCache(); }
+      else if (action === 'passwords') { openBrowserPasswordsSheet(); }
+    });
+  }
+
+  // ---- Password manager sheet (the one deliberate cross-tab feature) ----
+  function renderBrowserPasswordsSheet() {
+    const host = document.getElementById('browserPwBody');
+    if (!host) return;
+    host.innerHTML = `<div class="tool-list">${BROWSER_PASSWORDS.map(p => `
+      <div class="pw-row" data-pw="${p.id}">
+        <div class="pw-row__info">
+          <div class="pw-row__site">${escapeHtml(p.site)}</div>
+          <div class="pw-row__user mono-text">${escapeHtml(p.username)}</div>
+          <div class="pw-row__pass mono-text" data-act="reveal">${'•'.repeat(10)}</div>
+        </div>
+        <div class="pw-row__actions">
+          <button class="btn-chip" data-act="toggle" type="button">Anzeigen</button>
+          <button class="btn-chip" data-act="copy" type="button">Kopieren</button>
+        </div>
+      </div>`).join('')}</div>`;
+    host.querySelectorAll('.pw-row').forEach(row => {
+      const p = BROWSER_PASSWORDS.find(x => x.id === row.dataset.pw);
+      if (!p) return;
+      const passEl = row.querySelector('[data-act="reveal"]');
+      const toggleBtn = row.querySelector('[data-act="toggle"]');
+      let revealed = false;
+      toggleBtn.addEventListener('click', () => {
+        revealed = !revealed;
+        passEl.textContent = revealed ? p.password : '•'.repeat(10);
+        toggleBtn.textContent = revealed ? 'Verbergen' : 'Anzeigen';
+      });
+      passEl.addEventListener('click', () => toggleBtn.click());
+      row.querySelector('[data-act="copy"]').addEventListener('click', () => {
+        copyText(p.password);
+        toast('Passwort kopiert ✓');
+      });
+    });
+  }
+  function openBrowserPasswordsSheet() {
+    renderBrowserPasswordsSheet();
+    openSheet(document.getElementById('browserPasswordsSheetWrap'));
+  }
+  function wireBrowserPasswordsSheet() {
+    const wrap = document.getElementById('browserPasswordsSheetWrap');
+    wrap.querySelector('[data-close-browserpw]').addEventListener('click', () => closeSheet(wrap));
+    document.getElementById('browserPwClose').addEventListener('click', () => closeSheet(wrap));
+  }
+
+  // ---- Shell + chrome wiring ----
+  function renderBrowserShell() {
+    const host = document.querySelector('[data-screen="browser"]');
+    host.innerHTML = `
+      <div class="browser-col">
+        <div class="browser-chrome">
+          <div class="browser-toolbar">
+            <button class="browser-nav-btn" id="browserBackBtn" aria-label="Zurück" disabled>${icon('chevronLeft')}</button>
+            <button class="browser-nav-btn" id="browserFwdBtn" aria-label="Vor" disabled>${icon('chevronRight')}</button>
+            <div class="browser-address glass">
+              <span class="browser-address__incognito" title="Inkognito · isoliert · keine Cookies">${icon('incognito', 15)}</span>
+              <input type="text" id="browserUrlInput" class="browser-address__input" placeholder="Suchen oder Adresse eingeben…" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
+              <button class="browser-address__reload" id="browserReloadBtn" aria-label="Neu laden" type="button">${icon('replay', 16)}</button>
+            </div>
+            <button class="browser-nav-btn browser-tabs-btn" id="browserTabsBtn" aria-label="Tabs anzeigen"><span class="browser-tabs-btn__count" id="browserTabCount">1</span></button>
+            <button class="browser-nav-btn" id="browserMenuBtn" aria-label="Browser-Menü">${icon('dots')}</button>
+          </div>
+          <div class="browser-progress" id="browserProgress"><div class="browser-progress__bar" id="browserProgressBar"></div></div>
+        </div>
+        <div class="browser-content" id="browserContent"></div>
+      </div>`;
+  }
+  function wireBrowserChrome() {
+    document.getElementById('browserBackBtn').addEventListener('click', browserGoBack);
+    document.getElementById('browserFwdBtn').addEventListener('click', browserGoForward);
+    document.getElementById('browserReloadBtn').addEventListener('click', () => browserReload());
+    const input = document.getElementById('browserUrlInput');
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); browserNavigate(input.value); }
+    });
+    input.addEventListener('focus', () => input.select());
+    document.getElementById('browserTabsBtn').addEventListener('click', openBrowserTabsSheet);
+    document.getElementById('browserMenuBtn').addEventListener('click', () => openSheet(document.getElementById('browserMenuSheetWrap')));
+  }
+  function initBrowserScreen() {
+    renderBrowserShell();
+    wireBrowserChrome();
+    wireBrowserTabsSheet();
+    wireBrowserMenuSheet();
+    wireBrowserPasswordsSheet();
+    createBrowserTab(true);
+    renderBrowserActiveTab({ progress: false });
+  }
+  SCREEN_HOOKS.browser = syncBrowserChrome;
+
+  // ============================================================
   // Settings screen
   // ============================================================
   let termFontSizePx = 13;
@@ -3929,16 +4517,22 @@
     }));
     idx.push({ type: 'Screen', label: 'Server', sub: 'Serverliste öffnen', action: () => show('servers') });
     idx.push({ type: 'Screen', label: 'Terminals', sub: 'Terminal-Stack öffnen', action: () => goToTerminals() });
-    TOOL_DEFS.forEach(t => idx.push({
-      type: 'Tool', label: t.label, sub: 'Werkzeug öffnen',
-      action: () => { show('tools'); openToolSheet(t.id); },
-    }));
+    TOOL_DEFS.forEach(t => {
+      // Browser is now the app-level Browser screen, not a tool sheet — it
+      // gets its own 'Screen' entry below instead of this generic mapping.
+      if (t.id === 'browser') return;
+      idx.push({
+        type: 'Tool', label: t.label, sub: 'Werkzeug öffnen',
+        action: () => { show('tools'); openToolSheet(t.id); },
+      });
+    });
     TMS_DATA.cloudProjects.forEach(p => idx.push({
       type: 'Cloud', label: p.name, sub: `${p.provider} · ${p.folder}`,
       action: () => { show('cloud'); openCloudDetail(p.id, 'env'); },
     }));
     idx.push({ type: 'Screen', label: 'Manager', sub: 'Manager-Chat öffnen', action: () => show('manager') });
     idx.push({ type: 'Screen', label: 'Cloud', sub: 'Cloud-Projekte öffnen', action: () => show('cloud') });
+    idx.push({ type: 'Screen', label: 'Browser', sub: 'Inkognito-Browser öffnen', action: () => show('browser') });
     idx.push({ type: 'Screen', label: 'Werkzeuge', sub: 'Tool-Panels öffnen', action: () => show('tools') });
     idx.push({ type: 'Screen', label: 'Einstellungen', sub: 'Server, Sicherheit, Terminal, Über', action: () => show('settings') });
     idx.push({ type: 'Screen', label: 'Gebetszeiten', sub: 'Heutige Gebetszeiten', action: () => show('prayer') });
@@ -4114,6 +4708,8 @@
   renderCloudShell();
   renderCloudGroups();
   wireCloudToolbar();
+
+  initBrowserScreen();
 
   renderSettings();
 
