@@ -90,7 +90,7 @@
   .strip-group-title:first-child { margin-top: 0; }
   .strip-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--glass-border); }
   .strip-row:first-of-type { border-top: none; }
-  .strip-row[data-session] { cursor: pointer; }
+  .strip-row[data-session], .strip-row[data-prayer], .strip-row[data-build] { cursor: pointer; }
   .strip-row__dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
   .strip-row__name { flex: 1; font: 600 13px var(--font-ui); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .strip-row__meta { font: 12px var(--font-mono); color: var(--text-dim); flex: 0 0 auto; }
@@ -158,7 +158,8 @@
   .manager-teaser__time { font: 11px var(--font-mono); color: var(--text-dim); flex: 0 0 auto; }
 
   /* ---------- Heute-Zone ---------- */
-  .heute-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 11px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; }
+  .heute-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; text-align: left; padding: 10px 11px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; transition: border-color var(--transition); }
+  .heute-row:hover { border-color: var(--accent); }
   .heute-row__label { font-size: 12.5px; color: var(--text-dim); }
   .heute-row__value { font: 700 14px var(--font-mono); font-variant-numeric: tabular-nums; }
   .update-banner-mini { display: flex; align-items: center; gap: 10px; padding: 10px 11px; border-radius: 10px; }
@@ -223,7 +224,7 @@
   .rail-empty { padding: 10px 0; color: var(--text-dim); font-size: 12.5px; }
   .hit-badge { font: 700 11px var(--font-mono); color: var(--accent); background: rgba(79,140,255,.12); padding: 2px 7px; border-radius: 20px; flex: 0 0 auto; }
   .mono-text { font: 12.5px var(--font-mono); }
-  .tool-list__row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13px; }
+  .tool-list__row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13px; }
   .tool-list__row:first-child { border-top: none; }
   .tool-list__icon { width: 14px; text-align: center; color: var(--text-dim); font: 12px var(--font-mono); flex: 0 0 auto; }
   .tool-list__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -281,6 +282,229 @@
     10%, 90% { transform: translateX(-6px); } 20%, 80% { transform: translateX(5px); }
     30%, 50%, 70% { transform: translateX(-8px); } 40%, 60% { transform: translateX(8px); }
   }
+
+  /* ============================================================
+     Task 8 — Cloud, Manager, Tools, Settings, Prayer, Spotlight,
+     Server detail. Same visual language as the hub/workspace:
+     solid panels + hairline borders; glass reserved for sheets/
+     overlays/alerts — elevated moments only.
+     ============================================================ */
+
+  /* ---------- Shared: screen header, buttons, switch ---------- */
+  .screen-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+  .screen-head__title { font: 700 16px var(--font-ui); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .screen-head__count { font: 12px var(--font-mono); color: var(--text-dim); flex: 0 0 auto; }
+  .screen-head__actions { display: flex; gap: 8px; flex: 0 0 auto; }
+  .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-dim); font: 600 13px var(--font-mono); transition: border-color var(--transition), color var(--transition); flex: 0 0 auto; }
+  .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .zone__head-action { margin-left: auto; }
+  .btn-primary { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; background: var(--accent); color: #fff; font: 600 12.5px var(--font-ui); border-radius: 8px; transition: opacity var(--transition); }
+  .btn-primary:active { opacity: .8; }
+  .btn-secondary { display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px; border: 1px solid var(--border); color: var(--text); font: 600 12.5px var(--font-ui); border-radius: 8px; background: var(--panel-2); transition: border-color var(--transition), color var(--transition); }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-secondary.is-on { border-color: var(--accent); color: var(--accent); }
+  .table-scroll { overflow-x: auto; }
+
+  .switch { position: relative; display: inline-block; width: 38px; height: 22px; flex: 0 0 auto; }
+  .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; z-index: 1; }
+  .switch__track { position: absolute; inset: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 20px; transition: background var(--transition), border-color var(--transition); }
+  .switch__thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-dim); transition: transform var(--transition), background var(--transition); }
+  .switch input:checked + .switch__track { background: var(--glass-strong); border-color: var(--accent); }
+  .switch input:checked + .switch__track .switch__thumb { transform: translateX(16px); background: var(--accent); }
+
+  /* ---------- Hub quick-actions row (Tools; folded reach) ---------- */
+  .hub-quick-actions { display: flex; gap: 8px; padding: 12px 14px 0; overflow-x: auto; scrollbar-width: none; }
+  .hub-quick-actions::-webkit-scrollbar { display: none; }
+  @media (min-width: 700px) { .hub-quick-actions { padding: 14px 20px 0; } }
+  .quick-tile { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 5px; width: 58px; padding: 9px 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; transition: border-color var(--transition); }
+  .quick-tile:hover { border-color: var(--accent); }
+  .quick-tile__glyph { font: 700 10.5px var(--font-mono); color: var(--accent); }
+  .quick-tile__label { font: 500 10px var(--font-ui); color: var(--text-dim); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 52px; }
+
+  /* ---------- Status-strip search icon (Spotlight) ---------- */
+  .strip-search-btn { flex: 0 0 auto; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font: 600 13px var(--font-mono); color: var(--text-dim); transition: color var(--transition), background var(--transition); }
+  .strip-search-btn:hover { color: var(--accent); background: var(--glass-strong); }
+
+  /* ---------- Tool grid + sheet body primitives ---------- */
+  /* Always 3 columns: this grid renders both inside the wide tool sheet (up to
+     640px) AND the narrow workspace context rail (~35% of the viewport) — a
+     4-column variant used to overflow the rail's available width. */
+  .tool-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tool-tile { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); transition: border-color var(--transition); }
+  .tool-tile:hover { border-color: var(--accent); }
+  .tool-tile__glyph { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: var(--radius-sm); font: 700 11px var(--font-mono); color: var(--accent); }
+  .tool-tile__label { font: 500 12px var(--font-ui); text-align: center; }
+
+  .sheet-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .sheet-title { font: 700 14px var(--font-ui); flex: 1; }
+  .sheet-close { color: var(--text-dim); font: 600 var(--fs-micro) var(--font-mono); padding: 4px 8px; border: 1px solid var(--glass-border); border-radius: 6px; }
+  .sheet-close:hover { border-color: var(--accent); color: var(--accent); }
+  .sheet-body { max-height: 62vh; overflow-y: auto; }
+
+  .tool-list__row.is-tap { cursor: pointer; transition: background var(--transition); border-radius: 6px; }
+  .tool-list__row.is-tap:active { background: var(--panel-2); }
+  .tool-list__info { flex: 1; min-width: 0; }
+  .tool-list__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-list__sub { margin-top: 2px; font: var(--fs-micro) var(--font-mono); color: var(--text-dim); }
+
+  .sql-query { font: 12.5px/1.6 var(--font-mono); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 14px; overflow-x: auto; white-space: pre; }
+  .data-table { width: 100%; border-collapse: collapse; font: 12.5px var(--font-mono); }
+  .data-table th, .data-table td { text-align: left; padding: 7px 10px; border-top: 1px solid var(--border); white-space: nowrap; }
+  .data-table th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .data-table tr:first-child td { border-top: none; }
+  .cpu-cell { display: flex; align-items: center; gap: 8px; }
+  .cpu-bar { position: relative; width: 56px; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; flex: 0 0 auto; }
+  .cpu-bar__fill { position: absolute; inset: 0; width: var(--pct, 0%); background: var(--accent); border-radius: 3px; }
+
+  .shot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .shot-tile { aspect-ratio: 9 / 16; background: linear-gradient(160deg, var(--panel-2), var(--bg)); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .shot-flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 1400; transition: opacity 90ms ease-out; }
+  .shot-flash.is-flashing { opacity: .85; transition: opacity 40ms ease-out; }
+
+  .browser-bar { padding: 9px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 20px; font: 12.5px var(--font-mono); color: var(--text-dim); margin-bottom: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .browser-skeleton { display: flex; flex-direction: column; gap: 10px; }
+  .browser-skeleton__block { height: 14px; border-radius: 4px; background: var(--panel-2); }
+
+  /* ---------- Manager screen ---------- */
+  section[data-screen="manager"]:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; }
+  .manager-view { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .chat-scroll:not([hidden]), #managerArtifacts:not([hidden]), #managerMemory:not([hidden]) { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+
+  .chat-bubble-row { display: flex; }
+  .chat-bubble-row[data-from="user"] { justify-content: flex-end; }
+  .chat-bubble { max-width: 82%; padding: 10px 12px; border-radius: 12px; font-size: 13px; line-height: 1.5; background: var(--panel-2); border: 1px solid var(--border); }
+  .chat-bubble-row[data-from="manager"] .chat-bubble { border-bottom-left-radius: 4px; }
+  .chat-bubble-row[data-from="user"] .chat-bubble { background: var(--glass); border: 1px solid var(--glass-border); border-bottom-right-radius: 4px; }
+  .chat-bubble__time { display: block; margin-top: 4px; font: var(--fs-micro) var(--font-mono); color: var(--text-dim); }
+
+  .voice-pill { display: flex; align-items: center; gap: 8px; min-width: 180px; cursor: pointer; }
+  .voice-pill__play { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+  .voice-pill__wave { flex: 1; display: flex; align-items: center; gap: 2px; height: 20px; color: var(--accent); }
+  .voice-pill__wave span { width: 2px; display: block; background: currentColor; opacity: .5; border-radius: 1px; }
+  .voice-pill__dur { font: 11px var(--font-mono); color: var(--text-dim); flex: 0 0 auto; }
+  .voice-pill.is-playing .voice-pill__wave span { animation: waveScale .9s ease-in-out infinite; }
+  @keyframes waveScale { 0%, 100% { transform: scaleY(.4); } 50% { transform: scaleY(1); } }
+  .voice-transcript { margin-top: 8px; font-size: 12.5px; color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 8px; }
+  .voice-transcribing { margin-top: 8px; font: 600 12px var(--font-mono); color: var(--accent); }
+  .voice-transcribing .dots span { display: inline-block; animation: vDotBlink 1.2s infinite; opacity: .2; }
+  .voice-transcribing .dots span:nth-child(2) { animation-delay: .2s; }
+  .voice-transcribing .dots span:nth-child(3) { animation-delay: .4s; }
+  @keyframes vDotBlink { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
+
+  .chat-input-row:not([hidden]) { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--panel); }
+  .chat-input-row input { flex: 1; padding: 9px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 20px; font: 13px var(--font-ui); }
+  .mic-btn { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); color: var(--text-dim); display: flex; align-items: center; justify-content: center; transition: border-color var(--transition), color var(--transition); }
+  .mic-btn.is-recording { border-color: var(--err); color: var(--err); animation: pulseDot 1s ease-in-out infinite; }
+
+  .memory-row { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); font-size: 12.5px; }
+  .memory-row:first-child { border-top: none; }
+  .memory-row__time { color: var(--text-dim); font: var(--fs-micro) var(--font-mono); flex: 0 0 auto; white-space: nowrap; }
+  .artifact-card__meta { margin-top: 6px; font: var(--fs-micro) var(--font-mono); color: var(--text-dim); }
+
+  /* ---------- Cloud screen ---------- */
+  .cloud-toolbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; align-items: center; border-bottom: 1px solid var(--border); }
+  .chip-group { display: flex; gap: 6px; }
+  .chip-group button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 20px; font: 600 12px var(--font-ui); color: var(--text-dim); transition: border-color var(--transition), color var(--transition); }
+  .chip-group button.active { border-color: var(--accent); color: var(--accent); background: var(--glass); }
+  .cloud-toolbar__spacer { flex: 1; }
+
+  .folder-group__head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
+  .folder-group__head::before { content: '▾'; font-size: 10px; color: var(--text-dim); transition: transform var(--transition); }
+  .folder-group.is-collapsed .folder-group__head::before { transform: rotate(-90deg); }
+  .folder-group__name { font: 700 var(--fs-micro) var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); flex: 1; }
+  .folder-group__count { font: var(--fs-micro) var(--font-mono); color: var(--text-dim); }
+  .folder-group.is-collapsed .folder-group__rows { display: none; }
+
+  .cloud-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 14px; border-top: 1px solid var(--border); text-align: left; transition: background var(--transition); }
+  .cloud-row:hover { background: var(--panel-2); }
+  .cloud-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .cloud-row__name { font: 600 13.5px var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cloud-row__meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .cloud-row__deploy { font: 11.5px var(--font-mono); color: var(--text-dim); }
+  .fav-btn { flex: 0 0 auto; font-size: 17px; color: var(--border); transition: color var(--transition); padding: 4px; }
+  .fav-btn.is-fav { color: var(--accent); }
+
+  .cloud-detail__head { display: flex; align-items: center; gap: 10px; padding: 12px 14px 0; }
+  .cloud-detail__title { font: 700 15px var(--font-ui); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cloud-detail__body { padding: 12px 14px 24px; }
+
+  .env-row { padding: 10px 0; border-top: 1px solid var(--border); }
+  .env-row:first-child { border-top: none; }
+  .env-row__key { font: 600 12.5px var(--font-mono); }
+  .env-row__value { display: block; margin-top: 4px; font: 12.5px var(--font-mono); color: var(--text-dim); cursor: pointer; word-break: break-all; }
+  .env-row__actions { display: flex; gap: 8px; margin-top: 8px; }
+  .env-row__actions button { font: 600 11.5px var(--font-ui); padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); transition: border-color var(--transition), color var(--transition); }
+  .env-row__actions button:hover { border-color: var(--accent); color: var(--accent); }
+  .env-row__edit { display: flex; gap: 8px; margin-top: 8px; }
+  .env-row__edit input { flex: 1; padding: 7px 9px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font: 12.5px var(--font-mono); }
+
+  .log-viewer { display: flex; flex-direction: column; height: min(60vh, 520px); }
+  .log-viewer__tools { display: flex; gap: 8px; padding-bottom: 10px; flex-wrap: wrap; }
+  .log-viewer__search { flex: 1; min-width: 120px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font: 12.5px var(--font-mono); }
+  .log-viewer__pre { flex: 1; min-height: 0; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+
+  .deploy-row { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1px solid var(--border); }
+  .deploy-row:first-child { border-top: none; }
+  .deploy-row__version { font: 700 12.5px var(--font-mono); width: 40px; flex: 0 0 auto; }
+  .deploy-row__time { flex: 1; font: 12px var(--font-ui); color: var(--text-dim); }
+
+  /* ---------- Settings screen ---------- */
+  .settings-group { padding: 4px 14px 18px; }
+  .settings-group__title { font: 700 var(--fs-micro) var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); padding: 12px 0 8px; }
+  .settings-row { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); }
+  .settings-group .settings-row:first-of-type { border-top: none; }
+  .settings-row--stack { flex-direction: column; align-items: stretch; gap: 8px; }
+  .settings-row__label { flex: 1; font-size: 13px; }
+  .settings-row__label small { display: block; margin-top: 2px; color: var(--text-dim); font-size: 11.5px; }
+  .settings-row__value { font: 12.5px var(--font-mono); color: var(--text-dim); }
+  .settings-row.is-tap { cursor: pointer; }
+  .settings-row.is-tap:hover { color: var(--accent); }
+  .settings-slider { width: 100%; accent-color: var(--accent); }
+  .settings-pin-edit { display: flex; gap: 8px; padding-bottom: 12px; }
+  .settings-pin-edit input { flex: 1; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font: 13px var(--font-mono); letter-spacing: .3em; }
+  .font-preview { max-height: 56px; }
+
+  /* ---------- Prayer screen + Adhan overlay ---------- */
+  .prayer-list { padding: 4px 14px 8px; }
+  .prayer-row { display: flex; justify-content: space-between; align-items: center; padding: 13px 0; border-top: 1px solid var(--border); transition: color var(--transition); }
+  .prayer-row:first-child { border-top: none; }
+  .prayer-row.is-next { color: var(--accent); }
+  .prayer-row__name { font: 600 14px var(--font-ui); }
+  .prayer-row__time { font: 14px var(--font-mono); font-variant-numeric: tabular-nums; }
+  .prayer-next-card { margin: 12px 14px 18px; padding: 16px; border-radius: var(--radius); text-align: center; }
+  .prayer-next-card__label { font: 700 var(--fs-micro) var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  .prayer-next-card__countdown { margin-top: 4px; font: 700 26px var(--font-mono); font-variant-numeric: tabular-nums; }
+  .prayer-demo-btn { display: block; margin: 4px 14px 24px; }
+
+  .adhan-overlay:not([hidden]) { position: fixed; inset: 0; z-index: 1300; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; opacity: 0; transition: opacity var(--transition); }
+  .adhan-overlay.is-open { opacity: 1; }
+  .adhan-ring { width: 96px; height: 96px; border-radius: 50%; border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center; font: 700 20px var(--font-mono); color: var(--accent); animation: adhanPulse 1.6s ease-in-out infinite; }
+  @keyframes adhanPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(79,140,255,.4); } 50% { box-shadow: 0 0 0 18px rgba(79,140,255,0); } }
+  .adhan-overlay__name { font: 700 22px var(--font-ui); }
+  .adhan-overlay__sub { color: var(--text-dim); font-size: 13px; }
+  .adhan-overlay__stop { margin-top: 12px; padding: 12px 28px; background: var(--accent); color: #fff; font: 700 14px var(--font-ui); border-radius: 8px; }
+
+  /* ---------- Server detail screen ---------- */
+  .server-detail__body { padding: 4px 14px 24px; }
+
+  /* ---------- Spotlight (glass overlay, search icon in status strip) ---------- */
+  .spotlight-wrap:not([hidden]) { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-start; justify-content: center; padding-top: min(12vh, 80px); padding-left: 16px; padding-right: 16px; opacity: 0; transition: opacity var(--transition); }
+  .spotlight-wrap.is-open { opacity: 1; }
+  .spotlight-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
+  .spotlight-panel { position: relative; width: min(560px, 100%); max-height: 68vh; display: flex; flex-direction: column; border-radius: var(--radius); transform: translateY(-6px); transition: transform var(--transition); overflow: hidden; background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); }
+  .spotlight-wrap.is-open .spotlight-panel { transform: translateY(0); }
+  .spotlight-search { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--glass-border); }
+  .spotlight-search__icon { color: var(--text-dim); font: 600 14px var(--font-mono); }
+  #spotlightInput { flex: 1; border: none; background: none; font: 500 15px var(--font-ui); outline: none; }
+  #spotlightInput::placeholder { color: var(--text-dim); }
+  .spotlight-close { background: var(--glass); border: 1px solid var(--glass-border); color: var(--text-dim); font: var(--fs-micro) var(--font-mono); padding: 4px 8px; border-radius: 6px; }
+  .spotlight-results { overflow-y: auto; padding: 6px; }
+  .spotlight-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border-radius: 8px; text-align: left; transition: background var(--transition); }
+  .spotlight-row.is-highlighted, .spotlight-row:hover { background: var(--glass); }
+  .spotlight-row__type { flex: 0 0 auto; font: 600 10px var(--font-mono); text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); border: 1px solid var(--glass-border); padding: 2px 6px; border-radius: 20px; }
+  .spotlight-row__label { font: 500 13.5px var(--font-ui); flex: 0 1 auto; white-space: nowrap; }
+  .spotlight-row__sub { font: 12px var(--font-mono); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .spotlight-empty { padding: 20px; text-align: center; color: var(--text-dim); font-size: 13px; }
 </style>
 </head>
 <body class="is-locked">
@@ -300,12 +524,14 @@
         <span class="strip-seg__label" id="stripPrayerLabel"></span>
       </span>
       <span class="strip-time" id="stripTime"></span>
+      <button class="strip-search-btn" id="stripSearchBtn" aria-label="Suche öffnen">&#8981;</button>
     </div>
     <div class="strip-expanded" id="stripExpanded" aria-hidden="true"></div>
   </div>
 
   <main id="screens">
     <section data-screen="hub" hidden>
+      <div class="hub-quick-actions" id="hubQuickActions"></div>
       <div class="hub-grid">
         <section class="zone zone--sessions" id="zoneSessions">
           <header class="zone__head">
@@ -328,7 +554,10 @@
             <div class="zone__body"><div class="server-grid" id="serverGrid"></div></div>
           </section>
           <section class="zone zone--heute" id="zoneHeute">
-            <header class="zone__head"><span class="zone__eyebrow">Heute</span></header>
+            <header class="zone__head">
+              <span class="zone__eyebrow">Heute</span>
+              <button class="icon-btn zone__head-action" id="heuteSettingsBtn" aria-label="Einstellungen öffnen">&#9881;</button>
+            </header>
             <div class="zone__body" id="heuteBody"></div>
           </section>
         </div>
@@ -366,11 +595,84 @@
             <button data-tab="context" class="active">Kontext</button>
             <button data-tab="files">Dateien</button>
             <button data-tab="notes">Notizen</button>
+            <button data-tab="tools">Tools</button>
           </div>
           <div class="ws-rail-body" id="wsRailBody"></div>
         </div>
       </div>
       <div class="ws-switcher" id="wsSwitcher"></div>
+    </section>
+
+    <section data-screen="cloud" hidden>
+      <div class="screen-head">
+        <button class="back-chip" data-nav-back aria-label="Zurück zum Hub">&larr; Hub</button>
+        <span class="screen-head__title">Cloud</span>
+        <span class="screen-head__count" id="cloudCount"></span>
+      </div>
+      <div id="cloudListView">
+        <div class="cloud-toolbar">
+          <div class="chip-group" id="cloudProviderFilter">
+            <button data-provider="all" class="active">Alle</button>
+            <button data-provider="vercel">Vercel</button>
+            <button data-provider="render">Render</button>
+          </div>
+          <span class="cloud-toolbar__spacer"></span>
+          <div class="chip-group" id="cloudViewToggle">
+            <button data-view="folder" class="active">Ordner</button>
+            <button data-view="list">Liste</button>
+          </div>
+        </div>
+        <div id="cloudGroups"></div>
+      </div>
+      <div id="cloudDetail" hidden></div>
+    </section>
+
+    <section data-screen="manager" hidden>
+      <div class="screen-head">
+        <button class="back-chip" data-nav-back aria-label="Zurück zum Hub">&larr; Hub</button>
+        <span class="screen-head__title">Manager</span>
+      </div>
+      <div class="subtabs" id="managerTabs">
+        <button data-tab="chat" class="active">Chat</button>
+        <button data-tab="artifacts">Artifacts</button>
+        <button data-tab="memory">Memory</button>
+      </div>
+      <div class="manager-view">
+        <div class="chat-scroll" id="managerChat"></div>
+        <div id="managerArtifacts" hidden></div>
+        <div id="managerMemory" hidden></div>
+        <div class="chat-input-row" id="managerInputRow">
+          <input type="text" id="managerTextInput" placeholder="Nachricht an Manager…" autocomplete="off">
+          <button class="mic-btn" id="managerMicBtn" aria-label="Sprachnachricht aufnehmen">&#9679;</button>
+        </div>
+      </div>
+    </section>
+
+    <section data-screen="settings" hidden>
+      <div class="screen-head">
+        <button class="back-chip" data-nav-back aria-label="Zurück zum Hub">&larr; Hub</button>
+        <span class="screen-head__title">Einstellungen</span>
+      </div>
+      <div id="settingsBody"></div>
+    </section>
+
+    <section data-screen="prayer" hidden>
+      <div class="screen-head">
+        <button class="back-chip" data-nav-back aria-label="Zurück zum Hub">&larr; Hub</button>
+        <span class="screen-head__title">Gebetszeiten</span>
+      </div>
+      <div id="prayerNextCard"></div>
+      <div class="prayer-list" id="prayerList"></div>
+      <button class="btn-primary prayer-demo-btn" id="adhanDemoBtn">Adhan-Demo</button>
+    </section>
+
+    <section data-screen="serverDetail" hidden>
+      <div class="screen-head">
+        <button class="back-chip" data-nav-back aria-label="Zurück zum Hub">&larr; Hub</button>
+        <span class="screen-head__title" id="serverDetailTitle"></span>
+        <span class="status-chip" id="serverDetailChip"><span class="status-chip__dot"></span></span>
+      </div>
+      <div class="server-detail__body" id="serverDetailBody"></div>
     </section>
 
     <section data-screen="lock">
@@ -399,6 +701,38 @@
       </div>
     </div>
   </div>
+
+  <div class="sheet-wrap chrome-el" id="toolSheetWrap" hidden>
+    <div class="sheet-backdrop" data-close-tool-sheet></div>
+    <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="Werkzeug">
+      <div class="sheet-head">
+        <span class="sheet-title" id="toolSheetTitle"></span>
+        <button class="sheet-close" id="toolSheetClose">Schließen</button>
+      </div>
+      <div class="sheet-body" id="toolSheetBody"></div>
+    </div>
+  </div>
+
+  <div class="adhan-overlay glass chrome-el" id="adhanOverlay" hidden>
+    <div class="adhan-ring"><span id="adhanRingCode"></span></div>
+    <div class="adhan-overlay__name" id="adhanName"></div>
+    <div class="adhan-overlay__sub">Adhan-Demo</div>
+    <button class="adhan-overlay__stop" id="adhanStop">Stopp</button>
+  </div>
+
+  <div class="spotlight-wrap chrome-el" id="spotlightWrap" hidden>
+    <div class="spotlight-backdrop" data-close-spotlight></div>
+    <div class="spotlight-panel" role="dialog" aria-modal="true" aria-label="Spotlight-Suche">
+      <div class="spotlight-search">
+        <span class="spotlight-search__icon">&#8981;</span>
+        <input id="spotlightInput" type="text" placeholder="Suchen…" autocomplete="off" spellcheck="false">
+        <button class="spotlight-close" id="spotlightCloseBtn">Esc</button>
+      </div>
+      <div class="spotlight-results" id="spotlightResults"></div>
+    </div>
+  </div>
+
+  <div class="shot-flash chrome-el" id="shotFlash"></div>
 
   <div id="toasts"></div>
 
@@ -499,6 +833,10 @@
       activeSessionId: null,
       stripOpen: false,
       railTab: 'context',
+      managerTab: 'chat',
+      cloudView: 'folder', cloudProviderFilter: 'all', cloudDetailId: null, cloudDetailTab: 'env', cloudBuildTimer: null,
+      autoLock: false, pushNotif: true, adhanNotif: true, fontSize: 13,
+      spotlightOpen: false,
     };
     const cardState = {};
     TMS_DATA.sessions.forEach(s => {
@@ -576,7 +914,8 @@
         </div>`).join('');
       host.querySelectorAll('.server-tile').forEach(tile => {
         tile.addEventListener('click', () => {
-          toast(tile.dataset.status === 'online' ? 'Kommt in Teil 2' : 'Server offline — zuletzt gesehen vor 2 Std');
+          if (tile.dataset.status === 'online') enterServerDetail(tile.dataset.id);
+          else toast('Server offline — zuletzt gesehen vor 2 Std');
         });
       });
     }
@@ -590,14 +929,14 @@
       document.getElementById('cloudFavCount').textContent = String(favorites.length);
       host.innerHTML = favorites.map(p => `
         <div class="cloud-mini-row" data-id="${p.id}">
-          <span class="provider-glyph">${p.provider === 'vercel' ? '▲' : 'R'}</span>
+          <span class="provider-glyph">${CLOUD_GLYPH[p.provider] || '?'}</span>
           <span class="cloud-mini-row__name">${escapeHtml(p.name)}</span>
           <span class="status-chip" data-status="${p.status}"><span class="status-chip__dot"></span>${escapeHtml(p.status)}</span>
         </div>
         ${p.status === 'building' ? '<div class="shimmer-track"><div class="shimmer-track__fill"></div></div>' : ''}
       `).join('');
       host.querySelectorAll('.cloud-mini-row').forEach(row => {
-        row.addEventListener('click', () => toast('Kommt in Teil 2'));
+        row.addEventListener('click', () => openCloudDetail(row.dataset.id, 'env'));
       });
     }
 
@@ -620,7 +959,7 @@
           </div>
           <span class="manager-teaser__time">${escapeHtml(last.time)}</span>
         </button>`;
-      document.getElementById('managerTeaserRow').addEventListener('click', () => toast('Kommt in Teil 2'));
+      document.getElementById('managerTeaserRow').addEventListener('click', () => show('manager'));
     }
 
     // ============================================================
@@ -652,16 +991,17 @@
       const np = nextPrayer();
       const u = TMS_DATA.update;
       host.innerHTML = `
-        <div class="heute-row">
+        <button class="heute-row" id="heutePrayerRow">
           <span class="heute-row__label">Nächstes Gebet — ${escapeHtml(np.name)}${np.tomorrow ? ' (morgen)' : ''}</span>
           <span class="heute-row__value">${formatCountdown(np)}</span>
-        </div>
+        </button>
         ${u && u.current !== u.latest ? `
         <div class="update-banner-mini glass">
           <span class="update-banner-mini__text">v${escapeHtml(u.latest)} verfügbar — ${escapeHtml(u.notes)}</span>
           <span class="update-banner-mini__cta" id="heuteUpdateCta">Update</span>
         </div>` : ''}
       `;
+      document.getElementById('heutePrayerRow').addEventListener('click', () => show('prayer'));
       const cta = document.getElementById('heuteUpdateCta');
       if (cta) cta.addEventListener('click', () => toast('Mockup: Update-Vorgang wird nicht simuliert'));
     }
@@ -700,14 +1040,18 @@
         <div class="strip-group-title">Aktive Sitzungen</div>
         ${sessionRows}
         <div class="strip-group-title">Nächstes Gebet</div>
-        <div class="strip-row"><span class="strip-row__name">${escapeHtml(np.name)} · ${escapeHtml(np.time)}</span><span class="strip-row__meta">in ${formatCountdown(np)}</span></div>
+        <div class="strip-row" data-prayer><span class="strip-row__name">${escapeHtml(np.name)} · ${escapeHtml(np.time)}</span><span class="strip-row__meta">in ${formatCountdown(np)}</span></div>
         <div class="strip-group-title">Deploy</div>
-        <div class="strip-row"><span class="strip-row__name">${building ? escapeHtml(building.name) : 'Keine aktiven Builds'}</span><span class="strip-row__meta">${building ? 'Build läuft…' : ''}</span></div>
+        <div class="strip-row"${building ? ` data-build="${building.id}"` : ''}><span class="strip-row__name">${building ? escapeHtml(building.name) : 'Keine aktiven Builds'}</span><span class="strip-row__meta">${building ? 'Build läuft…' : ''}</span></div>
         <div class="strip-hint">Antippen zum Schließen</div>
       `;
       host.querySelectorAll('[data-session]').forEach(row => {
         row.addEventListener('click', e => { e.stopPropagation(); closeStrip(); enterWorkspace(row.dataset.session); });
       });
+      const prayerRow = host.querySelector('[data-prayer]');
+      if (prayerRow) prayerRow.addEventListener('click', e => { e.stopPropagation(); closeStrip(); show('prayer'); });
+      const buildRow = host.querySelector('[data-build]');
+      if (buildRow) buildRow.addEventListener('click', e => { e.stopPropagation(); closeStrip(); openCloudDetail(buildRow.dataset.build, 'logs'); });
     }
     function openStrip() {
       state.stripOpen = true;
@@ -918,8 +1262,13 @@
     // ============================================================
     // Touch text-selection: handles + copy bubble (workspace terminal)
     // ============================================================
-    function handleLineTap(line) {
-      const pre = currentPre();
+    // Generic lookup by cardId: matches the workspace's singleton #wsTermPre (when its
+    // data-card-id equals the active session) AND any other .ws-term-pre with that
+    // data-card-id (e.g. the Cloud XXL log viewer) — lets the selection machinery below
+    // be shared between the workspace terminal and cloud logs instead of duplicated.
+    function findPre(id) { return document.querySelector(`.ws-term-pre[data-card-id="${id}"]`); }
+
+    function handleLineTap(pre, line) {
       const id = pre.dataset.cardId;
       const cs = cardState[id];
       const i = Number(line.dataset.i);
@@ -931,8 +1280,8 @@
       syncSelectionUI(id);
     }
     function syncSelectionUI(id) {
-      const pre = currentPre();
-      if (!pre || pre.dataset.cardId !== id) return;
+      const pre = findPre(id);
+      if (!pre) return;
       const cs = cardState[id];
       pre.querySelectorAll('.term-line').forEach(l => {
         const i = Number(l.dataset.i);
@@ -989,7 +1338,7 @@
         e.stopPropagation();
         const cs = cardState[id];
         if (!cs.selection) return;
-        const pre = currentPre();
+        const pre = findPre(id);
         const lines = [...pre.querySelectorAll('.term-line')].slice(cs.selection.start, cs.selection.end + 1);
         const text = lines.map(l => l.querySelector('.term-line__text').textContent).join('\n');
         copyText(text);
@@ -999,8 +1348,8 @@
       return el;
     }
     function positionHandlesAndBubble(id) {
-      const pre = currentPre();
-      if (!pre || pre.dataset.cardId !== id) return;
+      const pre = findPre(id);
+      if (!pre) return;
       const cs = cardState[id];
       let handleStart = pre.querySelector('.sel-handle--start');
       let handleEnd = pre.querySelector('.sel-handle--end');
@@ -1027,15 +1376,17 @@
     function clearSelection(id) {
       const cs = cardState[id];
       cs.selection = null;
-      const pre = currentPre();
-      if (!pre || pre.dataset.cardId !== id) return;
+      const pre = findPre(id);
+      if (!pre) return;
       pre.querySelectorAll('.term-line.is-selected').forEach(l => l.classList.remove('is-selected'));
       positionHandlesAndBubble(id);
     }
 
-    // Delegated: wrapped-link copy (outside selection mode, workspace terminal only)
-    // + line-tap selection (inside selection mode). Scoped to .ws-term-pre so hub
-    // tile previews (which never enter selection mode) never trigger these paths.
+    // Delegated: wrapped-link copy (outside selection mode) + line-tap selection
+    // (inside selection mode). Scoped to .ws-term-pre so hub tile previews (which
+    // never carry that class) never trigger these paths. Generic over ANY
+    // .ws-term-pre in the DOM — the workspace terminal AND the Cloud XXL log
+    // viewer share this exact delegated handler.
     document.addEventListener('click', e => {
       const link = e.target.closest('.wrapped-link');
       if (link && link.closest('.ws-term-pre')) {
@@ -1049,9 +1400,181 @@
       const pre = e.target.closest('.ws-term-pre.selection-mode');
       if (pre) {
         const line = e.target.closest('.term-line');
-        if (line) handleLineTap(line);
+        if (line) handleLineTap(pre, line);
       }
     });
+
+    // ============================================================
+    // Tools — 9 panels as a shared glass bottom sheet. Reachable via the
+    // workspace context-rail "Tools" tab (unfolded ≥700px, rendered above)
+    // AND the hub quick-actions row (folded — rendered below).
+    // ============================================================
+    const TOOL_DEFS = [
+      { id: 'files', code: 'FS', label: 'Dateien' },
+      { id: 'sql', code: 'DB', label: 'SQL' },
+      { id: 'ports', code: 'PT', label: 'Ports' },
+      { id: 'processes', code: 'PS', label: 'Prozesse' },
+      { id: 'snippets', code: 'SN', label: 'Snippets' },
+      { id: 'notes', code: 'NT', label: 'Notizen' },
+      { id: 'screenshots', code: 'SC', label: 'Screenshots' },
+      { id: 'browser', code: 'BR', label: 'Browser' },
+      { id: 'watchers', code: 'WA', label: 'Watchers' },
+    ];
+
+    function renderHubQuickActions() {
+      const host = document.getElementById('hubQuickActions');
+      host.innerHTML = TOOL_DEFS.map(t => `
+        <button class="quick-tile" data-tool="${t.id}"><span class="quick-tile__glyph">${t.code}</span><span class="quick-tile__label">${t.label}</span></button>`).join('');
+      host.querySelectorAll('.quick-tile').forEach(tile => tile.addEventListener('click', () => openToolSheet(tile.dataset.tool)));
+    }
+
+    function openToolSheetPanel(title, bodyHtml) {
+      document.getElementById('toolSheetTitle').textContent = title;
+      document.getElementById('toolSheetBody').innerHTML = bodyHtml;
+      const wrap = document.getElementById('toolSheetWrap');
+      wrap.hidden = false;
+      requestAnimationFrame(() => wrap.classList.add('is-open'));
+    }
+    function closeToolSheet() {
+      const wrap = document.getElementById('toolSheetWrap');
+      wrap.classList.remove('is-open');
+      setTimeout(() => { wrap.hidden = true; document.getElementById('toolSheetBody').innerHTML = ''; }, 180);
+    }
+    function openToolSheet(id) {
+      const def = TOOL_DEFS.find(t => t.id === id);
+      const builders = {
+        files: buildFilesSheet, sql: buildSqlSheet, ports: buildPortsSheet, processes: buildProcessesSheet,
+        snippets: buildSnippetsSheet, notes: buildNotesSheet, screenshots: buildScreenshotsSheet,
+        browser: buildBrowserSheet, watchers: buildWatchersSheet,
+      };
+      if (!def || !builders[id]) return;
+      const { html, wire } = builders[id]();
+      openToolSheetPanel(def.label, html);
+      if (wire) wire();
+    }
+
+    function buildFilesSheet() {
+      const html = `<div class="tool-list">${TMS_DATA.files.map(f => `
+        <div class="tool-list__row"><span class="tool-list__icon">${f.type === 'dir' ? '▸' : '·'}</span><span class="tool-list__name">${escapeHtml(f.name)}</span><span class="tool-list__meta">${f.size ? escapeHtml(f.size) : ''}</span></div>`).join('')}</div>`;
+      return { html };
+    }
+    function buildSqlSheet() {
+      const cols = Object.keys(TMS_DATA.sql.rows[0] || {});
+      const html = `
+        <div class="sql-query">${ansiToHtml(TMS_DATA.sql.query)}</div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+            <tbody>${TMS_DATA.sql.rows.map(r => `<tr>${cols.map(c => `<td>${escapeHtml(String(r[c]))}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>
+        </div>`;
+      return { html };
+    }
+    function buildPortsSheet() {
+      const html = `<div class="tool-list">${TMS_DATA.ports.map(p => `
+        <div class="tool-list__row" data-port="${p.port}">
+          <span class="tool-list__name">:${p.port} — ${escapeHtml(p.service)}</span>
+          <label class="switch"><input type="checkbox" data-act="forward" ${p.forwarded ? 'checked' : ''}><span class="switch__track"><span class="switch__thumb"></span></span></label>
+        </div>`).join('')}</div>`;
+      const wire = () => {
+        document.querySelectorAll('#toolSheetBody [data-act="forward"]').forEach(inp => {
+          inp.addEventListener('change', () => {
+            const row = inp.closest('[data-port]');
+            const port = TMS_DATA.ports.find(p => String(p.port) === row.dataset.port);
+            if (!port) return;
+            port.forwarded = inp.checked;
+            toast(port.forwarded ? `Port ${port.port} weitergeleitet` : `Port ${port.port} nicht mehr weitergeleitet`);
+          });
+        });
+      };
+      return { html, wire };
+    }
+    function buildProcessesSheet() {
+      const maxCpu = Math.max(...TMS_DATA.processes.map(p => p.cpu), 1);
+      const html = `
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>PID</th><th>Prozess</th><th>CPU</th><th>Mem</th></tr></thead>
+            <tbody>${TMS_DATA.processes.map(p => `
+              <tr>
+                <td>${p.pid}</td>
+                <td>${escapeHtml(p.name)}</td>
+                <td><div class="cpu-cell"><div class="cpu-bar" style="--pct:${Math.round(Math.min(100, (p.cpu / maxCpu) * 100))}%"><div class="cpu-bar__fill"></div></div><span>${p.cpu.toFixed(1)}%</span></div></td>
+                <td>${p.mem} MB</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>`;
+      return { html };
+    }
+    function buildSnippetsSheet() {
+      const html = `<div class="tool-list">${TMS_DATA.snippets.map(s => `
+        <button class="tool-list__row is-tap" data-snippet="${s.id}">
+          <span class="tool-list__name">${escapeHtml(s.label)}</span>
+          <span class="tool-list__meta">${escapeHtml(s.cmd)}</span>
+        </button>`).join('')}</div>`;
+      const wire = () => {
+        document.querySelectorAll('#toolSheetBody [data-snippet]').forEach(btn => {
+          btn.addEventListener('click', () => toast('In Terminal eingefügt'));
+        });
+      };
+      return { html, wire };
+    }
+    function buildNotesSheet() {
+      const html = `<div class="notes-grid">${TMS_DATA.notes.map(n => `
+        <div class="note-card">
+          <div class="note-card__title">${escapeHtml(n.title)}</div>
+          <div class="note-card__body">${escapeHtml(n.body)}</div>
+          <div class="note-card__time">${escapeHtml(n.time)}</div>
+        </div>`).join('')}</div>`;
+      return { html };
+    }
+    function buildScreenshotsSheet() {
+      const html = `
+        <div class="shot-grid" id="shotGrid">${[1, 2, 3].map(() => '<div class="shot-tile"></div>').join('')}</div>
+        <button class="btn-primary" id="shotCaptureBtn">Aufnehmen</button>`;
+      const wire = () => {
+        document.getElementById('shotCaptureBtn').addEventListener('click', () => {
+          const flash = document.getElementById('shotFlash');
+          flash.classList.add('is-flashing');
+          setTimeout(() => flash.classList.remove('is-flashing'), 160);
+          const grid = document.getElementById('shotGrid');
+          if (grid) grid.insertAdjacentHTML('afterbegin', '<div class="shot-tile"></div>');
+          toast('Screenshot aufgenommen');
+        });
+      };
+      return { html, wire };
+    }
+    function buildBrowserSheet() {
+      const html = `
+        <div class="browser-bar">https://vercel.com/kashino17/pinterest-scraper</div>
+        <div class="browser-skeleton">
+          ${[92, 68, 100, 84, 40, 76].map(w => `<div class="browser-skeleton__block" style="width:${w}%"></div>`).join('')}
+        </div>`;
+      return { html };
+    }
+    function buildWatchersSheet() {
+      const html = `<div class="tool-list">${TMS_DATA.watchers.map(w => `
+        <div class="tool-list__row" data-watcher="${w.id}">
+          <div class="tool-list__info">
+            <div class="tool-list__title mono-text">${ansiToHtml(w.pattern)}</div>
+            <div class="tool-list__sub">${escapeHtml(w.session)}</div>
+          </div>
+          <span class="hit-badge">${w.hits}</span>
+          <label class="switch"><input type="checkbox" data-act="active" ${w.active ? 'checked' : ''}><span class="switch__track"><span class="switch__thumb"></span></span></label>
+        </div>`).join('')}</div>`;
+      const wire = () => {
+        document.querySelectorAll('#toolSheetBody [data-act="active"]').forEach(inp => {
+          inp.addEventListener('change', () => {
+            const row = inp.closest('[data-watcher]');
+            const w = TMS_DATA.watchers.find(x => x.id === row.dataset.watcher);
+            if (!w) return;
+            w.active = inp.checked;
+            toast(w.active ? `Watcher aktiv: ${w.pattern}` : `Watcher pausiert: ${w.pattern}`);
+          });
+        });
+      };
+      return { html, wire };
+    }
 
     // ============================================================
     // Terminal toolbar
@@ -1126,9 +1649,14 @@
       } else if (state.railTab === 'files') {
         host.innerHTML = `<div class="tool-list">${TMS_DATA.files.map(f => `
           <div class="tool-list__row"><span class="tool-list__icon">${f.type === 'dir' ? '▸' : '·'}</span><span class="tool-list__name">${escapeHtml(f.name)}</span><span class="tool-list__meta">${f.size ? escapeHtml(f.size) : ''}</span></div>`).join('')}</div>`;
-      } else {
+      } else if (state.railTab === 'notes') {
         host.innerHTML = `<div class="notes-grid">${TMS_DATA.notes.map(n => `
           <div class="note-card"><div class="note-card__title">${escapeHtml(n.title)}</div><div class="note-card__body">${escapeHtml(n.body)}</div><div class="note-card__time">${escapeHtml(n.time)}</div></div>`).join('')}</div>`;
+      } else {
+        // 'tools' — full 9-tool grid; each tile opens the shared bottom sheet (glass, elevated moment).
+        host.innerHTML = `<div class="tool-grid">${TOOL_DEFS.map(t => `
+          <button class="tool-tile" data-tool="${t.id}"><span class="tool-tile__glyph">${t.code}</span><span class="tool-tile__label">${t.label}</span></button>`).join('')}</div>`;
+        host.querySelectorAll('.tool-tile').forEach(tile => tile.addEventListener('click', () => openToolSheet(tile.dataset.tool)));
       }
     }
     function wireRailTabs() {
@@ -1182,6 +1710,700 @@
     }
 
     // ============================================================
+    // Manager screen (Chat / Artifacts / Memory)
+    // ============================================================
+    function ensureMessageIds() {
+      TMS_DATA.manager.messages.forEach((m, i) => { if (!m._id) m._id = 'msg' + i; });
+    }
+
+    function scheduleTranscription(m) {
+      if (!m.transcribing || m._transcribeScheduled) return;
+      m._transcribeScheduled = true;
+      setTimeout(() => {
+        m.transcribing = false;
+        m.transcript = '(Demo) Transkription abgeschlossen';
+        const screen = document.querySelector('[data-screen="manager"]');
+        if (screen && !screen.hidden) renderManagerChat();
+      }, 2500);
+    }
+
+    function renderChatMessageHtml(m) {
+      if (m.type === 'voice') {
+        const bars = Array.from({ length: 18 }, (_, i) => `<span style="height:${6 + ((i * 37) % 14)}px"></span>`).join('');
+        let inner = '';
+        if (m.transcribing) {
+          inner = `<div class="voice-transcribing">Transkribiere… <span class="dots"><span>●</span><span>●</span><span>●</span></span></div>`;
+        } else if (m.transcript) {
+          inner = `<div class="voice-transcript">${escapeHtml(m.transcript)}</div>`;
+        }
+        return `
+          <div class="chat-bubble-row" data-from="${m.from}">
+            <div class="chat-bubble">
+              <div class="voice-pill" data-act="play">
+                <span class="voice-pill__play">▶</span>
+                <span class="voice-pill__wave">${bars}</span>
+                <span class="voice-pill__dur">0:${String(m.duration).padStart(2, '0')}</span>
+              </div>
+              ${inner}
+              <span class="chat-bubble__time">${escapeHtml(m.time)}</span>
+            </div>
+          </div>`;
+      }
+      return `
+        <div class="chat-bubble-row" data-from="${m.from}">
+          <div class="chat-bubble">${escapeHtml(m.text)}<span class="chat-bubble__time">${escapeHtml(m.time)}</span></div>
+        </div>`;
+    }
+
+    function renderManagerChat() {
+      const host = document.getElementById('managerChat');
+      host.innerHTML = TMS_DATA.manager.messages.map(renderChatMessageHtml).join('');
+      host.scrollTop = host.scrollHeight;
+      wireManagerChatInteractions();
+      // Arm transcription timers only while the Manager screen is visible, so the
+      // seed message's "Transkribiere… → transcript" demo moment plays on first
+      // entry to the screen (via SCREEN_HOOKS.manager) instead of expiring at page init.
+      const screen = document.querySelector('[data-screen="manager"]');
+      if (screen && !screen.hidden) TMS_DATA.manager.messages.forEach(scheduleTranscription);
+    }
+
+    function wireManagerChatInteractions() {
+      document.querySelectorAll('#managerChat .voice-pill').forEach(pill => {
+        pill.addEventListener('click', () => {
+          const playing = pill.classList.toggle('is-playing');
+          const playBtn = pill.querySelector('.voice-pill__play');
+          if (playing) {
+            playBtn.textContent = '❚❚';
+            const durText = pill.querySelector('.voice-pill__dur').textContent;
+            const secs = parseInt(durText.split(':')[1], 10) || 5;
+            setTimeout(() => { pill.classList.remove('is-playing'); playBtn.textContent = '▶'; }, Math.min(secs, 6) * 1000);
+          } else {
+            playBtn.textContent = '▶';
+          }
+        });
+      });
+    }
+
+    function renderManagerArtifacts() {
+      const host = document.getElementById('managerArtifacts');
+      host.innerHTML = TMS_DATA.manager.artifacts.map(a => `
+        <div class="note-card">
+          <div class="note-card__title">${escapeHtml(a.title)}</div>
+          <div class="artifact-card__meta">${escapeHtml(a.kind)} · ${escapeHtml(a.time)}</div>
+        </div>`).join('');
+    }
+
+    function renderManagerMemory() {
+      const host = document.getElementById('managerMemory');
+      host.innerHTML = TMS_DATA.manager.memory.map(m => `
+        <div class="memory-row"><span>${escapeHtml(m.text)}</span><span class="memory-row__time">${escapeHtml(m.time)}</span></div>`).join('');
+    }
+
+    function wireManagerTabs() {
+      document.getElementById('managerTabs').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-tab]');
+        if (!btn) return;
+        const tab = btn.dataset.tab;
+        state.managerTab = tab;
+        document.querySelectorAll('#managerTabs button').forEach(b => b.classList.toggle('active', b === btn));
+        document.getElementById('managerChat').hidden = tab !== 'chat';
+        document.getElementById('managerInputRow').hidden = tab !== 'chat';
+        document.getElementById('managerArtifacts').hidden = tab !== 'artifacts';
+        document.getElementById('managerMemory').hidden = tab !== 'memory';
+      });
+    }
+
+    function wireManagerInput() {
+      const micBtn = document.getElementById('managerMicBtn');
+      micBtn.addEventListener('click', () => {
+        if (micBtn.classList.contains('is-recording')) return;
+        micBtn.classList.add('is-recording');
+        setTimeout(() => {
+          micBtn.classList.remove('is-recording');
+          const now = new Date();
+          const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+          const msg = { type: 'voice', from: 'user', time, duration: 8, transcript: null, transcribing: true, _id: 'msg' + TMS_DATA.manager.messages.length };
+          TMS_DATA.manager.messages.push(msg);
+          renderManagerChat();
+        }, 2000);
+      });
+      document.getElementById('managerTextInput').addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        const input = e.target;
+        const text = input.value.trim();
+        if (!text) return;
+        const now = new Date();
+        const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        TMS_DATA.manager.messages.push({ type: 'text', from: 'user', time, text, _id: 'msg' + TMS_DATA.manager.messages.length });
+        input.value = '';
+        renderManagerChat();
+      });
+    }
+
+    SCREEN_HOOKS.manager = renderManagerChat;
+
+    // ============================================================
+    // Cloud screen (Vercel + Render): folders/favorites, Env/Logs/Deploys
+    // ============================================================
+    const CLOUD_GLYPH = { vercel: '▲', render: 'R' };
+    const FAV_KEY = 'tms-mission-control-cloud-favorites';
+    function loadFavorites() {
+      try {
+        const raw = localStorage.getItem(FAV_KEY);
+        if (!raw) return;
+        const map = JSON.parse(raw);
+        TMS_DATA.cloudProjects.forEach(p => { if (Object.prototype.hasOwnProperty.call(map, p.id)) p.favorite = !!map[p.id]; });
+      } catch (e) { /* corrupt/unavailable storage: keep seed favorites */ }
+    }
+    function saveFavorites() {
+      const map = {};
+      TMS_DATA.cloudProjects.forEach(p => { map[p.id] = p.favorite; });
+      try { localStorage.setItem(FAV_KEY, JSON.stringify(map)); } catch (e) { /* storage unavailable */ }
+    }
+
+    function cloudFilteredProjects() {
+      return TMS_DATA.cloudProjects.filter(p => state.cloudProviderFilter === 'all' || p.provider === state.cloudProviderFilter);
+    }
+
+    function cloudRowHtml(p) {
+      return `
+        <button class="cloud-row" data-project="${p.id}">
+          <span class="provider-glyph">${CLOUD_GLYPH[p.provider] || '?'}</span>
+          <span class="cloud-row__main">
+            <span class="cloud-row__name">${escapeHtml(p.name)}</span>
+            <span class="cloud-row__meta">
+              <span class="status-chip" data-status="${p.status}"><span class="status-chip__dot"></span>${escapeHtml(p.status)}</span>
+              <span class="cloud-row__deploy">${escapeHtml(p.lastDeploy)}</span>
+            </span>
+          </span>
+          <span class="fav-btn${p.favorite ? ' is-fav' : ''}" data-fav="${p.id}">★</span>
+        </button>`;
+    }
+
+    function renderCloudGroups() {
+      const host = document.getElementById('cloudGroups');
+      const list = cloudFilteredProjects();
+      document.getElementById('cloudCount').textContent = String(list.length);
+      if (state.cloudView === 'list') {
+        const sorted = [...list].sort((a, b) => (b.favorite - a.favorite));
+        host.innerHTML = `<div class="folder-group__rows">${sorted.map(cloudRowHtml).join('')}</div>`;
+        return;
+      }
+      const folders = {};
+      list.forEach(p => { (folders[p.folder] = folders[p.folder] || []).push(p); });
+      const folderNames = Object.keys(folders).sort();
+      host.innerHTML = folderNames.map(name => {
+        const rows = [...folders[name]].sort((a, b) => (b.favorite - a.favorite));
+        return `
+          <div class="folder-group" data-folder="${escapeHtml(name)}">
+            <div class="folder-group__head">
+              <span class="folder-group__name">${escapeHtml(name)}</span>
+              <span class="folder-group__count">${rows.length}</span>
+            </div>
+            <div class="folder-group__rows">${rows.map(cloudRowHtml).join('')}</div>
+          </div>`;
+      }).join('');
+    }
+
+    function wireCloudToolbar() {
+      document.getElementById('cloudProviderFilter').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-provider]');
+        if (!btn) return;
+        state.cloudProviderFilter = btn.dataset.provider;
+        document.querySelectorAll('#cloudProviderFilter button').forEach(b => b.classList.toggle('active', b === btn));
+        renderCloudGroups();
+      });
+      document.getElementById('cloudViewToggle').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-view]');
+        if (!btn) return;
+        state.cloudView = btn.dataset.view;
+        document.querySelectorAll('#cloudViewToggle button').forEach(b => b.classList.toggle('active', b === btn));
+        renderCloudGroups();
+      });
+      document.getElementById('cloudGroups').addEventListener('click', e => {
+        const favBtn = e.target.closest('[data-fav]');
+        if (favBtn) {
+          const p = TMS_DATA.cloudProjects.find(x => x.id === favBtn.dataset.fav);
+          if (p) { p.favorite = !p.favorite; saveFavorites(); renderCloudGroups(); renderCloudZone(); }
+          return;
+        }
+        const folderHead = e.target.closest('.folder-group__head');
+        if (folderHead) { folderHead.closest('.folder-group').classList.toggle('is-collapsed'); return; }
+        const row = e.target.closest('.cloud-row');
+        if (row) openCloudDetail(row.dataset.project, 'env');
+      });
+    }
+
+    function stopCloudBuildTimer() {
+      if (state.cloudBuildTimer) { clearInterval(state.cloudBuildTimer); state.cloudBuildTimer = null; }
+    }
+
+    function showCloudList() {
+      stopCloudBuildTimer();
+      state.cloudDetailId = null;
+      document.getElementById('cloudDetail').hidden = true;
+      document.getElementById('cloudDetail').innerHTML = '';
+      document.getElementById('cloudListView').hidden = false;
+    }
+
+    function openCloudDetail(id, tab) {
+      const project = TMS_DATA.cloudProjects.find(p => p.id === id);
+      if (!project) return;
+      show('cloud');
+      state.cloudDetailId = id;
+      state.cloudDetailTab = tab || 'env';
+      document.getElementById('cloudListView').hidden = true;
+      document.getElementById('cloudDetail').hidden = false;
+      renderCloudDetail();
+    }
+
+    function renderCloudDetail() {
+      const project = TMS_DATA.cloudProjects.find(p => p.id === state.cloudDetailId);
+      const detail = document.getElementById('cloudDetail');
+      if (!project) return;
+      detail.innerHTML = `
+        <div class="cloud-detail__head">
+          <span class="back-chip" id="cloudBackBtn">&larr; Liste</span>
+          <span class="cloud-detail__title">${escapeHtml(project.name)}</span>
+        </div>
+        <div class="subtabs" id="cloudDetailTabs">
+          <button data-tab="env" class="${state.cloudDetailTab === 'env' ? 'active' : ''}">Env</button>
+          <button data-tab="logs" class="${state.cloudDetailTab === 'logs' ? 'active' : ''}">Logs</button>
+          <button data-tab="deploys" class="${state.cloudDetailTab === 'deploys' ? 'active' : ''}">Deploys</button>
+        </div>
+        <div class="cloud-detail__body" id="cloudDetailBody"></div>
+      `;
+      document.getElementById('cloudBackBtn').addEventListener('click', showCloudList);
+      document.getElementById('cloudDetailTabs').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-tab]');
+        if (!btn) return;
+        stopCloudBuildTimer();
+        state.cloudDetailTab = btn.dataset.tab;
+        renderCloudDetail();
+      });
+      renderCloudDetailBody(project);
+    }
+
+    function renderCloudDetailBody(project) {
+      const host = document.getElementById('cloudDetailBody');
+      if (state.cloudDetailTab === 'env') renderEnvTab(host, project);
+      else if (state.cloudDetailTab === 'logs') renderLogsTab(host, project);
+      else renderDeploysTab(host, project);
+    }
+
+    function renderEnvTab(host, project) {
+      host.innerHTML = project.env.map((e, i) => `
+        <div class="env-row" data-idx="${i}">
+          <span class="env-row__key">${escapeHtml(e.key)}</span>
+          <span class="env-row__value" data-act="reveal">${'•'.repeat(10)}</span>
+          <div class="env-row__actions">
+            <button data-act="copy">Kopieren</button>
+            <button data-act="edit">Bearbeiten</button>
+          </div>
+        </div>`).join('');
+      host.querySelectorAll('.env-row').forEach(row => {
+        const idx = Number(row.dataset.idx);
+        const entry = project.env[idx];
+        const valueEl = row.querySelector('[data-act="reveal"]');
+        let revealed = false;
+        valueEl.addEventListener('click', () => {
+          revealed = !revealed;
+          valueEl.textContent = revealed ? entry.value : '•'.repeat(10);
+        });
+        row.querySelector('[data-act="copy"]').addEventListener('click', () => {
+          copyText(entry.value);
+          toast('Kopiert ✓');
+        });
+        row.querySelector('[data-act="edit"]').addEventListener('click', () => {
+          if (row.querySelector('.env-row__edit')) return;
+          const editRow = document.createElement('div');
+          editRow.className = 'env-row__edit';
+          editRow.innerHTML = `<input type="text" value="${escapeHtml(entry.value)}"><button class="btn-secondary" data-act="save">Speichern</button>`;
+          row.appendChild(editRow);
+          editRow.querySelector('input').focus();
+          editRow.querySelector('[data-act="save"]').addEventListener('click', () => {
+            entry.value = editRow.querySelector('input').value;
+            valueEl.textContent = revealed ? entry.value : '•'.repeat(10);
+            editRow.remove();
+            toast('Gespeichert — Redeploy nötig');
+          });
+        });
+      });
+    }
+
+    function cloudLogCardId(project) { return `cloud-${project.id}`; }
+
+    function renderLogsTab(host, project) {
+      const cardId = cloudLogCardId(project);
+      if (!cardState[cardId]) cardState[cardId] = { lines: project.logs.slice(), selectionMode: false, selection: null };
+      else {
+        // The DOM below (Selektieren button + .ws-term-pre classes) is rebuilt fresh,
+        // so reset selection state to match — otherwise flag and UI desync after
+        // a Logs → other tab → Logs round-trip and the first toggle tap is a no-op.
+        cardState[cardId].lines = project.logs.slice();
+        cardState[cardId].selectionMode = false;
+        cardState[cardId].selection = null;
+      }
+      host.innerHTML = `
+        <div class="log-viewer">
+          <div class="log-viewer__tools">
+            <input type="text" class="log-viewer__search" id="cloudLogSearch" placeholder="Logs durchsuchen…" autocomplete="off">
+            <button class="btn-secondary" id="cloudLogSelectBtn">Selektieren</button>
+            <button class="btn-secondary" id="cloudLogCopyBtn">Kopieren</button>
+          </div>
+          <div class="ws-term-pre log-viewer__pre" data-card-id="${cardId}"></div>
+        </div>`;
+      const pre = host.querySelector('.ws-term-pre');
+      renderCardLines(pre, cardId);
+      document.getElementById('cloudLogSearch').addEventListener('input', e => {
+        const q = e.target.value.toLowerCase();
+        cardState[cardId].lines = q ? project.logs.filter(l => l.toLowerCase().includes(q)) : project.logs.slice();
+        renderCardLines(pre, cardId);
+      });
+      document.getElementById('cloudLogSelectBtn').addEventListener('click', () => {
+        const cs = cardState[cardId];
+        cs.selectionMode = !cs.selectionMode;
+        document.getElementById('cloudLogSelectBtn').classList.toggle('is-on', cs.selectionMode);
+        pre.classList.toggle('selection-mode', cs.selectionMode);
+        if (!cs.selectionMode) clearSelection(cardId);
+      });
+      document.getElementById('cloudLogCopyBtn').addEventListener('click', () => {
+        copyText(cardState[cardId].lines.join('\n'));
+        toast('Log kopiert ✓');
+      });
+      stopCloudBuildTimer();
+      if (project.status === 'building') {
+        let n = 0;
+        state.cloudBuildTimer = setInterval(() => {
+          n++;
+          const time = new Date().toTimeString().slice(0, 5);
+          const line = `${time} BUILD Verarbeite Modul ${n}…`;
+          project.logs.push(line);
+          const searchInput = document.getElementById('cloudLogSearch');
+          if (searchInput && !searchInput.value) {
+            cardState[cardId].lines.push(line);
+            renderCardLines(pre, cardId);
+          }
+        }, 2000);
+      }
+    }
+
+    function renderDeploysTab(host, project) {
+      const deploys = [
+        { version: 'v12', time: project.lastDeploy, status: project.status === 'building' ? 'building' : 'ready' },
+        { version: 'v11', time: 'vor 2 Tagen', status: 'ready' },
+        { version: 'v10', time: 'vor 5 Tagen', status: project.status === 'suspended' ? 'suspended' : 'ready' },
+      ];
+      host.innerHTML = deploys.map(d => `
+        <div class="deploy-row">
+          <span class="deploy-row__version">${d.version}</span>
+          <span class="deploy-row__time">${escapeHtml(d.time)}</span>
+          <span class="status-chip" data-status="${d.status}"><span class="status-chip__dot"></span>${escapeHtml(d.status)}</span>
+        </div>`).join('');
+    }
+
+    SCREEN_HOOKS.cloud = showCloudList;
+
+    // ============================================================
+    // Settings screen
+    // ============================================================
+    function switchHtml(key, checked) {
+      return `<label class="switch"><input type="checkbox" data-switch="${key}" ${checked ? 'checked' : ''}><span class="switch__track"><span class="switch__thumb"></span></span></label>`;
+    }
+
+    function renderSettings() {
+      const server = TMS_DATA.servers.find(s => s.status === 'online') || TMS_DATA.servers[0];
+      const host = document.getElementById('settingsBody');
+      host.innerHTML = `
+        <div class="settings-group">
+          <div class="settings-group__title">Server</div>
+          <div class="settings-row">
+            <span class="settings-row__label">Aktiver Server<small>${escapeHtml(server.name)}</small></span>
+            <span class="settings-row__value">${escapeHtml(server.host)}:${server.port}</span>
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group__title">Sicherheit</div>
+          <div class="settings-row is-tap" id="pinChangeRow">
+            <span class="settings-row__label">PIN ändern<small>4-stellige Demo-PIN</small></span>
+            <span class="settings-row__value">›</span>
+          </div>
+          <div id="pinEditHost"></div>
+          <div class="settings-row">
+            <span class="settings-row__label">Auto-Lock<small>Sperrt nach Inaktivität</small></span>
+            ${switchHtml('autoLock', state.autoLock)}
+          </div>
+          <div class="settings-row is-tap" id="lockNowRow">
+            <span class="settings-row__label">App sperren</span>
+            <span class="settings-row__value">›</span>
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group__title">Benachrichtigungen</div>
+          <div class="settings-row">
+            <span class="settings-row__label">Push-Benachrichtigungen</span>
+            ${switchHtml('pushNotif', state.pushNotif)}
+          </div>
+          <div class="settings-row">
+            <span class="settings-row__label">Adhan-Erinnerung</span>
+            ${switchHtml('adhanNotif', state.adhanNotif)}
+          </div>
+          <div class="settings-row is-tap" id="prayerRow">
+            <span class="settings-row__label">Gebetszeiten<small>Heutige Zeiten ansehen</small></span>
+            <span class="settings-row__value">›</span>
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group__title">Terminal</div>
+          <div class="settings-row settings-row--stack">
+            <span class="settings-row__label">Schriftgröße<small id="fontSizeValue">${state.fontSize}px</small></span>
+            <div class="ws-term-pre font-preview" id="fontSizePreview">$ echo "TMS Terminal"</div>
+            <input type="range" class="settings-slider" id="fontSizeSlider" min="11" max="18" value="${state.fontSize}">
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group__title">Über</div>
+          <div class="settings-row">
+            <span class="settings-row__label">Version</span>
+            <span class="settings-row__value">v${escapeHtml(TMS_DATA.update.current)}</span>
+          </div>
+          <div class="settings-row is-tap" id="updateHintRow">
+            <span class="settings-row__label">Update verfügbar<small>v${escapeHtml(TMS_DATA.update.latest)} — ${escapeHtml(TMS_DATA.update.notes)}</small></span>
+            <span class="settings-row__value">›</span>
+          </div>
+        </div>
+      `;
+      wireSettingsInteractions();
+    }
+
+    function togglePinEditor() {
+      const editHost = document.getElementById('pinEditHost');
+      if (editHost.innerHTML) { editHost.innerHTML = ''; return; }
+      editHost.innerHTML = `
+        <div class="settings-pin-edit">
+          <input type="text" inputmode="numeric" maxlength="4" id="newPinInput" placeholder="Neue 4-stellige PIN">
+          <button class="btn-secondary" id="savePinBtn">Speichern</button>
+        </div>`;
+      document.getElementById('savePinBtn').addEventListener('click', () => {
+        const val = document.getElementById('newPinInput').value.trim();
+        if (!/^\d{4}$/.test(val)) { toast('PIN muss 4 Ziffern haben'); return; }
+        state.pin = val;
+        editHost.innerHTML = '';
+        toast('PIN geändert ✓');
+      });
+    }
+
+    function wireSettingsInteractions() {
+      document.querySelectorAll('#settingsBody [data-switch]').forEach(inp => {
+        inp.addEventListener('change', () => {
+          state[inp.dataset.switch] = inp.checked;
+          toast(inp.checked ? 'Aktiviert' : 'Deaktiviert');
+        });
+      });
+      document.getElementById('pinChangeRow').addEventListener('click', togglePinEditor);
+      document.getElementById('lockNowRow').addEventListener('click', lockApp);
+      document.getElementById('prayerRow').addEventListener('click', () => show('prayer'));
+      document.getElementById('updateHintRow').addEventListener('click', () => toast(`v${TMS_DATA.update.latest} verfügbar — ${TMS_DATA.update.notes}`));
+      const slider = document.getElementById('fontSizeSlider');
+      slider.addEventListener('input', () => {
+        state.fontSize = Number(slider.value);
+        document.getElementById('fontSizeValue').textContent = `${state.fontSize}px`;
+        document.documentElement.style.setProperty('--term-font-size', state.fontSize + 'px');
+      });
+    }
+
+    // ============================================================
+    // Prayer screen + Adhan overlay (nextPrayer/parsePrayerTime/formatCountdown
+    // already defined above for the Heute-Zone + status strip — reused here so
+    // the countdown format matches everywhere in the app.)
+    // ============================================================
+    function renderPrayerList() {
+      const next = nextPrayer();
+      const host = document.getElementById('prayerList');
+      host.innerHTML = TMS_DATA.prayerTimes.map(p => `
+        <div class="prayer-row${p.name === next.name && !next.tomorrow ? ' is-next' : ''}">
+          <span class="prayer-row__name">${escapeHtml(p.name)}</span>
+          <span class="prayer-row__time">${escapeHtml(p.time)}</span>
+        </div>`).join('');
+    }
+
+    let prayerTickTimer = null;
+    function tickPrayerCountdown() {
+      renderPrayerList();
+      const next = nextPrayer();
+      const card = document.getElementById('prayerNextCard');
+      const update = () => {
+        card.innerHTML = `
+          <div class="prayer-next-card glass">
+            <div class="prayer-next-card__label">Nächstes Gebet — ${escapeHtml(next.name)}${next.tomorrow ? ' (morgen)' : ''}</div>
+            <div class="prayer-next-card__countdown">${formatCountdown(next)}</div>
+          </div>`;
+      };
+      update();
+      clearInterval(prayerTickTimer);
+      prayerTickTimer = setInterval(update, 30000);
+    }
+
+    function openAdhanOverlay(prayerName) {
+      const overlay = document.getElementById('adhanOverlay');
+      document.getElementById('adhanName').textContent = prayerName;
+      document.getElementById('adhanRingCode').textContent = prayerName.slice(0, 3).toUpperCase();
+      overlay.hidden = false;
+      requestAnimationFrame(() => overlay.classList.add('is-open'));
+    }
+    function closeAdhanOverlay() {
+      const overlay = document.getElementById('adhanOverlay');
+      overlay.classList.remove('is-open');
+      setTimeout(() => { overlay.hidden = true; }, 150);
+    }
+    function wirePrayer() {
+      document.getElementById('adhanDemoBtn').addEventListener('click', () => openAdhanOverlay(nextPrayer().name));
+      document.getElementById('adhanStop').addEventListener('click', closeAdhanOverlay);
+    }
+
+    SCREEN_HOOKS.prayer = tickPrayerCountdown;
+
+    // ============================================================
+    // Server detail screen (from Server-Zone; offline handled inline as a toast)
+    // ============================================================
+    function enterServerDetail(id) {
+      const server = TMS_DATA.servers.find(s => s.id === id);
+      if (!server) return;
+      document.getElementById('serverDetailTitle').textContent = server.name;
+      const chip = document.getElementById('serverDetailChip');
+      chip.dataset.status = server.status === 'online' ? 'ready' : 'suspended';
+      chip.innerHTML = `<span class="status-chip__dot"></span>${escapeHtml(server.status)}`;
+      document.getElementById('serverDetailBody').innerHTML = `
+        <div class="settings-group">
+          <div class="settings-row"><span class="settings-row__label">Adresse</span><span class="settings-row__value">${escapeHtml(server.host)}:${server.port}</span></div>
+          <div class="settings-row"><span class="settings-row__label">Latenz</span><span class="settings-row__value">${server.latency != null ? server.latency + 'ms' : '—'}</span></div>
+          <div class="settings-row"><span class="settings-row__label">Aktive Sessions</span><span class="settings-row__value">${server.sessions}</span></div>
+          <div class="settings-row"><span class="settings-row__label">Betriebssystem</span><span class="settings-row__value">${escapeHtml(server.os)}</span></div>
+        </div>`;
+      show('serverDetail');
+    }
+
+    // ============================================================
+    // Spotlight — full-index search (glass overlay, search icon in status strip)
+    // ============================================================
+    function buildSpotlightIndex() {
+      const idx = [];
+      TMS_DATA.sessions.forEach(s => idx.push({ type: 'Sitzung', label: s.name, sub: s.description, action: () => enterWorkspace(s.id) }));
+      TMS_DATA.cloudProjects.forEach(p => idx.push({ type: 'Cloud', label: p.name, sub: `${p.provider} · ${p.folder}`, action: () => openCloudDetail(p.id, 'env') }));
+      TMS_DATA.snippets.forEach(sn => idx.push({ type: 'Snippet', label: sn.label, sub: sn.cmd, action: () => toast('In Terminal eingefügt') }));
+      TOOL_DEFS.forEach(t => idx.push({ type: 'Tool', label: t.label, sub: 'Werkzeug öffnen', action: () => openToolSheet(t.id) }));
+      TMS_DATA.servers.forEach(s => idx.push({
+        type: 'Server', label: s.name, sub: `${s.host}:${s.port}`,
+        action: () => { if (s.status === 'online') enterServerDetail(s.id); else toast('Server offline — zuletzt gesehen vor 2 Std'); },
+      }));
+      idx.push({ type: 'Screen', label: 'Hub', sub: 'Zur Startseite', action: () => show('hub') });
+      idx.push({ type: 'Screen', label: 'Manager', sub: 'Manager-Chat öffnen', action: () => show('manager') });
+      idx.push({ type: 'Screen', label: 'Cloud', sub: 'Cloud-Projekte öffnen', action: () => show('cloud') });
+      idx.push({ type: 'Screen', label: 'Einstellungen', sub: 'Server, Sicherheit, Terminal, Über', action: () => show('settings') });
+      idx.push({ type: 'Screen', label: 'Gebetszeiten', sub: 'Heutige Gebetszeiten', action: () => show('prayer') });
+      idx.push({ type: 'Aktion', label: 'Adhan-Demo', sub: 'Adhan-Alarm testen', action: () => { show('prayer'); openAdhanOverlay(nextPrayer().name); } });
+      idx.push({ type: 'Aktion', label: 'Env kopieren — pinterest-scraper', sub: 'Cloud → Env-Variablen', action: () => openCloudDetail('c1', 'env') });
+      idx.push({ type: 'Aktion', label: 'App sperren', sub: 'Zur PIN-Sperre zurückkehren', action: () => lockApp() });
+      return idx;
+    }
+
+    function spotlightFuzzyScore(query, text) {
+      if (!query) return 0;
+      query = query.toLowerCase();
+      text = (text || '').toLowerCase();
+      let qi = 0, score = 0, lastIndex = -1;
+      for (let i = 0; i < text.length && qi < query.length; i++) {
+        if (text[i] === query[qi]) {
+          score += lastIndex === i - 1 ? 3 : 1;
+          lastIndex = i;
+          qi++;
+        }
+      }
+      return qi === query.length ? score : -1;
+    }
+
+    let spotlightIndex = [];
+    let spotlightFiltered = [];
+    let spotlightHighlight = 0;
+
+    function renderSpotlightResults(query) {
+      const scored = spotlightIndex
+        .map(entry => ({ entry, s: Math.max(spotlightFuzzyScore(query, entry.label), spotlightFuzzyScore(query, entry.sub || '')) }))
+        .filter(x => query === '' || x.s >= 0);
+      scored.sort((a, b) => b.s - a.s);
+      spotlightFiltered = scored.map(x => x.entry).slice(0, 30);
+      spotlightHighlight = 0;
+      const host = document.getElementById('spotlightResults');
+      if (!spotlightFiltered.length) {
+        host.innerHTML = `<div class="spotlight-empty">Keine Treffer</div>`;
+        return;
+      }
+      host.innerHTML = spotlightFiltered.map((entry, i) => `
+        <button class="spotlight-row${i === 0 ? ' is-highlighted' : ''}" data-idx="${i}">
+          <span class="spotlight-row__type">${escapeHtml(entry.type)}</span>
+          <span class="spotlight-row__label">${escapeHtml(entry.label)}</span>
+          <span class="spotlight-row__sub">${escapeHtml(entry.sub || '')}</span>
+        </button>
+      `).join('');
+    }
+
+    function moveSpotlightHighlight(dir) {
+      if (!spotlightFiltered.length) return;
+      spotlightHighlight = (spotlightHighlight + dir + spotlightFiltered.length) % spotlightFiltered.length;
+      document.querySelectorAll('.spotlight-row').forEach((el, i) => el.classList.toggle('is-highlighted', i === spotlightHighlight));
+      const activeEl = document.querySelector('.spotlight-row.is-highlighted');
+      if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+    }
+
+    function activateSpotlightEntry(i) {
+      const entry = spotlightFiltered[i];
+      if (!entry) return;
+      closeSpotlight();
+      entry.action();
+    }
+
+    function openSpotlight() {
+      spotlightIndex = buildSpotlightIndex();
+      state.spotlightOpen = true;
+      const wrap = document.getElementById('spotlightWrap');
+      wrap.hidden = false;
+      const input = document.getElementById('spotlightInput');
+      input.value = '';
+      renderSpotlightResults('');
+      requestAnimationFrame(() => {
+        wrap.classList.add('is-open');
+        input.focus();
+      });
+    }
+    function closeSpotlight() {
+      state.spotlightOpen = false;
+      const wrap = document.getElementById('spotlightWrap');
+      wrap.classList.remove('is-open');
+      setTimeout(() => { wrap.hidden = true; }, 150);
+    }
+    function wireSpotlight() {
+      document.getElementById('stripSearchBtn').addEventListener('click', e => { e.stopPropagation(); openSpotlight(); });
+      const input = document.getElementById('spotlightInput');
+      input.addEventListener('input', () => renderSpotlightResults(input.value));
+      input.addEventListener('keydown', e => {
+        if (e.key === 'ArrowDown') { e.preventDefault(); moveSpotlightHighlight(1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); moveSpotlightHighlight(-1); }
+        else if (e.key === 'Enter') { e.preventDefault(); activateSpotlightEntry(spotlightHighlight); }
+        else if (e.key === 'Escape') { closeSpotlight(); }
+      });
+      document.getElementById('spotlightCloseBtn').addEventListener('click', closeSpotlight);
+      document.querySelector('.spotlight-backdrop').addEventListener('click', closeSpotlight);
+      document.getElementById('spotlightResults').addEventListener('click', e => {
+        const row = e.target.closest('.spotlight-row');
+        if (row) activateSpotlightEntry(Number(row.dataset.idx));
+      });
+      document.addEventListener('keydown', e => {
+        if (document.body.classList.contains('is-locked')) return; // no shortcuts while locked
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openSpotlight(); }
+      });
+    }
+
+    // ============================================================
     // Lock screen (PIN pad)
     // ============================================================
     function renderPinDots(n) {
@@ -1214,6 +2436,7 @@
       renderServerZone();
       renderCloudZone();
       renderManagerZone();
+      renderHubQuickActions();
       startGlobalTick();
       initLiveSession();
       show('hub');
@@ -1223,7 +2446,11 @@
       state.lockDigits = '';
       renderPinDots(0);
       stopGlobalTick();
+      stopCloudBuildTimer();
       closeStrip();
+      closeSpotlight();
+      closeToolSheet();
+      closeAdhanOverlay();
       show('lock');
     }
     function wireLock() {
@@ -1243,6 +2470,7 @@
     // ============================================================
     SCREEN_HOOKS.hub = () => { renderHeuteZone(); updateStripPrayer(); };
     function show(name) {
+      if (name !== 'cloud') stopCloudBuildTimer();
       document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
       if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
     }
@@ -1250,16 +2478,38 @@
     // ============================================================
     // Init
     // ============================================================
+    ensureMessageIds();
+    loadFavorites();
+
     wireLock();
     wireToolbar();
     wireRailTabs();
     wireNameEdit();
+
+    renderManagerArtifacts();
+    renderManagerMemory();
+    wireManagerTabs();
+    wireManagerInput();
+    renderManagerChat();
+
+    renderCloudGroups();
+    wireCloudToolbar();
+
+    renderSettings();
+
+    renderPrayerList();
+    wirePrayer();
+
+    wireSpotlight();
 
     document.getElementById('wsBack').addEventListener('click', () => {
       state.activeSessionId = null;
       closePermSheet();
       show('hub');
     });
+
+    document.querySelectorAll('[data-nav-back]').forEach(btn => btn.addEventListener('click', () => show('hub')));
+    document.getElementById('heuteSettingsBtn').addEventListener('click', () => show('settings'));
 
     document.getElementById('statusStrip').addEventListener('click', toggleStrip);
     document.getElementById('statusStrip').addEventListener('keydown', e => {
@@ -1273,6 +2523,9 @@
     document.querySelector('#permSheetWrap [data-act="no"]').addEventListener('click', () => resolvePrompt(false));
     document.getElementById('permAutoBtn').addEventListener('click', toggleAutoApprove);
     // Permission sheet is modal for a pending decision — backdrop tap does not dismiss it.
+
+    document.getElementById('toolSheetClose').addEventListener('click', closeToolSheet);
+    document.querySelector('#toolSheetWrap .sheet-backdrop').addEventListener('click', closeToolSheet);
 
     show('lock');
   </script>
