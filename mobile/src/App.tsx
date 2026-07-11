@@ -40,6 +40,10 @@ const darkTheme = {
 
 export default function App() {
   const { ready, isEnabled, isUnlocked, lock, loadLockConfig } = useLockStore();
+  // UI-version switch: remount the WHOLE NavigationContainer on toggle — a key
+  // on the inner Stack.Navigator alone does not reliably reset navigation
+  // state, so initialRouteName was ignored when flipping the Design switch.
+  const seasonTwoEnabled = useSettingsStore((s) => s.seasonTwoEnabled);
   const [appReady, setAppReady] = useState(false);
   const [adhanAlert, setAdhanAlert] = useState<{ name: string; time: string; arabic: string } | null>(null);
 
@@ -113,7 +117,7 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ResponsiveProvider>
         <SafeAreaProvider>
-          <NavigationContainer theme={darkTheme}>
+          <NavigationContainer key={seasonTwoEnabled ? 's2' : 'classic'} theme={darkTheme}>
             <StatusBar style="light" backgroundColor={colors.bg} translucent={false} />
             <AppNavigator />
           </NavigationContainer>

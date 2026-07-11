@@ -49,12 +49,12 @@ const screenOptions = {
 
 export function AppNavigator() {
   // Season-2 (Liquid Glass) UI: same stack, different initial route — classic
-  // screens stay registered so the new UI can bridge into them. The `key`
-  // remounts the navigator when the user toggles the UI version in Settings.
+  // screens stay registered so the new UI can bridge into them. The remount
+  // on toggle happens at the NavigationContainer level (src/App.tsx `key`);
+  // this component only decides where a fresh container starts.
   const seasonTwoEnabled = useSettingsStore((s) => s.seasonTwoEnabled);
   return (
     <Stack.Navigator
-      key={seasonTwoEnabled ? 's2' : 'classic'}
       initialRouteName={seasonTwoEnabled ? 'SeasonTwo' : 'Home'}
       screenOptions={screenOptions}
     >
