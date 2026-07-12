@@ -20,7 +20,7 @@ import { useTerminalStore } from '../../store/terminalStore';
 import { GlassSurface } from '../components/GlassSurface';
 import { useDictation } from '../hooks/useDictation';
 import { useS2Theme } from '../theme/tokens';
-import { IconSend, IconMic, IconManager } from '../icons';
+import { IconSend, IconMic, IconManager, IconDot } from '../icons';
 
 interface ManagerScreenProps {
   navigation: NativeStackNavigationProp<RootStackParamList, 'SeasonTwo'>;
@@ -35,13 +35,25 @@ interface ManagerScreenProps {
 export function ManagerScreen({ navigation, wsService, serverId, serverHost, serverPort, serverToken, toast }: ManagerScreenProps) {
   const { theme } = useS2Theme();
   const { c, m } = theme;
-  const messages = useManagerStore((s) => s.messages);
+  const allMessages = useManagerStore((s) => s.messages);
+  const sessionMessages = useManagerStore((s) => s.sessionMessages);
+  const activeChat = useManagerStore((s) => s.activeChat);
   const streamingText = useManagerStore((s) => s.streamingText);
+  const streamingForChat = useManagerStore((s) => s.streamingForChat);
   const thinking = useManagerStore((s) => s.thinking);
   const loading = useManagerStore((s) => s.loading);
+  const delegatedTasks = useManagerStore((s) => s.delegatedTasks);
   const agentName = useManagerStore((s) => s.personality.agentName) || 'Manager';
+  const tabs = useTerminalStore((s) => s.tabs[serverId] ?? []);
   const [input, setInput] = useState('');
+  const [tasksOpen, setTasksOpen] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+
+  // Per-terminal chat targeting (classic V2 parity): 'alle' or a sessionId.
+  const messages = activeChat === 'alle'
+    ? (sessionMessages['alle']?.length ? sessionMessages['alle'] : allMessages)
+    : (sessionMessages[activeChat] ?? []);
+  const streamVisible = streamingText !== '' && streamingForChat === activeChat;
 
   // TTS — same server contract as classic: tts:generate → tts:result (base64
   // wav) → temp file → expo-av playback. One sound at a time.
@@ -93,9 +105,13 @@ export function ManagerScreen({ navigation, wsService, serverId, serverHost, ser
     const text = input.trim();
     if (!text) return;
     const store = useManagerStore.getState();
-    store.addMessage({ role: 'user', text }, 'alle');
+    const target = store.activeChat;
+    store.addMessage({ role: 'user', text, targetSessionId: target !== 'alle' ? target : undefined }, target);
     store.setLoading(true);
-    wsService.send({ type: 'manager:chat', payload: { text, onboarding: false } });
+    wsService.send({
+      type: 'manager:chat',
+      payload: { text, targetSessionId: target !== 'alle' ? target : undefined, onboarding: false },
+    });
     setInput('');
   }, [input, wsService]);
 
@@ -195,12 +211,49 @@ export function ManagerScreen({ navigation, wsService, serverId, serverHost, ser
         </View>
       </View>
 
+      {/* Chat target: Alle | per terminal (classic V2 group parity). */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.chipStrip}>
+        {[{ id: 'alle', label: 'Alle' }, ...tabs.filter((t) => t.sessionId).map((t) => ({ id: t.sessionId!, label: t.title || 'Terminal' }))].map((chatOpt) => {
+          const isActive = activeChat === chatOpt.id;
+          return (
+            <Pressable
+              key={chatOpt.id}
+              onPress={() => useManagerStore.getState().setActiveChat(chatOpt.id)}
+              style={[styles.chip, { borderColor: isActive ? `rgba(${c.accentRgb},0.5)` : c.glassBorder, backgroundColor: isActive ? `rgba(${c.accentRgb},0.14)` : `rgba(${c.overlayRgb},0.05)` }]}
+            >
+              <Text numberOfLines={1} style={{ color: isActive ? c.text : c.textDim, fontSize: m.font.caption, fontWeight: '700', maxWidth: 140 }}>
+                {chatOpt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      {delegatedTasks.length > 0 && (
+        <View style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+          <GlassSurface radius={m.radius.md} style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
+            <Pressable onPress={() => setTasksOpen((o) => !o)} accessibilityRole="button">
+              <Text style={{ color: c.textDim, fontSize: m.font.micro, fontWeight: '700', letterSpacing: 0.5 }}>
+                AUFGABEN ({delegatedTasks.filter((t) => t.status !== 'done').length} offen · {delegatedTasks.length} gesamt) {tasksOpen ? '▾' : '▸'}
+              </Text>
+            </Pressable>
+            {tasksOpen && delegatedTasks.map((t) => (
+              <View key={t.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 8 }}>
+                <IconDot size={8} color={t.status === 'done' ? c.ok : t.status === 'failed' ? c.err : c.warn} />
+                <Text numberOfLines={1} style={{ flex: 1, color: c.text, fontSize: m.font.caption }}>{t.description}</Text>
+                <Text style={{ color: c.textDim, fontSize: m.font.micro }}>{t.sessionLabel} · {t.status}</Text>
+              </View>
+            ))}
+          </GlassSurface>
+        </View>
+      )}
+
       <ScrollView
         ref={scrollRef}
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 12 }}
       >
-        {messages.length === 0 && !streamingText && (
+        {messages.length === 0 && !streamVisible && (
           <View style={{ alignItems: 'center', paddingVertical: 40, gap: 10 }}>
             <IconManager size={34} color={c.textDim} />
             <Text style={{ color: c.textDim, fontSize: m.font.body, textAlign: 'center' }}>
@@ -210,7 +263,7 @@ export function ManagerScreen({ navigation, wsService, serverId, serverHost, ser
         )}
         {messages.map(renderMessage)}
 
-        {streamingText !== '' && (
+        {streamVisible && (
           <View style={styles.bubbleRow}>
             <GlassSurface strong radius={m.radius.md} style={styles.bubble}>
               <View style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
@@ -220,7 +273,7 @@ export function ManagerScreen({ navigation, wsService, serverId, serverHost, ser
           </View>
         )}
 
-        {(thinking || (loading && !streamingText)) && (
+        {(thinking || (loading && !streamVisible)) && (
           <View style={[styles.bubbleRow, { alignItems: 'center', gap: 8 }]}>
             <ActivityIndicator color={c.accent} size="small" />
             <Text style={{ color: c.textDim, fontSize: m.font.caption }}>
@@ -275,6 +328,8 @@ const styles = StyleSheet.create({
   pageTitle: { fontWeight: '800', letterSpacing: 0.2 },
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10 },
   headChip: { paddingHorizontal: 12, height: 36, borderRadius: 999, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
+  chipStrip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingBottom: 8 },
+  chip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 32, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
   bubbleRow: { flexDirection: 'row', marginBottom: 10 },
   bubble: { maxWidth: '86%' },
   inputZone: { paddingHorizontal: 14 },

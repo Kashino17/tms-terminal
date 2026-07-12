@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, StyleSheet } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useSettingsStore } from '../store/settingsStore';
@@ -119,6 +120,20 @@ function S2Shell({ navigation }: Props) {
     setToastMsg(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToastMsg(null), 2600);
+  }, []);
+
+  // One-time gesture hint — the island long-press is otherwise undiscoverable.
+  useEffect(() => {
+    const KEY = 'tms-s2-hint-spotlight';
+    const t = setTimeout(() => {
+      AsyncStorage.getItem(KEY).then((seen) => {
+        if (seen) return;
+        AsyncStorage.setItem(KEY, '1').catch(() => {});
+        toast('Tipp: Insel oben gedrückt halten öffnet die Suche');
+      }).catch(() => {});
+    }, 2500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Prayer countdown for the island — reuses the classic prayer.service
