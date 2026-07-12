@@ -5678,8 +5678,10 @@
   let tsDots = [];
 
   function tsVisible() {
-    const screen = document.querySelector('[data-screen="terminals"]');
-    return !!screen && !screen.hidden && state.terminalView === 'stack' && state.order.length > 1;
+    // Auf Nutzerwunsch ausgeblendet: der Stack wischt ohnehin horizontal durch
+    // die Terminals — die Punkte kosteten nur Höhe. (Zum Reaktivieren die alte
+    // Bedingung wiederherstellen: Terminals-Tab + Stack + mehr als 1 Terminal.)
+    return false;
   }
   function tsName(i) {
     const s = TMS_DATA.sessions.find(x => x.id === state.order[i]);
