@@ -482,6 +482,29 @@
   // scrollTerminalToBottom und updateJumpOrb bleiben die des Mockups: die
   // .card-body ist wieder der echte Scroller.
 
+  /** Zeile in den Kopier-Modus nehmen. */
+  function startLineSelection(line) {
+    var pre = line.closest('.card-body[data-card-id]');
+    if (!pre) return;
+    var id = pre.getAttribute('data-card-id');
+    if (!pre.classList.contains('selection-mode') && typeof window.toggleCardSelectionMode === 'function') {
+      window.toggleCardSelectionMode(id, null);
+    }
+    if (typeof window.handleLineTap === 'function') window.handleLineTap(pre, line);
+    if (navigator.vibrate) navigator.vibrate(10);
+  }
+
+  // Langes Drücken feuert im Browser ohnehin ein contextmenu — und weil die
+  // native Textauswahl app-weit aus ist, ist das Signal hier frei verwendbar.
+  // Das ist zuverlässiger als ein eigener Timer (der nach einem vorherigen Tipp
+  // nicht mehr durchkam).
+  document.addEventListener('contextmenu', function (e) {
+    var line = e.target.closest && e.target.closest('.card-body[data-card-id] .term-line');
+    if (!line) return;
+    e.preventDefault();
+    startLineSelection(line);
+  });
+
   // Langes Drücken auf eine Terminalzeile startet das Markieren — die einzige
   // Stelle in der App, an der überhaupt noch etwas markiert werden kann.
   var selHold = null, selMoved = false, selStart = null;
@@ -495,12 +518,8 @@
     clearTimeout(selHold);
     selHold = setTimeout(function () {
       if (selMoved) return;
-      if (!pre.classList.contains('selection-mode') && typeof window.toggleCardSelectionMode === 'function') {
-        window.toggleCardSelectionMode(id, null);
-      }
-      if (typeof window.handleLineTap === 'function') window.handleLineTap(pre, line);
-      if (navigator.vibrate) navigator.vibrate(10);
-    }, 420);
+      startLineSelection(line);
+    }, 550);
   }, true);
   document.addEventListener('pointermove', function (e) {
     if (!selStart) return;
@@ -512,13 +531,19 @@
   document.addEventListener('pointerup', function () { clearTimeout(selHold); selStart = null; }, true);
   document.addEventListener('pointercancel', function () { clearTimeout(selHold); selStart = null; }, true);
 
-  // Ein Tipp ins Terminal (außerhalb des Auswahlmodus) holt die Tastatur.
+  // Ein Tipp ins Terminal wählt es aus und setzt den Cursor in die EINGABEZEILE
+  // unten — dort tippt man, sichtbar. Das versteckte Textfeld des Emulators zu
+  // fokussieren hieß: blind tippen, und Androids Wortvorschlag machte Salat.
   document.addEventListener('click', function (e) {
     var pre = e.target.closest && e.target.closest('.card-body[data-card-id]');
     if (!pre || pre.classList.contains('selection-mode')) return;
     if (e.target.closest('.wrapped-link') || e.target.closest('.jump-bottom-orb')) return;
-    var t = terms[pre.getAttribute('data-card-id')];
-    if (t && t.term.textarea) t.term.textarea.focus();
+    var id = pre.getAttribute('data-card-id');
+    if (window.__tmsState) window.__tmsState.activeCardId = id;
+    if (typeof window.setDockPage === 'function') window.setDockPage('term');
+    if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
+    var input = document.getElementById('dockInput');
+    if (input && !input.disabled) input.focus();
   });
   window.copyText = function (text) { post('clipboard:write', { text: text }); };
 
@@ -1057,37 +1082,57 @@
   // Screenshots — the real workflow: grab an image, upload it to the server,
   // then drop its path into the terminal so the AI can actually look at it.
   // Thumbnails come straight from the server (/files/download?token=…).
+  var uploadState = null; // { done, total } während des Hochladens
   window.buildScreenshotsSheet = function () {
     var shots = window.TMS_DATA.screenshots || [];
-    var tiles = shots.length
-      ? '<div class="shot-grid" id="shotGrid">' + shots.map(function (s, i) {
-          return '<button class="shot-tile" data-shot="' + i + '" title="' + escapeHtml(s.path) + '"' +
-            ' style="background-image:url(\'' + s.url + '\');background-size:cover;background-position:center"></button>';
-        }).join('') + '</div>'
+    var progress = uploadState
+      ? '<div class="up-progress"><div class="up-progress__bar"><span style="width:' +
+          Math.round((uploadState.done / Math.max(1, uploadState.total)) * 100) + '%"></span></div>' +
+        '<div class="up-progress__label">Lade hoch … ' + uploadState.done + ' von ' + uploadState.total + '</div></div>'
       : '';
-    // Nur zwei Wege — aufnehmen oder aus der Galerie wählen (bis zu 20 Bilder).
-    var html =
+    var choice = uploadState ? '' :
       '<div class="shot-choice">' +
       '<button class="shot-choice__btn" id="shotCaptureBtn">' + icon('camera', 22) + '<span>Kamera</span></button>' +
       '<button class="shot-choice__btn" id="shotPickBtn">' + icon('grid', 22) + '<span>Galerie</span><small>bis zu 20</small></button>' +
-      '</div>' + tiles;
-    var wire = function () {
-      document.getElementById('shotCaptureBtn').addEventListener('click', function () {
-        var flash = document.getElementById('shotFlash');
-        if (flash) { flash.classList.add('is-flashing'); setTimeout(function () { flash.classList.remove('is-flashing'); }, 160); }
-        post('shot:capture', { source: 'camera' });
-      });
-      document.getElementById('shotPickBtn').addEventListener('click', function () {
-        post('shot:capture', { source: 'library' });
-      });
-      document.querySelectorAll('#toolSheetBody [data-shot]').forEach(function (tile) {
-        tile.addEventListener('click', function () {
-          var shot = (window.TMS_DATA.screenshots || [])[Number(tile.dataset.shot)];
-          if (shot) insertIntoTerminal(shot.path, 'Bildpfad eingefügt');
+      '</div>';
+    var allBtn = shots.length
+      ? '<button class="shot-insert-all" id="shotInsertAll">Alle ' + shots.length + ' Bilder ins Terminal einfügen</button>'
+      : '';
+    var tiles = shots.length
+      ? '<div class="shot-grid" id="shotGrid">' + shots.map(function (sh, i) {
+          return '<button class="shot-tile" data-shot="' + i + '" title="' + escapeHtml(sh.path) + '"' +
+            ' style="background-image:url(\'' + sh.url + '\');background-size:cover;background-position:center"></button>';
+        }).join('') + '</div>'
+      : '';
+    return {
+      html: progress + choice + allBtn + tiles,
+      wire: function () {
+        var cap = document.getElementById('shotCaptureBtn');
+        if (cap) cap.addEventListener('click', function () {
+          var flash = document.getElementById('shotFlash');
+          if (flash) { flash.classList.add('is-flashing'); setTimeout(function () { flash.classList.remove('is-flashing'); }, 160); }
+          post('shot:capture', { source: 'camera' });
         });
-      });
+        var pick = document.getElementById('shotPickBtn');
+        if (pick) pick.addEventListener('click', function () { post('shot:capture', { source: 'library' }); });
+        var all = document.getElementById('shotInsertAll');
+        if (all) all.addEventListener('click', function () {
+          var paths = (window.TMS_DATA.screenshots || []).map(function (sh) { return sh.path; });
+          if (paths.length) insertIntoTerminal(paths.join(' '), paths.length + ' Bilder eingefügt');
+        });
+        document.querySelectorAll('#toolSheetBody [data-shot]').forEach(function (tile) {
+          tile.addEventListener('click', function () {
+            var shot = (window.TMS_DATA.screenshots || [])[Number(tile.dataset.shot)];
+            if (shot) insertIntoTerminal(shot.path, 'Bildpfad eingefügt');
+          });
+        });
+      },
     };
-    return { html: html, wire: wire };
+  };
+  /** Ladefortschritt: wie viele von wie vielen Bildern schon durch sind. */
+  window.TMSBridge.uploadProgress = function (done, total) {
+    uploadState = (done >= total) ? null : { done: done, total: total };
+    window.TMSBridge.setTool('screenshots', window.TMS_DATA.screenshots || []);
   };
 
   // ══ Notizen & Todos pro Terminal ══════════════════════════════════════════

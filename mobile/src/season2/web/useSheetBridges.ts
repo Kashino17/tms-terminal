@@ -110,6 +110,8 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       if (result.canceled) return;
 
       const uploaded: Array<{ path: string; url: string }> = [];
+      const total = result.assets.length;
+      call('uploadProgress', 0, total);
       for (const asset of result.assets) {
         const data = asset.base64
           ?? (await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
@@ -125,6 +127,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         const json = await r.json();
         if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
         uploaded.push({ path: json.path, url: downloadUrl(json.path) });
+        call('uploadProgress', uploaded.length, total); // 3 von 12 …
       }
       const next = [...uploaded.reverse(), ...shots];
       setShots(next);
@@ -134,6 +137,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       call('insertIntoTerminal', next.slice(0, uploaded.length).map((s) => s.path).join(' '),
         uploaded.length > 1 ? `${uploaded.length} Bilder eingefügt` : 'Bild eingefügt');
     } catch (e: any) {
+      call('uploadProgress', 1, 1); // Fortschritt wieder ausblenden
       call('toast', `Screenshot: ${e?.message ?? 'Upload fehlgeschlagen'}`);
     }
   }, [server, token, shots, downloadUrl, call]);

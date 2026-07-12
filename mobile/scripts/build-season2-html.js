@@ -127,6 +127,13 @@ patch('body end', '</body>', `<style>${xterm.XTERM_CSS}
 #tmsEmulators textarea { pointer-events: auto; }
 .card-body { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .card-body .term-line { display: block; white-space: pre-wrap; word-break: break-word; }
+.up-progress { margin-bottom: 14px; }
+.up-progress__bar { height: 6px; border-radius: 3px; background: rgba(var(--overlay-rgb),.14); overflow: hidden; }
+.up-progress__bar span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 260ms var(--spring); }
+.up-progress__label { margin-top: 7px; text-align: center; font: 12px var(--font-ui); color: var(--text-dim); }
+.shot-insert-all { width: 100%; padding: 13px; margin-bottom: 12px; border-radius: 14px; font: 600 13.5px var(--font-ui);
+  color: var(--accent); background: rgba(var(--accent-rgb),.14); border: 1px solid rgba(var(--accent-rgb),.4); }
+.shot-insert-all:active { transform: scale(.98); }
 .shot-choice { display: flex; gap: 10px; margin-bottom: 12px; }
 .shot-choice__btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 10px;
   border-radius: 16px; background: rgba(var(--well-rgb),var(--well-a)); border: 1px solid var(--glass-border); color: var(--text); }
