@@ -192,26 +192,35 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   }, [ready, state, rtt, server, call]);
 
   // ── The Server screen and its update banner, on real data.
+  const updateChecked = useRef(0);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || state !== 'connected') return;
     let cancelled = false;
     (async () => {
       const servers = await storageService.getServers().catch(() => []);
       if (cancelled) return;
       call('setServers', servers.map((s) => ({
         id: s.id, name: s.name, host: s.host, port: s.port,
-        status: s.id === server?.id && state === 'connected' ? 'online' : 'offline',
+        status: s.id === server?.id ? 'online' : 'offline',
         sessions: useTerminalStore.getState().getTabs(s.id).length,
-        os: '', latency: s.id === server?.id ? rtt : null,
+        os: '',
+        latency: null, // die Seite pflegt die Latenz selbst (setStatus-Ticker)
       })));
 
+      // Höchstens alle 30 Minuten: vorher hing `rtt` in den Abhängigkeiten,
+      // der Effekt lief bei JEDEM RTT-Tick (alle 3s) und hämmerte die
+      // GitHub-API — nach ~3 Minuten griff deren Rate-Limit (60/h) und das
+      // Update-Banner erschien NIE wieder. Genau so blieb der Nutzer auf
+      // alten Versionen hängen.
+      if (Date.now() - updateChecked.current < 30 * 60_000) return;
+      updateChecked.current = Date.now();
       const up = await checkForUpdate().catch(() => null);
-      if (cancelled || !up) return; // null means: already on the newest version
+      if (cancelled || !up) return; // null heißt auch: schon aktuell
       updateUrl.current = up.downloadUrl;
       call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
     })();
     return () => { cancelled = true; };
-  }, [ready, server, state, rtt, call]);
+  }, [ready, server, state, call]);
 
   // ── Once connected, hand the page the sessions that already exist.
   useEffect(() => {
