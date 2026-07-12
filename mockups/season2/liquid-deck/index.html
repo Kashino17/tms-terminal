@@ -638,7 +638,44 @@
   /* Die Tastenleiste schwebt über der Bottom-Bar, statt die Karte zu stauchen. */
   .keys-panel--global { position: fixed; left: 50%; transform: translateX(-50%); z-index: 39;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px);
-    width: min(calc(100vw - 24px), 520px); margin: 0 !important; }
+    width: min(calc(100vw - 24px), 520px); margin: 0 !important;
+    transition: bottom 380ms var(--spring); }
+  body.has-switcher .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px + 46px); }
+
+  /* ── Terminal-Slider ──────────────────────────────────────────────────────
+     Ein Zug mit dem Daumen durch alle Terminals. Gedrückt halten hebt ihn an,
+     dann schiebt der Finger den Stapel direkt mit — nicht Karte für Karte,
+     sondern kontinuierlich. Loslassen rastet federnd ein. */
+  .term-switcher { position: fixed; left: 50%; transform: translateX(-50%); z-index: 38;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px);
+    width: min(calc(100vw - 24px), 520px); display: flex; flex-direction: column; align-items: center; gap: 6px;
+    touch-action: pan-y; -webkit-user-select: none; user-select: none; }
+  .term-switcher[hidden] { display: none; }
+  .term-switcher__label { pointer-events: none; opacity: 0; transform: translateY(6px) scale(.92);
+    transition: opacity 220ms var(--spring), transform 320ms var(--spring); }
+  .term-switcher__label span { display: inline-block; padding: 5px 12px; border-radius: 999px;
+    background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+    border: 1px solid var(--glass-border); color: var(--text);
+    font: 600 12px var(--font-ui); letter-spacing: -.01em; white-space: nowrap;
+    box-shadow: 0 8px 22px rgba(0,0,0,.32); }
+  .term-switcher.is-scrubbing .term-switcher__label,
+  .term-switcher.is-hinting  .term-switcher__label { opacity: 1; transform: translateY(0) scale(1); }
+
+  .term-switcher__track { position: relative; display: flex; align-items: center; width: 100%; height: 30px;
+    padding: 0 4px; border-radius: 999px; overflow: hidden;
+    transition: transform 420ms var(--spring), box-shadow 420ms var(--spring); }
+  .term-switcher.is-scrubbing .term-switcher__track { transform: scale(1.045); box-shadow: 0 14px 34px rgba(0,0,0,.4); }
+
+  .ts-thumb { position: absolute; top: 3px; bottom: 3px; left: 0; width: 0; border-radius: 999px;
+    background: rgba(var(--overlay-rgb),.16); border: 1px solid rgba(var(--overlay-rgb),.14);
+    transition: transform 460ms var(--spring), width 460ms var(--spring); will-change: transform; }
+  .term-switcher.is-scrubbing .ts-thumb { transition: none; background: rgba(var(--accent-rgb),.22); border-color: rgba(var(--accent-rgb),.45); }
+
+  .ts-seg { position: relative; z-index: 1; flex: 1; height: 100%; display: flex; align-items: center; justify-content: center; }
+  .ts-dot { width: 6px; height: 6px; border-radius: 50%; opacity: .5;
+    transition: transform 340ms var(--spring), opacity 240ms ease; }
+  .ts-seg.is-active .ts-dot { opacity: 1; transform: scale(1.6); }
+  .term-switcher.is-scrubbing .ts-seg.is-active .ts-dot { transform: scale(2); }
   .keys-panel:not([hidden]) { flex: none; margin: 0 8px 8px; padding: 7px 8px; border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 6px; }
   .keys-panel__row { display: flex; align-items: center; gap: 7px; }
   .keys-panel__spacer { flex: 1 1 auto; }
@@ -1169,6 +1206,13 @@
 </main>
 
 <div class="pull-hint glass" id="pullHint" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Spotlight</span></div>
+
+<div class="term-switcher" id="termSwitcher" hidden aria-label="Terminal wechseln">
+  <div class="term-switcher__label" id="tsLabel"><span></span></div>
+  <div class="term-switcher__track glass" id="tsTrack">
+    <span class="ts-thumb" id="tsThumb" aria-hidden="true"></span>
+  </div>
+</div>
 
 <div class="keys-panel keys-panel--global glass" id="globalKeys" hidden></div>
 
@@ -1901,6 +1945,7 @@
     if (name !== 'terminals') { cancelDictation(); closeAllListRails(); }
     if (name !== 'browser') stopBrowserProgressTimers();
     if (name !== 'terminals' && typeof setDockPage === 'function') setDockPage('nav');
+    if (typeof renderTermSwitcher === 'function') setTimeout(renderTermSwitcher, 0);
     const prev = currentScreen;
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
@@ -2056,7 +2101,8 @@
   // just "throw the old view's DOM away and repaint the other one from
   // state", instant at this card count.
   function renderTerminalWorkspace() {
-    cancelDictation(); // never leave a mic mid-flight pointed at a DOM node we're about to discard
+    cancelDictation();
+    setTimeout(() => { if (typeof renderTermSwitcher === 'function') renderTermSwitcher(); }, 0); // never leave a mic mid-flight pointed at a DOM node we're about to discard
     const body = document.getElementById('termBody');
     if (!body) return;
     if (state.terminalView === 'list') {
@@ -2426,7 +2472,10 @@
   // (same click-to-edit flow as an existing card's name field).
   function addTerminal() {
     cancelDictation();
-    setTimeout(() => { if (typeof syncDockTerminal === 'function') syncDockTerminal(); }, 0);
+    setTimeout(() => {
+      if (typeof syncDockTerminal === 'function') syncDockTerminal();
+      if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
+    }, 0);
     const session = createTerminalSession();
     if (state.terminalView === 'list') {
       const cardsHost = document.getElementById('termListCards');
@@ -2825,6 +2874,7 @@
     state.activeCardId = state.order[index];
     layoutStack(index);
     renderRail();
+    if (typeof renderTermSwitcher === 'function') { tsPlaceThumb(index); tsMarkActive(index); }
     // Switching the active card in Stack changes which card's ⏬ orb (if
     // any) is allowed to show — re-evaluate every card, cheap at this count.
     state.order.forEach(id => updateJumpOrb(id));
@@ -5450,8 +5500,119 @@
   window.dockTargetId = dockTargetId;
 
   // Auf dem Terminals-Tab ist die Terminal-Leiste die Voreinstellung.
-  SCREEN_HOOKS.terminals = () => setDockPage('term');
+  SCREEN_HOOKS.terminals = () => { setDockPage('term'); renderTermSwitcher(); };
   setDockPage('nav');
+
+
+  // ============================================================
+  // Terminal-Slider — ein Daumenzug durch den Stapel.
+  // Gedrückt halten hebt ihn an; danach schiebt der Finger den Stapel
+  // KONTINUIERLICH mit (layoutStack nimmt Zwischenwerte), nicht Karte für
+  // Karte. Loslassen rastet federnd auf dem nächsten Terminal ein.
+  // ============================================================
+  const tsEl = document.getElementById('termSwitcher');
+  const tsTrack = document.getElementById('tsTrack');
+  const tsThumb = document.getElementById('tsThumb');
+  const tsLabel = document.getElementById('tsLabel').firstElementChild;
+
+  function tsVisible() {
+    const screen = document.querySelector('[data-screen="terminals"]');
+    return !!screen && !screen.hidden && state.terminalView === 'stack' && state.order.length > 1;
+  }
+  function tsName(i) {
+    const s = TMS_DATA.sessions.find(x => x.id === state.order[i]);
+    return s ? s.name : '';
+  }
+  function tsPlaceThumb(floatIndex, instant) {
+    const n = state.order.length;
+    if (!n) return;
+    const w = (tsTrack.clientWidth - 8) / n;
+    tsThumb.style.width = w + 'px';
+    tsThumb.style.transform = `translateX(${4 + floatIndex * w}px)`;
+    if (instant) tsThumb.getBoundingClientRect(); // Layout erzwingen, kein Nachziehen
+  }
+  function tsMarkActive(i) {
+    tsTrack.querySelectorAll('.ts-seg').forEach((s, k) => s.classList.toggle('is-active', k === i));
+    tsLabel.textContent = tsName(i);
+  }
+  function renderTermSwitcher() {
+    const show = tsVisible();
+    tsEl.hidden = !show;
+    document.body.classList.toggle('has-switcher', show);
+    if (!show) return;
+    tsTrack.querySelectorAll('.ts-seg').forEach(s => s.remove());
+    state.order.forEach((id, i) => {
+      const s = TMS_DATA.sessions.find(x => x.id === id);
+      const seg = document.createElement('button');
+      seg.className = 'ts-seg' + (i === state.activeIndex ? ' is-active' : '');
+      seg.dataset.ts = i;
+      seg.setAttribute('aria-label', s ? s.name : 'Terminal');
+      seg.innerHTML = `<span class="ts-dot" style="background:${s ? s.colorTag : 'var(--accent)'}"></span>`;
+      tsTrack.appendChild(seg);
+    });
+    requestAnimationFrame(() => { tsPlaceThumb(state.activeIndex); tsMarkActive(state.activeIndex); });
+  }
+  window.renderTermSwitcher = renderTermSwitcher;
+
+  // Gesten: langes Drücken -> anheben, schieben -> scrubben, loslassen -> einrasten.
+  let tsHold = null, tsScrub = false, tsMoved = false, tsIndexAtDown = 0;
+  function tsIndexFromX(clientX) {
+    const r = tsTrack.getBoundingClientRect();
+    const n = state.order.length;
+    const w = (r.width - 8) / n;
+    return clamp((clientX - r.left - 4) / w - 0.5, 0, n - 1);
+  }
+  tsTrack.addEventListener('pointerdown', e => {
+    if (!state.order.length) return;
+    tsMoved = false;
+    tsIndexAtDown = state.activeIndex;
+    tsTrack.setPointerCapture(e.pointerId);
+    clearTimeout(tsHold);
+    tsHold = setTimeout(() => {
+      tsScrub = true;
+      tsEl.classList.add('is-scrubbing');
+      if (navigator.vibrate) navigator.vibrate(8);
+    }, 260);
+  });
+  tsTrack.addEventListener('pointermove', e => {
+    if (!tsScrub) return;
+    tsMoved = true;
+    const f = tsIndexFromX(e.clientX);
+    tsPlaceThumb(f, true);
+    tsMarkActive(Math.round(f));
+    // Der Stapel folgt dem Daumen direkt — das ist der ganze Trick.
+    state.activeFloat = f;
+    layoutStack(f, { instant: true });
+  });
+  function tsRelease(e) {
+    clearTimeout(tsHold);
+    if (!tsScrub) return;
+    tsScrub = false;
+    tsEl.classList.remove('is-scrubbing');
+    const target = tsMoved ? Math.round(tsIndexFromX(e.clientX)) : tsIndexAtDown;
+    setActive(target);          // federt in die Ruhelage
+    tsPlaceThumb(target);
+    tsMarkActive(target);
+    tsEl.classList.add('is-hinting');
+    clearTimeout(tsEl._hint);
+    tsEl._hint = setTimeout(() => tsEl.classList.remove('is-hinting'), 900);
+  }
+  tsTrack.addEventListener('pointerup', tsRelease);
+  tsTrack.addEventListener('pointercancel', e => { clearTimeout(tsHold); if (tsScrub) tsRelease(e); });
+
+  // Kurzer Tipp auf ein Segment springt direkt dorthin.
+  tsTrack.addEventListener('click', e => {
+    if (tsMoved) return;
+    const seg = e.target.closest('.ts-seg');
+    if (!seg) return;
+    const i = Number(seg.dataset.ts);
+    setActive(i);
+    tsPlaceThumb(i); tsMarkActive(i);
+    tsEl.classList.add('is-hinting');
+    clearTimeout(tsEl._hint);
+    tsEl._hint = setTimeout(() => tsEl.classList.remove('is-hinting'), 900);
+  });
+  window.addEventListener('resize', () => { if (tsVisible()) tsPlaceThumb(state.activeIndex); });
 
   wireNav();
   wireTermToolsSheet();

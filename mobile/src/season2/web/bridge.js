@@ -649,6 +649,7 @@
       });
       restoring = false;
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
+      if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
       // addTerminal() arms the rename field for a brand-new terminal; a restored
       // one is not new, so drop that focus again.
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -1026,6 +1027,9 @@
     if (input && !input.disabled) {
       input.value = (input.value ? input.value + ' ' : '') + text;
       input.focus();
+      // Programmatische Änderungen feuern kein input-Event — sonst käme der
+      // Pfad in der Eingabezeile an, aber nie im Terminal.
+      input.dispatchEvent(new Event('input', { bubbles: true }));
     } else {
       window.__tmsInput(card, text);
     }
@@ -1225,6 +1229,64 @@
     s.notes = notes;
     s.todos = todos;
     if (sheetCardId === cardId) origRenderSessionBody();
+  };
+
+  // ══ Die Eingabezeile IST die des Terminals ═══════════════════════════════
+  // Bisher ging der Text erst bei Enter raus — in Claudes eigener Eingabezeile
+  // stand also nichts, während man tippte. Jetzt geht jedes Zeichen sofort an
+  // die PTY. Gesendet wird die DIFFERENZ zum vorherigen Feldinhalt, nicht der
+  // einzelne Tastendruck: damit kommt auch Androids Wortvorschlag korrekt an
+  // (er ersetzt ganze Wörter — als Rückschritte plus neuer Text).
+  var dockInput = document.getElementById('dockInput');
+  var dockLast = '';
+  var dockQuiet = false;
+
+  function dockToPty() {
+    var id = window.dockTargetId && window.dockTargetId();
+    if (!id || !byCard[id]) { dockLast = dockInput.value; return; }
+    var now = dockInput.value, prev = dockLast, i = 0;
+    while (i < prev.length && i < now.length && prev[i] === now[i]) i++;
+    var data = new Array(prev.length - i + 1).join('\x7f') + now.slice(i);
+    dockLast = now;
+    if (data) window.__tmsInput(id, data);
+  }
+  function dockReset() {
+    dockQuiet = true;
+    dockInput.value = '';
+    dockLast = '';
+    setTimeout(function () { dockQuiet = false; }, 0);
+  }
+  if (dockInput) {
+    dockInput.addEventListener('input', function () {
+      if (dockQuiet) { dockLast = dockInput.value; return; }
+      dockToPty();
+    });
+    dockInput.addEventListener('focus', function () { dockLast = dockInput.value; });
+  }
+
+  // Der Text steht schon im Terminal — beim Absenden fehlt nur noch das Enter.
+  window.sendTerminalCommand = function (id, cmd) {
+    if (!id) return;
+    window.__tmsInput(id, '\r');
+    dockReset();
+  };
+
+  // ^C und Esc verwerfen die Zeile in der Shell — dann auch bei uns.
+  var origHandleTermKey = window.handleTermKey;
+  window.handleTermKey = function (key, id) {
+    origHandleTermKey(key, id);
+    if (key === 'ctrlc' || key === 'esc') dockReset();
+  };
+  var origSendCtrlC = window.sendCtrlC;
+  window.sendCtrlC = function (id) { origSendCtrlC(id); dockReset(); };
+
+  // Ein anderes Terminal = eine andere Zeile: nicht die alte weiterschreiben.
+  var origSyncDock = window.syncDockTerminal;
+  var dockLastTarget = null;
+  window.syncDockTerminal = function () {
+    origSyncDock();
+    var id = window.dockTargetId && window.dockTargetId();
+    if (id !== dockLastTarget) { dockLastTarget = id; dockReset(); }
   };
 
   // ══ Rückfragen ════════════════════════════════════════════════════════════
