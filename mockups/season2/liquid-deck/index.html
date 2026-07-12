@@ -694,15 +694,21 @@
   /* Der Stapel endet ÜBER dem Slider, nicht darunter. */
   .stack { transition: bottom 520ms cubic-bezier(.30,1.18,.34,1); }
   body.has-switcher .stack { bottom: 52px; }
-  /* Die Tastenleiste liegt nicht AUF dem Terminal — es macht ihr Platz. */
-  body.keys-open .stack { bottom: 108px; }
-  body.keys-open.has-switcher .stack { bottom: 158px; }
-  body.keys-open .term-list { padding-bottom: 112px; }
+  /* Die Tastenleiste liegt nicht AUF dem Terminal — es macht ihr Platz.
+     --keys-h ist die ECHTE Panelhöhe (gesetzt beim Öffnen); statische Werte
+     gingen auseinander, sobald die Tastatur den Viewport verkürzte. */
+  body.keys-open .stack { bottom: calc(var(--keys-h, 100px) + 12px); }
+  body.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px + 40px); }
+  body.keys-open .term-list { padding-bottom: calc(var(--keys-h, 100px) + 20px); }
   /* Tastatur offen: die Slider-Punkte weichen, das Terminal wird größer. */
   #termSwitcher { transition: opacity 220ms ease-out, transform 380ms cubic-bezier(.30,1.18,.34,1); }
   body.typing #termSwitcher { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(24px) scale(.9); }
   body.typing.has-switcher .stack { bottom: 0; }
-  body.typing.keys-open.has-switcher .stack { bottom: 108px; }
+  /* Beim Tippen sind die Punkte weg — die Leiste rückt nach unten nach,
+     und die Karte muss nur noch die Leiste selbst freihalten. */
+  body.typing .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px); }
+  body.typing.keys-open .stack,
+  body.typing.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px); }
 
   /* ── Terminal-Slider ──────────────────────────────────────────────────────
      Nur Punkte. Antippen springt, gedrückt halten und ziehen schiebt den Stapel
@@ -2298,10 +2304,10 @@
               <button data-tt-cursor="→" aria-label="Rechts">${arrow(-90)}</button>
             </div>
             <span class="keys-panel__spacer"></span>
+            <button class="tt-key tt-key--icon" data-tt-key="mic" aria-label="Diktieren" title="Diktieren">${icon('mic', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="screenshots" aria-label="Screenshots" title="Screenshots">${icon('camera', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="files" aria-label="Dateien" title="Dateien">${icon('folder', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="notes" aria-label="Notizen" title="Notizen">${icon('note', 17)}</button>
-            <button class="tt-key tt-key--icon" data-tt-key="mic" aria-label="Diktieren" title="Diktieren">${icon('mic', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-key="werkzeuge" aria-label="Alle Werkzeuge" title="Alle Werkzeuge">${icon('tools', 17)}</button>
           </div>
         </div>`;
@@ -2362,6 +2368,9 @@
         const inner = tmp.querySelector('.keys-panel');
         host.innerHTML = inner ? inner.innerHTML : '';
         wireKeysPanel(document, id); // document.querySelector('.keys-panel') === #globalKeys
+        requestAnimationFrame(() => {
+          document.documentElement.style.setProperty('--keys-h', host.offsetHeight + 'px');
+        });
       } else if (!host.hidden) {
         host.classList.add('is-closing');
         clearTimeout(host._closeT);
