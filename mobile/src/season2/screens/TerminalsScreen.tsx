@@ -39,13 +39,14 @@ import { TerminalView, TerminalViewRef } from '../../components/TerminalView';
 import { GlassSurface } from '../components/GlassSurface';
 import { useUiPrefsStore } from '../store/uiPrefsStore';
 import { QuickKeys } from '../components/QuickKeys';
+import type { ContextAction } from '../components/BottomBar';
 import { OverviewGrid } from '../components/OverviewGrid';
 import { NotesSheet } from '../components/NotesSheet';
 import { useDictation } from '../hooks/useDictation';
 import { useS2Theme } from '../theme/tokens';
 import {
   IconPlus, IconTrash, IconSend, IconMic, IconChevronDown, IconChevronRight, IconServer, IconDot,
-  IconList, IconStack, IconGrid, IconBolt, IconNotes, IconArrowDownCircle,
+  IconList, IconStack, IconGrid, IconBolt, IconNotes, IconArrowDownCircle, IconClose, IconChevronUp,
 } from '../icons';
 
 // ── Season-2 connection state (module store — survives screen remounts) ──
@@ -96,13 +97,15 @@ export function useS2Connection() {
 interface TerminalsScreenProps {
   navigation: NativeStackNavigationProp<RootStackParamList, 'SeasonTwo'>;
   toast: (msg: string) => void;
+  /** Publishes terminal tools to the context bottom bar (dual-mode bar). */
+  onContextActions?: (actions: ContextAction[]) => void;
 }
 
 const SESSION_COLORS = ['#e8590c', '#1971c2', '#2f9e44', '#9c36b5', '#c2255c', '#0c8599'];
 const VIEW_KEY = 'tms-s2-terminal-view';
 type S2View = 'list' | 'stack';
 
-export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
+export function TerminalsScreen({ navigation, toast, onContextActions }: TerminalsScreenProps) {
   const { theme } = useS2Theme();
   const { c, m } = theme;
   const { isExpanded } = useResponsive();
@@ -264,6 +267,30 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
 
   // Stack view / Fold layout keep exactly one session in focus.
   const stackTab = tabs.find((t) => t.id === expandedId) ?? tabs[0] ?? null;
+
+  // Publish the active terminal's tools into the context bottom bar.
+  const activeForBar = view === 'list'
+    ? (tabs.find((t) => t.id === expandedId) ?? null)
+    : stackTab;
+  const activeSidForBar = activeForBar?.sessionId;
+  useEffect(() => {
+    if (!onContextActions) return;
+    if (!activeSidForBar || !conn.wsService) { onContextActions([]); return; }
+    const ws = conn.wsService;
+    const key = (data: string) => ws.send({ type: 'terminal:input', sessionId: activeSidForBar, payload: { data } });
+    onContextActions([
+      { id: 'k-ctrlc', label: '^C', icon: IconBolt, onPress: () => key('\x03') },
+      { id: 'k-esc', label: 'Esc', icon: IconClose, onPress: () => key('\x1b') },
+      { id: 'k-tab', label: 'Tab', icon: IconChevronRight, onPress: () => key('\t') },
+      { id: 'k-up', label: '↑', icon: IconChevronUp, onPress: () => key('\x1b[A') },
+      { id: 'k-down', label: '↓', icon: IconChevronDown, onPress: () => key('\x1b[B') },
+      { id: 'k-clear', label: 'Leeren', icon: IconTrash, onPress: () => key('\x0c') },
+      { id: 'k-new', label: 'Neu', icon: IconPlus, onPress: createTerminal },
+      { id: 'k-grid', label: 'Übersicht', icon: IconGrid, onPress: () => setOverviewOpen(true) },
+    ]);
+    return () => onContextActions([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSidForBar, conn.wsService, onContextActions]);
 
   // ── Fold-7 unfolded (≥700dp): ops-center layout — session rail left,
   //    active terminal full-height right (the mockup's expanded mode). ──

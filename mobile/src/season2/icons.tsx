@@ -224,3 +224,9 @@ export const IconArrowDownCircle = make(({ size, color, strokeWidth }) => (
     <Path d="M12 8v8m0 0 3.5-3.5M12 16l-3.5-3.5" {...stroke(color, strokeWidth)} />
   </Svg>
 ));
+
+export const IconChevronUp = make(({ size, color, strokeWidth }) => (
+  <Svg {...base(size)}>
+    <Path d="m6 15 6-6 6 6" {...stroke(color, strokeWidth)} />
+  </Svg>
+));

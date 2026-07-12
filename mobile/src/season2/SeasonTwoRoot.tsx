@@ -20,17 +20,21 @@ import {
 import { S2ThemeProvider } from './theme/S2ThemeProvider';
 import { useS2Theme } from './theme/tokens';
 import { GlassSurface } from './components/GlassSurface';
-import { Dock, DockItemKey } from './components/Dock';
+import { BottomBar, DockItemKey, BarMode, ContextAction } from './components/BottomBar';
 import { DynamicIsland, IslandSessionRow } from './components/DynamicIsland';
 import { TerminalsScreen, useS2Connection } from './screens/TerminalsScreen';
 import { CloudScreen } from './screens/CloudScreen';
-import { S2BrowserScreen } from './screens/S2BrowserScreen';
+import { S2BrowserScreen, S2BrowserRef } from './screens/S2BrowserScreen';
 import { ManagerScreen } from './screens/ManagerScreen';
 import { ServersScreen } from './screens/ServersScreen';
 import { S2SettingsScreen } from './screens/S2SettingsScreen';
 import { useManagerWire } from './manager/useManagerWire';
 import { Spotlight, SpotlightEntry } from './components/Spotlight';
 import { PromptSheet, PendingPrompt } from './components/PromptSheet';
+import {
+  IconBrowser, IconTerminal, IconPlus, IconGrid, IconList, IconStack, IconNotes, IconBolt,
+  IconArrowDownCircle, IconSearch, IconCloud, IconManager,
+} from './icons';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SeasonTwo'>;
 
@@ -57,6 +61,11 @@ function S2Shell({ navigation }: Props) {
   // (which normally installs the persistent handler) has never been mounted.
   useManagerWire(conn.wsService);
   const [spotlightOpen, setSpotlightOpen] = useState(false);
+  const [barMode, setBarMode] = useState<BarMode>('nav');
+  const browserRef = useRef<S2BrowserRef>(null);
+  // Terminal context-bar actions are published by TerminalsScreen (it owns the
+  // active session + its TerminalView ref).
+  const [termActions, setTermActions] = useState<ContextAction[]>([]);
 
   // ── GLOBAL prompt handling (M12 fix) ─────────────────────────────────────
   // This listener must live at the ROOT: the terminals screen unmounts when
@@ -222,6 +231,47 @@ function S2Shell({ navigation }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [islandSessions, navigation, conn]);
 
+  // Context-bar tools per screen. Server/start screen deliberately has none
+  // (user rule: connections page only ever shows the plain nav bar).
+  const contextActions: ContextAction[] = useMemo(() => {
+    if (screen === 'browser') {
+      return [
+        { id: 'b-new', label: 'Neuer Tab', icon: IconPlus, onPress: () => browserRef.current?.newTab() },
+        { id: 'b-reload', label: 'Neu laden', icon: IconArrowDownCircle, onPress: () => browserRef.current?.reload() },
+        { id: 'b-console', label: 'Konsole', icon: IconTerminal, onPress: () => browserRef.current?.toggleConsole() },
+        { id: 'b-net', label: 'Netzwerk', icon: IconCloud, onPress: () => browserRef.current?.toggleNetwork() },
+        { id: 'b-hard', label: 'Hard-Reload', icon: IconBolt, onPress: () => browserRef.current?.hardReload() },
+        { id: 'b-search', label: 'Suche', icon: IconSearch, onPress: () => setSpotlightOpen(true) },
+      ];
+    }
+    if (screen === 'terminals') return termActions;
+    if (screen === 'manager') {
+      return [
+        { id: 'm-memory', label: 'Memory', icon: IconNotes, onPress: () => {
+          if (conn.wsService && conn.server) navigation.navigate('ManagerMemory', { wsService: conn.wsService, serverId: conn.server.id });
+        } },
+        { id: 'm-artifacts', label: 'Artifacts', icon: IconGrid, onPress: () => {
+          if (conn.server) navigation.navigate('ManagerArtifacts', { serverId: conn.server.id, serverHost: conn.server.host, serverPort: conn.server.port, serverToken: conn.token ?? '' });
+        } },
+        { id: 'm-search', label: 'Suche', icon: IconSearch, onPress: () => setSpotlightOpen(true) },
+      ];
+    }
+    if (screen === 'cloud') {
+      return [
+        { id: 'c-search', label: 'Suche', icon: IconSearch, onPress: () => setSpotlightOpen(true) },
+        { id: 'c-terminals', label: 'Terminals', icon: IconTerminal, onPress: () => setScreen('terminals') },
+        { id: 'c-manager', label: 'Manager', icon: IconManager, onPress: () => handleDock('manager') },
+      ];
+    }
+    return [];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, termActions, conn, navigation]);
+
+  // Leaving a screen without context tools falls back to nav mode.
+  useEffect(() => {
+    if (contextActions.length === 0 && barMode === 'context') setBarMode('nav');
+  }, [contextActions.length, barMode]);
+
   const statusKind = conn.state === 'connected' ? 'ok' : conn.state === 'connecting' ? 'warn' : 'idle';
   const statusLabel =
     conn.state === 'connected' ? `Verbunden · ${conn.server?.name ?? ''}`
@@ -249,9 +299,9 @@ function S2Shell({ navigation }: Props) {
       </View>
 
       <Animated.View key={screen} entering={FadeIn.duration(200)} style={styles.content}>
-        {screen === 'terminals' && <TerminalsScreen navigation={navigation} toast={toast} />}
+        {screen === 'terminals' && <TerminalsScreen navigation={navigation} toast={toast} onContextActions={setTermActions} />}
         {screen === 'cloud' && <CloudScreen toast={toast} onOpenClassicCloud={() => navigation.navigate('Settings')} />}
-        {screen === 'browser' && <S2BrowserScreen toast={toast} />}
+        {screen === 'browser' && <S2BrowserScreen ref={browserRef} toast={toast} serverHost={conn.server?.host} />}
         {screen === 'server' && (
           <ServersScreen navigation={navigation} toast={toast} onConnected={() => setScreen('terminals')} />
         )}
@@ -270,9 +320,12 @@ function S2Shell({ navigation }: Props) {
       </Animated.View>
 
       <View style={[styles.dockZone, { paddingBottom: insets.bottom + 12 }]}>
-        <Dock
+        <BottomBar
+          mode={barMode}
+          onModeChange={setBarMode}
           active={screen}
           onSelect={handleDock}
+          contextActions={contextActions}
           badges={{ terminals: !!pendingPrompt && screen !== 'terminals' }}
         />
       </View>
