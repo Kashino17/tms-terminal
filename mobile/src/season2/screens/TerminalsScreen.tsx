@@ -10,7 +10,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, KeyboardAvoidingView, Platform,
+  LayoutAnimation, UIManager,
 } from 'react-native';
+
+// Accordion + view switches animate via LayoutAnimation (opt-in on Android).
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+import type { LayoutAnimationConfig } from 'react-native';
+const SPRING_LAYOUT: LayoutAnimationConfig = {
+  duration: 280,
+  create: { type: 'easeOut' as const, property: 'opacity' as const },
+  update: { type: 'spring' as const, springDamping: 0.85 },
+  delete: { type: 'easeOut' as const, property: 'opacity' as const },
+};
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -109,6 +122,7 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
     }).catch(() => {});
   }, []);
   const switchView = useCallback((v: S2View) => {
+    LayoutAnimation.configureNext(SPRING_LAYOUT);
     setView(v);
     AsyncStorage.setItem(VIEW_KEY, v).catch(() => {});
   }, []);
@@ -349,7 +363,10 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
               tab={tab}
               color={SESSION_COLORS[i % SESSION_COLORS.length]}
               expanded={expandedId === tab.id}
-              onToggle={() => setExpandedId(expandedId === tab.id ? null : tab.id)}
+              onToggle={() => {
+                LayoutAnimation.configureNext(SPRING_LAYOUT);
+                setExpandedId(expandedId === tab.id ? null : tab.id);
+              }}
               onClose={() => closeTerminal(tab)}
               onNotes={(color) => setNotesFor({ tabId: tab.id, title: tab.title, color })}
               wsService={conn.wsService!}

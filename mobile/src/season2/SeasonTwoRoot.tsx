@@ -6,6 +6,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
@@ -148,7 +149,7 @@ function S2Shell({ navigation }: Props) {
         />
       </View>
 
-      <View style={styles.content}>
+      <Animated.View key={screen} entering={FadeIn.duration(200)} style={styles.content}>
         {screen === 'terminals' && <TerminalsScreen navigation={navigation} toast={toast} />}
         {screen === 'cloud' && <CloudScreen toast={toast} onOpenClassicCloud={() => navigation.navigate('Settings')} />}
         {screen === 'browser' && <S2BrowserScreen toast={toast} />}
@@ -163,20 +164,25 @@ function S2Shell({ navigation }: Props) {
             toast={toast}
           />
         )}
-      </View>
+      </Animated.View>
 
       <View style={[styles.dockZone, { paddingBottom: insets.bottom + 12 }]}>
         <Dock active={screen} onSelect={handleDock} />
       </View>
 
       {toastMsg != null && (
-        <View pointerEvents="none" style={[styles.toastZone, { bottom: insets.bottom + m.dockHeight + 26 }]}>
+        <Animated.View
+          entering={FadeInDown.springify().damping(15)}
+          exiting={FadeOut.duration(160)}
+          pointerEvents="none"
+          style={[styles.toastZone, { bottom: insets.bottom + m.dockHeight + 26 }]}
+        >
           <GlassSurface strong radius={m.radius.pill}>
             <Text style={{ color: c.text, fontSize: m.font.caption, fontWeight: '600', paddingHorizontal: 18, paddingVertical: 10 }}>
               {toastMsg}
             </Text>
           </GlassSurface>
-        </View>
+        </Animated.View>
       )}
     </View>
   );

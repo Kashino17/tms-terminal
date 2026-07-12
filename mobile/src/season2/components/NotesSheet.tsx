@@ -5,6 +5,7 @@
  */
 import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-native';
+import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 import { GlassSurface } from './GlassSurface';
 import { useS2Theme } from '../theme/tokens';
 import { useNotesStore } from '../store/notesStore';
@@ -35,8 +36,9 @@ export function NotesSheet({ tabId, title, color, onClose }: NotesSheetProps) {
   };
 
   return (
-    <View style={[StyleSheet.absoluteFill, styles.zone, { backgroundColor: c.scrim }]}>
+    <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={[StyleSheet.absoluteFill, styles.zone, { backgroundColor: c.scrim }]}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Schließen" />
+      <Animated.View entering={SlideInDown.springify().damping(16)} exiting={SlideOutDown.duration(180)} style={{ width: '100%', alignItems: 'center' }}>
       <GlassSurface strong radius={m.radius.lg} style={styles.panel}>
         <View style={styles.head}>
           <IconDot size={10} color={color} />
@@ -117,7 +119,8 @@ export function NotesSheet({ tabId, title, color, onClose }: NotesSheetProps) {
           </Pressable>
         </View>
       </GlassSurface>
-    </View>
+      </Animated.View>
+    </Animated.View>
   );
 }
 

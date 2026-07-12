@@ -6,6 +6,7 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
+import Animated, { SlideInDown, SlideOutDown } from 'react-native-reanimated';
 import { GlassSurface } from './GlassSurface';
 import { useS2Theme } from '../theme/tokens';
 import { IconDot } from '../icons';
@@ -36,6 +37,7 @@ export function PromptSheet({ prompt, onApprove, onDismiss, onEnableAuto, bottom
 
   return (
     <View pointerEvents="box-none" style={[styles.zone, { bottom: bottomOffset }]}>
+      <Animated.View entering={SlideInDown.springify().damping(16)} exiting={SlideOutDown.duration(180)} style={{ width: '100%', alignItems: 'center' }}>
       <GlassSurface strong radius={m.radius.lg} style={styles.panel}>
         <View style={styles.head}>
           <IconDot size={10} color={prompt.color} />
@@ -58,6 +60,7 @@ export function PromptSheet({ prompt, onApprove, onDismiss, onEnableAuto, bottom
           </Pressable>
         </View>
       </GlassSurface>
+      </Animated.View>
     </View>
   );
 }

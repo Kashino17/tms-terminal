@@ -4,6 +4,7 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import Animated, { FadeIn, FadeOut, ZoomIn } from 'react-native-reanimated';
 import type { TerminalTab } from '../../types/terminal.types';
 import { GlassSurface } from './GlassSurface';
 import { useS2Theme } from '../theme/tokens';
@@ -21,7 +22,7 @@ export function OverviewGrid({ tabs, colors: tagColors, onSelect, onClose }: Ove
   const { c, m } = theme;
 
   return (
-    <View style={[StyleSheet.absoluteFill, styles.zone, { backgroundColor: c.scrim }]}>
+    <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={[StyleSheet.absoluteFill, styles.zone, { backgroundColor: c.scrim }]}>
       <View style={styles.headRow}>
         <Text style={{ color: c.text, fontSize: m.font.section, fontWeight: '800' }}>Übersicht</Text>
         <Pressable
@@ -34,8 +35,9 @@ export function OverviewGrid({ tabs, colors: tagColors, onSelect, onClose }: Ove
       </View>
       <ScrollView contentContainerStyle={styles.grid}>
         {tabs.map((tab, i) => (
-          <Pressable
+          <AnimatedPressable
             key={tab.id}
+            entering={ZoomIn.delay(Math.min(i, 12) * 30).springify().damping(15)}
             onPress={() => onSelect(tab.id)}
             style={({ pressed }) => [styles.cell, pressed && { transform: [{ scale: 0.97 }] }]}
           >
@@ -51,14 +53,16 @@ export function OverviewGrid({ tabs, colors: tagColors, onSelect, onClose }: Ove
                 {tab.notificationCount ? `  ·  ${tab.notificationCount} wartend` : ''}
               </Text>
             </GlassSurface>
-          </Pressable>
+          </AnimatedPressable>
         ))}
         {/* Strict 2-col grid: no stretching — flexBasis 50% per cell handles the
             lone-last-tile case naturally (right cell simply stays empty). */}
       </ScrollView>
-    </View>
+    </Animated.View>
   );
 }
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 const styles = StyleSheet.create({
   zone: { zIndex: 25, paddingTop: 4 },
