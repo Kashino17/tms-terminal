@@ -88,7 +88,29 @@ def main():
     sys.stderr.write(f"[whisper-sidecar] Using device: {device}\n")
     sys.stderr.flush()
 
-    # Cache loaded models to avoid reloading on every request
+    # ── MLX fast path (Apple Silicon) ────────────────────────────────────────
+    # mlx-whisper is ~3-4x faster than openai-whisper on M-series chips
+    # (benchmark 2026-07-12, large-v3-turbo, 10.8s German clip: 0.29s vs
+    # 1.06s warm on MPS). openai-whisper stays as the fallback for unmapped
+    # model names, missing package, or MLX runtime errors.
+    MLX_REPOS = {
+        "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+        "turbo": "mlx-community/whisper-large-v3-turbo",
+        "large-v3": "mlx-community/whisper-large-v3-mlx",
+        "medium": "mlx-community/whisper-medium-mlx",
+        "distil-large-v3": "mlx-community/distil-whisper-large-v3",
+    }
+    try:
+        import mlx_whisper  # type: ignore
+        mlx_available = True
+        sys.stderr.write("[whisper-sidecar] mlx-whisper available — using MLX fast path.\n")
+    except ImportError:
+        mlx_whisper = None
+        mlx_available = False
+        sys.stderr.write("[whisper-sidecar] mlx-whisper not installed — using openai-whisper.\n")
+    sys.stderr.flush()
+
+    # Cache loaded torch models to avoid reloading on every request
     models = {}
 
     def get_model(model_name):
@@ -100,9 +122,39 @@ def main():
             sys.stderr.flush()
         return models[model_name]
 
-    # Pre-load default model
+    def transcribe_file(path, model_name, language):
+        """MLX first (when available and the model is mapped), torch fallback."""
+        if mlx_available and model_name in MLX_REPOS:
+            try:
+                result = mlx_whisper.transcribe(path, path_or_hf_repo=MLX_REPOS[model_name], language=language)
+                return result.get("text", "").strip()
+            except Exception as e:  # noqa: BLE001 — any MLX failure falls back to torch
+                sys.stderr.write(f"[whisper-sidecar] MLX failed ({e}); falling back to openai-whisper.\n")
+                sys.stderr.flush()
+        result = get_model(model_name).transcribe(path, language=language, fp16=False)
+        return result.get("text", "").strip()
+
     default_model = "large-v3-turbo"
-    get_model(default_model)
+    if mlx_available:
+        # Prewarm MLX weights with a tiny silent clip so the first real
+        # dictation doesn't pay the model-load cost.
+        try:
+            _fd, _warm = tempfile.mkstemp(suffix=".wav")
+            with os.fdopen(_fd, "wb") as _f:
+                with wave.open(_f, "wb") as w:
+                    w.setnchannels(1)
+                    w.setsampwidth(2)
+                    w.setframerate(16000)
+                    w.writeframes(b"\x00\x00" * 1600)  # 0.1s silence
+            transcribe_file(_warm, default_model, "de")
+            os.unlink(_warm)
+            sys.stderr.write("[whisper-sidecar] MLX prewarmed.\n")
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write(f"[whisper-sidecar] Prewarm skipped: {e}\n")
+        sys.stderr.flush()
+    else:
+        # Pre-load default torch model
+        get_model(default_model)
 
     sys.stderr.write("[whisper-sidecar] Ready for requests.\n")
     sys.stderr.flush()
@@ -137,16 +189,13 @@ def main():
             sys.stderr.write(f"[whisper-sidecar] {req_id}: {duration:.1f}s audio, model={model_name}\n")
             sys.stderr.flush()
 
-            model = get_model(model_name)
-
             # Split into chunks if long audio
             chunks = split_wav(tmp_path)
             total_chunks = len(chunks)
 
             if total_chunks == 1:
                 # Short audio — transcribe directly
-                result = model.transcribe(chunks[0], language=language, fp16=False)
-                text = result.get("text", "").strip()
+                text = transcribe_file(chunks[0], model_name, language)
                 print(json.dumps({"id": req_id, "text": text}))
             else:
                 # Long audio — transcribe chunks with progress
@@ -154,8 +203,7 @@ def main():
                 sys.stderr.flush()
                 all_text = []
                 for i, chunk_path in enumerate(chunks):
-                    result = model.transcribe(chunk_path, language=language, fp16=False)
-                    chunk_text = result.get("text", "").strip()
+                    chunk_text = transcribe_file(chunk_path, model_name, language)
                     all_text.append(chunk_text)
                     # Send progress update
                     print(json.dumps({
