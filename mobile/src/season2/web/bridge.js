@@ -1025,10 +1025,12 @@
     if (wrap && typeof window.closeSheet === 'function') window.closeSheet(wrap);
     var input = document.getElementById('dockInput');
     if (input && !input.disabled) {
-      input.value = (input.value ? input.value + ' ' : '') + text;
+      // Reihenfolge ist entscheidend: focus() merkt sich den Feldinhalt als
+      // Referenz für die Differenz. Erst schreiben und dann fokussieren hieße:
+      // die Differenz ist leer, der Pfad steht im Feld — kommt aber nie im
+      // Terminal an und ist bei Enter einfach weg.
       input.focus();
-      // Programmatische Änderungen feuern kein input-Event — sonst käme der
-      // Pfad in der Eingabezeile an, aber nie im Terminal.
+      input.value = (input.value ? input.value + ' ' : '') + text;
       input.dispatchEvent(new Event('input', { bubbles: true }));
     } else {
       window.__tmsInput(card, text);
@@ -1239,7 +1241,6 @@
   // (er ersetzt ganze Wörter — als Rückschritte plus neuer Text).
   var dockInput = document.getElementById('dockInput');
   var dockLast = '';
-  var dockQuiet = false;
 
   function dockToPty() {
     var id = window.dockTargetId && window.dockTargetId();
@@ -1250,17 +1251,15 @@
     dockLast = now;
     if (data) window.__tmsInput(id, data);
   }
+  // Kein Stumm-Schalter: eine programmatische Wertzuweisung feuert ohnehin kein
+  // input-Event. Der Schalter hat stattdessen das erste getippte Zeichen
+  // verschluckt, wenn direkt nach einem Zurücksetzen losgetippt wurde.
   function dockReset() {
-    dockQuiet = true;
     dockInput.value = '';
     dockLast = '';
-    setTimeout(function () { dockQuiet = false; }, 0);
   }
   if (dockInput) {
-    dockInput.addEventListener('input', function () {
-      if (dockQuiet) { dockLast = dockInput.value; return; }
-      dockToPty();
-    });
+    dockInput.addEventListener('input', dockToPty);
     dockInput.addEventListener('focus', function () { dockLast = dockInput.value; });
   }
 
