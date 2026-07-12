@@ -88,8 +88,8 @@ android {
         applicationId 'com.tms.terminal'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 16100
-        versionName "1.61.0"
+        versionCode 16200
+        versionName "1.62.0"
 
         buildConfigField("boolean", "REACT_NATIVE_UNSTABLE_USE_RUNTIME_SCHEDULER_ALWAYS", (findProperty("reactNative.unstable_useRuntimeSchedulerAlways") ?: true).toString())
     }

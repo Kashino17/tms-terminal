@@ -362,6 +362,21 @@
   /* Keys panel slides in as a keyboard accessory. */
   @keyframes keysIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
   .keys-panel:not([hidden]) { animation: keysIn 240ms var(--spring-snappy); }
+  /* Die globale Leiste ist per translateX(-50%) zentriert — ihre Keyframes
+     MÜSSEN das mitführen, sonst springt sie während der Animation nach rechts
+     und plumpst am Ende nach links. Sie wächst federnd aus der Bottom-Bar. */
+  .keys-panel--global { transform-origin: 50% 100%; }
+  .keys-panel--global:not([hidden]) { animation: keysRise 520ms cubic-bezier(.30,1.18,.34,1); }
+  .keys-panel--global.is-closing { animation: keysFall 220ms cubic-bezier(.4,0,.68,.06) forwards; }
+  @keyframes keysRise {
+    from { opacity: 0; transform: translateX(-50%) translateY(26px) scale(.9); }
+    60%  { opacity: 1; }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  }
+  @keyframes keysFall {
+    from { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+    to   { opacity: 0; transform: translateX(-50%) translateY(18px) scale(.94); }
+  }
   /* Terminal stream lines are exempt from ALL motion — appends must be instant. */
   .term-line { transition: none !important; animation: none !important; }
   /* Scoped theme cross-fade — active only for ~400ms around a toggle. */
@@ -665,7 +680,17 @@
     transition: bottom 380ms var(--spring); }
   body.has-switcher .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px + 34px); }
   /* Der Stapel endet ÜBER dem Slider, nicht darunter. */
+  .stack { transition: bottom 520ms cubic-bezier(.30,1.18,.34,1); }
   body.has-switcher .stack { bottom: 52px; }
+  /* Die Tastenleiste liegt nicht AUF dem Terminal — es macht ihr Platz. */
+  body.keys-open .stack { bottom: 108px; }
+  body.keys-open.has-switcher .stack { bottom: 158px; }
+  body.keys-open .term-list { padding-bottom: 112px; }
+  /* Tastatur offen: die Slider-Punkte weichen, das Terminal wird größer. */
+  #termSwitcher { transition: opacity 220ms ease-out, transform 380ms cubic-bezier(.30,1.18,.34,1); }
+  body.typing #termSwitcher { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(24px) scale(.9); }
+  body.typing.has-switcher .stack { bottom: 0; }
+  body.typing.keys-open.has-switcher .stack { bottom: 108px; }
 
   /* ── Terminal-Slider ──────────────────────────────────────────────────────
      Nur Punkte. Antippen springt, gedrückt halten und ziehen schiebt den Stapel
@@ -2319,14 +2344,23 @@
     const id = typeof dockTargetId === 'function' ? dockTargetId() : state.activeCardId;
     if (host) {
       const show = !!state.keysPanelOpen && !!id && !!cardState[id];
-      host.hidden = !show;
       if (show) {
+        host.hidden = false;
+        host.classList.remove('is-closing');
         const tmp = document.createElement('div');
         tmp.innerHTML = keysPanelHtml(id);
         const inner = tmp.querySelector('.keys-panel');
         host.innerHTML = inner ? inner.innerHTML : '';
         wireKeysPanel(document, id); // document.querySelector('.keys-panel') === #globalKeys
+      } else if (!host.hidden) {
+        host.classList.add('is-closing');
+        clearTimeout(host._closeT);
+        host._closeT = setTimeout(() => { host.hidden = true; host.classList.remove('is-closing'); }, 220);
       }
+      document.body.classList.toggle('keys-open', show);
+      // Die Karte ist jetzt größer/kleiner — das Terminal neu vermessen.
+      clearTimeout(host._fitT);
+      host._fitT = setTimeout(() => window.dispatchEvent(new Event('resize')), 540);
     }
     document.querySelectorAll('.term-keys-btn, #dockKeysBtn').forEach(btn => {
       btn.classList.toggle('is-on', state.keysPanelOpen);
@@ -5409,6 +5443,8 @@
   // Beim Tippen darf das Terminal nicht hinter der Tastatur verschwinden.
   document.getElementById('dockInput').addEventListener('focus', () => {
     dockEl.classList.add('is-typing');
+    document.body.classList.add('typing');
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 420);
     const card = document.querySelector('.term-card.is-target');
     if (card) setTimeout(() => card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 260);
   });
@@ -5416,7 +5452,11 @@
     // Erst nach dem Klick: sonst wäre der Senden-Knopf schon weggerückt, wenn
     // der Finger ankommt.
     setTimeout(() => {
-      if (document.activeElement !== document.getElementById('dockInput')) dockEl.classList.remove('is-typing');
+      if (document.activeElement !== document.getElementById('dockInput')) {
+        dockEl.classList.remove('is-typing');
+        document.body.classList.remove('typing');
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 420);
+      }
     }, 120);
   });
   // Die Knöpfe der Leiste dürfen den Fokus nicht klauen — sonst klappt die
