@@ -91,9 +91,12 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
   const captureShot = useCallback(async (source: 'camera' | 'library') => {
     if (!server || !token) return;
     try {
-      if (source === 'camera') {
-        const perm = await ImagePicker.requestCameraPermissionsAsync();
-        if (!perm.granted) { call('toast', 'Kamera-Berechtigung fehlt'); return; }
+      const perm = source === 'camera'
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        call('toast', source === 'camera' ? 'Kamera-Berechtigung fehlt' : 'Galerie-Berechtigung fehlt');
+        return;
       }
       const result = source === 'camera'
         ? await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, base64: true })

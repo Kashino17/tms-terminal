@@ -2200,11 +2200,13 @@
   function wireKeysPanel(card, id) {
     const panel = card.querySelector('.keys-panel');
     if (!panel) return;
+    wireKeysPanelTools(panel, id);
     panel.querySelectorAll('[data-tt-key]').forEach(btn => {
       btn.addEventListener('click', e => {
         e.stopPropagation();
         const k = btn.dataset.ttKey;
-        if (k === 'tab') flashKeyEcho('Tab');
+        // Tab hat im Mockup nur geblinkt — die Taste muss das Terminal erreichen.
+        if (k === 'tab') handleTermKey('tab', id);
         else if (k === 'clear') clearActiveTerminal(id);
         else if (k === 'selectmode') {
           toggleCardSelectionMode(id, null);
@@ -2215,8 +2217,14 @@
         else if (k === 'closepanel') closeKeysPanel();
       });
     });
+    // Ebenso die Pfeiltasten: sie schickten bisher gar nichts, sondern zeigten
+    // nur ein Echo an. Sie steuern jetzt wirklich den Cursor im Terminal.
+    const CURSOR_KEYS = { '←': 'left', '↑': 'up', '↓': 'down', '→': 'right' };
     panel.querySelectorAll('[data-tt-cursor]').forEach(btn => {
-      btn.addEventListener('click', e => { e.stopPropagation(); flashKeyEcho(btn.dataset.ttCursor); });
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        handleTermKey(CURSOR_KEYS[btn.dataset.ttCursor] || btn.dataset.ttCursor, id);
+      });
     });
   }
   // Single shared open/closed flag (kept intentionally simple per spec):
