@@ -150,6 +150,8 @@
     term.onRender(function () { tagRows(cardId); });
 
     terms[cardId] = { term: term, fit: fit, element: term.element, host: host };
+    var vp = term.element.querySelector('.xterm-viewport');
+    if (vp) vp.addEventListener('scroll', function () { window.updateJumpOrb(cardId); });
     fitSoon(cardId);
     flush(cardId);
   }
@@ -194,10 +196,37 @@
       });
     }, 50);
   }
-  new MutationObserver(syncTerms).observe(document.body, { childList: true, subtree: true });
+  // Watch for cards appearing and disappearing — but xterm rewrites its rows on
+  // every single chunk of output, and reacting to that made syncTerms re-measure
+  // every card continuously. That was the scroll jank. Ignore anything that
+  // happens inside a terminal.
+  new MutationObserver(function (records) {
+    for (var i = 0; i < records.length; i++) {
+      var t = records[i].target;
+      if (t.nodeType === 1 && t.closest && t.closest('.xterm')) continue;
+      syncTerms();
+      return;
+    }
+  }).observe(document.body, { childList: true, subtree: true });
   window.addEventListener('resize', function () {
     Object.keys(terms).forEach(fitSoon);
   });
+
+  // ── Der „schnell nach unten“-Orb ──────────────────────────────────────────
+  // Das Mockup maß den Scrollstand der .card-body. Mit xterm scrollt aber der
+  // Viewport darin, die Karte selbst steht still — der Orb kam deshalb nie.
+  window.updateJumpOrb = function (id, pulse) {
+    var card = document.querySelector('.term-card[data-id="' + id + '"]');
+    var t = terms[id];
+    if (!card || !t) return;
+    var btn = card.querySelector('.jump-bottom-orb');
+    var vp = t.element && t.element.querySelector('.xterm-viewport');
+    if (!btn || !vp) return;
+    var atBottom = vp.scrollHeight - vp.scrollTop - vp.clientHeight < 24;
+    btn.classList.toggle('show', !atBottom);
+    if (atBottom) btn.classList.remove('pulse');
+    else if (pulse) btn.classList.add('pulse');
+  };
 
   // ── Replace the mockup's demo plumbing ────────────────────────────────────
   // Not a no-op: xterm owns the pixels, but the mockup still expects this to
@@ -280,17 +309,26 @@
   };
   window.copyText = function (text) { post('clipboard:write', { text: text }); };
 
-  // Real dictation: keep the mockup's exact visual states, drop its fake timers.
+  // Real dictation. The bar's own recording UI (trace, timer, ✓/✕) stays; only
+  // the fake 2s timers behind it are replaced by a real recorder.
+  var micCard = null;
   window.startDictation = function (cardId) {
-    var card = document.querySelector('.term-card[data-id="' + cardId + '"]');
-    var input = card && card.querySelector('.term-input');
-    var mic = card && card.querySelector('.term-mic-btn');
-    if (!input || !mic) return;
-    input.disabled = true;
-    input.placeholder = 'Höre zu…';
-    mic.classList.add('is-recording');
+    micCard = cardId || window.dockTargetId();
+    if (!micCard) return;
+    window.dockRecordingStart();
     if (typeof window.setIslandMicBadge === 'function') window.setIslandMicBadge(true);
-    post('mic:start', { cardId: cardId });
+    post('mic:start', { cardId: micCard });
+  };
+  window.confirmDictation = function () {
+    if (!micCard) return;
+    window.dockRecordingTranscribing();
+    post('mic:stop', { cardId: micCard });
+  };
+  window.cancelDictation = function () {
+    if (!micCard) return;
+    post('mic:cancel', { cardId: micCard });
+    micCard = null;
+    if (typeof window.setIslandMicBadge === 'function') window.setIslandMicBadge(false);
   };
 
   // Auto-Approve lives in React Native (it must keep working while the
@@ -326,6 +364,7 @@
         post('terminal:attach', Object.assign({ cardId: cardId, sessionId: item.sessionId }, dims(cardId)));
       });
       restoring = false;
+      if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
       // addTerminal() arms the rename field for a brand-new terminal; a restored
       // one is not new, so drop that focus again.
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -337,6 +376,7 @@
       byCard[cardId] = sessionId;
       mountTerm(cardId);
       flush(cardId);
+      if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
       post('terminal:attach', Object.assign({ cardId: cardId, sessionId: sessionId }, dims(cardId)));
     },
     /** PTY output. */
@@ -344,6 +384,7 @@
       var cardId = cardOf(sessionId);
       if (!cardId || !terms[cardId]) { (queued[sessionId] = queued[sessionId] || []).push(chunk); return; }
       terms[cardId].term.write(chunk);
+      window.updateJumpOrb(cardId, true);
       var plain = chunk.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').split('\n').filter(function (l) { return l.trim(); }).pop();
       if (plain) window.__tmsLastLine[cardId] = plain;
     },
@@ -368,27 +409,13 @@
       }
       if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
     },
-    /** Whisper result -> back into the card's input row. */
+    /** Whisper result -> into the bar's input line. */
     dictationResult: function (cardId, text) {
-      var card = document.querySelector('.term-card[data-id="' + cardId + '"]');
-      var input = card && card.querySelector('.term-input');
-      var mic = card && card.querySelector('.term-mic-btn');
-      if (mic) mic.classList.remove('is-recording', 'is-transcribing');
-      if (input) {
-        input.disabled = false;
-        input.placeholder = 'Befehl eingeben…';
-        if (text) { input.value = (input.value ? input.value + ' ' : '') + text; input.focus(); }
-      }
+      micCard = null;
+      window.dockRecordingEnd(text || '');
       if (typeof window.setIslandMicBadge === 'function') window.setIslandMicBadge(false);
     },
-    dictationTranscribing: function (cardId) {
-      var card = document.querySelector('.term-card[data-id="' + cardId + '"]');
-      var mic = card && card.querySelector('.term-mic-btn');
-      var input = card && card.querySelector('.term-input');
-      if (mic) { mic.classList.remove('is-recording'); mic.classList.add('is-transcribing'); }
-      if (input) input.placeholder = 'Transkribiere…';
-      if (typeof window.setIslandMicBadge === 'function') window.setIslandMicBadge(false);
-    },
+    dictationTranscribing: function () { window.dockRecordingTranscribing(); },
     toast: function (msg) { if (typeof window.toast === 'function') window.toast(msg); },
   };
 
@@ -487,6 +514,14 @@
       window.toggleCardAutoApprove(cardId);
     }
   };
+
+  document.addEventListener('pointerdown', function (e) {
+    if (e.target.closest && e.target.closest('.term-card')) {
+      setTimeout(function () {
+        if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
+      }, 0);
+    }
+  }, true);
 
   post('bridge:ready', {});
 })();

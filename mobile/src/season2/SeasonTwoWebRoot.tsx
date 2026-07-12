@@ -47,6 +47,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const pendingCard = useRef<string | null>(null);
   /** cardId whose mic is currently recording. */
   const micCard = useRef<string | null>(null);
+  /** Set when the user cancels: the recording still stops, its text is dropped. */
+  const micDiscard = useRef(false);
   const restored = useRef(false);
   /** Per-session "is it still producing output" timers — the server has no
    *  status event, so the state has to be derived from the stream itself. */
@@ -204,20 +206,29 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   }, [ready, server, state, call, sheets]);
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
-  const { toggle: toggleMic } = useDictation({
+  const { micState, toggle: toggleMic } = useDictation({
     wsService: wsService ?? null,
-    sessionId: undefined,
+    // Without this the hook returns immediately and nothing is ever recorded.
+    sessionId: activeSessionId,
     onText: (text: string) => {
-      if (micCard.current === MANAGER_MIC) sendManager(text);
-      else call('dictationResult', micCard.current ?? '', text);
+      const card = micCard.current;
       micCard.current = null;
+      if (micDiscard.current) { micDiscard.current = false; return; } // abgebrochen
+      if (card === MANAGER_MIC) sendManager(text);
+      else call('dictationResult', card ?? '', text);
     },
     onError: (msg: string) => {
-      if (micCard.current !== MANAGER_MIC) call('dictationResult', micCard.current ?? '', '');
-      call('toast', msg);
+      const card = micCard.current;
       micCard.current = null;
+      micDiscard.current = false;
+      if (card !== MANAGER_MIC) call('dictationResult', card ?? '', '');
+      call('toast', msg);
     },
   });
+
+  useEffect(() => {
+    if (ready && micState === 'processing') call('dictationTranscribing');
+  }, [ready, micState, call]);
 
   // ── Page → app.
   const onMessage = useCallback((event: WebViewMessageEvent) => {
@@ -268,7 +279,18 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
       case 'mic:start':
         micCard.current = payload.cardId;
-        toggleMic();
+        micDiscard.current = false;
+        toggleMic(); // start
+        break;
+
+      case 'mic:stop':
+        // The bar shows "Transkribiere…" until onText lands.
+        toggleMic(); // stop -> upload -> Whisper
+        break;
+
+      case 'mic:cancel':
+        micDiscard.current = true;
+        toggleMic(); // stop the recorder, then throw the transcript away
         break;
 
       case 'clipboard:write':
@@ -281,6 +303,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
       case 'manager:mic':
         micCard.current = MANAGER_MIC;
+        micDiscard.current = false;
         toggleMic();
         break;
 
