@@ -11,6 +11,7 @@ import {
 import Markdown from 'react-native-markdown-display';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
+import * as Clipboard from 'expo-clipboard';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../types/navigation.types';
 import type { WebSocketService } from '../../services/websocket.service';
@@ -123,7 +124,12 @@ export function ManagerScreen({ navigation, wsService, serverId, serverHost, ser
     }
     const isUser = msg.role === 'user';
     return (
-      <View key={msg.id} style={[styles.bubbleRow, isUser ? { justifyContent: 'flex-end' } : undefined]}>
+      <Pressable
+        key={msg.id}
+        onLongPress={async () => { await Clipboard.setStringAsync(msg.text); toast('Nachricht kopiert ✓'); }}
+        delayLongPress={420}
+        style={[styles.bubbleRow, isUser ? { justifyContent: 'flex-end' } : undefined]}
+      >
         <GlassSurface
           strong={!isUser}
           radius={m.radius.md}
@@ -158,7 +164,7 @@ export function ManagerScreen({ navigation, wsService, serverId, serverHost, ser
             )}
           </View>
         </GlassSurface>
-      </View>
+      </Pressable>
     );
   };
 

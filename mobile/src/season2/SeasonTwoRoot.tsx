@@ -24,6 +24,8 @@ import { TerminalsScreen, useS2Connection } from './screens/TerminalsScreen';
 import { CloudScreen } from './screens/CloudScreen';
 import { S2BrowserScreen } from './screens/S2BrowserScreen';
 import { ManagerScreen } from './screens/ManagerScreen';
+import { ServersScreen } from './screens/ServersScreen';
+import { S2SettingsScreen } from './screens/S2SettingsScreen';
 import { useManagerWire } from './manager/useManagerWire';
 import { Spotlight, SpotlightEntry } from './components/Spotlight';
 
@@ -47,7 +49,7 @@ function S2Shell({ navigation }: Props) {
   const tabsByServer = useTerminalStore((s) => s.tabs);
   const conn = useS2Connection();
   // Internal season2 screens (native ones); everything else bridges to classic.
-  const [screen, setScreen] = useState<'terminals' | 'cloud' | 'browser' | 'manager'>('terminals');
+  const [screen, setScreen] = useState<'terminals' | 'cloud' | 'browser' | 'manager' | 'server' | 'mehr'>('terminals');
   // Manager responses must be processed even when the classic terminal screen
   // (which normally installs the persistent handler) has never been mounted.
   useManagerWire(conn.wsService);
@@ -105,13 +107,13 @@ function S2Shell({ navigation }: Props) {
         setScreen('terminals');
         return;
       case 'server':
-        navigation.navigate('ServerList');
+        setScreen('server');
         return;
       case 'cloud':
         setScreen('cloud');
         return;
       case 'mehr':
-        navigation.navigate('Settings');
+        setScreen('mehr');
         return;
       case 'manager':
         if (conn.server && conn.wsService) {
@@ -137,8 +139,8 @@ function S2Shell({ navigation }: Props) {
       { id: 'sc-cloud', label: 'Cloud', kind: 'screen', run: () => setScreen('cloud') },
       { id: 'sc-browser', label: 'Browser', kind: 'screen', run: () => setScreen('browser') },
       { id: 'sc-manager', label: 'Manager', kind: 'screen', run: () => handleDock('manager') },
-      { id: 'sc-server', label: 'Server', kind: 'screen', run: () => navigation.navigate('ServerList') },
-      { id: 'sc-settings', label: 'Einstellungen', kind: 'screen', run: () => navigation.navigate('Settings') },
+      { id: 'sc-server', label: 'Server', kind: 'screen', run: () => setScreen('server') },
+      { id: 'sc-settings', label: 'Einstellungen', kind: 'screen', run: () => setScreen('mehr') },
       { id: 'ac-prayer', label: 'Gebetszeiten', kind: 'screen', run: () => navigation.navigate('PrayerTimes') },
       { id: 'ac-theme', label: 'Design wechseln (Hell/Dunkel)', kind: 'action', run: toggleTheme },
       { id: 'ac-classic', label: 'Zurück zu Klassisch', kind: 'action', run: () => setSeasonTwoEnabled(false) },
@@ -177,6 +179,10 @@ function S2Shell({ navigation }: Props) {
         {screen === 'terminals' && <TerminalsScreen navigation={navigation} toast={toast} />}
         {screen === 'cloud' && <CloudScreen toast={toast} onOpenClassicCloud={() => navigation.navigate('Settings')} />}
         {screen === 'browser' && <S2BrowserScreen toast={toast} />}
+        {screen === 'server' && (
+          <ServersScreen navigation={navigation} toast={toast} onConnected={() => setScreen('terminals')} />
+        )}
+        {screen === 'mehr' && <S2SettingsScreen navigation={navigation} />}
         {screen === 'manager' && conn.server && conn.wsService && (
           <ManagerScreen
             navigation={navigation}

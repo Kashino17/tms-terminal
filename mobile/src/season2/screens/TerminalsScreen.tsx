@@ -37,6 +37,7 @@ import { useAutoApproveStore } from '../../store/autoApproveStore';
 import type { TerminalTab } from '../../types/terminal.types';
 import { TerminalView, TerminalViewRef } from '../../components/TerminalView';
 import { GlassSurface } from '../components/GlassSurface';
+import { useUiPrefsStore } from '../store/uiPrefsStore';
 import { QuickKeys } from '../components/QuickKeys';
 import { PromptSheet, PendingPrompt } from '../components/PromptSheet';
 import { OverviewGrid } from '../components/OverviewGrid';
@@ -50,7 +51,7 @@ import {
 
 // ── Season-2 connection state (module store — survives screen remounts) ──
 
-interface S2Server { id: string; name: string; host: string; port: number; token?: string | null }
+export interface S2Server { id: string; name: string; host: string; port: number; token?: string | null }
 
 interface S2ConnState {
   server: S2Server | null;
@@ -60,7 +61,7 @@ interface S2ConnState {
   setFocusTab: (id: string | null) => void;
 }
 
-const useS2ConnStore = create<S2ConnState>((set) => ({
+export const useS2ConnStore = create<S2ConnState>((set) => ({
   server: null,
   token: null,
   focusTabId: null,
@@ -575,6 +576,7 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const termRef = useRef<TerminalViewRef>(null);
   const autoOn = useAutoApproveStore((s) => (tab.sessionId ? s.isEnabled(tab.sessionId) : false));
+  const terminalFontSize = useUiPrefsStore((s) => s.terminalFontSize);
   // Real dictation via the server's Whisper pipeline — transcript lands in
   // the command input, ready to edit and send.
   const { micState, toggle: toggleMic } = useDictation({
@@ -677,6 +679,7 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
                 sessionId={tab.sessionId}
                 wsService={wsService}
                 visible={expanded}
+                fontSize={terminalFontSize}
                 disableKeyboardOffset
                 tapFocusDisabled
               />
