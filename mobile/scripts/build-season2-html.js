@@ -140,6 +140,15 @@ patch('body end', '</body>', `<style>${xterm.XTERM_CSS}
 .shot-insert-all { width: 100%; padding: 13px; margin-bottom: 12px; border-radius: 14px; font: 600 13.5px var(--font-ui);
   color: var(--accent); background: rgba(var(--accent-rgb),.14); border: 1px solid rgba(var(--accent-rgb),.4); }
 .shot-insert-all:active { transform: scale(.98); }
+.shot-selbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.shot-tile { position: relative; }
+.shot-tile .shot-tile__check { position: absolute; right: 6px; top: 6px; width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font: 700 13px var(--font-ui); color: #fff;
+  background: var(--accent); opacity: 0; transform: scale(.6); transition: opacity 160ms ease-out, transform 240ms cubic-bezier(.22,1,.36,1); }
+.shot-tile.is-selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+.shot-tile.is-selected .shot-tile__check { opacity: 1; transform: scale(1); }
+.shot-tile__video { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 26px; color: var(--text); background: rgba(var(--well-rgb),var(--well-a)); border-radius: inherit; }
 .shot-choice { display: flex; gap: 10px; margin-bottom: 12px; }
 .shot-choice__btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 10px;
   border-radius: 16px; background: rgba(var(--well-rgb),var(--well-a)); border: 1px solid var(--glass-border); color: var(--text); }

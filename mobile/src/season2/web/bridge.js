@@ -1211,29 +1211,61 @@
   // then drop its path into the terminal so the AI can actually look at it.
   // Thumbnails come straight from the server (/files/download?token=…).
   var uploadState = null; // { done, total } während des Hochladens
+  var shotSelect = false; // Auswahlmodus (Long-Press auf eine Kachel)
+  var shotSel = {};       // Index -> ausgewählt
+
+  function shotRerender() {
+    window.TMSBridge.setTool('screenshots', window.TMS_DATA.screenshots || []);
+  }
+  function shotSelectedPaths() {
+    var shots = window.TMS_DATA.screenshots || [];
+    return Object.keys(shotSel).filter(function (k) { return shotSel[k] && shots[k]; })
+      .map(function (k) { return shots[k].path; });
+  }
+
   window.buildScreenshotsSheet = function () {
     var shots = window.TMS_DATA.screenshots || [];
+    var selCount = shotSelectedPaths().length;
+
     var progress = uploadState
       ? '<div class="up-progress"><div class="up-progress__bar"><span style="width:' +
           Math.round((uploadState.done / Math.max(1, uploadState.total)) * 100) + '%"></span></div>' +
         '<div class="up-progress__label">Lade hoch … ' + uploadState.done + ' von ' + uploadState.total + '</div></div>'
       : '';
-    var choice = uploadState ? '' :
+
+    var choice = (uploadState || shotSelect) ? '' :
       '<div class="shot-choice">' +
       '<button class="shot-choice__btn" id="shotCaptureBtn">' + icon('camera', 22) + '<span>Kamera</span></button>' +
-      '<button class="shot-choice__btn" id="shotPickBtn">' + icon('grid', 22) + '<span>Galerie</span><small>bis zu 20</small></button>' +
+      '<button class="shot-choice__btn" id="shotPickBtn">' + icon('grid', 22) + '<span>Galerie</span><small>Fotos & Videos · bis 20</small></button>' +
       '</div>';
-    var allBtn = shots.length
+
+    // Auswahlmodus: Anhängen / Löschen / Fertig statt der Aufnahme-Knöpfe.
+    var selbar = shotSelect
+      ? '<div class="shot-selbar">' +
+          '<button class="btn-chip" id="shotSelAttach">Anhängen (' + selCount + ')</button>' +
+          '<button class="btn-chip btn-chip--danger" id="shotSelDelete">Löschen (' + selCount + ')</button>' +
+          '<span class="keys-panel__spacer"></span>' +
+          '<button class="btn-chip" id="shotSelDone">Fertig</button>' +
+        '</div>'
+      : '';
+
+    var allBtn = (!shotSelect && shots.length)
       ? '<button class="shot-insert-all" id="shotInsertAll">Alle ' + shots.length + ' Bilder ins Terminal einfügen</button>'
       : '';
+
     var tiles = shots.length
       ? '<div class="shot-grid" id="shotGrid">' + shots.map(function (sh, i) {
-          return '<button class="shot-tile" data-shot="' + i + '" title="' + escapeHtml(sh.path) + '"' +
-            ' style="background-image:url(\'' + sh.url + '\');background-size:cover;background-position:center"></button>';
+          var bg = (sh.url && !sh.isVideo)
+            ? ' style="background-image:url(\'' + sh.url + '\');background-size:cover;background-position:center"' : '';
+          return '<button class="shot-tile' + (shotSel[i] ? ' is-selected' : '') + '" data-shot="' + i + '"' + bg +
+            ' title="' + escapeHtml(sh.path) + '">' +
+            (sh.isVideo ? '<span class="shot-tile__video">▶</span>' : '') +
+            '<span class="shot-tile__check">✓</span></button>';
         }).join('') + '</div>'
       : '';
+
     return {
-      html: progress + choice + allBtn + tiles,
+      html: progress + choice + selbar + allBtn + tiles,
       wire: function () {
         var cap = document.getElementById('shotCaptureBtn');
         if (cap) cap.addEventListener('click', function () {
@@ -1248,15 +1280,45 @@
           var paths = (window.TMS_DATA.screenshots || []).map(function (sh) { return sh.path; });
           if (paths.length) insertIntoTerminal(paths.join(' '), paths.length + ' Bilder eingefügt');
         });
+        var done = document.getElementById('shotSelDone');
+        if (done) done.addEventListener('click', function () { shotSelect = false; shotSel = {}; shotRerender(); });
+        var att = document.getElementById('shotSelAttach');
+        if (att) att.addEventListener('click', function () {
+          var paths = shotSelectedPaths();
+          if (!paths.length) return;
+          shotSelect = false; shotSel = {};
+          insertIntoTerminal(paths.join(' '), paths.length + ' Dateien eingefügt');
+        });
+        var del = document.getElementById('shotSelDelete');
+        if (del) del.addEventListener('click', function () {
+          var paths = shotSelectedPaths();
+          if (!paths.length) return;
+          shotSelect = false; shotSel = {};
+          post('shot:delete', { paths: paths }); // React Native löscht auf dem Gerät und meldet die neue Liste
+        });
         document.querySelectorAll('#toolSheetBody [data-shot]').forEach(function (tile) {
           tile.addEventListener('click', function () {
-            var shot = (window.TMS_DATA.screenshots || [])[Number(tile.dataset.shot)];
-            if (shot) insertIntoTerminal(shot.path, 'Bildpfad eingefügt');
+            var i = Number(tile.dataset.shot);
+            if (shotSelect) { shotSel[i] = !shotSel[i]; shotRerender(); return; }
+            var shot = (window.TMS_DATA.screenshots || [])[i];
+            if (shot) insertIntoTerminal(shot.path, shot.isVideo ? 'Videopfad eingefügt' : 'Bildpfad eingefügt');
           });
         });
       },
     };
   };
+
+  // Long-Press auf eine Kachel startet die Auswahl — wie in der Foto-App.
+  document.addEventListener('contextmenu', function (e) {
+    var tile = e.target.closest && e.target.closest('.shot-tile');
+    if (!tile) return;
+    e.preventDefault();
+    shotSelect = true;
+    shotSel[Number(tile.dataset.shot)] = true;
+    if (navigator.vibrate) navigator.vibrate(8);
+    shotRerender();
+  });
+
   /** Ladefortschritt: wie viele von wie vielen Bildern schon durch sind. */
   window.TMSBridge.uploadProgress = function (done, total) {
     uploadState = (done >= total) ? null : { done: done, total: total };

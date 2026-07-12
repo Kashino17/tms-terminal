@@ -54,7 +54,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
   /** Which sheet is open — so an async reply knows whether it is still wanted. */
   const openSheet = useRef<string | null>(null);
   /** Screenshots uploaded this session: server path + a thumbnail URL. */
-  const [shots, setShots] = useState<Array<{ path: string; url: string }>>([]);
+  const [shots, setShots] = useState<Array<{ path: string; url: string; isVideo?: boolean }>>([]);
 
   const listFiles = useCallback(async (path: string) => {
     if (!server || !token) return;
@@ -101,32 +101,56 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       const result = source === 'camera'
         ? await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, base64: true })
         : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: ImagePicker.MediaTypeOptions.All, // Fotos UND Videos
             quality: 1,
             base64: true,
             allowsMultipleSelection: true,
-            selectionLimit: 20, // bis zu 20 Bilder auf einmal
+            selectionLimit: 20, // bis zu 20 auf einmal
           });
       if (result.canceled) return;
 
-      const uploaded: Array<{ path: string; url: string }> = [];
+      const uploaded: Array<{ path: string; url: string; isVideo?: boolean }> = [];
       const total = result.assets.length;
       call('uploadProgress', 0, total);
       for (const asset of result.assets) {
-        const data = asset.base64
-          ?? (await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
-        const r = await fetch(`http://${server.host}:${server.port}/upload/screenshot`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({
-            filename: asset.fileName ?? `screenshot-${uploaded.length}.jpg`,
-            data,
-            mimeType: asset.mimeType ?? 'image/jpeg',
-          }),
-        });
-        const json = await r.json();
-        if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
-        uploaded.push({ path: json.path, url: downloadUrl(json.path) });
+        const isVideo = asset.type === 'video';
+        if (isVideo && (asset.fileSize ?? 0) > 500 * 1024 * 1024) {
+          call('toast', 'Video übersprungen: größer als 500 MB');
+          continue;
+        }
+        let json: any;
+        if (isVideo) {
+          // Multipart wie im klassischen Panel — 500 MB als Base64 wären das
+          // Ende der JS-Brücke. Der Server (/upload/media) kann genau 500 MB.
+          const form = new FormData();
+          form.append('file', {
+            uri: asset.uri,
+            name: asset.fileName ?? `video-${Date.now()}.mp4`,
+            type: asset.mimeType ?? 'video/mp4',
+          } as unknown as Blob);
+          const r = await fetch(`http://${server.host}:${server.port}/upload/media`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: form,
+          });
+          json = await r.json();
+          if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
+        } else {
+          const data = asset.base64
+            ?? (await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
+          const r = await fetch(`http://${server.host}:${server.port}/upload/screenshot`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              filename: asset.fileName ?? `screenshot-${uploaded.length}.jpg`,
+              data,
+              mimeType: asset.mimeType ?? 'image/jpeg',
+            }),
+          });
+          json = await r.json();
+          if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
+        }
+        uploaded.push({ path: json.path, url: isVideo ? '' : downloadUrl(json.path), isVideo });
         call('uploadProgress', uploaded.length, total); // 3 von 12 …
       }
       const next = [...uploaded.reverse(), ...shots];
@@ -269,6 +293,30 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       case 'shot:capture':
         captureShot(payload.source === 'camera' ? 'camera' : 'library');
         return true;
+
+      case 'shot:delete': {
+        const paths: string[] = payload.paths ?? [];
+        if (!server || !token || !paths.length) return true;
+        (async () => {
+          try {
+            const r = await fetch(`http://${server.host}:${server.port}/files/trash`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ paths }),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            setShots((prev) => {
+              const next = prev.filter((sh) => !paths.includes(sh.path));
+              call('setTool', 'screenshots', next);
+              return next;
+            });
+            call('toast', paths.length > 1 ? `${paths.length} Dateien gelöscht` : 'Gelöscht');
+          } catch (e: any) {
+            call('toast', `Löschen: ${e?.message ?? 'fehlgeschlagen'}`);
+          }
+        })();
+        return true;
+      }
 
       case 'watcher:toggle':
         wsService?.send({ type: 'watcher:update', payload: { id: payload.id, enabled: !!payload.on } });

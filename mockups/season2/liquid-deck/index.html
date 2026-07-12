@@ -302,8 +302,8 @@
      damit die Eingabezeile den Platz bekommt. Übrig bleiben Senden und Tasten. */
   .dock-page--term > * { transition: max-width 280ms cubic-bezier(.22,1,.36,1),
     opacity 160ms ease-out, margin 280ms cubic-bezier(.22,1,.36,1), transform 280ms cubic-bezier(.22,1,.36,1); }
-  #dock.is-typing .dock-page--term > .term-key,
-  #dock.is-typing .dock-page--term > #dockMicBtn {
+  /* Das Mikro bleibt beim Tippen sichtbar — Diktat IST Tippen per Stimme. */
+  #dock.is-typing .dock-page--term > .term-key {
     max-width: 0; min-width: 0; width: 0; opacity: 0; margin: 0; padding: 0; border-width: 0;
     transform: scale(.8); overflow: hidden; }
   #dock.is-typing .term-input { font-size: 15px; }
@@ -379,12 +379,25 @@
      ============================================================ */
   .sheet-wrap { position: fixed; inset: 0; z-index: 70; display: flex; align-items: flex-end; justify-content: center; visibility: hidden; }
   .sheet-wrap.is-open { visibility: visible; }
+  /* Die hintere Seite weicht zurück, wenn ein Sheet aufgeht: schrumpfen, runden,
+     abdunkeln — die iOS-Card-Präsentation. Ein Sheet liegt nicht AUF der Seite,
+     es schiebt sie nach hinten. */
+  #screens { transform-origin: 50% 12%;
+    transition: transform 520ms cubic-bezier(.32,1.06,.35,1), border-radius 520ms cubic-bezier(.32,1.06,.35,1), filter 380ms ease; }
+  body.sheet-open #screens { transform: scale(.935) translateY(8px); border-radius: 26px; overflow: hidden;
+    filter: brightness(.72) saturate(.92); }
+  body.sheet-open #statusHeader { transition: transform 520ms cubic-bezier(.32,1.06,.35,1), opacity 380ms ease;
+    transform: translateX(-50%) scale(.93) translateY(6px); opacity: .55; }
+  #statusHeader { transition: transform 520ms cubic-bezier(.32,1.06,.35,1), opacity 380ms ease; }
   .sheet-backdrop { position: absolute; inset: 0; background: rgba(var(--scrim-rgb),0); transition: background 350ms var(--spring); }
   .sheet-wrap.is-open .sheet-backdrop { background: rgba(var(--scrim-rgb),var(--scrim-a)); }
   .sheet-panel { position: relative; width: 100%; max-width: 480px; margin: 0 10px calc(env(safe-area-inset-bottom, 0px) + 10px); padding: 10px 18px calc(18px + env(safe-area-inset-bottom, 0px));
     background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
     transform: translateY(110%); transition: transform 260ms var(--ease-exit); will-change: transform; }
-  .sheet-wrap.is-open .sheet-panel { transform: translateY(0); transition: transform var(--dur-gentle) var(--spring-gentle); }
+  .sheet-wrap.is-open .sheet-panel { transform: translateY(0) scale(1);
+    transition: transform 560ms cubic-bezier(.30,1.18,.34,1); }
+  .sheet-wrap:not(.is-open) .sheet-panel { transform: translateY(104%) scale(.97);
+    transition: transform 340ms cubic-bezier(.4,0,.68,.06); }
   .sheet-grabber { width: 36px; height: 4px; border-radius: 3px; background: var(--glass-border); margin: 4px auto 14px; }
   .sheet-title { font-size: var(--fs-section); font-weight: 700; margin-bottom: 12px; }
 
@@ -1898,9 +1911,18 @@
   // ============================================================
   // Bottom sheets (Mehr / permission)
   // ============================================================
-  function openSheet(wrapEl) { wrapEl.hidden = false; requestAnimationFrame(() => wrapEl.classList.add('is-open')); }
+  function openSheet(wrapEl) {
+    wrapEl.hidden = false;
+    requestAnimationFrame(() => {
+      wrapEl.classList.add('is-open');
+      if (!wrapEl.classList.contains('sheet-wrap--perm')) document.body.classList.add('sheet-open');
+    });
+  }
   function closeSheet(wrapEl) {
     wrapEl.classList.remove('is-open');
+    if (!document.querySelector('.sheet-wrap.is-open:not(.sheet-wrap--perm)')) {
+      document.body.classList.remove('sheet-open');
+    }
     setTimeout(() => { wrapEl.hidden = true; }, 420);
   }
 
@@ -2244,6 +2266,7 @@
             <button class="tt-key tt-key--icon" data-tt-tool="screenshots" aria-label="Screenshots" title="Screenshots">${icon('camera', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="files" aria-label="Dateien" title="Dateien">${icon('folder', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="notes" aria-label="Notizen" title="Notizen">${icon('note', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-key="mic" aria-label="Diktieren" title="Diktieren">${icon('mic', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-key="werkzeuge" aria-label="Alle Werkzeuge" title="Alle Werkzeuge">${icon('tools', 17)}</button>
           </div>
         </div>`;
@@ -2272,7 +2295,8 @@
           const on = cardState[id].selectionMode;
           btn.classList.toggle('is-on', on);
           toast(on ? 'Auswahlmodus an' : 'Auswahlmodus aus');
-        } else if (k === 'werkzeuge') openTermToolsSheet(id);
+        } else if (k === 'mic') startDictation(id);
+        else if (k === 'werkzeuge') openTermToolsSheet(id);
         else if (k === 'closepanel') closeKeysPanel();
       });
     });
