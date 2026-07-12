@@ -22,7 +22,7 @@ export function OverviewGrid({ tabs, colors: tagColors, onSelect, onClose }: Ove
   const { c, m } = theme;
 
   return (
-    <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={[StyleSheet.absoluteFill, styles.zone, { backgroundColor: c.scrim }]}>
+    <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={[StyleSheet.absoluteFill, styles.zone, { backgroundColor: c.bgGradient[1] }]}>
       <View style={styles.headRow}>
         <Text style={{ color: c.text, fontSize: m.font.section, fontWeight: '800' }}>Übersicht</Text>
         <Pressable
@@ -48,9 +48,9 @@ export function OverviewGrid({ tabs, colors: tagColors, onSelect, onClose }: Ove
                   {tab.title || 'Terminal'}
                 </Text>
               </View>
-              <Text style={{ color: c.textDim, fontSize: m.font.micro, fontWeight: '600' }}>
-                {(tab.aiTool ? tab.aiTool.toUpperCase() : tab.sessionId ? 'BEREIT' : 'STARTET…')}
-                {tab.notificationCount ? `  ·  ${tab.notificationCount} wartend` : ''}
+              <Text numberOfLines={1} style={{ color: c.textDim, fontSize: m.font.micro, fontWeight: '600' }}>
+                {tab.sessionId ? (tab.lastCwd ?? 'Bereit') : 'Startet…'}
+                {tab.notificationCount ? '  ·  wartet' : ''}
               </Text>
             </GlassSurface>
           </AnimatedPressable>
@@ -65,7 +65,7 @@ export function OverviewGrid({ tabs, colors: tagColors, onSelect, onClose }: Ove
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 const styles = StyleSheet.create({
-  zone: { zIndex: 25, paddingTop: 4 },
+  zone: { zIndex: 60, paddingTop: 8 },
   headRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingVertical: 10,
@@ -76,6 +76,6 @@ const styles = StyleSheet.create({
   },
   grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, paddingBottom: 140 },
   cell: { flexBasis: '50%', maxWidth: '50%', padding: 6 },
-  tile: { padding: 12, minHeight: 84, justifyContent: 'space-between' },
+  tile: { padding: 12, minHeight: 96, justifyContent: 'space-between' },
   tileHead: { flexDirection: 'row', alignItems: 'center', gap: 7 },
 });

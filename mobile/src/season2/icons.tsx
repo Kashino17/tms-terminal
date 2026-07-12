@@ -204,3 +204,23 @@ export const IconDot = make(({ size, color }) => (
     <Circle cx={12} cy={12} r={5} fill={color} />
   </Svg>
 ));
+
+export const IconBolt = make(({ size, color, strokeWidth }) => (
+  <Svg {...base(size)}>
+    <Path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" {...stroke(color, strokeWidth)} />
+  </Svg>
+));
+
+export const IconNotes = make(({ size, color, strokeWidth }) => (
+  <Svg {...base(size)}>
+    <Rect x={5} y={3} width={14} height={18} rx={2.5} {...stroke(color, strokeWidth)} />
+    <Path d="M9 8h6M9 12h6M9 16h3" {...stroke(color, strokeWidth)} />
+  </Svg>
+));
+
+export const IconArrowDownCircle = make(({ size, color, strokeWidth }) => (
+  <Svg {...base(size)}>
+    <Circle cx={12} cy={12} r={9} {...stroke(color, strokeWidth)} />
+    <Path d="M12 8v8m0 0 3.5-3.5M12 16l-3.5-3.5" {...stroke(color, strokeWidth)} />
+  </Svg>
+));

@@ -45,7 +45,7 @@ import { useDictation } from '../hooks/useDictation';
 import { useS2Theme } from '../theme/tokens';
 import {
   IconPlus, IconTrash, IconSend, IconMic, IconChevronDown, IconChevronRight, IconServer, IconDot,
-  IconList, IconStack, IconGrid, IconEdit,
+  IconList, IconStack, IconGrid, IconBolt, IconNotes, IconArrowDownCircle,
 } from '../icons';
 
 // ── Season-2 connection state (module store — survives screen remounts) ──
@@ -114,6 +114,8 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
   const [view, setView] = useState<S2View>('list');
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [notesFor, setNotesFor] = useState<{ tabId: string; title: string; color: string } | null>(null);
+  const pagerRef = useRef<ScrollView>(null);
+  const [pageW, setPageW] = useState(0);
 
   // Load persisted view preference once.
   useEffect(() => {
@@ -302,9 +304,9 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
                       {!!tab.notificationCount && <View style={[styles.badge, { backgroundColor: c.warn }]} />}
                       <IconDot size={8} color={tab.sessionId ? c.ok : c.warn} />
                     </View>
-                    {(tab.lastCwd || tab.aiTool) && (
+                    {!!tab.lastCwd && (
                       <Text numberOfLines={1} style={{ color: c.textDim, fontSize: m.font.micro, marginTop: 4 }}>
-                        {tab.aiTool ? `${tab.aiTool} · ` : ''}{tab.lastCwd ?? ''}
+                        {tab.lastCwd}
                       </Text>
                     )}
                   </GlassSurface>
@@ -401,44 +403,72 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
 
       {view === 'stack' && tabs.length > 0 ? (
         <View style={{ flex: 1, minHeight: 0 }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.chipStrip}>
+          {/* Horizontal pager — swipe between terminals like iPhone home screens. */}
+          <ScrollView
+            ref={pagerRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(e) => {
+              const idx = Math.round(e.nativeEvent.contentOffset.x / Math.max(1, pageW));
+              const tab = tabs[Math.min(Math.max(idx, 0), tabs.length - 1)];
+              if (tab && tab.id !== expandedId) setExpandedId(tab.id);
+            }}
+            onLayout={(e) => setPageW(e.nativeEvent.layout.width)}
+            style={{ flex: 1 }}
+          >
+            {tabs.map((tab, i) => (
+              <View key={tab.id} style={{ width: pageW || undefined, paddingHorizontal: 14 }}>
+                <SessionCard
+                  tab={tab}
+                  color={SESSION_COLORS[i % SESSION_COLORS.length]}
+                  expanded
+                  full
+                  onToggle={() => {}}
+                  onClose={() => closeTerminal(tab)}
+                  onNotes={(color) => setNotesFor({ tabId: tab.id, title: tab.title, color })}
+                  wsService={conn.wsService!}
+                  serverId={conn.server!.id}
+                  toast={toast}
+                />
+              </View>
+            ))}
+          </ScrollView>
+          {/* Page dots — the home-screen style navigator. */}
+          <View style={[styles.dots, { paddingBottom: m.dockHeight + 18 }]}>
             {tabs.map((tab, i) => {
               const isActive = stackTab?.id === tab.id;
               return (
                 <Pressable
                   key={tab.id}
-                  onPress={() => setExpandedId(tab.id)}
-                  style={[styles.chip, { borderColor: isActive ? `rgba(${c.accentRgb},0.5)` : c.glassBorder, backgroundColor: isActive ? `rgba(${c.accentRgb},0.14)` : `rgba(${c.overlayRgb},0.05)` }]}
+                  onPress={() => {
+                    setExpandedId(tab.id);
+                    pagerRef.current?.scrollTo({ x: i * pageW, animated: true });
+                  }}
+                  hitSlop={8}
+                  accessibilityLabel={tab.title || 'Terminal'}
                 >
-                  <IconDot size={8} color={SESSION_COLORS[i % SESSION_COLORS.length]} />
-                  <Text numberOfLines={1} style={{ color: isActive ? c.text : c.textDim, fontSize: m.font.caption, fontWeight: '700', maxWidth: 140 }}>
-                    {tab.title || 'Terminal'}
-                  </Text>
-                  {!!tab.notificationCount && <View style={[styles.badge, { backgroundColor: c.warn }]} />}
+                  <View
+                    style={[
+                      styles.dot,
+                      {
+                        backgroundColor: isActive ? SESSION_COLORS[i % SESSION_COLORS.length] : c.textDim,
+                        opacity: isActive ? 1 : 0.35,
+                        width: isActive ? 22 : 7,
+                      },
+                    ]}
+                  />
                 </Pressable>
               );
             })}
-          </ScrollView>
-          {stackTab && (
-            <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 16, paddingBottom: m.dockHeight + 34 }}>
-              <SessionCard
-                key={stackTab.id}
-                tab={stackTab}
-                color={SESSION_COLORS[Math.max(0, tabs.findIndex((t) => t.id === stackTab.id)) % SESSION_COLORS.length]}
-                expanded
-                full
-                onToggle={() => {}}
-                onClose={() => closeTerminal(stackTab)}
-                onNotes={(color) => setNotesFor({ tabId: stackTab.id, title: stackTab.title, color })}
-                wsService={conn.wsService!}
-                serverId={conn.server!.id}
-                toast={toast}
-              />
-            </View>
-          )}
+          </View>
         </View>
       ) : (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: m.dockHeight + 40 }}>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: m.dockHeight + 40 }}
+          keyboardShouldPersistTaps="handled"
+        >
           {tabs.map((tab, i) => (
             <SessionCard
               key={tab.id}
@@ -510,6 +540,7 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(tab.title);
   const [cmd, setCmd] = useState('');
+  const [confirmClose, setConfirmClose] = useState(false);
   const tapCount = useRef(0);
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const termRef = useRef<TerminalViewRef>(null);
@@ -561,13 +592,14 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
     useAutoApproveStore.getState().toggle(tab.sessionId);
   }, [tab.sessionId]);
 
-  const statusLabel = tab.aiTool ? tab.aiTool : tab.sessionId ? 'Bereit' : 'Startet…';
-
   return (
     <GlassSurface strong={expanded} style={full ? { flex: 1, minHeight: 0 } : { marginBottom: 12 }}>
+      {/* Color identity: a calm 3px spine on the card edge instead of a
+          distracting dot — professional separation, no noise. */}
+      <View style={[styles.spine, { backgroundColor: color, opacity: expanded ? 0.9 : 0.5 }]} />
+
       <Pressable onPress={full ? undefined : onToggle} accessibilityRole="button" disabled={full}>
         <View style={styles.cardHead}>
-          <View style={[styles.colorTag, { backgroundColor: color }]} />
           {editing ? (
             <TextInput
               value={draft}
@@ -575,42 +607,69 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
               onBlur={commitRename}
               onSubmitEditing={commitRename}
               autoFocus
-              style={[styles.titleInput, { color: c.text, borderColor: c.glassBorder, fontSize: m.font.section }]}
+              style={[styles.titleInput, { color: c.text, borderColor: c.glassBorder, fontSize: m.font.label }]}
             />
           ) : (
             <Pressable onPress={handleTitleTap} style={{ flex: 1, minWidth: 0 }} accessibilityHint="Dreifach tippen zum Umbenennen">
-              <Text numberOfLines={1} style={{ color: c.text, fontSize: m.font.section, fontWeight: '700' }}>{tab.title}</Text>
+              <Text numberOfLines={1} style={{ color: c.text, fontSize: m.font.label, fontWeight: '600', letterSpacing: 0.1 }}>
+                {tab.title}
+              </Text>
             </Pressable>
           )}
           <Pressable
             onPress={() => onNotes(color)}
-            hitSlop={6}
             accessibilityLabel="Notizen und Todos"
-            style={({ pressed }) => [pressed && styles.pressed]}
+            style={({ pressed }) => [styles.iconBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
           >
-            <IconEdit size={m.icon.sm} color={c.textDim} />
+            <IconNotes size={m.icon.sm} color={c.textDim} />
           </Pressable>
           <Pressable
             onPress={toggleAuto}
             accessibilityLabel="Auto-Approve umschalten"
-            style={[styles.chipBtn, { borderColor: autoOn ? `rgba(${c.accentRgb},0.4)` : c.glassBorder, backgroundColor: autoOn ? `rgba(${c.accentRgb},0.14)` : 'transparent' }]}
+            accessibilityState={{ selected: autoOn }}
+            style={({ pressed }) => [
+              styles.iconBtn,
+              { borderColor: autoOn ? `rgba(${c.accentRgb},0.45)` : c.glassBorder, backgroundColor: autoOn ? `rgba(${c.accentRgb},0.14)` : 'transparent' },
+              pressed && styles.pressed,
+            ]}
           >
-            <Text style={{ color: autoOn ? c.ok : c.textDim, fontSize: m.font.micro, fontWeight: '800' }}>⚡ AUTO</Text>
+            <IconBolt size={m.icon.sm} color={autoOn ? c.accent : c.textDim} />
           </Pressable>
-          <View style={[styles.chip, { backgroundColor: `rgba(${c.accentRgb},0.10)`, borderColor: c.glassBorder }]}>
-            <IconDot size={8} color={tab.sessionId ? c.ok : c.warn} />
-            <Text style={{ color: c.textDim, fontSize: m.font.micro, fontWeight: '700' }}>{statusLabel.toUpperCase()}</Text>
-          </View>
-          <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="Terminal schließen" style={({ pressed }) => [pressed && styles.pressed]}>
+          <Pressable
+            onPress={() => setConfirmClose(true)}
+            accessibilityLabel="Terminal schließen"
+            style={({ pressed }) => [styles.iconBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+          >
             <IconTrash size={m.icon.sm} color={c.textDim} />
           </Pressable>
           {!full && <IconChevronDown size={m.icon.sm} color={c.textDim} />}
         </View>
       </Pressable>
 
+      {confirmClose && (
+        <View style={[styles.confirmRow, { borderTopColor: `rgba(${c.overlayRgb},0.08)` }]}>
+          <Text style={{ flex: 1, color: c.text, fontSize: m.font.caption }}>
+            „{tab.title}" wirklich schließen?
+          </Text>
+          <Pressable
+            onPress={() => { setConfirmClose(false); onClose(); }}
+            style={({ pressed }) => [styles.confirmBtn, { borderColor: `rgba(${'239,68,68'},0.45)` }, pressed && styles.pressed]}
+          >
+            <Text style={{ color: c.err, fontSize: m.font.caption, fontWeight: '800' }}>Schließen</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setConfirmClose(false)}
+            style={({ pressed }) => [styles.confirmBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+          >
+            <Text style={{ color: c.textDim, fontSize: m.font.caption, fontWeight: '700' }}>Abbrechen</Text>
+          </Pressable>
+        </View>
+      )}
+
       {expanded && (
         <View style={full ? { flex: 1, minHeight: 0 } : undefined}>
-          <View style={[styles.termWrap, { backgroundColor: c.termSurface }, full ? { flex: 1, minHeight: 0 } : { height: 340 }]}>
+          {/* Terminal fills the card edge-to-edge and takes the height it can get. */}
+          <View style={[styles.termWrap, { backgroundColor: c.termSurface }, full ? { flex: 1, minHeight: 0 } : { height: 460 }]}>
             {tab.sessionId ? (
               <TerminalView
                 ref={termRef}
@@ -626,43 +685,58 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
                 <Text style={{ color: c.textDim, fontSize: m.font.caption }}>Session wird gestartet…</Text>
               </View>
             )}
-          </View>
-          <QuickKeys onKey={sendRaw} onJumpBottom={() => termRef.current?.scrollToBottom()} />
-          <View style={[styles.inputRow, { borderTopColor: `rgba(${c.overlayRgb},0.08)` }]}>
-            <Text style={{ color: c.textDim, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }), fontSize: m.font.body }}>$</Text>
-            <TextInput
-              value={cmd}
-              onChangeText={setCmd}
-              onSubmitEditing={sendCmd}
-              placeholder="Befehl eingeben…"
-              placeholderTextColor={c.textDim}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={[styles.cmdInput, { color: c.text, fontSize: m.font.body }]}
-            />
+            {/* Jump-to-bottom — floats over the terminal, always reachable. */}
             <Pressable
-              onPress={toggleMic}
-              hitSlop={6}
-              accessibilityLabel={micState === 'recording' ? 'Aufnahme stoppen' : 'Diktieren'}
-              style={[
-                styles.micBtn,
-                micState === 'recording' && { backgroundColor: 'rgba(239,68,68,0.16)' },
-                micState === 'processing' && { backgroundColor: `rgba(${c.accentRgb},0.16)` },
+              onPress={() => termRef.current?.scrollToBottom()}
+              accessibilityLabel="Nach unten springen"
+              style={({ pressed }) => [
+                styles.jumpBtn,
+                { backgroundColor: `rgba(${c.accentRgb},0.22)`, borderColor: `rgba(${c.accentRgb},0.45)` },
+                pressed && styles.pressed,
               ]}
             >
-              <IconMic
-                size={m.icon.md}
-                color={micState === 'recording' ? c.err : micState === 'processing' ? c.accent : c.textDim}
+              <IconArrowDownCircle size={m.icon.md} color={c.accent} />
+            </Pressable>
+          </View>
+          <QuickKeys onKey={sendRaw} onJumpBottom={() => termRef.current?.scrollToBottom()} />
+          {/* Command line: recessed well surface so it clearly reads as input. */}
+          <View style={styles.inputZone}>
+            <View style={[styles.inputRow, { backgroundColor: c.well, borderColor: c.glassBorder }]}>
+              <Text style={{ color: c.accent, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }), fontSize: m.font.body, fontWeight: '700' }}>$</Text>
+              <TextInput
+                value={cmd}
+                onChangeText={setCmd}
+                onSubmitEditing={sendCmd}
+                placeholder="Befehl eingeben…"
+                placeholderTextColor={c.textDim}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[styles.cmdInput, { color: c.text, fontSize: m.font.body }]}
               />
-            </Pressable>
-            <Pressable
-              onPress={sendCmd}
-              hitSlop={6}
-              accessibilityLabel="Senden"
-              style={({ pressed }) => [styles.sendBtn, { backgroundColor: `rgba(${c.accentRgb},0.18)` }, pressed && styles.pressed]}
-            >
-              <IconSend size={m.icon.sm} color={c.accent} />
-            </Pressable>
+              <Pressable
+                onPress={toggleMic}
+                hitSlop={6}
+                accessibilityLabel={micState === 'recording' ? 'Aufnahme stoppen' : 'Diktieren'}
+                style={[
+                  styles.micBtn,
+                  micState === 'recording' && { backgroundColor: 'rgba(239,68,68,0.16)' },
+                  micState === 'processing' && { backgroundColor: `rgba(${c.accentRgb},0.16)` },
+                ]}
+              >
+                <IconMic
+                  size={m.icon.md}
+                  color={micState === 'recording' ? c.err : micState === 'processing' ? c.accent : c.textDim}
+                />
+              </Pressable>
+              <Pressable
+                onPress={sendCmd}
+                hitSlop={6}
+                accessibilityLabel="Senden"
+                style={({ pressed }) => [styles.sendBtn, { backgroundColor: `rgba(${c.accentRgb},0.22)` }, pressed && styles.pressed]}
+              >
+                <IconSend size={m.icon.sm} color={c.accent} />
+              </Pressable>
+            </View>
           </View>
         </View>
       )}
@@ -681,17 +755,23 @@ const styles = StyleSheet.create({
   viewToggle: { flexDirection: 'row', borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: 14, overflow: 'hidden' },
   viewToggleBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   chipStrip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
+  dots: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingTop: 10 },
+  dot: { height: 7, borderRadius: 4 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, height: 36, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
   badge: { width: 8, height: 8, borderRadius: 4 },
   addRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12 },
-  colorTag: { width: 10, height: 10, borderRadius: 5 },
-  titleInput: { flex: 1, borderBottomWidth: 1, paddingVertical: 2, fontWeight: '700' },
-  chipBtn: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
-  chip2: {},
-  termWrap: { marginHorizontal: 10, borderRadius: 14, overflow: 'hidden' },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 16, paddingRight: 12, paddingVertical: 10 },
+  spine: { position: 'absolute', left: 0, top: 10, bottom: 10, width: 3, borderTopRightRadius: 3, borderBottomRightRadius: 3, zIndex: 2 },
+  colorTag: { width: 8, height: 8, borderRadius: 4 },
+  titleInput: { flex: 1, borderBottomWidth: 1, paddingVertical: 2, fontWeight: '600' },
+  iconBtn: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
+  confirmRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
+  confirmBtn: { paddingHorizontal: 12, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
+  termWrap: { marginHorizontal: 4, borderRadius: 12, overflow: 'hidden' },
   termPending: { flex: 1, minHeight: 120, alignItems: 'center', justifyContent: 'center' },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
+  jumpBtn: { position: 'absolute', right: 10, bottom: 10, width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
+  inputZone: { paddingHorizontal: 8, paddingBottom: 8, paddingTop: 2 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth * 2 },
   cmdInput: { flex: 1, paddingVertical: 6, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
   micBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   sendBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
