@@ -266,5 +266,130 @@
     toast: function (msg) { if (typeof window.toast === 'function') window.toast(msg); },
   };
 
+  // ══ Manager ═══════════════════════════════════════════════════════════════
+  // The mockup wired its input at boot, so its listeners are already attached.
+  // Replacing the nodes is the only way to drop them without touching source.
+  function rewire(id) {
+    var el = document.getElementById(id);
+    if (!el) return null;
+    var clone = el.cloneNode(true);
+    el.parentNode.replaceChild(clone, el);
+    return clone;
+  }
+  var managerInput = rewire('managerTextInput');
+  var managerMic = rewire('managerMicBtn');
+  if (managerInput) {
+    managerInput.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      var text = managerInput.value.trim();
+      if (!text) return;
+      managerInput.value = '';
+      post('manager:send', { text: text });
+    });
+  }
+  if (managerMic) {
+    managerMic.addEventListener('click', function () {
+      if (managerMic.classList.contains('is-recording')) { post('manager:mic', { stop: true }); return; }
+      managerMic.classList.add('is-recording');
+      post('manager:mic', { stop: false });
+    });
+  }
+
+  // ══ Cloud ═════════════════════════════════════════════════════════════════
+  var origOpenCloud = window.openCloudDetail;
+  window.openCloudDetail = function (id, tab) {
+    origOpenCloud(id, tab);
+    post('cloud:open', { projectId: id });
+  };
+
+  // ══ Browser ═══════════════════════════════════════════════════════════════
+  // The mockup's fake page renderer is replaced by a real, native incognito
+  // WebView that React Native lays over #browserContent. Its chrome — tabs,
+  // address bar, progress, sheets — stays exactly as designed.
+  var origResolvePage = window.resolveBrowserPage;
+  window.resolveBrowserPage = function (raw) {
+    var input = String(raw || '').trim();
+    if (!input) return origResolvePage(input); // keep the mockup's new-tab page
+    return { kind: 'native', url: input, display: input };
+  };
+  var origNewTabHtml = window.browserNewTabHtml;
+  window.renderBrowserPageHtml = function (page) {
+    return page.kind === 'newtab' ? origNewTabHtml() : '<div class="native-page"></div>';
+  };
+  window.browserTabGlyph = function (tab) {
+    var page = tab.history[tab.historyIndex];
+    return !page || page.kind === 'newtab' ? '+' : '⊕';
+  };
+
+  function browserVisible() {
+    var screen = document.querySelector('[data-screen="browser"]');
+    return !!screen && !screen.hidden;
+  }
+  function syncNativeBrowser() {
+    var tab = window.activeBrowserTab && window.activeBrowserTab();
+    var host = document.getElementById('browserContent');
+    if (!tab || !host) { post('browser:sync', { visible: false }); return; }
+    var page = tab.history[tab.historyIndex] || {};
+    var r = host.getBoundingClientRect();
+    post('browser:sync', {
+      visible: browserVisible() && page.kind !== 'newtab',
+      tabId: tab.id,
+      url: page.kind === 'newtab' ? '' : page.url || '',
+      rect: { x: r.left, y: r.top, w: r.width, h: r.height },
+    });
+  }
+  var origRenderTab = window.renderBrowserActiveTab;
+  window.renderBrowserActiveTab = function (opts) {
+    origRenderTab(opts);
+    syncNativeBrowser();
+  };
+  var origCloseTab = window.closeBrowserTab;
+  window.closeBrowserTab = function (id) {
+    origCloseTab(id);
+    post('browser:closeTab', { tabId: id });
+    syncNativeBrowser();
+  };
+  window.browserReload = function () { post('browser:reload', {}); };
+
+  // Screen changes drive the overlay: it must never float over Terminals.
+  var origShow = window.show;
+  window.show = function (name) {
+    origShow(name);
+    post('nav:screen', { screen: name });
+    if (name === 'browser') setTimeout(syncNativeBrowser, 80);
+    else post('browser:sync', { visible: false });
+  };
+  window.addEventListener('resize', function () { if (browserVisible()) syncNativeBrowser(); });
+
+  // ══ React Native → WebView (Manager / Cloud / Browser) ═════════════════════
+  window.TMSBridge.setManager = function (messages) {
+    window.TMS_DATA.manager.messages = messages;
+    if (managerMic) managerMic.classList.remove('is-recording');
+    if (typeof window.renderManagerChat === 'function') window.renderManagerChat();
+  };
+  window.TMSBridge.setCloud = function (projects) {
+    window.TMS_DATA.cloudProjects = projects;
+    if (typeof window.renderCloudGroups === 'function') window.renderCloudGroups();
+  };
+  window.TMSBridge.setCloudDetail = function (projectId, detail) {
+    var p = (window.TMS_DATA.cloudProjects || []).find(function (x) { return x.id === projectId; });
+    if (!p) return;
+    if (detail.env) p.env = detail.env;
+    if (detail.logs) p.logs = detail.logs;
+    if (detail.deploys) p.deploys = detail.deploys;
+    if (typeof window.renderCloudDetail === 'function') window.renderCloudDetail();
+  };
+  /** The native page reported its real title — put it in the chrome. */
+  window.TMSBridge.browserTitle = function (tabId, title, url) {
+    var tab = (window.activeBrowserTab && window.activeBrowserTab()) || null;
+    if (!tab || tab.id !== tabId) return;
+    var page = tab.history[tab.historyIndex];
+    if (!page || page.kind === 'newtab') return;
+    if (title) page.display = title;
+    if (url) page.url = url;
+    if (typeof window.syncBrowserChrome === 'function') window.syncBrowserChrome();
+  };
+  window.TMSBridge.browserSync = syncNativeBrowser;
+
   post('bridge:ready', {});
 })();

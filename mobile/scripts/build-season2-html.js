@@ -68,6 +68,13 @@ patch('island live session',
   `    const live = TMS_DATA.sessions.find(s => s.live) || TMS_DATA.sessions[0] || null;
     const lastLine = (live && window.__tmsLastLine && window.__tmsLastLine[live.id]) || '';`);
 
+// ── 4b) The Deploys tab invented three fake releases; take the real ones when
+//        React Native has fetched them (TMSBridge.setCloudDetail).
+patch('cloud deploys', `    const deploys = [
+      { version: 'v12', time: project.lastDeploy, status: project.status === 'building' ? 'building' : 'ready' },`,
+  `    const deploys = project.deploys || [
+      { version: 'v12', time: project.lastDeploy, status: project.status === 'building' ? 'building' : 'ready' },`);
+
 // ── 5) Boot without the demo: no scripted session, no fake RTT jitter. Both
 //       run inside the mockup's own script, i.e. before the bridge can replace
 //       them, so they have to go here.

@@ -22,7 +22,12 @@ import { storageService, getToken } from '../services/storage.service';
 import { getConnection } from '../services/websocket.service';
 import { useS2ConnStore, useS2Connection } from './screens/TerminalsScreen';
 import { useDictation } from './hooks/useDictation';
+import { useManagerWire } from './manager/useManagerWire';
+import { useManagerBridge, useCloudBridge } from './web/useSeasonTwoBackends';
+import { NativeBrowserLayer, type BrowserRect } from './web/NativeBrowserLayer';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
+
+interface BrowserOverlay { visible: boolean; tabId: string | null; url: string; rect: BrowserRect | null }
 
 interface Props {
   navigation: NativeStackNavigationProp<RootStackParamList, 'SeasonTwo'>;
@@ -41,11 +46,17 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   /** cardId whose mic is currently recording. */
   const micCard = useRef<string | null>(null);
   const restored = useRef(false);
+  const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, tabId: null, url: '', rect: null });
 
   const call = useCallback((fn: string, ...args: unknown[]) => {
     const js = `window.TMSBridge && window.TMSBridge.${fn}(${args.map((a) => JSON.stringify(a)).join(',')});true;`;
     webRef.current?.injectJavaScript(js);
   }, []);
+
+  // Manager answers must land in the store even while another screen is open.
+  useManagerWire(wsService);
+  const sendManager = useManagerBridge(wsService, ready, call);
+  const { loadProjects: loadCloud, loadDetail: loadCloudDetail } = useCloudBridge(ready, call);
 
   // ── Pick up the saved server (the WebView has no server picker of its own).
   useEffect(() => {
@@ -142,11 +153,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     wsService: wsService ?? null,
     sessionId: undefined,
     onText: (text: string) => {
-      call('dictationResult', micCard.current ?? '', text);
+      if (micCard.current === MANAGER_MIC) sendManager(text);
+      else call('dictationResult', micCard.current ?? '', text);
       micCard.current = null;
     },
     onError: (msg: string) => {
-      call('dictationResult', micCard.current ?? '', '');
+      if (micCard.current !== MANAGER_MIC) call('dictationResult', micCard.current ?? '', '');
       call('toast', msg);
       micCard.current = null;
     },
@@ -205,12 +217,42 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         Clipboard.setStringAsync(payload.text ?? '').then(() => call('toast', 'Kopiert'));
         break;
 
+      case 'manager:send':
+        sendManager(payload.text);
+        break;
+
+      case 'manager:mic':
+        micCard.current = MANAGER_MIC;
+        toggleMic();
+        break;
+
+      case 'cloud:open':
+        loadCloudDetail(payload.projectId);
+        break;
+
+      case 'nav:screen':
+        if (payload.screen === 'cloud') loadCloud();
+        break;
+
+      case 'browser:sync':
+        setBrowser({
+          visible: !!payload.visible,
+          tabId: payload.tabId ?? null,
+          url: payload.url ?? '',
+          rect: payload.rect ?? null,
+        });
+        break;
+
+      case 'browser:closeTab':
+        setBrowser((b) => (b.tabId === payload.tabId ? { ...b, visible: false, tabId: null } : b));
+        break;
+
       case 'nav:classic':
         if (payload.screen === 'settings') navigation.navigate('Settings');
         else setSeasonTwoEnabled(false);
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled]);
+  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, sendManager, loadCloud, loadCloudDetail]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -230,9 +272,20 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         setSupportMultipleWindows={false}
         style={styles.web}
       />
+      <NativeBrowserLayer
+        visible={browser.visible}
+        tabId={browser.tabId}
+        url={browser.url}
+        rect={browser.rect}
+        serverHost={server?.host}
+        onTitle={(tabId, title, url) => call('browserTitle', tabId, title, url)}
+      />
     </View>
   );
 }
+
+/** Sentinel cardId: the mic that belongs to the Manager chat, not a terminal. */
+const MANAGER_MIC = '__manager__';
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#1e2126' },
