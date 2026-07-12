@@ -1529,5 +1529,50 @@
     }
   }, true);
 
+  // ── Terminal beenden — echt, nicht nur die Karte ──────────────────────────
+  // Die Karte fällt erst, wenn der Server das Ende bestätigt; eine Session, die
+  // nie angehängt wurde, wird nur weggeräumt.
+  window.closeTerminal = function (cardId) {
+    var sid = byCard[cardId];
+    if (!sid) {
+      delete bound[cardId];
+      delete byCard[cardId];
+      if (terms[cardId]) { try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {} delete terms[cardId]; }
+      if (typeof window.removeTerminalCard === 'function') window.removeTerminalCard(cardId);
+      return;
+    }
+    post('terminal:close', { cardId: cardId, sessionId: sid });
+    if (typeof window.toast === 'function') window.toast('Beende…');
+  };
+  window.TMSBridge.sessionClosed = function (sessionId) {
+    var cardId = cardOf(sessionId);
+    if (!cardId) return;
+    delete bound[cardId];
+    delete byCard[cardId];
+    if (terms[cardId]) { try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {} delete terms[cardId]; }
+    if (typeof window.removeTerminalCard === 'function') window.removeTerminalCard(cardId);
+    if (typeof window.toast === 'function') window.toast('Terminal beendet');
+  };
+
+  // ── Kein Flackern in der Übersicht ────────────────────────────────────────
+  // Das Original baute bei JEDEM Statuswechsel Rail und Übersichtsraster komplett
+  // neu — bei laufendem Output flackerte die ganze Anzeige. Jetzt werden nur die
+  // sichtbaren Chips und Vorschauen in place aktualisiert; das Raster selbst
+  // bauen weiterhin nur Öffnen/Schließen und Struktur-Änderungen.
+  window.refreshPreviews = function () {
+    document.querySelectorAll('.overview-tile[data-id]').forEach(function (tile) {
+      var id = tile.getAttribute('data-id');
+      var sess = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === id; });
+      var chip = tile.querySelector('.status-chip');
+      if (chip && sess) chip.dataset.status = sess.status;
+      var body = tile.querySelector('.overview-tile__body');
+      if (body && window.__tmsPreview) body.innerHTML = window.__tmsPreview(id, 5);
+    });
+    document.querySelectorAll('.rail-item[data-id]').forEach(function (item) {
+      var prev = item.querySelector('.rail-item__preview');
+      if (prev && window.__tmsPreview) prev.innerHTML = window.__tmsPreview(item.getAttribute('data-id'), 2);
+    });
+  };
+
   post('bridge:ready', {});
 })();

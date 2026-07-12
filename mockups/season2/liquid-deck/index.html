@@ -649,6 +649,10 @@
   .list-swipe-btn .ic { width: var(--icon-md); height: var(--icon-md); }
   .list-swipe-btn:active { transform: scale(.9); }
   .list-swipe-btn--danger { color: var(--err); background: rgba(var(--err-rgb),.16); border-color: rgba(var(--err-rgb),.34); }
+  .tt-close-terminal { width: 100%; margin-top: 12px; padding: 13px; border-radius: 14px;
+    font: 600 13.5px var(--font-ui); color: var(--err);
+    background: rgba(var(--err-rgb),.12); border: 1px solid rgba(var(--err-rgb),.34); }
+  .tt-close-terminal:active { transform: scale(.98); }
   .list-swipe-btn--accent { color: var(--accent); background: rgba(var(--accent-rgb),.16); border-color: rgba(var(--accent-rgb),.4); }
   .list-swipe-btn.is-on { color: var(--accent); background: rgba(var(--accent-rgb),.2); border-color: rgba(var(--accent-rgb),.4); }
   .list-card__surface { position: relative; z-index: 1; display: flex; flex-direction: column; border-radius: inherit; transition: transform 320ms var(--spring); touch-action: pan-y; }
@@ -2470,6 +2474,7 @@
           <button class="list-swipe-btn list-swipe-btn--danger" data-rail="ctrlc" aria-label="Strg+C senden" title="Strg+C"><span class="rail-key">^C</span></button>
           <button class="list-swipe-btn" data-rail="clear" aria-label="Terminal leeren" title="Leeren">${icon('trash')}</button>
           <button class="list-swipe-btn" data-rail="notes" aria-label="Notizen & Todos" title="Notizen">${icon('note')}</button>
+          <button class="list-swipe-btn list-swipe-btn--danger" data-rail="close" aria-label="Terminal beenden" title="Beenden">${icon('x')}</button>
           <button class="list-swipe-btn list-swipe-btn--accent" data-rail="files" aria-label="Dateien" title="Dateien">${icon('folder')}</button>
           <button class="list-swipe-btn${state.keysPanelOpen ? ' is-on' : ''}" data-rail="keys" aria-label="Tasten" title="Tasten">${icon('keyboard')}</button>
         </div>
@@ -2536,6 +2541,29 @@
   // Requirement 2 — "+ Neues Terminal": pushes a fresh session, paints it
   // into whichever view is mounted, and drops straight into inline rename
   // (same click-to-edit flow as an existing card's name field).
+  function removeTerminalCard(id) {
+    const idx = state.order.indexOf(id);
+    if (idx === -1) return;
+    state.order.splice(idx, 1);
+    const si = TMS_DATA.sessions.findIndex(s => s.id === id);
+    if (si !== -1) TMS_DATA.sessions.splice(si, 1);
+    delete cardState[id];
+    if (!state.order.length) { state.activeCardId = null; state.activeIndex = 0; }
+    else {
+      state.activeIndex = Math.min(idx, state.order.length - 1);
+      state.activeCardId = state.order[state.activeIndex];
+    }
+    state.activeFloat = state.activeIndex;
+    renderTerminalWorkspace();
+    if (typeof syncDockTerminal === 'function') syncDockTerminal();
+    if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
+  }
+  function closeTerminal(id) {
+    // Demo: Karte weg. Die App beendet stattdessen die echte PTY-Session.
+    removeTerminalCard(id);
+    toast('Terminal beendet');
+  }
+
   function addTerminal() {
     cancelDictation();
     setTimeout(() => {
@@ -3681,8 +3709,20 @@
       if (!def) return '';
       return `<button class="tool-tile glass" data-tt-tool="${tid}"><span class="tool-tile__glyph">${icon(def.icon || 'tools')}</span><span class="tool-tile__label">${escapeHtml(def.label)}</span></button>`;
     }).join('');
-    document.getElementById('termToolsBody').innerHTML = `<div class="tool-grid">${tiles}</div>`;
+    document.getElementById('termToolsBody').innerHTML = `<div class="tool-grid">${tiles}</div>
+      <button class="tt-close-terminal" id="ttCloseTerminal" type="button">Terminal beenden</button>`;
     const body = document.getElementById('termToolsBody');
+    const closeBtn = body.querySelector('#ttCloseTerminal');
+    closeBtn.addEventListener('click', () => {
+      if (!closeBtn.dataset.armed) {
+        closeBtn.dataset.armed = '1';
+        closeBtn.textContent = 'Wirklich beenden?';
+        setTimeout(() => { delete closeBtn.dataset.armed; closeBtn.textContent = 'Terminal beenden'; }, 3000);
+        return;
+      }
+      closeSheet(wrap);
+      closeTerminal(id);
+    });
     body.querySelectorAll('[data-tt-tool]').forEach(btn => {
       btn.addEventListener('click', () => { closeSheet(wrap); openToolSheet(btn.dataset.ttTool); });
     });
@@ -3727,6 +3767,20 @@
       case 'notes': openSessionSheet(id); break;
       case 'files': openToolSheet('files'); break;
       case 'keys': toggleKeysPanel(); break;
+      case 'close': {
+        // Beenden ist endgültig — der erste Tipp spannt nur, der zweite handelt.
+        const btn = document.querySelector(`.list-card[data-id="${id}"] [data-rail="close"]`);
+        if (btn && !btn.dataset.armed) {
+          btn.dataset.armed = '1';
+          btn.classList.add('is-on');
+          toast('Nochmal tippen: Terminal beenden');
+          setTimeout(() => { delete btn.dataset.armed; btn.classList.remove('is-on'); }, 3000);
+        } else {
+          if (btn) delete btn.dataset.armed;
+          closeTerminal(id);
+        }
+        break;
+      }
     }
   }
   function wireListSwipe(card) {

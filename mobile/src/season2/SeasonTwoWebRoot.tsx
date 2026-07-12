@@ -144,6 +144,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         const tab = useTerminalStore.getState().getTabs(server.id).find((t) => t.sessionId === m.sessionId);
         if (tab) useTerminalStore.getState().removeTab(server.id, tab.id);
         dropScrollback(m.sessionId);
+        call('sessionClosed', m.sessionId); // die Seite räumt die Karte weg
         return;
       }
       if (m?.type === 'terminal:prompt_detected' && m.sessionId) {
