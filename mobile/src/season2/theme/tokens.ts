@@ -93,17 +93,24 @@ export const S2_LIGHT: S2Palette = {
  *  one icon ramp, ≥44pt touch targets. */
 export const S2_METRICS = {
   space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 },
-  radius: { sm: 10, md: 16, lg: 24, pill: 999 },
+  /** Radius family — 1:1 from the mockup (--radius-*). */
+  radius: { xs: 10, sm: 12, md: 16, lg: 22, pill: 999 },
+  /** Icon ramp — three sizes only (--icon-*). */
   icon: { sm: 16, md: 20, lg: 24 },
   touch: 44,
+  /** Type ramp — fixed sizes per role (--fs-*). */
   font: {
-    micro: 10.5,
-    caption: 12,
-    label: 13.5,
-    body: 15,
-    section: 17,
-    title: 28,
+    micro: 9.5,
+    caption: 11,
+    label: 12.5,
+    body: 14,
+    section: 15,
+    h2: 21,
+    title: 26,
   },
+  /** Control heights on the 8pt rhythm (--chip-h / --pill-h). */
+  chipHeight: 26,
+  pillHeight: 34,
   islandHeight: 40,
   dockHeight: 64,
 } as const;

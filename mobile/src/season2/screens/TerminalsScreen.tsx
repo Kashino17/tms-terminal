@@ -731,34 +731,64 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
   }, [tab.sessionId]);
 
   return (
-    <GlassSurface strong={expanded} style={full ? { flex: 1, minHeight: 0 } : { marginBottom: 12 }}>
-      {/* Color identity: a calm 3px spine on the card edge instead of a
-          distracting dot — professional separation, no noise. */}
-      <View style={[styles.spine, { backgroundColor: color, opacity: expanded ? 0.65 : 0.35 }]} />
-
+    <GlassSurface strong={expanded} style={[styles.card, full ? { flex: 1, minHeight: 0 } : { marginBottom: 12 }]}>
       <Pressable onPress={full ? undefined : onToggle} accessibilityRole="button" disabled={full}>
         <View style={styles.cardHead}>
-          {editing ? (
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              onBlur={commitRename}
-              onSubmitEditing={commitRename}
-              autoFocus
-              style={[styles.titleInput, { color: c.text, borderColor: c.glassBorder, fontSize: m.font.label }]}
-            />
-          ) : (
-            <Pressable onPress={handleTitleTap} style={{ flex: 1, minWidth: 0 }} accessibilityHint="Dreifach tippen zum Umbenennen">
-              <Text numberOfLines={1} style={{ color: c.text, fontSize: m.font.label, fontWeight: '600', letterSpacing: 0.1 }}>
-                {tab.title}
-              </Text>
-            </Pressable>
-          )}
+          {/* Mockup anatomy: 10px color dot, name + description stack. */}
+          <View style={[styles.cardTag, { backgroundColor: color }]} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            {editing ? (
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                onBlur={commitRename}
+                onSubmitEditing={commitRename}
+                autoFocus
+                style={[styles.cardName, { color: c.text, borderBottomColor: c.accent, fontSize: m.font.section }]}
+              />
+            ) : (
+              <Pressable onPress={handleTitleTap} accessibilityHint="Dreifach tippen zum Umbenennen">
+                <Text numberOfLines={1} style={[styles.cardName, { color: c.text, fontSize: m.font.section }]}>
+                  {tab.title}
+                </Text>
+              </Pressable>
+            )}
+            <Text numberOfLines={1} style={{ color: c.textDim, fontSize: m.font.caption, marginTop: 1 }}>
+              {tab.lastCwd ?? (tab.sessionId ? 'Verbunden' : 'Startet…')}
+            </Text>
+          </View>
+
+          {/* Auto-Approve pill — icon + label, green when on (mockup .auto-toggle). */}
+          <Pressable
+            onPress={toggleAuto}
+            accessibilityLabel="Auto-Approve umschalten"
+            accessibilityState={{ selected: autoOn }}
+            style={({ pressed }) => [
+              styles.autoPill,
+              {
+                borderColor: autoOn ? `rgba(74,222,128,0.4)` : c.glassBorder,
+                backgroundColor: autoOn ? 'rgba(74,222,128,0.08)' : `rgba(${c.overlayRgb},0.06)`,
+              },
+              pressed && { transform: [{ scale: 0.94 }] },
+            ]}
+          >
+            <IconBolt size={m.icon.sm} color={autoOn ? c.ok : c.textDim} />
+            <Text style={{ color: autoOn ? c.ok : c.textDim, fontSize: m.font.caption, fontWeight: '700' }}>AUTO</Text>
+          </Pressable>
+
+          {/* Status chip (mockup .status-chip). */}
+          <View style={[styles.statusChip, { backgroundColor: `rgba(${tab.notificationCount ? '251,191,36' : tab.sessionId ? '74,222,128' : '251,191,36'},0.08)` }]}>
+            <View style={[styles.statusDot, { backgroundColor: tab.notificationCount ? c.warn : tab.sessionId ? c.ok : c.warn }]} />
+            <Text style={{ color: tab.notificationCount ? c.warn : tab.sessionId ? c.ok : c.warn, fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 }}>
+              {tab.notificationCount ? 'WARTET' : tab.sessionId ? 'BEREIT' : 'START'}
+            </Text>
+          </View>
+
           {onToggleFullscreen && (
             <Pressable
               onPress={onToggleFullscreen}
               accessibilityLabel={fullscreen ? 'Vollbild verlassen' : 'Terminal auf Vollbild'}
-              style={({ pressed }) => [styles.iconBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+              style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
             >
               {fullscreen
                 ? <IconMinimize size={m.icon.sm} color={c.accent} />
@@ -768,26 +798,14 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
           <Pressable
             onPress={() => onNotes(color)}
             accessibilityLabel="Notizen und Todos"
-            style={({ pressed }) => [styles.iconBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
           >
             <IconNotes size={m.icon.sm} color={c.textDim} />
           </Pressable>
           <Pressable
-            onPress={toggleAuto}
-            accessibilityLabel="Auto-Approve umschalten"
-            accessibilityState={{ selected: autoOn }}
-            style={({ pressed }) => [
-              styles.iconBtn,
-              { borderColor: autoOn ? `rgba(${c.accentRgb},0.45)` : c.glassBorder, backgroundColor: autoOn ? `rgba(${c.accentRgb},0.14)` : 'transparent' },
-              pressed && styles.pressed,
-            ]}
-          >
-            <IconBolt size={m.icon.sm} color={autoOn ? c.accent : c.textDim} />
-          </Pressable>
-          <Pressable
             onPress={() => setConfirmClose(true)}
             accessibilityLabel="Terminal schließen"
-            style={({ pressed }) => [styles.iconBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
           >
             <IconTrash size={m.icon.sm} color={c.textDim} />
           </Pressable>
@@ -911,11 +929,17 @@ const styles = StyleSheet.create({
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, height: 36, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
   badge: { width: 8, height: 8, borderRadius: 4 },
   addRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 16, paddingRight: 12, paddingVertical: 10 },
+  card: { width: '100%', maxWidth: 480, alignSelf: 'center' },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10 },
+  cardTag: { width: 10, height: 10, borderRadius: 5 },
+  cardName: { fontWeight: '700', letterSpacing: -0.1, paddingVertical: 1, borderBottomWidth: 1, borderBottomColor: 'transparent' },
+  autoPill: { flexDirection: 'row', alignItems: 'center', gap: 5, height: 28, minWidth: 44, paddingHorizontal: 10, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
+  statusChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999 },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
   spine: { position: 'absolute', left: 0, top: 12, bottom: 12, width: 2, borderTopRightRadius: 2, borderBottomRightRadius: 2, zIndex: 2 },
   colorTag: { width: 8, height: 8, borderRadius: 4 },
   titleInput: { flex: 1, borderBottomWidth: 1, paddingVertical: 2, fontWeight: '600' },
-  iconBtn: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
+  iconBtn: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   confirmRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
   confirmBtn: { paddingHorizontal: 12, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
   termWrap: { marginHorizontal: 0, borderRadius: 0, overflow: 'hidden' },
