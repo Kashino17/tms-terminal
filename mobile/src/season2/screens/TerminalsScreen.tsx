@@ -39,7 +39,6 @@ import { TerminalView, TerminalViewRef } from '../../components/TerminalView';
 import { GlassSurface } from '../components/GlassSurface';
 import { useUiPrefsStore } from '../store/uiPrefsStore';
 import { QuickKeys } from '../components/QuickKeys';
-import { PromptSheet, PendingPrompt } from '../components/PromptSheet';
 import { OverviewGrid } from '../components/OverviewGrid';
 import { NotesSheet } from '../components/NotesSheet';
 import { useDictation } from '../hooks/useDictation';
@@ -114,9 +113,7 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [view, setView] = useState<S2View>('list');
   const [overviewOpen, setOverviewOpen] = useState(false);
-  const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null);
   const [notesFor, setNotesFor] = useState<{ tabId: string; title: string; color: string } | null>(null);
-  const autoTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   // Load persisted view preference once.
   useEffect(() => {
@@ -168,7 +165,6 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
     if (!conn.wsService || !conn.server) return;
     const serverId = conn.server.id;
     const ws = conn.wsService;
-    const timers = autoTimers.current;
     const unsub = ws.addMessageListener((msg: any) => {
       if (msg?.type === 'terminal:created' && msg.sessionId) {
         const pending = useTerminalStore.getState().getTabs(serverId).find((t) => !t.sessionId);
@@ -184,36 +180,11 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
       } else if (msg?.type === 'terminal:closed' && msg.sessionId) {
         const gone = useTerminalStore.getState().getTabs(serverId).find((t) => t.sessionId === msg.sessionId);
         if (gone) useTerminalStore.getState().removeTab(serverId, gone.id);
-      } else if (msg?.type === 'terminal:prompt_detected' && msg.sessionId) {
-        // Same guards as the classic TerminalScreen: skip when the user is
-        // typing or has unsent input, throttle back-to-back prompts.
-        const autoApprove = useAutoApproveStore.getState();
-        const sid = msg.sessionId as string;
-        const hasPendingInput = !!msg.payload?.hasPendingInput;
-        if (autoApprove.isEnabled(sid) && !autoApprove.isRunning(sid) && !autoApprove.isTyping(sid) && !hasPendingInput) {
-          autoApprove.setRunning(sid, true);
-          ws.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
-          const t = setTimeout(() => { autoApprove.setRunning(sid, false); timers.delete(t); }, 500);
-          timers.add(t);
-        } else if (!autoApprove.isEnabled(sid)) {
-          useTerminalStore.getState().setTabNotification(serverId, sid);
-          const tabsNow = useTerminalStore.getState().getTabs(serverId);
-          const idx = tabsNow.findIndex((t) => t.sessionId === sid);
-          if (idx >= 0) {
-            setPendingPrompt({
-              sessionId: sid,
-              title: tabsNow[idx].title || 'Terminal',
-              color: SESSION_COLORS[idx % SESSION_COLORS.length],
-            });
-          }
-        }
       }
+      // NOTE: terminal:prompt_detected is handled GLOBALLY in SeasonTwoRoot
+      // (M12) — it must keep working while this screen is unmounted.
     });
-    return () => {
-      unsub();
-      timers.forEach(clearTimeout);
-      timers.clear();
-    };
+    return unsub;
   }, [conn.wsService, conn.server]);
 
   const connectTo = useCallback(async (server: S2Server) => {
@@ -251,20 +222,6 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
     }
     useTerminalStore.getState().removeTab(conn.server.id, tab.id);
   }, [conn.wsService, conn.server]);
-
-  const approvePrompt = useCallback(() => {
-    if (!pendingPrompt || !conn.wsService || !conn.server) return;
-    conn.wsService.send({ type: 'terminal:input', sessionId: pendingPrompt.sessionId, payload: { data: '\r' } });
-    const tab = useTerminalStore.getState().getTabs(conn.server.id).find((t) => t.sessionId === pendingPrompt.sessionId);
-    if (tab) useTerminalStore.getState().updateTab(conn.server.id, tab.id, { notificationCount: 0 });
-    setPendingPrompt(null);
-  }, [pendingPrompt, conn.wsService, conn.server]);
-
-  const enableAutoForPrompt = useCallback(() => {
-    if (!pendingPrompt) return;
-    useAutoApproveStore.getState().setEnabled(pendingPrompt.sessionId, true);
-    approvePrompt();
-  }, [pendingPrompt, approvePrompt]);
 
   // ── Not connected: server picker ──
   if (!conn.server) {
@@ -393,15 +350,6 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
             onClose={() => setOverviewOpen(false)}
           />
         )}
-        {pendingPrompt && (
-          <PromptSheet
-            prompt={pendingPrompt}
-            onApprove={approvePrompt}
-            onDismiss={() => setPendingPrompt(null)}
-            onEnableAuto={enableAutoForPrompt}
-            bottomOffset={m.dockHeight + 40}
-          />
-        )}
         {notesFor && (
           <NotesSheet
             tabId={notesFor.tabId}
@@ -525,16 +473,6 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
           colors={SESSION_COLORS}
           onSelect={(tabId) => { setExpandedId(tabId); setOverviewOpen(false); }}
           onClose={() => setOverviewOpen(false)}
-        />
-      )}
-
-      {pendingPrompt && (
-        <PromptSheet
-          prompt={pendingPrompt}
-          onApprove={approvePrompt}
-          onDismiss={() => setPendingPrompt(null)}
-          onEnableAuto={enableAutoForPrompt}
-          bottomOffset={m.dockHeight + 40}
         />
       )}
 

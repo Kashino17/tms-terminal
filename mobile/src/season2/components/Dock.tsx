@@ -26,9 +26,11 @@ const ITEMS: { key: DockItemKey; label: string; Icon: (p: S2IconProps) => React.
 interface DockProps {
   active: DockItemKey;
   onSelect: (key: DockItemKey) => void;
+  /** Attention dots per item (e.g. pending permission prompt on terminals). */
+  badges?: Partial<Record<DockItemKey, boolean>>;
 }
 
-export function Dock({ active, onSelect }: DockProps) {
+export function Dock({ active, onSelect, badges }: DockProps) {
   const { theme } = useS2Theme();
   const { c, m } = theme;
   const pillX = useSharedValue(0);
@@ -84,6 +86,7 @@ export function Dock({ active, onSelect }: DockProps) {
             >
               <Icon size={m.icon.md} color={color} />
               <Text style={[styles.label, { color, fontSize: m.font.micro }]}>{label}</Text>
+              {badges?.[key] && <View style={[styles.itemBadge, { backgroundColor: c.warn }]} />}
             </Pressable>
           );
         })}
@@ -112,4 +115,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   label: { fontWeight: '600', letterSpacing: 0.1 },
+  itemBadge: { position: 'absolute', top: 6, right: 12, width: 8, height: 8, borderRadius: 4 },
 });

@@ -12,6 +12,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useSettingsStore } from '../store/settingsStore';
 import { useTerminalStore } from '../store/terminalStore';
+import { useAutoApproveStore } from '../store/autoApproveStore';
 import {
   getCurrentLocation, fetchPrayerTimes, getNextPrayer, formatRemaining, PrayerTimes,
 } from '../services/prayer.service';
@@ -28,6 +29,7 @@ import { ServersScreen } from './screens/ServersScreen';
 import { S2SettingsScreen } from './screens/S2SettingsScreen';
 import { useManagerWire } from './manager/useManagerWire';
 import { Spotlight, SpotlightEntry } from './components/Spotlight';
+import { PromptSheet, PendingPrompt } from './components/PromptSheet';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SeasonTwo'>;
 
@@ -54,6 +56,62 @@ function S2Shell({ navigation }: Props) {
   // (which normally installs the persistent handler) has never been mounted.
   useManagerWire(conn.wsService);
   const [spotlightOpen, setSpotlightOpen] = useState(false);
+
+  // ── GLOBAL prompt handling (M12 fix) ─────────────────────────────────────
+  // This listener must live at the ROOT: the terminals screen unmounts when
+  // the user visits Cloud/Manager/Browser, and auto-approve/permission
+  // prompts must keep working there. The sheet itself only shows on the
+  // terminals screen (user rule); elsewhere the dock badge signals pending.
+  const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null);
+  const autoTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  useEffect(() => {
+    if (!conn.wsService || !conn.server) return;
+    const serverId = conn.server.id;
+    const ws = conn.wsService;
+    const timers = autoTimers.current;
+    const unsub = ws.addMessageListener((msg: any) => {
+      if (msg?.type !== 'terminal:prompt_detected' || !msg.sessionId) return;
+      const autoApprove = useAutoApproveStore.getState();
+      const sid = msg.sessionId as string;
+      const hasPendingInput = !!msg.payload?.hasPendingInput;
+      if (autoApprove.isEnabled(sid) && !autoApprove.isRunning(sid) && !autoApprove.isTyping(sid) && !hasPendingInput) {
+        autoApprove.setRunning(sid, true);
+        ws.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
+        const t = setTimeout(() => { autoApprove.setRunning(sid, false); timers.delete(t); }, 500);
+        timers.add(t);
+      } else if (!autoApprove.isEnabled(sid)) {
+        useTerminalStore.getState().setTabNotification(serverId, sid);
+        const tabsNow = useTerminalStore.getState().getTabs(serverId);
+        const idx = tabsNow.findIndex((t) => t.sessionId === sid);
+        if (idx >= 0) {
+          setPendingPrompt({
+            sessionId: sid,
+            title: tabsNow[idx].title || 'Terminal',
+            color: SESSION_COLORS[idx % SESSION_COLORS.length],
+          });
+        }
+      }
+    });
+    return () => {
+      unsub();
+      timers.forEach(clearTimeout);
+      timers.clear();
+    };
+  }, [conn.wsService, conn.server]);
+
+  const approvePrompt = useCallback(() => {
+    if (!pendingPrompt || !conn.wsService || !conn.server) return;
+    conn.wsService.send({ type: 'terminal:input', sessionId: pendingPrompt.sessionId, payload: { data: '\r' } });
+    const tab = useTerminalStore.getState().getTabs(conn.server.id).find((t) => t.sessionId === pendingPrompt.sessionId);
+    if (tab) useTerminalStore.getState().updateTab(conn.server.id, tab.id, { notificationCount: 0 });
+    setPendingPrompt(null);
+  }, [pendingPrompt, conn.wsService, conn.server]);
+
+  const enableAutoForPrompt = useCallback(() => {
+    if (!pendingPrompt) return;
+    useAutoApproveStore.getState().setEnabled(pendingPrompt.sessionId, true);
+    approvePrompt();
+  }, [pendingPrompt, approvePrompt]);
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -197,8 +255,22 @@ function S2Shell({ navigation }: Props) {
       </Animated.View>
 
       <View style={[styles.dockZone, { paddingBottom: insets.bottom + 12 }]}>
-        <Dock active={screen} onSelect={handleDock} />
+        <Dock
+          active={screen}
+          onSelect={handleDock}
+          badges={{ terminals: !!pendingPrompt && screen !== 'terminals' }}
+        />
       </View>
+
+      {pendingPrompt && screen === 'terminals' && (
+        <PromptSheet
+          prompt={pendingPrompt}
+          onApprove={approvePrompt}
+          onDismiss={() => setPendingPrompt(null)}
+          onEnableAuto={enableAutoForPrompt}
+          bottomOffset={insets.bottom + m.dockHeight + 30}
+        />
+      )}
 
       {spotlightOpen && (
         <Spotlight entries={spotlightEntries} onClose={() => setSpotlightOpen(false)} />
