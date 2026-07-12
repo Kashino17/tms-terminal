@@ -22,6 +22,8 @@ import { DynamicIsland, IslandSessionRow } from './components/DynamicIsland';
 import { TerminalsScreen, useS2Connection } from './screens/TerminalsScreen';
 import { CloudScreen } from './screens/CloudScreen';
 import { S2BrowserScreen } from './screens/S2BrowserScreen';
+import { ManagerScreen } from './screens/ManagerScreen';
+import { useManagerWire } from './manager/useManagerWire';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SeasonTwo'>;
 
@@ -43,7 +45,10 @@ function S2Shell({ navigation }: Props) {
   const tabsByServer = useTerminalStore((s) => s.tabs);
   const conn = useS2Connection();
   // Internal season2 screens (native ones); everything else bridges to classic.
-  const [screen, setScreen] = useState<'terminals' | 'cloud' | 'browser'>('terminals');
+  const [screen, setScreen] = useState<'terminals' | 'cloud' | 'browser' | 'manager'>('terminals');
+  // Manager responses must be processed even when the classic terminal screen
+  // (which normally installs the persistent handler) has never been mounted.
+  useManagerWire(conn.wsService);
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -107,13 +112,7 @@ function S2Shell({ navigation }: Props) {
         return;
       case 'manager':
         if (conn.server && conn.wsService) {
-          navigation.navigate('ManagerChat', {
-            wsService: conn.wsService,
-            serverId: conn.server.id,
-            serverHost: conn.server.host,
-            serverPort: conn.server.port,
-            serverToken: conn.token ?? '',
-          });
+          setScreen('manager');
         } else {
           toast('Erst Server verbinden — dann öffnet der Manager');
         }
@@ -153,6 +152,17 @@ function S2Shell({ navigation }: Props) {
         {screen === 'terminals' && <TerminalsScreen navigation={navigation} toast={toast} />}
         {screen === 'cloud' && <CloudScreen toast={toast} onOpenClassicCloud={() => navigation.navigate('Settings')} />}
         {screen === 'browser' && <S2BrowserScreen toast={toast} />}
+        {screen === 'manager' && conn.server && conn.wsService && (
+          <ManagerScreen
+            navigation={navigation}
+            wsService={conn.wsService}
+            serverId={conn.server.id}
+            serverHost={conn.server.host}
+            serverPort={conn.server.port}
+            serverToken={conn.token ?? ''}
+            toast={toast}
+          />
+        )}
       </View>
 
       <View style={[styles.dockZone, { paddingBottom: insets.bottom + 12 }]}>
