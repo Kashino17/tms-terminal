@@ -546,12 +546,44 @@
   document.addEventListener('pointerup', function () { clearTimeout(selHold); selStart = null; }, true);
   document.addEventListener('pointercancel', function () { clearTimeout(selHold); selStart = null; }, true);
 
+  /** Kopier-Modus wirklich verlassen — das Mockup löschte nur die Auswahl. */
+  function exitSelection(cardId) {
+    var pre = document.querySelector('.card-body[data-card-id="' + cardId + '"]');
+    if (!pre || !pre.classList.contains('selection-mode')) return;
+    if (typeof window.clearSelection === 'function') window.clearSelection(cardId);
+    if (typeof window.toggleCardSelectionMode === 'function') window.toggleCardSelectionMode(cardId, null);
+  }
+  function exitAllSelections() {
+    document.querySelectorAll('.card-body.selection-mode[data-card-id]').forEach(function (p) {
+      exitSelection(p.getAttribute('data-card-id'));
+    });
+  }
+
+  // Nach dem Kopieren ist man fertig — also raus aus dem Modus. Die Bubble des
+  // Mockups stoppt die Weitergabe, deshalb hier in der Capture-Phase mitlesen.
+  document.addEventListener('click', function (e) {
+    var bub = e.target.closest && e.target.closest('.copy-bubble');
+    if (!bub) return;
+    var pre = bub.closest('.card-body[data-card-id]');
+    var id = pre && pre.getAttribute('data-card-id');
+    if (id) setTimeout(function () { exitSelection(id); }, 0);
+  }, true);
+
   // Ein Tipp ins Terminal wählt es aus und setzt den Cursor in die EINGABEZEILE
   // unten — dort tippt man, sichtbar. Das versteckte Textfeld des Emulators zu
   // fokussieren hieß: blind tippen, und Androids Wortvorschlag machte Salat.
   document.addEventListener('click', function (e) {
+    if (e.target.closest('.copy-bubble') || e.target.closest('.sel-handle')) return;
     var pre = e.target.closest && e.target.closest('.card-body[data-card-id]');
-    if (!pre || pre.classList.contains('selection-mode')) return;
+
+    // Irgendwo daneben tippen beendet den Kopier-Modus. Ohne das kam man da
+    // nie wieder raus — und damit auch nicht zurück in die Eingabezeile.
+    if (!pre || !e.target.closest('.term-line')) {
+      exitAllSelections();
+      if (!pre) return;
+    }
+    if (pre.classList.contains('selection-mode')) return; // Zeile antippen = auswählen
+
     if (e.target.closest('.wrapped-link') || e.target.closest('.jump-bottom-orb')) return;
     var id = pre.getAttribute('data-card-id');
     if (window.__tmsState) window.__tmsState.activeCardId = id;
