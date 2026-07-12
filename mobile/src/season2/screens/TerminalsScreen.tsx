@@ -38,7 +38,6 @@ import type { TerminalTab } from '../../types/terminal.types';
 import { TerminalView, TerminalViewRef } from '../../components/TerminalView';
 import { GlassSurface } from '../components/GlassSurface';
 import { useUiPrefsStore } from '../store/uiPrefsStore';
-import { QuickKeys } from '../components/QuickKeys';
 import type { ContextAction } from '../components/BottomBar';
 import { OverviewGrid } from '../components/OverviewGrid';
 import { NotesSheet } from '../components/NotesSheet';
@@ -267,6 +266,8 @@ export function TerminalsScreen({ navigation, toast, onContextActions }: Termina
 
   // Stack view / Fold layout keep exactly one session in focus.
   const stackTab = tabs.find((t) => t.id === expandedId) ?? tabs[0] ?? null;
+  // List view: the opened terminal (if any) renders outside the scroll strip.
+  const listTab = tabs.find((t) => t.id === expandedId) ?? null;
 
   // Publish the active terminal's tools into the context bottom bar.
   const activeForBar = view === 'list'
@@ -443,9 +444,10 @@ export function TerminalsScreen({ navigation, toast, onContextActions }: Termina
             }}
             onLayout={(e) => setPageW(e.nativeEvent.layout.width)}
             style={{ flex: 1 }}
+            contentContainerStyle={{ height: '100%' }}
           >
             {tabs.map((tab, i) => (
-              <View key={tab.id} style={{ width: pageW || undefined, paddingHorizontal: 14 }}>
+              <View key={tab.id} style={{ width: pageW || undefined, height: '100%', paddingHorizontal: 10 }}>
                 <SessionCard
                   tab={tab}
                   color={SESSION_COLORS[i % SESSION_COLORS.length]}
@@ -491,37 +493,66 @@ export function TerminalsScreen({ navigation, toast, onContextActions }: Termina
           </View>
         </View>
       ) : (
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: m.dockHeight + 40 }}
-          keyboardShouldPersistTaps="handled"
-        >
-          {tabs.map((tab, i) => (
-            <SessionCard
-              key={tab.id}
-              tab={tab}
-              color={SESSION_COLORS[i % SESSION_COLORS.length]}
-              expanded={expandedId === tab.id}
-              onToggle={() => {
-                LayoutAnimation.configureNext(SPRING_LAYOUT);
-                setExpandedId(expandedId === tab.id ? null : tab.id);
-              }}
-              onClose={() => closeTerminal(tab)}
-              onNotes={(color) => setNotesFor({ tabId: tab.id, title: tab.title, color })}
-              wsService={conn.wsService!}
-              serverId={conn.server!.id}
-              toast={toast}
-            />
-          ))}
-          <Pressable onPress={createTerminal} style={({ pressed }) => [pressed && styles.pressed]}>
-            <GlassSurface radius={m.radius.pill} style={{ marginTop: 6 }}>
-              <View style={styles.addRow}>
-                <IconPlus size={m.icon.sm} color={c.accent} />
-                <Text style={{ color: c.accent, fontSize: m.font.body, fontWeight: '700' }}>Neues Terminal</Text>
-              </View>
-            </GlassSurface>
-          </Pressable>
-        </ScrollView>
+        <View style={{ flex: 1, minHeight: 0 }}>
+          {/* Collapsed rows scroll in a compact strip … */}
+          <ScrollView
+            style={{ flexGrow: 0, maxHeight: listTab ? 190 : undefined }}
+            contentContainerStyle={{ paddingHorizontal: 10, paddingBottom: 6 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {tabs.filter((t) => t.id !== expandedId).map((tab) => {
+              const i = tabs.findIndex((t) => t.id === tab.id);
+              return (
+                <SessionCard
+                  key={tab.id}
+                  tab={tab}
+                  color={SESSION_COLORS[i % SESSION_COLORS.length]}
+                  expanded={false}
+                  onToggle={() => {
+                    LayoutAnimation.configureNext(SPRING_LAYOUT);
+                    setExpandedId(tab.id);
+                  }}
+                  onClose={() => closeTerminal(tab)}
+                  onNotes={(color) => setNotesFor({ tabId: tab.id, title: tab.title, color })}
+                  wsService={conn.wsService!}
+                  serverId={conn.server!.id}
+                  toast={toast}
+                />
+              );
+            })}
+            <Pressable onPress={createTerminal} style={({ pressed }) => [pressed && styles.pressed]}>
+              <GlassSurface radius={m.radius.pill} style={{ marginTop: 2, marginBottom: 6 }}>
+                <View style={styles.addRow}>
+                  <IconPlus size={m.icon.sm} color={c.accent} />
+                  <Text style={{ color: c.accent, fontSize: m.font.body, fontWeight: '700' }}>Neues Terminal</Text>
+                </View>
+              </GlassSurface>
+            </Pressable>
+          </ScrollView>
+
+          {/* … while the open terminal owns the rest of the screen (its WebView
+              keeps its own vertical gestures — no parent ScrollView stealing). */}
+          {listTab && (
+            <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 10, paddingBottom: m.dockHeight + 26 }}>
+              <SessionCard
+                key={listTab.id}
+                tab={listTab}
+                color={SESSION_COLORS[Math.max(0, tabs.findIndex((t) => t.id === listTab.id)) % SESSION_COLORS.length]}
+                expanded
+                full
+                onToggle={() => {
+                  LayoutAnimation.configureNext(SPRING_LAYOUT);
+                  setExpandedId(null);
+                }}
+                onClose={() => closeTerminal(listTab)}
+                onNotes={(color) => setNotesFor({ tabId: listTab.id, title: listTab.title, color })}
+                wsService={conn.wsService!}
+                serverId={conn.server!.id}
+                toast={toast}
+              />
+            </View>
+          )}
+        </View>
       )}
 
       {overviewOpen && (
@@ -695,8 +726,9 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
 
       {expanded && (
         <View style={full ? { flex: 1, minHeight: 0 } : undefined}>
-          {/* Terminal fills the card edge-to-edge and takes the height it can get. */}
-          <View style={[styles.termWrap, { backgroundColor: c.termSurface }, full ? { flex: 1, minHeight: 0 } : { height: 460 }]}>
+          {/* Infinity edge: the terminal runs to the card's borders and takes
+              every pixel of height the card can give it. */}
+          <View style={[styles.termWrap, { backgroundColor: c.termSurface }, full ? { flex: 1, minHeight: 0 } : { height: 420 }]}>
             {tab.sessionId ? (
               <TerminalView
                 ref={termRef}
@@ -725,7 +757,6 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
               <IconArrowDownCircle size={m.icon.md} color={c.accent} />
             </Pressable>
           </View>
-          <QuickKeys onKey={sendRaw} onJumpBottom={() => termRef.current?.scrollToBottom()} />
           {/* Command line: recessed well surface so it clearly reads as input. */}
           <View style={styles.inputZone}>
             <View style={[styles.inputRow, { backgroundColor: c.well, borderColor: c.glassBorder }]}>
@@ -794,10 +825,10 @@ const styles = StyleSheet.create({
   iconBtn: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
   confirmRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
   confirmBtn: { paddingHorizontal: 12, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
-  termWrap: { marginHorizontal: 4, borderRadius: 12, overflow: 'hidden' },
+  termWrap: { marginHorizontal: 0, borderRadius: 0, overflow: 'hidden' },
   termPending: { flex: 1, minHeight: 120, alignItems: 'center', justifyContent: 'center' },
   jumpBtn: { position: 'absolute', right: 10, bottom: 10, width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
-  inputZone: { paddingHorizontal: 8, paddingBottom: 8, paddingTop: 2 },
+  inputZone: { paddingHorizontal: 6, paddingBottom: 6, paddingTop: 6 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth * 2 },
   cmdInput: { flex: 1, paddingVertical: 6, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
   micBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
