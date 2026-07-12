@@ -111,9 +111,18 @@
     var innerW = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     var innerH = host.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     var cols = Math.max(20, Math.floor(innerW / cell.w));
-    var rows = Math.max(5, Math.floor(innerH / cell.h));
-    if (t.term.cols !== cols || t.term.rows !== rows) {
-      try { t.term.resize(cols, rows); } catch (e) { return false; }
+    var rowsFit = Math.max(5, Math.floor(innerH / cell.h));
+    // ZEILEN-RATSCHE — der Kern gegen Dopplungen: Tastatur, Tastenleiste und
+    // Tipp-Modus ändern die Kartenhöhe ständig, und jede Zeilen-Änderung ist
+    // ein SIGWINCH, auf das Claude & Co. ihre KOMPLETTE Oberfläche neu malen —
+    // der alte Frame bleibt als Leiche im Scrollback (die "Dopplungen").
+    // Deshalb: rows wächst nur auf das größte gesehene Maß und schrumpft nie;
+    // wird die Karte kleiner, scrollt sie einfach. Nur eine ECHTE Breiten-
+    // änderung (Falten, Drehen) setzt die Ratsche zurück.
+    if (t.pinCols !== cols) { t.pinCols = cols; t.pinRows = rowsFit; }
+    else t.pinRows = Math.max(t.pinRows || rowsFit, rowsFit);
+    if (t.term.cols !== cols || t.term.rows !== t.pinRows) {
+      try { t.term.resize(cols, t.pinRows); } catch (e) { return false; }
     }
     return true;
   }
