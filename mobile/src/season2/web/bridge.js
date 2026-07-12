@@ -435,10 +435,12 @@
           bound[cardId] = 'pending';
           fitNow(cardId); // beste verfügbare Größe — aber wir warten nicht darauf
           var tc = terms[cardId];
+          var sessName = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
           post('terminal:create', {
             cardId: cardId,
             cols: (tc && tc.term.cols) || 80,
             rows: (tc && tc.term.rows) || 24,
+            name: sessName ? sessName.name : undefined,
           });
         }
       });
@@ -1543,6 +1545,23 @@
     }
     post('terminal:close', { cardId: cardId, sessionId: sid });
     if (typeof window.toast === 'function') window.toast('Beende…');
+  };
+  /**
+   * Die gespeicherte Session existiert auf dem Server nicht mehr ("Session not
+   * found"). Vorher blieb die Karte dann für immer leer — jetzt heilt sie sich:
+   * dieselbe Karte, derselbe Name, eine frische PTY.
+   */
+  window.TMSBridge.sessionExpired = function (sessionId) {
+    var cardId = cardOf(sessionId);
+    if (!cardId) return;
+    delete byCard[cardId];
+    bound[cardId] = 'pending';
+    var t = terms[cardId];
+    if (t) { try { t.term.reset(); } catch (e) {} renderTerm(cardId); }
+    if (typeof window.toast === 'function') window.toast('Session abgelaufen — starte neu');
+    var d = dims(cardId);
+    var sessName = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
+    post('terminal:create', { cardId: cardId, cols: d.cols, rows: d.rows, name: sessName ? sessName.name : undefined });
   };
   window.TMSBridge.sessionClosed = function (sessionId) {
     var cardId = cardOf(sessionId);

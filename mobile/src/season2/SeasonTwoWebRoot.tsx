@@ -45,8 +45,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const setServer = useS2ConnStore((s) => s.setServer);
   const setSeasonTwoEnabled = useSettingsStore((s) => s.setSeasonTwoEnabled);
 
-  /** cardId of the terminal:create we are still waiting on a sessionId for. */
-  const pendingCard = useRef<string | null>(null);
+  /** FIFO der terminal:create-Anfragen — der Server antwortet in Reihenfolge.
+   *  Ein Einzelwert ordnete bei mehreren gleichzeitigen Creates falsch zu. */
+  const pendingCards = useRef<Array<{ cardId: string; name?: string }>>([]);
   /** cardId whose mic is currently recording. */
   const micCard = useRef<string | null>(null);
   /** Set when the user cancels: the recording still stops, its text is dropped. */
@@ -124,12 +125,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
       if (m?.type === 'terminal:created' && m.sessionId) {
-        const cardId = pendingCard.current;
-        pendingCard.current = null;
+        const pending = pendingCards.current.shift();
+        const cardId = pending?.cardId ?? null;
         useTerminalStore.getState().addTab(server.id, {
           id: cardId ?? m.sessionId,
           sessionId: m.sessionId,
-          title: cardId ?? 'Terminal',
+          title: pending?.name ?? cardId ?? 'Terminal',
           serverId: server.id,
           active: true,
         });
@@ -145,6 +146,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         if (tab) useTerminalStore.getState().removeTab(server.id, tab.id);
         dropScrollback(m.sessionId);
         call('sessionClosed', m.sessionId); // die Seite räumt die Karte weg
+        return;
+      }
+      if (m?.type === 'terminal:error' && m.sessionId && m.sessionId !== 'none') {
+        // "Session not found": die gespeicherte Session gibt es nicht mehr. Wie
+        // die klassische App: toten Tab austragen und die Karte neu bestücken —
+        // die Seite fordert daraufhin eine frische PTY für dieselbe Karte an.
+        const dead = useTerminalStore.getState().getTabs(server.id).find((t) => t.sessionId === m.sessionId);
+        if (dead) useTerminalStore.getState().removeTab(server.id, dead.id);
+        dropScrollback(m.sessionId);
+        call('sessionExpired', m.sessionId);
         return;
       }
       if (m?.type === 'terminal:prompt_detected' && m.sessionId) {
@@ -259,7 +270,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
     switch (type) {
       case 'terminal:create':
-        pendingCard.current = payload.cardId;
+        pendingCards.current.push({ cardId: payload.cardId, name: payload.name });
         // Mit den echten Maßen der Karte, nicht mit 80x24: sonst muss die Shell
         // beim ersten Resize alles neu zeichnen — und genau das erzeugt die
         // doppelten und zerrissenen Zeilen.
