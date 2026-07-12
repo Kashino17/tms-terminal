@@ -1473,6 +1473,13 @@
     if (id !== dockLastTarget) { dockLastTarget = id; dockReset(); }
   };
 
+  // Die Seite stimmt NIE selbst zu. Auto-Approve führt der Server aus — er kennt
+  // die Prompt-Varianten ([y/N] braucht 'y', nicht Enter) und blockt bei
+  // ungesendetem Text. Die alte Auto-Logik des Mockups hätte hier blind Enter
+  // gedrückt und damit ein [y/N] ABGELEHNT — und sie öffnete zusätzlich das
+  // Berechtigungsfenster, obwohl Auto-Approve genau das ersparen soll.
+  window.autoApproveResolve = function () { /* der Server macht das */ };
+
   // ══ Rückfragen ════════════════════════════════════════════════════════════
   // Approve already reaches the PTY through the card's sim (Enter). Deny did
   // not: the mockup only printed a line, because its simulator had nothing to

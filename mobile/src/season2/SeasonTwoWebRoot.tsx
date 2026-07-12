@@ -138,7 +138,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         if (cardId) {
           call('bindSession', cardId, m.sessionId);
           sheets.pushNotes(cardId);
-          call('setAutoApprove', cardId, useAutoApproveStore.getState().isEnabled(m.sessionId));
+          const on = useAutoApproveStore.getState().enabled[m.sessionId] ?? true; // Standard: an
+          useAutoApproveStore.getState().setEnabled(m.sessionId, on);
+          wsService.send({ type: 'client:set_auto_approve', sessionId: m.sessionId, payload: { enabled: on } });
+          call('setAutoApprove', cardId, on);
         }
         return;
       }
@@ -168,20 +171,29 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
       if (m?.type === 'terminal:prompt_detected' && m.sessionId) {
-        // Auto-Approve has to keep working while the terminals screen is not
-        // even visible, so it is resolved here and not inside the page.
-        const auto = useAutoApproveStore.getState();
+        // Auto-Approve führt der SERVER aus (chooseApprovalKey: Enter für
+        // nummerierte Prompts, 'y' bei [y/N], nie automatisch bei Freitext).
+        // Er meldet nur, was er nicht selbst beantworten konnte oder durfte.
         const sid = m.sessionId as string;
-        const armed = auto.isEnabled(sid) && !auto.isRunning(sid) && !auto.isTyping(sid);
-        const question = m.payload?.kind === 'question';
-        if (armed && !question && !m.payload?.hasPendingInput) {
-          auto.setRunning(sid, true);
-          wsService.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
-          setTimeout(() => auto.setRunning(sid, false), 500);
-        } else {
-          call('setSessionStatus', sid, 'waiting');
-          call('prompt', sid, describePrompt(m.payload?.snippet ?? ''));
+        const info = describePrompt(m.payload?.snippet ?? '');
+        const autoOn = useAutoApproveStore.getState().enabled[sid] ?? true;
+
+        call('setSessionStatus', sid, 'waiting');
+
+        // Echte Rückfragen (Auswahl / Freitext) darf niemand automatisch
+        // beantworten — die kommen IMMER vor den Nutzer.
+        if (info.kind === 'question') {
+          useTerminalStore.getState().setTabNotification(server.id, sid);
+          call('prompt', sid, info);
+          return;
         }
+        // Reine Berechtigung bei aktivem Auto-Approve: kein Fenster. Genau das
+        // soll Auto-Approve ja ersparen — der Server hat es entweder schon
+        // bestätigt oder bewusst pausiert (etwa weil gerade getippt wird).
+        if (autoOn) return;
+
+        useTerminalStore.getState().setTabNotification(server.id, sid);
+        call('prompt', sid, info);
         return;
       }
     });
@@ -260,7 +272,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     live.forEach((t, i) => {
       const cardId = `t${i + 1}`;
       sheets.pushNotes(cardId);
-      call('setAutoApprove', cardId, useAutoApproveStore.getState().isEnabled(t.sessionId));
+      call('setAutoApprove', cardId, useAutoApproveStore.getState().enabled[t.sessionId] ?? true);
     });
   }, [ready, server, state, call, sheets, scrollbackTick]);
 
@@ -339,7 +351,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'autoapprove:set':
-        if (payload.sessionId) useAutoApproveStore.getState().setEnabled(payload.sessionId, !!payload.enabled);
+        if (payload.sessionId) {
+          const on = !!payload.enabled;
+          useAutoApproveStore.getState().setEnabled(payload.sessionId, on);
+          // ENTSCHEIDEND: der Server führt Auto-Approve aus, nicht wir. Er kennt
+          // die Prompt-Varianten ([y/N] braucht 'y', nicht Enter!), blockt bei
+          // ungesendetem Text und läuft auch, wenn die App im Hintergrund ist.
+          // Ohne diese Zeile war der Schalter reine Dekoration.
+          wsService.send({ type: 'client:set_auto_approve', sessionId: payload.sessionId, payload: { enabled: on } });
+        }
         break;
 
       case 'mic:start':
@@ -473,31 +493,67 @@ const MANAGER_MIC = '__manager__';
  * and when they are not in there, show the snippet rather than an empty sheet.
  */
 interface PromptOption { id: string; label: string; description?: string }
+
+/**
+ * Der Server meldet eine Rückfrage nur als rohen Textausschnitt. Hier wird
+ * entschieden, WAS es ist — und danach, welches Fenster erscheint:
+ *
+ *   kind 'question'  -> Auswahl-Sheet (Optionen, Mehrfachauswahl, Freitext).
+ *                       Von Auto-Approve grundsätzlich ausgenommen.
+ *   sonst            -> Berechtigungs-Sheet (Erlauben / Ablehnen).
+ *
+ * Die Erkennung spiegelt bewusst chooseApprovalKey des Servers: nur was der
+ * Server NICHT selbst beantworten würde, landet als echte Frage beim Nutzer.
+ */
 function describePrompt(snippet: string): {
   tool: string; target: string; question: string; kind?: string;
   options?: PromptOption[]; multiSelect?: boolean;
 } {
-  const clean = snippet.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').trim();
+  const clean = snippet.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '');
   const lines = clean.split('\n').map((l) => l.trim()).filter(Boolean);
+  const flat = clean.replace(/\s+/g, ' ');
+
   const tool = clean.match(/\b(Bash|Edit|MultiEdit|Write|Read|WebFetch|WebSearch|Task|Grep|Glob|NotebookEdit)\b/)?.[1] ?? 'Berechtigung';
   const target =
     clean.match(/`([^`]{1,80})`/)?.[1] ??
     clean.match(/(?:in|to|from)\s+([\w./-]+\.[a-z]{1,5})/i)?.[1] ??
     '';
-  const question = lines.find((l) => l.endsWith('?')) ?? lines[0] ?? 'Erlauben?';
 
-  // Nummerierte Auswahloptionen herausziehen: "❯ 1. Ja", "2) Nein, sag mehr" …
-  // Das Frage-Sheet des Mockups braucht {id,label}; die id ist die Ziffer, die
-  // später als Taste an die PTY geht. "[ ]"/"[x]" markiert Mehrfachauswahl.
+  // Optionen: "❯ 1. Ja", "2) Nein", auch ANSI-verklebt ("1.Yes").
   const options: PromptOption[] = [];
   for (const l of lines) {
-    const m = l.match(/^(?:❯\s*)?([1-9])[.)]\s+(?:\[[ x]\]\s+)?(.+)$/);
-    if (m) options.push({ id: m[1], label: m[2].trim() });
+    const m = l.match(/^(?:❯|>)?\s*([1-9])[.)]\s*(?:\[[ xX]\]\s*)?(.+)$/);
+    if (m && m[2].length > 1) options.push({ id: m[1], label: m[2].trim() });
   }
-  const kind = options.length >= 2 ? 'question' : undefined;
-  const multiSelect = /\[[ x]\]/.test(clean);
-  return { tool, target, question, kind, options: kind ? options : undefined, multiSelect };
+
+  // Eine reine Ja/Nein-Berechtigung erkennt man an der Ja-Option bzw. an [y/N].
+  // Alles andere mit >= 2 Optionen ist eine ECHTE Frage (Multiple Choice).
+  const looksLikePermission =
+    /1\.?\s*(Yes|Ja)\b/i.test(flat) || /\[y\/n\]/i.test(flat) || /Esc\s*to\s*cancel/i.test(flat);
+  // Freitext-Prompt ("Frage? ›") ohne Optionen: auch eine echte Frage.
+  // ABER: "[y/N]" endet ebenfalls auf "? [" — das ist eine Berechtigung, keine
+  // Frage. Deshalb wird sie hier ausdrücklich ausgenommen.
+  const freeText =
+    !looksLikePermission && options.length === 0 && /\?\s*(›|>|\[|\()/.test(flat);
+
+  const isQuestion = (options.length >= 2 && !looksLikePermission) || freeText;
+  const multiSelect = /\[[ xX]\]/.test(clean);
+
+  const question =
+    lines.find((l) => l.endsWith('?')) ??
+    lines.find((l) => !/^[1-9❯>]/.test(l)) ??
+    lines[0] ?? 'Erlauben?';
+
+  return {
+    tool,
+    target,
+    question,
+    kind: isQuestion ? 'question' : undefined,
+    options: isQuestion && options.length ? options : undefined,
+    multiSelect,
+  };
 }
+
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#1e2126' },
