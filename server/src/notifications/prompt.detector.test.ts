@@ -107,3 +107,58 @@ test('matches a freshly rendered prompt even when the rolling-window tail is pas
 
   det.unwatch('s1');
 });
+
+// ── Prose is not a prompt ────────────────────────────────────────────────────
+//
+// A real incident: an AI in the terminal EXPLAINED how yes/no prompts work, so
+// the pattern sat in the middle of its answer. The detector matched the whole
+// window, called it a prompt, and auto-approve typed a confirmation into the
+// live session — where it was submitted as a chat message. Over and over.
+//
+// The rule that prevents it: a WAITING prompt is the LAST thing on screen. If
+// text follows the pattern, nothing is waiting there.
+//
+// The pattern is never spelled out below — writing it verbatim would re-trigger
+// the very bug these tests guard, in any AI session running this suite.
+const YN = '[' + 'y/N' + ']';
+
+/** Feeds one screen of output past the startup grace; did a prompt fire? */
+function fires(output: string): boolean {
+  let t = 100_000;
+  const det = new PromptDetector(() => t);
+  let fired = false;
+  det.watch('s1', () => { fired = true; });
+  t += PAST_GRACE;
+  det.feed('s1', output);
+  det.unwatch('s1');
+  return fired;
+}
+
+test('prose that merely MENTIONS a yes/no pattern is not a prompt', () => {
+  const answer =
+    'Ich habe die Ursache gefunden.\n' +
+    `Der Server sucht ${YN} im ganzen Fenster.\n` +
+    'Deshalb tippt er eine Bestätigung in die Sitzung.\n' +
+    'Das ist jetzt behoben.\n\n> ';
+  assert.equal(fires(answer), false, 'an AI writing ABOUT a prompt must never look like one');
+});
+
+test('a pattern far above the cursor is not a prompt', () => {
+  const long = `${YN} kam hier oben vor.\n` +
+    Array.from({ length: 20 }, (_, i) => `Zeile ${i}: normale Ausgabe`).join('\n');
+  assert.equal(fires(long), false);
+});
+
+test('a yes/no prompt waiting on the last line still fires', () => {
+  assert.equal(fires(`npm WARN deprecated foo\nOverwrite existing file? ${YN} `), true);
+});
+
+test("Claude Code's multi-line permission box still fires", () => {
+  const box =
+    'Ich lese jetzt die Datei.\n\n' +
+    ' Bash command\n   rm -rf build\n\n' +
+    ' Do you want to proceed?\n' +
+    ' ❯ 1. Yes\n   2. No, tell Claude what to do differently\n\n' +
+    ' Esc to cancel';
+  assert.equal(fires(box), true);
+});

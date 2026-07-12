@@ -69,12 +69,25 @@ const PROMPT_PATTERNS = [
 
   // inquirer-style: "Question? ›" or "Question? [choices]"
   /\?\s*(›|\[|\()/,
+];
 
-  // ── TUI patterns (ANSI stripping removes spaces in Claude Code's rendered output) ──
+/**
+ * Muster, die NUR eine echte, interaktive Prompt-Box zeichnet — Auswahlpfeil,
+ * nummerierte Optionen, Abbruch-Hinweis, Pfeiltasten-Legende. Eine KI schreibt
+ * so etwas nicht im Fließtext. Nur diese dürfen irgendwo im Ausgabe-Schwanz
+ * stehen; die Box ist ja mehrzeilig und die Frage steht oben in ihr.
+ *
+ * (Die Optionswörter treffen ANSI-verklebt ein — "1.Yes", "Esctocancel" —
+ *  deshalb überall \s* statt \s+.)
+ */
+const BOX_PATTERNS = [
+  /❯\s*\d\.?\s*\w/,
+  /\d\.?\s*Yes[\s,]/i,
   /Esc\s*to\s*cancel/i,
-  /Esctocancel/i,
-  /1\.?\s*Yes/,
-  /allowalledits/i,
+  /\(Use\s*arrow\s*keys\)/i,
+  /↑↓[^\n]*(select|choose|wählen)/i,
+  /\[Enter\]\s*(to\s*)?(confirm|accept|continue)/i,
+  /allow\s*all\s*edits/i,
 ];
 
 // ── AI Tool Detection ────────────────────────────────────────────────────────
@@ -121,6 +134,43 @@ const MIN_REFIRE_MS     = 400;
 // generous window — and the per-chunk match below catches a box rendered in a
 // single fat frame regardless of window size.
 const FAST_WINDOW       = 4000;
+
+/** Wie viele Zeilen am Ende der Ausgabe als "hier wartet etwas" gelten. Eine
+ *  Claude-Berechtigungsbox ist mehrzeilig (Frage, Optionen, "Esc to cancel"),
+ *  darum nicht nur die letzte Zeile — aber weit genug weg von Fließtext, der
+ *  weiter oben zufällig ein Bestätigungsmuster erwähnt. */
+const PROMPT_TAIL_LINES = 6;
+
+function lastLines(s: string, n: number = PROMPT_TAIL_LINES): string {
+  // Leerzeilen am Ende (der Cursor steht schon auf der nächsten Zeile) zählen
+  // nicht mit — sonst schöbe eine einzige davon den Prompt aus dem Fenster.
+  const lines = s.split('\n');
+  while (lines.length > 1 && !lines[lines.length - 1].trim()) lines.pop();
+  return lines.slice(-n).join('\n');
+}
+
+/**
+ * Wartet am Ende dieser Ausgabe wirklich ein Prompt?
+ *
+ * Der Grund für die Strenge: Eine KI SCHREIBT über Prompts. Sie erklärt, dass
+ * ein Befehl mit einem Ja/Nein-Muster nachfragt, oder ein Commit-Text enthält
+ * es. Früher genügte das Muster IRGENDWO im Fenster — der Server hielt die
+ * Antwort der KI für eine Rückfrage und tippte eine Bestätigung in die laufende
+ * Sitzung. Deshalb:
+ *
+ *   • Box-Chrome (Auswahlpfeil, "Esc to cancel", …) darf im ganzen Schwanz
+ *     stehen — eine Box ist mehrzeilig, und nur eine echte Box zeichnet das.
+ *   • Alles andere (Phrasen, Ja/Nein-Klammern) muss auf der LETZTEN Zeile
+ *     stehen. Dort blinkt der Cursor. Steht danach noch Text, wartet nichts.
+ */
+function matchPrompt(text: string): RegExp | undefined {
+  if (!text) return undefined;
+  const tail = lastLines(text);
+  const box = BOX_PATTERNS.find((p) => p.test(tail));
+  if (box) return box;
+  const lastLine = lastLines(text, 1);
+  return lastLine.trim() ? PROMPT_PATTERNS.find((p) => p.test(lastLine)) : undefined;
+}
 
 function hashTail(s: string): string {
   // Cheap non-crypto hash — enough to detect "same text" vs "different text"
@@ -197,7 +247,12 @@ export class PromptDetector {
         // Match the rolling window OR this fresh chunk on its own. A freshly
         // rendered box matches even when a long preceding redraw pushed the
         // window tail (slice(-FAST_WINDOW)) into the middle of a diff/command.
-        const matched = PROMPT_PATTERNS.find((p) => p.test(fastWindow) || p.test(cleanChunk));
+        //
+        // Aber nur im SCHWANZ der Ausgabe: ein wartender Prompt ist immer das
+        // Letzte, was zu sehen ist. Erwähnt eine KI mitten in ihrer Antwort ein
+        // Bestätigungsmuster (oder ein Commit-/Log-Text enthält es), ist das
+        // kein Prompt — und wurde früher trotzdem als einer gemeldet.
+        const matched = matchPrompt(fastWindow) ?? matchPrompt(cleanChunk);
         if (matched && this._shouldFire(sessionId, hashTail(fastWindow))) {
           console.log(`[PromptDetector] PROMPT (fast) in ${sessionId.slice(0, 8)}: ${matched}`);
           const snippet = this._extractSnippet(fastWindow);
@@ -311,7 +366,7 @@ export class PromptDetector {
     // Check 1: Interactive prompt patterns. Shares the fast-path's dedup gate
     // (_shouldFire) so the silence fallback never double-fires a prompt the
     // fast-path already handled, and never re-fires as the tail hash drifts.
-    const promptMatch = PROMPT_PATTERNS.find((p) => p.test(tail));
+    const promptMatch = matchPrompt(tail);
     const matched = promptMatch && this._shouldFire(sessionId, promptSig) ? promptMatch : undefined;
 
     // Check 2: AI tool finished (active + enough output + shell prompt returned)

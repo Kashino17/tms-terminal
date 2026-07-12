@@ -48,20 +48,35 @@ export function computePendingLen(prev: number, data: string): number {
  * to No, so Enter would DECLINE — we send "y" there instead.
  */
 export function chooseApprovalKey(window: string): string | null {
+  // SICHERHEIT — die Lehre aus einem echten Zwischenfall: Ein WARTENDER Prompt
+  // steht immer in der ALLERLETZTEN Zeile, dort blinkt der Cursor. Erwähnt eine
+  // KI dagegen nur im Fließtext ein "[y/N]" (oder ein Log-/Commit-Text tut es),
+  // steht das mitten im Fenster, und die letzte Zeile ist die Eingabebox der KI.
+  // Vorher wurde das GANZE Fenster durchsucht: die App tippte daraufhin "y" +
+  // Enter in die laufende KI-Sitzung und verschickte es als Nachricht.
+  const lastLine = window.slice(window.lastIndexOf('\n') + 1).trim();
+
+  // Cursor auf einer frischen, leeren Zeile: da wartet nichts.
+  if (!lastLine) return null;
+
   // 1. [y/N] — capital-N default means bare Enter declines; send 'y'.
-  if (/\[y\/N\]/.test(window)) return 'y\r';
+  if (/\[y\/N\]/.test(lastLine)) return 'y\r';
 
   // 2. Standard Claude Code numbered prompt — option 1 (Yes) is the default. The
   //    option words arrive ANSI-glued ("1.Yes" / "Esctocancel"), so match loosely.
-  if (/1\.?\s*Yes/i.test(window) || /Esc\s*to\s*cancel/i.test(window)) return '\r';
+  if (/1\.?\s*Yes/i.test(lastLine) || /Esc\s*to\s*cancel/i.test(lastLine)) return '\r';
 
   // 3. [Y/n] / explicit yes-default confirmations — Enter approves.
-  if (/\[Y\/n\]/.test(window)) return '\r';
+  if (/\[Y\/n\]/.test(lastLine)) return '\r';
 
   // 4. Free-text input prompt ("Question? ›" / "? [" / "? (") with no yes-option
   //    above — do NOT auto-press; let the user answer.
-  if (/\?\s*(›|\[|\()/.test(window)) return null;
+  if (/\?\s*(›|\[|\()/.test(lastLine)) return null;
 
-  // 5. Generic yes/no confirmation — Enter is the conventional accept.
-  return '\r';
+  // 5. Generische Ja/Nein-Bestätigung: Enter. Aber NUR, wenn die letzte Zeile
+  //    auch wirklich nach einer Frage aussieht — sonst lieber gar nichts drücken
+  //    und den Nutzer fragen, als blind in eine KI-Sitzung zu tippen.
+  if (/\?|\by\/n\b|proceed|continue|are you sure|confirm/i.test(lastLine)) return '\r';
+  return null;
 }
+

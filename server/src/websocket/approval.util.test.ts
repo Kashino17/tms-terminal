@@ -2,6 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computePendingLen, chooseApprovalKey } from './approval.util';
 
+// Never spell the yes/no markers out: node:test echoes test names and failing
+// fixtures back into the terminal, and inside a live AI session the server's own
+// prompt detector reads that output — it would take this suite for a real prompt.
+const YN_NO = '[y/' + 'N]'; // default No  -> needs an explicit 'y'
+
 // ── Fix #4: pending-input length must self-heal on line-clearing edit keys ──
 test('computePendingLen counts printable input and clears on submit/cancel', () => {
   assert.equal(computePendingLen(0, 'abc'), 3, 'printable chars increment');
@@ -28,8 +33,8 @@ test('chooseApprovalKey sends Enter for the standard Claude numbered prompt', ()
   assert.equal(chooseApprovalKey(claudeBash), '\r');
 });
 
-test('chooseApprovalKey sends "y" for a [y/N] default-No prompt (bare Enter would decline)', () => {
-  assert.equal(chooseApprovalKey('Overwrite existing file? [y/N]'), 'y\r');
+test('chooseApprovalKey sends "y" when the default is No (bare Enter would decline)', () => {
+  assert.equal(chooseApprovalKey('Overwrite existing file? ' + YN_NO + ''), 'y\r');
 });
 
 test('chooseApprovalKey refuses to auto-press on a free-text input prompt', () => {
@@ -38,4 +43,30 @@ test('chooseApprovalKey refuses to auto-press on a free-text input prompt', () =
 
 test('chooseApprovalKey falls back to Enter for generic yes/no confirmations', () => {
   assert.equal(chooseApprovalKey('Are you sure you want to continue?'), '\r');
+});
+
+// ── Der Zwischenfall: Prosa ist kein Prompt ─────────────────────────────────
+//
+// Eine KI im Terminal erklärte, wie Bestätigungs-Prompts funktionieren. Das
+// Muster stand damit mitten in ihrer Antwort. chooseApprovalKey durchsuchte das
+// ganze Fenster, fand es — und der Server tippte "y" + Enter in die laufende
+// Sitzung, wo es als Nachricht abgeschickt wurde. Dutzende Male.
+//
+// Ein wartender Prompt steht immer auf der LETZTEN Zeile. Steht danach noch
+// Text, wartet dort nichts, und es wird nichts gedrückt.
+
+test('chooseApprovalKey presses NOTHING when an AI merely writes about a yes/no prompt', () => {
+  const prosa =
+    'Ich habe die Ursache gefunden.\n' +
+    `Der Server sucht ${YN_NO} im ganzen Fenster.\n` +
+    'Deshalb tippt er eine Bestätigung in die Sitzung.\n\n> ';
+  assert.equal(chooseApprovalKey(prosa), null);
+});
+
+test('chooseApprovalKey presses NOTHING when the marker sits far above the cursor', () => {
+  assert.equal(chooseApprovalKey(`${YN_NO} kam hier oben vor.\nDanach kam noch viel Ausgabe.\nUnd noch mehr.`), null);
+});
+
+test('chooseApprovalKey presses NOTHING on a blank trailing line (nothing is waiting)', () => {
+  assert.equal(chooseApprovalKey('Fertig.\nAlles erledigt.\n\n'), null);
 });
