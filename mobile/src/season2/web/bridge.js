@@ -82,15 +82,39 @@
    * its first frames, and fitting against that yields 0 rows — an empty box and
    * a resize the server rejects outright. Wait for a real box, then fit.
    */
+  /**
+   * Die Spaltenzahl MUSS aus der Schrift kommen, in der wir wirklich zeichnen —
+   * nicht aus der, die xterm intern misst. Sonst passt eine Zeile, die der
+   * Emulator für voll hält, im DOM nicht mehr in die Karte: die CSS bricht sie
+   * ein ZWEITES Mal um. Genau das hat den Inhalt zerrissen und verschoben.
+   */
+  function measureCell(pre) {
+    var probe = document.createElement('span');
+    probe.className = 'term-line__text';
+    probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;left:-9999px;';
+    probe.textContent = new Array(101).join('0');
+    pre.appendChild(probe);
+    var r = probe.getBoundingClientRect();
+    probe.remove();
+    return { w: r.width / 100, h: r.height };
+  }
+
   /** Sofort vermessen. Gibt false zurück, wenn die Karte (noch) keine Größe hat. */
   function fitNow(cardId) {
     var t = terms[cardId];
     if (!t) return false;
     var host = t.host;
     if (!host || !host.clientWidth || !host.clientHeight) return false;
-    t.box.style.width = host.clientWidth + 'px';
-    t.box.style.height = host.clientHeight + 'px';
-    try { t.fit.fit(); } catch (e) {}
+    var cell = measureCell(host);
+    if (!cell.w || !cell.h) return false;
+    var cs = getComputedStyle(host);
+    var innerW = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var innerH = host.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    var cols = Math.max(20, Math.floor(innerW / cell.w));
+    var rows = Math.max(5, Math.floor(innerH / cell.h));
+    if (t.term.cols !== cols || t.term.rows !== rows) {
+      try { t.term.resize(cols, rows); } catch (e) { return false; }
+    }
     return true;
   }
 
@@ -99,25 +123,18 @@
     if (!t) return;
     clearTimeout(t.fitTimer);
     t.fitTimer = setTimeout(function () {
-      var host = t.host;
-      if (!host || !host.clientWidth || !host.clientHeight) {
+      if (!fitNow(cardId)) {
         if ((t.fitTries = (t.fitTries || 0) + 1) < 40) fitSoon(cardId);
         return;
       }
       t.fitTries = 0;
-      // Der Emulator ist unsichtbar, also bekommt er die Maße der Karte gesagt.
-      t.box.style.width = host.clientWidth + 'px';
-      t.box.style.height = host.clientHeight + 'px';
-      try { t.fit.fit(); } catch (e) {}
       renderTerm(cardId);
-
     }, 60);
   }
 
   /** Alle Emulatoren leben unsichtbar hier — sie rendern nichts mehr selbst. */
   var emuHost = document.createElement('div');
   emuHost.id = 'tmsEmulators';
-  emuHost.style.cssText = 'position:fixed;left:-99999px;top:0;';
   document.body.appendChild(emuHost);
 
   function mountTerm(cardId) {
@@ -138,8 +155,6 @@
       allowProposedApi: true,
       convertEol: false,
     });
-    var fit = new window.FitAddon.FitAddon();
-    term.loadAddon(fit);
     term.open(box);
 
     // Der Emulator ist unsichtbar, aber sein Textfeld ist die Tastatur-Anbindung:
@@ -158,7 +173,7 @@
     term.onData(function (d) { window.__tmsInput(cardId, d); });
     term.onResize(function (sz) { queueResize(cardId, sz.cols, sz.rows); });
 
-    terms[cardId] = { term: term, fit: fit, box: box, host: host, dirty: true };
+    terms[cardId] = { term: term, box: box, host: host };
     fitSoon(cardId);
     flush(cardId);
     renderTerm(cardId);
