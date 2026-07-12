@@ -31,7 +31,23 @@ function patch(label, find, replace) {
 //       are restored by the bridge once React Native has connected.
 patch('data.js tag', '<script src="../shared/data.js" charset="utf-8"></script>', `<script>
 ${dataJs}
+// Kein einziges Demo-Datum darf je zu sehen sein: alles, was React Native
+// nachliefert, startet leer — sonst zeigt ein Sheet Platzhalter, bis (oder
+// falls) die echten Daten eintreffen.
 window.TMS_DATA.sessions = [];
+window.TMS_DATA.files = [];
+window.TMS_DATA.processes = [];
+window.TMS_DATA.watchers = [];
+window.TMS_DATA.ports = [];
+window.TMS_DATA.snippets = [];
+window.TMS_DATA.notes = [];
+window.TMS_DATA.screenshots = [];
+window.TMS_DATA.sql = { statements: [] };
+window.TMS_DATA.cloudProjects = [];
+window.TMS_DATA.manager.messages = [];
+window.TMS_DATA.update = { current: '', latest: '', notes: '' };
+// Die Gebetszeiten bleiben als Rückfall stehen: nextPrayer() läuft beim Start,
+// bevor der echte Standort da ist, und die Insel würde sonst rechnen mit nichts.
 // No simulator: every card's "sim" is a thin proxy onto its PTY, handed out by
 // the bridge (see the cardState patches below), so the mockup's prompt/answer
 // plumbing keeps working against a real terminal.

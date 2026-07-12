@@ -509,6 +509,16 @@
      OUTSIDE the <pre> so renderCardLines()'s innerHTML rewrite (every
      streamed line) never tears down its listeners/animation state. */
   .card-body-shell { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .tt-key--icon { padding: 0; width: 36px; flex: none; justify-content: center; }
+  /* Die Werkzeug-Reihe darf nie über den Rand laufen — lieber schiebbar. */
+  .keys-panel__row--tools { gap: 5px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .keys-panel__row--tools::-webkit-scrollbar { display: none; }
+  .keys-panel__row { min-width: 0; }
+  .keys-panel__arrows { flex: none; }
+  .keys-panel__row--tools .keys-panel__spacer { min-width: 8px; }
+  /* Welches Terminal die Leiste bedient, muss man SEHEN. */
+  .term-card.is-target { border-color: rgba(var(--accent-rgb),.55) !important; box-shadow: 0 0 0 1px rgba(var(--accent-rgb),.35), 0 10px 30px rgba(0,0,0,.3); }
+  .term-card.is-target .card-tag { box-shadow: 0 0 0 3px rgba(var(--accent-rgb),.28); }
   .jump-bottom-orb { position: absolute; right: 10px; bottom: 10px; width: var(--touch); height: var(--touch); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--accent); background: rgba(var(--accent-rgb),.2); border: 1px solid rgba(var(--accent-rgb),.4); box-shadow: 0 6px 18px rgba(0,0,0,.24); opacity: 0; transform: translateY(6px) scale(.9); pointer-events: none; transition: opacity 200ms var(--spring), transform 200ms var(--spring); z-index: 4; }
   .jump-bottom-orb .ic { width: var(--icon-md); height: var(--icon-md); }
   .jump-bottom-orb.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
@@ -1591,6 +1601,7 @@
     incognito: '<path d="M5 10Q12 2 19 10"/><path d="M3 10h18"/><circle cx="8" cy="13" r="3"/><circle cx="16" cy="13" r="3"/><path d="M11 13h2"/>',
     key: '<circle cx="7" cy="17" r="4"/><path d="M10 14 20 4"/><path d="M15 9l3 3"/><path d="M18 6l2.5 2.5"/>',
   };
+  ICON_PATHS.camera = '<path d="M4 8a2 2 0 0 1 2-2h1.6l1-1.6a1 1 0 0 1 .85-.4h5.1a1 1 0 0 1 .85.4l1 1.6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.3"/>';
   ICON_PATHS.check = '<path d="m5 13 4 4L19 7"/>';
   function icon(name, size, cls) {
     const p = ICON_PATHS[name] || '';
@@ -2152,12 +2163,12 @@
         <div class="keys-panel glass" data-keys-panel${state.keysPanelOpen ? '' : ' hidden'}>
           <div class="keys-panel__row">
             <button class="tt-key" data-tt-key="tab">Tab</button>
-            <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode">Aa Auswahl</button>
-            <button class="tt-key tt-key--danger" data-tt-key="clear">${icon('trash', 15)}<span>Leeren</span></button>
+            <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode" aria-label="Auswahlmodus" title="Auswahl">Aa</button>
+            <button class="tt-key tt-key--danger tt-key--icon" data-tt-key="clear" aria-label="Terminal leeren" title="Leeren">${icon('trash', 16)}</button>
             <span class="keys-panel__spacer"></span>
             <button class="keys-panel__close" data-tt-key="closepanel" aria-label="Tasten schließen" title="Schließen">${icon('x', 15)}</button>
           </div>
-          <div class="keys-panel__row">
+          <div class="keys-panel__row keys-panel__row--tools">
             <div class="keys-panel__arrows">
               <button data-tt-cursor="←" aria-label="Links">${arrow(90)}</button>
               <button data-tt-cursor="↑" aria-label="Hoch">${arrow(180)}</button>
@@ -2165,13 +2176,21 @@
               <button data-tt-cursor="→" aria-label="Rechts">${arrow(-90)}</button>
             </div>
             <span class="keys-panel__spacer"></span>
-            <button class="tt-key" data-tt-key="werkzeuge">${icon('tools', 15)}<span>Werkzeuge</span></button>
+            <button class="tt-key tt-key--icon" data-tt-tool="screenshots" aria-label="Screenshots" title="Screenshots">${icon('camera', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-tool="files" aria-label="Dateien" title="Dateien">${icon('folder', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-tool="notes" aria-label="Notizen" title="Notizen">${icon('note', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-key="werkzeuge" aria-label="Alle Werkzeuge" title="Alle Werkzeuge">${icon('tools', 17)}</button>
           </div>
         </div>`;
   }
   // Wires one card's panel to act ONLY on that card's id — "acts on the
   // active/focused card" (spec) falls out naturally since each panel
   // instance targets its own terminal, whichever view renders it.
+  function wireKeysPanelTools(panel, id) {
+    panel.querySelectorAll('[data-tt-tool]').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); openToolSheet(btn.dataset.ttTool); });
+    });
+  }
   function wireKeysPanel(card, id) {
     const panel = card.querySelector('.keys-panel');
     if (!panel) return;
@@ -3502,7 +3521,7 @@
   // on; this sheet now only hosts the Dateien/SQL/Prozesse/Snippets/
   // Watchers tool shortcuts, reached via the panel's own „Werkzeuge" entry.
   // ============================================================
-  const TERM_TOOL_SHORTCUTS = ['screenshots', 'files', 'notes', 'sql', 'processes', 'snippets', 'watchers'];
+  const TERM_TOOL_SHORTCUTS = ['files', 'notes', 'sql', 'processes', 'snippets', 'watchers'];
   function openTermToolsSheet(id) {
     const session = TMS_DATA.sessions.find(s => s.id === id);
     const wrap = document.getElementById('termToolsSheetWrap');
@@ -5145,7 +5164,8 @@
       // excluded: findScrollTarget() below resolves #termList as its own
       // nearest scrollable ancestor, so pull-to-search still works exactly
       // like on every other screen (scrolled list ≠ trigger; pull at top does).
-      if (target.closest('.workspace, .overview-grid')) return false;
+      if (target.closest('.workspace, .overview-grid, #dock, .keys-panel')) return false;
+      if (typeof dockSwitching !== 'undefined' && dockSwitching) return false;
       const section = target.closest('section[data-screen]:not([hidden])');
       if (!section) return false;
       const el = findScrollTarget(target, section);
@@ -5267,7 +5287,13 @@
     input.placeholder = session ? `Befehl an ${session.name}…` : 'Kein Terminal';
     input.disabled = !session;
     document.getElementById('dockKeysBtn').classList.toggle('is-on', !!state.keysPanelOpen);
+    document.querySelectorAll('.term-card').forEach(c => c.classList.toggle('is-target', c.dataset.id === id));
   }
+  // Beim Tippen darf das Terminal nicht hinter der Tastatur verschwinden.
+  document.getElementById('dockInput').addEventListener('focus', () => {
+    const card = document.querySelector('.term-card.is-target');
+    if (card) setTimeout(() => card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 260);
+  });
 
   document.getElementById('dockTerm').addEventListener('click', e => {
     const id = dockTargetId();
