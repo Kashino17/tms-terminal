@@ -391,5 +391,180 @@
   };
   window.TMSBridge.browserSync = syncNativeBrowser;
 
+  // ══ Werkzeug-Sheets ═══════════════════════════════════════════════════════
+  // Each sheet renders straight out of TMS_DATA[key], so the whole job is to
+  // put real data there and to make the taps do real work.
+  var origOpenTool = window.openToolSheet;
+  var openTool = null;
+  window.openToolSheet = function (id) {
+    openTool = id;
+    origOpenTool(id);
+    post('tool:open', { tool: id });
+  };
+  var origCloseSheet = window.closeSheet;
+  window.closeSheet = function (el) {
+    origCloseSheet(el);
+    openTool = null;
+  };
+
+  function activeCardId() {
+    var el = document.querySelector('.term-card.is-active[data-id], .term-card[data-id]');
+    return el ? el.getAttribute('data-id') : null;
+  }
+
+  // Dateien — the mockup showed a flat list; a real tree needs to be walkable.
+  window.__tmsCwd = '~';
+  window.buildFilesSheet = function () {
+    var files = window.TMS_DATA.files || [];
+    var rows = files.map(function (f) {
+      if (f.type === 'dir') {
+        return '<button class="tool-row is-tap" data-cd="' + escapeHtml(f.name) + '">' +
+          '<span class="tool-row__icon">▸</span><span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
+          '<span class="tool-row__meta"></span></button>';
+      }
+      return '<div class="tool-row"><span class="tool-row__icon">·</span>' +
+        '<span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
+        '<span class="tool-row__meta">' + escapeHtml(f.size || '') + '</span></div>';
+    }).join('');
+    var up = '<button class="tool-row is-tap" data-cd="..">' +
+      '<span class="tool-row__icon">▴</span><span class="tool-row__name mono-text">' + escapeHtml(window.__tmsCwd) + '</span>' +
+      '<span class="tool-row__meta">aufwärts</span></button>';
+    return {
+      html: '<div class="tool-list">' + up + rows + '</div>',
+      wire: function () {
+        document.querySelectorAll('#toolSheetBody [data-cd]').forEach(function (btn) {
+          btn.addEventListener('click', function () { post('files:cd', { name: btn.dataset.cd }); });
+        });
+      },
+    };
+  };
+
+  // Snippets — tapping one writes it into the active terminal for real.
+  window.buildSnippetsSheet = function () {
+    var list = window.TMS_DATA.snippets || [];
+    var html = '<div class="tool-list">' + list.map(function (s) {
+      return '<button class="tool-row is-tap" data-snippet="' + escapeHtml(s.id) + '">' +
+        '<span class="tool-row__name">' + escapeHtml(s.label) + '</span>' +
+        '<span class="tool-row__meta mono-text">' + escapeHtml(s.cmd) + '</span></button>';
+    }).join('') + '</div>';
+    return {
+      html: html,
+      wire: function () {
+        document.querySelectorAll('#toolSheetBody [data-snippet]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var s = (window.TMS_DATA.snippets || []).find(function (x) { return x.id === btn.dataset.snippet; });
+            if (!s) return;
+            var card = activeCardId();
+            if (card) { window.__tmsInput(card, s.cmd); toast('In Terminal eingefügt'); }
+            else toast('Kein aktives Terminal');
+          });
+        });
+      },
+    };
+  };
+
+  // SQL — the real store holds the statements detected in the terminal output,
+  // not a query with a result grid; show those and let one be copied.
+  window.buildSqlSheet = function () {
+    var rows = window.TMS_DATA.sql && window.TMS_DATA.sql.statements || [];
+    if (!rows.length) return { html: '<div class="tool-empty">Keine SQL-Statements erkannt.</div>' };
+    var html = '<div class="tool-list">' + rows.map(function (r, i) {
+      return '<button class="tool-row is-tap" data-sql="' + i + '">' +
+        '<span class="tool-row__name mono-text">' + escapeHtml(r.sql) + '</span>' +
+        '<span class="tool-row__meta">' + escapeHtml(r.time || '') + '</span></button>';
+    }).join('') + '</div>';
+    return {
+      html: html,
+      wire: function () {
+        document.querySelectorAll('#toolSheetBody [data-sql]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var r = rows[Number(btn.dataset.sql)];
+            if (r) { post('clipboard:write', { text: r.sql }); }
+          });
+        });
+      },
+    };
+  };
+
+  // Ports — the mockup had an on/off switch, but the real thing is a list of
+  // saved forwards with nothing to switch. Tapping one opens it in the browser,
+  // which is what a forwarded port is actually for.
+  window.buildPortsSheet = function () {
+    var list = window.TMS_DATA.ports || [];
+    if (!list.length) return { html: '<div class="tool-empty">Keine Port-Weiterleitungen gespeichert.</div>' };
+    var html = '<div class="tool-list">' + list.map(function (p) {
+      return '<button class="tool-row is-tap" data-port="' + escapeHtml(String(p.port)) + '">' +
+        '<span class="tool-row__name mono-text">:' + escapeHtml(String(p.port)) + '</span>' +
+        '<span class="tool-row__meta">' + escapeHtml(p.service || '') + ' · öffnen</span></button>';
+    }).join('') + '</div>';
+    return {
+      html: html,
+      wire: function () {
+        document.querySelectorAll('#toolSheetBody [data-port]').forEach(function (row) {
+          row.addEventListener('click', function () { post('ports:open', { port: row.dataset.port }); });
+        });
+      },
+    };
+  };
+
+  var origBuildWatchers = window.buildWatchersSheet;
+  window.buildWatchersSheet = function () {
+    var built = origBuildWatchers();
+    return {
+      html: built.html,
+      wire: function () {
+        document.querySelectorAll('#toolSheetBody [data-watcher]').forEach(function (row) {
+          var input = row.querySelector('input[type="checkbox"]');
+          if (input) input.addEventListener('change', function () {
+            post('watcher:toggle', { id: row.dataset.watcher, on: input.checked });
+          });
+        });
+      },
+    };
+  };
+
+  // ══ Notizen & Todos pro Terminal ══════════════════════════════════════════
+  // Every mutation (add, toggle, delete) re-renders the sheet body, so a single
+  // hook there catches all of them — no need to override each handler.
+  var origOpenSessionSheet = window.openSessionSheet;
+  var sheetCardId = null;
+  window.openSessionSheet = function (id) {
+    sheetCardId = id;
+    origOpenSessionSheet(id);
+  };
+  var origRenderSessionBody = window.renderSessionSheetBody;
+  window.renderSessionSheetBody = function () {
+    origRenderSessionBody();
+    if (!sheetCardId) return;
+    var s = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === sheetCardId; });
+    if (s) post('notes:sync', { cardId: sheetCardId, notes: s.notes || [], todos: s.todos || [] });
+  };
+
+  // ══ React Native → WebView (Sheets) ═══════════════════════════════════════
+  window.TMSBridge.setTool = function (key, data, cwd) {
+    window.TMS_DATA[key] = data;
+    if (cwd) window.__tmsCwd = cwd;
+    if (openTool === key) origOpenTool(key); // rebuild the open sheet in place
+  };
+  window.TMSBridge.setPrayer = function (times) {
+    window.TMS_DATA.prayerTimes = times;
+    if (typeof window.renderPrayerList === 'function') window.renderPrayerList();
+    if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
+  };
+  /** Jump to the Browser screen and load a URL (used by the Ports sheet). */
+  window.TMSBridge.openBrowser = function (url) {
+    var wrap = document.getElementById('toolSheetWrap');
+    if (wrap && typeof window.closeSheet === 'function') window.closeSheet(wrap);
+    window.show('browser');
+    if (typeof window.browserNavigate === 'function') window.browserNavigate(url);
+  };
+  window.TMSBridge.setNotes = function (cardId, notes, todos) {
+    var s = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
+    if (!s) return;
+    s.notes = notes;
+    s.todos = todos;
+    if (sheetCardId === cardId) origRenderSessionBody();
+  };
+
   post('bridge:ready', {});
 })();

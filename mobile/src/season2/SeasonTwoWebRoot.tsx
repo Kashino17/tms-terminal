@@ -24,6 +24,7 @@ import { useS2ConnStore, useS2Connection } from './screens/TerminalsScreen';
 import { useDictation } from './hooks/useDictation';
 import { useManagerWire } from './manager/useManagerWire';
 import { useManagerBridge, useCloudBridge } from './web/useSeasonTwoBackends';
+import { useSheetBridges } from './web/useSheetBridges';
 import { NativeBrowserLayer, type BrowserRect } from './web/NativeBrowserLayer';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
 
@@ -57,6 +58,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   useManagerWire(wsService);
   const sendManager = useManagerBridge(wsService, ready, call);
   const { loadProjects: loadCloud, loadDetail: loadCloudDetail } = useCloudBridge(ready, call);
+  const activeSessionId = useTerminalStore((s) =>
+    server ? (s.tabs[server.id] ?? []).find((t) => t.active)?.sessionId ?? (s.tabs[server.id] ?? [])[0]?.sessionId : undefined,
+  );
+  const sheets = useSheetBridges({ ready, call, wsService, server, token, activeSessionId });
 
   // ── Pick up the saved server (the WebView has no server picker of its own).
   useEffect(() => {
@@ -97,7 +102,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           serverId: server.id,
           active: true,
         });
-        if (cardId) call('bindSession', cardId, m.sessionId);
+        if (cardId) { call('bindSession', cardId, m.sessionId); sheets.pushNotes(cardId); }
         return;
       }
       if (m?.type === 'terminal:closed' && m.sessionId) {
@@ -145,8 +150,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       .getTabs(server.id)
       .filter((t) => t.sessionId)
       .map((t) => ({ sessionId: t.sessionId as string }));
-    if (live.length) call('restoreSessions', live);
-  }, [ready, server, state, call]);
+    if (live.length) {
+      call('restoreSessions', live);
+      // The page names restored cards t1..tN; hand each its stored notes back.
+      live.forEach((_, i) => sheets.pushNotes(`t${i + 1}`));
+    }
+  }, [ready, server, state, call, sheets]);
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
   const { toggle: toggleMic } = useDictation({
@@ -172,6 +181,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
     if (type === 'bridge:ready') { setReady(true); return; }
     if (!wsService || !server) return;
+    if (sheets.handle(type, payload)) return;
 
     switch (type) {
       case 'terminal:create':
@@ -252,7 +262,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         else setSeasonTwoEnabled(false);
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, sendManager, loadCloud, loadCloudDetail]);
+  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, sendManager, loadCloud, loadCloudDetail, sheets]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
