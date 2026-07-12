@@ -25,6 +25,7 @@ import { CloudScreen } from './screens/CloudScreen';
 import { S2BrowserScreen } from './screens/S2BrowserScreen';
 import { ManagerScreen } from './screens/ManagerScreen';
 import { useManagerWire } from './manager/useManagerWire';
+import { Spotlight, SpotlightEntry } from './components/Spotlight';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SeasonTwo'>;
 
@@ -39,7 +40,7 @@ export function SeasonTwoRoot(props: Props) {
 const SESSION_COLORS = ['#e8590c', '#1971c2', '#2f9e44', '#9c36b5', '#c2255c', '#0c8599'];
 
 function S2Shell({ navigation }: Props) {
-  const { theme } = useS2Theme();
+  const { theme, toggleTheme } = useS2Theme();
   const { c, m } = theme;
   const insets = useSafeAreaInsets();
   const setSeasonTwoEnabled = useSettingsStore((s) => s.setSeasonTwoEnabled);
@@ -50,6 +51,7 @@ function S2Shell({ navigation }: Props) {
   // Manager responses must be processed even when the classic terminal screen
   // (which normally installs the persistent handler) has never been mounted.
   useManagerWire(conn.wsService);
+  const [spotlightOpen, setSpotlightOpen] = useState(false);
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -124,6 +126,27 @@ function S2Shell({ navigation }: Props) {
     }
   }, [navigation, conn, toast]);
 
+  const spotlightEntries: SpotlightEntry[] = useMemo(() => {
+    const entries: SpotlightEntry[] = [];
+    islandSessions.forEach((s) => entries.push({
+      id: `s-${s.id}`, label: s.title, sub: s.statusLabel, kind: 'session', color: s.color,
+      run: () => { setScreen('terminals'); conn.focusTab(s.id); },
+    }));
+    entries.push(
+      { id: 'sc-terminals', label: 'Terminals', kind: 'screen', run: () => setScreen('terminals') },
+      { id: 'sc-cloud', label: 'Cloud', kind: 'screen', run: () => setScreen('cloud') },
+      { id: 'sc-browser', label: 'Browser', kind: 'screen', run: () => setScreen('browser') },
+      { id: 'sc-manager', label: 'Manager', kind: 'screen', run: () => handleDock('manager') },
+      { id: 'sc-server', label: 'Server', kind: 'screen', run: () => navigation.navigate('ServerList') },
+      { id: 'sc-settings', label: 'Einstellungen', kind: 'screen', run: () => navigation.navigate('Settings') },
+      { id: 'ac-prayer', label: 'Gebetszeiten', kind: 'screen', run: () => navigation.navigate('PrayerTimes') },
+      { id: 'ac-theme', label: 'Design wechseln (Hell/Dunkel)', kind: 'action', run: toggleTheme },
+      { id: 'ac-classic', label: 'Zurück zu Klassisch', kind: 'action', run: () => setSeasonTwoEnabled(false) },
+    );
+    return entries;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [islandSessions, navigation, conn]);
+
   const statusKind = conn.state === 'connected' ? 'ok' : conn.state === 'connecting' ? 'warn' : 'idle';
   const statusLabel =
     conn.state === 'connected' ? `Verbunden · ${conn.server?.name ?? ''}`
@@ -146,6 +169,7 @@ function S2Shell({ navigation }: Props) {
           sessions={islandSessions}
           onSessionPress={(id) => { setScreen('terminals'); conn.focusTab(id); }}
           onBackToClassic={() => setSeasonTwoEnabled(false)}
+          onOpenSpotlight={() => setSpotlightOpen(true)}
         />
       </View>
 
@@ -169,6 +193,10 @@ function S2Shell({ navigation }: Props) {
       <View style={[styles.dockZone, { paddingBottom: insets.bottom + 12 }]}>
         <Dock active={screen} onSelect={handleDock} />
       </View>
+
+      {spotlightOpen && (
+        <Spotlight entries={spotlightEntries} onClose={() => setSpotlightOpen(false)} />
+      )}
 
       {toastMsg != null && (
         <Animated.View

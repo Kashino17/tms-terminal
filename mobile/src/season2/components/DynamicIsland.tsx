@@ -28,13 +28,15 @@ interface DynamicIslandProps {
   sessions: IslandSessionRow[];
   onSessionPress: (id: string) => void;
   onBackToClassic: () => void;
+  /** Long-press on the compact pill opens the Spotlight search. */
+  onOpenSpotlight?: () => void;
 }
 
 const COLLAPSED_H = 40;
 const EXPANDED_MAX_H = 420;
 
 export function DynamicIsland({
-  statusLabel, statusKind, latencyMs, prayerLabel, sessions, onSessionPress, onBackToClassic,
+  statusLabel, statusKind, latencyMs, prayerLabel, sessions, onSessionPress, onBackToClassic, onOpenSpotlight,
 }: DynamicIslandProps) {
   const { theme, toggleTheme } = useS2Theme();
   const { c, m } = theme;
@@ -70,7 +72,13 @@ export function DynamicIsland({
     <View style={styles.zone} pointerEvents="box-none">
       <Animated.View style={[styles.shell, shellStyle]}>
         <GlassSurface strong radius={expanded ? m.radius.lg : m.radius.pill} style={StyleSheet.absoluteFill}>
-          <Pressable onPress={toggle} accessibilityRole="button" accessibilityLabel="Status – Details öffnen/schließen">
+          <Pressable
+            onPress={toggle}
+            onLongPress={onOpenSpotlight}
+            delayLongPress={420}
+            accessibilityRole="button"
+            accessibilityLabel="Status – Details öffnen/schließen (lang drücken: Suche)"
+          >
             <View style={[styles.compactRow, { height: COLLAPSED_H }]}>
               <View style={[styles.dot, { backgroundColor: dotColor }]} />
               <Text numberOfLines={1} style={[styles.statusLabel, { color: c.text, fontSize: m.font.label }]}>

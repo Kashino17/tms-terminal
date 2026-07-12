@@ -35,6 +35,9 @@ export function CloudScreen({ toast, onOpenClassicCloud }: CloudScreenProps) {
   const { c, m } = theme;
   const tokens = useCloudAuthStore((s) => s.tokens);
   const favorites = useCloudPrefsStore((s) => s.favorites);
+  const folders = useCloudPrefsStore((s) => s.folders);
+  const [folderFor, setFolderFor] = useState<Row | null>(null);
+  const [folderDraft, setFolderDraft] = useState('');
 
   const providers = useMemo(() => {
     const map: Partial<Record<CloudPlatform, CloudProvider>> = {};
@@ -74,16 +77,22 @@ export function CloudScreen({ toast, onOpenClassicCloud }: CloudScreenProps) {
 
   useEffect(() => { if (connected.length) load(); }, [load, connected.length]);
 
-  const sorted = useMemo(() => {
+  // Sections: favorites first, then user folders (alphabetical), then the rest.
+  const sections = useMemo(() => {
     const key = (r: Row) => `${r.platform}:${r.project.id}`;
-    return [...rows].sort((a, b) => {
-      const fa = favorites[key(a)] ? 0 : 1;
-      const fb = favorites[key(b)] ? 0 : 1;
-      if (fa !== fb) return fa - fb;
-      if (a.platform !== b.platform) return a.platform.localeCompare(b.platform);
-      return a.project.name.localeCompare(b.project.name);
+    const byName = (a: Row, b: Row) => a.project.name.localeCompare(b.project.name);
+    const favs = rows.filter((r) => favorites[key(r)]).sort(byName);
+    const nonFav = rows.filter((r) => !favorites[key(r)]);
+    const folderNames = [...new Set(nonFav.map((r) => folders[key(r)]).filter(Boolean))].sort() as string[];
+    const result: { title: string | null; rows: Row[] }[] = [];
+    if (favs.length) result.push({ title: '★ Favoriten', rows: favs });
+    folderNames.forEach((name) => {
+      result.push({ title: name, rows: nonFav.filter((r) => folders[key(r)] === name).sort(byName) });
     });
-  }, [rows, favorites]);
+    const loose = nonFav.filter((r) => !folders[key(r)]).sort(byName);
+    if (loose.length) result.push({ title: folderNames.length || favs.length ? 'Weitere' : null, rows: loose });
+    return result;
+  }, [rows, favorites, folders]);
 
   if (detail) {
     return (
@@ -129,37 +138,94 @@ export function CloudScreen({ toast, onOpenClassicCloud }: CloudScreenProps) {
 
         {loading && <ActivityIndicator color={c.accent} style={{ marginVertical: 24 }} />}
 
-        {sorted.map((row) => {
-          const key = `${row.platform}:${row.project.id}`;
-          const fav = !!favorites[key];
-          return (
-            <Pressable key={key} onPress={() => setDetail(row)} style={({ pressed }) => [pressed && styles.pressed]}>
-              <GlassSurface style={{ marginBottom: 10, padding: 14 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <IconDot size={9} color={PROJECT_STATUS_COLORS[row.project.status] ?? c.textDim} />
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text numberOfLines={1} style={{ color: c.text, fontSize: m.font.body, fontWeight: '700' }}>
-                      {row.project.name}
-                    </Text>
-                    <Text numberOfLines={1} style={{ color: c.textDim, fontSize: m.font.micro, marginTop: 2 }}>
-                      {row.platform === 'render' ? 'Render' : 'Vercel'} · {row.project.status} · {row.project.type}
-                    </Text>
-                  </View>
-                  <Pressable
-                    onPress={() => useCloudPrefsStore.getState().toggleFavorite(key)}
-                    hitSlop={8}
-                    accessibilityLabel="Favorit umschalten"
-                  >
-                    <Text style={{ fontSize: 18, color: fav ? c.warn : c.textDim, opacity: fav ? 1 : 0.5 }}>★</Text>
-                  </Pressable>
-                  <IconChevronRight size={m.icon.sm} color={c.textDim} />
-                </View>
-              </GlassSurface>
-            </Pressable>
-          );
-        })}
+        {sections.map((section, si) => (
+          <View key={section.title ?? `s${si}`}>
+            {section.title != null && (
+              <Text style={{ color: c.textDim, fontSize: m.font.micro, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8, marginTop: si === 0 ? 0 : 8 }}>
+                {section.title}
+              </Text>
+            )}
+            {section.rows.map((row) => {
+              const key = `${row.platform}:${row.project.id}`;
+              const fav = !!favorites[key];
+              return (
+                <Pressable
+                  key={key}
+                  onPress={() => setDetail(row)}
+                  onLongPress={() => { setFolderFor(row); setFolderDraft(folders[key] ?? ''); }}
+                  delayLongPress={420}
+                  style={({ pressed }) => [pressed && styles.pressed]}
+                >
+                  <GlassSurface style={{ marginBottom: 10, padding: 14 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <IconDot size={9} color={PROJECT_STATUS_COLORS[row.project.status] ?? c.textDim} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text numberOfLines={1} style={{ color: c.text, fontSize: m.font.body, fontWeight: '700' }}>
+                          {row.project.name}
+                        </Text>
+                        <Text numberOfLines={1} style={{ color: c.textDim, fontSize: m.font.micro, marginTop: 2 }}>
+                          {row.platform === 'render' ? 'Render' : 'Vercel'} · {row.project.status} · {row.project.type}
+                        </Text>
+                      </View>
+                      <Pressable
+                        onPress={() => useCloudPrefsStore.getState().toggleFavorite(key)}
+                        hitSlop={8}
+                        accessibilityLabel="Favorit umschalten"
+                      >
+                        <Text style={{ fontSize: 18, color: fav ? c.warn : c.textDim, opacity: fav ? 1 : 0.5 }}>★</Text>
+                      </Pressable>
+                      <IconChevronRight size={m.icon.sm} color={c.textDim} />
+                    </View>
+                  </GlassSurface>
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
 
-        {connected.length > 0 && !loading && sorted.length === 0 && (
+        {folderFor && (
+          <GlassSurface strong style={{ padding: 14, marginBottom: 10 }}>
+            <Text style={{ color: c.text, fontSize: m.font.label, fontWeight: '700', marginBottom: 8 }}>
+              Ordner für {folderFor.project.name}
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+              {[...new Set(Object.values(folders))].sort().map((name) => (
+                <Pressable
+                  key={name}
+                  onPress={() => setFolderDraft(name)}
+                  style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: folderDraft === name ? `rgba(${c.accentRgb},0.5)` : c.glassBorder }}
+                >
+                  <Text style={{ color: c.textDim, fontSize: m.font.micro, fontWeight: '700' }}>{name}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <TextInput
+                value={folderDraft}
+                onChangeText={setFolderDraft}
+                placeholder="Ordnername (leer = entfernen)"
+                placeholderTextColor={c.textDim}
+                style={{ flex: 1, color: c.text, fontSize: m.font.caption, borderBottomWidth: 1, borderColor: c.glassBorder, paddingVertical: 4 }}
+              />
+              <Pressable
+                onPress={() => {
+                  const key = `${folderFor.platform}:${folderFor.project.id}`;
+                  useCloudPrefsStore.getState().setFolder(key, folderDraft || null);
+                  setFolderFor(null);
+                  toast(folderDraft.trim() ? `In „${folderDraft.trim()}" verschoben` : 'Aus Ordner entfernt');
+                }}
+                hitSlop={6}
+              >
+                <Text style={{ color: c.ok, fontSize: m.font.caption, fontWeight: '800' }}>OK</Text>
+              </Pressable>
+              <Pressable onPress={() => setFolderFor(null)} hitSlop={6}>
+                <IconClose size={m.icon.sm} color={c.textDim} />
+              </Pressable>
+            </View>
+          </GlassSurface>
+        )}
+
+        {connected.length > 0 && !loading && rows.length === 0 && (
           <Text style={{ color: c.textDim, fontSize: m.font.caption, textAlign: 'center', paddingVertical: 20 }}>
             Keine Projekte gefunden.
           </Text>

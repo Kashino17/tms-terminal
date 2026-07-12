@@ -144,6 +144,21 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
     }
   }, [conn.focusTabId, conn]);
 
+  // Reattach persisted sessions once per connection — without this, tabs
+  // restored from storage after an app restart would sit on dead sessionIds
+  // (the classic screen does this in its connState effect; season2 mirrors it).
+  const reattachedRef = useRef(false);
+  useEffect(() => {
+    if (conn.state !== 'connected') { reattachedRef.current = false; return; }
+    if (reattachedRef.current || !conn.wsService || !conn.server) return;
+    reattachedRef.current = true;
+    const ws = conn.wsService;
+    const dims = { cols: 100, rows: 32 };
+    useTerminalStore.getState().getTabs(conn.server.id).forEach((tab) => {
+      if (tab.sessionId) ws.send({ type: 'terminal:reattach', sessionId: tab.sessionId, payload: dims });
+    });
+  }, [conn.state, conn.wsService, conn.server]);
+
   // Server messages: assign sessionIds to pending tabs, drop closed sessions,
   // and mirror the classic auto-approve contract for detected prompts.
   useEffect(() => {
@@ -155,6 +170,14 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
       if (msg?.type === 'terminal:created' && msg.sessionId) {
         const pending = useTerminalStore.getState().getTabs(serverId).find((t) => !t.sessionId);
         if (pending) useTerminalStore.getState().updateTab(serverId, pending.id, { sessionId: msg.sessionId });
+      } else if (msg?.type === 'terminal:reattached' && msg.sessionId) {
+        const tab = useTerminalStore.getState().getTabs(serverId).find((t) => t.sessionId === msg.sessionId);
+        if (tab) {
+          const updates: Record<string, string> = {};
+          if (msg.payload?.cwd) updates.lastCwd = msg.payload.cwd;
+          if (msg.payload?.processName) updates.lastProcess = msg.payload.processName;
+          if (Object.keys(updates).length > 0) useTerminalStore.getState().updateTab(serverId, tab.id, updates);
+        }
       } else if (msg?.type === 'terminal:closed' && msg.sessionId) {
         const gone = useTerminalStore.getState().getTabs(serverId).find((t) => t.sessionId === msg.sessionId);
         if (gone) useTerminalStore.getState().removeTab(serverId, gone.id);
