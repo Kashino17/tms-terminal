@@ -104,6 +104,7 @@ interface TerminalsScreenProps {
 // Muted, professional palette: enough hue separation to tell sessions apart,
 // low enough saturation to never pull the eye away from the terminal output.
 const SESSION_COLORS = ['#6f8fb0', '#7fa088', '#b09a70', '#9a8bb0', '#b08585', '#7fa5a8'];
+const MONO_FONT = Platform.select({ ios: 'Menlo', default: 'monospace' });
 const VIEW_KEY = 'tms-s2-terminal-view';
 type S2View = 'list' | 'stack';
 
@@ -444,11 +445,14 @@ export function TerminalsScreen({ navigation, toast, onContextActions }: Termina
                 key={v}
                 onPress={() => switchView(v)}
                 accessibilityState={{ selected: view === v }}
-                style={[styles.viewToggleBtn, view === v && { backgroundColor: `rgba(${c.accentRgb},0.16)` }]}
+                style={[styles.viewToggleBtn, view === v && { backgroundColor: `rgba(${c.accentRgb},0.20)` }]}
               >
                 {v === 'stack'
                   ? <IconStack size={m.icon.sm} color={view === v ? c.text : c.textDim} />
                   : <IconList size={m.icon.sm} color={view === v ? c.text : c.textDim} />}
+                <Text style={{ color: view === v ? c.text : c.textDim, fontSize: m.font.label, fontWeight: '600' }}>
+                  {v === 'stack' ? 'Stack' : 'Liste'}
+                </Text>
               </Pressable>
             ))}
           </View>
@@ -590,6 +594,13 @@ export function TerminalsScreen({ navigation, toast, onContextActions }: Termina
                         style={({ pressed }) => [styles.railBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
                       >
                         <IconNotes size={m.icon.sm} color={c.text} />
+                      </Pressable>
+                      <Pressable
+                        onPress={() => { setSwipedId(null); closeTerminal(tab); }}
+                        accessibilityLabel="Terminal schließen"
+                        style={({ pressed }) => [styles.railBtn, { borderColor: 'rgba(255,160,160,0.4)' }, pressed && styles.pressed]}
+                      >
+                        <IconTrash size={m.icon.sm} color={c.err} />
                       </Pressable>
                     </View>
                   )}
@@ -734,7 +745,12 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
     <GlassSurface strong={expanded} style={[styles.card, full ? { flex: 1, minHeight: 0 } : { marginBottom: 12 }]}>
       <Pressable onPress={full ? undefined : onToggle} accessibilityRole="button" disabled={full}>
         <View style={styles.cardHead}>
-          {/* Mockup anatomy: 10px color dot, name + description stack. */}
+          {/* Mockup .card-header: chevron · tag · name/desc · status-chip · auto-toggle */}
+          {!full ? (
+            <View style={styles.chevronBtn}>
+              <IconChevronDown size={14} color={c.textDim} />
+            </View>
+          ) : null}
           <View style={[styles.cardTag, { backgroundColor: color }]} />
           <View style={{ flex: 1, minWidth: 0 }}>
             {editing ? (
@@ -758,7 +774,13 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
             </Text>
           </View>
 
-          {/* Auto-Approve pill — icon + label, green when on (mockup .auto-toggle). */}
+          <View style={[styles.statusChip, { backgroundColor: `rgba(${tab.sessionId && !tab.notificationCount ? '74,222,128' : '251,191,36'},0.08)` }]}>
+            <View style={[styles.statusDot, { backgroundColor: tab.notificationCount ? c.warn : tab.sessionId ? c.ok : c.warn }]} />
+            <Text style={{ color: tab.notificationCount ? c.warn : tab.sessionId ? c.ok : c.warn, fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 }}>
+              {tab.notificationCount ? 'WARTET' : tab.sessionId ? 'BEREIT' : 'START'}
+            </Text>
+          </View>
+
           <Pressable
             onPress={toggleAuto}
             accessibilityLabel="Auto-Approve umschalten"
@@ -766,28 +788,22 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
             style={({ pressed }) => [
               styles.autoPill,
               {
-                borderColor: autoOn ? `rgba(74,222,128,0.4)` : c.glassBorder,
+                borderColor: autoOn ? 'rgba(74,222,128,0.4)' : c.glassBorder,
                 backgroundColor: autoOn ? 'rgba(74,222,128,0.08)' : `rgba(${c.overlayRgb},0.06)`,
               },
               pressed && { transform: [{ scale: 0.94 }] },
             ]}
           >
             <IconBolt size={m.icon.sm} color={autoOn ? c.ok : c.textDim} />
-            <Text style={{ color: autoOn ? c.ok : c.textDim, fontSize: m.font.caption, fontWeight: '700' }}>AUTO</Text>
+            <Text style={{ color: autoOn ? c.ok : c.textDim, fontSize: m.font.caption, fontWeight: '700' }}>Auto</Text>
           </Pressable>
 
-          {/* Status chip (mockup .status-chip). */}
-          <View style={[styles.statusChip, { backgroundColor: `rgba(${tab.notificationCount ? '251,191,36' : tab.sessionId ? '74,222,128' : '251,191,36'},0.08)` }]}>
-            <View style={[styles.statusDot, { backgroundColor: tab.notificationCount ? c.warn : tab.sessionId ? c.ok : c.warn }]} />
-            <Text style={{ color: tab.notificationCount ? c.warn : tab.sessionId ? c.ok : c.warn, fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 }}>
-              {tab.notificationCount ? 'WARTET' : tab.sessionId ? 'BEREIT' : 'START'}
-            </Text>
-          </View>
-
-          {onToggleFullscreen && (
+          {/* Full mode (stack / fullscreen): the two actions the list keeps in
+              its swipe rail live here, since there is no chevron slot. */}
+          {full && onToggleFullscreen && (
             <Pressable
               onPress={onToggleFullscreen}
-              accessibilityLabel={fullscreen ? 'Vollbild verlassen' : 'Terminal auf Vollbild'}
+              accessibilityLabel={fullscreen ? 'Vollbild verlassen' : 'Vollbild'}
               style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
             >
               {fullscreen
@@ -795,21 +811,15 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
                 : <IconMaximize size={m.icon.sm} color={c.textDim} />}
             </Pressable>
           )}
-          <Pressable
-            onPress={() => onNotes(color)}
-            accessibilityLabel="Notizen und Todos"
-            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
-          >
-            <IconNotes size={m.icon.sm} color={c.textDim} />
-          </Pressable>
-          <Pressable
-            onPress={() => setConfirmClose(true)}
-            accessibilityLabel="Terminal schließen"
-            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
-          >
-            <IconTrash size={m.icon.sm} color={c.textDim} />
-          </Pressable>
-          {!full && <IconChevronDown size={m.icon.sm} color={c.textDim} />}
+          {full && (
+            <Pressable
+              onPress={() => setConfirmClose(true)}
+              accessibilityLabel="Terminal schließen"
+              style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
+            >
+              <IconTrash size={m.icon.sm} color={c.textDim} />
+            </Pressable>
+          )}
         </View>
       </Pressable>
 
@@ -866,10 +876,24 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
               <IconArrowDownCircle size={m.icon.md} color={c.accent} />
             </Pressable>
           </View>
-          {/* Command line: recessed well surface so it clearly reads as input. */}
+          {/* Mockup .term-input-row: one glass pill — ^C · Esc · $ · input · mic · send · keys */}
           <View style={styles.inputZone}>
-            <View style={[styles.inputRow, { backgroundColor: c.well, borderColor: c.glassBorder }]}>
-              <Text style={{ color: c.accent, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }), fontSize: m.font.body, fontWeight: '700' }}>$</Text>
+            <View style={[styles.inputPill, { backgroundColor: c.glass, borderColor: c.glassBorder }]}>
+              <Pressable
+                onPress={() => sendRaw('\x03')}
+                accessibilityLabel="Strg+C"
+                style={({ pressed }) => [styles.termKey, { borderColor: 'rgba(255,160,160,0.35)', backgroundColor: 'rgba(255,160,160,0.10)' }, pressed && styles.pressed]}
+              >
+                <Text style={{ color: c.err, fontSize: m.font.caption, fontWeight: '700' }}>^C</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => sendRaw('\x1b')}
+                accessibilityLabel="Escape"
+                style={({ pressed }) => [styles.termKey, { borderColor: c.glassBorder, backgroundColor: `rgba(${c.overlayRgb},0.06)` }, pressed && styles.pressed]}
+              >
+                <Text style={{ color: c.textDim, fontSize: m.font.caption, fontWeight: '700' }}>Esc</Text>
+              </Pressable>
+              <Text style={{ color: c.textDim, fontFamily: MONO_FONT, fontSize: m.font.body }}>$</Text>
               <TextInput
                 value={cmd}
                 onChangeText={setCmd}
@@ -882,26 +906,28 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
               />
               <Pressable
                 onPress={toggleMic}
-                hitSlop={6}
                 accessibilityLabel={micState === 'recording' ? 'Aufnahme stoppen' : 'Diktieren'}
                 style={[
-                  styles.micBtn,
+                  styles.inputBtn,
                   micState === 'recording' && { backgroundColor: 'rgba(239,68,68,0.16)' },
                   micState === 'processing' && { backgroundColor: `rgba(${c.accentRgb},0.16)` },
                 ]}
               >
-                <IconMic
-                  size={m.icon.md}
-                  color={micState === 'recording' ? c.err : micState === 'processing' ? c.accent : c.textDim}
-                />
+                <IconMic size={m.icon.sm} color={micState === 'recording' ? c.err : micState === 'processing' ? c.accent : c.textDim} />
               </Pressable>
               <Pressable
                 onPress={sendCmd}
-                hitSlop={6}
                 accessibilityLabel="Senden"
-                style={({ pressed }) => [styles.sendBtn, { backgroundColor: `rgba(${c.accentRgb},0.22)` }, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.inputBtn, { backgroundColor: `rgba(${c.accentRgb},0.20)` }, pressed && styles.pressed]}
               >
                 <IconSend size={m.icon.sm} color={c.accent} />
+              </Pressable>
+              <Pressable
+                onPress={() => onNotes(color)}
+                accessibilityLabel="Notizen und Todos"
+                style={({ pressed }) => [styles.inputBtn, { backgroundColor: `rgba(${c.overlayRgb},0.06)` }, pressed && styles.pressed]}
+              >
+                <IconNotes size={m.icon.sm} color={c.textDim} />
               </Pressable>
             </View>
           </View>
@@ -920,7 +946,7 @@ const styles = StyleSheet.create({
   headActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: 12 },
   viewToggle: { flexDirection: 'row', gap: 3, padding: 4, borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: 999 },
-  viewToggleBtn: { minWidth: 40, minHeight: 36, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderRadius: 999 },
+  viewToggleBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 15, paddingVertical: 8, justifyContent: 'center', borderRadius: 999 },
   chipStrip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
   dots: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingTop: 10 },
   swipeRail: { justifyContent: 'center', gap: 6, paddingLeft: 8, paddingBottom: 12 },
@@ -942,11 +968,15 @@ const styles = StyleSheet.create({
   iconBtn: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   confirmRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
   confirmBtn: { paddingHorizontal: 12, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
-  termWrap: { marginHorizontal: 0, borderRadius: 0, overflow: 'hidden' },
+  termWrap: { marginHorizontal: 8, borderRadius: 16, overflow: 'hidden' },
   termPending: { flex: 1, minHeight: 120, alignItems: 'center', justifyContent: 'center' },
   jumpBtn: { position: 'absolute', right: 10, bottom: 10, width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
-  inputZone: { paddingHorizontal: 6, paddingBottom: 6, paddingTop: 6 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth * 2 },
+  inputZone: { paddingHorizontal: 8, paddingBottom: 8, paddingTop: 6 },
+  inputPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 6, paddingVertical: 5, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
+  termKey: { paddingHorizontal: 9, height: 30, borderRadius: 999, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
+  inputBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  chevronBtn: { width: 26, alignItems: 'center', justifyContent: 'center' },
+
   cmdInput: { flex: 1, paddingVertical: 6, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
   micBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   sendBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
