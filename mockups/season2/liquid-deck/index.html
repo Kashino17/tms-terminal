@@ -519,6 +519,15 @@
     transition: transform 380ms var(--spring), opacity 380ms var(--spring), filter 380ms var(--spring); will-change: transform, opacity; }
   .card-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; cursor: grab; }
   .card-tag { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  /* Die Terminalfarbe ist der obere Rand der Karte: halbtransparent, folgt der
+     Rundung der oberen Ecken und verläuft an den Seiten sanft aus. */
+  .stack-card.term-card::before, .list-card.term-card .list-card__surface::before {
+    content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 4;
+    border: 2px solid color-mix(in srgb, var(--tag, transparent) 50%, transparent);
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--tag, transparent) 16%, transparent), transparent 26%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 12%, transparent 38%);
+    mask-image: linear-gradient(to bottom, #000 0, #000 12%, transparent 38%);
+  }
   .card-name-wrap { flex: 1 1 0%; min-width: 0; }
   /* Name + description are both readonly inputs; triple-tap unlocks editing
      (see wireTripleTapEdit) so single taps never pop the keyboard. */
@@ -529,7 +538,7 @@
   .card-desc[data-editing="1"] { text-overflow: clip; }
 
   /* Per-terminal Auto-Approve — 1-tap header pill, default ON. */
-  .auto-toggle { flex: none; display: flex; align-items: center; gap: 5px; height: 28px; min-width: 44px; padding: 0 10px; border-radius: var(--radius-pill); font: 700 var(--fs-caption) var(--font-ui); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
+  .auto-toggle { flex: none; display: flex; align-items: center; justify-content: center; height: 30px; width: 34px; padding: 0; border-radius: var(--radius-pill); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
   .auto-toggle .ic { width: var(--icon-sm); height: var(--icon-sm); flex: none; }
   .auto-toggle__label { letter-spacing: .01em; }
   .auto-toggle.is-on { color: var(--ok); background: rgba(var(--ok-rgb),var(--chip-a)); border-color: rgba(var(--ok-rgb),.4); }
@@ -561,7 +570,6 @@
   .keys-panel__row--tools .keys-panel__spacer { min-width: 8px; }
   /* Welches Terminal die Leiste bedient, muss man SEHEN. */
   .term-card.is-target { border-color: rgba(var(--accent-rgb),.55) !important; box-shadow: 0 0 0 1px rgba(var(--accent-rgb),.35), 0 10px 30px rgba(0,0,0,.3); }
-  .term-card.is-target .card-tag { box-shadow: 0 0 0 3px rgba(var(--accent-rgb),.28); }
   .jump-bottom-orb { position: absolute; right: 10px; bottom: 10px; width: var(--touch); height: var(--touch); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--accent); background: rgba(var(--accent-rgb),.2); border: 1px solid rgba(var(--accent-rgb),.4); box-shadow: 0 6px 18px rgba(0,0,0,.24); opacity: 0; transform: translateY(6px) scale(.9); pointer-events: none; transition: opacity 200ms var(--spring), transform 200ms var(--spring); z-index: 4; }
   .jump-bottom-orb .ic { width: var(--icon-md); height: var(--icon-md); }
   .jump-bottom-orb.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
@@ -2252,13 +2260,11 @@
     return `
         <div class="card-header${isList ? ' list-card__header' : ''}">
           ${isList ? `<button class="chevron-btn" data-act="toggle" aria-label="Ein-/Ausklappen" title="Ein-/Ausklappen">${icon('chevron', 16)}</button>` : ''}
-          <span class="card-tag" style="background:${session.colorTag}"></span>
           <div class="card-name-wrap">
             <input class="card-name" value="${escapeHtml(session.name)}" readonly aria-label="Terminal-Name">
-            <input class="card-desc" value="${escapeHtml(session.description)}" readonly aria-label="Beschreibung">
           </div>
           <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
-          <button class="auto-toggle${cs.autoApprove ? ' is-on' : ''}" data-act="auto" aria-pressed="${cs.autoApprove}" aria-label="Auto-Approve umschalten" title="Auto-Approve">${icon('bolt', 14)}<span class="auto-toggle__label">Auto</span></button>
+          <button class="auto-toggle${cs.autoApprove ? ' is-on' : ''}" data-act="auto" aria-pressed="${cs.autoApprove}" aria-label="Auto-Approve umschalten" title="Auto-Approve">${icon('bolt', 15)}</button>
         </div>`;
   }
 
@@ -2417,6 +2423,7 @@
     const card = document.createElement('div');
     card.className = 'stack-card term-card glass';
     card.dataset.id = id;
+    card.style.setProperty('--tag', session.colorTag);
     card.innerHTML = `
         ${cardHeaderHtml(session, id, false)}
         ${cardBodyBlockHtml(id, false)}
@@ -2468,6 +2475,7 @@
     const card = document.createElement('article');
     card.className = 'list-card term-card';
     card.dataset.id = id;
+    card.style.setProperty('--tag', session.colorTag);
     card.dataset.collapsed = String(!!(cs && cs.collapsed));
     card.innerHTML = `
         <div class="list-card__rail" aria-hidden="true">
