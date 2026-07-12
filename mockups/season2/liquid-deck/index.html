@@ -1720,6 +1720,7 @@
     incognito: '<path d="M5 10Q12 2 19 10"/><path d="M3 10h18"/><circle cx="8" cy="13" r="3"/><circle cx="16" cy="13" r="3"/><path d="M11 13h2"/>',
     key: '<circle cx="7" cy="17" r="4"/><path d="M10 14 20 4"/><path d="M15 9l3 3"/><path d="M18 6l2.5 2.5"/>',
   };
+  ICON_PATHS.backspace = '<path d="M9 6h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-6-6a1 1 0 0 1 0-1.4Z"/><path d="m17 10-4 4M13 10l4 4"/>';
   ICON_PATHS.camera = '<path d="M4 8a2 2 0 0 1 2-2h1.6l1-1.6a1 1 0 0 1 .85-.4h5.1a1 1 0 0 1 .85.4l1 1.6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.3"/>';
   ICON_PATHS.check = '<path d="m5 13 4 4L19 7"/>';
   function icon(name, size, cls) {
@@ -2292,6 +2293,7 @@
           <div class="keys-panel__row">
             <button class="tt-key" data-tt-key="tab">Tab</button>
             <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode" aria-label="Auswahlmodus" title="Auswahl">Aa</button>
+            <button class="tt-key tt-key--icon" data-tt-key="backspace" aria-label="Zeichen löschen" title="Löschen (⌫)">${icon('backspace', 17)}</button>
             <button class="tt-key tt-key--danger tt-key--icon" data-tt-key="clear" aria-label="Terminal leeren" title="Leeren">${icon('trash', 16)}</button>
             <span class="keys-panel__spacer"></span>
             <button class="keys-panel__close" data-tt-key="closepanel" aria-label="Tasten schließen" title="Schließen">${icon('x', 15)}</button>
@@ -2330,6 +2332,7 @@
         const k = btn.dataset.ttKey;
         // Tab hat im Mockup nur geblinkt — die Taste muss das Terminal erreichen.
         if (k === 'tab') handleTermKey('tab', id);
+        else if (k === 'backspace') handleTermKey('backspace', id);
         else if (k === 'clear') clearActiveTerminal(id);
         else if (k === 'selectmode') {
           toggleCardSelectionMode(id, null);
@@ -5678,10 +5681,8 @@
   let tsDots = [];
 
   function tsVisible() {
-    // Auf Nutzerwunsch ausgeblendet: der Stack wischt ohnehin horizontal durch
-    // die Terminals — die Punkte kosteten nur Höhe. (Zum Reaktivieren die alte
-    // Bedingung wiederherstellen: Terminals-Tab + Stack + mehr als 1 Terminal.)
-    return false;
+    const screen = document.querySelector('[data-screen="terminals"]');
+    return !!screen && !screen.hidden && state.terminalView === 'stack' && state.order.length > 1;
   }
   function tsName(i) {
     const s = TMS_DATA.sessions.find(x => x.id === state.order[i]);

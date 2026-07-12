@@ -558,7 +558,7 @@
     var t = terms[id];
     var app = !!(t && t.term.modes && t.term.modes.applicationCursorKeysMode);
     var seq = {
-      ctrlc: '\x03', esc: '\x1b', tab: '\t',
+      ctrlc: '\x03', esc: '\x1b', tab: '\t', backspace: '\x7f',
       up:    app ? '\x1bOA' : '\x1b[A',
       down:  app ? '\x1bOB' : '\x1b[B',
       left:  app ? '\x1bOD' : '\x1b[D',
