@@ -28,6 +28,7 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../types/navigation.types';
+import { useResponsive } from '../../hooks/useResponsive';
 import { getConnection, WebSocketService } from '../../services/websocket.service';
 import type { ConnectionState } from '../../types/websocket.types';
 import { storageService, getToken } from '../../services/storage.service';
@@ -104,6 +105,7 @@ type S2View = 'list' | 'stack';
 export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
   const { theme } = useS2Theme();
   const { c, m } = theme;
+  const { isExpanded } = useResponsive();
   const conn = useS2Connection();
   const setServer = useS2ConnStore((s) => s.setServer);
   const tabs = useTerminalStore((s) => (conn.server ? s.tabs[conn.server.id] ?? [] : []));
@@ -300,8 +302,116 @@ export function TerminalsScreen({ navigation, toast }: TerminalsScreenProps) {
     );
   }
 
-  // Stack view keeps exactly one session in focus.
+  // Stack view / Fold layout keep exactly one session in focus.
   const stackTab = tabs.find((t) => t.id === expandedId) ?? tabs[0] ?? null;
+
+  // ── Fold-7 unfolded (≥700dp): ops-center layout — session rail left,
+  //    active terminal full-height right (the mockup's expanded mode). ──
+  if (isExpanded) {
+    return (
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={styles.headRow}>
+          <Text style={[styles.pageTitle, { color: c.text, fontSize: m.font.title }]}>Terminals</Text>
+          <View style={styles.headActions}>
+            <Pressable
+              onPress={() => setOverviewOpen(true)}
+              accessibilityLabel="Übersicht"
+              style={({ pressed }) => [styles.headBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+            >
+              <IconGrid size={m.icon.md} color={c.text} />
+            </Pressable>
+            <Pressable
+              onPress={createTerminal}
+              accessibilityLabel="Neues Terminal"
+              style={({ pressed }) => [styles.headBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+            >
+              <IconPlus size={m.icon.md} color={c.text} />
+            </Pressable>
+          </View>
+        </View>
+        <View style={{ flex: 1, minHeight: 0, flexDirection: 'row', paddingHorizontal: 16, gap: 12, paddingBottom: m.dockHeight + 34 }}>
+          <ScrollView style={{ width: 280, flexGrow: 0 }} contentContainerStyle={{ gap: 8 }}>
+            {tabs.map((tab, i) => {
+              const isActive = stackTab?.id === tab.id;
+              return (
+                <Pressable key={tab.id} onPress={() => setExpandedId(tab.id)} style={({ pressed }) => [pressed && styles.pressed]}>
+                  <GlassSurface strong={isActive} style={{ padding: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <View style={[styles.colorTag, { backgroundColor: SESSION_COLORS[i % SESSION_COLORS.length] }]} />
+                      <Text numberOfLines={1} style={{ flex: 1, color: isActive ? c.text : c.textDim, fontSize: m.font.label, fontWeight: '700' }}>
+                        {tab.title || 'Terminal'}
+                      </Text>
+                      {!!tab.notificationCount && <View style={[styles.badge, { backgroundColor: c.warn }]} />}
+                      <IconDot size={8} color={tab.sessionId ? c.ok : c.warn} />
+                    </View>
+                    {(tab.lastCwd || tab.aiTool) && (
+                      <Text numberOfLines={1} style={{ color: c.textDim, fontSize: m.font.micro, marginTop: 4 }}>
+                        {tab.aiTool ? `${tab.aiTool} · ` : ''}{tab.lastCwd ?? ''}
+                      </Text>
+                    )}
+                  </GlassSurface>
+                </Pressable>
+              );
+            })}
+            <Pressable onPress={createTerminal} style={({ pressed }) => [pressed && styles.pressed]}>
+              <GlassSurface radius={m.radius.pill}>
+                <View style={styles.addRow}>
+                  <IconPlus size={m.icon.sm} color={c.accent} />
+                  <Text style={{ color: c.accent, fontSize: m.font.caption, fontWeight: '700' }}>Neues Terminal</Text>
+                </View>
+              </GlassSurface>
+            </Pressable>
+          </ScrollView>
+          <View style={{ flex: 1, minHeight: 0 }}>
+            {stackTab ? (
+              <SessionCard
+                key={stackTab.id}
+                tab={stackTab}
+                color={SESSION_COLORS[Math.max(0, tabs.findIndex((t) => t.id === stackTab.id)) % SESSION_COLORS.length]}
+                expanded
+                full
+                onToggle={() => {}}
+                onClose={() => closeTerminal(stackTab)}
+                onNotes={(color) => setNotesFor({ tabId: stackTab.id, title: stackTab.title, color })}
+                wsService={conn.wsService!}
+                serverId={conn.server!.id}
+                toast={toast}
+              />
+            ) : (
+              <GlassSurface style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: c.textDim, fontSize: m.font.body }}>Kein Terminal — links „Neues Terminal"</Text>
+              </GlassSurface>
+            )}
+          </View>
+        </View>
+        {overviewOpen && (
+          <OverviewGrid
+            tabs={tabs}
+            colors={SESSION_COLORS}
+            onSelect={(tabId) => { setExpandedId(tabId); setOverviewOpen(false); }}
+            onClose={() => setOverviewOpen(false)}
+          />
+        )}
+        {pendingPrompt && (
+          <PromptSheet
+            prompt={pendingPrompt}
+            onApprove={approvePrompt}
+            onDismiss={() => setPendingPrompt(null)}
+            onEnableAuto={enableAutoForPrompt}
+            bottomOffset={m.dockHeight + 40}
+          />
+        )}
+        {notesFor && (
+          <NotesSheet
+            tabId={notesFor.tabId}
+            title={notesFor.title}
+            color={notesFor.color}
+            onClose={() => setNotesFor(null)}
+          />
+        )}
+      </KeyboardAvoidingView>
+    );
+  }
 
   // ── Connected ──
   return (

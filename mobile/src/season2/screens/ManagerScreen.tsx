@@ -9,6 +9,8 @@ import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import Markdown from 'react-native-markdown-display';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../types/navigation.types';
 import type { WebSocketService } from '../../services/websocket.service';
@@ -39,6 +41,37 @@ export function ManagerScreen({ navigation, wsService, serverId, serverHost, ser
   const agentName = useManagerStore((s) => s.personality.agentName) || 'Manager';
   const [input, setInput] = useState('');
   const scrollRef = useRef<ScrollView>(null);
+
+  // TTS — same server contract as classic: tts:generate → tts:result (base64
+  // wav) → temp file → expo-av playback. One sound at a time.
+  const [ttsLoading, setTtsLoading] = useState<Set<string>>(new Set());
+  const soundRef = useRef<Audio.Sound | null>(null);
+  useEffect(() => {
+    return wsService.addMessageListener(async (data: unknown) => {
+      const msg = data as { type: string; payload?: any };
+      if (msg.type === 'tts:result' && msg.payload?.messageId && msg.payload?.audio) {
+        setTtsLoading((prev) => { const n = new Set(prev); n.delete(msg.payload.messageId); return n; });
+        try {
+          if (soundRef.current) { await soundRef.current.unloadAsync().catch(() => {}); soundRef.current = null; }
+          const filePath = `${FileSystem.cacheDirectory}s2_tts_${Date.now()}.wav`;
+          await FileSystem.writeAsStringAsync(filePath, msg.payload.audio, { encoding: FileSystem.EncodingType.Base64 });
+          const { sound } = await Audio.Sound.createAsync({ uri: filePath }, { shouldPlay: true });
+          soundRef.current = sound;
+        } catch {
+          toast('Wiedergabe fehlgeschlagen');
+        }
+      } else if (msg.type === 'tts:error' && msg.payload?.messageId) {
+        setTtsLoading((prev) => { const n = new Set(prev); n.delete(msg.payload.messageId); return n; });
+        toast('Vorlesen fehlgeschlagen');
+      }
+    });
+  }, [wsService, toast]);
+  useEffect(() => () => { soundRef.current?.unloadAsync().catch(() => {}); }, []);
+
+  const speak = useCallback((msg: ManagerMessage) => {
+    setTtsLoading((prev) => new Set(prev).add(msg.id));
+    wsService.send({ type: 'tts:generate', payload: { text: msg.text, messageId: msg.id } });
+  }, [wsService]);
 
   // Dictation borrows the first live terminal session for the Whisper route.
   const dictationSessionId = useTerminalStore((s) => (s.tabs[serverId] ?? []).find((t) => t.sessionId)?.sessionId);
@@ -110,6 +143,18 @@ export function ManagerScreen({ navigation, wsService, serverId, serverHost, ser
               <Text style={{ color: c.textDim, fontSize: m.font.micro, marginTop: 4 }}>
                 {msg.actions.map((a) => `⚙ ${a.detail}`).join('\n')}
               </Text>
+            )}
+            {!isUser && !msg.isError && (
+              <Pressable
+                onPress={() => speak(msg)}
+                hitSlop={8}
+                accessibilityLabel="Vorlesen"
+                style={{ alignSelf: 'flex-start', marginTop: 6, opacity: ttsLoading.has(msg.id) ? 0.5 : 1 }}
+              >
+                <Text style={{ color: ttsLoading.has(msg.id) ? c.textDim : c.accent, fontSize: m.font.micro, fontWeight: '700' }}>
+                  {ttsLoading.has(msg.id) ? 'Lädt…' : 'Vorlesen'}
+                </Text>
+              </Pressable>
             )}
           </View>
         </GlassSurface>
