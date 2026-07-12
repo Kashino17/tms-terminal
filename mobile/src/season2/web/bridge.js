@@ -646,6 +646,12 @@
           if (nameEl) nameEl.value = item.name;
         }
         mountTerm(cardId);
+        fitNow(cardId);
+        // Ohne das hier hängt die Karte für immer leer da: der Server erfährt
+        // nie, dass wir wieder da sind, und schickt entsprechend nichts.
+        var td = dims(cardId);
+        lastDims[item.sessionId] = td.cols + 'x' + td.rows;
+        post('terminal:attach', { cardId: cardId, sessionId: item.sessionId, cols: td.cols, rows: td.rows });
       });
       restoring = false;
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();

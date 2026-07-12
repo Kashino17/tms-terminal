@@ -26,6 +26,16 @@ const VIEW_BUFFER_MAX = 400_000; // 400 KB per session
 const MAX_VIEW_BUFFERS = 20;
 const viewBuffers = new Map<string, string>();
 
+/** Die zuletzt gesehene Ausgabe einer Session — der Server liefert beim
+ *  Reattach nur, was seit dem Trennen dazukam. Season 2 nutzt denselben
+ *  Speicher, damit die Historie auch beim Umschalten der Oberfläche steht. */
+export function getViewBuffer(sessionId: string): string | undefined {
+  return viewBuffers.get(sessionId);
+}
+export function recordViewBuffer(sessionId: string, data: string): void {
+  appendViewBuffer(sessionId, data);
+}
+
 function appendViewBuffer(sessionId: string, data: string) {
   // Cap total number of sessions to prevent unbounded memory growth
   if (!viewBuffers.has(sessionId) && viewBuffers.size >= MAX_VIEW_BUFFERS) {

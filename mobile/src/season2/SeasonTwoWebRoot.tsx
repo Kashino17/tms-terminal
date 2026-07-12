@@ -27,6 +27,8 @@ import { useManagerWire } from './manager/useManagerWire';
 import { useManagerBridge, useCloudBridge } from './web/useSeasonTwoBackends';
 import { useSheetBridges } from './web/useSheetBridges';
 import { NativeBrowserLayer, type BrowserRect } from './web/NativeBrowserLayer';
+import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
+import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback } from './web/scrollbackStore';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
 
 interface BrowserOverlay { visible: boolean; tabId: string | null; url: string; rect: BrowserRect | null }
@@ -55,6 +57,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const idleTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const updateUrl = useRef<string | null>(null);
   const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, tabId: null, url: '', rect: null });
+
+  // Die gesicherte Historie muss da sein, BEVOR das erste Terminal anhängt.
+  const scrollbackReady = useRef(false);
+  const [scrollbackTick, setScrollbackTick] = useState(0);
+  useEffect(() => {
+    hydrateScrollback().then(() => {
+      scrollbackReady.current = true;
+      setScrollbackTick((n) => n + 1); // stößt das Wiederherstellen an
+    });
+  }, []);
 
   const call = useCallback((fn: string, ...args: unknown[]) => {
     const js = `window.TMSBridge && window.TMSBridge.${fn}(${args.map((a) => JSON.stringify(a)).join(',')});true;`;
@@ -105,6 +117,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
     const unsub = wsService.addMessageListener((m: any) => {
       if (m?.type === 'terminal:output' && m.sessionId && m.payload?.data) {
+        recordViewBuffer(m.sessionId, m.payload.data);
+        appendScrollback(m.sessionId, m.payload.data);
         call('output', m.sessionId, m.payload.data);
         markBusy(m.sessionId);
         return;
@@ -129,6 +143,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       if (m?.type === 'terminal:closed' && m.sessionId) {
         const tab = useTerminalStore.getState().getTabs(server.id).find((t) => t.sessionId === m.sessionId);
         if (tab) useTerminalStore.getState().removeTab(server.id, tab.id);
+        dropScrollback(m.sessionId);
         return;
       }
       if (m?.type === 'terminal:prompt_detected' && m.sessionId) {
@@ -189,6 +204,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // ── Once connected, hand the page the sessions that already exist.
   useEffect(() => {
     if (!ready || !server || state !== 'connected' || restored.current) return;
+    if (!scrollbackReady.current) return; // sonst hingen die Karten leer da
     restored.current = true;
     const live = useTerminalStore
       .getState()
@@ -203,7 +219,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       sheets.pushNotes(cardId);
       call('setAutoApprove', cardId, useAutoApproveStore.getState().isEnabled(t.sessionId));
     });
-  }, [ready, server, state, call, sheets]);
+  }, [ready, server, state, call, sheets, scrollbackTick]);
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
   const { micState, toggle: toggleMic } = useDictation({
