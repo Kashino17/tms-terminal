@@ -95,7 +95,7 @@ function stringExports(file) {
   return out;
 }
 const xterm = stringExports('../src/assets/xtermBundle.ts');
-for (const k of ['XTERM_CSS', 'XTERM_XTERM', 'XTERM_FIT']) {
+for (const k of ['XTERM_CSS', 'XTERM_XTERM', 'XTERM_FIT', 'XTERM_WEBLINKS']) {
   if (!xterm[k]) throw new Error(`xtermBundle.ts is missing ${k}`);
 }
 
@@ -103,13 +103,28 @@ patch('body end', '</body>', `<style>${xterm.XTERM_CSS}
 /* An xterm inside a mockup .card-body: transparent, edge to edge, its own scroll. */
 .card-body.is-xterm { padding: 8px 10px; overflow: hidden; }
 .card-body.is-xterm .xterm { height: 100%; }
-.card-body.is-xterm .xterm-viewport { background: transparent !important; overflow-y: auto; }
 .card-body.is-xterm .xterm-screen { width: 100% !important; }
+/* In the Liste the card has no fixed height, so an empty terminal collapsed to
+   a sliver. Give it a real one — the Stack's flex:1 still wins over this. */
+.card-body.is-xterm { min-height: 240px; }
+/* Scrolling: the terminal keeps the gesture instead of handing it to the list
+   behind it, and the touch is a vertical pan rather than a text drag. */
+.card-body.is-xterm .xterm-viewport {
+  background: transparent !important;
+  overflow-y: auto;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+/* The mockup's line selection, now on xterm's rows. */
+.card-body.is-xterm .xterm-rows > div.term-line { border-radius: 3px; }
+.card-body.is-xterm.selection-mode .xterm-viewport { touch-action: none; }
 /* Empty states for the sheets that can legitimately have nothing in them. */
 .tool-empty { padding: 22px 8px; text-align: center; font: 12.5px var(--font-ui); color: var(--text-dim); }
 </style>
 <script>${xterm.XTERM_XTERM}</script>
 <script>${xterm.XTERM_FIT}</script>
+<script>${xterm.XTERM_WEBLINKS}</script>
 <script>${bridgeJs}</script>
 </body>`);
 

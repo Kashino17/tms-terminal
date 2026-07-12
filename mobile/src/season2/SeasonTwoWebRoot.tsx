@@ -239,7 +239,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         wsService.send({
           type: 'terminal:reattach',
           sessionId: payload.sessionId,
-          payload: { cols: payload.cols ?? 80, rows: payload.rows ?? 24 },
+          // `?? 80` would let a 0 through — the server rejects that and the
+          // terminal would never receive a single byte.
+          payload: { cols: payload.cols || 80, rows: payload.rows || 24 },
         });
         break;
 
