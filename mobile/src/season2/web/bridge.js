@@ -484,10 +484,23 @@
     if (typeof window.toast === 'function') window.toast('^C gesendet');
   };
   window.handleTermKey = function (key, id) {
-    var seq = { ctrlc: '\x03', esc: '\x1b', tab: '\t', up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C' }[key];
+    // TUIs wie Claudes Auswahlmenü schalten den Application-Cursor-Modus ein
+    // (DECCKM) — dort erwartet die Anwendung ESC O A statt ESC [ A. Ein echtes
+    // Terminal übersetzt das automatisch; unser Emulator kennt den Modus, also
+    // fragen wir ihn. Mit stur ESC [ A kamen die Pfeile im Menü nie an.
+    var t = terms[id];
+    var app = !!(t && t.term.modes && t.term.modes.applicationCursorKeysMode);
+    var seq = {
+      ctrlc: '\x03', esc: '\x1b', tab: '\t',
+      up:    app ? '\x1bOA' : '\x1b[A',
+      down:  app ? '\x1bOB' : '\x1b[B',
+      left:  app ? '\x1bOD' : '\x1b[D',
+      right: app ? '\x1bOC' : '\x1b[C',
+    }[key];
     if (seq) window.__tmsInput(id, seq);
     if (typeof window.flashKeyEcho === 'function') {
-      window.flashKeyEcho(key === 'ctrlc' ? '^C' : key === 'esc' ? 'Esc' : key === 'tab' ? 'Tab' : key);
+      var echo = { ctrlc: '^C', esc: 'Esc', tab: 'Tab', up: '↑', down: '↓', left: '←', right: '→' }[key] || key;
+      window.flashKeyEcho(echo);
     }
   };
   window.clearActiveTerminal = function (id) {
