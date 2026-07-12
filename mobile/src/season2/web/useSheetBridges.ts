@@ -100,7 +100,13 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       }
       const result = source === 'camera'
         ? await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, base64: true })
-        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, base64: true, allowsMultipleSelection: true });
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 1,
+            base64: true,
+            allowsMultipleSelection: true,
+            selectionLimit: 20, // bis zu 20 Bilder auf einmal
+          });
       if (result.canceled) return;
 
       const uploaded: Array<{ path: string; url: string }> = [];

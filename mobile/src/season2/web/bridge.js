@@ -93,79 +93,273 @@
         return;
       }
       t.fitTries = 0;
+      // Der Emulator ist unsichtbar, also bekommt er die Maße der Karte gesagt.
+      t.box.style.width = host.clientWidth + 'px';
+      t.box.style.height = host.clientHeight + 'px';
       try { t.fit.fit(); } catch (e) {}
-      tagRows(cardId);
+      renderTerm(cardId);
+      if (t.pendingCreate) {
+        t.pendingCreate = false;
+        post('terminal:create', { cardId: cardId, cols: t.term.cols, rows: t.term.rows });
+      }
+      if (t.pendingAttach) {
+        var a = t.pendingAttach;
+        t.pendingAttach = null;
+        lastDims[a.sessionId] = t.term.cols + 'x' + t.term.rows;
+        post('terminal:attach', { cardId: cardId, sessionId: a.sessionId, cols: t.term.cols, rows: t.term.rows });
+      }
     }, 60);
   }
+
+  /** Alle Emulatoren leben unsichtbar hier — sie rendern nichts mehr selbst. */
+  var emuHost = document.createElement('div');
+  emuHost.id = 'tmsEmulators';
+  emuHost.style.cssText = 'position:fixed;left:-99999px;top:0;';
+  document.body.appendChild(emuHost);
 
   function mountTerm(cardId) {
     var host = document.querySelector('.card-body[data-card-id="' + cardId + '"]');
     if (!host) return;
     var t = terms[cardId];
+    if (t) { t.host = host; fitSoon(cardId); renderTerm(cardId); return; }
 
-    // The mockup rebuilds every card from scratch on a view switch (Stack ⇄
-    // Liste), a reorder or a new terminal. Move the live xterm into the new
-    // body instead of recreating it — the scrollback survives, and without this
-    // the terminal stays attached to the discarded node and the card goes blank.
-    if (t) {
-      if (t.host !== host) {
-        host.innerHTML = '';
-        host.classList.add('is-xterm');
-        host.appendChild(t.element);
-        t.host = host;
-      }
-      fitSoon(cardId);
-      return;
-    }
+    var box = document.createElement('div');
+    box.style.cssText = 'width:600px;height:400px;';
+    emuHost.appendChild(box);
 
-    host.innerHTML = '';
-    host.classList.add('is-xterm');
     var term = new window.Terminal({
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      fontFamily: 'monospace',
       fontSize: 12.5,
       lineHeight: 1.25,
-      cursorBlink: true,
       scrollback: 5000,
       allowProposedApi: true,
-      theme: xtermTheme(),
+      convertEol: false,
     });
     var fit = new window.FitAddon.FitAddon();
     term.loadAddon(fit);
-    // A tapped link copies itself — the same thing the mockup's wrapped link did.
-    if (window.WebLinksAddon) {
-      term.loadAddon(new window.WebLinksAddon.WebLinksAddon(function (event, uri) {
-        post('clipboard:write', { text: uri });
-        if (typeof window.toast === 'function') window.toast('Link kopiert ✓');
-      }));
+    term.open(box);
+
+    // Der Emulator ist unsichtbar, aber sein Textfeld ist die Tastatur-Anbindung:
+    // ein Tipp ins Terminal fokussiert es. Androids Wortvorschlag komponierte hier
+    // ganze Wörter vor und schickte beim Leerzeichen Zeichensalat — ein Feld im
+    // URL-Modus bekommt weder Autokorrektur noch Vorschläge.
+    var ta = term.textarea;
+    if (ta) {
+      ta.setAttribute('inputmode', 'url');
+      ta.setAttribute('autocomplete', 'off');
+      ta.setAttribute('autocorrect', 'off');
+      ta.setAttribute('autocapitalize', 'none');
+      ta.setAttribute('spellcheck', 'false');
     }
-    term.open(host);
 
     term.onData(function (d) { window.__tmsInput(cardId, d); });
-    term.onResize(function (sz) {
-      var sid = byCard[cardId];
-      if (sid && sz.cols > 0 && sz.rows > 0) {
-        post('terminal:resize', { sessionId: sid, cols: sz.cols, rows: sz.rows });
-      }
-    });
-    term.onRender(function () { tagRows(cardId); });
+    term.onResize(function (sz) { queueResize(cardId, sz.cols, sz.rows); });
 
-    terms[cardId] = { term: term, fit: fit, element: term.element, host: host };
-    var vp = term.element.querySelector('.xterm-viewport');
-    if (vp) vp.addEventListener('scroll', function () { window.updateJumpOrb(cardId); });
+    terms[cardId] = { term: term, fit: fit, box: box, host: host, dirty: true };
     fitSoon(cardId);
     flush(cardId);
+    renderTerm(cardId);
+  }
+
+  // ── Vom Emulator-Puffer in die DOM-Form des Mockups ────────────────────────
+  var PALETTE = ['#1e2126','#e05561','#8cc265','#d18f52','#4aa5f0','#c162de','#42b3c2','#d7dae0',
+                 '#6b7280','#ff6b74','#a5e075','#f0a45d','#66b8ff','#d67bef','#5fd0dd','#f0f2f6'];
+  var MAX_ROWS = 800;   // so viel Scrollback halten wir als DOM vor
+  // URLs zuerst; Pfade nur, wenn davor kein / : ~ oder Wortzeichen steht — sonst
+  // wird die zweite Hälfte einer umgebrochenen URL als eigener "Pfad" erkannt.
+  var URL_RE = /(https?:\/\/[^\s"'<>()]+)|((?<![\w:\/~])(?:~|\.{0,2})\/[\w.\-]+(?:\/[\w.\-]+)+)/g;
+
+  function xterm256(c) {
+    if (c < 16) return PALETTE[c];
+    if (c < 232) {
+      var i = c - 16, r = Math.floor(i / 36), g2 = Math.floor((i % 36) / 6), b2 = i % 6;
+      var v = function (x) { return x ? 55 + x * 40 : 0; };
+      return 'rgb(' + v(r) + ',' + v(g2) + ',' + v(b2) + ')';
+    }
+    var l = 8 + (c - 232) * 10;
+    return 'rgb(' + l + ',' + l + ',' + l + ')';
+  }
+  function colorOf(cell, isFg) {
+    if (isFg) {
+      if (cell.isFgDefault()) return null;
+      if (cell.isFgRGB()) return '#' + ('000000' + cell.getFgColor().toString(16)).slice(-6);
+      return xterm256(cell.getFgColor());
+    }
+    if (cell.isBgDefault()) return null;
+    if (cell.isBgRGB()) return '#' + ('000000' + cell.getBgColor().toString(16)).slice(-6);
+    return xterm256(cell.getBgColor());
+  }
+
+  /** Eine Pufferzeile -> [{text, style}] zusammengefasste Abschnitte. */
+  function rowRuns(line) {
+    var runs = [], cur = null;
+    for (var i = 0; i < line.length; i++) {
+      var cell = line.getCell(i);
+      if (!cell) continue;
+      var ch = cell.getChars() || ' ';
+      var st = (colorOf(cell, true) || '') + '|' + (colorOf(cell, false) || '') + '|' +
+               (cell.isBold() ? 'b' : '') + (cell.isDim() ? 'd' : '') +
+               (cell.isItalic() ? 'i' : '') + (cell.isUnderline() ? 'u' : '') + (cell.isInverse() ? 'v' : '');
+      if (!cur || cur.st !== st) { cur = { st: st, text: '', cell: cell }; runs.push(cur); }
+      cur.text += ch;
+    }
+    return runs;
+  }
+
+  function runStyle(cell) {
+    var fg = colorOf(cell, true), bg = colorOf(cell, false), css = '';
+    if (cell.isInverse()) { var tmp = fg; fg = bg || '#1e2126'; bg = tmp || '#f0f2f6'; }
+    if (fg) css += 'color:' + fg + ';';
+    if (bg) css += 'background:' + bg + ';';
+    if (cell.isBold()) css += 'font-weight:700;';
+    if (cell.isDim()) css += 'opacity:.62;';
+    if (cell.isItalic()) css += 'font-style:italic;';
+    if (cell.isUnderline()) css += 'text-decoration:underline;';
+    return css;
   }
 
   /**
-   * Die Übersicht und die Rail zeigten die letzten Zeilen aus cs.lines — das ist
-   * seit xterm leer, deshalb stand dort nur der Demo-Prompt. Hier kommen die
-   * echten letzten Zeilen aus dem Terminal-Puffer.
+   * Baut die Zeilen als .term-line > .term-line__text — exakt die Form, für die
+   * die Selektion, die Griffe und die Kopieren-Bubble des Mockups gebaut sind.
+   * Umgebrochene Links werden über die LOGISCHE Zeile erkannt, damit ein Tipp
+   * die ganze URL liefert statt der Hälfte bis zum Zeilenumbruch.
    */
+  function renderTerm(cardId) {
+    var t = terms[cardId];
+    var pre = t && t.host;
+    if (!t || !pre || !pre.isConnected) return;
+
+    var buf = t.term.buffer.active;
+    var end = buf.baseY + t.term.rows;                 // eine Zeile hinter der letzten
+    var start = Math.max(0, end - MAX_ROWS);
+
+    // Logische Zeilen (über Umbrüche hinweg) für die Link-Erkennung.
+    var rows = [];
+    for (var i = start; i < end; i++) {
+      var line = buf.getLine(i);
+      rows.push(line ? { line: line, text: line.translateToString(true), wrapped: !!line.isWrapped } : null);
+    }
+    var links = {}; // rowIndex -> [{from, to, url}]
+    var g = 0;
+    while (g < rows.length) {
+      if (!rows[g]) { g++; continue; }
+      var group = [g], text = rows[g].text;
+      var k = g + 1;
+      var cols = t.term.cols;
+      while (k < rows.length && rows[k] &&
+             (rows[k].wrapped || (rows[k - 1] && rows[k - 1].text.length >= cols))) {
+        group.push(k); text += rows[k].text; k++;
+      }
+      var m;
+      URL_RE.lastIndex = 0;
+      while ((m = URL_RE.exec(text))) {
+        var url = m[0].replace(/[.,;:)\]]+$/, '');
+        var from = m.index, to = from + url.length;
+        var off = 0;
+        for (var gi = 0; gi < group.length; gi++) {
+          var ri = group[gi], len = rows[ri].text.length;
+          var a = Math.max(from, off) - off, bEnd = Math.min(to, off + len) - off;
+          if (bEnd > a) (links[ri] = links[ri] || []).push({ from: a, to: bEnd, url: url });
+          off += len;
+        }
+      }
+      g = k;
+    }
+
+    var out = [];
+    for (var r = 0; r < rows.length; r++) {
+      var row = rows[r];
+      var idx = out.length;
+      if (!row) { out.push('<span class="term-line" data-i="' + idx + '"><span class="term-line__text"></span></span>'); continue; }
+      var runs = rowRuns(row.line);
+      var linkRanges = links[r] || [];
+      var col = 0, html = '';
+      for (var q = 0; q < runs.length; q++) {
+        var run = runs[q], style = runStyle(run.cell), txt = run.text;
+        // Den Abschnitt an Link-Grenzen zerlegen, damit die URL anklickbar wird.
+        var pos = 0;
+        while (pos < txt.length) {
+          var abs = col + pos;
+          var hit = null;
+          for (var li = 0; li < linkRanges.length; li++) {
+            if (abs >= linkRanges[li].from && abs < linkRanges[li].to) { hit = linkRanges[li]; break; }
+          }
+          var stop = txt.length;
+          for (var lj = 0; lj < linkRanges.length; lj++) {
+            var bnd = hit ? linkRanges[lj].to : linkRanges[lj].from;
+            if (bnd > abs && bnd - col < stop) stop = bnd - col;
+          }
+          var piece = txt.slice(pos, stop);
+          if (piece) {
+            var inner = '<span style="' + style + '">' + escapeHtml(piece) + '</span>';
+            html += hit
+              ? '<span class="wrapped-link" data-url="' + escapeHtml(hit.url) +
+                '" data-short="' + escapeHtml(hit.url.slice(-10)) + '" role="link">' + inner + '</span>'
+              : inner;
+          }
+          pos = stop;
+        }
+        col += txt.length;
+      }
+      out.push('<span class="term-line" data-i="' + idx + '"><span class="term-line__text">' + (html || '') + '</span></span>');
+    }
+
+    var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
+    pre.innerHTML = out.join('');
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    if (cs) {
+      pre.classList.toggle('selection-mode', !!cs.selectionMode);
+      cs.lines = rows.map(function (x) { return x ? x.text : ''; }); // Kopieren/Selektion lesen daraus
+      cs._renderedLen = cs.lines.length;
+      if (cs.selection) {
+        if (cs.selection.end >= out.length) cs.selection = null;
+        else pre.querySelectorAll('.term-line').forEach(function (l, i) {
+          l.classList.toggle('is-selected', i >= cs.selection.start && i <= cs.selection.end);
+        });
+      }
+    }
+    if (atBottom) pre.scrollTop = pre.scrollHeight;
+    // Das Neuzeichnen ersetzt den Karteninhalt — Griffe und Kopieren-Bubble sind
+    // Kinder davon und wären sonst bei jeder Ausgabe wieder weg.
+    if (cs && cs.selection && typeof window.positionHandlesAndBubble === 'function') {
+      window.positionHandlesAndBubble(cardId);
+    }
+    if (typeof window.updateJumpOrb === 'function') window.updateJumpOrb(cardId, !atBottom);
+  }
+
+  // Gedrosselt: bei Dauerausgabe nicht öfter als alle 60ms neu zeichnen.
+  var renderTimers = {};
+  function scheduleRender(cardId) {
+    if (renderTimers[cardId]) return;
+    renderTimers[cardId] = setTimeout(function () {
+      renderTimers[cardId] = null;
+      renderTerm(cardId);
+    }, 60);
+  }
+  window.__tmsRenderTerm = renderTerm;
+
+  // Nur echte Größenänderungen, und nur eine pro Ruhephase: jedes SIGWINCH lässt
+  // Claude & Co. ihre Ausgabe neu zeichnen — ein Resize-Sturm erzeugt genau die
+  // doppelten und zerrissenen Zeilen.
+  var resizeTimers = {}, lastDims = {};
+  function queueResize(cardId, cols, rows) {
+    if (!cols || !rows) return;
+    clearTimeout(resizeTimers[cardId]);
+    resizeTimers[cardId] = setTimeout(function () {
+      var sid = byCard[cardId];
+      if (!sid) return;
+      var key = cols + 'x' + rows;
+      if (lastDims[sid] === key) return;
+      lastDims[sid] = key;
+      post('terminal:resize', { sessionId: sid, cols: cols, rows: rows });
+    }, 250);
+  }
+
+  /** Vorschau für Übersicht und Rail — aus dem echten Puffer. */
   window.__tmsPreview = function (cardId, n) {
     var t = terms[cardId];
     if (!t) return '';
-    var buf = t.term.buffer.active;
-    var out = [];
+    var buf = t.term.buffer.active, out = [];
     for (var i = buf.baseY + buf.cursorY; i >= 0 && out.length < n; i--) {
       var line = buf.getLine(i);
       if (!line) continue;
@@ -174,8 +368,6 @@
     }
     return out.join('<br>');
   };
-
-  // Sie sollen LIVE sein: bei neuer Ausgabe die sichtbaren Vorschauen nachziehen.
   var previewTimers = {};
   function refreshPreview(cardId) {
     clearTimeout(previewTimers[cardId]);
@@ -216,12 +408,13 @@
         mountTerm(cardId); // mounts, or re-homes an existing terminal
         if (!restoring && !(cardId in bound)) {
           bound[cardId] = 'pending';
-          post('terminal:create', { cardId: cardId });
+          if (terms[cardId]) { terms[cardId].pendingCreate = true; fitSoon(cardId); }
+          else post('terminal:create', { cardId: cardId });
         }
       });
       Object.keys(terms).forEach(function (cardId) {
         if (!document.querySelector('.card-body[data-card-id="' + cardId + '"]')) {
-          try { terms[cardId].term.dispose(); } catch (e) {}
+          try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {}
           delete terms[cardId];
         }
       });
@@ -231,10 +424,15 @@
   // every single chunk of output, and reacting to that made syncTerms re-measure
   // every card continuously. That was the scroll jank. Ignore anything that
   // happens inside a terminal.
+  // Wir suchen NEUE Karten — nichts sonst. Der Karteninhalt ist unsere eigene
+  // Ausgabe: darauf zu reagieren hieße, sich selbst zu triggern (und genau das
+  // hat vorher jedes Neuzeichnen in eine Endlosschleife geschickt, die das
+  // Vermessen der Karte nie zu Ende kommen ließ — und das Scrollen ruckeln).
   new MutationObserver(function (records) {
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
-      if (t.nodeType === 1 && t.closest && t.closest('.xterm')) continue;
+      if (t.nodeType === 1 && t.closest &&
+          (t.closest('.card-body[data-card-id]') || t.closest('#tmsEmulators'))) continue;
       syncTerms();
       return;
     }
@@ -243,79 +441,17 @@
     Object.keys(terms).forEach(fitSoon);
   });
 
-  // ── Der „schnell nach unten“-Orb ──────────────────────────────────────────
-  // Das Mockup maß den Scrollstand der .card-body. Mit xterm scrollt aber der
-  // Viewport darin, die Karte selbst steht still — der Orb kam deshalb nie.
-  window.updateJumpOrb = function (id, pulse) {
-    var card = document.querySelector('.term-card[data-id="' + id + '"]');
-    var t = terms[id];
-    if (!card || !t) return;
-    var btn = card.querySelector('.jump-bottom-orb');
-    var vp = t.element && t.element.querySelector('.xterm-viewport');
-    if (!btn || !vp) return;
-    var atBottom = vp.scrollHeight - vp.scrollTop - vp.clientHeight < 24;
-    btn.classList.toggle('show', !atBottom);
-    if (atBottom) btn.classList.remove('pulse');
-    else if (pulse) btn.classList.add('pulse');
-  };
-
   // ── Replace the mockup's demo plumbing ────────────────────────────────────
   // Not a no-op: xterm owns the pixels, but the mockup still expects this to
   // (re)establish the per-line elements its selection UI works on.
-  window.renderCardLines = function (id) { tagRows(id); };
+  // Das Mockup zeichnet die Karte neu -> wir liefern die Zeilen aus dem Emulator.
+  window.renderCardLines = function (id) { renderTerm(id); };
   window.initLiveSession = function () { /* no simulator — output comes from the PTY */ };
   window.startQuestionScript = function () {};
   window.scheduleQuestionScript = function () {};
   window.showReplay = function () {};
   window.replaySession = function () {};
   window.startLatencyTicker = function () { /* React Native drives the real RTT */ };
-
-  // Copy the selected rows. The mockup read a .term-line__text child that an
-  // xterm row does not have — take the row's own text instead.
-  window.makeBubble = function (cardId) {
-    var el = document.createElement('button');
-    el.className = 'copy-bubble';
-    el.textContent = 'Kopieren';
-    el.addEventListener('click', function (e) {
-      e.stopPropagation();
-      var pre = document.querySelector('.card-body[data-card-id="' + cardId + '"]');
-      var sel = pre ? pre.querySelectorAll('.term-line.is-selected') : [];
-      if (!sel.length) return;
-      var text = [].map.call(sel, function (l) { return l.textContent.replace(/\s+$/, ''); }).join('\n');
-      post('clipboard:write', { text: text });
-      if (typeof window.toast === 'function') window.toast('Kopiert ✓');
-      if (typeof window.clearSelection === 'function') window.clearSelection(cardId);
-    });
-    return el;
-  };
-
-  // The handles and the copy bubble were positioned off a .term-line__text
-  // child that an xterm row has no equivalent for. Measure the rows themselves
-  // — and against the card body, since they live in a scrolled viewport.
-  window.positionHandlesAndBubble = function (cardId) {
-    var pre = document.querySelector('.card-body[data-card-id="' + cardId + '"]');
-    if (!pre) return;
-    var hs = pre.querySelector('.sel-handle--start');
-    var he = pre.querySelector('.sel-handle--end');
-    var bubble = pre.querySelector('.copy-bubble');
-    var sel = pre.querySelectorAll('.term-line.is-selected');
-    if (!sel.length) {
-      [hs, he, bubble].forEach(function (el) { if (el) el.remove(); });
-      return;
-    }
-    if (!hs) { hs = window.makeHandle('start', cardId); pre.appendChild(hs); }
-    if (!he) { he = window.makeHandle('end', cardId); pre.appendChild(he); }
-    if (!bubble) { bubble = window.makeBubble(cardId); pre.appendChild(bubble); }
-    var base = pre.getBoundingClientRect();
-    var first = sel[0].getBoundingClientRect();
-    var last = sel[sel.length - 1].getBoundingClientRect();
-    hs.style.top = (first.bottom - base.top) + 'px';
-    hs.style.left = (first.left - base.left) + 'px';
-    he.style.top = (last.bottom - base.top) + 'px';
-    he.style.left = (last.right - base.left) + 'px';
-    bubble.style.top = Math.max(0, first.top - base.top - 38) + 'px';
-    bubble.style.left = (first.left - base.left) + 'px';
-  };
 
   window.sendTerminalCommand = function (id, cmd) {
     if (cmd && cmd.trim()) window.__tmsInput(id, cmd.trim() + '\r');
@@ -332,12 +468,20 @@
     }
   };
   window.clearActiveTerminal = function (id) {
-    if (terms[id]) terms[id].term.clear();
+    if (terms[id]) { terms[id].term.clear(); renderTerm(id); }
     if (typeof window.toast === 'function') window.toast('Geleert');
   };
-  window.scrollTerminalToBottom = function (id) {
-    if (terms[id]) terms[id].term.scrollToBottom();
-  };
+  // scrollTerminalToBottom und updateJumpOrb bleiben die des Mockups: die
+  // .card-body ist wieder der echte Scroller.
+
+  // Ein Tipp ins Terminal (außerhalb des Auswahlmodus) holt die Tastatur.
+  document.addEventListener('click', function (e) {
+    var pre = e.target.closest && e.target.closest('.card-body[data-card-id]');
+    if (!pre || pre.classList.contains('selection-mode')) return;
+    if (e.target.closest('.wrapped-link') || e.target.closest('.jump-bottom-orb')) return;
+    var t = terms[pre.getAttribute('data-card-id')];
+    if (t && t.term.textarea) t.term.textarea.focus();
+  });
   window.copyText = function (text) { post('clipboard:write', { text: text }); };
 
   // Real dictation. The bar's own recording UI (trace, timer, ✓/✕) stays; only
@@ -392,7 +536,6 @@
           if (nameEl) nameEl.value = item.name;
         }
         mountTerm(cardId);
-        post('terminal:attach', Object.assign({ cardId: cardId, sessionId: item.sessionId }, dims(cardId)));
       });
       restoring = false;
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
@@ -408,14 +551,14 @@
       mountTerm(cardId);
       flush(cardId);
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
-      post('terminal:attach', Object.assign({ cardId: cardId, sessionId: sessionId }, dims(cardId)));
+      // Erst messen, dann anhängen — mit der echten Spaltenzahl.
+      if (terms[cardId]) { terms[cardId].pendingAttach = { sessionId: sessionId }; fitSoon(cardId); }
     },
     /** PTY output. */
     output: function (sessionId, chunk) {
       var cardId = cardOf(sessionId);
       if (!cardId || !terms[cardId]) { (queued[sessionId] = queued[sessionId] || []).push(chunk); return; }
-      terms[cardId].term.write(chunk);
-      window.updateJumpOrb(cardId, true);
+      terms[cardId].term.write(chunk, function () { scheduleRender(cardId); });
       refreshPreview(cardId);
       var plain = chunk.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').split('\n').filter(function (l) { return l.trim(); }).pop();
       if (plain) window.__tmsLastLine[cardId] = plain;
@@ -603,36 +746,161 @@
     return el ? el.getAttribute('data-id') : null;
   }
 
-  // Dateien — das Mockup zeigte eine tote Liste. Jetzt: Ordner öffnen sich,
-  // und eine Datei anzutippen schreibt ihren vollen Pfad in das Terminal, das
-  // die Leiste gerade bedient. Genau dafür ist der Explorer da.
+  // ── Datei-Explorer ────────────────────────────────────────────────────────
+  // Der alte Explorer der App konnte alles: navigieren, suchen, Favoriten,
+  // Vorschau, Herunterladen, Umbenennen, Löschen, Ordner anlegen. Der hier kann
+  // es wieder — und zusätzlich das, wofür er im Terminal gebraucht wird: einen
+  // Pfad direkt in die Eingabezeile legen.
   window.__tmsCwd = '~';
+  window.__tmsFavs = [];
+  var filesFilter = '';
+  var filesMenuFor = null;   // Pfad, dessen Aktionsleiste offen ist
+  var filesRenaming = null;  // Pfad, der gerade umbenannt wird
+  var filesConfirmDel = null;
+  var filesNewFolder = false;
+
+  function fileRowHtml(f) {
+    var isDir = f.type === 'dir';
+    var path = f.path || '';
+    if (filesRenaming === path) {
+      return '<div class="tool-row">' +
+        '<input class="term-input fx-input" id="fxRename" value="' + escapeHtml(f.name.replace(/\/$/, '')) + '">' +
+        '<button class="btn-chip" data-fx="rename-ok">OK</button>' +
+        '<button class="btn-chip" data-fx="cancel">Abbrechen</button></div>';
+    }
+    var head = '<button class="tool-row is-tap" ' + (isDir ? 'data-cd="' : 'data-path="') + escapeHtml(isDir ? f.name : path) + '">' +
+      '<span class="tool-row__icon">' + (isDir ? '▸' : '·') + '</span>' +
+      '<span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
+      '<span class="tool-row__meta">' + escapeHtml(isDir ? 'öffnen' : (f.size || '') + ' · einfügen') + '</span>' +
+      '</button>' +
+      '<button class="fx-more" data-fx="menu" data-target="' + escapeHtml(path) + '" aria-label="Aktionen">⋯</button>';
+
+    var menu = '';
+    if (filesMenuFor === path) {
+      var fav = window.__tmsFavs.indexOf(path) !== -1;
+      menu = '<div class="fx-actions">' +
+        (isDir ? '' : '<button class="btn-chip" data-fx="insert" data-target="' + escapeHtml(path) + '">Einfügen</button>' +
+                      '<button class="btn-chip" data-fx="preview" data-target="' + escapeHtml(path) + '">Vorschau</button>' +
+                      '<button class="btn-chip" data-fx="download" data-target="' + escapeHtml(path) + '">Laden</button>') +
+        '<button class="btn-chip" data-fx="fav" data-target="' + escapeHtml(path) + '">' + (fav ? '★ Favorit' : '☆ Favorit') + '</button>' +
+        '<button class="btn-chip" data-fx="rename" data-target="' + escapeHtml(path) + '">Umbenennen</button>' +
+        '<button class="btn-chip btn-chip--danger" data-fx="del" data-target="' + escapeHtml(path) + '">' +
+          (filesConfirmDel === path ? 'Wirklich löschen?' : 'Löschen') + '</button>' +
+        '</div>';
+    }
+    return '<div class="fx-row">' + head + menu + '</div>';
+  }
+
   window.buildFilesSheet = function () {
-    var files = window.TMS_DATA.files || [];
-    var up = '<button class="tool-row is-tap" data-cd="..">' +
-      '<span class="tool-row__icon">▴</span><span class="tool-row__name mono-text">' + escapeHtml(window.__tmsCwd) + '</span>' +
-      '<span class="tool-row__meta">aufwärts</span></button>';
-    var rows = files.map(function (f) {
-      if (f.type === 'dir') {
-        return '<button class="tool-row is-tap" data-cd="' + escapeHtml(f.name) + '">' +
-          '<span class="tool-row__icon">▸</span><span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
-          '<span class="tool-row__meta">öffnen</span></button>';
-      }
-      return '<button class="tool-row is-tap" data-path="' + escapeHtml(f.path || '') + '">' +
-        '<span class="tool-row__icon">·</span><span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
-        '<span class="tool-row__meta">' + escapeHtml(f.size || '') + ' · einfügen</span></button>';
-    }).join('');
+    var all = window.TMS_DATA.files || [];
+    var q = filesFilter.toLowerCase();
+    var files = q ? all.filter(function (f) { return f.name.toLowerCase().indexOf(q) !== -1; }) : all;
+
+    var favs = window.__tmsFavs.length
+      ? '<div class="fx-favs">' + window.__tmsFavs.map(function (p) {
+          return '<button class="btn-chip" data-fx="gofav" data-target="' + escapeHtml(p) + '">★ ' +
+            escapeHtml(p.split('/').pop() || p) + '</button>';
+        }).join('') + '</div>'
+      : '';
+
+    var newFolder = filesNewFolder
+      ? '<div class="tool-row"><input class="term-input fx-input" id="fxNewFolder" placeholder="Ordnername…">' +
+        '<button class="btn-chip" data-fx="mkdir-ok">Anlegen</button>' +
+        '<button class="btn-chip" data-fx="cancel">Abbrechen</button></div>'
+      : '';
+
+    var html =
+      '<div class="fx-head">' +
+        '<button class="btn-chip" data-cd="..">▴ Aufwärts</button>' +
+        '<span class="fx-path mono-text">' + escapeHtml(window.__tmsCwd) + '</span>' +
+        '<button class="btn-chip" data-fx="newfolder">+ Ordner</button>' +
+      '</div>' +
+      '<input class="term-input fx-search" id="fxSearch" placeholder="Filtern…" value="' + escapeHtml(filesFilter) + '">' +
+      favs + newFolder +
+      '<div class="tool-list">' + (files.length
+        ? files.map(fileRowHtml).join('')
+        : '<div class="tool-empty">Nichts gefunden.</div>') + '</div>';
+
     return {
-      html: '<div class="tool-list">' + up + rows + '</div>',
+      html: html,
       wire: function () {
-        document.querySelectorAll('#toolSheetBody [data-cd]').forEach(function (btn) {
-          btn.addEventListener('click', function () { post('files:cd', { name: btn.dataset.cd }); });
-        });
-        document.querySelectorAll('#toolSheetBody [data-path]').forEach(function (btn) {
-          btn.addEventListener('click', function () { insertIntoTerminal(btn.dataset.path, 'Pfad eingefügt'); });
-        });
+        var body = document.getElementById('toolSheetBody');
+
+        var search = document.getElementById('fxSearch');
+        if (search) {
+          search.addEventListener('input', function () {
+            filesFilter = search.value;
+            var list = body.querySelector('.tool-list');
+            var all2 = window.TMS_DATA.files || [];
+            var q2 = filesFilter.toLowerCase();
+            var f2 = q2 ? all2.filter(function (f) { return f.name.toLowerCase().indexOf(q2) !== -1; }) : all2;
+            list.innerHTML = f2.length ? f2.map(fileRowHtml).join('') : '<div class="tool-empty">Nichts gefunden.</div>';
+            wireRows();
+          });
+        }
+        var nf = document.getElementById('fxNewFolder');
+        if (nf) nf.focus();
+        var rn = document.getElementById('fxRename');
+        if (rn) { rn.focus(); rn.select(); }
+
+        function rerender() { filesFilter = filesFilter; window.TMSBridge.setTool('files', window.TMS_DATA.files, window.__tmsCwd); }
+
+        function wireRows() {
+          body.querySelectorAll('[data-cd]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+              filesMenuFor = null; filesConfirmDel = null; filesFilter = '';
+              post('files:cd', { name: btn.dataset.cd });
+            });
+          });
+          body.querySelectorAll('[data-path]').forEach(function (btn) {
+            btn.addEventListener('click', function () { insertIntoTerminal(btn.dataset.path, 'Pfad eingefügt'); });
+          });
+          body.querySelectorAll('[data-fx]').forEach(function (btn) {
+            btn.addEventListener('click', function (e) {
+              e.stopPropagation();
+              var a = btn.dataset.fx, t = btn.dataset.target;
+              if (a === 'menu') { filesMenuFor = filesMenuFor === t ? null : t; filesConfirmDel = null; rerender(); }
+              else if (a === 'insert') insertIntoTerminal(t, 'Pfad eingefügt');
+              else if (a === 'preview') post('files:preview', { path: t });
+              else if (a === 'download') post('files:download', { path: t });
+              else if (a === 'fav') { post('files:fav', { path: t }); }
+              else if (a === 'rename') { filesRenaming = t; rerender(); }
+              else if (a === 'rename-ok') {
+                var v = document.getElementById('fxRename');
+                if (v && v.value.trim()) post('files:rename', { path: filesRenaming, name: v.value.trim() });
+                filesRenaming = null;
+              }
+              else if (a === 'del') {
+                if (filesConfirmDel !== t) { filesConfirmDel = t; rerender(); }
+                else { post('files:trash', { path: t }); filesConfirmDel = null; filesMenuFor = null; }
+              }
+              else if (a === 'newfolder') { filesNewFolder = true; rerender(); }
+              else if (a === 'mkdir-ok') {
+                var n = document.getElementById('fxNewFolder');
+                if (n && n.value.trim()) post('files:mkdir', { name: n.value.trim() });
+                filesNewFolder = false;
+              }
+              else if (a === 'cancel') { filesNewFolder = false; filesRenaming = null; rerender(); }
+              else if (a === 'gofav') { filesMenuFor = null; post('files:goto', { path: t }); }
+            });
+          });
+        }
+        wireRows();
       },
     };
+  };
+
+  /** Textvorschau einer Datei — kommt aus /files/read. */
+  window.TMSBridge.filePreview = function (name, content) {
+    var body = document.getElementById('toolSheetBody');
+    if (!body) return;
+    document.getElementById('toolSheetTitle').textContent = name;
+    body.innerHTML = '<button class="btn-chip" id="fxBack">◂ Zurück</button>' +
+      '<pre class="fx-preview mono-text">' + escapeHtml(content || '') + '</pre>';
+    document.getElementById('fxBack').addEventListener('click', function () { window.openToolSheet('files'); });
+  };
+  window.TMSBridge.setFavs = function (list) {
+    window.__tmsFavs = list || [];
   };
 
   /** Schreibt Text in das Terminal, das die Bottom-Bar gerade bedient. */
@@ -752,22 +1020,21 @@
   window.buildScreenshotsSheet = function () {
     var shots = window.TMS_DATA.screenshots || [];
     var tiles = shots.length
-      ? shots.map(function (s, i) {
+      ? '<div class="shot-grid" id="shotGrid">' + shots.map(function (s, i) {
           return '<button class="shot-tile" data-shot="' + i + '" title="' + escapeHtml(s.path) + '"' +
             ' style="background-image:url(\'' + s.url + '\');background-size:cover;background-position:center"></button>';
-        }).join('')
-      : '<div class="shot-tile"></div><div class="shot-tile"></div><div class="shot-tile"></div>';
-    var html = '<div class="shot-grid" id="shotGrid">' + tiles + '</div>' +
-      '<div style="display:flex;gap:8px">' +
-      '<button class="btn-chip" id="shotCaptureBtn" style="flex:1">Aufnehmen</button>' +
-      '<button class="btn-chip" id="shotPickBtn" style="flex:1">Galerie</button></div>';
+        }).join('') + '</div>'
+      : '';
+    // Nur zwei Wege — aufnehmen oder aus der Galerie wählen (bis zu 20 Bilder).
+    var html =
+      '<div class="shot-choice">' +
+      '<button class="shot-choice__btn" id="shotCaptureBtn">' + icon('camera', 22) + '<span>Kamera</span></button>' +
+      '<button class="shot-choice__btn" id="shotPickBtn">' + icon('grid', 22) + '<span>Galerie</span><small>bis zu 20</small></button>' +
+      '</div>' + tiles;
     var wire = function () {
       document.getElementById('shotCaptureBtn').addEventListener('click', function () {
         var flash = document.getElementById('shotFlash');
-        if (flash) {
-          flash.classList.add('is-flashing');
-          setTimeout(function () { flash.classList.remove('is-flashing'); }, 160);
-        }
+        if (flash) { flash.classList.add('is-flashing'); setTimeout(function () { flash.classList.remove('is-flashing'); }, 160); }
         post('shot:capture', { source: 'camera' });
       });
       document.getElementById('shotPickBtn').addEventListener('click', function () {
@@ -923,22 +1190,6 @@
       window.toggleCardAutoApprove(cardId);
     }
   };
-
-  // Der Orb: das Mockup scrollte die .card-body — die steht mit xterm aber still,
-  // ein Klick tat also schlicht nichts. Wir fangen ihn VOR dem Original ab und
-  // scrollen den Viewport, in dem die Ausgabe wirklich liegt.
-  document.addEventListener('click', function (e) {
-    var orb = e.target.closest && e.target.closest('.jump-bottom-orb');
-    if (!orb) return;
-    var card = orb.closest('.term-card');
-    var id = card && card.getAttribute('data-id');
-    if (!id || !terms[id]) return;
-    e.stopPropagation();
-    e.preventDefault();
-    orb.classList.remove('pulse');
-    terms[id].term.scrollToBottom();
-    window.updateJumpOrb(id);
-  }, true);
 
   document.addEventListener('pointerdown', function (e) {
     if (e.target.closest && e.target.closest('.term-card')) {

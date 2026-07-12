@@ -243,7 +243,13 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     switch (type) {
       case 'terminal:create':
         pendingCard.current = payload.cardId;
-        wsService.send({ type: 'terminal:create', payload: { cols: 80, rows: 24 } });
+        // Mit den echten Maßen der Karte, nicht mit 80x24: sonst muss die Shell
+        // beim ersten Resize alles neu zeichnen — und genau das erzeugt die
+        // doppelten und zerrissenen Zeilen.
+        wsService.send({
+          type: 'terminal:create',
+          payload: { cols: payload.cols || 80, rows: payload.rows || 24 },
+        });
         break;
 
       case 'terminal:attach':
