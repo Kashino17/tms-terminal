@@ -46,7 +46,7 @@ export function SeasonTwoRoot(props: Props) {
   );
 }
 
-const SESSION_COLORS = ['#e8590c', '#1971c2', '#2f9e44', '#9c36b5', '#c2255c', '#0c8599'];
+const SESSION_COLORS = ['#6f8fb0', '#7fa088', '#b09a70', '#9a8bb0', '#b08585', '#7fa5a8'];
 
 function S2Shell({ navigation }: Props) {
   const { theme, toggleTheme } = useS2Theme();

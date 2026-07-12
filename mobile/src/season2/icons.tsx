@@ -230,3 +230,15 @@ export const IconChevronUp = make(({ size, color, strokeWidth }) => (
     <Path d="m6 15 6-6 6 6" {...stroke(color, strokeWidth)} />
   </Svg>
 ));
+
+export const IconMaximize = make(({ size, color, strokeWidth }) => (
+  <Svg {...base(size)}>
+    <Path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" {...stroke(color, strokeWidth)} />
+  </Svg>
+));
+
+export const IconMinimize = make(({ size, color, strokeWidth }) => (
+  <Svg {...base(size)}>
+    <Path d="M4 9h3a2 2 0 0 0 2-2V4M20 9h-3a2 2 0 0 1-2-2V4M4 15h3a2 2 0 0 1 2 2v3M20 15h-3a2 2 0 0 0-2 2v3" {...stroke(color, strokeWidth)} />
+  </Svg>
+));

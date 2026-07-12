@@ -42,16 +42,23 @@ export function OverviewGrid({ tabs, colors: tagColors, onSelect, onClose }: Ove
             style={({ pressed }) => [styles.cell, pressed && { transform: [{ scale: 0.97 }] }]}
           >
             <GlassSurface strong style={styles.tile}>
+              {/* Calm color spine — same identity language as the cards. */}
+              <View style={[styles.tileSpine, { backgroundColor: tagColors[i % tagColors.length], opacity: 0.55 }]} />
               <View style={styles.tileHead}>
-                <IconDot size={9} color={tagColors[i % tagColors.length]} />
-                <Text numberOfLines={1} style={{ color: c.text, fontSize: m.font.label, fontWeight: '700', flex: 1 }}>
+                <Text numberOfLines={1} style={{ color: c.text, fontSize: m.font.label, fontWeight: '600', flex: 1 }}>
                   {tab.title || 'Terminal'}
                 </Text>
+                {!!tab.notificationCount && <View style={[styles.tileBadge, { backgroundColor: c.warn }]} />}
               </View>
-              <Text numberOfLines={1} style={{ color: c.textDim, fontSize: m.font.micro, fontWeight: '600' }}>
-                {tab.sessionId ? (tab.lastCwd ?? 'Bereit') : 'Startet…'}
-                {tab.notificationCount ? '  ·  wartet' : ''}
+              <Text numberOfLines={2} style={{ color: c.textDim, fontSize: m.font.micro, lineHeight: 15 }}>
+                {tab.lastCwd ?? (tab.sessionId ? 'Bereit' : 'Startet…')}
               </Text>
+              <View style={[styles.tileChip, { borderColor: c.glassBorder, backgroundColor: `rgba(${c.overlayRgb},0.05)` }]}>
+                <IconDot size={7} color={tab.sessionId ? c.ok : c.warn} />
+                <Text style={{ color: c.textDim, fontSize: m.font.micro, fontWeight: '700' }}>
+                  {tab.notificationCount ? 'WARTET' : tab.sessionId ? 'BEREIT' : 'STARTET'}
+                </Text>
+              </View>
             </GlassSurface>
           </AnimatedPressable>
         ))}
@@ -76,6 +83,9 @@ const styles = StyleSheet.create({
   },
   grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, paddingBottom: 140 },
   cell: { flexBasis: '50%', maxWidth: '50%', padding: 6 },
-  tile: { padding: 12, minHeight: 96, justifyContent: 'space-between' },
+  tile: { paddingLeft: 14, paddingRight: 12, paddingVertical: 12, minHeight: 118, justifyContent: 'space-between', gap: 6 },
+  tileSpine: { position: 'absolute', left: 0, top: 12, bottom: 12, width: 2, borderTopRightRadius: 2, borderBottomRightRadius: 2 },
   tileHead: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  tileBadge: { width: 8, height: 8, borderRadius: 4 },
+  tileChip: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 5, paddingHorizontal: 8, height: 22, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth },
 });

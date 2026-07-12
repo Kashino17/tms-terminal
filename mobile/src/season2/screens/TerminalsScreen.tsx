@@ -46,6 +46,7 @@ import { useS2Theme } from '../theme/tokens';
 import {
   IconPlus, IconTrash, IconSend, IconMic, IconChevronDown, IconChevronRight, IconServer, IconDot,
   IconList, IconStack, IconGrid, IconBolt, IconNotes, IconArrowDownCircle, IconClose, IconChevronUp,
+  IconMaximize, IconMinimize,
 } from '../icons';
 
 // ── Season-2 connection state (module store — survives screen remounts) ──
@@ -100,7 +101,9 @@ interface TerminalsScreenProps {
   onContextActions?: (actions: ContextAction[]) => void;
 }
 
-const SESSION_COLORS = ['#e8590c', '#1971c2', '#2f9e44', '#9c36b5', '#c2255c', '#0c8599'];
+// Muted, professional palette: enough hue separation to tell sessions apart,
+// low enough saturation to never pull the eye away from the terminal output.
+const SESSION_COLORS = ['#6f8fb0', '#7fa088', '#b09a70', '#9a8bb0', '#b08585', '#7fa5a8'];
 const VIEW_KEY = 'tms-s2-terminal-view';
 type S2View = 'list' | 'stack';
 
@@ -118,6 +121,9 @@ export function TerminalsScreen({ navigation, toast, onContextActions }: Termina
   const [notesFor, setNotesFor] = useState<{ tabId: string; title: string; color: string } | null>(null);
   const pagerRef = useRef<ScrollView>(null);
   const [pageW, setPageW] = useState(0);
+  const [fullscreenId, setFullscreenId] = useState<string | null>(null);
+  const [swipedId, setSwipedId] = useState<string | null>(null);
+  const swipeStart = useRef<number | null>(null);
 
   // Load persisted view preference once.
   useEffect(() => {
@@ -393,6 +399,40 @@ export function TerminalsScreen({ navigation, toast, onContextActions }: Termina
   }
 
   // ── Connected ──
+  // ── Fullscreen terminal (user: "Terminal toggle fehlt") ──
+  const fsTab = fullscreenId ? tabs.find((t) => t.id === fullscreenId) ?? null : null;
+  if (fsTab) {
+    return (
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 6, paddingBottom: m.dockHeight + 20 }}>
+          <SessionCard
+            key={fsTab.id}
+            tab={fsTab}
+            color={SESSION_COLORS[Math.max(0, tabs.findIndex((t) => t.id === fsTab.id)) % SESSION_COLORS.length]}
+            expanded
+            full
+            fullscreen
+            onToggleFullscreen={() => setFullscreenId(null)}
+            onToggle={() => {}}
+            onClose={() => { setFullscreenId(null); closeTerminal(fsTab); }}
+            onNotes={(color) => setNotesFor({ tabId: fsTab.id, title: fsTab.title, color })}
+            wsService={conn.wsService!}
+            serverId={conn.server!.id}
+            toast={toast}
+          />
+        </View>
+        {notesFor && (
+          <NotesSheet
+            tabId={notesFor.tabId}
+            title={notesFor.title}
+            color={notesFor.color}
+            onClose={() => setNotesFor(null)}
+          />
+        )}
+      </KeyboardAvoidingView>
+    );
+  }
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.headRow}>
@@ -453,6 +493,7 @@ export function TerminalsScreen({ navigation, toast, onContextActions }: Termina
                   color={SESSION_COLORS[i % SESSION_COLORS.length]}
                   expanded
                   full
+                  onToggleFullscreen={() => setFullscreenId(tab.id)}
                   onToggle={() => {}}
                   onClose={() => closeTerminal(tab)}
                   onNotes={(color) => setNotesFor({ tabId: tab.id, title: tab.title, color })}
@@ -502,22 +543,57 @@ export function TerminalsScreen({ navigation, toast, onContextActions }: Termina
           >
             {tabs.filter((t) => t.id !== expandedId).map((tab) => {
               const i = tabs.findIndex((t) => t.id === tab.id);
+              const color = SESSION_COLORS[i % SESSION_COLORS.length];
+              const revealed = swipedId === tab.id;
               return (
-                <SessionCard
-                  key={tab.id}
-                  tab={tab}
-                  color={SESSION_COLORS[i % SESSION_COLORS.length]}
-                  expanded={false}
-                  onToggle={() => {
-                    LayoutAnimation.configureNext(SPRING_LAYOUT);
-                    setExpandedId(tab.id);
-                  }}
-                  onClose={() => closeTerminal(tab)}
-                  onNotes={(color) => setNotesFor({ tabId: tab.id, title: tab.title, color })}
-                  wsService={conn.wsService!}
-                  serverId={conn.server!.id}
-                  toast={toast}
-                />
+                <View key={tab.id} style={{ flexDirection: 'row', alignItems: 'stretch' }}>
+                  <View
+                    style={{ flex: 1 }}
+                    onStartShouldSetResponder={() => true}
+                    onMoveShouldSetResponder={(e) => Math.abs(e.nativeEvent.locationX) > 0}
+                    onResponderGrant={(e) => { swipeStart.current = e.nativeEvent.pageX; }}
+                    onResponderRelease={(e) => {
+                      const dx = e.nativeEvent.pageX - (swipeStart.current ?? e.nativeEvent.pageX);
+                      swipeStart.current = null;
+                      if (dx < -48) { LayoutAnimation.configureNext(SPRING_LAYOUT); setSwipedId(tab.id); }
+                      else if (dx > 48) { LayoutAnimation.configureNext(SPRING_LAYOUT); setSwipedId(null); }
+                    }}
+                  >
+                    <SessionCard
+                      tab={tab}
+                      color={color}
+                      expanded={false}
+                      onToggle={() => {
+                        if (revealed) { LayoutAnimation.configureNext(SPRING_LAYOUT); setSwipedId(null); return; }
+                        LayoutAnimation.configureNext(SPRING_LAYOUT);
+                        setExpandedId(tab.id);
+                      }}
+                      onClose={() => closeTerminal(tab)}
+                      onNotes={(col) => setNotesFor({ tabId: tab.id, title: tab.title, color: col })}
+                      wsService={conn.wsService!}
+                      serverId={conn.server!.id}
+                      toast={toast}
+                    />
+                  </View>
+                  {revealed && (
+                    <View style={styles.swipeRail}>
+                      <Pressable
+                        onPress={() => { setSwipedId(null); setFullscreenId(tab.id); }}
+                        accessibilityLabel="Vollbild"
+                        style={({ pressed }) => [styles.railBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+                      >
+                        <IconMaximize size={m.icon.sm} color={c.text} />
+                      </Pressable>
+                      <Pressable
+                        onPress={() => { setSwipedId(null); setNotesFor({ tabId: tab.id, title: tab.title, color }); }}
+                        accessibilityLabel="Notizen"
+                        style={({ pressed }) => [styles.railBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+                      >
+                        <IconNotes size={m.icon.sm} color={c.text} />
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
               );
             })}
             <Pressable onPress={createTerminal} style={({ pressed }) => [pressed && styles.pressed]}>
@@ -540,6 +616,7 @@ export function TerminalsScreen({ navigation, toast, onContextActions }: Termina
                 color={SESSION_COLORS[Math.max(0, tabs.findIndex((t) => t.id === listTab.id)) % SESSION_COLORS.length]}
                 expanded
                 full
+                onToggleFullscreen={() => setFullscreenId(listTab.id)}
                 onToggle={() => {
                   LayoutAnimation.configureNext(SPRING_LAYOUT);
                   setExpandedId(null);
@@ -587,12 +664,15 @@ interface SessionCardProps {
   onToggle: () => void;
   onClose: () => void;
   onNotes: (color: string) => void;
+  /** Terminal-only fullscreen toggle (user: "Terminal toggle fehlt"). */
+  fullscreen?: boolean;
+  onToggleFullscreen?: () => void;
   wsService: WebSocketService;
   serverId: string;
   toast: (msg: string) => void;
 }
 
-function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, onNotes, wsService, serverId, toast }: SessionCardProps) {
+function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, onNotes, fullscreen = false, onToggleFullscreen, wsService, serverId, toast }: SessionCardProps) {
   const { theme } = useS2Theme();
   const { c, m } = theme;
   const [editing, setEditing] = useState(false);
@@ -654,7 +734,7 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
     <GlassSurface strong={expanded} style={full ? { flex: 1, minHeight: 0 } : { marginBottom: 12 }}>
       {/* Color identity: a calm 3px spine on the card edge instead of a
           distracting dot — professional separation, no noise. */}
-      <View style={[styles.spine, { backgroundColor: color, opacity: expanded ? 0.9 : 0.5 }]} />
+      <View style={[styles.spine, { backgroundColor: color, opacity: expanded ? 0.65 : 0.35 }]} />
 
       <Pressable onPress={full ? undefined : onToggle} accessibilityRole="button" disabled={full}>
         <View style={styles.cardHead}>
@@ -672,6 +752,17 @@ function SessionCard({ tab, color, expanded, full = false, onToggle, onClose, on
               <Text numberOfLines={1} style={{ color: c.text, fontSize: m.font.label, fontWeight: '600', letterSpacing: 0.1 }}>
                 {tab.title}
               </Text>
+            </Pressable>
+          )}
+          {onToggleFullscreen && (
+            <Pressable
+              onPress={onToggleFullscreen}
+              accessibilityLabel={fullscreen ? 'Vollbild verlassen' : 'Terminal auf Vollbild'}
+              style={({ pressed }) => [styles.iconBtn, { borderColor: c.glassBorder }, pressed && styles.pressed]}
+            >
+              {fullscreen
+                ? <IconMinimize size={m.icon.sm} color={c.accent} />
+                : <IconMaximize size={m.icon.sm} color={c.textDim} />}
             </Pressable>
           )}
           <Pressable
@@ -814,12 +905,14 @@ const styles = StyleSheet.create({
   viewToggleBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   chipStrip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
   dots: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingTop: 10 },
+  swipeRail: { justifyContent: 'center', gap: 6, paddingLeft: 8, paddingBottom: 12 },
+  railBtn: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
   dot: { height: 7, borderRadius: 4 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, height: 36, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
   badge: { width: 8, height: 8, borderRadius: 4 },
   addRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 16, paddingRight: 12, paddingVertical: 10 },
-  spine: { position: 'absolute', left: 0, top: 10, bottom: 10, width: 3, borderTopRightRadius: 3, borderBottomRightRadius: 3, zIndex: 2 },
+  spine: { position: 'absolute', left: 0, top: 12, bottom: 12, width: 2, borderTopRightRadius: 2, borderBottomRightRadius: 2, zIndex: 2 },
   colorTag: { width: 8, height: 8, borderRadius: 4 },
   titleInput: { flex: 1, borderBottomWidth: 1, paddingVertical: 2, fontWeight: '600' },
   iconBtn: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
