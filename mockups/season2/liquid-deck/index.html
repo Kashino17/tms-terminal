@@ -502,7 +502,7 @@
   .status-chip[data-status="idle"] { color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); }
   .status-chip[data-status="idle"] .dot { background: var(--text-dim); }
 
-  .card-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 8px 8px; border-radius: var(--radius-md); padding: 12px 14px; font-size: var(--term-font-size); line-height: 1.6; font-family: var(--font-mono); position: relative; }
+  .card-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 4px 5px; border-radius: var(--radius-md); padding: 12px 14px; font-size: var(--term-font-size); line-height: 1.6; font-family: var(--font-mono); position: relative; }
   .card-body::before { display: none; }
 
   /* Shell wraps .card-body + the ⏬ jump-to-bottom orb — the orb lives
@@ -630,6 +630,10 @@
      presses, only via its own ✕ or the „Tasten" toggle. See
      toggleKeysPanel()/keysPanelHtml() in the script. ============================================================ */
   .keys-panel[hidden] { display: none; }
+  /* Die Tastenleiste schwebt über der Bottom-Bar, statt die Karte zu stauchen. */
+  .keys-panel--global { position: fixed; left: 50%; transform: translateX(-50%); z-index: 39;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px);
+    width: min(calc(100vw - 24px), 520px); margin: 0 !important; }
   .keys-panel:not([hidden]) { flex: none; margin: 0 8px 8px; padding: 7px 8px; border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 6px; }
   .keys-panel__row { display: flex; align-items: center; gap: 7px; }
   .keys-panel__spacer { flex: 1 1 auto; }
@@ -1160,6 +1164,8 @@
 </main>
 
 <div class="pull-hint glass" id="pullHint" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Spotlight</span></div>
+
+<div class="keys-panel keys-panel--global glass" id="globalKeys" hidden></div>
 
 <nav id="dock" class="glass" data-page="nav">
   <div class="dock-page dock-page--nav" id="dockNav">
@@ -2216,8 +2222,22 @@
   // Single shared open/closed flag (kept intentionally simple per spec):
   // flipping it shows/hides every card's panel at once, in both views.
   function applyKeysPanelVisibility() {
-    document.querySelectorAll('[data-keys-panel]').forEach(el => { el.hidden = !state.keysPanelOpen; });
-    document.querySelectorAll('.term-keys-btn').forEach(btn => {
+    // Eine einzige Tastenleiste, über der Bottom-Bar — nicht mehr eine pro Karte.
+    // Sie gilt immer dem Terminal, das die Leiste gerade bedient.
+    const host = document.getElementById('globalKeys');
+    const id = typeof dockTargetId === 'function' ? dockTargetId() : state.activeCardId;
+    if (host) {
+      const show = !!state.keysPanelOpen && !!id && !!cardState[id];
+      host.hidden = !show;
+      if (show) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = keysPanelHtml(id);
+        const inner = tmp.querySelector('.keys-panel');
+        host.innerHTML = inner ? inner.innerHTML : '';
+        wireKeysPanel(document, id); // document.querySelector('.keys-panel') === #globalKeys
+      }
+    }
+    document.querySelectorAll('.term-keys-btn, #dockKeysBtn').forEach(btn => {
       btn.classList.toggle('is-on', state.keysPanelOpen);
       btn.setAttribute('aria-pressed', String(state.keysPanelOpen));
     });
@@ -2272,7 +2292,7 @@
         ${cardHeaderHtml(session, id, false)}
         ${cardBodyBlockHtml(id, false)}
         <button class="replay-pill" hidden>${icon('replay', 14)}<span>Session erneut abspielen</span></button>
-        ${keysPanelHtml(id)}
+        
         ${stackInputRowHtml()}
       `;
     wireCardHeader(card, id);
@@ -2333,7 +2353,7 @@
           <div class="list-card__collapsible">
             ${cardBodyBlockHtml(id, true)}
             <button class="replay-pill" hidden>${icon('replay', 14)}<span>Session erneut abspielen</span></button>
-            ${keysPanelHtml(id)}
+            
             ${listInputRowHtml()}
           </div>
         </div>
@@ -2864,7 +2884,8 @@
       const cs = cardState[id];
       const tile = document.createElement('div');
       tile.className = 'overview-tile glass';
-      const previewLines = cs.lines.slice(-4).map(l => ansiToHtml(l)).join('<br>');
+      const previewLines = window.__tmsPreview ? window.__tmsPreview(id, 5) : cs.lines.slice(-4).map(l => ansiToHtml(l)).join('<br>');
+      tile.dataset.id = id;
       tile.innerHTML = `
         <div class="overview-tile__head"><span class="card-tag" style="background:${session.colorTag}"></span><span class="overview-tile__name">${escapeHtml(session.name)}</span><span class="status-chip" data-status="${session.status}"><span class="dot"></span></span></div>
         <div class="overview-tile__body">${previewLines}</div>
@@ -2900,7 +2921,7 @@
       const item = document.createElement('div');
       item.className = 'rail-item glass' + (isActive ? ' is-active' : '');
       item.dataset.id = id; item.dataset.index = i;
-      const preview = cs.lines.slice(-2).map(l => ansiToHtml(l)).join('<br>');
+      const preview = window.__tmsPreview ? window.__tmsPreview(id, 2) : cs.lines.slice(-2).map(l => ansiToHtml(l)).join('<br>');
       item.innerHTML = `
         <div class="rail-item__top"><span class="card-tag" style="background:${session.colorTag}"></span><span class="rail-item__name">${escapeHtml(session.name)}</span></div>
         <div class="rail-item__preview">${preview}</div>
@@ -5288,6 +5309,7 @@
     input.disabled = !session;
     document.getElementById('dockKeysBtn').classList.toggle('is-on', !!state.keysPanelOpen);
     document.querySelectorAll('.term-card').forEach(c => c.classList.toggle('is-target', c.dataset.id === id));
+    if (state.keysPanelOpen) applyKeysPanelVisibility();
   }
   // Beim Tippen darf das Terminal nicht hinter der Tastatur verschwinden.
   document.getElementById('dockInput').addEventListener('focus', () => {

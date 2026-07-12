@@ -71,6 +71,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
           name: e.isDir ? `${e.name}/` : e.name,
           type: e.isDir ? 'dir' : 'file',
           size: e.isDir ? '' : humanSize(e.size),
+          path: e.path, // damit ein Tipp den Pfad ins Terminal schreiben kann
         })),
         data.path,
       );
@@ -119,7 +120,10 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       const next = [...uploaded.reverse(), ...shots];
       setShots(next);
       call('setTool', 'screenshots', next);
-      call('toast', uploaded.length > 1 ? `${uploaded.length} Bilder hochgeladen` : 'Hochgeladen');
+      // Ein Bild hochzuladen hat nur einen Zweck: die KI soll es ansehen. Also
+      // landet der Serverpfad sofort im Terminal.
+      call('insertIntoTerminal', next.slice(0, uploaded.length).map((s) => s.path).join(' '),
+        uploaded.length > 1 ? `${uploaded.length} Bilder eingefügt` : 'Bild eingefügt');
     } catch (e: any) {
       call('toast', `Screenshot: ${e?.message ?? 'Upload fehlgeschlagen'}`);
     }

@@ -2,7 +2,7 @@
   "expo": {
     "name": "TMS Terminal",
     "slug": "tms-terminal",
-    "version": "1.48.0",
+    "version": "1.49.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -15,7 +15,7 @@
         "backgroundColor": "#1a1a2e"
       },
       "package": "com.tms.terminal",
-      "versionCode": 14800
+      "versionCode": 14900
     },
     "ios": {
       "bundleIdentifier": "com.tms.terminal",

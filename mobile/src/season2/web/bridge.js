@@ -156,6 +156,37 @@
     flush(cardId);
   }
 
+  /**
+   * Die Übersicht und die Rail zeigten die letzten Zeilen aus cs.lines — das ist
+   * seit xterm leer, deshalb stand dort nur der Demo-Prompt. Hier kommen die
+   * echten letzten Zeilen aus dem Terminal-Puffer.
+   */
+  window.__tmsPreview = function (cardId, n) {
+    var t = terms[cardId];
+    if (!t) return '';
+    var buf = t.term.buffer.active;
+    var out = [];
+    for (var i = buf.baseY + buf.cursorY; i >= 0 && out.length < n; i--) {
+      var line = buf.getLine(i);
+      if (!line) continue;
+      var text = line.translateToString(true).replace(/\s+$/, '');
+      if (text) out.unshift(escapeHtml(text));
+    }
+    return out.join('<br>');
+  };
+
+  // Sie sollen LIVE sein: bei neuer Ausgabe die sichtbaren Vorschauen nachziehen.
+  var previewTimers = {};
+  function refreshPreview(cardId) {
+    clearTimeout(previewTimers[cardId]);
+    previewTimers[cardId] = setTimeout(function () {
+      var tile = document.querySelector('.overview-tile[data-id="' + cardId + '"] .overview-tile__body');
+      if (tile) tile.innerHTML = window.__tmsPreview(cardId, 5);
+      var rail = document.querySelector('.rail-item[data-id="' + cardId + '"] .rail-item__preview');
+      if (rail) rail.innerHTML = window.__tmsPreview(cardId, 2);
+    }, 350);
+  }
+
   function flush(cardId) {
     var sid = byCard[cardId];
     var t = terms[cardId];
@@ -385,6 +416,7 @@
       if (!cardId || !terms[cardId]) { (queued[sessionId] = queued[sessionId] || []).push(chunk); return; }
       terms[cardId].term.write(chunk);
       window.updateJumpOrb(cardId, true);
+      refreshPreview(cardId);
       var plain = chunk.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').split('\n').filter(function (l) { return l.trim(); }).pop();
       if (plain) window.__tmsLastLine[cardId] = plain;
     },
@@ -571,32 +603,55 @@
     return el ? el.getAttribute('data-id') : null;
   }
 
-  // Dateien — the mockup showed a flat list; a real tree needs to be walkable.
+  // Dateien — das Mockup zeigte eine tote Liste. Jetzt: Ordner öffnen sich,
+  // und eine Datei anzutippen schreibt ihren vollen Pfad in das Terminal, das
+  // die Leiste gerade bedient. Genau dafür ist der Explorer da.
   window.__tmsCwd = '~';
   window.buildFilesSheet = function () {
     var files = window.TMS_DATA.files || [];
+    var up = '<button class="tool-row is-tap" data-cd="..">' +
+      '<span class="tool-row__icon">▴</span><span class="tool-row__name mono-text">' + escapeHtml(window.__tmsCwd) + '</span>' +
+      '<span class="tool-row__meta">aufwärts</span></button>';
     var rows = files.map(function (f) {
       if (f.type === 'dir') {
         return '<button class="tool-row is-tap" data-cd="' + escapeHtml(f.name) + '">' +
           '<span class="tool-row__icon">▸</span><span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
-          '<span class="tool-row__meta"></span></button>';
+          '<span class="tool-row__meta">öffnen</span></button>';
       }
-      return '<div class="tool-row"><span class="tool-row__icon">·</span>' +
-        '<span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
-        '<span class="tool-row__meta">' + escapeHtml(f.size || '') + '</span></div>';
+      return '<button class="tool-row is-tap" data-path="' + escapeHtml(f.path || '') + '">' +
+        '<span class="tool-row__icon">·</span><span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
+        '<span class="tool-row__meta">' + escapeHtml(f.size || '') + ' · einfügen</span></button>';
     }).join('');
-    var up = '<button class="tool-row is-tap" data-cd="..">' +
-      '<span class="tool-row__icon">▴</span><span class="tool-row__name mono-text">' + escapeHtml(window.__tmsCwd) + '</span>' +
-      '<span class="tool-row__meta">aufwärts</span></button>';
     return {
       html: '<div class="tool-list">' + up + rows + '</div>',
       wire: function () {
         document.querySelectorAll('#toolSheetBody [data-cd]').forEach(function (btn) {
           btn.addEventListener('click', function () { post('files:cd', { name: btn.dataset.cd }); });
         });
+        document.querySelectorAll('#toolSheetBody [data-path]').forEach(function (btn) {
+          btn.addEventListener('click', function () { insertIntoTerminal(btn.dataset.path, 'Pfad eingefügt'); });
+        });
       },
     };
   };
+
+  /** Schreibt Text in das Terminal, das die Bottom-Bar gerade bedient. */
+  function insertIntoTerminal(text, okMsg) {
+    if (!text) return;
+    var card = activeCardId();
+    if (!card) { post('clipboard:write', { text: text }); toast('Kein Terminal — kopiert'); return; }
+    var wrap = document.getElementById('toolSheetWrap');
+    if (wrap && typeof window.closeSheet === 'function') window.closeSheet(wrap);
+    var input = document.getElementById('dockInput');
+    if (input && !input.disabled) {
+      input.value = (input.value ? input.value + ' ' : '') + text;
+      input.focus();
+    } else {
+      window.__tmsInput(card, text);
+    }
+    toast(okMsg || 'Eingefügt');
+  }
+  window.__tmsInsert = insertIntoTerminal;
 
   // Snippets — tapping one writes it into the active terminal for real.
   window.buildSnippetsSheet = function () {
@@ -611,11 +666,8 @@
       wire: function () {
         document.querySelectorAll('#toolSheetBody [data-snippet]').forEach(function (btn) {
           btn.addEventListener('click', function () {
-            var s = (window.TMS_DATA.snippets || []).find(function (x) { return x.id === btn.dataset.snippet; });
-            if (!s) return;
-            var card = activeCardId();
-            if (card) { window.__tmsInput(card, s.cmd); toast('In Terminal eingefügt'); }
-            else toast('Kein aktives Terminal');
+            var sn = (window.TMS_DATA.snippets || []).find(function (x) { return x.id === btn.dataset.snippet; });
+            if (sn) insertIntoTerminal(sn.cmd, 'In Terminal eingefügt');
           });
         });
       },
@@ -723,11 +775,8 @@
       });
       document.querySelectorAll('#toolSheetBody [data-shot]').forEach(function (tile) {
         tile.addEventListener('click', function () {
-          var s = (window.TMS_DATA.screenshots || [])[Number(tile.dataset.shot)];
-          if (!s) return;
-          var card = activeCardId();
-          if (card) { window.__tmsInput(card, s.path); toast('Pfad ins Terminal eingefügt'); }
-          else post('clipboard:write', { text: s.path });
+          var shot = (window.TMS_DATA.screenshots || [])[Number(tile.dataset.shot)];
+          if (shot) insertIntoTerminal(shot.path, 'Bildpfad eingefügt');
         });
       });
     };
@@ -757,6 +806,8 @@
     if (cwd) window.__tmsCwd = cwd;
     if (openTool === key) origOpenTool(key); // rebuild the open sheet in place
   };
+  /** Nach einem Upload: den Serverpfad sofort ins Terminal schreiben. */
+  window.TMSBridge.insertIntoTerminal = function (text, msg) { insertIntoTerminal(text, msg); };
   window.TMSBridge.setPrayer = function (times) {
     window.TMS_DATA.prayerTimes = times;
     if (typeof window.renderPrayerList === 'function') window.renderPrayerList();
