@@ -19,6 +19,7 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useTerminalStore } from '../store/terminalStore';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
+import { checkForUpdate, downloadAndInstall, getCurrentVersion } from '../services/updater.service';
 import { getConnection } from '../services/websocket.service';
 import { useS2ConnStore, useS2Connection } from './screens/TerminalsScreen';
 import { useDictation } from './hooks/useDictation';
@@ -47,6 +48,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   /** cardId whose mic is currently recording. */
   const micCard = useRef<string | null>(null);
   const restored = useRef(false);
+  /** Per-session "is it still producing output" timers — the server has no
+   *  status event, so the state has to be derived from the stream itself. */
+  const idleTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const updateUrl = useRef<string | null>(null);
   const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, tabId: null, url: '', rect: null });
 
   const call = useCallback((fn: string, ...args: unknown[]) => {
@@ -83,6 +88,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (conn.state === 'disconnected') conn.connect({ host: server.host, port: server.port, token });
   }, [server, token]);
 
+  /** Output means the tool is working; silence for a while means it is done. */
+  const markBusy = useCallback((sessionId: string) => {
+    call('setSessionStatus', sessionId, 'running');
+    clearTimeout(idleTimers.current[sessionId]);
+    idleTimers.current[sessionId] = setTimeout(() => {
+      call('setSessionStatus', sessionId, 'idle');
+    }, 2500);
+  }, [call]);
+
   // ── Server → page.
   useEffect(() => {
     if (!wsService || !server || !ready) return;
@@ -90,6 +104,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     const unsub = wsService.addMessageListener((m: any) => {
       if (m?.type === 'terminal:output' && m.sessionId && m.payload?.data) {
         call('output', m.sessionId, m.payload.data);
+        markBusy(m.sessionId);
         return;
       }
       if (m?.type === 'terminal:created' && m.sessionId) {
@@ -102,7 +117,11 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           serverId: server.id,
           active: true,
         });
-        if (cardId) { call('bindSession', cardId, m.sessionId); sheets.pushNotes(cardId); }
+        if (cardId) {
+          call('bindSession', cardId, m.sessionId);
+          sheets.pushNotes(cardId);
+          call('setAutoApprove', cardId, useAutoApproveStore.getState().isEnabled(m.sessionId));
+        }
         return;
       }
       if (m?.type === 'terminal:closed' && m.sessionId) {
@@ -122,16 +141,18 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           wsService.send({ type: 'terminal:input', sessionId: sid, payload: { data: '\r' } });
           setTimeout(() => auto.setRunning(sid, false), 500);
         } else {
-          call('prompt', sid, m.payload ?? {});
+          call('setSessionStatus', sid, 'waiting');
+          call('prompt', sid, describePrompt(m.payload?.snippet ?? ''));
         }
         return;
       }
-      if (m?.type === 'terminal:status' && m.sessionId && m.payload?.status) {
-        call('setSessionStatus', m.sessionId, m.payload.status);
-      }
     });
     return unsub;
-  }, [wsService, server, ready, call]);
+  }, [wsService, server, ready, call, markBusy]);
+
+  useEffect(() => () => {
+    Object.values(idleTimers.current).forEach(clearTimeout);
+  }, []);
 
   // ── Connection state → the Dynamic Island + latency chips.
   useEffect(() => {
@@ -141,6 +162,28 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     call('setStatus', { kind, label, latency: rtt, name: server?.name ?? '' });
   }, [ready, state, rtt, server, call]);
 
+  // ── The Server screen and its update banner, on real data.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    (async () => {
+      const servers = await storageService.getServers().catch(() => []);
+      if (cancelled) return;
+      call('setServers', servers.map((s) => ({
+        id: s.id, name: s.name, host: s.host, port: s.port,
+        status: s.id === server?.id && state === 'connected' ? 'online' : 'offline',
+        sessions: useTerminalStore.getState().getTabs(s.id).length,
+        os: '', latency: s.id === server?.id ? rtt : null,
+      })));
+
+      const up = await checkForUpdate().catch(() => null);
+      if (cancelled || !up) return; // null means: already on the newest version
+      updateUrl.current = up.downloadUrl;
+      call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
+    })();
+    return () => { cancelled = true; };
+  }, [ready, server, state, rtt, call]);
+
   // ── Once connected, hand the page the sessions that already exist.
   useEffect(() => {
     if (!ready || !server || state !== 'connected' || restored.current) return;
@@ -149,12 +192,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       .getState()
       .getTabs(server.id)
       .filter((t) => t.sessionId)
-      .map((t) => ({ sessionId: t.sessionId as string }));
-    if (live.length) {
-      call('restoreSessions', live);
-      // The page names restored cards t1..tN; hand each its stored notes back.
-      live.forEach((_, i) => sheets.pushNotes(`t${i + 1}`));
-    }
+      .map((t) => ({ sessionId: t.sessionId as string, name: t.title }));
+    if (!live.length) return;
+    call('restoreSessions', live);
+    // The page names restored cards t1..tN, in order.
+    live.forEach((t, i) => {
+      const cardId = `t${i + 1}`;
+      sheets.pushNotes(cardId);
+      call('setAutoApprove', cardId, useAutoApproveStore.getState().isEnabled(t.sessionId));
+    });
   }, [ready, server, state, call, sheets]);
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
@@ -257,6 +303,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         setBrowser((b) => (b.tabId === payload.tabId ? { ...b, visible: false, tabId: null } : b));
         break;
 
+      case 'terminal:rename': {
+        const tab = useTerminalStore.getState().getTabs(server.id).find((t) => t.id === payload.cardId);
+        if (tab && payload.field === 'name' && payload.value) {
+          useTerminalStore.getState().updateTab(server.id, tab.id, { title: payload.value });
+        }
+        break;
+      }
+
+      case 'update:install':
+        if (updateUrl.current) {
+          call('toast', 'Update wird geladen …');
+          downloadAndInstall(updateUrl.current).catch(() => call('toast', 'Update fehlgeschlagen'));
+        }
+        break;
+
       case 'nav:classic':
         if (payload.screen === 'settings') navigation.navigate('Settings');
         else setSeasonTwoEnabled(false);
@@ -296,6 +357,26 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
 /** Sentinel cardId: the mic that belongs to the Manager chat, not a terminal. */
 const MANAGER_MIC = '__manager__';
+
+/**
+ * The server reports a detected prompt as a raw text snippet; the permission
+ * sheet wants a tool, a target and a question. Pull those out of the snippet —
+ * and when they are not in there, show the snippet rather than an empty sheet.
+ */
+function describePrompt(snippet: string): { tool: string; target: string; question: string; kind?: string } {
+  const clean = snippet.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').trim();
+  const lines = clean.split('\n').map((l) => l.trim()).filter(Boolean);
+  const tool = clean.match(/\b(Bash|Edit|MultiEdit|Write|Read|WebFetch|WebSearch|Task|Grep|Glob|NotebookEdit)\b/)?.[1] ?? 'Berechtigung';
+  const target =
+    clean.match(/`([^`]{1,80})`/)?.[1] ??
+    clean.match(/(?:in|to|from)\s+([\w./-]+\.[a-z]{1,5})/i)?.[1] ??
+    '';
+  const question = lines.find((l) => l.endsWith('?')) ?? lines[0] ?? 'Erlauben?';
+  // A numbered choice list is a question, not a yes/no permission — the sheet
+  // for those is a different one, and Auto-Approve must not touch it.
+  const kind = /^\s*(❯\s*)?[1-9][.)]\s/m.test(clean) && lines.length > 2 ? 'question' : undefined;
+  return { tool, target, question, kind };
+}
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#1e2126' },

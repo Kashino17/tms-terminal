@@ -194,6 +194,12 @@
         if (!cardId) return;
         bound[cardId] = item.sessionId;
         byCard[cardId] = item.sessionId;
+        if (item.name) {
+          var sess = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
+          if (sess) sess.name = item.name;
+          var nameEl = document.querySelector('.term-card[data-id="' + cardId + '"] .card-name');
+          if (nameEl) nameEl.value = item.name;
+        }
         mountTerm(cardId);
         post('terminal:attach', { cardId: cardId, sessionId: item.sessionId });
       });
@@ -604,6 +610,97 @@
     s.notes = notes;
     s.todos = todos;
     if (sheetCardId === cardId) origRenderSessionBody();
+  };
+
+  // ══ Rückfragen ════════════════════════════════════════════════════════════
+  // Approve already reaches the PTY through the card's sim (Enter). Deny did
+  // not: the mockup only printed a line, because its simulator had nothing to
+  // cancel. A real prompt needs a real Escape.
+  var promptCard = null;
+  var origHandlePrompt = window.handlePrompt;
+  window.handlePrompt = function (id, data) {
+    promptCard = id;
+    origHandlePrompt(id, data);
+  };
+  var origResolvePrompt = window.resolvePrompt;
+  window.resolvePrompt = function (approved) {
+    var id = promptCard;
+    promptCard = null;
+    origResolvePrompt(approved);
+    if (!approved && id) window.__tmsInput(id, '\x1b');
+  };
+
+  // ══ Umbenennen ════════════════════════════════════════════════════════════
+  // The mockup renamed in memory only. Its own blur handler runs first, so by
+  // the time ours does, session[field] already holds the new value.
+  var origWireEditable = window.wireEditableField;
+  window.wireEditableField = function (input, field, session) {
+    origWireEditable(input, field, session);
+    if (!input) return;
+    input.addEventListener('blur', function () {
+      post('terminal:rename', { cardId: session.id, field: field, value: session[field] });
+    });
+  };
+
+  // ══ Einstellungen ═════════════════════════════════════════════════════════
+  // Without this there is no way out of Season 2 from inside Season 2.
+  var origRenderSettings = window.renderSettings;
+  window.renderSettings = function () {
+    origRenderSettings();
+    var body = document.getElementById('settingsBody');
+    if (!body) return;
+    var group = document.createElement('div');
+    group.className = 'settings-group glass';
+    group.innerHTML =
+      '<div class="settings-group__title">Oberfläche</div>' +
+      '<div class="settings-row is-tap" id="s2ToClassic">' +
+        '<span class="settings-row__label">Klassische Oberfläche<small>Season 2 verlassen — jederzeit wieder umschaltbar</small></span>' +
+        '<span class="settings-row__value">Wechseln</span></div>' +
+      '<div class="settings-row is-tap" id="s2ClassicSettings">' +
+        '<span class="settings-row__label">Klassische Einstellungen<small>Sicherheit, Benachrichtigungen, Cloud-Tokens, Manager …</small></span>' +
+        '<span class="settings-row__value">Öffnen</span></div>';
+    body.appendChild(group);
+    group.querySelector('#s2ToClassic').addEventListener('click', function () {
+      post('nav:classic', { screen: 'classic' });
+    });
+    group.querySelector('#s2ClassicSettings').addEventListener('click', function () {
+      post('nav:classic', { screen: 'settings' });
+    });
+  };
+  window.renderSettings();
+
+  // ══ Update-Banner ═════════════════════════════════════════════════════════
+  var origRenderUpdateBanner = window.renderUpdateBanner;
+  window.renderUpdateBanner = function (host) {
+    var u = window.TMS_DATA.update || {};
+    if (!u.latest || u.latest === u.current) return; // nothing to offer
+    origRenderUpdateBanner(host);
+    var cta = host.querySelector('.update-pill .cta');
+    if (cta) {
+      var fresh = cta.cloneNode(true);
+      cta.parentNode.replaceChild(fresh, cta);
+      fresh.addEventListener('click', function () { post('update:install', {}); });
+    }
+  };
+
+  // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
+  window.TMSBridge.setServers = function (servers) {
+    window.TMS_DATA.servers = servers;
+    if (typeof window.renderServers === 'function') window.renderServers();
+    if (typeof window.renderSettings === 'function') window.renderSettings();
+  };
+  window.TMSBridge.setUpdate = function (update) {
+    window.TMS_DATA.update = update;
+    if (typeof window.renderServers === 'function') window.renderServers();
+  };
+  /** React Native owns Auto-Approve; make the card's toggle agree with it. */
+  window.TMSBridge.setAutoApprove = function (cardId, on) {
+    var toggle = document.querySelector('.term-card[data-id="' + cardId + '"] .auto-toggle');
+    if (!toggle) return;
+    var isOn = toggle.classList.contains('is-on');
+    if (isOn !== !!on && typeof window.toggleCardAutoApprove === 'function') {
+      window.toggleCardAutoApprove(cardId);
+    }
   };
 
   post('bridge:ready', {});
