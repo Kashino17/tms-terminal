@@ -21,6 +21,7 @@ import { Dock, DockItemKey } from './components/Dock';
 import { DynamicIsland, IslandSessionRow } from './components/DynamicIsland';
 import { TerminalsScreen, useS2Connection } from './screens/TerminalsScreen';
 import { CloudScreen } from './screens/CloudScreen';
+import { S2BrowserScreen } from './screens/S2BrowserScreen';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SeasonTwo'>;
 
@@ -42,7 +43,7 @@ function S2Shell({ navigation }: Props) {
   const tabsByServer = useTerminalStore((s) => s.tabs);
   const conn = useS2Connection();
   // Internal season2 screens (native ones); everything else bridges to classic.
-  const [screen, setScreen] = useState<'terminals' | 'cloud'>('terminals');
+  const [screen, setScreen] = useState<'terminals' | 'cloud' | 'browser'>('terminals');
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -118,7 +119,7 @@ function S2Shell({ navigation }: Props) {
         }
         return;
       case 'browser':
-        toast('Browser kommt in Season 2 — Meilenstein 2');
+        setScreen('browser');
         return;
     }
   }, [navigation, conn, toast]);
@@ -149,11 +150,9 @@ function S2Shell({ navigation }: Props) {
       </View>
 
       <View style={styles.content}>
-        {screen === 'terminals' ? (
-          <TerminalsScreen navigation={navigation} toast={toast} />
-        ) : (
-          <CloudScreen toast={toast} onOpenClassicCloud={() => navigation.navigate('Settings')} />
-        )}
+        {screen === 'terminals' && <TerminalsScreen navigation={navigation} toast={toast} />}
+        {screen === 'cloud' && <CloudScreen toast={toast} onOpenClassicCloud={() => navigation.navigate('Settings')} />}
+        {screen === 'browser' && <S2BrowserScreen toast={toast} />}
       </View>
 
       <View style={[styles.dockZone, { paddingBottom: insets.bottom + 12 }]}>
