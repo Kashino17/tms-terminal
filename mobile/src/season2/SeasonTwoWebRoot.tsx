@@ -231,6 +231,19 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     return () => { cancelled = true; };
   }, [ready, server, state, call]);
 
+  // ── Nach jedem RECONNECT neu anhängen. Der Server hängt Sessions beim
+  //    Verbindungsabriss ab und puffert ihren Output — ohne Reattach bliebe
+  //    jede Karte für immer beim letzten Frame stehen, während der Kopf
+  //    "Verbunden" zeigt. Genau so sah eine gesendete Nachricht "nicht
+  //    abgeschickt" aus. (Der Erst-Anlauf läuft über restoreSessions unten.)
+  const prevConnState = useRef(state);
+  useEffect(() => {
+    if (ready && restored.current && state === 'connected' && prevConnState.current !== 'connected') {
+      call('reattachAll');
+    }
+    prevConnState.current = state;
+  }, [ready, state, call]);
+
   // ── Once connected, hand the page the sessions that already exist.
   useEffect(() => {
     if (!ready || !server || state !== 'connected' || restored.current) return;

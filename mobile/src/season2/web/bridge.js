@@ -1609,6 +1609,22 @@
     var sessName = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
     post('terminal:create', { cardId: cardId, cols: d.cols, rows: d.rows, name: sessName ? sessName.name : undefined });
   };
+  /**
+   * Nach einem Verbindungsabriss hängt der Server die Sessions ab und puffert
+   * ihren Output. Ohne erneutes Anhängen bleibt jede Karte beim letzten Frame
+   * stehen — während der Kopf fröhlich "Verbunden" zeigt (der WebSocket selbst
+   * ist ja wieder da). Hier hängen wir alle gebundenen Karten neu an; der
+   * Server flusht dann alles Verpasste in einem Rutsch.
+   */
+  window.TMSBridge.reattachAll = function () {
+    Object.keys(byCard).forEach(function (cardId) {
+      var sid = byCard[cardId];
+      if (!sid) return;
+      var d = dims(cardId);
+      lastDims[sid] = d.cols + 'x' + d.rows;
+      post('terminal:attach', { cardId: cardId, sessionId: sid, cols: d.cols, rows: d.rows });
+    });
+  };
   window.TMSBridge.sessionClosed = function (sessionId) {
     var cardId = cardOf(sessionId);
     if (!cardId) return;
