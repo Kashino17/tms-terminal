@@ -325,13 +325,14 @@ export function ManagerScreen({ navigation, wsService, serverId, serverHost, ser
 }
 
 const styles = StyleSheet.create({
-  pageTitle: { fontWeight: '800', letterSpacing: 0.2 },
+  pageTitle: { fontWeight: '700', letterSpacing: -0.26 },
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10 },
-  headChip: { paddingHorizontal: 12, height: 36, borderRadius: 999, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
+  headChip: { paddingHorizontal: 12, height: 34, borderRadius: 999, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
   chipStrip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingBottom: 8 },
-  chip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 32, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
+  chip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 30, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2 },
   bubbleRow: { flexDirection: 'row', marginBottom: 10 },
   bubble: { maxWidth: '86%' },
+  centered: { width: '100%', maxWidth: 480, alignSelf: 'center' },
   inputZone: { paddingHorizontal: 14 },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 12, paddingVertical: 4 },
   roundBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', marginBottom: 3 },

@@ -74,20 +74,46 @@ export function ServersScreen({ navigation, toast, onConnected }: ServersScreenP
             : ' ';
           return (
             <Pressable key={s.id} onPress={() => connectTo(s)} style={({ pressed }) => [pressed && styles.pressed]}>
-              <GlassSurface strong={isActive} style={{ marginBottom: 12, padding: 16 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <IconServer size={m.icon.lg} color={isActive ? c.accent : c.textDim} />
+              <GlassSurface strong={isActive} style={styles.serverCard}>
+                <View style={styles.serverRow}>
+                  {/* .server-orb — 46px, glowing ring when online */}
+                  <View
+                    style={[
+                      styles.serverOrb,
+                      { borderColor: c.glassBorder, backgroundColor: `rgba(${c.overlayRgb},0.06)` },
+                      isActive && conn.state === 'connected' && {
+                        borderColor: 'rgba(74,222,128,0.4)',
+                        shadowColor: '#4ade80',
+                        shadowOpacity: 0.5,
+                        shadowRadius: 14,
+                        shadowOffset: { width: 0, height: 0 },
+                        elevation: 6,
+                      },
+                    ]}
+                  >
+                    <IconServer size={22} color={isActive && conn.state === 'connected' ? c.ok : c.textDim} />
+                  </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text numberOfLines={1} style={{ color: c.text, fontSize: m.font.section, fontWeight: '700' }}>{s.name}</Text>
-                    <Text numberOfLines={1} style={{ color: c.textDim, fontSize: m.font.caption, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) }}>
+                    <Text numberOfLines={1} style={styles.serverName ? [styles.serverName, { color: c.text }] : { color: c.text }}>
+                      {s.name}
+                    </Text>
+                    <Text numberOfLines={1} style={[styles.serverHost, { color: c.textDim }]}>
                       {s.host}:{s.port}
                     </Text>
-                    {isActive && (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                        <IconDot size={8} color={conn.state === 'connected' ? c.ok : c.warn} />
-                        <Text style={{ color: c.textDim, fontSize: m.font.micro, fontWeight: '600' }}>{stateLabel}</Text>
+                    <View style={styles.serverMeta}>
+                      <View style={[styles.serverChip, { backgroundColor: `rgba(${c.overlayRgb},0.06)` }]}>
+                        <Text style={{ color: isActive && conn.state === 'connected' ? c.ok : c.textDim, fontSize: 11, fontWeight: '600' }}>
+                          {isActive
+                            ? conn.state === 'connected' ? 'online' : conn.state === 'connecting' ? 'verbinde…' : 'getrennt'
+                            : 'bereit'}
+                        </Text>
                       </View>
-                    )}
+                      {isActive && conn.rtt != null && (
+                        <View style={[styles.serverChip, { backgroundColor: `rgba(${c.overlayRgb},0.06)` }]}>
+                          <Text style={{ color: c.textDim, fontSize: 11, fontWeight: '600' }}>{conn.rtt} ms</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
                   <IconChevronRight size={m.icon.sm} color={c.textDim} />
                 </View>
@@ -110,7 +136,14 @@ export function ServersScreen({ navigation, toast, onConnected }: ServersScreenP
 }
 
 const styles = StyleSheet.create({
-  pageTitle: { fontWeight: '800', letterSpacing: 0.2 },
+  serverCard: { marginBottom: 12, padding: 18, width: '100%', maxWidth: 480, alignSelf: 'center' },
+  serverRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  serverOrb: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
+  serverName: { fontSize: 17, fontWeight: '700', letterSpacing: -0.17 },
+  serverHost: { fontSize: 12, marginTop: 2, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
+  serverMeta: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  serverChip: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999 },
+  pageTitle: { fontWeight: '700', letterSpacing: -0.26 },
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10 },
   headBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: 14 },
   pressed: { opacity: 0.7, transform: [{ scale: 0.98 }] },

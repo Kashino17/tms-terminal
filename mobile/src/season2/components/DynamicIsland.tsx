@@ -32,7 +32,7 @@ interface DynamicIslandProps {
   onOpenSpotlight?: () => void;
 }
 
-const COLLAPSED_H = 40;
+const COLLAPSED_H = 40; // mockup .island-compact
 const EXPANDED_MAX_H = 420;
 
 export function DynamicIsland({

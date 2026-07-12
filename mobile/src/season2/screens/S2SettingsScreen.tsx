@@ -88,7 +88,7 @@ export function S2SettingsScreen({ navigation }: S2SettingsScreenProps) {
 }
 
 const styles = StyleSheet.create({
-  pageTitle: { fontWeight: '800', letterSpacing: 0.2 },
+  pageTitle: { fontWeight: '700', letterSpacing: -0.26 },
   headRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10 },
   section: { fontSize: 10.5, fontWeight: '700', letterSpacing: 1, marginTop: 14, marginBottom: 8 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 8, paddingVertical: 13 },

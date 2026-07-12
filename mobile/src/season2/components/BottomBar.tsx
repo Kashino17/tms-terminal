@@ -184,7 +184,7 @@ export function BottomBar({ mode, onModeChange, active, onSelect, contextActions
 
 const styles = StyleSheet.create({
   wrap: { alignSelf: 'center', paddingBottom: 2 },
-  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 6 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 2, padding: 6 },
   contextRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingVertical: 6 },
   contextBtn: {
     minWidth: 58, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: 3,
@@ -192,11 +192,11 @@ const styles = StyleSheet.create({
   },
   pill: {
     position: 'absolute', top: 6, bottom: 6, left: 0,
-    borderRadius: 999, borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: 999, borderWidth: StyleSheet.hairlineWidth,
   },
   item: {
     alignItems: 'center', justifyContent: 'center', gap: 3,
-    minWidth: 54, paddingVertical: 7, paddingHorizontal: 2, zIndex: 1,
+    width: 58, paddingTop: 7, paddingBottom: 6, paddingHorizontal: 2, zIndex: 1,
   },
   label: { fontWeight: '600', letterSpacing: 0.1 },
   itemBadge: { position: 'absolute', top: 4, right: 10, width: 8, height: 8, borderRadius: 4 },
