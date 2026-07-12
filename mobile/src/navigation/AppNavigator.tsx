@@ -18,7 +18,7 @@ import { ManagerChatScreen } from '../screens/ManagerChatScreen';
 import { ManagerChatScreenV2 } from '../screens/ManagerChatScreenV2';
 import { ManagerMemoryScreen } from '../screens/ManagerMemoryScreen';
 import { ManagerArtifactsScreen } from '../screens/ManagerArtifactsScreen';
-import { SeasonTwoRoot } from '../season2/SeasonTwoRoot';
+import { SeasonTwoWebRoot } from '../season2/SeasonTwoWebRoot';
 import { colors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import type { RootStackParamList } from '../types/navigation.types';
@@ -61,7 +61,7 @@ export function AppNavigator() {
       {/* ── Season 2 (Liquid Glass) ──────────────────────────── */}
       <Stack.Screen
         name="SeasonTwo"
-        component={SeasonTwoRoot}
+        component={SeasonTwoWebRoot}
         options={{ headerShown: false, animation: 'fade' }}
       />
       {/* ── Home (new start screen) ──────────────────────────── */}

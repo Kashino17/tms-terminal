@@ -5,7 +5,8 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "build:season2": "node scripts/build-season2-html.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "1.21.0",
