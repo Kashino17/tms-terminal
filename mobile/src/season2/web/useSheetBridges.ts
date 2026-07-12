@@ -12,10 +12,14 @@
  *   Snippets   the same AsyncStorage snippets the classic panel uses
  *   SQL        the statements detected in terminal output (sqlStore)
  *   Notizen    notesStore (global) + per-terminal notes/todos (season2 store)
+ *   Screens.   camera / gallery -> upload to the server -> the path goes into
+ *              the terminal, which is the only reason to take one
  *   Gebete     real prayer times for the current location
  */
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import type { WebSocketService } from '../../services/websocket.service';
 import { usePortForwardingStore } from '../../store/portForwardingStore';
 import { useNotesStore } from '../../store/notesStore';
@@ -49,6 +53,8 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
   const cwd = useRef('~');
   /** Which sheet is open — so an async reply knows whether it is still wanted. */
   const openSheet = useRef<string | null>(null);
+  /** Screenshots uploaded this session: server path + a thumbnail URL. */
+  const [shots, setShots] = useState<Array<{ path: string; url: string }>>([]);
 
   const listFiles = useCallback(async (path: string) => {
     if (!server || !token) return;
@@ -72,6 +78,52 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       call('toast', `Dateien: ${e?.message ?? 'Laden fehlgeschlagen'}`);
     }
   }, [server, token, call]);
+
+  /** Server path → a URL the page can put in an <img>. */
+  const downloadUrl = useCallback((path: string) => (
+    server && token
+      ? `http://${server.host}:${server.port}/files/download?path=${encodeURIComponent(path)}&token=${token}`
+      : ''
+  ), [server, token]);
+
+  /** Pick an image, upload it, and remember where it landed. */
+  const captureShot = useCallback(async (source: 'camera' | 'library') => {
+    if (!server || !token) return;
+    try {
+      if (source === 'camera') {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) { call('toast', 'Kamera-Berechtigung fehlt'); return; }
+      }
+      const result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, base64: true })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, base64: true, allowsMultipleSelection: true });
+      if (result.canceled) return;
+
+      const uploaded: Array<{ path: string; url: string }> = [];
+      for (const asset of result.assets) {
+        const data = asset.base64
+          ?? (await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
+        const r = await fetch(`http://${server.host}:${server.port}/upload/screenshot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            filename: asset.fileName ?? `screenshot-${uploaded.length}.jpg`,
+            data,
+            mimeType: asset.mimeType ?? 'image/jpeg',
+          }),
+        });
+        const json = await r.json();
+        if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
+        uploaded.push({ path: json.path, url: downloadUrl(json.path) });
+      }
+      const next = [...uploaded.reverse(), ...shots];
+      setShots(next);
+      call('setTool', 'screenshots', next);
+      call('toast', uploaded.length > 1 ? `${uploaded.length} Bilder hochgeladen` : 'Hochgeladen');
+    } catch (e: any) {
+      call('toast', `Screenshot: ${e?.message ?? 'Upload fehlgeschlagen'}`);
+    }
+  }, [server, token, shots, downloadUrl, call]);
 
   const openTool = useCallback(async (tool: string) => {
     openSheet.current = tool;
@@ -120,6 +172,10 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         break;
       }
 
+      case 'screenshots':
+        call('setTool', 'screenshots', shots);
+        break;
+
       case 'notes': {
         if (!server) break;
         await useNotesStore.getState().load();
@@ -132,7 +188,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         break;
       }
     }
-  }, [listFiles, wsService, server, call, activeSessionId]);
+  }, [listFiles, wsService, server, call, activeSessionId, shots]);
 
   // Async server replies for the two WebSocket-backed sheets.
   useEffect(() => {
@@ -193,6 +249,10 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         call('openBrowser', String(payload.port));
         return true;
 
+      case 'shot:capture':
+        captureShot(payload.source === 'camera' ? 'camera' : 'library');
+        return true;
+
       case 'watcher:toggle':
         wsService?.send({ type: 'watcher:update', payload: { id: payload.id, enabled: !!payload.on } });
         return true;
@@ -207,7 +267,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         return true;
     }
     return false;
-  }, [openTool, listFiles, server, wsService, call]);
+  }, [openTool, listFiles, server, wsService, call, captureShot]);
 
   /** Hand a card's stored notes/todos back to the page once it exists. */
   const pushNotes = useCallback((cardId: string) => {

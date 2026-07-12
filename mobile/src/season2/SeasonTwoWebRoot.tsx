@@ -268,7 +268,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <WebView
         ref={webRef}
-        source={{ html: LIQUID_DECK_HTML, baseUrl: 'https://tms.local' }}
+        source={{ html: LIQUID_DECK_HTML, baseUrl: 'http://tms.local' }}
         originWhitelist={['*']}
         javaScriptEnabled
         domStorageEnabled

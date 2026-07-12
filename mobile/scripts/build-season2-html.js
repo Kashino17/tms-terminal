@@ -105,6 +105,8 @@ patch('body end', '</body>', `<style>${xterm.XTERM_CSS}
 .card-body.is-xterm .xterm { height: 100%; }
 .card-body.is-xterm .xterm-viewport { background: transparent !important; overflow-y: auto; }
 .card-body.is-xterm .xterm-screen { width: 100% !important; }
+/* Empty states for the sheets that can legitimately have nothing in them. */
+.tool-empty { padding: 22px 8px; text-align: center; font: 12.5px var(--font-ui); color: var(--text-dim); }
 </style>
 <script>${xterm.XTERM_XTERM}</script>
 <script>${xterm.XTERM_FIT}</script>

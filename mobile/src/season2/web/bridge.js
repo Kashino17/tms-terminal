@@ -523,6 +523,46 @@
     };
   };
 
+  // Screenshots — the real workflow: grab an image, upload it to the server,
+  // then drop its path into the terminal so the AI can actually look at it.
+  // Thumbnails come straight from the server (/files/download?token=…).
+  window.buildScreenshotsSheet = function () {
+    var shots = window.TMS_DATA.screenshots || [];
+    var tiles = shots.length
+      ? shots.map(function (s, i) {
+          return '<button class="shot-tile" data-shot="' + i + '" title="' + escapeHtml(s.path) + '"' +
+            ' style="background-image:url(\'' + s.url + '\');background-size:cover;background-position:center"></button>';
+        }).join('')
+      : '<div class="shot-tile"></div><div class="shot-tile"></div><div class="shot-tile"></div>';
+    var html = '<div class="shot-grid" id="shotGrid">' + tiles + '</div>' +
+      '<div style="display:flex;gap:8px">' +
+      '<button class="btn-chip" id="shotCaptureBtn" style="flex:1">Aufnehmen</button>' +
+      '<button class="btn-chip" id="shotPickBtn" style="flex:1">Galerie</button></div>';
+    var wire = function () {
+      document.getElementById('shotCaptureBtn').addEventListener('click', function () {
+        var flash = document.getElementById('shotFlash');
+        if (flash) {
+          flash.classList.add('is-flashing');
+          setTimeout(function () { flash.classList.remove('is-flashing'); }, 160);
+        }
+        post('shot:capture', { source: 'camera' });
+      });
+      document.getElementById('shotPickBtn').addEventListener('click', function () {
+        post('shot:capture', { source: 'library' });
+      });
+      document.querySelectorAll('#toolSheetBody [data-shot]').forEach(function (tile) {
+        tile.addEventListener('click', function () {
+          var s = (window.TMS_DATA.screenshots || [])[Number(tile.dataset.shot)];
+          if (!s) return;
+          var card = activeCardId();
+          if (card) { window.__tmsInput(card, s.path); toast('Pfad ins Terminal eingefügt'); }
+          else post('clipboard:write', { text: s.path });
+        });
+      });
+    };
+    return { html: html, wire: wire };
+  };
+
   // ══ Notizen & Todos pro Terminal ══════════════════════════════════════════
   // Every mutation (add, toggle, delete) re-renders the sheet body, so a single
   // hook there catches all of them — no need to override each handler.
