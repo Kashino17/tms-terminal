@@ -82,6 +82,18 @@
    * its first frames, and fitting against that yields 0 rows — an empty box and
    * a resize the server rejects outright. Wait for a real box, then fit.
    */
+  /** Sofort vermessen. Gibt false zurück, wenn die Karte (noch) keine Größe hat. */
+  function fitNow(cardId) {
+    var t = terms[cardId];
+    if (!t) return false;
+    var host = t.host;
+    if (!host || !host.clientWidth || !host.clientHeight) return false;
+    t.box.style.width = host.clientWidth + 'px';
+    t.box.style.height = host.clientHeight + 'px';
+    try { t.fit.fit(); } catch (e) {}
+    return true;
+  }
+
   function fitSoon(cardId) {
     var t = terms[cardId];
     if (!t) return;
@@ -98,16 +110,7 @@
       t.box.style.height = host.clientHeight + 'px';
       try { t.fit.fit(); } catch (e) {}
       renderTerm(cardId);
-      if (t.pendingCreate) {
-        t.pendingCreate = false;
-        post('terminal:create', { cardId: cardId, cols: t.term.cols, rows: t.term.rows });
-      }
-      if (t.pendingAttach) {
-        var a = t.pendingAttach;
-        t.pendingAttach = null;
-        lastDims[a.sessionId] = t.term.cols + 'x' + t.term.rows;
-        post('terminal:attach', { cardId: cardId, sessionId: a.sessionId, cols: t.term.cols, rows: t.term.rows });
-      }
+
     }, 60);
   }
 
@@ -408,8 +411,13 @@
         mountTerm(cardId); // mounts, or re-homes an existing terminal
         if (!restoring && !(cardId in bound)) {
           bound[cardId] = 'pending';
-          if (terms[cardId]) { terms[cardId].pendingCreate = true; fitSoon(cardId); }
-          else post('terminal:create', { cardId: cardId });
+          fitNow(cardId); // beste verfügbare Größe — aber wir warten nicht darauf
+          var tc = terms[cardId];
+          post('terminal:create', {
+            cardId: cardId,
+            cols: (tc && tc.term.cols) || 80,
+            rows: (tc && tc.term.rows) || 24,
+          });
         }
       });
       Object.keys(terms).forEach(function (cardId) {
@@ -473,6 +481,36 @@
   };
   // scrollTerminalToBottom und updateJumpOrb bleiben die des Mockups: die
   // .card-body ist wieder der echte Scroller.
+
+  // Langes Drücken auf eine Terminalzeile startet das Markieren — die einzige
+  // Stelle in der App, an der überhaupt noch etwas markiert werden kann.
+  var selHold = null, selMoved = false, selStart = null;
+  document.addEventListener('pointerdown', function (e) {
+    var line = e.target.closest && e.target.closest('.card-body[data-card-id] .term-line');
+    if (!line) return;
+    var pre = line.closest('.card-body[data-card-id]');
+    var id = pre.getAttribute('data-card-id');
+    selMoved = false;
+    selStart = { x: e.clientX, y: e.clientY };
+    clearTimeout(selHold);
+    selHold = setTimeout(function () {
+      if (selMoved) return;
+      if (!pre.classList.contains('selection-mode') && typeof window.toggleCardSelectionMode === 'function') {
+        window.toggleCardSelectionMode(id, null);
+      }
+      if (typeof window.handleLineTap === 'function') window.handleLineTap(pre, line);
+      if (navigator.vibrate) navigator.vibrate(10);
+    }, 420);
+  }, true);
+  document.addEventListener('pointermove', function (e) {
+    if (!selStart) return;
+    if (Math.abs(e.clientX - selStart.x) > 8 || Math.abs(e.clientY - selStart.y) > 8) {
+      selMoved = true;               // gescrollt, nicht gedrückt gehalten
+      clearTimeout(selHold);
+    }
+  }, true);
+  document.addEventListener('pointerup', function () { clearTimeout(selHold); selStart = null; }, true);
+  document.addEventListener('pointercancel', function () { clearTimeout(selHold); selStart = null; }, true);
 
   // Ein Tipp ins Terminal (außerhalb des Auswahlmodus) holt die Tastatur.
   document.addEventListener('click', function (e) {
@@ -551,8 +589,10 @@
       mountTerm(cardId);
       flush(cardId);
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
-      // Erst messen, dann anhängen — mit der echten Spaltenzahl.
-      if (terms[cardId]) { terms[cardId].pendingAttach = { sessionId: sessionId }; fitSoon(cardId); }
+      fitNow(cardId);
+      var bd = dims(cardId);
+      lastDims[sessionId] = bd.cols + 'x' + bd.rows;
+      post('terminal:attach', { cardId: cardId, sessionId: sessionId, cols: bd.cols, rows: bd.rows });
     },
     /** PTY output. */
     output: function (sessionId, chunk) {

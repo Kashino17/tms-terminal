@@ -292,6 +292,11 @@
     border: 1px solid var(--glass-border); border-radius: 999px; overflow: hidden; touch-action: pan-y;
     transition: transform 340ms var(--spring), box-shadow 340ms var(--spring); }
   /* Long-press lifts the bar: the sign that it can now be swiped to the other one. */
+  /* Langes Drücken darf NIRGENDS Androids Textauswahl oder sein App-Menü öffnen.
+     Markiert wird ausschließlich im Terminal — über dessen Auswahlmodus. Nur
+     echte Eingabefelder dürfen weiterhin Text auswählen. */
+  html, body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  input, textarea, .fx-preview { -webkit-user-select: text; user-select: text; }
   #dock { -webkit-user-select: none; user-select: none; }
   #dockInput { -webkit-user-select: text; user-select: text; }
   #dock.is-switching { transform: translateX(-50%) translateY(-6px) scale(1.03); box-shadow: 0 16px 40px rgba(0,0,0,.42); }

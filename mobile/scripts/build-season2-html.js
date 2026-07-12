@@ -124,6 +124,7 @@ patch('body end', '</body>', `<style>${xterm.XTERM_CSS}
    zeichnen die Zeilen selbst in genau die Form, für die die Selektion, die
    Griffe, die Kopieren-Bubble und der Jump-Orb des Mockups gebaut sind. */
 #tmsEmulators { position: fixed; left: -99999px; top: 0; opacity: 0; pointer-events: none; }
+#tmsEmulators textarea { pointer-events: auto; }
 .card-body { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .card-body .term-line { display: block; white-space: pre-wrap; word-break: break-word; }
 .shot-choice { display: flex; gap: 10px; margin-bottom: 12px; }
