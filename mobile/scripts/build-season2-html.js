@@ -127,6 +127,9 @@ patch('body end', '</body>', `<style>${xterm.XTERM_CSS}
 #tmsEmulators textarea { pointer-events: auto; }
 .card-body { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .card-body { overflow-x: hidden; }
+/* Ein 16px-Griff ist für Finger zu klein: unsichtbare 44px-Trefferfläche. */
+.sel-handle::after { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px;
+  transform: translate(-50%, -50%); border-radius: 50%; }
 /* Der Emulator hat schon umgebrochen — die CSS darf NICHT nochmal umbrechen. */
 .card-body .term-line { display: block; white-space: pre; }
 .card-body .term-line__text { white-space: pre; }

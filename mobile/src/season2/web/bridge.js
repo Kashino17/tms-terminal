@@ -246,6 +246,11 @@
     var t = terms[cardId];
     var pre = t && t.host;
     if (!t || !pre || !pre.isConnected) return;
+    // Mitten im Griff-Drag nichts neu bauen — der Output wird nachgeholt.
+    if (typeof window.__tmsDragging === 'function' && window.__tmsDragging(cardId)) {
+      scheduleRender(cardId);
+      return;
+    }
 
     var buf = t.term.buffer.active;
     var end = buf.baseY + t.term.rows;                 // eine Zeile hinter der letzten
@@ -336,7 +341,9 @@
         });
       }
     }
-    if (atBottom) pre.scrollTop = pre.scrollHeight;
+    // Wer gerade markiert, will lesen — nicht ans Ende springen.
+    var selecting = cs && (cs.selectionMode || cs.selection);
+    if (atBottom && !selecting) pre.scrollTop = pre.scrollHeight;
     // Das Neuzeichnen ersetzt den Karteninhalt — Griffe und Kopieren-Bubble sind
     // Kinder davon und wären sonst bei jeder Ausgabe wieder weg.
     if (cs && cs.selection && typeof window.positionHandlesAndBubble === 'function') {
@@ -475,6 +482,55 @@
   window.showReplay = function () {};
   window.replaySession = function () {};
   window.startLatencyTicker = function () { /* React Native drives the real RTT */ };
+
+  // ── Auswahl-Griffe ────────────────────────────────────────────────────────
+  // Das Original suchte die Zielzeile mit elementFromPoint — unter dem Finger
+  // liegt aber der GRIFF selbst, also fand es meistens nichts und der Drag tat
+  // nichts. Hier wird die Zeile aus der Fingerposition BERECHNET (Zeilenhöhe ist
+  // bekannt), am Rand wird nachgescrollt, und solange gezogen wird, pausiert das
+  // Neuzeichnen — sonst risse laufender Output den Griff aus der Hand.
+  var handleDragCard = null;
+  window.__tmsDragging = function (cardId) { return handleDragCard === cardId; };
+  window.startHandleDrag = function (e, cardId, kind) {
+    e.stopPropagation();
+    e.preventDefault();
+    var handle = e.currentTarget;
+    var pre = document.querySelector('.card-body[data-card-id="' + cardId + '"]');
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    if (!pre || !cs || !cs.selection) return;
+    try { handle.setPointerCapture(e.pointerId); } catch (err) {}
+    handleDragCard = cardId;
+    var probe = pre.querySelector('.term-line');
+    var lineH = probe ? probe.getBoundingClientRect().height : 20;
+    var padTop = parseFloat(getComputedStyle(pre).paddingTop) || 0;
+
+    function apply(ev) {
+      var base = pre.getBoundingClientRect();
+      var total = pre.querySelectorAll('.term-line').length;
+      var idx = Math.floor((ev.clientY - base.top - padTop + pre.scrollTop) / lineH);
+      idx = Math.max(0, Math.min(total - 1, idx));
+      if (kind === 'start') cs.selection.start = Math.min(idx, cs.selection.end);
+      else cs.selection.end = Math.max(idx, cs.selection.start);
+      pre.querySelectorAll('.term-line').forEach(function (l, i) {
+        l.classList.toggle('is-selected', i >= cs.selection.start && i <= cs.selection.end);
+      });
+      window.positionHandlesAndBubble(cardId);
+      // Am Rand weiterziehen scrollt nach — sonst endete die Auswahl am Sichtfeld.
+      if (ev.clientY < base.top + 28) pre.scrollTop -= lineH;
+      else if (ev.clientY > base.bottom - 28) pre.scrollTop += lineH;
+    }
+    function end(ev) {
+      handleDragCard = null;
+      try { handle.releasePointerCapture(ev.pointerId); } catch (err) {}
+      handle.removeEventListener('pointermove', apply);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      scheduleRender(cardId); // aufgestauten Output nachzeichnen
+    }
+    handle.addEventListener('pointermove', apply);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  };
 
   window.sendTerminalCommand = function (id, cmd) {
     if (cmd && cmd.trim()) window.__tmsInput(id, cmd.trim() + '\r');
