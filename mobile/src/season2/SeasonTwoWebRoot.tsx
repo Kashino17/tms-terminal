@@ -24,6 +24,7 @@ import { getConnection } from '../services/websocket.service';
 import { useS2ConnStore, useS2Connection } from './screens/TerminalsScreen';
 import { useDictation } from './hooks/useDictation';
 import { useManagerWire } from './manager/useManagerWire';
+import { useManagerStore } from '../store/managerStore';
 import { useManagerBridge, useCloudBridge } from './web/useSeasonTwoBackends';
 import { useSheetBridges } from './web/useSheetBridges';
 import { NativeBrowserLayer, type BrowserRect } from './web/NativeBrowserLayer';
@@ -146,6 +147,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         if (tab) useTerminalStore.getState().removeTab(server.id, tab.id);
         dropScrollback(m.sessionId);
         call('sessionClosed', m.sessionId); // die Seite räumt die Karte weg
+        return;
+      }
+      if (m?.type === 'manager:memory_data' && m.payload?.memory) {
+        const mem = m.payload.memory;
+        const items: Array<{ id: string; text: string; time: string }> = [];
+        for (const j of mem.journal ?? []) items.push({ id: `j-${j.date}`, text: j.text, time: j.date });
+        for (const i of mem.insights ?? []) items.push({ id: `i-${i.date}-${i.text.slice(0, 12)}`, text: i.text, time: i.date });
+        call('setManagerMemory', items.slice(-40).reverse());
         return;
       }
       if (m?.type === 'terminal:error' && m.sessionId && m.sessionId !== 'none') {
@@ -356,6 +365,25 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
       case 'nav:screen':
         if (payload.screen === 'cloud') loadCloud();
+        if (payload.screen === 'manager') {
+          // Memory frisch vom Server; Artefakte aus den Manager-Nachrichten
+          // (Bilder/Präsentationen), antippbar über den In-App-Browser.
+          wsService.send({ type: 'manager:memory_read' });
+          const msgs = useManagerStore.getState().messages ?? [];
+          const arts: Array<{ id: string; title: string; kind: string; time: string; url: string }> = [];
+          for (const msg of msgs) {
+            const when = new Date(msg.timestamp).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+            for (const f of msg.images ?? []) {
+              arts.push({ id: `img-${f}`, title: f, kind: 'Bild', time: when,
+                url: `http://${server.host}:${server.port}/generated-images/${encodeURIComponent(f)}?token=${token}` });
+            }
+            for (const f of msg.presentations ?? []) {
+              arts.push({ id: `prs-${f}`, title: f, kind: 'Präsentation', time: when,
+                url: `http://${server.host}:${server.port}/generated-presentations/${encodeURIComponent(f)}?token=${token}` });
+            }
+          }
+          call('setManagerArtifacts', arts.reverse());
+        }
         break;
 
       case 'browser:sync':
@@ -431,7 +459,11 @@ const MANAGER_MIC = '__manager__';
  * sheet wants a tool, a target and a question. Pull those out of the snippet —
  * and when they are not in there, show the snippet rather than an empty sheet.
  */
-function describePrompt(snippet: string): { tool: string; target: string; question: string; kind?: string } {
+interface PromptOption { id: string; label: string; description?: string }
+function describePrompt(snippet: string): {
+  tool: string; target: string; question: string; kind?: string;
+  options?: PromptOption[]; multiSelect?: boolean;
+} {
   const clean = snippet.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').trim();
   const lines = clean.split('\n').map((l) => l.trim()).filter(Boolean);
   const tool = clean.match(/\b(Bash|Edit|MultiEdit|Write|Read|WebFetch|WebSearch|Task|Grep|Glob|NotebookEdit)\b/)?.[1] ?? 'Berechtigung';
@@ -440,10 +472,18 @@ function describePrompt(snippet: string): { tool: string; target: string; questi
     clean.match(/(?:in|to|from)\s+([\w./-]+\.[a-z]{1,5})/i)?.[1] ??
     '';
   const question = lines.find((l) => l.endsWith('?')) ?? lines[0] ?? 'Erlauben?';
-  // A numbered choice list is a question, not a yes/no permission — the sheet
-  // for those is a different one, and Auto-Approve must not touch it.
-  const kind = /^\s*(❯\s*)?[1-9][.)]\s/m.test(clean) && lines.length > 2 ? 'question' : undefined;
-  return { tool, target, question, kind };
+
+  // Nummerierte Auswahloptionen herausziehen: "❯ 1. Ja", "2) Nein, sag mehr" …
+  // Das Frage-Sheet des Mockups braucht {id,label}; die id ist die Ziffer, die
+  // später als Taste an die PTY geht. "[ ]"/"[x]" markiert Mehrfachauswahl.
+  const options: PromptOption[] = [];
+  for (const l of lines) {
+    const m = l.match(/^(?:❯\s*)?([1-9])[.)]\s+(?:\[[ x]\]\s+)?(.+)$/);
+    if (m) options.push({ id: m[1], label: m[2].trim() });
+  }
+  const kind = options.length >= 2 ? 'question' : undefined;
+  const multiSelect = /\[[ x]\]/.test(clean);
+  return { tool, target, question, kind, options: kind ? options : undefined, multiSelect };
 }
 
 const styles = StyleSheet.create({

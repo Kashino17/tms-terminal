@@ -961,12 +961,6 @@
   function fileRowHtml(f) {
     var isDir = f.type === 'dir';
     var path = f.path || '';
-    if (filesRenaming === path) {
-      return '<div class="tool-row">' +
-        '<input class="term-input fx-input" id="fxRename" value="' + escapeHtml(f.name.replace(/\/$/, '')) + '">' +
-        '<button class="btn-chip" data-fx="rename-ok">OK</button>' +
-        '<button class="btn-chip" data-fx="cancel">Abbrechen</button></div>';
-    }
     var head = '<button class="tool-row is-tap" ' + (isDir ? 'data-cd="' : 'data-path="') + escapeHtml(isDir ? f.name : path) + '">' +
       '<span class="tool-row__icon">' + (isDir ? '▸' : '·') + '</span>' +
       '<span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
@@ -982,7 +976,6 @@
                       '<button class="btn-chip" data-fx="preview" data-target="' + escapeHtml(path) + '">Vorschau</button>' +
                       '<button class="btn-chip" data-fx="download" data-target="' + escapeHtml(path) + '">Laden</button>') +
         '<button class="btn-chip" data-fx="fav" data-target="' + escapeHtml(path) + '">' + (fav ? '★ Favorit' : '☆ Favorit') + '</button>' +
-        '<button class="btn-chip" data-fx="rename" data-target="' + escapeHtml(path) + '">Umbenennen</button>' +
         '<button class="btn-chip btn-chip--danger" data-fx="del" data-target="' + escapeHtml(path) + '">' +
           (filesConfirmDel === path ? 'Wirklich löschen?' : 'Löschen') + '</button>' +
         '</div>';
@@ -1126,20 +1119,45 @@
   window.__tmsInsert = insertIntoTerminal;
 
   // Snippets — tapping one writes it into the active terminal for real.
+  var snipConfirmDel = null;
   window.buildSnippetsSheet = function () {
     var list = window.TMS_DATA.snippets || [];
-    var html = '<div class="tool-list">' + list.map(function (s) {
-      return '<button class="tool-row is-tap" data-snippet="' + escapeHtml(s.id) + '">' +
+    var addRow = '<div class="fx-head" style="margin-bottom:10px">' +
+      '<input class="term-input fx-input" id="snipNew" placeholder="Neues Snippet…">' +
+      '<button class="btn-chip" id="snipAdd">Hinzufügen</button></div>';
+    var html = addRow + '<div class="tool-list">' + list.map(function (s) {
+      return '<div class="fx-row">' +
+        '<button class="tool-row is-tap" data-snippet="' + escapeHtml(s.id) + '">' +
         '<span class="tool-row__name">' + escapeHtml(s.label) + '</span>' +
-        '<span class="tool-row__meta mono-text">' + escapeHtml(s.cmd) + '</span></button>';
-    }).join('') + '</div>';
+        '<span class="tool-row__meta mono-text">' + escapeHtml(s.cmd) + '</span></button>' +
+        '<button class="fx-more" data-snipdel="' + escapeHtml(s.id) + '" aria-label="Löschen">' +
+          (snipConfirmDel === s.id ? '✕?' : '✕') + '</button></div>';
+    }).join('') + (list.length ? '' : '<div class="tool-empty">Keine Snippets.</div>') + '</div>';
     return {
       html: html,
       wire: function () {
+        var inp = document.getElementById('snipNew');
+        document.getElementById('snipAdd').addEventListener('click', function () {
+          if (inp.value.trim()) { post('snippet:add', { text: inp.value.trim() }); inp.value = ''; }
+        });
         document.querySelectorAll('#toolSheetBody [data-snippet]').forEach(function (btn) {
           btn.addEventListener('click', function () {
             var sn = (window.TMS_DATA.snippets || []).find(function (x) { return x.id === btn.dataset.snippet; });
             if (sn) insertIntoTerminal(sn.cmd, 'In Terminal eingefügt');
+          });
+        });
+        document.querySelectorAll('#toolSheetBody [data-snipdel]').forEach(function (btn) {
+          btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var id = btn.dataset.snipdel;
+            if (snipConfirmDel !== id) {
+              snipConfirmDel = id;
+              btn.textContent = '✕?';
+              setTimeout(function () { if (snipConfirmDel === id) { snipConfirmDel = null; btn.textContent = '✕'; } }, 3000);
+            } else {
+              snipConfirmDel = null;
+              post('snippet:delete', { id: id });
+            }
           });
         });
       },
@@ -1200,6 +1218,7 @@
   }
   window.buildProcessesSheet = withEmptyState(window.buildProcessesSheet, 'processes', 'Lade Prozesse vom Server …');
 
+  var watchConfirmDel = null;
   var origBuildWatchers = window.buildWatchersSheet;
   window.buildWatchersSheet = function () {
     var list = window.TMS_DATA.watchers || [];
@@ -1213,6 +1232,24 @@
           if (input) input.addEventListener('change', function () {
             post('watcher:toggle', { id: row.dataset.watcher, on: input.checked });
           });
+          var del = document.createElement('button');
+          del.className = 'fx-more';
+          del.textContent = '✕';
+          del.setAttribute('aria-label', 'Watcher löschen');
+          del.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var id = row.dataset.watcher;
+            if (watchConfirmDel !== id) {
+              watchConfirmDel = id;
+              del.textContent = '✕?';
+              setTimeout(function () { if (watchConfirmDel === id) { watchConfirmDel = null; del.textContent = '✕'; } }, 3000);
+            } else {
+              watchConfirmDel = null;
+              post('watcher:delete', { id: id });
+            }
+          });
+          row.style.position = 'relative';
+          row.appendChild(del);
         });
       },
     };
@@ -1599,6 +1636,60 @@
     document.querySelectorAll('.rail-item[data-id]').forEach(function (item) {
       var prev = item.querySelector('.rail-item__preview');
       if (prev && window.__tmsPreview) prev.innerHTML = window.__tmsPreview(item.getAttribute('data-id'), 2);
+    });
+  };
+
+  // ── Multiple-Choice-Rückfragen: die Antwort erreicht die PTY wirklich ─────
+  // Das Mockup echote die Auswahl nur lokal (sim.respond() ohne Argument = nur
+  // Enter). Ein echtes Menü von Claude Code will die ZIFFER der Option — bei
+  // Mehrfachauswahl Ziffer + Leertaste je Option, dann Enter.
+  window.submitQuestionAnswer = function () {
+    var st = window.__tmsState;
+    var id = st && st.pendingPromptId;
+    if (!id) return;
+    var cs = window.__tmsCardState && window.__tmsCardState[id];
+    var data = cs && cs.pendingPrompt;
+    if (!data) return;
+    var optionsEl = document.getElementById('questionOptions');
+    var checked = Array.prototype.slice.call(optionsEl.querySelectorAll('input:checked'));
+    if (!checked.length) return;
+    var comment = (document.getElementById('questionComment').value || '').trim();
+
+    var keys = '';
+    if (data.multiSelect) {
+      checked.forEach(function (inp) { keys += inp.value + ' '; });
+      keys += '\r';
+    } else {
+      keys = checked[0].value; // Einzelauswahl: die Ziffer wählt UND bestätigt
+    }
+    window.__tmsInput(id, keys);
+    // Eine Anmerkung kann das TUI-Menü nicht aufnehmen — sie geht als
+    // Folgezeile hinterher, sobald das Menü die Auswahl verarbeitet hat.
+    if (comment) setTimeout(function () { window.__tmsInput(id, comment + '\r'); }, 400);
+
+    cs.pendingPrompt = null;
+    st.pendingPromptId = null;
+    window.closeSheet(document.getElementById('questionSheetWrap'));
+    if (typeof window.updatePendingBadge === 'function') window.updatePendingBadge();
+    if (typeof window.setIslandActivity === 'function') window.setIslandActivity('live', 'Claude arbeitet');
+  };
+
+  // ── Manager: Memory & Artifacts echt ──────────────────────────────────────
+  window.TMSBridge.setManagerMemory = function (items) {
+    window.TMS_DATA.manager.memory = items || [];
+    if (typeof window.renderManagerMemory === 'function') window.renderManagerMemory();
+  };
+  window.TMSBridge.setManagerArtifacts = function (items) {
+    window.TMS_DATA.manager.artifacts = items || [];
+    if (typeof window.renderManagerArtifacts === 'function') window.renderManagerArtifacts();
+    var host = document.getElementById('managerArtifacts');
+    if (!host) return;
+    // Antippen öffnet das Artefakt im In-App-Browser.
+    Array.prototype.forEach.call(host.querySelectorAll('.artifact-card'), function (card, i) {
+      var item = (window.TMS_DATA.manager.artifacts || [])[i];
+      if (item && item.url) card.addEventListener('click', function () {
+        window.TMSBridge.openBrowser(item.url);
+      });
     });
   };
 

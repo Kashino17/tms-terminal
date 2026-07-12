@@ -25,6 +25,8 @@ import { usePortForwardingStore } from '../../store/portForwardingStore';
 import { useNotesStore } from '../../store/notesStore';
 import { useSQLStore } from '../../store/sqlStore';
 import { useNotesStore as useS2NotesStore } from '../store/notesStore';
+import { Linking } from 'react-native';
+import { useFavPathsStore } from '../../store/favPathsStore';
 import { fetchPrayerTimes, getCurrentLocation } from '../../services/prayer.service';
 
 type Call = (fn: string, ...args: unknown[]) => void;
@@ -166,10 +168,21 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
     }
   }, [server, token, shots, downloadUrl, call]);
 
+  const pushSnippets = useCallback(async () => {
+    const raw = await AsyncStorage.getItem(SNIPPETS_KEY);
+    const list: Array<{ id: string; text: string }> = raw ? JSON.parse(raw) : [];
+    call('setTool', 'snippets', list.map((sn) => ({
+      id: sn.id,
+      label: sn.text.split('\n')[0].slice(0, 40),
+      cmd: sn.text,
+    })));
+  }, [call]);
+
   const openTool = useCallback(async (tool: string) => {
     openSheet.current = tool;
     switch (tool) {
       case 'files':
+        call('setFavs', useFavPathsStore.getState().paths.map((f) => f.path));
         await listFiles(cwd.current);
         break;
 
@@ -191,16 +204,9 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         break;
       }
 
-      case 'snippets': {
-        const raw = await AsyncStorage.getItem(SNIPPETS_KEY);
-        const list: Array<{ id: string; text: string }> = raw ? JSON.parse(raw) : [];
-        call('setTool', 'snippets', list.map((s) => ({
-          id: s.id,
-          label: s.text.split('\n')[0].slice(0, 40),
-          cmd: s.text,
-        })));
+      case 'snippets':
+        await pushSnippets();
         break;
-      }
 
       case 'sql': {
         const entries = activeSessionId ? useSQLStore.getState().entries[activeSessionId] ?? [] : [];
@@ -229,7 +235,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         break;
       }
     }
-  }, [listFiles, wsService, server, call, activeSessionId, shots]);
+  }, [listFiles, wsService, server, call, activeSessionId, shots, pushSnippets]);
 
   // Async server replies for the two WebSocket-backed sheets.
   useEffect(() => {
@@ -274,6 +280,100 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
     switch (type) {
       case 'tool:open':
         openTool(payload.tool);
+        return true;
+
+      case 'files:preview': {
+        if (!server || !token) return true;
+        (async () => {
+          try {
+            const r = await fetch(`http://${server.host}:${server.port}/files/read?path=${encodeURIComponent(payload.path)}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const d = await r.json();
+            if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
+            call('filePreview', payload.path.split('/').pop(), d.content ?? '');
+          } catch (e: any) { call('toast', `Vorschau: ${e?.message ?? 'fehlgeschlagen'}`); }
+        })();
+        return true;
+      }
+
+      case 'files:download':
+        // Der System-Browser lädt die Datei herunter (Token in der URL, wie im
+        // klassischen Explorer — Tailscale verschlüsselt den Transport).
+        Linking.openURL(downloadUrl(payload.path)).catch(() => call('toast', 'Download fehlgeschlagen'));
+        return true;
+
+      case 'files:fav': {
+        const fav = useFavPathsStore.getState();
+        if (fav.isFav(payload.path)) fav.remove(payload.path);
+        else fav.add(payload.path);
+        call('setFavs', useFavPathsStore.getState().paths.map((f) => f.path));
+        listFiles(cwd.current); // Sheet neu zeichnen mit aktualisierten Sternen
+        return true;
+      }
+
+      case 'files:goto':
+        listFiles(String(payload.path ?? '~'));
+        return true;
+
+      case 'files:mkdir': {
+        if (!server || !token) return true;
+        (async () => {
+          try {
+            const r = await fetch(`http://${server.host}:${server.port}/files/mkdir`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ path: `${cwd.current.replace(/\/$/, '')}/${payload.name}` }),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            call('toast', 'Ordner angelegt');
+            listFiles(cwd.current);
+          } catch (e: any) { call('toast', `Ordner: ${e?.message ?? 'fehlgeschlagen'}`); }
+        })();
+        return true;
+      }
+
+      case 'files:trash': {
+        if (!server || !token) return true;
+        (async () => {
+          try {
+            const r = await fetch(`http://${server.host}:${server.port}/files/trash`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ paths: [payload.path] }),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            call('toast', 'In den Papierkorb gelegt');
+            listFiles(cwd.current);
+          } catch (e: any) { call('toast', `Löschen: ${e?.message ?? 'fehlgeschlagen'}`); }
+        })();
+        return true;
+      }
+
+      case 'snippet:add': {
+        (async () => {
+          const raw = await AsyncStorage.getItem(SNIPPETS_KEY);
+          const list: Array<{ id: string; text: string }> = raw ? JSON.parse(raw) : [];
+          list.unshift({ id: `s-${Date.now()}`, text: String(payload.text) });
+          await AsyncStorage.setItem(SNIPPETS_KEY, JSON.stringify(list));
+          pushSnippets();
+        })();
+        return true;
+      }
+
+      case 'snippet:delete': {
+        (async () => {
+          const raw = await AsyncStorage.getItem(SNIPPETS_KEY);
+          const list: Array<{ id: string; text: string }> = raw ? JSON.parse(raw) : [];
+          await AsyncStorage.setItem(SNIPPETS_KEY, JSON.stringify(list.filter((sn) => sn.id !== payload.id)));
+          pushSnippets();
+        })();
+        return true;
+      }
+
+      case 'watcher:delete':
+        wsService?.send({ type: 'watcher:delete', payload: { id: payload.id } });
+        setTimeout(() => wsService?.send({ type: 'watcher:list' }), 300);
         return true;
 
       case 'files:cd': {
@@ -332,7 +432,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         return true;
     }
     return false;
-  }, [openTool, listFiles, server, wsService, call, captureShot]);
+  }, [openTool, listFiles, server, token, wsService, call, captureShot, pushSnippets]);
 
   /** Hand a card's stored notes/todos back to the page once it exists. */
   const pushNotes = useCallback((cardId: string) => {
