@@ -229,7 +229,7 @@
   #statusHeader {
     position: fixed; top: calc(var(--safe-top) + 8px); left: 50%; z-index: 60;
     transform: translateX(-50%);
-    width: min(92vw, 400px);
+    width: max-content; max-width: min(92vw, 400px);
     border-radius: 22px; border: 1px solid var(--glass-border);
     padding: 0; overflow: hidden; cursor: pointer;
     transition: width var(--dur-snappy) var(--spring-snappy),
@@ -243,17 +243,19 @@
     box-shadow: 0 18px 50px rgba(0,0,0,.35);
   }
   #statusHeader::before { left: 14%; right: 14%; }
-  .island-compact { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; }
-  /* Terminal-Bildschirm: die Insel wird zur Mini-Aktionsleiste (Neu/Stack/
-     Liste/Übersicht) statt Status zu zeigen — dafür ist ein Tap auf die
-     Insel weiterhin da (Details bleiben einen Tap entfernt). */
-  .island-term-actions { display: none; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
-  #statusHeader.is-terminal-mode .status-hd__activity,
-  #statusHeader.is-terminal-mode .status-hd__metrics { display: none; }
+  .island-compact { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; }
+  /* Terminal-Bildschirm: die Aktivitätszeile (Punkt+"Bereit") weicht den
+     vier Mini-Aktionen — Ping und Gebetszeit bleiben, wie überall sonst
+     auch, einfach stehen. Die Insel selbst ist "fit-content": ohne die
+     Aktivitätszeile zieht sie sich von selbst schmaler, statt die Icons in
+     eine unverändert breite Hülle zu klatschen. */
+  .island-term-actions { display: none; align-items: center; gap: 3px; flex: none;
+    padding: 3px; border-radius: 11px; background: rgba(var(--overlay-rgb),.06); }
+  #statusHeader.is-terminal-mode .status-hd__activity { display: none; }
   #statusHeader.is-terminal-mode .island-term-actions { display: flex; }
-  .island-term-actions .overview-btn { width: 28px; height: 28px; border-radius: 9px; }
-  .island-term-actions .view-toggle { padding: 2px; gap: 2px; align-self: center; }
-  .island-term-actions .view-toggle__btn { min-height: 24px; padding: 5px 7px; }
+  .island-term-actions .overview-btn { width: 26px; height: 26px; border-radius: 8px; }
+  .island-term-actions .view-toggle { padding: 2px; gap: 2px; align-self: center; background: transparent; }
+  .island-term-actions .view-toggle__btn { min-height: 22px; padding: 4px 6px; }
   /* Apple-artiger "Pop": ein kurzer Bounce, wenn der Insel-Inhalt wechselt
      (Bildschirmwechsel rein/raus aus Terminals) — Compositor-only. */
   @keyframes islandPop { 0% { transform: translateX(-50%) scale(1); } 45% { transform: translateX(-50%) scale(1.035); } 100% { transform: translateX(-50%) scale(1); } }
