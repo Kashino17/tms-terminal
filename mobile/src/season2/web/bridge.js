@@ -1048,6 +1048,38 @@
     return '<div class="fx-row">' + head + menu + '</div>';
   }
 
+  /** Kleines Menü für einen Favoriten-Chip — kein FileEntry bekannt, nur der
+   *  Pfad, darum nur die drei Aktionen, die ohne isDir/Größe auskommen. */
+  function openFavMenu(p) {
+    var old = document.getElementById('fxFavMenu');
+    if (old) old.remove();
+    var el = document.createElement('div');
+    el.id = 'fxFavMenu';
+    el.style.cssText = 'position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,.45)';
+    el.innerHTML = '<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px">' +
+      '<div style="font-weight:800;font-size:13px;padding:2px 4px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">★ ' + escapeHtml(p.split('/').pop() || p) + '</div>' +
+      '<button class="btn-chip" data-fm="open">Öffnen</button>' +
+      '<button class="btn-chip" data-fm="copyPath">Pfad kopieren</button>' +
+      '<button class="btn-chip" data-fm="cd">Im Terminal öffnen (cd)</button>' +
+      '<button class="btn-chip btn-chip--danger" data-fm="unfav">Favorit entfernen</button>' +
+      '<button class="btn-chip" data-fm="close">Abbrechen</button></div>';
+    document.body.appendChild(el);
+    el.addEventListener('click', function (ev) {
+      var btn = ev.target.closest('[data-fm]');
+      if (!btn) { if (ev.target === el) el.remove(); return; }
+      var m = btn.dataset.fm;
+      el.remove();
+      if (m === 'open') post('files:goto', { path: p });
+      else if (m === 'copyPath') window.fsAction('copyPath', { paths: [p] });
+      else if (m === 'cd') {
+        var wrap = document.getElementById('toolSheetWrap');
+        if (wrap && typeof window.closeSheet === 'function') window.closeSheet(wrap);
+        window.fsAction('cd', { path: p });
+      }
+      else if (m === 'unfav') post('files:fav', { path: p });
+    });
+  }
+
   window.buildFilesSheet = function () {
     var all = window.TMS_DATA.files || [];
     var q = filesFilter.toLowerCase();
@@ -1122,8 +1154,22 @@
             btn.addEventListener('click', function () { insertIntoTerminal(btn.dataset.path, 'Pfad eingefügt'); });
           });
           body.querySelectorAll('[data-fx]').forEach(function (btn) {
+            // Favoriten-Chips: Long-Press öffnet ein Mini-Menü (Pfad kopieren,
+            // cd, entfernen) statt sofort hineinzunavigieren — ein Fingertipp
+            // bleibt "öffnen", genau wie bei den normalen Zeilen.
+            var lpTimer = null, lpFired = false;
+            if (btn.dataset.fx === 'gofav') {
+              btn.addEventListener('pointerdown', function () {
+                lpFired = false;
+                lpTimer = setTimeout(function () { lpFired = true; openFavMenu(btn.dataset.target); }, 550);
+              });
+              ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (ev) {
+                btn.addEventListener(ev, function () { clearTimeout(lpTimer); });
+              });
+            }
             btn.addEventListener('click', function (e) {
               e.stopPropagation();
+              if (lpFired) { lpFired = false; return; }
               var a = btn.dataset.fx, t = btn.dataset.target;
               if (a === 'menu') { filesMenuFor = filesMenuFor === t ? null : t; filesConfirmDel = null; rerender(); }
               else if (a === 'copyPath') window.fsAction('copyPath', { paths: [t] });
