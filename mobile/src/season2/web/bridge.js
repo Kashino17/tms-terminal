@@ -1585,6 +1585,9 @@
   function dockReset() {
     dockInput.value = '';
     dockLast = '';
+    // Das Feld darf mitwachsen (bis 3 Zeilen) — nach dem Leeren muss es auch
+    // wieder auf eine Zeile zurückfallen, sonst bleibt die Bar aufgebläht.
+    if (typeof window.autoGrowInput === 'function') window.autoGrowInput(dockInput);
   }
   if (dockInput) {
     dockInput.addEventListener('input', dockToPty);

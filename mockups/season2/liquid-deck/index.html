@@ -33,6 +33,12 @@
     --dur-snappy: 300ms;
     --dur-gentle: 450ms;
     --ease-exit: cubic-bezier(0.4, 0, 0.7, 0.2);
+    /* One shared motion vocabulary — every animated surface picks from these
+       four instead of inventing its own curve. */
+    --spring-soft: cubic-bezier(.32,1.06,.35,1);   /* page/screens push-back */
+    --spring-pop: cubic-bezier(.30,1.18,.34,1);    /* sheets & panels enter  */
+    --ease-out: cubic-bezier(.22,1,.36,1);         /* small UI settles       */
+    --ease-exit-hard: cubic-bezier(.4,0,.68,.06);  /* sheets & panels leave  */
     --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
     /* Icon ramp — three sizes only */
@@ -142,13 +148,13 @@
      every glass surface, source of the "light" glass refracts.
      ============================================================ */
   .atmosphere { position: fixed; inset: 0; overflow: hidden; z-index: 0; pointer-events: none; }
-  .atmosphere .blob { position: absolute; border-radius: 50%; filter: blur(60px); opacity: .55; will-change: transform; }
-  .blob--a { width: 60vmax; height: 60vmax; left: -20vmax; top: -24vmax; background: radial-gradient(circle at 30% 30%, rgba(var(--accent-rgb),var(--blob-a1)), transparent 65%); animation: driftA 46s ease-in-out infinite alternate; }
-  .blob--b { width: 52vmax; height: 52vmax; right: -18vmax; top: 10vmax; background: radial-gradient(circle at 60% 40%, rgba(var(--accent-warm-rgb),var(--blob-a2)), transparent 65%); animation: driftB 58s ease-in-out infinite alternate; }
-  .blob--c { width: 46vmax; height: 46vmax; left: 8vmax; bottom: -20vmax; background: radial-gradient(circle at 50% 50%, rgba(var(--accent-cool-rgb),var(--blob-a3)), transparent 65%); animation: driftC 64s ease-in-out infinite alternate; }
-  @keyframes driftA { from { transform: translate(0,0) scale(1); } to { transform: translate(6vmax,8vmax) scale(1.08); } }
-  @keyframes driftB { from { transform: translate(0,0) scale(1); } to { transform: translate(-8vmax,4vmax) scale(0.94); } }
-  @keyframes driftC { from { transform: translate(0,0) scale(1); } to { transform: translate(4vmax,-6vmax) scale(1.06); } }
+  /* Static on purpose: a permanently drifting background forces every
+     backdrop-filter surface above it to re-blur EVERY frame — the single
+     biggest jank source on mobile GPUs. The look is identical when still. */
+  .atmosphere .blob { position: absolute; border-radius: 50%; filter: blur(60px); opacity: .55; }
+  .blob--a { width: 60vmax; height: 60vmax; left: -20vmax; top: -24vmax; background: radial-gradient(circle at 30% 30%, rgba(var(--accent-rgb),var(--blob-a1)), transparent 65%); }
+  .blob--b { width: 52vmax; height: 52vmax; right: -18vmax; top: 10vmax; background: radial-gradient(circle at 60% 40%, rgba(var(--accent-warm-rgb),var(--blob-a2)), transparent 65%); }
+  .blob--c { width: 46vmax; height: 46vmax; left: 8vmax; bottom: -20vmax; background: radial-gradient(circle at 50% 50%, rgba(var(--accent-cool-rgb),var(--blob-a3)), transparent 65%); }
   @media (prefers-reduced-motion: reduce) {
     .atmosphere .blob { animation: none; }
   }
@@ -201,12 +207,30 @@
      spring); tap outside or on the compact row → morphs back.
      Carries: session/agent activity, ping latency, prayer countdown.
      ============================================================ */
-  @keyframes islandPulse { 0% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb),.55); } 70% { box-shadow: 0 0 0 7px rgba(var(--accent-rgb),0); } 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb),0); } }
+  /* Composited pulse primitives — transform/opacity only, never box-shadow
+     (box-shadow animates on the raster thread and repaints every frame). */
+  @keyframes dotBreathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .5; transform: scale(.85); } }
+  @keyframes glowBreathe { 0%, 100% { opacity: 1; } 50% { opacity: .72; } }
+  @keyframes ringPulse { 0% { opacity: .6; transform: scale(1); } 75%, 100% { opacity: 0; transform: scale(1.55); } }
+  /* Ruhemodus: nach 15s ohne Berührung pausieren die Dauer-Pulse. Sie sind
+     compositor-only, halten aber Display + GPU permanent auf voller Bildrate
+     wach — auf dem Gerät ist das spürbare Wärme. Aktive Zustände (Aufnahme,
+     Diktat, Adhan) pulsieren weiter, weil dort ohnehin interagiert wird. */
+  body.is-calm .status-dot.is-live, body.is-calm .status-dot.is-warn,
+  body.is-calm .dock-badge,
+  body.is-calm .status-chip[data-status="running"] .dot,
+  body.is-calm .status-chip[data-status="live"] .dot,
+  body.is-calm .status-chip[data-status="building"] .dot,
+  body.is-calm .jump-bottom-orb.pulse::after,
+  body.is-calm .sel-handle { animation: none; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
   #statusHeader {
     position: fixed; top: calc(var(--safe-top) + 8px); left: 50%; z-index: 60;
     transform: translateX(-50%);
-    width: min(92vw, 400px);
-    border-radius: 24px; border: 1px solid var(--glass-border);
+    width: max-content; max-width: min(92vw, 400px);
+    border-radius: 22px; border: 1px solid var(--glass-border);
     padding: 0; overflow: hidden; cursor: pointer;
     transition: width var(--dur-snappy) var(--spring-snappy),
                 border-radius var(--dur-snappy) var(--spring-snappy),
@@ -219,7 +243,58 @@
     box-shadow: 0 18px 50px rgba(0,0,0,.35);
   }
   #statusHeader::before { left: 14%; right: 14%; }
-  .island-compact { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 14px; }
+  /* touch-action:none ist Pflicht für den Long-Press-Swipe unten — sonst
+     wertet der Browser das erste Fingerbewegen als Scroll-Versuch, kapert
+     die Geste und schickt uns nur ein pointercancel (genau wie beim
+     Terminal-Switcher, der das aus demselben Grund schon so macht). */
+  .island-compact { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
+    touch-action: none; -webkit-user-select: none; user-select: none; }
+  /* Terminal-Bildschirm: die Aktivitätszeile (Punkt+"Bereit") weicht den
+     vier Mini-Aktionen — Ping und Gebetszeit bleiben, wie überall sonst
+     auch, einfach stehen. Die Insel selbst ist "fit-content": ohne die
+     Aktivitätszeile zieht sie sich von selbst schmaler, statt die Icons in
+     eine unverändert breite Hülle zu klatschen. */
+  .island-term-actions { display: none; align-items: center; gap: 5px; flex: 1 1 auto;
+    justify-content: center; margin: 0 2px; }
+  #statusHeader.is-terminal-mode .status-hd__activity { display: none; }
+  #statusHeader.is-terminal-mode .island-term-actions { display: flex; }
+  /* Alle vier Insel-Knöpfe teilen sich EINE Grundform — gleiche Größe, gleiche
+     Rundung, gleicher Glasrahmen. Nur der Zustand (aktiv/gewählt) färbt sie
+     ein; vorher war „+" ein Glas-Chip, die Ansichts-Umschalter ein Segment
+     ohne Rahmen und die Übersicht wieder etwas anderes. */
+  .island-act { flex: none; width: 28px; height: 28px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center; color: var(--text-dim);
+    background: rgba(var(--overlay-rgb),.07); border: 1px solid var(--glass-border);
+    transition: color 200ms var(--spring), background 200ms var(--spring), transform 150ms var(--spring); }
+  .island-act .ic { width: 15px; height: 15px; }
+  .island-act:active { transform: scale(.9); }
+  .island-act.is-on,
+  .island-act[aria-selected="true"] { color: var(--accent); background: rgba(var(--accent-rgb),.2); border-color: rgba(var(--accent-rgb),.42); }
+  /* Apple-artiger "Pop": ein kurzer Bounce, wenn der Insel-Inhalt wechselt
+     (Bildschirmwechsel rein/raus aus Terminals) — Compositor-only. */
+  @keyframes islandPop { 0% { transform: translateX(-50%) scale(1); } 45% { transform: translateX(-50%) scale(1.035); } 100% { transform: translateX(-50%) scale(1); } }
+  #statusHeader.is-popping { animation: islandPop 420ms var(--spring-snappy); }
+
+  /* Browser-Badge — grün wenn irgendwo ein Tab aktiv navigiert ist, auf
+     jedem Bildschirm sichtbar (auch im Terminal-Modus), Tap springt direkt
+     in den Browser. */
+  .island-browser-badge { display: none; flex: none; width: 28px; height: 28px; border-radius: 9px;
+    align-items: center; justify-content: center; color: #22C55E;
+    background: rgba(34,197,94,.16); border: 1px solid rgba(34,197,94,.35);
+    transition: transform 150ms var(--spring); }
+  .island-browser-badge .ic { width: 15px; height: 15px; }
+  .island-browser-badge:active { transform: scale(.9); }
+  .island-browser-badge.is-visible { display: flex; }
+
+  /* Long-Press + Ziehen auf der Insel wechselt den Bildschirm — der Hinweis
+     schwebt knapp darunter, genau wie das Terminal-Switcher-Label. */
+  .island-swipe-hint { position: fixed; top: calc(var(--safe-top) + 8px + 44px); left: 50%; z-index: 61;
+    transform: translateX(-50%) translateY(4px) scale(.92); opacity: 0; pointer-events: none;
+    transition: opacity 160ms ease-out, transform 220ms var(--ease-out);
+    padding: 6px 14px; border-radius: 999px; background: rgba(var(--well-rgb),.92);
+    -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border);
+    font: 600 12px var(--font-ui); color: var(--text); white-space: nowrap; }
+  .island-swipe-hint.is-visible { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
   .island-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-gentle) var(--spring-gentle); }
   .island-body__inner {
     overflow: hidden; min-height: 0;
@@ -238,8 +313,8 @@
      metrics are short, fixed-format readouts and always stay whole. */
   .status-hd__label { font-size: var(--fs-label); font-weight: 600; letter-spacing: .01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-dim); }
-  .status-dot.is-live { background: var(--accent); animation: islandPulse 1.4s ease-out infinite; }
-  .status-dot.is-warn { background: var(--warn); animation: islandPulse 1.1s ease-out infinite; }
+  .status-dot.is-live { background: var(--accent); animation: dotBreathe 1.4s ease-in-out infinite; }
+  .status-dot.is-warn { background: var(--warn); animation: dotBreathe 1.1s ease-in-out infinite; }
   .status-dot.is-ok { background: var(--ok); }
   .status-hd__metrics { display: flex; align-items: center; gap: 10px; flex: none; }
   .status-hd__metric { display: flex; align-items: center; gap: 5px; font-size: var(--fs-caption); font-weight: 600; color: var(--text-dim); font-variant-numeric: tabular-nums; }
@@ -250,7 +325,7 @@
   /* Dictation-in-progress badge — pinned to the header's leading edge. */
   .status-mic-badge { position: absolute; top: 11px; left: -2px; width: 18px; height: 18px; border-radius: 50%;
     background: var(--err); color: var(--on-err); display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 0 10px rgba(var(--err-rgb),.7); animation: islandPulse 1s ease-in-out infinite; z-index: 2; }
+    box-shadow: 0 0 10px rgba(var(--err-rgb),.7); animation: glowBreathe 1s ease-in-out infinite; z-index: 2; }
   .status-mic-badge .ic { width: 11px; height: 11px; }
   .status-mic-badge[hidden] { display: none; }
 
@@ -298,14 +373,15 @@
   html, body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
   input, textarea, .fx-preview { -webkit-user-select: text; user-select: text; }
   #dock { -webkit-user-select: none; user-select: none; }
-  /* Schreib-Modus: sobald die Tastatur offen ist, weichen ^C, Esc und das Mikro,
-     damit die Eingabezeile den Platz bekommt. Übrig bleiben Senden und Tasten. */
-  .dock-page--term > * { transition: max-width 280ms cubic-bezier(.22,1,.36,1),
-    opacity 160ms ease-out, margin 280ms cubic-bezier(.22,1,.36,1), transform 280ms cubic-bezier(.22,1,.36,1); }
-  /* Das Mikro bleibt beim Tippen sichtbar — Diktat IST Tippen per Stimme. */
-  #dock.is-typing .dock-page--term > .term-key {
-    max-width: 0; min-width: 0; width: 0; opacity: 0; margin: 0; padding: 0; border-width: 0;
-    transform: scale(.8); overflow: hidden; }
+  /* ^C und Esc sind aus der Zeile ausgezogen — sie wohnen jetzt in der
+     Tastenleiste bei den Pfeiltasten. Übrig bleiben Prompt, Feld, Mikro,
+     Senden und Tasten; die Zeile darf dafür auf drei Zeilen wachsen, und
+     die Knöpfe bleiben dabei unten am Feldrand kleben. */
+  .dock-page--term { align-items: flex-end; }
+  .dock-page--term > * { transition: max-width 280ms var(--ease-out),
+    opacity 160ms ease-out, margin 280ms var(--ease-out), transform 280ms var(--ease-out); }
+  .dock-page--term > .term-input-btn { margin-bottom: 1px; }
+  .dock-page--term > .term-input-row__prompt { margin-bottom: 8px; }
   #dock.is-typing .term-input { font-size: 15px; }
   #dock.is-typing .term-input-row__prompt { margin-left: 4px; }
   #dockInput { -webkit-user-select: text; user-select: text; }
@@ -324,9 +400,10 @@
 
   /* Aufnahme-Leiste: Spur, Timer, Abbrechen, Übernehmen. */
   .rec-wave { flex: 1; display: flex; align-items: center; justify-content: center; gap: 3px; height: 34px; min-width: 0; overflow: hidden; }
-  .rec-wave span { width: 3px; border-radius: 2px; background: var(--accent); opacity: .85;
+  .rec-wave span { width: 3px; height: var(--h, 18px); border-radius: 2px; background: var(--accent); opacity: .85;
     animation: rec-bounce 900ms ease-in-out infinite; }
-  @keyframes rec-bounce { 0%, 100% { height: 5px; } 50% { height: var(--h, 18px); } }
+  /* scaleY statt height: die Balken hüpfen auf dem Compositor, nicht im Layout. */
+  @keyframes rec-bounce { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
   .rec-timer { flex: none; min-width: 44px; text-align: center; font: 700 13px var(--font-mono); color: var(--text); font-variant-numeric: tabular-nums; }
   .rec-btn { flex: none; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
   .rec-btn .ic { width: 20px; height: 20px; }
@@ -341,8 +418,15 @@
   .dock-btn span { font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; }
   .dock-btn.active { color: var(--text); }
   .dock-btn:active { transform: scale(.94); }
-  /* The sliding glass pill IS the active-state background. */
-  #dockPill { position: absolute; top: 6px; bottom: 6px; left: 0; width: 58px; border-radius: var(--radius-pill);
+  /* The sliding glass pill IS the active-state background.
+     Sie MUSS im selben Koordinatensystem messen wie die Knöpfe, die sie
+     unterlegt. Die Nav-Seite ist deshalb immer ein eigener Bezugsrahmen
+     (position: relative) — vorher war sie nur als INAKTIVE Seite positioniert
+     (inset: 6px) und nur dann bezog sich offsetLeft auf sie. Die Pille wurde
+     also mal gegen das Dock, mal gegen die Seite gerechnet und sprang bei
+     jeder Rückkehr von den Terminals um die 6px Dock-Polsterung daneben. */
+  .dock-page--nav { position: relative; }
+  #dockPill { position: absolute; top: 0; bottom: 0; left: 0; width: 58px; border-radius: var(--radius-pill);
     background: rgba(var(--accent-rgb),.16); border: 1px solid rgba(var(--accent-rgb),.22);
     opacity: 0; z-index: 0; pointer-events: none;
     transition: transform var(--dur-snappy) var(--spring-snappy), width var(--dur-snappy) var(--spring-snappy), opacity 200ms ease; }
@@ -366,8 +450,8 @@
      MÜSSEN das mitführen, sonst springt sie während der Animation nach rechts
      und plumpst am Ende nach links. Sie wächst federnd aus der Bottom-Bar. */
   .keys-panel--global { transform-origin: 50% 100%; }
-  .keys-panel--global:not([hidden]) { animation: keysRise 520ms cubic-bezier(.30,1.18,.34,1); }
-  .keys-panel--global.is-closing { animation: keysFall 220ms cubic-bezier(.4,0,.68,.06) forwards; }
+  .keys-panel--global:not([hidden]) { animation: keysRise 520ms var(--spring-pop); }
+  .keys-panel--global.is-closing { animation: keysFall 220ms var(--ease-exit-hard) forwards; }
   @keyframes keysRise {
     from { opacity: 0; transform: translateX(-50%) translateY(26px) scale(.9); }
     60%  { opacity: 1; }
@@ -386,7 +470,7 @@
   .cloud-row:active, .mehr-item:active { transform: scale(.985); }
   /* Pending-request badge on the Terminals tab — shown when a permission
      prompt is waiting while the user is on another screen. */
-  .dock-badge { position: absolute; top: 5px; right: 11px; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--glass), 0 0 8px rgba(var(--warn-rgb),.8); animation: islandPulse 1.3s ease-out infinite; }
+  .dock-badge { position: absolute; top: 5px; right: 11px; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--glass), 0 0 8px rgba(var(--warn-rgb),.8); animation: dotBreathe 1.3s ease-in-out infinite; }
   .dock-badge[hidden] { display: none; }
 
   /* ============================================================
@@ -397,22 +481,27 @@
   /* Die hintere Seite weicht zurück, wenn ein Sheet aufgeht: schrumpfen, runden,
      abdunkeln — die iOS-Card-Präsentation. Ein Sheet liegt nicht AUF der Seite,
      es schiebt sie nach hinten. */
-  #screens { transform-origin: 50% 12%;
-    transition: transform 520ms cubic-bezier(.32,1.06,.35,1), border-radius 520ms cubic-bezier(.32,1.06,.35,1), filter 380ms ease; }
-  body.sheet-open #screens { transform: scale(.935) translateY(8px); border-radius: 26px; overflow: hidden;
-    filter: brightness(.72) saturate(.92); }
-  body.sheet-open #statusHeader { transition: transform 520ms cubic-bezier(.32,1.06,.35,1), opacity 380ms ease;
+  /* Transform-only: border-radius/filter on the whole app content would
+     repaint every frame of the 520ms spring (xterm canvases included). The
+     dim comes from the sheet scrim above, the rounding snaps unnoticed
+     under the scale motion. */
+  #screens { transform-origin: 50% 12%; will-change: transform;
+    transition: transform 520ms var(--spring-soft); }
+  body.sheet-open #screens { transform: scale(.935) translateY(8px); border-radius: 26px; overflow: hidden; }
+  body.sheet-open #statusHeader { transition: transform 520ms var(--spring-soft), opacity 380ms ease;
     transform: translateX(-50%) scale(.93) translateY(6px); opacity: .55; }
-  #statusHeader { transition: transform 520ms cubic-bezier(.32,1.06,.35,1), opacity 380ms ease; }
-  .sheet-backdrop { position: absolute; inset: 0; background: rgba(var(--scrim-rgb),0); transition: background 350ms var(--spring); }
-  .sheet-wrap.is-open .sheet-backdrop { background: rgba(var(--scrim-rgb),var(--scrim-a)); }
+  #statusHeader { transition: transform 520ms var(--spring-soft), opacity 380ms ease; }
+  /* Opacity, not background-color: the fade then runs on the compositor and
+     also covers the dim the screens-filter used to provide. */
+  .sheet-backdrop { position: absolute; inset: 0; background: rgba(var(--scrim-rgb),var(--scrim-a)); opacity: 0; transition: opacity 350ms var(--spring); }
+  .sheet-wrap.is-open .sheet-backdrop { opacity: 1; }
   .sheet-panel { position: relative; width: 100%; max-width: 480px; margin: 0 10px calc(env(safe-area-inset-bottom, 0px) + 10px); padding: 10px 18px calc(18px + env(safe-area-inset-bottom, 0px));
     background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
     transform: translateY(110%); transition: transform 260ms var(--ease-exit); will-change: transform; }
   .sheet-wrap.is-open .sheet-panel { transform: translateY(0) scale(1);
-    transition: transform 560ms cubic-bezier(.30,1.18,.34,1); }
+    transition: transform 560ms var(--spring-pop); }
   .sheet-wrap:not(.is-open) .sheet-panel { transform: translateY(104%) scale(.97);
-    transition: transform 340ms cubic-bezier(.4,0,.68,.06); }
+    transition: transform 340ms var(--ease-exit-hard); }
   .sheet-grabber { width: 36px; height: 4px; border-radius: 3px; background: var(--glass-border); margin: 4px auto 14px; }
   .sheet-title { font-size: var(--fs-section); font-weight: 700; margin-bottom: 12px; }
 
@@ -491,10 +580,6 @@
   /* ============================================================
      Terminal workspace — spatial swipeable stack
      ============================================================ */
-  .term-header { display: flex; flex-direction: column; gap: 10px; padding: 0 2px 12px; flex: none; }
-  .term-header__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .term-header__top h2 { margin: 0; font-size: var(--fs-title); font-weight: 700; letter-spacing: -.01em; }
-  .term-header__actions { display: flex; align-items: center; gap: 6px; flex: none; }
   .overview-btn { width: var(--touch); height: var(--touch); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color 200ms var(--spring), background 200ms var(--spring), transform 150ms var(--spring); }
   .overview-btn .ic { width: var(--icon-md); height: var(--icon-md); }
   .overview-btn:active { transform: scale(.94); }
@@ -516,7 +601,7 @@
   .stack.is-dragging .stack-card { transition: none !important; }
 
   .stack-card { position: absolute; inset: 0; margin: 0 auto; width: 100%; max-width: 480px; display: flex; flex-direction: column; overflow: hidden;
-    transition: transform 380ms var(--spring), opacity 380ms var(--spring), filter 380ms var(--spring); will-change: transform, opacity; }
+    transition: transform 380ms var(--spring), opacity 380ms var(--spring); will-change: transform, opacity; }
   .card-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; cursor: grab; }
   .card-tag { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   /* Die Terminalfarbe ist der obere Rand der Karte: halbtransparent, folgt der
@@ -546,7 +631,7 @@
   .status-chip { flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .02em; padding: 4px 9px; border-radius: 999px; display: flex; align-items: center; gap: 5px; text-transform: uppercase; }
   .status-chip .dot { width: 6px; height: 6px; border-radius: 50%; }
   .status-chip[data-status="running"] { color: var(--accent); background: rgba(var(--accent-rgb),var(--chip-a)); }
-  .status-chip[data-status="running"] .dot { background: var(--accent); animation: islandPulse 1.3s ease-out infinite; }
+  .status-chip[data-status="running"] .dot { background: var(--accent); animation: dotBreathe 1.3s ease-in-out infinite; }
   .status-chip[data-status="waiting"] { color: var(--warn); background: rgba(var(--warn-rgb),var(--chip-a)); }
   .status-chip[data-status="waiting"] .dot { background: var(--warn); }
   .status-chip[data-status="done"] { color: var(--ok); background: rgba(var(--ok-rgb),var(--chip-a)); }
@@ -574,8 +659,7 @@
   .jump-bottom-orb .ic { width: var(--icon-md); height: var(--icon-md); }
   .jump-bottom-orb.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
   .jump-bottom-orb:active { transform: scale(.92); }
-  .jump-bottom-orb.pulse { animation: jumpOrbPulse 1.3s ease-in-out infinite; }
-  @keyframes jumpOrbPulse { 0%, 100% { box-shadow: 0 6px 18px rgba(0,0,0,.24), 0 0 0 0 rgba(var(--accent-rgb),.55); } 50% { box-shadow: 0 6px 18px rgba(0,0,0,.24), 0 0 0 9px rgba(var(--accent-rgb),0); } }
+  .jump-bottom-orb.pulse::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid rgba(var(--accent-rgb),.55); animation: ringPulse 1.3s ease-out infinite; pointer-events: none; }
   .term-line { display: block; white-space: pre-wrap; word-break: break-word; padding: 1px 0; border-radius: 4px; }
   .term-line.is-selected { background: rgba(var(--accent-rgb),.22); }
   .selection-mode .term-line { cursor: pointer; }
@@ -589,8 +673,7 @@
 
   /* glowing selection handles + copy bubble */
   .sel-handle { position: absolute; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); transform: translate(-50%, 0); touch-action: none; z-index: 5;
-    box-shadow: 0 0 0 4px rgba(var(--accent-rgb),.22), 0 0 16px 3px rgba(var(--accent-rgb),.65); animation: handleGlow 1.6s ease-in-out infinite; }
-  @keyframes handleGlow { 0%,100% { box-shadow: 0 0 0 4px rgba(var(--accent-rgb),.22), 0 0 16px 3px rgba(var(--accent-rgb),.55); } 50% { box-shadow: 0 0 0 6px rgba(var(--accent-rgb),.3), 0 0 22px 6px rgba(var(--accent-rgb),.8); } }
+    box-shadow: 0 0 0 4px rgba(var(--accent-rgb),.22), 0 0 16px 3px rgba(var(--accent-rgb),.65); animation: glowBreathe 1.6s ease-in-out infinite; }
   .sel-handle::before { content: ''; position: absolute; left: 50%; bottom: 100%; width: 2px; height: 18px; background: var(--accent); transform: translateX(-50%); box-shadow: 0 0 8px rgba(var(--accent-rgb),.7); }
   .copy-bubble { position: absolute; transform: translateX(-8px); background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); color: var(--text); font: 600 12px var(--font-ui); padding: 7px 14px; border-radius: 999px; cursor: pointer; z-index: 6; white-space: nowrap; }
 
@@ -616,6 +699,10 @@
   .overview-tile__head { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .overview-tile__name { font-size: 12.5px; font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .overview-tile__body { flex: 1; min-width: 0; min-height: 0; overflow: hidden; font: 10px/1.4 var(--font-mono); color: var(--text-dim); word-break: break-word; overflow-wrap: anywhere; }
+  .overview-tile__close { flex: none; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); background: rgba(var(--overlay-rgb),.08); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
+  .overview-tile__close .ic { width: 11px; height: 11px; }
+  .overview-tile__close:active { transform: scale(.9); }
+  .overview-tile__close.is-armed { color: var(--err); background: rgba(var(--err-rgb),.18); border-color: rgba(var(--err-rgb),.4); }
 
   /* ============================================================
      Liste view — vertical terminal stack (Command-Deck ergonomics,
@@ -686,13 +773,18 @@
      toggleKeysPanel()/keysPanelHtml() in the script. ============================================================ */
   .keys-panel[hidden] { display: none; }
   /* Die Tastenleiste schwebt über der Bottom-Bar, statt die Karte zu stauchen. */
+  /* --dock-h ist die ECHTE Höhe der Bottom-Bar; sie ändert sich, sobald die
+     Eingabezeile auf zwei oder drei Zeilen wächst (siehe autoGrowInput). */
   .keys-panel--global { position: fixed; left: 50%; transform: translateX(-50%); z-index: 39;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + var(--dock-h, 62px));
     width: min(calc(100vw - 24px), 520px); margin: 0 !important;
-    transition: bottom 380ms var(--spring); }
-  body.has-switcher .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px + 34px); }
-  /* Der Stapel endet ÜBER dem Slider, nicht darunter. */
-  .stack { transition: bottom 520ms cubic-bezier(.30,1.18,.34,1); }
+    /* bottom hängt an --dock-h und springt mit der Bar im selben Frame um —
+       eine eigene Transition hier würde die Leiste von der Bar abkoppeln. */
+    transition: transform 380ms var(--spring); }
+  body.has-switcher .keys-panel--global { transform: translateX(-50%) translateY(-34px); }
+  /* Der Stapel endet ÜBER dem Slider, nicht darunter. Der Wechsel ist bewusst
+     NICHT animiert: eine bottom-Transition würde die Karte (und damit das
+     xterm) jeden Frame neu layouten — ein SIGWINCH-Sturm für die PTY. */
   body.has-switcher .stack { bottom: 52px; }
   /* Die Tastenleiste liegt nicht AUF dem Terminal — es macht ihr Platz.
      --keys-h ist die ECHTE Panelhöhe (gesetzt beim Öffnen); statische Werte
@@ -701,12 +793,12 @@
   body.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px + 40px); }
   body.keys-open .term-list { padding-bottom: calc(var(--keys-h, 100px) + 20px); }
   /* Tastatur offen: die Slider-Punkte weichen, das Terminal wird größer. */
-  #termSwitcher { transition: opacity 220ms ease-out, transform 380ms cubic-bezier(.30,1.18,.34,1); }
+  #termSwitcher { transition: opacity 220ms ease-out, transform 380ms var(--spring-pop); }
   body.typing #termSwitcher { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(24px) scale(.9); }
   body.typing.has-switcher .stack { bottom: 0; }
   /* Beim Tippen sind die Punkte weg — die Leiste rückt nach unten nach,
      und die Karte muss nur noch die Leiste selbst freihalten. */
-  body.typing .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px); }
+  body.typing .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + var(--dock-h, 62px)); }
   body.typing.keys-open .stack,
   body.typing.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px); }
 
@@ -724,7 +816,7 @@
 
   .term-switcher__label { pointer-events: none; margin-bottom: 5px;
     opacity: 0; transform: translateY(4px) scale(.9);
-    transition: opacity 160ms ease-out, transform 260ms cubic-bezier(.22,1,.36,1); }
+    transition: opacity 160ms ease-out, transform 260ms var(--ease-out); }
   .term-switcher__label span { display: inline-block; padding: 4px 11px; border-radius: 999px;
     background: rgba(var(--well-rgb),.92); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
     border: 1px solid var(--glass-border); color: var(--text);
@@ -736,15 +828,24 @@
     width: 100%; height: 26px; }
 
   .ts-seg { flex: 0 0 34px; height: 100%; display: flex; align-items: center; justify-content: center; }
-  .ts-dot { width: 6px; height: 6px; border-radius: 50%; opacity: .38;
+  /* War ein bloßer Farbpunkt — jetzt ein Mini-Icon-Chip mit dem Anfangs-
+     buchstaben der Sitzung, damit man auf einen Blick sieht, welches
+     Terminal unter dem Daumen liegt, nicht nur seine Farbe. */
+  .ts-dot { width: 18px; height: 18px; border-radius: 7px; opacity: .45;
+    display: flex; align-items: center; justify-content: center;
+    font: 700 9.5px var(--font-ui); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.35);
     transform: scale(1); will-change: transform;
-    transition: transform 260ms cubic-bezier(.22,1,.36,1), opacity 160ms ease-out; }
-  .ts-seg.is-active .ts-dot { opacity: 1; transform: scale(1.9); }
+    transition: transform 260ms var(--ease-out), opacity 160ms ease-out; }
+  .ts-seg.is-active .ts-dot { opacity: 1; transform: scale(1.3); }
   /* Beim Ziehen wird die Größe pro Frame gesetzt — Übergänge würden nachhinken. */
   .term-switcher.is-scrubbing .ts-dot { transition: opacity 120ms ease-out; }
   .keys-panel:not([hidden]) { flex: none; margin: 0 8px 8px; padding: 7px 8px; border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 6px; }
   .keys-panel__row { display: flex; align-items: center; gap: 7px; }
   .keys-panel__spacer { flex: 1 1 auto; }
+  /* In der Leiste sitzen jetzt auch ^C und Esc — die Chips rücken enger
+     zusammen, damit die erste Reihe auf 380dp nicht überläuft. */
+  .keys-panel .tt-key { height: 34px; min-width: 34px; padding: 0 10px; font-size: var(--fs-caption); border-radius: var(--radius-sm); }
+  .keys-panel .tt-key--icon { width: 34px; padding: 0; }
   .keys-panel__arrows { display: flex; align-items: center; gap: 6px; }
   .keys-panel__arrows button { width: 34px; height: 34px; flex: none; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring); }
   .keys-panel__arrows button .ic { width: var(--icon-sm); height: var(--icon-sm); }
@@ -788,9 +889,9 @@
   .status-chip[data-status="ready"] { color: var(--ok); background: rgba(var(--ok-rgb),var(--chip-a)); }
   .status-chip[data-status="ready"] .dot { background: var(--ok); }
   .status-chip[data-status="live"] { color: var(--ok); background: rgba(var(--ok-rgb),var(--chip-a)); }
-  .status-chip[data-status="live"] .dot { background: var(--ok); animation: islandPulse 1.4s ease-out infinite; }
+  .status-chip[data-status="live"] .dot { background: var(--ok); animation: dotBreathe 1.4s ease-in-out infinite; }
   .status-chip[data-status="building"] { color: var(--accent); background: rgba(var(--accent-rgb),var(--chip-a)); }
-  .status-chip[data-status="building"] .dot { background: var(--accent); animation: islandPulse 1.4s ease-out infinite; }
+  .status-chip[data-status="building"] .dot { background: var(--accent); animation: dotBreathe 1.4s ease-in-out infinite; }
   .status-chip[data-status="suspended"] { color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); }
   .status-chip[data-status="suspended"] .dot { background: var(--text-dim); }
 
@@ -881,7 +982,8 @@
   .chat-input-row input { flex: 1; padding: 11px 15px; border-radius: 999px; font: 13px var(--font-ui); background: var(--glass); border: 1px solid var(--glass-border); color: var(--text); }
   .chat-input-row input::placeholder { color: var(--text-dim); }
   .mic-btn { flex: none; width: 38px; height: 38px; border-radius: 50%; color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: color 200ms var(--spring), border-color 200ms var(--spring), box-shadow 200ms var(--spring); }
-  .mic-btn.is-recording { border-color: rgba(var(--err-rgb),.6); color: var(--err); box-shadow: 0 0 0 6px rgba(var(--err-rgb),.15); animation: islandPulse 1s ease-in-out infinite; }
+  .mic-btn.is-recording { position: relative; border-color: rgba(var(--err-rgb),.6); color: var(--err); box-shadow: 0 0 0 6px rgba(var(--err-rgb),.15); }
+  .mic-btn.is-recording::after { content: ''; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid rgba(var(--err-rgb),.5); animation: ringPulse 1s ease-out infinite; pointer-events: none; }
 
   .artifact-carousel { display: flex; gap: 12px; overflow-x: auto; padding: 4px 2px 8px; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
   .artifact-card { scroll-snap-align: start; flex: 0 0 auto; width: min(78vw, 260px); padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 92px; }
@@ -1061,11 +1163,54 @@
 
   .adhan-overlay:not([hidden]) { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; background: rgba(var(--scrim-strong-rgb),var(--scrim-strong-a)); -webkit-backdrop-filter: blur(40px) saturate(160%); backdrop-filter: blur(40px) saturate(160%); opacity: 0; transition: opacity 350ms var(--spring); }
   .adhan-overlay.is-open { opacity: 1; }
-  .adhan-ring { width: 104px; height: 104px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font: 700 22px var(--font-mono); color: var(--accent); animation: adhan-pulse 1.8s ease-in-out infinite; }
-  @keyframes adhan-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb),.45); } 50% { box-shadow: 0 0 0 22px rgba(var(--accent-rgb),0); } }
+  .adhan-ring { position: relative; width: 104px; height: 104px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font: 700 22px var(--font-mono); color: var(--accent); }
+  .adhan-ring::after { content: ''; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid rgba(var(--accent-rgb),.45); animation: ringPulse 1.8s ease-out infinite; pointer-events: none; }
   .adhan-overlay__name { font: 700 24px var(--font-ui); }
   .adhan-overlay__sub { color: var(--text-dim); font-size: 13px; }
   .adhan-overlay__stop { margin-top: 14px; padding: 13px 32px; border-radius: 999px; background: rgba(var(--accent-rgb),.22); border: 1px solid rgba(var(--accent-rgb),.4); color: var(--accent-ink); font: 700 14px var(--font-ui); cursor: pointer; }
+
+  /* ---------- Files screen ---------- */
+  section[data-screen="files"]:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; }
+  .fs-head { display: flex; align-items: center; gap: 6px; padding: 10px 12px 4px; }
+  .fs-crumbs { flex: 1; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
+  .fs-crumbs::-webkit-scrollbar { display: none; }
+  .fs-crumb { background: none; border: 0; color: var(--text); font: inherit; font-size: 12.5px; padding: 4px 5px; border-radius: 8px; opacity: .75; cursor: pointer; }
+  .fs-crumb:last-child { opacity: 1; font-weight: 700; }
+  .fs-crumb-sep { opacity: .35; font-size: 11px; }
+  .fs-tools { display: flex; gap: 4px; padding: 2px 12px 6px; align-items: center; flex-wrap: wrap; }
+  .fs-searchrow { padding: 0 12px 6px; }
+  .fs-list { flex: 1; overflow-y: auto; padding: 0 8px 120px; -webkit-overflow-scrolling: touch; }
+  .fs-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 8px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; border-radius: 14px; cursor: pointer; }
+  .fs-row:active { background: rgba(255,255,255,.06); }
+  .fs-row.is-selected { background: rgba(var(--accent-rgb, 138,184,255),.14); }
+  .fs-ico { width: 36px; height: 36px; border-radius: 10px; flex: none; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; background: rgba(255,255,255,.06); }
+  .fs-thumb { width: 36px; height: 36px; border-radius: 10px; flex: none; object-fit: cover; background: rgba(255,255,255,.06); }
+  .fs-cell { flex: 1; min-width: 0; }
+  .fs-name { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  .fs-sub { font-size: 11px; opacity: .55; }
+  .fs-check { width: 21px; height: 21px; border-radius: 7px; border: 1.5px solid rgba(255,255,255,.35); flex: none; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .fs-check.is-on { background: var(--accent, #8ab8ff); border-color: transparent; color: #0b0e14; }
+  .fs-bulkbar { position: absolute; left: 12px; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); display: flex; gap: 8px; padding: 10px; border-radius: 18px; z-index: 40; }
+  .fs-bulkbar .btn-chip { flex: 1; justify-content: center; }
+  .fs-dlbar { position: absolute; left: 12px; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); padding: 8px 12px; border-radius: 14px; font-size: 12px; z-index: 39; display: flex; align-items: center; gap: 8px; }
+  .fs-dlbar progress { flex: 1; height: 4px; }
+  .fs-empty { text-align: center; opacity: .5; padding: 40px 0; font-size: 13px; }
+  .fs-viewer { position: fixed; inset: 0; z-index: 90; background: rgba(5,7,12,.96); display: flex; flex-direction: column; }
+  .fs-viewer__bar { display: flex; align-items: center; gap: 8px; padding: calc(10px + env(safe-area-inset-top)) 12px 10px; }
+  .fs-viewer__name { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fs-viewer__body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto; position: relative; }
+  .fs-viewer__body img { max-width: 100%; max-height: 100%; touch-action: pinch-zoom; }
+  .fs-viewer__body video { width: 100%; max-height: 100%; background: #000; }
+  .fs-viewer__body iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+  .fs-viewer__nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: 0; border-radius: 14px; background: rgba(255,255,255,.08); color: var(--text); font-size: 20px; cursor: pointer; }
+  .fs-md, .fs-txt { align-self: stretch; width: 100%; overflow: auto; padding: 4px 16px calc(20px + env(safe-area-inset-bottom)); font-size: 13.5px; line-height: 1.55; }
+  .fs-md pre { background: rgba(255,255,255,.07); padding: 10px; border-radius: 10px; overflow-x: auto; }
+  .fs-md code { background: rgba(255,255,255,.09); padding: 1px 5px; border-radius: 5px; font-family: ui-monospace, monospace; font-size: 12px; }
+  .fs-md h1, .fs-md h2, .fs-md h3 { margin: 14px 0 6px; }
+  .fs-md blockquote { border-left: 3px solid var(--accent, #8ab8ff); margin: 8px 0; padding: 2px 10px; opacity: .8; }
+  .fs-txt pre { font-family: ui-monospace, monospace; font-size: 11.5px; line-height: 1.5; }
+  .fs-txt .ln { opacity: .35; user-select: none; display: inline-block; min-width: 34px; text-align: right; margin-right: 10px; }
+  .fs-infocard { text-align: center; padding: 24px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
 
   /* ---------- Lock screen ---------- */
   section[data-screen="lock"]:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; }
@@ -1135,6 +1280,20 @@
   .term-input { flex: 1; min-width: 36px; background: none; border: none; outline: none; color: var(--text); font: var(--fs-body) var(--font-mono); padding: 8px 2px; }
   .term-input::placeholder { color: var(--text-dim); }
   .term-input:disabled { color: var(--text-dim); }
+  /* Die Eingabezeile ist ein Textfeld, kein Einzeiler mehr: sie wächst beim
+     Schreiben mit — bis zu drei Zeilen, danach scrollt sie in sich selbst.
+     Die Höhe setzt autoGrowInput() (JS), weil scrollHeight die einzige
+     ehrliche Quelle dafür ist; CSS deckelt sie nur.
+     touch-action: pan-y — ein waagerechtes Ziehen gehört dem Cursor-Schrubber
+     (langes Drücken im Feld), nicht dem Browser. */
+  textarea.term-input { resize: none; line-height: var(--term-input-lh, 20px);
+    max-height: calc(var(--term-input-lh, 20px) * 3 + 16px); overflow-y: hidden;
+    touch-action: pan-y; border-radius: 12px;
+    /* KEINE Höhen-Transition: die Bar, die Tastenleiste und das Feld müssen
+       exakt gleichzeitig umspringen. Animiert man nur das Feld, hinkt alles
+       darüber 180 ms hinterher — genau das sah „verschoben" aus. */
+    transition: background 200ms var(--spring); }
+  textarea.term-input.is-scrubbing { background: rgba(var(--accent-rgb),.10); }
   /* Quick-key chip (^C / Esc) — mono text label, hit-area ≥34px tall */
   .term-key { flex: none; height: 34px; min-width: 36px; padding: 0 9px; border-radius: var(--radius-pill); display: flex; align-items: center; justify-content: center; font: 700 var(--fs-caption) var(--font-mono); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: background 200ms var(--spring), color 200ms var(--spring), transform 150ms var(--spring); }
   .term-key:active { transform: scale(.92); background: rgba(var(--overlay-rgb),.14); }
@@ -1148,10 +1307,11 @@
   .term-send-btn { color: var(--accent); background: rgba(var(--accent-rgb),.16); }
   .term-send-btn:active { background: rgba(var(--accent-rgb),.3); }
   /* Mic — recording/transcribing render as an elegant pulsing ring */
-  .term-mic-btn.is-recording { color: var(--err); animation: micRing 1.3s ease-in-out infinite; }
-  .term-mic-btn.is-transcribing { color: var(--accent); animation: micRingA 1.3s ease-in-out infinite; }
-  @keyframes micRing { 0%,100% { box-shadow: 0 0 0 2px rgba(var(--err-rgb),.55); } 50% { box-shadow: 0 0 0 7px rgba(var(--err-rgb),0); } }
-  @keyframes micRingA { 0%,100% { box-shadow: 0 0 0 2px rgba(var(--accent-rgb),.5); } 50% { box-shadow: 0 0 0 7px rgba(var(--accent-rgb),0); } }
+  .term-mic-btn.is-recording, .term-mic-btn.is-transcribing { position: relative; }
+  .term-mic-btn.is-recording { color: var(--err); }
+  .term-mic-btn.is-transcribing { color: var(--accent); }
+  .term-mic-btn.is-recording::after, .term-mic-btn.is-transcribing::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; border: 2px solid rgba(var(--err-rgb),.55); animation: ringPulse 1.3s ease-out infinite; pointer-events: none; }
+  .term-mic-btn.is-transcribing::after { border-color: rgba(var(--accent-rgb),.5); }
 
   .sheet-add-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(var(--overlay-rgb),.08); }
   .sheet-add-row input { flex: 1; min-width: 0; padding: 10px 14px; border-radius: 999px; font: 13px var(--font-ui); background: var(--glass); border: 1px solid var(--glass-border); color: var(--text); }
@@ -1222,21 +1382,35 @@
 </div>
 
 <header id="statusHeader" class="glass glass--strong" role="button" tabindex="0" aria-expanded="false" aria-label="Status – Details öffnen">
-  <div class="island-compact">
+  <div class="island-compact" id="islandCompact">
+    <span class="status-hd__metric status-hd__metric--latency" id="statusLatencySeg">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h.01M8 20v-5M13 20v-9M18 20V6"/></svg>
+      <span id="statusLatencyLabel">— ms</span>
+    </span>
     <span class="status-hd__activity">
       <span class="status-dot" id="statusDot"></span>
       <span class="status-hd__label" id="statusActivityLabel">Bereit</span>
     </span>
-    <span class="status-hd__metrics">
-      <span class="status-hd__metric status-hd__metric--latency" id="statusLatencySeg">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h.01M8 20v-5M13 20v-9M18 20V6"/></svg>
-        <span id="statusLatencyLabel">— ms</span>
-      </span>
-      <span class="status-hd__divider"></span>
-      <span class="status-hd__metric status-hd__metric--prayer">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-        <span id="statusPrayerLabel">—</span>
-      </span>
+    <div class="island-term-actions" id="islandTermActions" role="tablist" aria-label="Terminal-Aktionen">
+      <button class="island-act" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="island-act" data-view="stack" role="tab" aria-selected="true" aria-label="Stack" title="Stack">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="6.5" width="13" height="13" rx="2.5" opacity=".45"/><rect x="4.5" y="4.5" width="13" height="13" rx="2.5"/></svg>
+      </button>
+      <button class="island-act" data-view="list" role="tab" aria-selected="false" aria-label="Liste" title="Liste">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>
+      </button>
+      <button class="island-act" id="overviewBtn" aria-label="Übersicht" title="Übersicht">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/></svg>
+      </button>
+    </div>
+    <button class="island-browser-badge" id="islandBrowserBadge" aria-label="Browser öffnen" title="Browser">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/></svg>
+    </button>
+    <span class="status-hd__metric status-hd__metric--prayer">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+      <span id="statusPrayerLabel">—</span>
     </span>
   </div>
   <div class="island-body" aria-hidden="true">
@@ -1244,6 +1418,7 @@
   </div>
   <span class="status-mic-badge" id="statusMicBadge" hidden aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg></span>
 </header>
+<div class="island-swipe-hint" id="islandSwipeHint"></div>
 <div id="islandScrim" aria-hidden="true"></div>
 
 <main id="screens">
@@ -1253,6 +1428,7 @@
   <section data-screen="manager" hidden></section>
   <section data-screen="cloud" hidden></section>
   <section data-screen="browser" hidden></section>
+  <section data-screen="files" hidden></section>
   <section data-screen="settings" hidden></section>
   <section data-screen="prayer" hidden></section>
   <section data-screen="lock">
@@ -1311,10 +1487,8 @@
   </div>
 
   <div class="dock-page dock-page--term" id="dockTerm">
-    <button class="term-key term-key--danger" data-dock-key="ctrlc" aria-label="Strg+C senden">^C</button>
-    <button class="term-key" data-dock-key="esc" aria-label="Escape">Esc</button>
     <span class="term-input-row__prompt">$</span>
-    <input type="text" class="term-input" id="dockInput" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben">
+    <textarea class="term-input" id="dockInput" rows="1" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben"></textarea>
     <button class="term-input-btn term-mic-btn" id="dockMicBtn" aria-label="Diktieren"></button>
     <button class="term-input-btn term-send-btn" id="dockSendBtn" aria-label="Senden"></button>
     <button class="term-input-btn term-keys-btn" id="dockKeysBtn" aria-label="Tasten"></button>
@@ -1909,7 +2083,9 @@
   }
   function toggleIsland() { state.islandOpen ? closeIsland() : openIsland(); }
 
+  let islSuppressClick = false;
   statusHeaderEl.addEventListener('click', e => {
+    if (islSuppressClick) { islSuppressClick = false; return; }
     // Taps inside the expanded body operate its content; only the compact
     // row (or an outside/scrim tap) toggles the island closed.
     if (state.islandOpen && e.target.closest('.island-body')) return;
@@ -1918,6 +2094,127 @@
   statusHeaderEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleIsland(); } });
   islandScrim.addEventListener('click', closeIsland);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.islandOpen) closeIsland(); });
+
+  // ============================================================
+  // Browser-Badge — grünes Globe-Icon, sobald irgendwo ein Browser-Tab
+  // tatsächlich navigiert ist (nicht bloß ein leerer Neuer-Tab). Tap springt
+  // direkt in den Browser; von dort führt der Swipe unten wieder zurück.
+  // ============================================================
+  const islandBrowserBadge = document.getElementById('islandBrowserBadge');
+  function isBrowserActive() {
+    const tab = typeof activeBrowserTab === 'function' ? activeBrowserTab() : null;
+    const page = tab && tab.history && tab.history[tab.historyIndex];
+    return !!page && page.kind !== 'newtab';
+  }
+  function updateIslandBrowserBadge() {
+    islandBrowserBadge.classList.toggle('is-visible', isBrowserActive());
+  }
+  islandBrowserBadge.addEventListener('click', e => {
+    e.stopPropagation();
+    islSuppressClick = false; // eigener Tap, kein Insel-Toggle nötig
+    show('browser');
+  });
+
+  // ============================================================
+  // Long-Press + Ziehen auf der Insel wechselt den Bildschirm — dieselbe
+  // Press-and-hold-dann-Ziehen-Mechanik wie der Terminal-Switcher unten,
+  // nur über die fünf Dock-Einträge statt über Terminal-Tabs. Vom Browser
+  // aus führt jede Zugrichtung zurück zu Terminals ("swipe back").
+  // ============================================================
+  const DOCK_SWIPE_ORDER = ['servers', 'terminals', 'manager', 'cloud', 'browser'];
+  const DOCK_SWIPE_LABEL = { servers: 'Server', terminals: 'Terminals', manager: 'Manager', cloud: 'Cloud', browser: 'Browser' };
+  const islandCompactEl = document.getElementById('islandCompact');
+  const islandSwipeHintEl = document.getElementById('islandSwipeHint');
+  let islHold = null, islArmed = false, islMoved = false, islStartX = 0, islX = 0, islRaf = 0, islFromIdx = 0;
+  // Seit die vier Terminal-Knöpfe mitten in der Insel sitzen, bliebe für die
+  // Geste kaum noch Fläche übrig, wenn die Knöpfe sie abwürgen. Sie darf
+  // deshalb ÜBERALL beginnen — auch auf einem Knopf. Erst wenn das lange
+  // Drücken wirklich scharf ist (260 ms), reißt die Insel die Geste an sich
+  // und der Klick des Knopfes darunter wird geschluckt. Ein kurzes Antippen
+  // bleibt ein ganz normaler Knopfdruck.
+  let islDownBtn = null, islSwallowBtnClick = false, islPointerId = null;
+
+  function islIndexFromDx(dx) {
+    const STEP = 56; // px pro Schritt — ein bequemer Daumen-Swipe
+    return clamp(islFromIdx - Math.round(dx / STEP), 0, DOCK_SWIPE_ORDER.length - 1);
+  }
+  function islFrame() {
+    islRaf = 0;
+    if (!islArmed) return;
+    if (currentScreen === 'browser') { islandSwipeHintEl.textContent = '‹ Zurück zu Terminals'; return; }
+    const idx = islIndexFromDx(islX - islStartX);
+    islandSwipeHintEl.textContent = DOCK_SWIPE_LABEL[DOCK_SWIPE_ORDER[idx]] || '';
+  }
+  islandCompactEl.addEventListener('pointerdown', e => {
+    islMoved = false;
+    islSwallowBtnClick = false;
+    islDownBtn = e.target.closest('.island-act, .island-browser-badge');
+    islPointerId = e.pointerId;
+    islStartX = e.clientX; islX = e.clientX;
+    islFromIdx = Math.max(0, DOCK_SWIPE_ORDER.indexOf(currentScreen));
+    clearTimeout(islHold);
+    islHold = setTimeout(() => {
+      islArmed = true;
+      // Der Knopf unter dem Daumen darf jetzt nicht mehr auslösen — gehalten
+      // wurde die Insel, nicht er.
+      if (islDownBtn) islSwallowBtnClick = true;
+      // Ohne Capture verlöre der Zug die Ereignisse, sobald der Finger den
+      // Knopf verlässt, auf dem er gestartet ist.
+      try { islandCompactEl.setPointerCapture(islPointerId); } catch (err) { /* kein Capture nötig */ }
+      if (navigator.vibrate) navigator.vibrate(6);
+      islandSwipeHintEl.classList.add('is-visible');
+      islFrame();
+    }, 260);
+  });
+  islandCompactEl.addEventListener('pointermove', e => {
+    if (!islArmed) {
+      // Wer sofort loszieht, wollte wischen und nicht drücken: kein Long-Press
+      // erzwingen, aber den Knopf-Klick auch nicht aus Versehen auslösen.
+      if (islHold && Math.abs(e.clientX - islStartX) > 12) { clearTimeout(islHold); islHold = null; }
+      return;
+    }
+    islMoved = true;
+    islX = e.clientX;
+    if (!islRaf) islRaf = requestAnimationFrame(islFrame);
+  });
+  // Läuft VOR den Klick-Handlern der Knöpfe (Capture-Phase) und schluckt den
+  // Klick, wenn die Geste ihn übernommen hat.
+  islandCompactEl.addEventListener('click', e => {
+    if (!islSwallowBtnClick) return;
+    islSwallowBtnClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+  // Sicherheitsnetz: bleibt der Klick nach dem Zug aus (Android verschluckt ihn
+  // bei gefangenem Pointer gern), verfällt das Flag von selbst — sonst fräße es
+  // den nächsten ECHTEN Knopfdruck.
+  function islArmSwallowExpiry() {
+    setTimeout(() => { islSwallowBtnClick = false; }, 400);
+  }
+  function islEnd() {
+    clearTimeout(islHold);
+    islHold = null;
+    islDownBtn = null;
+    if (islPointerId != null) {
+      try { islandCompactEl.releasePointerCapture(islPointerId); } catch (err) { /* nie gefangen */ }
+      islPointerId = null;
+    }
+    if (!islArmed) { return; }
+    islArmed = false;
+    if (islSwallowBtnClick) islArmSwallowExpiry();
+    islSuppressClick = true; // war ein Long-Press-Zug, kein normaler Tap — Insel nicht zusätzlich auf/zu
+    cancelAnimationFrame(islRaf); islRaf = 0;
+    islandSwipeHintEl.classList.remove('is-visible');
+    if (!islMoved) return; // reiner Halt ohne Zug: nichts committen, Insel bleibt wie sie war
+    if (currentScreen === 'browser') { show('terminals'); return; }
+    const dx = islX - islStartX;
+    if (Math.abs(dx) < 24) return; // zu kurz gezogen, keine erkennbare Absicht
+    const target = DOCK_SWIPE_ORDER[islIndexFromDx(dx)];
+    if (target && target !== currentScreen) show(target);
+  }
+  islandCompactEl.addEventListener('pointerup', islEnd);
+  islandCompactEl.addEventListener('pointerleave', islEnd);
+  islandCompactEl.addEventListener('pointercancel', islEnd);
 
   statusPrayerLabel.textContent = (() => { const np = nextPrayer(); return `${np.name} · ${np.countdown}`; })();
 
@@ -1955,19 +2252,27 @@
   // ============================================================
   // Bottom sheets (Mehr / permission)
   // ============================================================
+  // A close parks a hide-timer on the wrap; reopening within that window MUST
+  // cancel it, or the timer hides a sheet that is visibly open (stuck scrim).
+  const sheetCloseTimers = new WeakMap();
   function openSheet(wrapEl) {
+    const pending = sheetCloseTimers.get(wrapEl);
+    if (pending) { clearTimeout(pending); sheetCloseTimers.delete(wrapEl); }
     wrapEl.hidden = false;
-    requestAnimationFrame(() => {
+    // Double rAF: the un-hidden closed state must hit the compositor once,
+    // otherwise the enter transition occasionally skips (sheet pops in).
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       wrapEl.classList.add('is-open');
       if (!wrapEl.classList.contains('sheet-wrap--perm')) document.body.classList.add('sheet-open');
-    });
+    }));
   }
   function closeSheet(wrapEl) {
     wrapEl.classList.remove('is-open');
     if (!document.querySelector('.sheet-wrap.is-open:not(.sheet-wrap--perm)')) {
       document.body.classList.remove('sheet-open');
     }
-    setTimeout(() => { wrapEl.hidden = true; }, 420);
+    const t = setTimeout(() => { sheetCloseTimers.delete(wrapEl); wrapEl.hidden = true; }, 420);
+    sheetCloseTimers.set(wrapEl, t);
   }
 
   const mehrWrap = document.getElementById('mehrSheetWrap');
@@ -2016,7 +2321,7 @@
   function show(name) {
     if (name !== 'cloud') stopCloudBuildTimer();
     if (name !== 'prayer') stopPrayerTick();
-    if (name !== 'terminals') { cancelDictation(); closeAllListRails(); }
+    if (name !== 'terminals') { cancelDictation(); closeAllListRails(); closeKeysPanel(); }
     if (name !== 'browser') stopBrowserProgressTimers();
     if (name !== 'terminals' && typeof setDockPage === 'function') setDockPage('nav');
     if (typeof renderTermSwitcher === 'function') setTimeout(renderTermSwitcher, 0);
@@ -2024,6 +2329,11 @@
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
     positionDockPill();
+    // Nach dem Entsperren ist die Bar zum ersten Mal überhaupt sichtbar — erst
+    // jetzt lässt sich ihre Höhe messen.
+    if (typeof syncDockHeight === 'function') syncDockHeight();
+    // Zurück auf Terminals: verdeckte Karten holen ihren Output nach.
+    if (name === 'terminals') flushHiddenCards();
     // Directional slide+fade between tab screens (transform/opacity only;
     // fires once per navigation, never on content updates or streaming).
     if (prev && prev !== name && name !== 'lock' && prev !== 'lock') {
@@ -2037,12 +2347,26 @@
         to.addEventListener('animationend', () => to.classList.remove(cls), { once: true });
       }
     }
+    // The island swaps status readout for the terminal mini-toolbar only on
+    // this screen; the brief pop is the same "content just changed" bounce
+    // Apple's Dynamic Island does, not a generic screen-transition effect —
+    // so it only fires the moment terminal-mode itself flips, not on every nav.
+    const enteringTerminalMode = name === 'terminals' && prev !== 'terminals';
+    const leavingTerminalMode = name !== 'terminals' && prev === 'terminals';
+    if (enteringTerminalMode || leavingTerminalMode) {
+      statusHeaderEl.classList.toggle('is-terminal-mode', name === 'terminals');
+      statusHeaderEl.classList.remove('is-popping');
+      void statusHeaderEl.offsetWidth;
+      statusHeaderEl.classList.add('is-popping');
+      statusHeaderEl.addEventListener('animationend', () => statusHeaderEl.classList.remove('is-popping'), { once: true });
+    }
     currentScreen = name;
     if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
     // A pending permission/question prompt only shows its sheet on the Terminals
     // screen; syncPromptSheets re-homes/hides it as the user navigates.
     syncPromptSheets();
     updatePendingBadge();
+    if (typeof updateIslandBrowserBadge === 'function') updateIslandBrowserBadge();
   }
   function goToTerminals() { show('terminals'); }
 
@@ -2139,32 +2463,20 @@
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
   function buildTerminalScreen() {
+    // The old title + action row now lives in the Dynamic Island (see
+    // #islandTermActions in the static header) — its buttons/ids are
+    // unchanged, so wireViewToggle() and the listeners below still just work
+    // wherever the elements physically sit. Freeing this row hands the extra
+    // height straight to .term-body-wrap (flex: 1 fills whatever is left).
     const host = document.querySelector('[data-screen="terminals"]');
     host.innerHTML = `
-      <div class="term-header">
-        <div class="term-header__top">
-          <h2>Terminals</h2>
-          <div class="term-header__actions">
-            <button class="overview-btn glass" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">${icon('plus')}</button>
-            <button class="overview-btn glass" id="overviewBtn" aria-label="Übersicht" title="Übersicht">${icon('grid')}</button>
-          </div>
-        </div>
-        <div class="view-toggle glass" id="viewToggle" role="tablist" aria-label="Ansicht">
-          <button class="view-toggle__btn" data-view="stack" role="tab" aria-selected="true">
-            ${icon('stack', 16)}<span>Stack</span>
-          </button>
-          <button class="view-toggle__btn" data-view="list" role="tab" aria-selected="false">
-            ${icon('list', 16)}<span>Liste</span>
-          </button>
-        </div>
-      </div>
       <div class="term-body-wrap" id="termBodyWrap">
         <div class="term-body" id="termBody"></div>
         <div class="overview-grid" id="overviewGrid"></div>
       </div>
     `;
-    document.getElementById('overviewBtn').addEventListener('click', () => toggleOverview());
-    document.getElementById('addTerminalBtn').addEventListener('click', () => addTerminal());
+    document.getElementById('overviewBtn').addEventListener('click', e => { e.stopPropagation(); toggleOverview(); });
+    document.getElementById('addTerminalBtn').addEventListener('click', e => { e.stopPropagation(); addTerminal(); });
     wireViewToggle();
     renderTerminalWorkspace();
   }
@@ -2206,11 +2518,12 @@
   }
 
   function wireViewToggle() {
-    const toggle = document.getElementById('viewToggle');
+    const toggle = document.getElementById('islandTermActions');
     if (!toggle) return;
     toggle.addEventListener('click', e => {
-      const btn = e.target.closest('.view-toggle__btn');
+      const btn = e.target.closest('.island-act[data-view]');
       if (!btn) return;
+      e.stopPropagation(); // lives inside the island now — a tap must not also expand it
       setTerminalView(btn.dataset.view);
     });
   }
@@ -2231,7 +2544,7 @@
     }
   }
   function updateViewToggleUI() {
-    document.querySelectorAll('.view-toggle__btn').forEach(btn => {
+    document.querySelectorAll('#islandTermActions .island-act[data-view]').forEach(btn => {
       btn.setAttribute('aria-selected', String(btn.dataset.view === state.terminalView));
     });
   }
@@ -2291,6 +2604,8 @@
     return `
         <div class="keys-panel glass" data-keys-panel${state.keysPanelOpen ? '' : ' hidden'}>
           <div class="keys-panel__row">
+            <button class="tt-key tt-key--danger" data-tt-key="ctrlc" aria-label="Strg+C senden" title="Strg+C">^C</button>
+            <button class="tt-key" data-tt-key="esc" aria-label="Escape" title="Esc">Esc</button>
             <button class="tt-key" data-tt-key="tab">Tab</button>
             <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode" aria-label="Auswahlmodus" title="Auswahl">Aa</button>
             <button class="tt-key tt-key--icon" data-tt-key="backspace" aria-label="Zeichen löschen" title="Löschen (⌫)">${icon('backspace', 17)}</button>
@@ -2332,6 +2647,8 @@
         const k = btn.dataset.ttKey;
         // Tab hat im Mockup nur geblinkt — die Taste muss das Terminal erreichen.
         if (k === 'tab') handleTermKey('tab', id);
+        // ^C und Esc wohnen jetzt hier statt links in der Eingabezeile.
+        else if (k === 'ctrlc' || k === 'esc') handleTermKey(k, id);
         else if (k === 'backspace') handleTermKey('backspace', id);
         else if (k === 'clear') clearActiveTerminal(id);
         else if (k === 'selectmode') {
@@ -2577,6 +2894,10 @@
     renderTerminalWorkspace();
     if (typeof syncDockTerminal === 'function') syncDockTerminal();
     if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
+    // The overview grid isn't rebuilt on every status tick (see the
+    // no-flicker note below) — a closed card would sit as a ghost tile
+    // until the panel was toggled shut and reopened.
+    if (state.overviewOpen) renderOverview();
   }
   function closeTerminal(id) {
     // Demo: Karte weg. Die App beendet stattdessen die echte PTY-Session.
@@ -2877,9 +3198,69 @@
     wrap.querySelector('[data-close-session]').addEventListener('click', () => closeSheet(wrap));
   }
 
+  // ── Sichtbarkeits-Gating ─────────────────────────────────────────────────
+  // Nur sichtbare Karten werden ins DOM gemalt: der volle innerHTML-Rebuild
+  // unter Backdrop-Blur ist der teuerste Dauerposten auf dem Gerät (Wärme).
+  // Die Puffer ALLER Sessions laufen ungebremst weiter — was verdeckt Output
+  // bekam, landet in __tmsPendingHidden und wird beim Sichtbarwerden über
+  // flushHiddenCards() in einem Rutsch nachgezeichnet.
+  function pendingHiddenCards() { return window.__tmsPendingHidden || (window.__tmsPendingHidden = {}); }
+  window.__tmsCardVisible = function (id) {
+    const pre = document.querySelector(`.card-body[data-card-id="${id}"]`);
+    if (!pre) return false;
+    const idx = state.order.indexOf(id);
+    if (idx !== -1) {
+      const screen = document.querySelector('[data-screen="terminals"]');
+      if (!screen || screen.hidden) return false;
+      // Im Stack zählt die Wisch-Position: beim Ziehen wird die Nachbarkarte
+      // ab der Hälfte des Wegs lebendig, im Ruhezustand malt nur die aktive.
+      if (state.terminalView === 'stack') return Math.abs(idx - state.activeFloat) < 0.75;
+    }
+    // Liste (und Cloud-Log-Viewer): alles außerhalb des Viewports ruht.
+    const r = pre.getBoundingClientRect();
+    return r.width > 0 && r.bottom > 0 && r.top < window.innerHeight;
+  };
+  function flushHiddenCards() {
+    const pending = pendingHiddenCards();
+    Object.keys(pending).forEach(id => {
+      if (!document.querySelector(`.card-body[data-card-id="${id}"]`)) { delete pending[id]; return; }
+      if (!window.__tmsCardVisible(id)) return;
+      delete pending[id];
+      renderCardLines(id);
+    });
+  }
+  window.__tmsFlushHidden = flushHiddenCards;
+  // Liste: Karten, die in den Viewport scrollen, holen ihren Output nach.
+  // Scroll-Events der .term-list erreichen weder Section noch document
+  // zuverlässig (empirisch, auch capture nicht) — deshalb ein Wächter, der
+  // NUR arbeitet, solange etwas aufgestaut ist: bei leerem Pending-Objekt
+  // kostet der Tick nichts, es gibt keinen Dauer-Poll über den DOM.
+  setInterval(() => {
+    if (Object.keys(pendingHiddenCards()).length) flushHiddenCards();
+  }, 400);
+
+  // Ruhemodus: 15s ohne Interaktion -> body.is-calm, die Dauer-Pulse (Status-
+  // Dots, Dock-Badge, Orb-Ring) pausieren und die GPU darf in den Leerlauf.
+  // Jede Berührung weckt sie sofort wieder — der 1s-Riegel verhindert nur,
+  // dass pointermove den Timer im Dauerfeuer neu aufzieht.
+  let calmTimer = 0, calmLastBump = 0;
+  function bumpCalm() {
+    const now = performance.now();
+    if (now - calmLastBump < 1000 && !document.body.classList.contains('is-calm')) return;
+    calmLastBump = now;
+    document.body.classList.remove('is-calm');
+    clearTimeout(calmTimer);
+    calmTimer = setTimeout(() => document.body.classList.add('is-calm'), 15000);
+  }
+  ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'].forEach(ev =>
+    window.addEventListener(ev, bumpCalm, { passive: true }));
+  bumpCalm();
+
   function renderCardLines(id) {
     const pre = document.querySelector(`.card-body[data-card-id="${id}"]`);
     if (!pre) return;
+    if (!window.__tmsCardVisible(id)) { pendingHiddenCards()[id] = 1; return; }
+    delete pendingHiddenCards()[id];
     const cs = cardState[id];
     const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
     // Did new lines actually arrive (streamed output), vs. a re-render for
@@ -2978,6 +3359,9 @@
       if (body) body.style.pointerEvents = ao < 0.05 ? 'auto' : 'none';
     });
     if (opts.instant) requestAnimationFrame(() => stackEl.classList.remove('is-dragging'));
+    // Wisch/Scrub: eine Karte, die eben noch verdeckt war und jetzt in
+    // Sichtweite rückt, malt hier ihren aufgestauten Output nach.
+    flushHiddenCards();
   }
 
   function setActive_syncDock() { if (typeof syncDockTerminal === 'function') syncDockTerminal(); }
@@ -3064,10 +3448,22 @@
       const previewLines = window.__tmsPreview ? window.__tmsPreview(id, 5) : cs.lines.slice(-4).map(l => ansiToHtml(l)).join('<br>');
       tile.dataset.id = id;
       tile.innerHTML = `
-        <div class="overview-tile__head"><span class="card-tag" style="background:${session.colorTag}"></span><span class="overview-tile__name">${escapeHtml(session.name)}</span><span class="status-chip" data-status="${session.status}"><span class="dot"></span></span></div>
+        <div class="overview-tile__head"><span class="card-tag" style="background:${session.colorTag}"></span><span class="overview-tile__name">${escapeHtml(session.name)}</span><span class="status-chip" data-status="${session.status}"><span class="dot"></span></span><button class="overview-tile__close" data-close-tile aria-label="Terminal beenden" title="Beenden">${icon('x', 11)}</button></div>
         <div class="overview-tile__body">${previewLines}</div>
       `;
       tile.addEventListener('click', () => { toggleOverview(false); focusTerminal(id); });
+      const closeBtn = tile.querySelector('[data-close-tile]');
+      closeBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (!closeBtn.classList.contains('is-armed')) {
+          closeBtn.classList.add('is-armed');
+          toast('Nochmal tippen: Terminal beenden');
+          setTimeout(() => closeBtn.classList.remove('is-armed'), 3000);
+          return;
+        }
+        closeBtn.classList.remove('is-armed');
+        closeTerminal(id);
+      });
       grid.appendChild(tile);
     });
   }
@@ -3905,6 +4301,9 @@
       // Browser screen (dock item). The tile stays here so there's no dead
       // end, it just routes straight there instead of opening a sheet.
       if (tile.dataset.tool === 'browser') { show('browser'); return; }
+      // Dateien is a full screen now, like the browser — the sheet stays
+      // reachable from the terminal toolbar for quick path inserts.
+      if (tile.dataset.tool === 'files') { window.openFilesScreen(); return; }
       openToolSheet(tile.dataset.tool);
     });
   }
@@ -3924,14 +4323,529 @@
     if (wire) wire();
   }
 
+  // ============================================================
+  // Files screen — fullscreen explorer. The demo data layer below
+  // is swapped out by bridge.js in the app (window.fs* hooks).
+  // ============================================================
+  const FS_TYPE_COLORS = { ts:'#3B82F6', tsx:'#3B82F6', js:'#F59E0B', jsx:'#F59E0B', py:'#22C55E',
+    rs:'#EF4444', go:'#06B6D4', html:'#F97316', css:'#3B82F6', json:'#F59E0B', yml:'#F59E0B',
+    yaml:'#F59E0B', md:'#8B5CF6', mdx:'#8B5CF6', txt:'#94A3B8', pdf:'#EF4444', sh:'#22C55E',
+    log:'#94A3B8', png:'#EC4899', jpg:'#EC4899', jpeg:'#EC4899', gif:'#EC4899', webp:'#EC4899',
+    svg:'#F97316', mp4:'#A855F7', webm:'#A855F7', mov:'#A855F7', mkv:'#A855F7', mp3:'#06B6D4',
+    wav:'#06B6D4', m4a:'#06B6D4', zip:'#F59E0B', gz:'#F59E0B', env:'#F59E0B' };
+  const FS_KINDS = {
+    img: ['png','jpg','jpeg','gif','webp','svg','ico','bmp','heic'],
+    vid: ['mp4','webm','mov','m4v','mkv','avi'],
+    aud: ['mp3','wav','m4a','ogg','flac'],
+    md:  ['md','mdx'],
+    pdf: ['pdf'],
+  };
+  function fsExt(name) { return (name.split('.').pop() || '').toLowerCase(); }
+  function fsKind(name) {
+    const e = fsExt(name);
+    for (const k in FS_KINDS) if (FS_KINDS[k].indexOf(e) !== -1) return k;
+    return 'txt';
+  }
+  function fsFmtSize(n) {
+    if (!n && n !== 0) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+  function fsFmtDate(ms) {
+    if (!ms) return '';
+    const d = new Date(ms), now = new Date();
+    return d.getFullYear() === now.getFullYear()
+      ? d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })
+      : String(d.getFullYear());
+  }
+
+  const fsState = {
+    cwd: '~', entries: [], sort: 'name', asc: true, filter: '', showSearch: false,
+    selectMode: false, sel: new Set(), renaming: null, newFolder: false,
+    downloads: [],  // {id, name, pct, state}
+  };
+
+  // ── Demo data layer (bridge.js replaces these) ──
+  const FS_DEMO = {
+    '~': [
+      { name: 'Desktop', isDir: true }, { name: 'projekt', isDir: true },
+      { name: 'notizen.md', isDir: false, size: 2400 },
+      { name: 'foto.svg', isDir: false, size: 5200 },
+      { name: 'demo.mp4', isDir: false, size: 1288490188 },
+      { name: 'report.pdf', isDir: false, size: 312000 },
+    ],
+    '~/Desktop': [{ name: 'screenshot.svg', isDir: false, size: 8100 }],
+    '~/projekt': [
+      { name: 'src', isDir: true }, { name: 'README.md', isDir: false, size: 1800 },
+      { name: 'server.log', isDir: false, size: 45000 },
+    ],
+    '~/projekt/src': [{ name: 'index.ts', isDir: false, size: 3200 }],
+  };
+  const FS_DEMO_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160">' +
+    '<rect width="240" height="160" rx="16" fill="#223"/><circle cx="70" cy="66" r="30" fill="#8ab8ff"/>' +
+    '<rect x="120" y="46" width="90" height="12" rx="6" fill="#555"/><rect x="120" y="70" width="70" height="12" rx="6" fill="#444"/></svg>');
+  window.fsListDir = function (path) {
+    const list = (FS_DEMO[path] || []).map(e => ({
+      name: e.name, isDir: !!e.isDir, size: e.size || 0,
+      modified: Date.now() - 86400000,
+      path: path.replace(/\/$/, '') + '/' + e.name,
+    }));
+    window.fsSetDir(path, list);
+  };
+  window.fsFileUrl = function (path) { return /\.svg$/.test(path) ? FS_DEMO_SVG : ''; };
+  window.fsPdfUrl = function () { return ''; };
+  window.fsReadFile = function (path) {
+    window.fsSetFileContent(path, /\.md$/.test(path)
+      ? '# Demo\n\nDies ist **Markdown** aus dem Mockup.\n\n- Punkt eins\n- Punkt zwei\n\n```js\nconsole.log("hi");\n```'
+      : 'Demo-Inhalt von ' + path + '\nZeile 2\nZeile 3');
+  };
+  window.fsAction = function (action, payload) { toast('Demo: ' + action); };
+
+  window.fsSetDir = function (path, entries) {
+    fsState.cwd = path;
+    fsState.entries = entries;
+    fsState.sel.clear(); fsState.selectMode = false;
+    renderFilesScreen();
+  };
+  window.openFilesScreen = function (path) {
+    if (path) fsState.cwd = path;
+    show('files');
+    window.fsListDir(fsState.cwd);
+  };
+  window.fsRerender = function () { if (currentScreen === 'files') renderFilesScreen(); };
+
+  function fsSorted() {
+    const q = fsState.filter.toLowerCase();
+    let list = q ? fsState.entries.filter(e => e.name.toLowerCase().indexOf(q) !== -1) : fsState.entries.slice();
+    const dir = fsState.asc ? 1 : -1;
+    list.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      if (fsState.sort === 'size') return (a.size - b.size) * dir;
+      if (fsState.sort === 'date') return (a.modified - b.modified) * dir;
+      return a.name.localeCompare(b.name, 'de', { sensitivity: 'base' }) * dir;
+    });
+    return list;
+  }
+
+  function fsCrumbsHtml() {
+    const parts = fsState.cwd.split('/').filter(Boolean);
+    let acc = '';
+    return parts.map((p, i) => {
+      acc += (i ? '/' : '') + p;
+      const target = acc;
+      return (i ? '<span class="fs-crumb-sep">›</span>' : '') +
+        '<button class="fs-crumb" data-crumb="' + escapeHtml(target) + '">' + escapeHtml(p) + '</button>';
+    }).join('');
+  }
+
+  function fsRowHtml(e) {
+    const kind = e.isDir ? 'dir' : fsKind(e.name);
+    const color = e.isDir ? '#F59E0B' : (FS_TYPE_COLORS[fsExt(e.name)] || '#64748B');
+    const url = !e.isDir && kind === 'img' ? window.fsFileUrl(e.path) : '';
+    const iconHtml = url
+      ? '<img class="fs-thumb" loading="lazy" src="' + escapeHtml(url) + '">'
+      : '<span class="fs-ico" style="color:' + color + '">' + (e.isDir ? icon('folder', 16) : (fsExt(e.name).slice(0, 3).toUpperCase() || '·')) + '</span>';
+    const sel = fsState.sel.has(e.path);
+    const check = fsState.selectMode
+      ? '<span class="fs-check' + (sel ? ' is-on' : '') + '">' + (sel ? '✓' : '') + '</span>' : '';
+    return '<div class="fs-rowwrap">' +
+      '<button class="fs-row' + (sel ? ' is-selected' : '') + '" data-fspath="' + escapeHtml(e.path) + '" data-fsdir="' + (e.isDir ? 1 : 0) + '">' +
+        check + iconHtml +
+        '<span class="fs-cell"><span class="fs-name">' + escapeHtml(e.name) + '</span>' +
+        '<span class="fs-sub">' + (e.isDir ? 'Ordner' : escapeHtml(fsFmtSize(e.size))) +
+        (e.modified ? ' · ' + fsFmtDate(e.modified) : '') + '</span></span>' +
+        (fsState.selectMode ? '' : '<span class="fx-more" data-fsmenu="' + escapeHtml(e.path) + '">⋯</span>') +
+      '</button></div>';
+  }
+
+  function renderFilesScreen() {
+    const host = document.querySelector('[data-screen="files"]');
+    if (!host) return;
+    const list = fsSorted();
+    const favs = (window.__tmsFavs || []);
+    const sortLabel = { name: 'Name', date: 'Datum', size: 'Größe' }[fsState.sort];
+    host.innerHTML =
+      '<div class="fs-head">' +
+        '<button class="btn-chip" data-fsup>▴</button>' +
+        '<div class="fs-crumbs">' + fsCrumbsHtml() + '</div>' +
+      '</div>' +
+      '<div class="fs-tools">' +
+        '<button class="btn-chip" data-fssearch>' + icon('search', 13) + '</button>' +
+        '<button class="btn-chip" data-fssort>' + escapeHtml(sortLabel) + ' ' + (fsState.asc ? '↑' : '↓') + '</button>' +
+        '<button class="btn-chip" data-fsselect>' + (fsState.selectMode ? '✕ Auswahl' : '☑ Auswählen') + '</button>' +
+        (fsState.selectMode ? '<button class="btn-chip" data-fsselectall>Alle</button>' : '') +
+        '<button class="btn-chip" data-fsnewfolder>+ Ordner</button>' +
+      '</div>' +
+      (fsState.showSearch ? '<div class="fs-searchrow"><input class="term-input" id="fsSearchInput" placeholder="Filtern…" value="' + escapeHtml(fsState.filter) + '"></div>' : '') +
+      (fsState.newFolder ? '<div class="fs-searchrow" style="display:flex;gap:6px"><input class="term-input" id="fsNewFolderInput" placeholder="Ordnername…" style="flex:1">' +
+        '<button class="btn-chip" data-fsmkdirok>Anlegen</button><button class="btn-chip" data-fscancel>✕</button></div>' : '') +
+      (fsState.renaming ? '<div class="fs-searchrow" style="display:flex;gap:6px">' +
+        '<input class="term-input" id="fsRenameInput" style="flex:1" value="' + escapeHtml((fsState.renaming.split('/').pop() || '')) + '">' +
+        '<button class="btn-chip" data-fsrenameok>Umbenennen</button><button class="btn-chip" data-fscancelrename>✕</button></div>' : '') +
+      (favs.length ? '<div class="fs-tools">' + favs.map(p =>
+        '<button class="btn-chip" data-fsgofav="' + escapeHtml(p) + '">★ ' + escapeHtml(p.split('/').pop() || p) + '</button>').join('') + '</div>' : '') +
+      '<div class="fs-list">' + (list.length ? list.map(fsRowHtml).join('') : '<div class="fs-empty">Leer.</div>') + '</div>' +
+      fsBulkbarHtml() + fsDlbarHtml();
+    wireFilesScreen(host);
+  }
+  function fsBulkbarHtml() {
+    if (!fsState.selectMode || !fsState.sel.size) return '';
+    return '<div class="fs-bulkbar glass">' +
+      '<button class="btn-chip" data-fsbulk="download">⇩ Laden (' + fsState.sel.size + ')</button>' +
+      '<button class="btn-chip" data-fsbulk="copyPath">Pfade</button>' +
+      '<button class="btn-chip btn-chip--danger" data-fsbulk="trash">Löschen</button>' +
+      '</div>';
+  }
+  function fsDlbarHtml() {
+    const running = fsState.downloads.filter(d => d.state === 'running');
+    if (!running.length || (fsState.selectMode && fsState.sel.size)) return '';
+    const d = running[0];
+    return '<div class="fs-dlbar glass">⇩ ' + escapeHtml(d.name) +
+      '<progress max="100" value="' + Math.round(d.pct * 100) + '"></progress>' +
+      Math.round(d.pct * 100) + '%</div>';
+  }
+  window.fsDownloadProgress = function (id, name, pct, state) {
+    const i = fsState.downloads.findIndex(d => d.id === id);
+    if (i === -1) fsState.downloads.push({ id: id, name: name, pct: pct, state: state });
+    else fsState.downloads[i] = { id: id, name: name, pct: pct, state: state };
+    if (state === 'done') { toast('Gespeichert: ' + name); fsState.downloads = fsState.downloads.filter(d => d.id !== id); }
+    if (state === 'error') { fsState.downloads = fsState.downloads.filter(d => d.id !== id); }
+    window.fsRerender();
+  };
+  function wireFilesScreen(host) {
+    host.querySelectorAll('[data-crumb]').forEach(b => b.addEventListener('click', () => {
+      const t = b.dataset.crumb;
+      window.fsListDir(t.indexOf('~') === 0 ? t : '/' + t);
+    }));
+    const up = host.querySelector('[data-fsup]');
+    if (up) up.addEventListener('click', () => {
+      const c = fsState.cwd.replace(/\/+$/, '');
+      if (c === '~' || c === '/' || !c) return;
+      const p = c.replace(/\/[^/]+$/, '');
+      window.fsListDir(p || (c.indexOf('~') === 0 ? '~' : '/'));
+    });
+    const se = host.querySelector('[data-fssearch]');
+    if (se) se.addEventListener('click', () => {
+      fsState.showSearch = !fsState.showSearch;
+      if (!fsState.showSearch) fsState.filter = '';
+      renderFilesScreen();
+      if (fsState.showSearch) { const i = document.getElementById('fsSearchInput'); if (i) i.focus(); }
+    });
+    const si = host.querySelector('#fsSearchInput');
+    if (si) si.addEventListener('input', () => {
+      fsState.filter = si.value;
+      const lst = host.querySelector('.fs-list');
+      const l = fsSorted();
+      lst.innerHTML = l.length ? l.map(fsRowHtml).join('') : '<div class="fs-empty">Nichts gefunden.</div>';
+      wireFsRows(host);
+    });
+    const so = host.querySelector('[data-fssort]');
+    if (so) so.addEventListener('click', () => {
+      const order = ['name', 'date', 'size'];
+      if (fsState.asc) { fsState.asc = false; }
+      else { fsState.sort = order[(order.indexOf(fsState.sort) + 1) % 3]; fsState.asc = true; }
+      renderFilesScreen();
+    });
+    const sm = host.querySelector('[data-fsselect]');
+    if (sm) sm.addEventListener('click', () => { fsState.selectMode = !fsState.selectMode; fsState.sel.clear(); renderFilesScreen(); });
+    const sa = host.querySelector('[data-fsselectall]');
+    if (sa) sa.addEventListener('click', () => { fsSorted().forEach(e => fsState.sel.add(e.path)); renderFilesScreen(); });
+    const nf = host.querySelector('[data-fsnewfolder]');
+    if (nf) nf.addEventListener('click', () => { fsState.newFolder = true; renderFilesScreen(); const i = document.getElementById('fsNewFolderInput'); if (i) i.focus(); });
+    const ok = host.querySelector('[data-fsmkdirok]');
+    if (ok) ok.addEventListener('click', () => {
+      const i = document.getElementById('fsNewFolderInput');
+      if (i && i.value.trim()) window.fsAction('mkdir', { path: fsState.cwd.replace(/\/$/, '') + '/' + i.value.trim() });
+      fsState.newFolder = false; renderFilesScreen();
+    });
+    const ca = host.querySelector('[data-fscancel]');
+    if (ca) ca.addEventListener('click', () => { fsState.newFolder = false; renderFilesScreen(); });
+    const ro = host.querySelector('[data-fsrenameok]');
+    if (ro) ro.addEventListener('click', () => {
+      const i = document.getElementById('fsRenameInput');
+      if (i && i.value.trim()) window.fsAction('rename', { path: fsState.renaming, name: i.value.trim() });
+      fsState.renaming = null; renderFilesScreen();
+    });
+    const rc = host.querySelector('[data-fscancelrename]');
+    if (rc) rc.addEventListener('click', () => { fsState.renaming = null; renderFilesScreen(); });
+    host.querySelectorAll('[data-fsgofav]').forEach(b => {
+      let lpTimer = null, lpFired = false;
+      b.addEventListener('pointerdown', () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => { lpFired = true; openFsFavMenu(b.dataset.fsgofav); }, 550);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => b.addEventListener(ev, () => clearTimeout(lpTimer)));
+      b.addEventListener('click', () => { if (lpFired) { lpFired = false; return; } window.fsListDir(b.dataset.fsgofav); });
+    });
+    host.querySelectorAll('[data-fsbulk]').forEach(b => b.addEventListener('click', () => {
+      const paths = Array.from(fsState.sel);
+      const hasDir = fsState.entries.some(e => e.isDir && fsState.sel.has(e.path));
+      const a = b.dataset.fsbulk;
+      if (a === 'download') window.fsAction('download', { paths: paths, zip: hasDir || paths.length > 1 });
+      else if (a === 'copyPath') window.fsAction('copyPath', { paths: paths });
+      else if (a === 'trash') {
+        if (b.dataset.confirmed) {
+          window.fsAction('trash', { paths: paths });
+          fsState.selectMode = false; fsState.sel.clear();
+          renderFilesScreen();
+        } else {
+          b.dataset.confirmed = '1';
+          b.textContent = paths.length + ' in den Papierkorb?';
+          setTimeout(() => { delete b.dataset.confirmed; if (document.contains(b)) renderFilesScreen(); }, 3000);
+        }
+      }
+    }));
+    wireFsRows(host);
+  }
+  function wireFsRows(host) {
+    host.querySelectorAll('img.fs-thumb').forEach(im => im.addEventListener('error', () => {
+      const s = document.createElement('span'); s.className = 'fs-ico'; s.textContent = '·';
+      im.replaceWith(s);
+    }));
+    host.querySelectorAll('.fs-row').forEach(row => {
+      let lpTimer = null, lpFired = false;
+      row.addEventListener('pointerdown', () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => {
+          lpFired = true;
+          if (!fsState.selectMode) { fsState.selectMode = true; fsState.sel.add(row.dataset.fspath); renderFilesScreen(); }
+        }, 550);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => row.addEventListener(ev, () => clearTimeout(lpTimer)));
+      row.addEventListener('click', (ev) => {
+        if (lpFired) { lpFired = false; return; }
+        if (ev.target.closest('[data-fsmenu]')) return;
+        const p = row.dataset.fspath, isDir = row.dataset.fsdir === '1';
+        if (fsState.selectMode) { fsState.sel.has(p) ? fsState.sel.delete(p) : fsState.sel.add(p); renderFilesScreen(); return; }
+        if (isDir) window.fsListDir(p);
+        else openFsViewer(p);
+      });
+    });
+    host.querySelectorAll('[data-fsmenu]').forEach(b => b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openFsRowMenu(b.dataset.fsmenu);
+    }));
+  }
+  function fsMdToHtml(md) {
+    let h = md
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/^######\s+(.+)$/gm, '<h6>$1</h6>').replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>')
+      .replace(/^####\s+(.+)$/gm, '<h4>$1</h4>').replace(/^###\s+(.+)$/gm, '<h3>$1</h3>')
+      .replace(/^##\s+(.+)$/gm, '<h2>$1</h2>').replace(/^#\s+(.+)$/gm, '<h1>$1</h1>')
+      .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/^&gt;\s+(.+)$/gm, '<blockquote>$1</blockquote>')
+      .replace(/^---+$/gm, '<hr>')
+      .replace(/^[\-\*]\s+(.+)$/gm, '<li>$1</li>')
+      .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%">')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+    h = h.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, '<ul>$1</ul>');
+    return h.split(/\n{2,}/).map(b => /^\s*<(h\d|ul|pre|blockquote|hr)/.test(b) ? b : '<p>' + b.replace(/\n/g, '<br>') + '</p>').join('');
+  }
+
+  let fsViewerReadTarget = null;
+  window.fsSetFileContent = function (path, content, error) {
+    if (fsViewerReadTarget !== path) return;
+    fsViewerReadTarget = null;
+    const body = document.querySelector('.fs-viewer__body');
+    if (!body) return;
+    if (error) { body.innerHTML = fsInfoCardHtml(path, error); wireFsInfoCard(body, path); return; }
+    if (fsKind(path.split('/').pop() || '') === 'md') {
+      body.innerHTML = '<div class="fs-md">' + fsMdToHtml(content || '') + '</div>';
+      const bar = document.querySelector('.fs-viewer__bar');
+      const t = document.createElement('button');
+      t.className = 'btn-chip'; t.textContent = 'Quelltext';
+      let raw = false;
+      t.addEventListener('click', () => {
+        raw = !raw; t.textContent = raw ? 'Ansicht' : 'Quelltext';
+        body.innerHTML = raw
+          ? '<div class="fs-txt"><pre>' + escapeHtml(content || '') + '</pre></div>'
+          : '<div class="fs-md">' + fsMdToHtml(content || '') + '</div>';
+      });
+      bar.insertBefore(t, bar.querySelector('[data-vdl]'));
+    } else {
+      const lines = (content || '').split('\n');
+      body.innerHTML = '<div class="fs-txt"><pre>' + lines.map((l, i) =>
+        '<span class="ln">' + (i + 1) + '</span>' + escapeHtml(l)).join('\n') + '</pre></div>';
+    }
+  };
+
+  function fsInfoCardHtml(p, note) {
+    const e = fsState.entries.find(x => x.path === p) || { name: p.split('/').pop(), size: 0, modified: 0 };
+    return '<div class="fs-infocard">' +
+      '<div style="font-size:34px">🗂</div>' +
+      '<div style="font-weight:800">' + escapeHtml(e.name || '') + '</div>' +
+      '<div class="fs-sub">' + escapeHtml(fsFmtSize(e.size)) + (e.modified ? ' · ' + fsFmtDate(e.modified) : '') + '</div>' +
+      (note ? '<div class="fs-sub">' + escapeHtml(note) + '</div>' : '') +
+      '<div style="display:flex;gap:8px"><button class="btn-chip" data-ic="download">⇩ Herunterladen</button>' +
+      '<button class="btn-chip" data-ic="share">Teilen</button></div></div>';
+  }
+  function wireFsInfoCard(body, p) {
+    body.querySelectorAll('[data-ic]').forEach(b => b.addEventListener('click', () => {
+      if (b.dataset.ic === 'download') window.fsAction('download', { paths: [p], zip: false });
+      else window.fsAction('share', { path: p });
+    }));
+  }
+
+  function openFsViewer(p) {
+    const name = p.split('/').pop() || p;
+    const kind = fsKind(name);
+    const url = window.fsFileUrl(p);
+    const old = document.getElementById('fsViewer');
+    if (old) old.remove();
+    const el = document.createElement('div');
+    el.className = 'fs-viewer'; el.id = 'fsViewer';
+    el.innerHTML =
+      '<div class="fs-viewer__bar">' +
+        '<span class="fs-viewer__name">' + escapeHtml(name) + '</span>' +
+        '<button class="btn-chip" data-vdl>⇩</button>' +
+        '<button class="btn-chip" data-vshare>Teilen</button>' +
+        '<button class="btn-chip" data-vclose>✕</button>' +
+      '</div><div class="fs-viewer__body"></div>';
+    document.body.appendChild(el);
+    el.querySelector('[data-vclose]').addEventListener('click', () => el.remove());
+    el.querySelector('[data-vdl]').addEventListener('click', () => window.fsAction('download', { paths: [p], zip: false }));
+    el.querySelector('[data-vshare]').addEventListener('click', () => window.fsAction('share', { path: p }));
+    const body = el.querySelector('.fs-viewer__body');
+
+    if (kind === 'img' && url) {
+      const imgs = fsSorted().filter(x => !x.isDir && fsKind(x.name) === 'img');
+      let idx = Math.max(0, imgs.findIndex(x => x.path === p));
+      const render = () => {
+        const cur = imgs[idx];
+        el.querySelector('.fs-viewer__name').textContent = cur.name;
+        body.innerHTML = '<img src="' + escapeHtml(window.fsFileUrl(cur.path)) + '">' +
+          (imgs.length > 1 ? '<button class="fs-viewer__nav" style="left:8px" data-vprev>‹</button>' +
+            '<button class="fs-viewer__nav" style="right:8px" data-vnext>›</button>' : '');
+        const pv = body.querySelector('[data-vprev]'), nx = body.querySelector('[data-vnext]');
+        if (pv) pv.addEventListener('click', () => { idx = (idx - 1 + imgs.length) % imgs.length; render(); });
+        if (nx) nx.addEventListener('click', () => { idx = (idx + 1) % imgs.length; render(); });
+        const img = body.querySelector('img');
+        let zoomed = false;
+        img.addEventListener('dblclick', () => {
+          zoomed = !zoomed;
+          img.style.maxWidth = zoomed ? 'none' : '100%';
+          img.style.maxHeight = zoomed ? 'none' : '100%';
+        });
+      };
+      render();
+    } else if (kind === 'vid' && url) {
+      body.innerHTML = '<video controls autoplay playsinline src="' + escapeHtml(url) + '"></video>';
+      body.querySelector('video').addEventListener('error', () => {
+        body.innerHTML = fsInfoCardHtml(p, 'Format nicht abspielbar — herunterladen oder teilen.');
+        wireFsInfoCard(body, p);
+      });
+    } else if (kind === 'aud' && url) {
+      body.innerHTML = '<audio controls autoplay src="' + escapeHtml(url) + '" style="width:90%"></audio>';
+    } else if (kind === 'pdf') {
+      const pu = window.fsPdfUrl(p);
+      if (pu) body.innerHTML = '<iframe src="' + escapeHtml(pu) + '"></iframe>';
+      else { body.innerHTML = fsInfoCardHtml(p, 'PDF-Viewer nur in der App.'); wireFsInfoCard(body, p); }
+    } else if (kind === 'md' || kind === 'txt') {
+      const e = fsState.entries.find(x => x.path === p);
+      if (e && e.size > 5 * 1024 * 1024) { body.innerHTML = fsInfoCardHtml(p, 'Zu groß für die Vorschau (> 5 MB).'); wireFsInfoCard(body, p); }
+      else { fsViewerReadTarget = p; body.innerHTML = '<div class="fs-empty">Lädt…</div>'; window.fsReadFile(p); }
+    } else {
+      body.innerHTML = fsInfoCardHtml(p, url ? '' : 'Keine Vorschau verfügbar.');
+      wireFsInfoCard(body, p);
+    }
+  }
+  function openFsRowMenu(p) {
+    const e = fsState.entries.find(x => x.path === p);
+    if (!e) return;
+    const old = document.getElementById('fsRowMenu');
+    if (old) old.remove();
+    const parent = e.isDir ? e.path : e.path.replace(/\/[^/]+$/, '');
+    const isFav = (window.__tmsFavs || []).indexOf(p) !== -1;
+    const el = document.createElement('div');
+    el.id = 'fsRowMenu';
+    el.style.cssText = 'position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,.45)';
+    el.innerHTML = '<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px">' +
+      '<div style="font-weight:800;font-size:13px;padding:2px 4px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.name) + '</div>' +
+      (e.isDir ? '' : '<button class="btn-chip" data-m="open">Öffnen</button>') +
+      '<button class="btn-chip" data-m="copyPath">Pfad kopieren</button>' +
+      '<button class="btn-chip" data-m="cd">Im Terminal öffnen (cd)</button>' +
+      '<button class="btn-chip" data-m="insert">In Eingabezeile einfügen</button>' +
+      '<button class="btn-chip" data-m="download">Herunterladen' + (e.isDir ? ' (ZIP)' : '') + '</button>' +
+      (e.isDir ? '' : '<button class="btn-chip" data-m="share">Teilen</button>') +
+      '<button class="btn-chip" data-m="rename">Umbenennen</button>' +
+      '<button class="btn-chip" data-m="fav">' + (isFav ? '★ Favorit entfernen' : '☆ Favorit') + '</button>' +
+      '<button class="btn-chip btn-chip--danger" data-m="trash">Löschen</button>' +
+      '<button class="btn-chip" data-m="close">Abbrechen</button></div>';
+    document.body.appendChild(el);
+    el.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-m]');
+      if (!btn) { if (ev.target === el) el.remove(); return; }
+      const m = btn.dataset.m;
+      if (m === 'trash' && !btn.dataset.confirmed) {
+        btn.dataset.confirmed = '1'; btn.textContent = 'Wirklich in den Papierkorb?'; return;
+      }
+      el.remove();
+      if (m === 'open') openFsViewer(p);
+      else if (m === 'copyPath') window.fsAction('copyPath', { paths: [p] });
+      else if (m === 'cd') window.fsAction('cd', { path: parent });
+      else if (m === 'insert') window.fsAction('insert', { path: p });
+      else if (m === 'download') window.fsAction('download', { paths: [p], zip: !!e.isDir });
+      else if (m === 'share') window.fsAction('share', { path: p });
+      else if (m === 'fav') window.fsAction('fav', { path: p });
+      else if (m === 'trash') window.fsAction('trash', { paths: [p] });
+      else if (m === 'rename') {
+        fsState.renaming = p; renderFilesScreen();
+        setTimeout(() => { const i = document.getElementById('fsRenameInput'); if (i) { i.focus(); i.select(); } }, 50);
+      }
+    });
+  }
+  /** Favoriten-Chip hat keinen FileEntry (isDir/size) — nur der Pfad ist
+   *  bekannt. cd behandelt ihn deshalb wie einen Ordner, was zum bisherigen
+   *  Einzeltipp-Verhalten passt (der navigiert ja auch schon hinein). */
+  function openFsFavMenu(p) {
+    const old = document.getElementById('fsFavMenu');
+    if (old) old.remove();
+    const el = document.createElement('div');
+    el.id = 'fsFavMenu';
+    el.style.cssText = 'position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,.45)';
+    el.innerHTML = '<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px">' +
+      '<div style="font-weight:800;font-size:13px;padding:2px 4px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">★ ' + escapeHtml(p.split('/').pop() || p) + '</div>' +
+      '<button class="btn-chip" data-m="open">Öffnen</button>' +
+      '<button class="btn-chip" data-m="copyPath">Pfad kopieren</button>' +
+      '<button class="btn-chip" data-m="cd">Im Terminal öffnen (cd)</button>' +
+      '<button class="btn-chip btn-chip--danger" data-m="unfav">Favorit entfernen</button>' +
+      '<button class="btn-chip" data-m="close">Abbrechen</button></div>';
+    document.body.appendChild(el);
+    el.addEventListener('click', ev => {
+      const btn = ev.target.closest('[data-m]');
+      if (!btn) { if (ev.target === el) el.remove(); return; }
+      const m = btn.dataset.m;
+      el.remove();
+      if (m === 'open') window.fsListDir(p);
+      else if (m === 'copyPath') window.fsAction('copyPath', { paths: [p] });
+      else if (m === 'cd') window.fsAction('cd', { path: p });
+      else if (m === 'unfav') window.fsAction('fav', { path: p });
+    });
+  }
+  SCREEN_HOOKS.files = function () { if (!document.querySelector('[data-screen="files"] .fs-list')) renderFilesScreen(); };
+
   function buildFilesSheet() {
-    const html = `<div class="tool-list">${TMS_DATA.files.map(f => `
+    const html = `<div class="fx-head" style="margin-bottom:8px">
+        <button class="btn-chip" data-fx-fullscreen>⛶ Vollbild-Explorer</button>
+      </div><div class="tool-list">${TMS_DATA.files.map(f => `
       <div class="tool-row">
         <span class="tool-row__icon">${f.type === 'dir' ? '▸' : '·'}</span>
         <span class="tool-row__name">${escapeHtml(f.name)}</span>
         <span class="tool-row__meta">${f.size ? escapeHtml(f.size) : ''}</span>
       </div>`).join('')}</div>`;
-    return { html };
+    return { html, wire() {
+      const btn = document.querySelector('#toolSheetBody [data-fx-fullscreen]');
+      if (btn) btn.addEventListener('click', () => {
+        closeSheet(document.getElementById('toolSheetWrap'));
+        window.openFilesScreen();
+      });
+    } };
   }
 
   function buildSqlSheet() {
@@ -5498,6 +6412,9 @@
     Object.keys(dockPages).forEach(k => dockPages[k].classList.toggle('is-active', k === page));
     if (page === 'nav') positionDockPill();
     if (page === 'term') syncDockTerminal();
+    // Nav- und Terminal-Seite sind unterschiedlich hoch: was auf der Bar steht
+    // (die Tastenleiste) muss die neue Höhe kennen, sonst überlappt sie.
+    syncDockHeight();
   }
 
   /** Which terminal the bar acts on: the one last tapped / typed into. */
@@ -5514,6 +6431,91 @@
     document.querySelectorAll('.term-card').forEach(c => c.classList.toggle('is-target', c.dataset.id === id));
     if (state.keysPanelOpen) applyKeysPanelVisibility();
   }
+  // ============================================================
+  // Eingabezeile: mitwachsen (bis 3 Zeilen) + Cursor-Schrubber
+  // ============================================================
+  // Die Bar sitzt unten fest — wächst das Feld, wächst sie nach OBEN. Alles,
+  // was auf ihr steht (Tastenleiste), hängt an --dock-h und rückt mit.
+  function syncDockHeight() {
+    // Auf dem Sperrbildschirm ist die Bar display:none — dann misst sie 0 und
+    // die Tastenleiste säße plötzlich HINTER ihr. Nur echte Höhen zählen.
+    const h = dockEl.offsetHeight;
+    if (h > 0) document.documentElement.style.setProperty('--dock-h', h + 'px');
+  }
+  window.addEventListener('resize', syncDockHeight);
+  function autoGrowInput(el) {
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    const lh = parseFloat(cs.lineHeight) || 20;
+    const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const max = lh * 3 + pad;
+    // Beim Messen MUSS das Feld auf overflow:hidden stehen. Steht es noch auf
+    // „scrollbar" (weil es eben noch dreizeilig war), rechnet Chrome scrollHeight
+    // mit dem alten Scroll-Inhalt — das Feld schrumpfte dann nie ganz zurück.
+    el.style.overflowY = 'hidden';
+    el.style.height = 'auto';
+    // Ist das Feld leer, misst Chrome den PLATZHALTER mit — der bricht auf zwei
+    // Zeilen um, und die Bar stünde im Ruhezustand zweizeilig da. Leer heißt
+    // immer genau eine Zeile.
+    const contentH = el.value ? el.scrollHeight : lh + pad;
+    const h = Math.min(contentH, max);
+    el.style.height = h + 'px';
+    // Erst ab der vierten Zeile scrollt das Feld in sich selbst.
+    el.style.overflowY = contentH > max + 1 ? 'auto' : 'hidden';
+    if (contentH <= max) el.scrollTop = 0;
+    // Feld und Bar wachsen im SELBEN Frame — eine Höhen-Animation hier hätte
+    // die Leiste darüber hinterherhinken lassen (und scrollHeight mitten im
+    // Übergang lügt ohnehin).
+    syncDockHeight();
+  }
+  // Gedrückt halten und waagerecht ziehen schiebt den Cursor durch den Text —
+  // die Alternative zu Androids Lupe, die im WebView nicht zuverlässig kommt.
+  // Greift nur im FOKUSSIERTEN Feld: unfokussiert gehört das lange Drücken
+  // weiterhin der Bar (Terminal-Wechsel), sonst würden sich beide beißen.
+  function wireCaretScrub(el) {
+    const HOLD_MS = 280, PX_PER_CHAR = 7, MOVE_CANCEL = 10;
+    let hold = null, scrubbing = false, startX = 0, startPos = 0;
+    const stop = () => {
+      clearTimeout(hold); hold = null;
+      if (!scrubbing) return;
+      scrubbing = false;
+      el.classList.remove('is-scrubbing');
+    };
+    el.addEventListener('pointerdown', e => {
+      if (document.activeElement !== el) return; // erst tippen, dann schrubben
+      startX = e.clientX;
+      clearTimeout(hold);
+      hold = setTimeout(() => {
+        scrubbing = true;
+        startPos = el.selectionStart == null ? el.value.length : el.selectionStart;
+        el.classList.add('is-scrubbing');
+        try { el.setPointerCapture(e.pointerId); } catch (err) { /* kein Capture nötig */ }
+        if (navigator.vibrate) navigator.vibrate(8);
+      }, HOLD_MS);
+    });
+    el.addEventListener('pointermove', e => {
+      if (!scrubbing) {
+        if (hold && Math.abs(e.clientX - startX) > MOVE_CANCEL) { clearTimeout(hold); hold = null; }
+        return;
+      }
+      e.preventDefault();
+      const pos = Math.max(0, Math.min(el.value.length,
+        startPos + Math.round((e.clientX - startX) / PX_PER_CHAR)));
+      try { el.setSelectionRange(pos, pos); } catch (err) { /* ignore */ }
+    });
+    el.addEventListener('pointerup', stop);
+    el.addEventListener('pointercancel', stop);
+    // Beim Schrubben darf Android weder Kontextmenü noch Wortauswahl aufmachen.
+    el.addEventListener('contextmenu', e => { if (scrubbing) e.preventDefault(); });
+    el.addEventListener('selectstart', e => { if (scrubbing) e.preventDefault(); });
+  }
+  document.getElementById('dockInput').addEventListener('input', e => autoGrowInput(e.target));
+  wireCaretScrub(document.getElementById('dockInput'));
+  requestAnimationFrame(syncDockHeight);
+  // Die Bridge leert das Feld selbst (dockReset) — sie muss es danach auch
+  // wieder schrumpfen lassen, sonst bleibt die Bar dreizeilig stehen.
+  window.autoGrowInput = autoGrowInput;
+
   // Beim Tippen darf das Terminal nicht hinter der Tastatur verschwinden.
   document.getElementById('dockInput').addEventListener('focus', () => {
     dockEl.classList.add('is-typing');
@@ -5550,6 +6552,7 @@
       const input = document.getElementById('dockInput');
       sendTerminalCommand(id, input.value);
       input.value = '';
+      autoGrowInput(input);
       input.blur();
     } else if (e.target.closest('#dockMicBtn')) {
       startDictation(id);
@@ -5560,10 +6563,14 @@
   });
   document.getElementById('dockInput').addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
+    // Im Textfeld würde Enter umbrechen statt zu senden — die Zeile wächst nur
+    // MIT dem Text (Umbruch), nicht durch selbst gesetzte Zeilenschaltungen.
+    e.preventDefault();
     const id = dockTargetId();
     if (!id) return;
     sendTerminalCommand(id, e.target.value);
     e.target.value = '';
+    autoGrowInput(e.target);
     e.target.blur();
   });
 
@@ -5694,7 +6701,7 @@
     const near = Math.round(clamp(f, 0, n - 1));
     tsDots.forEach((dot, i) => {
       const d = Math.abs(i - f);
-      const scale = 1 + Math.max(0, 1 - d) * 0.9 + (d < 1 ? (1 - d) * 0.3 : 0);
+      const scale = 1 + Math.max(0, 1 - d) * 0.3 + (d < 1 ? (1 - d) * 0.1 : 0);
       dot.style.transform = `scale(${scale.toFixed(3)})`;
       dot.style.opacity = (0.38 + Math.max(0, 1 - d) * 0.62).toFixed(3);
       dot.parentElement.classList.toggle('is-active', i === near);
@@ -5713,8 +6720,9 @@
     if (!show) return;
     tsTrack.innerHTML = state.order.map((id, i) => {
       const s = TMS_DATA.sessions.find(x => x.id === id);
+      const initial = escapeHtml(((s ? s.name : '?').trim()[0] || '?').toUpperCase());
       return `<button class="ts-seg${i === state.activeIndex ? ' is-active' : ''}" data-ts="${i}"
-        aria-label="${escapeHtml(s ? s.name : 'Terminal')}"><span class="ts-dot" style="background:${s ? s.colorTag : 'var(--accent)'}"></span></button>`;
+        aria-label="${escapeHtml(s ? s.name : 'Terminal')}"><span class="ts-dot" style="background:${s ? s.colorTag : 'var(--accent)'}">${initial}</span></button>`;
     }).join('');
     tsDots = [...tsTrack.querySelectorAll('.ts-dot')];
     tsRest(state.activeIndex);
