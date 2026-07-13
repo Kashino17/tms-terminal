@@ -258,6 +258,26 @@
      (Bildschirmwechsel rein/raus aus Terminals) — Compositor-only. */
   @keyframes islandPop { 0% { transform: translateX(-50%) scale(1); } 45% { transform: translateX(-50%) scale(1.035); } 100% { transform: translateX(-50%) scale(1); } }
   #statusHeader.is-popping { animation: islandPop 420ms var(--spring-snappy); }
+
+  /* Browser-Badge — grün wenn irgendwo ein Tab aktiv navigiert ist, auf
+     jedem Bildschirm sichtbar (auch im Terminal-Modus), Tap springt direkt
+     in den Browser. */
+  .island-browser-badge { display: none; flex: none; width: 26px; height: 26px; border-radius: 8px;
+    align-items: center; justify-content: center; color: #22C55E;
+    background: rgba(34,197,94,.16); border: 1px solid rgba(34,197,94,.35);
+    transition: transform 150ms var(--spring); }
+  .island-browser-badge:active { transform: scale(.9); }
+  .island-browser-badge.is-visible { display: flex; }
+
+  /* Long-Press + Ziehen auf der Insel wechselt den Bildschirm — der Hinweis
+     schwebt knapp darunter, genau wie das Terminal-Switcher-Label. */
+  .island-swipe-hint { position: fixed; top: calc(var(--safe-top) + 8px + 44px); left: 50%; z-index: 61;
+    transform: translateX(-50%) translateY(4px) scale(.92); opacity: 0; pointer-events: none;
+    transition: opacity 160ms ease-out, transform 220ms var(--ease-out);
+    padding: 6px 14px; border-radius: 999px; background: rgba(var(--well-rgb),.92);
+    -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border);
+    font: 600 12px var(--font-ui); color: var(--text); white-space: nowrap; }
+  .island-swipe-hint.is-visible { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
   .island-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-gentle) var(--spring-gentle); }
   .island-body__inner {
     overflow: hidden; min-height: 0;
@@ -1315,7 +1335,7 @@
 </div>
 
 <header id="statusHeader" class="glass glass--strong" role="button" tabindex="0" aria-expanded="false" aria-label="Status – Details öffnen">
-  <div class="island-compact">
+  <div class="island-compact" id="islandCompact">
     <span class="status-hd__activity">
       <span class="status-dot" id="statusDot"></span>
       <span class="status-hd__label" id="statusActivityLabel">Bereit</span>
@@ -1331,6 +1351,9 @@
         <span id="statusPrayerLabel">—</span>
       </span>
     </span>
+    <button class="island-browser-badge" id="islandBrowserBadge" aria-label="Browser öffnen" title="Browser">
+      <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/></svg>
+    </button>
     <div class="island-term-actions" id="islandTermActions">
       <button class="overview-btn glass" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">
         <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -1353,6 +1376,7 @@
   </div>
   <span class="status-mic-badge" id="statusMicBadge" hidden aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg></span>
 </header>
+<div class="island-swipe-hint" id="islandSwipeHint"></div>
 <div id="islandScrim" aria-hidden="true"></div>
 
 <main id="screens">
@@ -2019,7 +2043,9 @@
   }
   function toggleIsland() { state.islandOpen ? closeIsland() : openIsland(); }
 
+  let islSuppressClick = false;
   statusHeaderEl.addEventListener('click', e => {
+    if (islSuppressClick) { islSuppressClick = false; return; }
     // Taps inside the expanded body operate its content; only the compact
     // row (or an outside/scrim tap) toggles the island closed.
     if (state.islandOpen && e.target.closest('.island-body')) return;
@@ -2028,6 +2054,87 @@
   statusHeaderEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleIsland(); } });
   islandScrim.addEventListener('click', closeIsland);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.islandOpen) closeIsland(); });
+
+  // ============================================================
+  // Browser-Badge — grünes Globe-Icon, sobald irgendwo ein Browser-Tab
+  // tatsächlich navigiert ist (nicht bloß ein leerer Neuer-Tab). Tap springt
+  // direkt in den Browser; von dort führt der Swipe unten wieder zurück.
+  // ============================================================
+  const islandBrowserBadge = document.getElementById('islandBrowserBadge');
+  function isBrowserActive() {
+    const tab = typeof activeBrowserTab === 'function' ? activeBrowserTab() : null;
+    const page = tab && tab.history && tab.history[tab.historyIndex];
+    return !!page && page.kind !== 'newtab';
+  }
+  function updateIslandBrowserBadge() {
+    islandBrowserBadge.classList.toggle('is-visible', isBrowserActive());
+  }
+  islandBrowserBadge.addEventListener('click', e => {
+    e.stopPropagation();
+    islSuppressClick = false; // eigener Tap, kein Insel-Toggle nötig
+    show('browser');
+  });
+
+  // ============================================================
+  // Long-Press + Ziehen auf der Insel wechselt den Bildschirm — dieselbe
+  // Press-and-hold-dann-Ziehen-Mechanik wie der Terminal-Switcher unten,
+  // nur über die fünf Dock-Einträge statt über Terminal-Tabs. Vom Browser
+  // aus führt jede Zugrichtung zurück zu Terminals ("swipe back").
+  // ============================================================
+  const DOCK_SWIPE_ORDER = ['servers', 'terminals', 'manager', 'cloud', 'browser'];
+  const DOCK_SWIPE_LABEL = { servers: 'Server', terminals: 'Terminals', manager: 'Manager', cloud: 'Cloud', browser: 'Browser' };
+  const islandCompactEl = document.getElementById('islandCompact');
+  const islandSwipeHintEl = document.getElementById('islandSwipeHint');
+  let islHold = null, islArmed = false, islMoved = false, islStartX = 0, islX = 0, islRaf = 0, islFromIdx = 0;
+
+  function islIndexFromDx(dx) {
+    const STEP = 56; // px pro Schritt — ein bequemer Daumen-Swipe
+    return clamp(islFromIdx - Math.round(dx / STEP), 0, DOCK_SWIPE_ORDER.length - 1);
+  }
+  function islFrame() {
+    islRaf = 0;
+    if (!islArmed) return;
+    if (currentScreen === 'browser') { islandSwipeHintEl.textContent = '‹ Zurück zu Terminals'; return; }
+    const idx = islIndexFromDx(islX - islStartX);
+    islandSwipeHintEl.textContent = DOCK_SWIPE_LABEL[DOCK_SWIPE_ORDER[idx]] || '';
+  }
+  islandCompactEl.addEventListener('pointerdown', e => {
+    // Buttons/Toggles innerhalb der Insel behalten ihr eigenes Tap-Verhalten.
+    if (e.target.closest('.overview-btn, .view-toggle, .island-browser-badge')) return;
+    islMoved = false;
+    islStartX = e.clientX; islX = e.clientX;
+    islFromIdx = Math.max(0, DOCK_SWIPE_ORDER.indexOf(currentScreen));
+    clearTimeout(islHold);
+    islHold = setTimeout(() => {
+      islArmed = true;
+      if (navigator.vibrate) navigator.vibrate(6);
+      islandSwipeHintEl.classList.add('is-visible');
+      islFrame();
+    }, 260);
+  });
+  islandCompactEl.addEventListener('pointermove', e => {
+    if (!islArmed) return;
+    islMoved = true;
+    islX = e.clientX;
+    if (!islRaf) islRaf = requestAnimationFrame(islFrame);
+  });
+  function islEnd() {
+    clearTimeout(islHold);
+    if (!islArmed) { return; }
+    islArmed = false;
+    islSuppressClick = true; // war ein Long-Press-Zug, kein normaler Tap — Insel nicht zusätzlich auf/zu
+    cancelAnimationFrame(islRaf); islRaf = 0;
+    islandSwipeHintEl.classList.remove('is-visible');
+    if (!islMoved) return; // reiner Halt ohne Zug: nichts committen, Insel bleibt wie sie war
+    if (currentScreen === 'browser') { show('terminals'); return; }
+    const dx = islX - islStartX;
+    if (Math.abs(dx) < 24) return; // zu kurz gezogen, keine erkennbare Absicht
+    const target = DOCK_SWIPE_ORDER[islIndexFromDx(dx)];
+    if (target && target !== currentScreen) show(target);
+  }
+  islandCompactEl.addEventListener('pointerup', islEnd);
+  islandCompactEl.addEventListener('pointerleave', islEnd);
+  islandCompactEl.addEventListener('pointercancel', islEnd);
 
   statusPrayerLabel.textContent = (() => { const np = nextPrayer(); return `${np.name} · ${np.countdown}`; })();
 
@@ -2176,6 +2283,7 @@
     // screen; syncPromptSheets re-homes/hides it as the user navigates.
     syncPromptSheets();
     updatePendingBadge();
+    if (typeof updateIslandBrowserBadge === 'function') updateIslandBrowserBadge();
   }
   function goToTerminals() { show('terminals'); }
 
@@ -3032,11 +3140,13 @@
   }
   window.__tmsFlushHidden = flushHiddenCards;
   // Liste: Karten, die in den Viewport scrollen, holen ihren Output nach.
-  // (capture, weil scroll nicht bubbelt — so reicht ein Listener für alle.)
-  let flushScrollRaf = 0;
-  document.querySelector('[data-screen="terminals"]').addEventListener('scroll', () => {
-    if (!flushScrollRaf) flushScrollRaf = requestAnimationFrame(() => { flushScrollRaf = 0; flushHiddenCards(); });
-  }, { capture: true, passive: true });
+  // Scroll-Events der .term-list erreichen weder Section noch document
+  // zuverlässig (empirisch, auch capture nicht) — deshalb ein Wächter, der
+  // NUR arbeitet, solange etwas aufgestaut ist: bei leerem Pending-Objekt
+  // kostet der Tick nichts, es gibt keinen Dauer-Poll über den DOM.
+  setInterval(() => {
+    if (Object.keys(pendingHiddenCards()).length) flushHiddenCards();
+  }, 400);
 
   // Ruhemodus: 15s ohne Interaktion -> body.is-calm, die Dauer-Pulse (Status-
   // Dots, Dock-Badge, Orb-Ring) pausieren und die GPU darf in den Leerlauf.
