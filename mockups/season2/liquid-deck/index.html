@@ -288,8 +288,53 @@
      Glass dock — bottom pill navigation
      ============================================================ */
   #dock { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); transform: translateX(-50%); z-index: 40;
-    display: flex; gap: 2px; padding: 6px; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
-    border: 1px solid var(--glass-border); border-radius: 999px; }
+    width: min(calc(100vw - 24px), 520px); padding: 6px; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+    border: 1px solid var(--glass-border); border-radius: 999px; overflow: hidden; touch-action: pan-y;
+    transition: transform 340ms var(--spring), box-shadow 340ms var(--spring); }
+  /* Long-press lifts the bar: the sign that it can now be swiped to the other one. */
+  /* Langes Drücken darf NIRGENDS Androids Textauswahl oder sein App-Menü öffnen.
+     Markiert wird ausschließlich im Terminal — über dessen Auswahlmodus. Nur
+     echte Eingabefelder dürfen weiterhin Text auswählen. */
+  html, body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  input, textarea, .fx-preview { -webkit-user-select: text; user-select: text; }
+  #dock { -webkit-user-select: none; user-select: none; }
+  /* Schreib-Modus: sobald die Tastatur offen ist, weichen ^C, Esc und das Mikro,
+     damit die Eingabezeile den Platz bekommt. Übrig bleiben Senden und Tasten. */
+  .dock-page--term > * { transition: max-width 280ms cubic-bezier(.22,1,.36,1),
+    opacity 160ms ease-out, margin 280ms cubic-bezier(.22,1,.36,1), transform 280ms cubic-bezier(.22,1,.36,1); }
+  /* Das Mikro bleibt beim Tippen sichtbar — Diktat IST Tippen per Stimme. */
+  #dock.is-typing .dock-page--term > .term-key {
+    max-width: 0; min-width: 0; width: 0; opacity: 0; margin: 0; padding: 0; border-width: 0;
+    transform: scale(.8); overflow: hidden; }
+  #dock.is-typing .term-input { font-size: 15px; }
+  #dock.is-typing .term-input-row__prompt { margin-left: 4px; }
+  #dockInput { -webkit-user-select: text; user-select: text; }
+  #dock.is-switching { transform: translateX(-50%) translateY(-6px) scale(1.03); box-shadow: 0 16px 40px rgba(0,0,0,.42); }
+  .dock-page { display: flex; align-items: center; gap: 2px; width: 100%;
+    transition: transform 360ms var(--spring), opacity 240ms ease; }
+  .dock-page:not(.is-active) { position: absolute; inset: 6px; opacity: 0; pointer-events: none; }
+  .dock-page--nav { justify-content: space-between; }
+  .dock-page--term, .dock-page--rec { gap: 5px; }
+  #dock[data-page="nav"]  .dock-page--term, #dock[data-page="rec"] .dock-page--term { transform: translateX(30%); }
+  #dock[data-page="term"] .dock-page--nav,  #dock[data-page="rec"] .dock-page--nav  { transform: translateX(-30%); }
+  #dock[data-page="term"] .dock-page--rec,  #dock[data-page="nav"] .dock-page--rec  { transform: translateY(60%); }
+  .dock-switch-hint { position: absolute; left: 50%; bottom: 2px; width: 34px; height: 3px; border-radius: 2px;
+    background: rgba(var(--overlay-rgb),.22); transform: translateX(-50%); opacity: 0; transition: opacity 200ms ease; }
+  #dock.is-switching .dock-switch-hint { opacity: 1; }
+
+  /* Aufnahme-Leiste: Spur, Timer, Abbrechen, Übernehmen. */
+  .rec-wave { flex: 1; display: flex; align-items: center; justify-content: center; gap: 3px; height: 34px; min-width: 0; overflow: hidden; }
+  .rec-wave span { width: 3px; border-radius: 2px; background: var(--accent); opacity: .85;
+    animation: rec-bounce 900ms ease-in-out infinite; }
+  @keyframes rec-bounce { 0%, 100% { height: 5px; } 50% { height: var(--h, 18px); } }
+  .rec-timer { flex: none; min-width: 44px; text-align: center; font: 700 13px var(--font-mono); color: var(--text); font-variant-numeric: tabular-nums; }
+  .rec-btn { flex: none; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+  .rec-btn .ic { width: 20px; height: 20px; }
+  .rec-btn--cancel { color: var(--danger); background: rgba(var(--danger-rgb),.14); }
+  .rec-btn--confirm { color: var(--ok); background: rgba(var(--ok-rgb),.16); }
+  .rec-btn:active { transform: scale(.92); }
+  #dock[data-page="rec"] { border-color: rgba(var(--accent-rgb),.5); }
+  .dock-page--rec.is-transcribing .rec-wave span { animation: none; height: 5px; opacity: .35; }
   #dock::before { content: ''; position: absolute; left: 14%; right: 14%; top: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(var(--sheen-rgb),var(--sheen-a)), transparent); }
   .dock-btn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; width: 58px; padding: 7px 2px 6px; border-radius: var(--radius-pill); color: var(--text-dim); transition: color 250ms var(--spring), background 250ms var(--spring); }
   .dock-btn svg { width: var(--icon-md); height: var(--icon-md); }
@@ -317,6 +362,21 @@
   /* Keys panel slides in as a keyboard accessory. */
   @keyframes keysIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
   .keys-panel:not([hidden]) { animation: keysIn 240ms var(--spring-snappy); }
+  /* Die globale Leiste ist per translateX(-50%) zentriert — ihre Keyframes
+     MÜSSEN das mitführen, sonst springt sie während der Animation nach rechts
+     und plumpst am Ende nach links. Sie wächst federnd aus der Bottom-Bar. */
+  .keys-panel--global { transform-origin: 50% 100%; }
+  .keys-panel--global:not([hidden]) { animation: keysRise 520ms cubic-bezier(.30,1.18,.34,1); }
+  .keys-panel--global.is-closing { animation: keysFall 220ms cubic-bezier(.4,0,.68,.06) forwards; }
+  @keyframes keysRise {
+    from { opacity: 0; transform: translateX(-50%) translateY(26px) scale(.9); }
+    60%  { opacity: 1; }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  }
+  @keyframes keysFall {
+    from { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+    to   { opacity: 0; transform: translateX(-50%) translateY(18px) scale(.94); }
+  }
   /* Terminal stream lines are exempt from ALL motion — appends must be instant. */
   .term-line { transition: none !important; animation: none !important; }
   /* Scoped theme cross-fade — active only for ~400ms around a toggle. */
@@ -334,12 +394,25 @@
      ============================================================ */
   .sheet-wrap { position: fixed; inset: 0; z-index: 70; display: flex; align-items: flex-end; justify-content: center; visibility: hidden; }
   .sheet-wrap.is-open { visibility: visible; }
+  /* Die hintere Seite weicht zurück, wenn ein Sheet aufgeht: schrumpfen, runden,
+     abdunkeln — die iOS-Card-Präsentation. Ein Sheet liegt nicht AUF der Seite,
+     es schiebt sie nach hinten. */
+  #screens { transform-origin: 50% 12%;
+    transition: transform 520ms cubic-bezier(.32,1.06,.35,1), border-radius 520ms cubic-bezier(.32,1.06,.35,1), filter 380ms ease; }
+  body.sheet-open #screens { transform: scale(.935) translateY(8px); border-radius: 26px; overflow: hidden;
+    filter: brightness(.72) saturate(.92); }
+  body.sheet-open #statusHeader { transition: transform 520ms cubic-bezier(.32,1.06,.35,1), opacity 380ms ease;
+    transform: translateX(-50%) scale(.93) translateY(6px); opacity: .55; }
+  #statusHeader { transition: transform 520ms cubic-bezier(.32,1.06,.35,1), opacity 380ms ease; }
   .sheet-backdrop { position: absolute; inset: 0; background: rgba(var(--scrim-rgb),0); transition: background 350ms var(--spring); }
   .sheet-wrap.is-open .sheet-backdrop { background: rgba(var(--scrim-rgb),var(--scrim-a)); }
   .sheet-panel { position: relative; width: 100%; max-width: 480px; margin: 0 10px calc(env(safe-area-inset-bottom, 0px) + 10px); padding: 10px 18px calc(18px + env(safe-area-inset-bottom, 0px));
     background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
     transform: translateY(110%); transition: transform 260ms var(--ease-exit); will-change: transform; }
-  .sheet-wrap.is-open .sheet-panel { transform: translateY(0); transition: transform var(--dur-gentle) var(--spring-gentle); }
+  .sheet-wrap.is-open .sheet-panel { transform: translateY(0) scale(1);
+    transition: transform 560ms cubic-bezier(.30,1.18,.34,1); }
+  .sheet-wrap:not(.is-open) .sheet-panel { transform: translateY(104%) scale(.97);
+    transition: transform 340ms cubic-bezier(.4,0,.68,.06); }
   .sheet-grabber { width: 36px; height: 4px; border-radius: 3px; background: var(--glass-border); margin: 4px auto 14px; }
   .sheet-title { font-size: var(--fs-section); font-weight: 700; margin-bottom: 12px; }
 
@@ -446,6 +519,15 @@
     transition: transform 380ms var(--spring), opacity 380ms var(--spring), filter 380ms var(--spring); will-change: transform, opacity; }
   .card-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; cursor: grab; }
   .card-tag { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  /* Die Terminalfarbe ist der obere Rand der Karte: halbtransparent, folgt der
+     Rundung der oberen Ecken und verläuft an den Seiten sanft aus. */
+  .stack-card.term-card::before, .list-card.term-card .list-card__surface::before {
+    content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 4;
+    border: 2px solid color-mix(in srgb, var(--tag, transparent) 50%, transparent);
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--tag, transparent) 16%, transparent), transparent 26%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 12%, transparent 38%);
+    mask-image: linear-gradient(to bottom, #000 0, #000 12%, transparent 38%);
+  }
   .card-name-wrap { flex: 1 1 0%; min-width: 0; }
   /* Name + description are both readonly inputs; triple-tap unlocks editing
      (see wireTripleTapEdit) so single taps never pop the keyboard. */
@@ -456,7 +538,7 @@
   .card-desc[data-editing="1"] { text-overflow: clip; }
 
   /* Per-terminal Auto-Approve — 1-tap header pill, default ON. */
-  .auto-toggle { flex: none; display: flex; align-items: center; gap: 5px; height: 28px; min-width: 44px; padding: 0 10px; border-radius: var(--radius-pill); font: 700 var(--fs-caption) var(--font-ui); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
+  .auto-toggle { flex: none; display: flex; align-items: center; justify-content: center; height: 30px; width: 34px; padding: 0; border-radius: var(--radius-pill); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
   .auto-toggle .ic { width: var(--icon-sm); height: var(--icon-sm); flex: none; }
   .auto-toggle__label { letter-spacing: .01em; }
   .auto-toggle.is-on { color: var(--ok); background: rgba(var(--ok-rgb),var(--chip-a)); border-color: rgba(var(--ok-rgb),.4); }
@@ -472,13 +554,22 @@
   .status-chip[data-status="idle"] { color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); }
   .status-chip[data-status="idle"] .dot { background: var(--text-dim); }
 
-  .card-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 8px 8px; border-radius: var(--radius-md); padding: 12px 14px; font-size: var(--term-font-size); line-height: 1.6; font-family: var(--font-mono); position: relative; }
+  .card-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 4px 5px; border-radius: var(--radius-md); padding: 12px 14px; font-size: var(--term-font-size); line-height: 1.6; font-family: var(--font-mono); position: relative; }
   .card-body::before { display: none; }
 
   /* Shell wraps .card-body + the ⏬ jump-to-bottom orb — the orb lives
      OUTSIDE the <pre> so renderCardLines()'s innerHTML rewrite (every
      streamed line) never tears down its listeners/animation state. */
   .card-body-shell { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .tt-key--icon { padding: 0; width: 36px; flex: none; justify-content: center; }
+  /* Die Werkzeug-Reihe darf nie über den Rand laufen — lieber schiebbar. */
+  .keys-panel__row--tools { gap: 5px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .keys-panel__row--tools::-webkit-scrollbar { display: none; }
+  .keys-panel__row { min-width: 0; }
+  .keys-panel__arrows { flex: none; }
+  .keys-panel__row--tools .keys-panel__spacer { min-width: 8px; }
+  /* Welches Terminal die Leiste bedient, muss man SEHEN. */
+  .term-card.is-target { border-color: rgba(var(--accent-rgb),.55) !important; box-shadow: 0 0 0 1px rgba(var(--accent-rgb),.35), 0 10px 30px rgba(0,0,0,.3); }
   .jump-bottom-orb { position: absolute; right: 10px; bottom: 10px; width: var(--touch); height: var(--touch); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--accent); background: rgba(var(--accent-rgb),.2); border: 1px solid rgba(var(--accent-rgb),.4); box-shadow: 0 6px 18px rgba(0,0,0,.24); opacity: 0; transform: translateY(6px) scale(.9); pointer-events: none; transition: opacity 200ms var(--spring), transform 200ms var(--spring); z-index: 4; }
   .jump-bottom-orb .ic { width: var(--icon-md); height: var(--icon-md); }
   .jump-bottom-orb.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
@@ -566,6 +657,10 @@
   .list-swipe-btn .ic { width: var(--icon-md); height: var(--icon-md); }
   .list-swipe-btn:active { transform: scale(.9); }
   .list-swipe-btn--danger { color: var(--err); background: rgba(var(--err-rgb),.16); border-color: rgba(var(--err-rgb),.34); }
+  .tt-close-terminal { width: 100%; margin-top: 12px; padding: 13px; border-radius: 14px;
+    font: 600 13.5px var(--font-ui); color: var(--err);
+    background: rgba(var(--err-rgb),.12); border: 1px solid rgba(var(--err-rgb),.34); }
+  .tt-close-terminal:active { transform: scale(.98); }
   .list-swipe-btn--accent { color: var(--accent); background: rgba(var(--accent-rgb),.16); border-color: rgba(var(--accent-rgb),.4); }
   .list-swipe-btn.is-on { color: var(--accent); background: rgba(var(--accent-rgb),.2); border-color: rgba(var(--accent-rgb),.4); }
   .list-card__surface { position: relative; z-index: 1; display: flex; flex-direction: column; border-radius: inherit; transition: transform 320ms var(--spring); touch-action: pan-y; }
@@ -590,6 +685,63 @@
      presses, only via its own ✕ or the „Tasten" toggle. See
      toggleKeysPanel()/keysPanelHtml() in the script. ============================================================ */
   .keys-panel[hidden] { display: none; }
+  /* Die Tastenleiste schwebt über der Bottom-Bar, statt die Karte zu stauchen. */
+  .keys-panel--global { position: fixed; left: 50%; transform: translateX(-50%); z-index: 39;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px);
+    width: min(calc(100vw - 24px), 520px); margin: 0 !important;
+    transition: bottom 380ms var(--spring); }
+  body.has-switcher .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px + 34px); }
+  /* Der Stapel endet ÜBER dem Slider, nicht darunter. */
+  .stack { transition: bottom 520ms cubic-bezier(.30,1.18,.34,1); }
+  body.has-switcher .stack { bottom: 52px; }
+  /* Die Tastenleiste liegt nicht AUF dem Terminal — es macht ihr Platz.
+     --keys-h ist die ECHTE Panelhöhe (gesetzt beim Öffnen); statische Werte
+     gingen auseinander, sobald die Tastatur den Viewport verkürzte. */
+  body.keys-open .stack { bottom: calc(var(--keys-h, 100px) + 12px); }
+  body.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px + 40px); }
+  body.keys-open .term-list { padding-bottom: calc(var(--keys-h, 100px) + 20px); }
+  /* Tastatur offen: die Slider-Punkte weichen, das Terminal wird größer. */
+  #termSwitcher { transition: opacity 220ms ease-out, transform 380ms cubic-bezier(.30,1.18,.34,1); }
+  body.typing #termSwitcher { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(24px) scale(.9); }
+  body.typing.has-switcher .stack { bottom: 0; }
+  /* Beim Tippen sind die Punkte weg — die Leiste rückt nach unten nach,
+     und die Karte muss nur noch die Leiste selbst freihalten. */
+  body.typing .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px); }
+  body.typing.keys-open .stack,
+  body.typing.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px); }
+
+  /* ── Terminal-Slider ──────────────────────────────────────────────────────
+     Nur Punkte. Antippen springt, gedrückt halten und ziehen schiebt den Stapel
+     kontinuierlich mit — und der Punkt unter dem Daumen wächst mit der Nähe,
+     wie der Modus-Wähler der Kamera. Nichts hier hat einen Hintergrund: die
+     Leiste soll man kaum bemerken, bis man sie anfasst. */
+  .term-switcher { position: fixed; left: 50%; transform: translateX(-50%); z-index: 38;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px);
+    width: min(calc(100vw - 24px), 520px);
+    display: flex; flex-direction: column; align-items: center;
+    touch-action: none; -webkit-user-select: none; user-select: none; }
+  .term-switcher[hidden] { display: none; }
+
+  .term-switcher__label { pointer-events: none; margin-bottom: 5px;
+    opacity: 0; transform: translateY(4px) scale(.9);
+    transition: opacity 160ms ease-out, transform 260ms cubic-bezier(.22,1,.36,1); }
+  .term-switcher__label span { display: inline-block; padding: 4px 11px; border-radius: 999px;
+    background: rgba(var(--well-rgb),.92); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+    border: 1px solid var(--glass-border); color: var(--text);
+    font: 600 11.5px var(--font-ui); letter-spacing: -.01em; white-space: nowrap; }
+  .term-switcher.is-scrubbing .term-switcher__label,
+  .term-switcher.is-hinting  .term-switcher__label { opacity: 1; transform: translateY(0) scale(1); }
+
+  .term-switcher__track { display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 26px; }
+
+  .ts-seg { flex: 0 0 34px; height: 100%; display: flex; align-items: center; justify-content: center; }
+  .ts-dot { width: 6px; height: 6px; border-radius: 50%; opacity: .38;
+    transform: scale(1); will-change: transform;
+    transition: transform 260ms cubic-bezier(.22,1,.36,1), opacity 160ms ease-out; }
+  .ts-seg.is-active .ts-dot { opacity: 1; transform: scale(1.9); }
+  /* Beim Ziehen wird die Größe pro Frame gesetzt — Übergänge würden nachhinken. */
+  .term-switcher.is-scrubbing .ts-dot { transition: opacity 120ms ease-out; }
   .keys-panel:not([hidden]) { flex: none; margin: 0 8px 8px; padding: 7px 8px; border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 6px; }
   .keys-panel__row { display: flex; align-items: center; gap: 7px; }
   .keys-panel__spacer { flex: 1 1 auto; }
@@ -915,6 +1067,33 @@
   .adhan-overlay__sub { color: var(--text-dim); font-size: 13px; }
   .adhan-overlay__stop { margin-top: 14px; padding: 13px 32px; border-radius: 999px; background: rgba(var(--accent-rgb),.22); border: 1px solid rgba(var(--accent-rgb),.4); color: var(--accent-ink); font: 700 14px var(--font-ui); cursor: pointer; }
 
+  /* ---------- Files screen ---------- */
+  section[data-screen="files"]:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; }
+  .fs-head { display: flex; align-items: center; gap: 6px; padding: 10px 12px 4px; }
+  .fs-crumbs { flex: 1; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
+  .fs-crumbs::-webkit-scrollbar { display: none; }
+  .fs-crumb { background: none; border: 0; color: var(--text); font: inherit; font-size: 12.5px; padding: 4px 5px; border-radius: 8px; opacity: .75; cursor: pointer; }
+  .fs-crumb:last-child { opacity: 1; font-weight: 700; }
+  .fs-crumb-sep { opacity: .35; font-size: 11px; }
+  .fs-tools { display: flex; gap: 4px; padding: 2px 12px 6px; align-items: center; flex-wrap: wrap; }
+  .fs-searchrow { padding: 0 12px 6px; }
+  .fs-list { flex: 1; overflow-y: auto; padding: 0 8px 120px; -webkit-overflow-scrolling: touch; }
+  .fs-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 8px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; border-radius: 14px; cursor: pointer; }
+  .fs-row:active { background: rgba(255,255,255,.06); }
+  .fs-row.is-selected { background: rgba(var(--accent-rgb, 138,184,255),.14); }
+  .fs-ico { width: 36px; height: 36px; border-radius: 10px; flex: none; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; background: rgba(255,255,255,.06); }
+  .fs-thumb { width: 36px; height: 36px; border-radius: 10px; flex: none; object-fit: cover; background: rgba(255,255,255,.06); }
+  .fs-cell { flex: 1; min-width: 0; }
+  .fs-name { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  .fs-sub { font-size: 11px; opacity: .55; }
+  .fs-check { width: 21px; height: 21px; border-radius: 7px; border: 1.5px solid rgba(255,255,255,.35); flex: none; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .fs-check.is-on { background: var(--accent, #8ab8ff); border-color: transparent; color: #0b0e14; }
+  .fs-bulkbar { position: absolute; left: 12px; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); display: flex; gap: 8px; padding: 10px; border-radius: 18px; z-index: 40; }
+  .fs-bulkbar .btn-chip { flex: 1; justify-content: center; }
+  .fs-dlbar { position: absolute; left: 12px; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); padding: 8px 12px; border-radius: 14px; font-size: 12px; z-index: 39; display: flex; align-items: center; gap: 8px; }
+  .fs-dlbar progress { flex: 1; height: 4px; }
+  .fs-empty { text-align: center; opacity: .5; padding: 40px 0; font-size: 13px; }
+
   /* ---------- Lock screen ---------- */
   section[data-screen="lock"]:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; }
   body.is-locked #dock, body.is-locked #statusHeader, body.is-locked #islandScrim, body.is-locked #pullHint, body.is-locked #keyEcho { display: none !important; }
@@ -1101,6 +1280,7 @@
   <section data-screen="manager" hidden></section>
   <section data-screen="cloud" hidden></section>
   <section data-screen="browser" hidden></section>
+  <section data-screen="files" hidden></section>
   <section data-screen="settings" hidden></section>
   <section data-screen="prayer" hidden></section>
   <section data-screen="lock">
@@ -1121,7 +1301,15 @@
 
 <div class="pull-hint glass" id="pullHint" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Spotlight</span></div>
 
-<nav id="dock" class="glass">
+<div class="term-switcher" id="termSwitcher" hidden aria-label="Terminal wechseln">
+  <div class="term-switcher__label" id="tsLabel"><span></span></div>
+  <div class="term-switcher__track" id="tsTrack"></div>
+</div>
+
+<div class="keys-panel keys-panel--global glass" id="globalKeys" hidden></div>
+
+<nav id="dock" class="glass" data-page="nav">
+  <div class="dock-page dock-page--nav" id="dockNav">
   <span id="dockPill" aria-hidden="true"></span>
   <button class="dock-btn" data-nav="servers">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
@@ -1148,6 +1336,26 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>
     <span>Mehr</span>
   </button>
+  </div>
+
+  <div class="dock-page dock-page--term" id="dockTerm">
+    <button class="term-key term-key--danger" data-dock-key="ctrlc" aria-label="Strg+C senden">^C</button>
+    <button class="term-key" data-dock-key="esc" aria-label="Escape">Esc</button>
+    <span class="term-input-row__prompt">$</span>
+    <input type="text" class="term-input" id="dockInput" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben">
+    <button class="term-input-btn term-mic-btn" id="dockMicBtn" aria-label="Diktieren"></button>
+    <button class="term-input-btn term-send-btn" id="dockSendBtn" aria-label="Senden"></button>
+    <button class="term-input-btn term-keys-btn" id="dockKeysBtn" aria-label="Tasten"></button>
+  </div>
+
+  <div class="dock-page dock-page--rec" id="dockRec">
+    <button class="rec-btn rec-btn--cancel" id="recCancelBtn" aria-label="Diktat abbrechen"></button>
+    <div class="rec-wave" id="recWave" aria-hidden="true"></div>
+    <span class="rec-timer" id="recTimer">0:00</span>
+    <button class="rec-btn rec-btn--confirm" id="recConfirmBtn" aria-label="Diktat übernehmen"></button>
+  </div>
+
+  <span class="dock-switch-hint" id="dockSwitchHint" aria-hidden="true"></span>
 </nav>
 
 <div id="keyEcho" aria-hidden="true"></div>
@@ -1410,6 +1618,7 @@
   }
 
   const state = {
+    dockPage: 'nav',
     theme: loadTheme(),
     order: TMS_DATA.sessions.map(s => s.id),   // logical stack position -> session id (mutable via rail swap)
     activeIndex: 0,
@@ -1539,6 +1748,9 @@
     incognito: '<path d="M5 10Q12 2 19 10"/><path d="M3 10h18"/><circle cx="8" cy="13" r="3"/><circle cx="16" cy="13" r="3"/><path d="M11 13h2"/>',
     key: '<circle cx="7" cy="17" r="4"/><path d="M10 14 20 4"/><path d="M15 9l3 3"/><path d="M18 6l2.5 2.5"/>',
   };
+  ICON_PATHS.backspace = '<path d="M9 6h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-6-6a1 1 0 0 1 0-1.4Z"/><path d="m17 10-4 4M13 10l4 4"/>';
+  ICON_PATHS.camera = '<path d="M4 8a2 2 0 0 1 2-2h1.6l1-1.6a1 1 0 0 1 .85-.4h5.1a1 1 0 0 1 .85.4l1 1.6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.3"/>';
+  ICON_PATHS.check = '<path d="m5 13 4 4L19 7"/>';
   function icon(name, size, cls) {
     const p = ICON_PATHS[name] || '';
     const s = size || 20;
@@ -1771,9 +1983,18 @@
   // ============================================================
   // Bottom sheets (Mehr / permission)
   // ============================================================
-  function openSheet(wrapEl) { wrapEl.hidden = false; requestAnimationFrame(() => wrapEl.classList.add('is-open')); }
+  function openSheet(wrapEl) {
+    wrapEl.hidden = false;
+    requestAnimationFrame(() => {
+      wrapEl.classList.add('is-open');
+      if (!wrapEl.classList.contains('sheet-wrap--perm')) document.body.classList.add('sheet-open');
+    });
+  }
   function closeSheet(wrapEl) {
     wrapEl.classList.remove('is-open');
+    if (!document.querySelector('.sheet-wrap.is-open:not(.sheet-wrap--perm)')) {
+      document.body.classList.remove('sheet-open');
+    }
     setTimeout(() => { wrapEl.hidden = true; }, 420);
   }
 
@@ -1825,6 +2046,8 @@
     if (name !== 'prayer') stopPrayerTick();
     if (name !== 'terminals') { cancelDictation(); closeAllListRails(); }
     if (name !== 'browser') stopBrowserProgressTimers();
+    if (name !== 'terminals' && typeof setDockPage === 'function') setDockPage('nav');
+    if (typeof renderTermSwitcher === 'function') setTimeout(renderTermSwitcher, 0);
     const prev = currentScreen;
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
@@ -1980,7 +2203,8 @@
   // just "throw the old view's DOM away and repaint the other one from
   // state", instant at this card count.
   function renderTerminalWorkspace() {
-    cancelDictation(); // never leave a mic mid-flight pointed at a DOM node we're about to discard
+    cancelDictation();
+    setTimeout(() => { if (typeof renderTermSwitcher === 'function') renderTermSwitcher(); }, 0); // never leave a mic mid-flight pointed at a DOM node we're about to discard
     const body = document.getElementById('termBody');
     if (!body) return;
     if (state.terminalView === 'list') {
@@ -2071,13 +2295,11 @@
     return `
         <div class="card-header${isList ? ' list-card__header' : ''}">
           ${isList ? `<button class="chevron-btn" data-act="toggle" aria-label="Ein-/Ausklappen" title="Ein-/Ausklappen">${icon('chevron', 16)}</button>` : ''}
-          <span class="card-tag" style="background:${session.colorTag}"></span>
           <div class="card-name-wrap">
             <input class="card-name" value="${escapeHtml(session.name)}" readonly aria-label="Terminal-Name">
-            <input class="card-desc" value="${escapeHtml(session.description)}" readonly aria-label="Beschreibung">
           </div>
           <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
-          <button class="auto-toggle${cs.autoApprove ? ' is-on' : ''}" data-act="auto" aria-pressed="${cs.autoApprove}" aria-label="Auto-Approve umschalten" title="Auto-Approve">${icon('bolt', 14)}<span class="auto-toggle__label">Auto</span></button>
+          <button class="auto-toggle${cs.autoApprove ? ' is-on' : ''}" data-act="auto" aria-pressed="${cs.autoApprove}" aria-label="Auto-Approve umschalten" title="Auto-Approve">${icon('bolt', 15)}</button>
         </div>`;
   }
 
@@ -2098,12 +2320,13 @@
         <div class="keys-panel glass" data-keys-panel${state.keysPanelOpen ? '' : ' hidden'}>
           <div class="keys-panel__row">
             <button class="tt-key" data-tt-key="tab">Tab</button>
-            <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode">Aa Auswahl</button>
-            <button class="tt-key tt-key--danger" data-tt-key="clear">${icon('trash', 15)}<span>Leeren</span></button>
+            <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode" aria-label="Auswahlmodus" title="Auswahl">Aa</button>
+            <button class="tt-key tt-key--icon" data-tt-key="backspace" aria-label="Zeichen löschen" title="Löschen (⌫)">${icon('backspace', 17)}</button>
+            <button class="tt-key tt-key--danger tt-key--icon" data-tt-key="clear" aria-label="Terminal leeren" title="Leeren">${icon('trash', 16)}</button>
             <span class="keys-panel__spacer"></span>
             <button class="keys-panel__close" data-tt-key="closepanel" aria-label="Tasten schließen" title="Schließen">${icon('x', 15)}</button>
           </div>
-          <div class="keys-panel__row">
+          <div class="keys-panel__row keys-panel__row--tools">
             <div class="keys-panel__arrows">
               <button data-tt-cursor="←" aria-label="Links">${arrow(90)}</button>
               <button data-tt-cursor="↑" aria-label="Hoch">${arrow(180)}</button>
@@ -2111,40 +2334,85 @@
               <button data-tt-cursor="→" aria-label="Rechts">${arrow(-90)}</button>
             </div>
             <span class="keys-panel__spacer"></span>
-            <button class="tt-key" data-tt-key="werkzeuge">${icon('tools', 15)}<span>Werkzeuge</span></button>
+            <button class="tt-key tt-key--icon" data-tt-key="mic" aria-label="Diktieren" title="Diktieren">${icon('mic', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-tool="screenshots" aria-label="Screenshots" title="Screenshots">${icon('camera', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-tool="files" aria-label="Dateien" title="Dateien">${icon('folder', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-tool="notes" aria-label="Notizen" title="Notizen">${icon('note', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-key="werkzeuge" aria-label="Alle Werkzeuge" title="Alle Werkzeuge">${icon('tools', 17)}</button>
           </div>
         </div>`;
   }
   // Wires one card's panel to act ONLY on that card's id — "acts on the
   // active/focused card" (spec) falls out naturally since each panel
   // instance targets its own terminal, whichever view renders it.
+  function wireKeysPanelTools(panel, id) {
+    panel.querySelectorAll('[data-tt-tool]').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); openToolSheet(btn.dataset.ttTool); });
+    });
+  }
   function wireKeysPanel(card, id) {
     const panel = card.querySelector('.keys-panel');
     if (!panel) return;
+    wireKeysPanelTools(panel, id);
     panel.querySelectorAll('[data-tt-key]').forEach(btn => {
       btn.addEventListener('click', e => {
         e.stopPropagation();
         const k = btn.dataset.ttKey;
-        if (k === 'tab') flashKeyEcho('Tab');
+        // Tab hat im Mockup nur geblinkt — die Taste muss das Terminal erreichen.
+        if (k === 'tab') handleTermKey('tab', id);
+        else if (k === 'backspace') handleTermKey('backspace', id);
         else if (k === 'clear') clearActiveTerminal(id);
         else if (k === 'selectmode') {
           toggleCardSelectionMode(id, null);
           const on = cardState[id].selectionMode;
           btn.classList.toggle('is-on', on);
           toast(on ? 'Auswahlmodus an' : 'Auswahlmodus aus');
-        } else if (k === 'werkzeuge') openTermToolsSheet(id);
+        } else if (k === 'mic') startDictation(id);
+        else if (k === 'werkzeuge') openTermToolsSheet(id);
         else if (k === 'closepanel') closeKeysPanel();
       });
     });
+    // Ebenso die Pfeiltasten: sie schickten bisher gar nichts, sondern zeigten
+    // nur ein Echo an. Sie steuern jetzt wirklich den Cursor im Terminal.
+    const CURSOR_KEYS = { '←': 'left', '↑': 'up', '↓': 'down', '→': 'right' };
     panel.querySelectorAll('[data-tt-cursor]').forEach(btn => {
-      btn.addEventListener('click', e => { e.stopPropagation(); flashKeyEcho(btn.dataset.ttCursor); });
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        handleTermKey(CURSOR_KEYS[btn.dataset.ttCursor] || btn.dataset.ttCursor, id);
+      });
     });
   }
   // Single shared open/closed flag (kept intentionally simple per spec):
   // flipping it shows/hides every card's panel at once, in both views.
   function applyKeysPanelVisibility() {
-    document.querySelectorAll('[data-keys-panel]').forEach(el => { el.hidden = !state.keysPanelOpen; });
-    document.querySelectorAll('.term-keys-btn').forEach(btn => {
+    // Eine einzige Tastenleiste, über der Bottom-Bar — nicht mehr eine pro Karte.
+    // Sie gilt immer dem Terminal, das die Leiste gerade bedient.
+    const host = document.getElementById('globalKeys');
+    const id = typeof dockTargetId === 'function' ? dockTargetId() : state.activeCardId;
+    if (host) {
+      const show = !!state.keysPanelOpen && !!id && !!cardState[id];
+      if (show) {
+        host.hidden = false;
+        host.classList.remove('is-closing');
+        const tmp = document.createElement('div');
+        tmp.innerHTML = keysPanelHtml(id);
+        const inner = tmp.querySelector('.keys-panel');
+        host.innerHTML = inner ? inner.innerHTML : '';
+        wireKeysPanel(document, id); // document.querySelector('.keys-panel') === #globalKeys
+        requestAnimationFrame(() => {
+          document.documentElement.style.setProperty('--keys-h', host.offsetHeight + 'px');
+        });
+      } else if (!host.hidden) {
+        host.classList.add('is-closing');
+        clearTimeout(host._closeT);
+        host._closeT = setTimeout(() => { host.hidden = true; host.classList.remove('is-closing'); }, 220);
+      }
+      document.body.classList.toggle('keys-open', show);
+      // Die Karte ist jetzt größer/kleiner — das Terminal neu vermessen.
+      clearTimeout(host._fitT);
+      host._fitT = setTimeout(() => window.dispatchEvent(new Event('resize')), 540);
+    }
+    document.querySelectorAll('.term-keys-btn, #dockKeysBtn').forEach(btn => {
       btn.classList.toggle('is-on', state.keysPanelOpen);
       btn.setAttribute('aria-pressed', String(state.keysPanelOpen));
     });
@@ -2165,7 +2433,7 @@
   // longer opens the Werkzeuge sheet — it shows/hides the non-modal
   // .keys-panel docked just above this row (see keysPanelHtml/toggleKeysPanel).
   function stackInputRowHtml() {
-    return `
+    return ``; /* die Eingabezeile ist jetzt die Bottom-Bar */ return `
         <div class="term-input-row glass">
           <button class="term-key term-key--danger" data-key="ctrlc" aria-label="Strg+C senden" title="Strg+C">^C</button>
           <button class="term-key" data-key="esc" aria-label="Escape" title="Esc">Esc</button>
@@ -2179,7 +2447,8 @@
 
   // Liste input cluster — lean (input + mic + send); quick-keys live in the
   // per-card swipe rail instead.
-  function listInputRowHtml() {
+  function listInputRowHtml() { return ''; } // die Eingabezeile ist jetzt die Bottom-Bar
+  function listInputRowHtml_unused() {
     return `
         <div class="term-input-row glass">
           <span class="term-input-row__prompt">$</span>
@@ -2194,11 +2463,12 @@
     const card = document.createElement('div');
     card.className = 'stack-card term-card glass';
     card.dataset.id = id;
+    card.style.setProperty('--tag', session.colorTag);
     card.innerHTML = `
         ${cardHeaderHtml(session, id, false)}
         ${cardBodyBlockHtml(id, false)}
         <button class="replay-pill" hidden>${icon('replay', 14)}<span>Session erneut abspielen</span></button>
-        ${keysPanelHtml(id)}
+        
         ${stackInputRowHtml()}
       `;
     wireCardHeader(card, id);
@@ -2221,6 +2491,7 @@
     });
     layoutStack(state.activeIndex, { instant: true });
     state.activeCardId = state.order[state.activeIndex];
+    setActive_syncDock();
   }
 
   // ============================================================
@@ -2244,12 +2515,14 @@
     const card = document.createElement('article');
     card.className = 'list-card term-card';
     card.dataset.id = id;
+    card.style.setProperty('--tag', session.colorTag);
     card.dataset.collapsed = String(!!(cs && cs.collapsed));
     card.innerHTML = `
         <div class="list-card__rail" aria-hidden="true">
           <button class="list-swipe-btn list-swipe-btn--danger" data-rail="ctrlc" aria-label="Strg+C senden" title="Strg+C"><span class="rail-key">^C</span></button>
           <button class="list-swipe-btn" data-rail="clear" aria-label="Terminal leeren" title="Leeren">${icon('trash')}</button>
           <button class="list-swipe-btn" data-rail="notes" aria-label="Notizen & Todos" title="Notizen">${icon('note')}</button>
+          <button class="list-swipe-btn list-swipe-btn--danger" data-rail="close" aria-label="Terminal beenden" title="Beenden">${icon('x')}</button>
           <button class="list-swipe-btn list-swipe-btn--accent" data-rail="files" aria-label="Dateien" title="Dateien">${icon('folder')}</button>
           <button class="list-swipe-btn${state.keysPanelOpen ? ' is-on' : ''}" data-rail="keys" aria-label="Tasten" title="Tasten">${icon('keyboard')}</button>
         </div>
@@ -2258,7 +2531,7 @@
           <div class="list-card__collapsible">
             ${cardBodyBlockHtml(id, true)}
             <button class="replay-pill" hidden>${icon('replay', 14)}<span>Session erneut abspielen</span></button>
-            ${keysPanelHtml(id)}
+            
             ${listInputRowHtml()}
           </div>
         </div>
@@ -2270,7 +2543,7 @@
     restoreReplayPill(card, id);
     card.querySelector('.chevron-btn').addEventListener('click', e => { e.stopPropagation(); toggleListCardCollapse(id); });
     // Tapping anywhere in a list card marks it "current" for orb/tool actions.
-    card.addEventListener('pointerdown', () => { state.activeCardId = id; });
+    card.addEventListener('pointerdown', () => { state.activeCardId = id; setActive_syncDock(); });
     wireListSwipe(card, id);
     card.querySelector('.list-card__rail').addEventListener('click', e => {
       const btn = e.target.closest('[data-rail]');
@@ -2316,8 +2589,35 @@
   // Requirement 2 — "+ Neues Terminal": pushes a fresh session, paints it
   // into whichever view is mounted, and drops straight into inline rename
   // (same click-to-edit flow as an existing card's name field).
+  function removeTerminalCard(id) {
+    const idx = state.order.indexOf(id);
+    if (idx === -1) return;
+    state.order.splice(idx, 1);
+    const si = TMS_DATA.sessions.findIndex(s => s.id === id);
+    if (si !== -1) TMS_DATA.sessions.splice(si, 1);
+    delete cardState[id];
+    if (!state.order.length) { state.activeCardId = null; state.activeIndex = 0; }
+    else {
+      state.activeIndex = Math.min(idx, state.order.length - 1);
+      state.activeCardId = state.order[state.activeIndex];
+    }
+    state.activeFloat = state.activeIndex;
+    renderTerminalWorkspace();
+    if (typeof syncDockTerminal === 'function') syncDockTerminal();
+    if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
+  }
+  function closeTerminal(id) {
+    // Demo: Karte weg. Die App beendet stattdessen die echte PTY-Session.
+    removeTerminalCard(id);
+    toast('Terminal beendet');
+  }
+
   function addTerminal() {
     cancelDictation();
+    setTimeout(() => {
+      if (typeof syncDockTerminal === 'function') syncDockTerminal();
+      if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
+    }, 0);
     const session = createTerminalSession();
     if (state.terminalView === 'list') {
       const cardsHost = document.getElementById('termListCards');
@@ -2708,6 +3008,7 @@
     if (opts.instant) requestAnimationFrame(() => stackEl.classList.remove('is-dragging'));
   }
 
+  function setActive_syncDock() { if (typeof syncDockTerminal === 'function') syncDockTerminal(); }
   function setActive(index) {
     index = clamp(index, 0, state.order.length - 1);
     state.activeIndex = index;
@@ -2715,6 +3016,7 @@
     state.activeCardId = state.order[index];
     layoutStack(index);
     renderRail();
+    if (typeof tsRest === 'function' && tsVisible()) tsRest(index);
     // Switching the active card in Stack changes which card's ⏬ orb (if
     // any) is allowed to show — re-evaluate every card, cheap at this count.
     state.order.forEach(id => updateJumpOrb(id));
@@ -2787,7 +3089,8 @@
       const cs = cardState[id];
       const tile = document.createElement('div');
       tile.className = 'overview-tile glass';
-      const previewLines = cs.lines.slice(-4).map(l => ansiToHtml(l)).join('<br>');
+      const previewLines = window.__tmsPreview ? window.__tmsPreview(id, 5) : cs.lines.slice(-4).map(l => ansiToHtml(l)).join('<br>');
+      tile.dataset.id = id;
       tile.innerHTML = `
         <div class="overview-tile__head"><span class="card-tag" style="background:${session.colorTag}"></span><span class="overview-tile__name">${escapeHtml(session.name)}</span><span class="status-chip" data-status="${session.status}"><span class="dot"></span></span></div>
         <div class="overview-tile__body">${previewLines}</div>
@@ -2823,7 +3126,7 @@
       const item = document.createElement('div');
       item.className = 'rail-item glass' + (isActive ? ' is-active' : '');
       item.dataset.id = id; item.dataset.index = i;
-      const preview = cs.lines.slice(-2).map(l => ansiToHtml(l)).join('<br>');
+      const preview = window.__tmsPreview ? window.__tmsPreview(id, 2) : cs.lines.slice(-2).map(l => ansiToHtml(l)).join('<br>');
       item.innerHTML = `
         <div class="rail-item__top"><span class="card-tag" style="background:${session.colorTag}"></span><span class="rail-item__name">${escapeHtml(session.name)}</span></div>
         <div class="rail-item__preview">${preview}</div>
@@ -3444,7 +3747,7 @@
   // on; this sheet now only hosts the Dateien/SQL/Prozesse/Snippets/
   // Watchers tool shortcuts, reached via the panel's own „Werkzeuge" entry.
   // ============================================================
-  const TERM_TOOL_SHORTCUTS = ['files', 'sql', 'processes', 'snippets', 'watchers'];
+  const TERM_TOOL_SHORTCUTS = ['files', 'notes', 'sql', 'processes', 'snippets', 'watchers'];
   function openTermToolsSheet(id) {
     const session = TMS_DATA.sessions.find(s => s.id === id);
     const wrap = document.getElementById('termToolsSheetWrap');
@@ -3454,8 +3757,20 @@
       if (!def) return '';
       return `<button class="tool-tile glass" data-tt-tool="${tid}"><span class="tool-tile__glyph">${icon(def.icon || 'tools')}</span><span class="tool-tile__label">${escapeHtml(def.label)}</span></button>`;
     }).join('');
-    document.getElementById('termToolsBody').innerHTML = `<div class="tool-grid">${tiles}</div>`;
+    document.getElementById('termToolsBody').innerHTML = `<div class="tool-grid">${tiles}</div>
+      <button class="tt-close-terminal" id="ttCloseTerminal" type="button">Terminal beenden</button>`;
     const body = document.getElementById('termToolsBody');
+    const closeBtn = body.querySelector('#ttCloseTerminal');
+    closeBtn.addEventListener('click', () => {
+      if (!closeBtn.dataset.armed) {
+        closeBtn.dataset.armed = '1';
+        closeBtn.textContent = 'Wirklich beenden?';
+        setTimeout(() => { delete closeBtn.dataset.armed; closeBtn.textContent = 'Terminal beenden'; }, 3000);
+        return;
+      }
+      closeSheet(wrap);
+      closeTerminal(id);
+    });
     body.querySelectorAll('[data-tt-tool]').forEach(btn => {
       btn.addEventListener('click', () => { closeSheet(wrap); openToolSheet(btn.dataset.ttTool); });
     });
@@ -3500,6 +3815,20 @@
       case 'notes': openSessionSheet(id); break;
       case 'files': openToolSheet('files'); break;
       case 'keys': toggleKeysPanel(); break;
+      case 'close': {
+        // Beenden ist endgültig — der erste Tipp spannt nur, der zweite handelt.
+        const btn = document.querySelector(`.list-card[data-id="${id}"] [data-rail="close"]`);
+        if (btn && !btn.dataset.armed) {
+          btn.dataset.armed = '1';
+          btn.classList.add('is-on');
+          toast('Nochmal tippen: Terminal beenden');
+          setTimeout(() => { delete btn.dataset.armed; btn.classList.remove('is-on'); }, 3000);
+        } else {
+          if (btn) delete btn.dataset.armed;
+          closeTerminal(id);
+        }
+        break;
+      }
     }
   }
   function wireListSwipe(card) {
@@ -3604,6 +3933,9 @@
       // Browser screen (dock item). The tile stays here so there's no dead
       // end, it just routes straight there instead of opening a sheet.
       if (tile.dataset.tool === 'browser') { show('browser'); return; }
+      // Dateien is a full screen now, like the browser — the sheet stays
+      // reachable from the terminal toolbar for quick path inserts.
+      if (tile.dataset.tool === 'files') { window.openFilesScreen(); return; }
       openToolSheet(tile.dataset.tool);
     });
   }
@@ -3622,6 +3954,268 @@
     openSheet(document.getElementById('toolSheetWrap'));
     if (wire) wire();
   }
+
+  // ============================================================
+  // Files screen — fullscreen explorer. The demo data layer below
+  // is swapped out by bridge.js in the app (window.fs* hooks).
+  // ============================================================
+  const FS_TYPE_COLORS = { ts:'#3B82F6', tsx:'#3B82F6', js:'#F59E0B', jsx:'#F59E0B', py:'#22C55E',
+    rs:'#EF4444', go:'#06B6D4', html:'#F97316', css:'#3B82F6', json:'#F59E0B', yml:'#F59E0B',
+    yaml:'#F59E0B', md:'#8B5CF6', mdx:'#8B5CF6', txt:'#94A3B8', pdf:'#EF4444', sh:'#22C55E',
+    log:'#94A3B8', png:'#EC4899', jpg:'#EC4899', jpeg:'#EC4899', gif:'#EC4899', webp:'#EC4899',
+    svg:'#F97316', mp4:'#A855F7', webm:'#A855F7', mov:'#A855F7', mkv:'#A855F7', mp3:'#06B6D4',
+    wav:'#06B6D4', m4a:'#06B6D4', zip:'#F59E0B', gz:'#F59E0B', env:'#F59E0B' };
+  const FS_KINDS = {
+    img: ['png','jpg','jpeg','gif','webp','svg','ico','bmp','heic'],
+    vid: ['mp4','webm','mov','m4v','mkv','avi'],
+    aud: ['mp3','wav','m4a','ogg','flac'],
+    md:  ['md','mdx'],
+    pdf: ['pdf'],
+  };
+  function fsExt(name) { return (name.split('.').pop() || '').toLowerCase(); }
+  function fsKind(name) {
+    const e = fsExt(name);
+    for (const k in FS_KINDS) if (FS_KINDS[k].indexOf(e) !== -1) return k;
+    return 'txt';
+  }
+  function fsFmtSize(n) {
+    if (!n && n !== 0) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+  function fsFmtDate(ms) {
+    if (!ms) return '';
+    const d = new Date(ms), now = new Date();
+    return d.getFullYear() === now.getFullYear()
+      ? d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })
+      : String(d.getFullYear());
+  }
+
+  const fsState = {
+    cwd: '~', entries: [], sort: 'name', asc: true, filter: '', showSearch: false,
+    selectMode: false, sel: new Set(), renaming: null, newFolder: false,
+    downloads: [],  // {id, name, pct, state}
+  };
+
+  // ── Demo data layer (bridge.js replaces these) ──
+  const FS_DEMO = {
+    '~': [
+      { name: 'Desktop', isDir: true }, { name: 'projekt', isDir: true },
+      { name: 'notizen.md', isDir: false, size: 2400 },
+      { name: 'foto.svg', isDir: false, size: 5200 },
+      { name: 'demo.mp4', isDir: false, size: 1288490188 },
+      { name: 'report.pdf', isDir: false, size: 312000 },
+    ],
+    '~/Desktop': [{ name: 'screenshot.svg', isDir: false, size: 8100 }],
+    '~/projekt': [
+      { name: 'src', isDir: true }, { name: 'README.md', isDir: false, size: 1800 },
+      { name: 'server.log', isDir: false, size: 45000 },
+    ],
+    '~/projekt/src': [{ name: 'index.ts', isDir: false, size: 3200 }],
+  };
+  const FS_DEMO_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160">' +
+    '<rect width="240" height="160" rx="16" fill="#223"/><circle cx="70" cy="66" r="30" fill="#8ab8ff"/>' +
+    '<rect x="120" y="46" width="90" height="12" rx="6" fill="#555"/><rect x="120" y="70" width="70" height="12" rx="6" fill="#444"/></svg>');
+  window.fsListDir = function (path) {
+    const list = (FS_DEMO[path] || []).map(e => ({
+      name: e.name, isDir: !!e.isDir, size: e.size || 0,
+      modified: Date.now() - 86400000,
+      path: path.replace(/\/$/, '') + '/' + e.name,
+    }));
+    window.fsSetDir(path, list);
+  };
+  window.fsFileUrl = function (path) { return /\.svg$/.test(path) ? FS_DEMO_SVG : ''; };
+  window.fsPdfUrl = function () { return ''; };
+  window.fsReadFile = function (path) {
+    window.fsSetFileContent(path, /\.md$/.test(path)
+      ? '# Demo\n\nDies ist **Markdown** aus dem Mockup.\n\n- Punkt eins\n- Punkt zwei\n\n```js\nconsole.log("hi");\n```'
+      : 'Demo-Inhalt von ' + path + '\nZeile 2\nZeile 3');
+  };
+  window.fsAction = function (action, payload) { toast('Demo: ' + action); };
+
+  window.fsSetDir = function (path, entries) {
+    fsState.cwd = path;
+    fsState.entries = entries;
+    fsState.sel.clear(); fsState.selectMode = false;
+    renderFilesScreen();
+  };
+  window.openFilesScreen = function (path) {
+    if (path) fsState.cwd = path;
+    show('files');
+    window.fsListDir(fsState.cwd);
+  };
+  window.fsRerender = function () { if (currentScreen === 'files') renderFilesScreen(); };
+
+  function fsSorted() {
+    const q = fsState.filter.toLowerCase();
+    let list = q ? fsState.entries.filter(e => e.name.toLowerCase().indexOf(q) !== -1) : fsState.entries.slice();
+    const dir = fsState.asc ? 1 : -1;
+    list.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      if (fsState.sort === 'size') return (a.size - b.size) * dir;
+      if (fsState.sort === 'date') return (a.modified - b.modified) * dir;
+      return a.name.localeCompare(b.name, 'de', { sensitivity: 'base' }) * dir;
+    });
+    return list;
+  }
+
+  function fsCrumbsHtml() {
+    const parts = fsState.cwd.split('/').filter(Boolean);
+    let acc = '';
+    return parts.map((p, i) => {
+      acc += (i ? '/' : '') + p;
+      const target = acc;
+      return (i ? '<span class="fs-crumb-sep">›</span>' : '') +
+        '<button class="fs-crumb" data-crumb="' + escapeHtml(target) + '">' + escapeHtml(p) + '</button>';
+    }).join('');
+  }
+
+  function fsRowHtml(e) {
+    const kind = e.isDir ? 'dir' : fsKind(e.name);
+    const color = e.isDir ? '#F59E0B' : (FS_TYPE_COLORS[fsExt(e.name)] || '#64748B');
+    const url = !e.isDir && kind === 'img' ? window.fsFileUrl(e.path) : '';
+    const iconHtml = url
+      ? '<img class="fs-thumb" loading="lazy" src="' + escapeHtml(url) + '">'
+      : '<span class="fs-ico" style="color:' + color + '">' + (e.isDir ? icon('folder', 16) : (fsExt(e.name).slice(0, 3).toUpperCase() || '·')) + '</span>';
+    const sel = fsState.sel.has(e.path);
+    const check = fsState.selectMode
+      ? '<span class="fs-check' + (sel ? ' is-on' : '') + '">' + (sel ? '✓' : '') + '</span>' : '';
+    return '<div class="fs-rowwrap">' +
+      '<button class="fs-row' + (sel ? ' is-selected' : '') + '" data-fspath="' + escapeHtml(e.path) + '" data-fsdir="' + (e.isDir ? 1 : 0) + '">' +
+        check + iconHtml +
+        '<span class="fs-cell"><span class="fs-name">' + escapeHtml(e.name) + '</span>' +
+        '<span class="fs-sub">' + (e.isDir ? 'Ordner' : escapeHtml(fsFmtSize(e.size))) +
+        (e.modified ? ' · ' + fsFmtDate(e.modified) : '') + '</span></span>' +
+        (fsState.selectMode ? '' : '<span class="fx-more" data-fsmenu="' + escapeHtml(e.path) + '">⋯</span>') +
+      '</button></div>';
+  }
+
+  function renderFilesScreen() {
+    const host = document.querySelector('[data-screen="files"]');
+    if (!host) return;
+    const list = fsSorted();
+    const favs = (window.__tmsFavs || []);
+    const sortLabel = { name: 'Name', date: 'Datum', size: 'Größe' }[fsState.sort];
+    host.innerHTML =
+      '<div class="fs-head">' +
+        '<button class="btn-chip" data-fsup>▴</button>' +
+        '<div class="fs-crumbs">' + fsCrumbsHtml() + '</div>' +
+      '</div>' +
+      '<div class="fs-tools">' +
+        '<button class="btn-chip" data-fssearch>' + icon('search', 13) + '</button>' +
+        '<button class="btn-chip" data-fssort>' + escapeHtml(sortLabel) + ' ' + (fsState.asc ? '↑' : '↓') + '</button>' +
+        '<button class="btn-chip" data-fsselect>' + (fsState.selectMode ? '✕ Auswahl' : '☑ Auswählen') + '</button>' +
+        (fsState.selectMode ? '<button class="btn-chip" data-fsselectall>Alle</button>' : '') +
+        '<button class="btn-chip" data-fsnewfolder>+ Ordner</button>' +
+      '</div>' +
+      (fsState.showSearch ? '<div class="fs-searchrow"><input class="term-input" id="fsSearchInput" placeholder="Filtern…" value="' + escapeHtml(fsState.filter) + '"></div>' : '') +
+      (fsState.newFolder ? '<div class="fs-searchrow" style="display:flex;gap:6px"><input class="term-input" id="fsNewFolderInput" placeholder="Ordnername…" style="flex:1">' +
+        '<button class="btn-chip" data-fsmkdirok>Anlegen</button><button class="btn-chip" data-fscancel>✕</button></div>' : '') +
+      (fsState.renaming ? '<div class="fs-searchrow" style="display:flex;gap:6px">' +
+        '<input class="term-input" id="fsRenameInput" style="flex:1" value="' + escapeHtml((fsState.renaming.split('/').pop() || '')) + '">' +
+        '<button class="btn-chip" data-fsrenameok>Umbenennen</button><button class="btn-chip" data-fscancelrename>✕</button></div>' : '') +
+      (favs.length ? '<div class="fs-tools">' + favs.map(p =>
+        '<button class="btn-chip" data-fsgofav="' + escapeHtml(p) + '">★ ' + escapeHtml(p.split('/').pop() || p) + '</button>').join('') + '</div>' : '') +
+      '<div class="fs-list">' + (list.length ? list.map(fsRowHtml).join('') : '<div class="fs-empty">Leer.</div>') + '</div>' +
+      fsBulkbarHtml() + fsDlbarHtml();
+    wireFilesScreen(host);
+  }
+  function fsBulkbarHtml() { return ''; }   // Auswahl-Task füllt das
+  function fsDlbarHtml() { return ''; }     // Viewer-Task füllt das
+  function wireFilesScreen(host) {
+    host.querySelectorAll('[data-crumb]').forEach(b => b.addEventListener('click', () => {
+      const t = b.dataset.crumb;
+      window.fsListDir(t.indexOf('~') === 0 ? t : '/' + t);
+    }));
+    const up = host.querySelector('[data-fsup]');
+    if (up) up.addEventListener('click', () => {
+      const c = fsState.cwd.replace(/\/+$/, '');
+      if (c === '~' || c === '/' || !c) return;
+      const p = c.replace(/\/[^/]+$/, '');
+      window.fsListDir(p || (c.indexOf('~') === 0 ? '~' : '/'));
+    });
+    const se = host.querySelector('[data-fssearch]');
+    if (se) se.addEventListener('click', () => {
+      fsState.showSearch = !fsState.showSearch;
+      if (!fsState.showSearch) fsState.filter = '';
+      renderFilesScreen();
+      if (fsState.showSearch) { const i = document.getElementById('fsSearchInput'); if (i) i.focus(); }
+    });
+    const si = host.querySelector('#fsSearchInput');
+    if (si) si.addEventListener('input', () => {
+      fsState.filter = si.value;
+      const lst = host.querySelector('.fs-list');
+      const l = fsSorted();
+      lst.innerHTML = l.length ? l.map(fsRowHtml).join('') : '<div class="fs-empty">Nichts gefunden.</div>';
+      wireFsRows(host);
+    });
+    const so = host.querySelector('[data-fssort]');
+    if (so) so.addEventListener('click', () => {
+      const order = ['name', 'date', 'size'];
+      if (fsState.asc) { fsState.asc = false; }
+      else { fsState.sort = order[(order.indexOf(fsState.sort) + 1) % 3]; fsState.asc = true; }
+      renderFilesScreen();
+    });
+    const sm = host.querySelector('[data-fsselect]');
+    if (sm) sm.addEventListener('click', () => { fsState.selectMode = !fsState.selectMode; fsState.sel.clear(); renderFilesScreen(); });
+    const sa = host.querySelector('[data-fsselectall]');
+    if (sa) sa.addEventListener('click', () => { fsSorted().forEach(e => fsState.sel.add(e.path)); renderFilesScreen(); });
+    const nf = host.querySelector('[data-fsnewfolder]');
+    if (nf) nf.addEventListener('click', () => { fsState.newFolder = true; renderFilesScreen(); const i = document.getElementById('fsNewFolderInput'); if (i) i.focus(); });
+    const ok = host.querySelector('[data-fsmkdirok]');
+    if (ok) ok.addEventListener('click', () => {
+      const i = document.getElementById('fsNewFolderInput');
+      if (i && i.value.trim()) window.fsAction('mkdir', { path: fsState.cwd.replace(/\/$/, '') + '/' + i.value.trim() });
+      fsState.newFolder = false; renderFilesScreen();
+    });
+    const ca = host.querySelector('[data-fscancel]');
+    if (ca) ca.addEventListener('click', () => { fsState.newFolder = false; renderFilesScreen(); });
+    const ro = host.querySelector('[data-fsrenameok]');
+    if (ro) ro.addEventListener('click', () => {
+      const i = document.getElementById('fsRenameInput');
+      if (i && i.value.trim()) window.fsAction('rename', { path: fsState.renaming, name: i.value.trim() });
+      fsState.renaming = null; renderFilesScreen();
+    });
+    const rc = host.querySelector('[data-fscancelrename]');
+    if (rc) rc.addEventListener('click', () => { fsState.renaming = null; renderFilesScreen(); });
+    host.querySelectorAll('[data-fsgofav]').forEach(b => b.addEventListener('click', () => window.fsListDir(b.dataset.fsgofav)));
+    wireFsRows(host);
+  }
+  function wireFsRows(host) {
+    host.querySelectorAll('img.fs-thumb').forEach(im => im.addEventListener('error', () => {
+      const s = document.createElement('span'); s.className = 'fs-ico'; s.textContent = '·';
+      im.replaceWith(s);
+    }));
+    host.querySelectorAll('.fs-row').forEach(row => {
+      let lpTimer = null, lpFired = false;
+      row.addEventListener('pointerdown', () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => {
+          lpFired = true;
+          if (!fsState.selectMode) { fsState.selectMode = true; fsState.sel.add(row.dataset.fspath); renderFilesScreen(); }
+        }, 550);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => row.addEventListener(ev, () => clearTimeout(lpTimer)));
+      row.addEventListener('click', (ev) => {
+        if (lpFired) { lpFired = false; return; }
+        if (ev.target.closest('[data-fsmenu]')) return;
+        const p = row.dataset.fspath, isDir = row.dataset.fsdir === '1';
+        if (fsState.selectMode) { fsState.sel.has(p) ? fsState.sel.delete(p) : fsState.sel.add(p); renderFilesScreen(); return; }
+        if (isDir) window.fsListDir(p);
+        else openFsViewer(p);
+      });
+    });
+    host.querySelectorAll('[data-fsmenu]').forEach(b => b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openFsRowMenu(b.dataset.fsmenu);
+    }));
+  }
+  function openFsViewer(p) { toast('Viewer folgt: ' + (p.split('/').pop() || p)); }
+  function openFsRowMenu(p) { toast('Menü folgt'); }
+  SCREEN_HOOKS.files = function () { if (!document.querySelector('[data-screen="files"] .fs-list')) renderFilesScreen(); };
 
   function buildFilesSheet() {
     const html = `<div class="tool-list">${TMS_DATA.files.map(f => `
@@ -5087,7 +5681,8 @@
       // excluded: findScrollTarget() below resolves #termList as its own
       // nearest scrollable ancestor, so pull-to-search still works exactly
       // like on every other screen (scrolled list ≠ trigger; pull at top does).
-      if (target.closest('.workspace, .overview-grid')) return false;
+      if (target.closest('.workspace, .overview-grid, #dock, .keys-panel')) return false;
+      if (typeof dockSwitching !== 'undefined' && dockSwitching) return false;
       const section = target.closest('section[data-screen]:not([hidden])');
       if (!section) return false;
       const el = findScrollTarget(target, section);
@@ -5166,6 +5761,325 @@
 
   wireLock();
   wireSessionSheet();
+
+
+  // ============================================================
+  // Die Bottom-Bar IST die Terminal-Leiste. Auf dem Terminals-Tab verwandelt
+  // sie sich in Eingabezeile + Tasten für das GEWÄHLTE Terminal; lange drücken
+  // hebt sie an, ein Wisch zur Seite schaltet zwischen beiden Leisten um.
+  // Beim Diktieren wird sie zur Aufnahme-Spur mit Timer und Ja/Nein.
+  // ============================================================
+  const dockEl = document.getElementById('dock');
+  const dockPages = {
+    nav: document.getElementById('dockNav'),
+    term: document.getElementById('dockTerm'),
+    rec: document.getElementById('dockRec'),
+  };
+  document.getElementById('dockMicBtn').innerHTML = icon('mic');
+  document.getElementById('dockSendBtn').innerHTML = icon('enter');
+  document.getElementById('dockKeysBtn').innerHTML = icon('keyboard');
+  document.getElementById('recCancelBtn').innerHTML = icon('x');
+  document.getElementById('recConfirmBtn').innerHTML = icon('check');
+  document.getElementById('recWave').innerHTML =
+    Array.from({ length: 22 }, (_, i) =>
+      `<span style="--h:${8 + ((i * 7) % 16)}px;animation-delay:${(i % 7) * 70}ms"></span>`).join('');
+
+  function setDockPage(page) {
+    if (!dockPages[page]) return;
+    state.dockPage = page;
+    dockEl.dataset.page = page;
+    Object.keys(dockPages).forEach(k => dockPages[k].classList.toggle('is-active', k === page));
+    if (page === 'nav') positionDockPill();
+    if (page === 'term') syncDockTerminal();
+  }
+
+  /** Which terminal the bar acts on: the one last tapped / typed into. */
+  function dockTargetId() {
+    return state.activeCardId || state.order[0] || null;
+  }
+  function syncDockTerminal() {
+    const id = dockTargetId();
+    const session = TMS_DATA.sessions.find(s => s.id === id);
+    const input = document.getElementById('dockInput');
+    input.placeholder = session ? `Befehl an ${session.name}…` : 'Kein Terminal';
+    input.disabled = !session;
+    document.getElementById('dockKeysBtn').classList.toggle('is-on', !!state.keysPanelOpen);
+    document.querySelectorAll('.term-card').forEach(c => c.classList.toggle('is-target', c.dataset.id === id));
+    if (state.keysPanelOpen) applyKeysPanelVisibility();
+  }
+  // Beim Tippen darf das Terminal nicht hinter der Tastatur verschwinden.
+  document.getElementById('dockInput').addEventListener('focus', () => {
+    dockEl.classList.add('is-typing');
+    document.body.classList.add('typing');
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 420);
+    const card = document.querySelector('.term-card.is-target');
+    if (card) setTimeout(() => card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 260);
+  });
+  document.getElementById('dockInput').addEventListener('blur', () => {
+    // Erst nach dem Klick: sonst wäre der Senden-Knopf schon weggerückt, wenn
+    // der Finger ankommt.
+    setTimeout(() => {
+      if (document.activeElement !== document.getElementById('dockInput')) {
+        dockEl.classList.remove('is-typing');
+        document.body.classList.remove('typing');
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 420);
+      }
+    }, 120);
+  });
+  // Die Knöpfe der Leiste dürfen den Fokus nicht klauen — sonst klappt die
+  // Zeile beim Antippen von "Senden" zusammen, bevor der Klick durch ist.
+  document.getElementById('dockTerm').addEventListener('pointerdown', e => {
+    if (e.target.closest('button') && document.activeElement === document.getElementById('dockInput')) {
+      e.preventDefault();
+    }
+  });
+
+  document.getElementById('dockTerm').addEventListener('click', e => {
+    const id = dockTargetId();
+    if (!id) return;
+    const key = e.target.closest('[data-dock-key]');
+    if (key) { handleTermKey(key.dataset.dockKey, id); return; }
+    if (e.target.closest('#dockSendBtn')) {
+      const input = document.getElementById('dockInput');
+      sendTerminalCommand(id, input.value);
+      input.value = '';
+      input.blur();
+    } else if (e.target.closest('#dockMicBtn')) {
+      startDictation(id);
+    } else if (e.target.closest('#dockKeysBtn')) {
+      toggleKeysPanel();
+      syncDockTerminal();
+    }
+  });
+  document.getElementById('dockInput').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const id = dockTargetId();
+    if (!id) return;
+    sendTerminalCommand(id, e.target.value);
+    e.target.value = '';
+    e.target.blur();
+  });
+
+  // Lange drücken hebt die Leiste an, dann wischen (oder die andere antippen).
+  let dockHold = null, dockSwitching = false, dockSwitched = false, dockStartX = 0, dockSuppressClick = false;
+  dockEl.addEventListener('pointerdown', e => {
+    // In der Terminal-Leiste ist die Mitte das Eingabefeld — dort MUSS das
+    // lange Drücken trotzdem greifen, sonst bliebe kaum Fläche dafür übrig.
+    // Nur wer gerade wirklich tippt, wird in Ruhe gelassen.
+    const input = document.getElementById('dockInput');
+    // Nur wer gerade wirklich IM Eingabefeld tippt, wird in Ruhe gelassen —
+    // überall sonst auf der Leiste greift das lange Drücken.
+    if (document.activeElement === input && e.target.closest('#dockInput')) return;
+    dockStartX = e.clientX;
+    dockHold = setTimeout(() => {
+      dockSwitching = true;
+      dockSuppressClick = true;
+      if (input) input.blur();
+      dockEl.classList.add('is-switching');
+      if (navigator.vibrate) navigator.vibrate(8);
+    }, 420);
+  });
+  // Das lange Drücken darf den Knopf darunter nicht mit auslösen.
+  dockEl.addEventListener('click', e => {
+    if (!dockSuppressClick) return;
+    dockSuppressClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+  dockEl.addEventListener('pointermove', e => {
+    // Ein Wisch = EIN Wechsel. Ohne die Sperre kippt die Leiste während einer
+    // einzigen Bewegung mehrfach hin und her.
+    if (!dockSwitching || dockSwitched || Math.abs(e.clientX - dockStartX) < 45) return;
+    dockSwitched = true;
+    setDockPage(state.dockPage === 'nav' ? 'term' : 'nav');
+  });
+  function endDockHold() {
+    clearTimeout(dockHold);
+    if (!dockSwitching) return;
+    // Gedrückt gehalten, aber nicht gewischt? Dann ist das Antippen der Wechsel.
+    if (!dockSwitched) setDockPage(state.dockPage === 'nav' ? 'term' : 'nav');
+    dockSwitching = false;
+    dockSwitched = false;
+    dockEl.classList.remove('is-switching');
+  }
+  dockEl.addEventListener('pointerup', endDockHold);
+  dockEl.addEventListener('pointercancel', endDockHold);
+
+  // ── Diktat: die Leiste wird zur Aufnahme.
+  let recStart = 0, recTick = null;
+  function dockRecordingStart() {
+    setDockPage('rec');
+    dockPages.rec.classList.remove('is-transcribing');
+    document.getElementById('recConfirmBtn').disabled = false;
+    recStart = Date.now();
+    document.getElementById('recTimer').textContent = '0:00';
+    clearInterval(recTick);
+    recTick = setInterval(() => {
+      const s = Math.floor((Date.now() - recStart) / 1000);
+      document.getElementById('recTimer').textContent =
+        `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }, 250);
+  }
+  function dockRecordingTranscribing() {
+    clearInterval(recTick);
+    dockPages.rec.classList.add('is-transcribing');
+    document.getElementById('recConfirmBtn').disabled = true;
+    document.getElementById('recTimer').textContent = '…';
+  }
+  function dockRecordingEnd(text) {
+    clearInterval(recTick);
+    dockPages.rec.classList.remove('is-transcribing');
+    setDockPage('term');
+    if (text) {
+      const input = document.getElementById('dockInput');
+      // Erst fokussieren, dann schreiben, dann melden: die Bridge schickt die
+      // DIFFERENZ zum Feldinhalt an die PTY. Andersherum wäre sie leer — das
+      // Diktat stünde im Feld, käme aber nie im Terminal an.
+      input.focus();
+      input.value = (input.value ? input.value + ' ' : '') + text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+  document.getElementById('recCancelBtn').addEventListener('click', () => {
+    cancelDictation();
+    dockRecordingEnd('');
+  });
+  document.getElementById('recConfirmBtn').addEventListener('click', () => {
+    confirmDictation();
+  });
+  // Das Mockup hat keinen echten Recorder — die Bridge ersetzt diese drei.
+  function confirmDictation() { dockRecordingTranscribing(); setTimeout(() => dockRecordingEnd('(Demo) Transkript'), 1200); }
+  window.dockRecordingStart = dockRecordingStart;
+  window.dockRecordingTranscribing = dockRecordingTranscribing;
+  window.dockRecordingEnd = dockRecordingEnd;
+  window.confirmDictation = confirmDictation;
+  window.setDockPage = setDockPage;
+  window.syncDockTerminal = syncDockTerminal;
+  window.dockTargetId = dockTargetId;
+
+  // Auf dem Terminals-Tab ist die Terminal-Leiste die Voreinstellung.
+  SCREEN_HOOKS.terminals = () => { setDockPage('term'); renderTermSwitcher(); };
+  setDockPage('nav');
+
+
+  // ============================================================
+  // Terminal-Slider — nur Punkte, ein Daumenzug durch den Stapel.
+  // Gezogen wird pro Frame (rAF), nicht pro Pointer-Event: dadurch bleibt es
+  // auch bei schnellen Bewegungen flüssig. Der Punkt unter dem Daumen wächst
+  // mit der Nähe — wie beim Modus-Wähler der Kamera.
+  // ============================================================
+  const tsEl = document.getElementById('termSwitcher');
+  const tsTrack = document.getElementById('tsTrack');
+  const tsLabel = document.getElementById('tsLabel').firstElementChild;
+  let tsDots = [];
+
+  function tsVisible() {
+    const screen = document.querySelector('[data-screen="terminals"]');
+    return !!screen && !screen.hidden && state.terminalView === 'stack' && state.order.length > 1;
+  }
+  function tsName(i) {
+    const s = TMS_DATA.sessions.find(x => x.id === state.order[i]);
+    return s ? s.name : '';
+  }
+  /** Punkte nach Nähe zum Daumen skalieren — ein weicher Bauch, kein Sprung. */
+  function tsPaint(f) {
+    const n = state.order.length;
+    const near = Math.round(clamp(f, 0, n - 1));
+    tsDots.forEach((dot, i) => {
+      const d = Math.abs(i - f);
+      const scale = 1 + Math.max(0, 1 - d) * 0.9 + (d < 1 ? (1 - d) * 0.3 : 0);
+      dot.style.transform = `scale(${scale.toFixed(3)})`;
+      dot.style.opacity = (0.38 + Math.max(0, 1 - d) * 0.62).toFixed(3);
+      dot.parentElement.classList.toggle('is-active', i === near);
+    });
+    tsLabel.textContent = tsName(near);
+  }
+  function tsRest(i) {
+    tsDots.forEach(d => { d.style.transform = ''; d.style.opacity = ''; });
+    tsTrack.querySelectorAll('.ts-seg').forEach((s, k) => s.classList.toggle('is-active', k === i));
+    tsLabel.textContent = tsName(i);
+  }
+  function renderTermSwitcher() {
+    const show = tsVisible();
+    tsEl.hidden = !show;
+    document.body.classList.toggle('has-switcher', show);
+    if (!show) return;
+    tsTrack.innerHTML = state.order.map((id, i) => {
+      const s = TMS_DATA.sessions.find(x => x.id === id);
+      return `<button class="ts-seg${i === state.activeIndex ? ' is-active' : ''}" data-ts="${i}"
+        aria-label="${escapeHtml(s ? s.name : 'Terminal')}"><span class="ts-dot" style="background:${s ? s.colorTag : 'var(--accent)'}"></span></button>`;
+    }).join('');
+    tsDots = [...tsTrack.querySelectorAll('.ts-dot')];
+    tsRest(state.activeIndex);
+  }
+  window.renderTermSwitcher = renderTermSwitcher;
+
+  let tsHold = null, tsScrub = false, tsMoved = false, tsFrom = 0, tsRaf = 0, tsX = 0;
+  function tsIndexFromX(x) {
+    const segs = tsTrack.querySelectorAll('.ts-seg');
+    if (!segs.length) return 0;
+    const first = segs[0].getBoundingClientRect();
+    const step = segs.length > 1
+      ? (segs[segs.length - 1].getBoundingClientRect().left - first.left) / (segs.length - 1)
+      : 1;
+    return clamp((x - (first.left + first.width / 2)) / step, 0, segs.length - 1);
+  }
+  function tsFrame() {
+    tsRaf = 0;
+    if (!tsScrub) return;
+    const f = tsIndexFromX(tsX);
+    tsPaint(f);
+    state.activeFloat = f;
+    layoutStack(f, { instant: true }); // der Stapel folgt dem Daumen direkt
+  }
+  tsTrack.addEventListener('pointerdown', e => {
+    if (!state.order.length) return;
+    tsMoved = false;
+    tsFrom = state.activeIndex;
+    tsX = e.clientX;
+    tsTrack.setPointerCapture(e.pointerId);
+    clearTimeout(tsHold);
+    tsHold = setTimeout(() => {
+      tsScrub = true;
+      tsEl.classList.add('is-scrubbing');
+      if (navigator.vibrate) navigator.vibrate(6);
+      if (!tsRaf) tsRaf = requestAnimationFrame(tsFrame);
+    }, 200);
+  });
+  tsTrack.addEventListener('pointermove', e => {
+    if (!tsScrub) return;
+    tsMoved = true;
+    tsX = e.clientX;                       // nur merken …
+    if (!tsRaf) tsRaf = requestAnimationFrame(tsFrame); // … gezeichnet wird pro Frame
+  });
+  function tsEnd(e) {
+    clearTimeout(tsHold);
+    if (!tsScrub) return;
+    tsScrub = false;
+    cancelAnimationFrame(tsRaf); tsRaf = 0;
+    tsEl.classList.remove('is-scrubbing');
+    const target = tsMoved ? Math.round(tsIndexFromX(e ? e.clientX : tsX)) : tsFrom;
+    setActive(target);   // federt in die Ruhelage
+    tsRest(target);
+    tsEl.classList.add('is-hinting');
+    clearTimeout(tsEl._hint);
+    tsEl._hint = setTimeout(() => tsEl.classList.remove('is-hinting'), 800);
+  }
+  tsTrack.addEventListener('pointerup', tsEnd);
+  tsTrack.addEventListener('pointercancel', tsEnd);
+
+  // Kurzer Tipp auf einen Punkt springt direkt dorthin.
+  tsTrack.addEventListener('click', e => {
+    if (tsMoved) return;
+    const seg = e.target.closest('.ts-seg');
+    if (!seg) return;
+    const i = Number(seg.dataset.ts);
+    setActive(i);
+    tsRest(i);
+    tsEl.classList.add('is-hinting');
+    clearTimeout(tsEl._hint);
+    tsEl._hint = setTimeout(() => tsEl.classList.remove('is-hinting'), 800);
+  });
 
   wireNav();
   wireTermToolsSheet();
