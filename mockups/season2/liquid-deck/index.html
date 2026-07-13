@@ -4443,13 +4443,21 @@
   SCREEN_HOOKS.files = function () { if (!document.querySelector('[data-screen="files"] .fs-list')) renderFilesScreen(); };
 
   function buildFilesSheet() {
-    const html = `<div class="tool-list">${TMS_DATA.files.map(f => `
+    const html = `<div class="fx-head" style="margin-bottom:8px">
+        <button class="btn-chip" data-fx-fullscreen>⛶ Vollbild-Explorer</button>
+      </div><div class="tool-list">${TMS_DATA.files.map(f => `
       <div class="tool-row">
         <span class="tool-row__icon">${f.type === 'dir' ? '▸' : '·'}</span>
         <span class="tool-row__name">${escapeHtml(f.name)}</span>
         <span class="tool-row__meta">${f.size ? escapeHtml(f.size) : ''}</span>
       </div>`).join('')}</div>`;
-    return { html };
+    return { html, wire() {
+      const btn = document.querySelector('#toolSheetBody [data-fx-fullscreen]');
+      if (btn) btn.addEventListener('click', () => {
+        closeSheet(document.getElementById('toolSheetWrap'));
+        window.openFilesScreen();
+      });
+    } };
   }
 
   function buildSqlSheet() {
