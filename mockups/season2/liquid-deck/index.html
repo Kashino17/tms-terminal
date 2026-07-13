@@ -1093,6 +1093,22 @@
   .fs-dlbar { position: absolute; left: 12px; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); padding: 8px 12px; border-radius: 14px; font-size: 12px; z-index: 39; display: flex; align-items: center; gap: 8px; }
   .fs-dlbar progress { flex: 1; height: 4px; }
   .fs-empty { text-align: center; opacity: .5; padding: 40px 0; font-size: 13px; }
+  .fs-viewer { position: fixed; inset: 0; z-index: 90; background: rgba(5,7,12,.96); display: flex; flex-direction: column; }
+  .fs-viewer__bar { display: flex; align-items: center; gap: 8px; padding: calc(10px + env(safe-area-inset-top)) 12px 10px; }
+  .fs-viewer__name { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fs-viewer__body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto; position: relative; }
+  .fs-viewer__body img { max-width: 100%; max-height: 100%; touch-action: pinch-zoom; }
+  .fs-viewer__body video { width: 100%; max-height: 100%; background: #000; }
+  .fs-viewer__body iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+  .fs-viewer__nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: 0; border-radius: 14px; background: rgba(255,255,255,.08); color: var(--text); font-size: 20px; cursor: pointer; }
+  .fs-md, .fs-txt { align-self: stretch; width: 100%; overflow: auto; padding: 4px 16px calc(20px + env(safe-area-inset-bottom)); font-size: 13.5px; line-height: 1.55; }
+  .fs-md pre { background: rgba(255,255,255,.07); padding: 10px; border-radius: 10px; overflow-x: auto; }
+  .fs-md code { background: rgba(255,255,255,.09); padding: 1px 5px; border-radius: 5px; font-family: ui-monospace, monospace; font-size: 12px; }
+  .fs-md h1, .fs-md h2, .fs-md h3 { margin: 14px 0 6px; }
+  .fs-md blockquote { border-left: 3px solid var(--accent, #8ab8ff); margin: 8px 0; padding: 2px 10px; opacity: .8; }
+  .fs-txt pre { font-family: ui-monospace, monospace; font-size: 11.5px; line-height: 1.5; }
+  .fs-txt .ln { opacity: .35; user-select: none; display: inline-block; min-width: 34px; text-align: right; margin-right: 10px; }
+  .fs-infocard { text-align: center; padding: 24px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
 
   /* ---------- Lock screen ---------- */
   section[data-screen="lock"]:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; }
@@ -4131,7 +4147,22 @@
       '<button class="btn-chip btn-chip--danger" data-fsbulk="trash">Löschen</button>' +
       '</div>';
   }
-  function fsDlbarHtml() { return ''; }     // Viewer-Task füllt das
+  function fsDlbarHtml() {
+    const running = fsState.downloads.filter(d => d.state === 'running');
+    if (!running.length || (fsState.selectMode && fsState.sel.size)) return '';
+    const d = running[0];
+    return '<div class="fs-dlbar glass">⇩ ' + escapeHtml(d.name) +
+      '<progress max="100" value="' + Math.round(d.pct * 100) + '"></progress>' +
+      Math.round(d.pct * 100) + '%</div>';
+  }
+  window.fsDownloadProgress = function (id, name, pct, state) {
+    const i = fsState.downloads.findIndex(d => d.id === id);
+    if (i === -1) fsState.downloads.push({ id: id, name: name, pct: pct, state: state });
+    else fsState.downloads[i] = { id: id, name: name, pct: pct, state: state };
+    if (state === 'done') { toast('Gespeichert: ' + name); fsState.downloads = fsState.downloads.filter(d => d.id !== id); }
+    if (state === 'error') { fsState.downloads = fsState.downloads.filter(d => d.id !== id); }
+    window.fsRerender();
+  };
   function wireFilesScreen(host) {
     host.querySelectorAll('[data-crumb]').forEach(b => b.addEventListener('click', () => {
       const t = b.dataset.crumb;
@@ -4238,7 +4269,132 @@
       openFsRowMenu(b.dataset.fsmenu);
     }));
   }
-  function openFsViewer(p) { toast('Viewer folgt: ' + (p.split('/').pop() || p)); }
+  function fsMdToHtml(md) {
+    let h = md
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/^######\s+(.+)$/gm, '<h6>$1</h6>').replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>')
+      .replace(/^####\s+(.+)$/gm, '<h4>$1</h4>').replace(/^###\s+(.+)$/gm, '<h3>$1</h3>')
+      .replace(/^##\s+(.+)$/gm, '<h2>$1</h2>').replace(/^#\s+(.+)$/gm, '<h1>$1</h1>')
+      .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/^&gt;\s+(.+)$/gm, '<blockquote>$1</blockquote>')
+      .replace(/^---+$/gm, '<hr>')
+      .replace(/^[\-\*]\s+(.+)$/gm, '<li>$1</li>')
+      .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%">')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+    h = h.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, '<ul>$1</ul>');
+    return h.split(/\n{2,}/).map(b => /^\s*<(h\d|ul|pre|blockquote|hr)/.test(b) ? b : '<p>' + b.replace(/\n/g, '<br>') + '</p>').join('');
+  }
+
+  let fsViewerReadTarget = null;
+  window.fsSetFileContent = function (path, content, error) {
+    if (fsViewerReadTarget !== path) return;
+    fsViewerReadTarget = null;
+    const body = document.querySelector('.fs-viewer__body');
+    if (!body) return;
+    if (error) { body.innerHTML = fsInfoCardHtml(path, error); wireFsInfoCard(body, path); return; }
+    if (fsKind(path.split('/').pop() || '') === 'md') {
+      body.innerHTML = '<div class="fs-md">' + fsMdToHtml(content || '') + '</div>';
+      const bar = document.querySelector('.fs-viewer__bar');
+      const t = document.createElement('button');
+      t.className = 'btn-chip'; t.textContent = 'Quelltext';
+      let raw = false;
+      t.addEventListener('click', () => {
+        raw = !raw; t.textContent = raw ? 'Ansicht' : 'Quelltext';
+        body.innerHTML = raw
+          ? '<div class="fs-txt"><pre>' + escapeHtml(content || '') + '</pre></div>'
+          : '<div class="fs-md">' + fsMdToHtml(content || '') + '</div>';
+      });
+      bar.insertBefore(t, bar.querySelector('[data-vdl]'));
+    } else {
+      const lines = (content || '').split('\n');
+      body.innerHTML = '<div class="fs-txt"><pre>' + lines.map((l, i) =>
+        '<span class="ln">' + (i + 1) + '</span>' + escapeHtml(l)).join('\n') + '</pre></div>';
+    }
+  };
+
+  function fsInfoCardHtml(p, note) {
+    const e = fsState.entries.find(x => x.path === p) || { name: p.split('/').pop(), size: 0, modified: 0 };
+    return '<div class="fs-infocard">' +
+      '<div style="font-size:34px">🗂</div>' +
+      '<div style="font-weight:800">' + escapeHtml(e.name || '') + '</div>' +
+      '<div class="fs-sub">' + escapeHtml(fsFmtSize(e.size)) + (e.modified ? ' · ' + fsFmtDate(e.modified) : '') + '</div>' +
+      (note ? '<div class="fs-sub">' + escapeHtml(note) + '</div>' : '') +
+      '<div style="display:flex;gap:8px"><button class="btn-chip" data-ic="download">⇩ Herunterladen</button>' +
+      '<button class="btn-chip" data-ic="share">Teilen</button></div></div>';
+  }
+  function wireFsInfoCard(body, p) {
+    body.querySelectorAll('[data-ic]').forEach(b => b.addEventListener('click', () => {
+      if (b.dataset.ic === 'download') window.fsAction('download', { paths: [p], zip: false });
+      else window.fsAction('share', { path: p });
+    }));
+  }
+
+  function openFsViewer(p) {
+    const name = p.split('/').pop() || p;
+    const kind = fsKind(name);
+    const url = window.fsFileUrl(p);
+    const old = document.getElementById('fsViewer');
+    if (old) old.remove();
+    const el = document.createElement('div');
+    el.className = 'fs-viewer'; el.id = 'fsViewer';
+    el.innerHTML =
+      '<div class="fs-viewer__bar">' +
+        '<span class="fs-viewer__name">' + escapeHtml(name) + '</span>' +
+        '<button class="btn-chip" data-vdl>⇩</button>' +
+        '<button class="btn-chip" data-vshare>Teilen</button>' +
+        '<button class="btn-chip" data-vclose>✕</button>' +
+      '</div><div class="fs-viewer__body"></div>';
+    document.body.appendChild(el);
+    el.querySelector('[data-vclose]').addEventListener('click', () => el.remove());
+    el.querySelector('[data-vdl]').addEventListener('click', () => window.fsAction('download', { paths: [p], zip: false }));
+    el.querySelector('[data-vshare]').addEventListener('click', () => window.fsAction('share', { path: p }));
+    const body = el.querySelector('.fs-viewer__body');
+
+    if (kind === 'img' && url) {
+      const imgs = fsSorted().filter(x => !x.isDir && fsKind(x.name) === 'img');
+      let idx = Math.max(0, imgs.findIndex(x => x.path === p));
+      const render = () => {
+        const cur = imgs[idx];
+        el.querySelector('.fs-viewer__name').textContent = cur.name;
+        body.innerHTML = '<img src="' + escapeHtml(window.fsFileUrl(cur.path)) + '">' +
+          (imgs.length > 1 ? '<button class="fs-viewer__nav" style="left:8px" data-vprev>‹</button>' +
+            '<button class="fs-viewer__nav" style="right:8px" data-vnext>›</button>' : '');
+        const pv = body.querySelector('[data-vprev]'), nx = body.querySelector('[data-vnext]');
+        if (pv) pv.addEventListener('click', () => { idx = (idx - 1 + imgs.length) % imgs.length; render(); });
+        if (nx) nx.addEventListener('click', () => { idx = (idx + 1) % imgs.length; render(); });
+        const img = body.querySelector('img');
+        let zoomed = false;
+        img.addEventListener('dblclick', () => {
+          zoomed = !zoomed;
+          img.style.maxWidth = zoomed ? 'none' : '100%';
+          img.style.maxHeight = zoomed ? 'none' : '100%';
+        });
+      };
+      render();
+    } else if (kind === 'vid' && url) {
+      body.innerHTML = '<video controls autoplay playsinline src="' + escapeHtml(url) + '"></video>';
+      body.querySelector('video').addEventListener('error', () => {
+        body.innerHTML = fsInfoCardHtml(p, 'Format nicht abspielbar — herunterladen oder teilen.');
+        wireFsInfoCard(body, p);
+      });
+    } else if (kind === 'aud' && url) {
+      body.innerHTML = '<audio controls autoplay src="' + escapeHtml(url) + '" style="width:90%"></audio>';
+    } else if (kind === 'pdf') {
+      const pu = window.fsPdfUrl(p);
+      if (pu) body.innerHTML = '<iframe src="' + escapeHtml(pu) + '"></iframe>';
+      else { body.innerHTML = fsInfoCardHtml(p, 'PDF-Viewer nur in der App.'); wireFsInfoCard(body, p); }
+    } else if (kind === 'md' || kind === 'txt') {
+      const e = fsState.entries.find(x => x.path === p);
+      if (e && e.size > 5 * 1024 * 1024) { body.innerHTML = fsInfoCardHtml(p, 'Zu groß für die Vorschau (> 5 MB).'); wireFsInfoCard(body, p); }
+      else { fsViewerReadTarget = p; body.innerHTML = '<div class="fs-empty">Lädt…</div>'; window.fsReadFile(p); }
+    } else {
+      body.innerHTML = fsInfoCardHtml(p, url ? '' : 'Keine Vorschau verfügbar.');
+      wireFsInfoCard(body, p);
+    }
+  }
   function openFsRowMenu(p) {
     const e = fsState.entries.find(x => x.path === p);
     if (!e) return;
