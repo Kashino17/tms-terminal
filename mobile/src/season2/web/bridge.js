@@ -1023,9 +1023,12 @@
     if (filesMenuFor === path) {
       var fav = window.__tmsFavs.indexOf(path) !== -1;
       menu = '<div class="fx-actions">' +
+        '<button class="btn-chip" data-fx="copyPath" data-target="' + escapeHtml(path) + '">Pfad kopieren</button>' +
+        (isDir ? '<button class="btn-chip" data-fx="cd" data-target="' + escapeHtml(path) + '">Im Terminal öffnen (cd)</button>' : '') +
         (isDir ? '' : '<button class="btn-chip" data-fx="insert" data-target="' + escapeHtml(path) + '">Einfügen</button>' +
                       '<button class="btn-chip" data-fx="preview" data-target="' + escapeHtml(path) + '">Vorschau</button>' +
                       '<button class="btn-chip" data-fx="download" data-target="' + escapeHtml(path) + '">Laden</button>') +
+        '<button class="btn-chip" data-fx="rename" data-target="' + escapeHtml(path) + '">Umbenennen</button>' +
         '<button class="btn-chip" data-fx="fav" data-target="' + escapeHtml(path) + '">' + (fav ? '★ Favorit' : '☆ Favorit') + '</button>' +
         '<button class="btn-chip btn-chip--danger" data-fx="del" data-target="' + escapeHtml(path) + '">' +
           (filesConfirmDel === path ? 'Wirklich löschen?' : 'Löschen') + '</button>' +
@@ -1052,15 +1055,23 @@
         '<button class="btn-chip" data-fx="cancel">Abbrechen</button></div>'
       : '';
 
+    var renaming = filesRenaming
+      ? '<div class="tool-row"><input class="term-input fx-input" id="fxRename" placeholder="Neuer Name…" value="' +
+        escapeHtml(filesRenaming.split('/').pop() || '') + '">' +
+        '<button class="btn-chip" data-fx="rename-ok">Umbenennen</button>' +
+        '<button class="btn-chip" data-fx="cancel">Abbrechen</button></div>'
+      : '';
+
     var html =
       '<div class="fx-head">' +
         '<button class="btn-chip" data-cd="..">▴ Aufwärts</button>' +
         '<span class="fx-path mono-text">' + escapeHtml(window.__tmsCwd) + '</span>' +
+        '<button class="btn-chip" data-fx="cdhere" aria-label="Diesen Ordner im Terminal öffnen">cd hier</button>' +
         '<button class="btn-chip" data-fx="newfolder">+ Ordner</button>' +
         '<button class="btn-chip" data-fx="fullscreen" aria-label="Vollbild-Explorer">⛶</button>' +
       '</div>' +
       '<input class="term-input fx-search" id="fxSearch" placeholder="Filtern…" value="' + escapeHtml(filesFilter) + '">' +
-      favs + newFolder +
+      favs + newFolder + renaming +
       '<div class="tool-list">' + (files.length
         ? files.map(fileRowHtml).join('')
         : '<div class="tool-empty">Nichts gefunden.</div>') + '</div>';
@@ -1104,6 +1115,17 @@
               e.stopPropagation();
               var a = btn.dataset.fx, t = btn.dataset.target;
               if (a === 'menu') { filesMenuFor = filesMenuFor === t ? null : t; filesConfirmDel = null; rerender(); }
+              else if (a === 'copyPath') window.fsAction('copyPath', { paths: [t] });
+              else if (a === 'cd') {
+                var wrapCd = document.getElementById('toolSheetWrap');
+                if (wrapCd && typeof window.closeSheet === 'function') window.closeSheet(wrapCd);
+                window.fsAction('cd', { path: t });
+              }
+              else if (a === 'cdhere') {
+                var wrapCdh = document.getElementById('toolSheetWrap');
+                if (wrapCdh && typeof window.closeSheet === 'function') window.closeSheet(wrapCdh);
+                window.fsAction('cd', { path: window.__tmsCwd });
+              }
               else if (a === 'insert') insertIntoTerminal(t, 'Pfad eingefügt');
               else if (a === 'preview') post('files:preview', { path: t });
               else if (a === 'download') post('files:download', { path: t });
@@ -1111,7 +1133,13 @@
               else if (a === 'rename') { filesRenaming = t; rerender(); }
               else if (a === 'rename-ok') {
                 var v = document.getElementById('fxRename');
-                if (v && v.value.trim()) post('files:rename', { path: filesRenaming, name: v.value.trim() });
+                if (v && v.value.trim()) {
+                  post('files:rename', { path: filesRenaming, name: v.value.trim() });
+                  // 'files:rename' refreshes the fullscreen explorer's list (a
+                  // different RN hook) — kick THIS sheet's own list too, or
+                  // the renamed entry keeps showing its old name here.
+                  post('files:goto', { path: window.__tmsCwd });
+                }
                 filesRenaming = null;
               }
               else if (a === 'del') {
