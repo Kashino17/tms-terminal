@@ -1,4 +1,8 @@
 node_modules/
 dist/
+# Zwischenstaende des Updates (neben dem laufenden dist gebaut, dann getauscht)
+dist.new/
+dist.old/
+.tsbuildinfo.new
 certs/
 .env

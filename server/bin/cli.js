@@ -227,47 +227,99 @@ switch (command) {
 
     ensureConfigDir();
 
+    // Der Server laeuft weiter, solange noch irgendetwas schiefgehen kann.
+    // Frueher war es umgekehrt: erst stoppen, dann pullen und bauen — scheiterte
+    // eine dieser Stufen (Konflikt im Arbeitsbaum, kaputte Referenz, kein Netz,
+    // Build-Fehler), blieb der Server AUS. Aus der Ferne, mit dem Handy in der
+    // Hand, ist das der schlimmste Ausgang: kein Terminal mehr, um es zu richten.
+    //
+    // Jetzt: pullen, installieren und NEBEN dem laufenden dist bauen. Erst wenn
+    // der neue Stand fertig und der Einstiegspunkt da ist, wird getauscht — und
+    // kommt der neue Server nicht hoch, wird das alte dist zurueckgerollt.
+    const NEW_DIST = path.join(ROOT, 'dist.new');
+    const NEW_TSBUILDINFO = path.join(ROOT, '.tsbuildinfo.new');
+    const NEW_INDEX = path.join(NEW_DIST, 'server', 'src', 'index.js');
+    const OLD_DIST = path.join(ROOT, 'dist.old');
+
     const script = `#!/bin/bash
 exec > "${UPDATE_LOG}" 2>&1
-echo "[$(date)] Update started"
+echo "[$(date)] Update gestartet"
 
 cd "${ROOT}" || exit 1
 
-# 1. Stop server (kill by PID + port fallback)
-echo "[$(date)] Stopping server..."
+# ── Phase 1: alles, was scheitern darf. Der Server laeuft dabei weiter. ──
+
+echo "[$(date)] Hole neuen Stand..."
+git pull || { echo "[$(date)] ABBRUCH: git pull fehlgeschlagen. Der Server laeuft unveraendert weiter."; exit 1; }
+
+echo "[$(date)] Installiere Abhaengigkeiten..."
+npm install --no-audit --no-fund || { echo "[$(date)] ABBRUCH: npm install fehlgeschlagen. Der Server laeuft unveraendert weiter."; exit 1; }
+
+echo "[$(date)] Baue neben dem laufenden Server..."
+rm -rf "${NEW_DIST}" "${NEW_TSBUILDINFO}"
+npx tsc --outDir "${NEW_DIST}" --tsBuildInfoFile "${NEW_TSBUILDINFO}" || {
+  echo "[$(date)] ABBRUCH: Build fehlgeschlagen. Der Server laeuft unveraendert weiter."
+  rm -rf "${NEW_DIST}" "${NEW_TSBUILDINFO}"
+  exit 1
+}
+if [ ! -f "${NEW_INDEX}" ]; then
+  echo "[$(date)] ABBRUCH: Der Build hat keinen Einstiegspunkt erzeugt. Der Server laeuft unveraendert weiter."
+  rm -rf "${NEW_DIST}" "${NEW_TSBUILDINFO}"
+  exit 1
+fi
+
+VERSION=$(node -e "console.log(require('./package.json').version)" 2>/dev/null || echo "?")
+echo "[$(date)] v$VERSION ist fertig gebaut. Erst JETZT wird der Server angefasst."
+
+# ── Phase 2: der kurze Tausch. Ab hier ist der Server kurz weg. ──
+
 node "${CLI_PATH}" stop 2>/dev/null || true
 sleep 1
 
-# 2. Pull latest code
-echo "[$(date)] Pulling latest changes..."
-git pull || { echo "FAILED: git pull"; exit 1; }
+rm -rf "${OLD_DIST}"
+mv "${DIST_DIR}" "${OLD_DIST}" 2>/dev/null || true
+mv "${NEW_DIST}" "${DIST_DIR}" || {
+  echo "[$(date)] Tausch fehlgeschlagen — rolle zurueck."
+  mv "${OLD_DIST}" "${DIST_DIR}" 2>/dev/null || true
+  nohup node "${CLI_PATH}" start >> "${UPDATE_LOG}" 2>&1 &
+  exit 1
+}
+mv -f "${NEW_TSBUILDINFO}" "${TSBUILDINFO}" 2>/dev/null || true
 
-# 3. Install dependencies
-echo "[$(date)] Installing dependencies..."
-npm install --no-audit --no-fund || { echo "FAILED: npm install"; exit 1; }
-
-# 4. Rebuild (clear dist AND the incremental cache — a stale .tsbuildinfo
-#    makes tsc a silent no-op and the server crashes with MODULE_NOT_FOUND)
-echo "[$(date)] Rebuilding..."
-rm -rf "${DIST_DIR}" "${TSBUILDINFO}"
-npx tsc || { echo "FAILED: tsc build"; exit 1; }
-if [ ! -f "${DIST_INDEX}" ]; then echo "FAILED: tsc produced no output"; exit 1; fi
-
-# 5. Read new version
-VERSION=$(node -e "console.log(require('./package.json').version)" 2>/dev/null || echo "?")
-echo "[$(date)] Updated to v$VERSION"
-
-# 6. Start server (detached)
-echo "[$(date)] Starting server..."
+echo "[$(date)] Starte Server..."
 nohup node "${CLI_PATH}" start >> "${UPDATE_LOG}" 2>&1 &
-echo "[$(date)] Server started (PID $!)"
-echo "[$(date)] Update complete"
+sleep 4
+
+# ── Phase 3: kommt er wirklich hoch? Sonst zurueck auf den alten Stand. ──
+
+if node "${CLI_PATH}" status | grep -q "is running"; then
+  echo "[$(date)] Server laeuft wieder (v$VERSION). Update fertig."
+  rm -rf "${OLD_DIST}"
+else
+  echo "[$(date)] Der neue Server kommt nicht hoch — ZURUECK auf den alten Stand."
+  node "${CLI_PATH}" stop 2>/dev/null || true
+  rm -rf "${DIST_DIR}"
+  mv "${OLD_DIST}" "${DIST_DIR}" 2>/dev/null || true
+  nohup node "${CLI_PATH}" start >> "${UPDATE_LOG}" 2>&1 &
+  sleep 4
+  node "${CLI_PATH}" status
+  echo "[$(date)] Zurueckgerollt. Der Fehler steht weiter oben in diesem Log."
+  exit 1
+fi
 `;
 
     fs.writeFileSync(UPDATE_SCRIPT, script, { mode: 0o755 });
 
-    console.log('\x1b[34m⟳\x1b[0m  Update wird im Hintergrund ausgeführt...');
-    console.log('\x1b[34m⟳\x1b[0m  Der Server startet automatisch neu.');
+    // Trockenlauf: schreibt das Skript, führt es aber nicht aus. Damit lässt sich
+    // nachsehen (und prüfen), was ein Update tun WÜRDE, ohne den Server anzufassen.
+    if (process.env.TMS_UPDATE_DRY_RUN) {
+      console.log(`\x1b[33m⟳\x1b[0m  Trockenlauf — Skript geschrieben, nicht ausgeführt:\n   ${UPDATE_SCRIPT}`);
+      break;
+    }
+
+    console.log('\x1b[34m⟳\x1b[0m  Update läuft im Hintergrund...');
+    console.log('\x1b[90m   Der Server bleibt an, bis der neue Stand fertig gebaut ist —\x1b[0m');
+    console.log('\x1b[90m   dann kurzer Neustart. Scheitert etwas, läuft er unverändert weiter.\x1b[0m');
     console.log(`\x1b[90m   Log: ${UPDATE_LOG}\x1b[0m`);
 
     // Spawn fully detached — survives PTY death, server stop, everything
@@ -293,7 +345,9 @@ echo "[$(date)] Update complete"
   tms-terminal setup        Configure password & port
   tms-terminal stop         Stop the running server
   tms-terminal status       Check if server is running
-  tms-terminal update       Pull latest code, rebuild, restart
+  tms-terminal update       Pull, rebuild alongside, then swap + restart
+                            (server stays up until the new build is proven;
+                             rolls back if it fails to come up)
   tms-terminal rebuild      Recompile TypeScript
   tms-terminal uninstall    Remove everything (config, global command)
 
