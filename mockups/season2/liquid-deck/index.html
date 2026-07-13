@@ -768,10 +768,15 @@
     width: 100%; height: 26px; }
 
   .ts-seg { flex: 0 0 34px; height: 100%; display: flex; align-items: center; justify-content: center; }
-  .ts-dot { width: 6px; height: 6px; border-radius: 50%; opacity: .38;
+  /* War ein bloßer Farbpunkt — jetzt ein Mini-Icon-Chip mit dem Anfangs-
+     buchstaben der Sitzung, damit man auf einen Blick sieht, welches
+     Terminal unter dem Daumen liegt, nicht nur seine Farbe. */
+  .ts-dot { width: 18px; height: 18px; border-radius: 7px; opacity: .45;
+    display: flex; align-items: center; justify-content: center;
+    font: 700 9.5px var(--font-ui); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.35);
     transform: scale(1); will-change: transform;
     transition: transform 260ms var(--ease-out), opacity 160ms ease-out; }
-  .ts-seg.is-active .ts-dot { opacity: 1; transform: scale(1.9); }
+  .ts-seg.is-active .ts-dot { opacity: 1; transform: scale(1.3); }
   /* Beim Ziehen wird die Größe pro Frame gesetzt — Übergänge würden nachhinken. */
   .term-switcher.is-scrubbing .ts-dot { transition: opacity 120ms ease-out; }
   .keys-panel:not([hidden]) { flex: none; margin: 0 8px 8px; padding: 7px 8px; border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 6px; }
@@ -2981,9 +2986,50 @@
     wrap.querySelector('[data-close-session]').addEventListener('click', () => closeSheet(wrap));
   }
 
+  // ── Sichtbarkeits-Gating ─────────────────────────────────────────────────
+  // Nur sichtbare Karten werden ins DOM gemalt: der volle innerHTML-Rebuild
+  // unter Backdrop-Blur ist der teuerste Dauerposten auf dem Gerät (Wärme).
+  // Die Puffer ALLER Sessions laufen ungebremst weiter — was verdeckt Output
+  // bekam, landet in __tmsPendingHidden und wird beim Sichtbarwerden über
+  // flushHiddenCards() in einem Rutsch nachgezeichnet.
+  function pendingHiddenCards() { return window.__tmsPendingHidden || (window.__tmsPendingHidden = {}); }
+  window.__tmsCardVisible = function (id) {
+    const pre = document.querySelector(`.card-body[data-card-id="${id}"]`);
+    if (!pre) return false;
+    const idx = state.order.indexOf(id);
+    if (idx !== -1) {
+      const screen = document.querySelector('[data-screen="terminals"]');
+      if (!screen || screen.hidden) return false;
+      // Im Stack zählt die Wisch-Position: beim Ziehen wird die Nachbarkarte
+      // ab der Hälfte des Wegs lebendig, im Ruhezustand malt nur die aktive.
+      if (state.terminalView === 'stack') return Math.abs(idx - state.activeFloat) < 0.75;
+    }
+    // Liste (und Cloud-Log-Viewer): alles außerhalb des Viewports ruht.
+    const r = pre.getBoundingClientRect();
+    return r.width > 0 && r.bottom > 0 && r.top < window.innerHeight;
+  };
+  function flushHiddenCards() {
+    const pending = pendingHiddenCards();
+    Object.keys(pending).forEach(id => {
+      if (!document.querySelector(`.card-body[data-card-id="${id}"]`)) { delete pending[id]; return; }
+      if (!window.__tmsCardVisible(id)) return;
+      delete pending[id];
+      renderCardLines(id);
+    });
+  }
+  window.__tmsFlushHidden = flushHiddenCards;
+  // Liste: Karten, die in den Viewport scrollen, holen ihren Output nach.
+  // (capture, weil scroll nicht bubbelt — so reicht ein Listener für alle.)
+  let flushScrollRaf = 0;
+  document.querySelector('[data-screen="terminals"]').addEventListener('scroll', () => {
+    if (!flushScrollRaf) flushScrollRaf = requestAnimationFrame(() => { flushScrollRaf = 0; flushHiddenCards(); });
+  }, { capture: true, passive: true });
+
   function renderCardLines(id) {
     const pre = document.querySelector(`.card-body[data-card-id="${id}"]`);
     if (!pre) return;
+    if (!window.__tmsCardVisible(id)) { pendingHiddenCards()[id] = 1; return; }
+    delete pendingHiddenCards()[id];
     const cs = cardState[id];
     const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
     // Did new lines actually arrive (streamed output), vs. a re-render for
@@ -6292,7 +6338,7 @@
     const near = Math.round(clamp(f, 0, n - 1));
     tsDots.forEach((dot, i) => {
       const d = Math.abs(i - f);
-      const scale = 1 + Math.max(0, 1 - d) * 0.9 + (d < 1 ? (1 - d) * 0.3 : 0);
+      const scale = 1 + Math.max(0, 1 - d) * 0.3 + (d < 1 ? (1 - d) * 0.1 : 0);
       dot.style.transform = `scale(${scale.toFixed(3)})`;
       dot.style.opacity = (0.38 + Math.max(0, 1 - d) * 0.62).toFixed(3);
       dot.parentElement.classList.toggle('is-active', i === near);
@@ -6311,8 +6357,9 @@
     if (!show) return;
     tsTrack.innerHTML = state.order.map((id, i) => {
       const s = TMS_DATA.sessions.find(x => x.id === id);
+      const initial = escapeHtml(((s ? s.name : '?').trim()[0] || '?').toUpperCase());
       return `<button class="ts-seg${i === state.activeIndex ? ' is-active' : ''}" data-ts="${i}"
-        aria-label="${escapeHtml(s ? s.name : 'Terminal')}"><span class="ts-dot" style="background:${s ? s.colorTag : 'var(--accent)'}"></span></button>`;
+        aria-label="${escapeHtml(s ? s.name : 'Terminal')}"><span class="ts-dot" style="background:${s ? s.colorTag : 'var(--accent)'}">${initial}</span></button>`;
     }).join('');
     tsDots = [...tsTrack.querySelectorAll('.ts-dot')];
     tsRest(state.activeIndex);
