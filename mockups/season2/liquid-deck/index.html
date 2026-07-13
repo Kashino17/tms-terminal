@@ -212,6 +212,17 @@
   @keyframes dotBreathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .5; transform: scale(.85); } }
   @keyframes glowBreathe { 0%, 100% { opacity: 1; } 50% { opacity: .72; } }
   @keyframes ringPulse { 0% { opacity: .6; transform: scale(1); } 75%, 100% { opacity: 0; transform: scale(1.55); } }
+  /* Ruhemodus: nach 15s ohne Berührung pausieren die Dauer-Pulse. Sie sind
+     compositor-only, halten aber Display + GPU permanent auf voller Bildrate
+     wach — auf dem Gerät ist das spürbare Wärme. Aktive Zustände (Aufnahme,
+     Diktat, Adhan) pulsieren weiter, weil dort ohnehin interagiert wird. */
+  body.is-calm .status-dot.is-live, body.is-calm .status-dot.is-warn,
+  body.is-calm .dock-badge,
+  body.is-calm .status-chip[data-status="running"] .dot,
+  body.is-calm .status-chip[data-status="live"] .dot,
+  body.is-calm .status-chip[data-status="building"] .dot,
+  body.is-calm .jump-bottom-orb.pulse::after,
+  body.is-calm .sel-handle { animation: none; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   }
@@ -2131,6 +2142,8 @@
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
     positionDockPill();
+    // Zurück auf Terminals: verdeckte Karten holen ihren Output nach.
+    if (name === 'terminals') flushHiddenCards();
     // Directional slide+fade between tab screens (transform/opacity only;
     // fires once per navigation, never on content updates or streaming).
     if (prev && prev !== name && name !== 'lock' && prev !== 'lock') {
@@ -3025,6 +3038,23 @@
     if (!flushScrollRaf) flushScrollRaf = requestAnimationFrame(() => { flushScrollRaf = 0; flushHiddenCards(); });
   }, { capture: true, passive: true });
 
+  // Ruhemodus: 15s ohne Interaktion -> body.is-calm, die Dauer-Pulse (Status-
+  // Dots, Dock-Badge, Orb-Ring) pausieren und die GPU darf in den Leerlauf.
+  // Jede Berührung weckt sie sofort wieder — der 1s-Riegel verhindert nur,
+  // dass pointermove den Timer im Dauerfeuer neu aufzieht.
+  let calmTimer = 0, calmLastBump = 0;
+  function bumpCalm() {
+    const now = performance.now();
+    if (now - calmLastBump < 1000 && !document.body.classList.contains('is-calm')) return;
+    calmLastBump = now;
+    document.body.classList.remove('is-calm');
+    clearTimeout(calmTimer);
+    calmTimer = setTimeout(() => document.body.classList.add('is-calm'), 15000);
+  }
+  ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'].forEach(ev =>
+    window.addEventListener(ev, bumpCalm, { passive: true }));
+  bumpCalm();
+
   function renderCardLines(id) {
     const pre = document.querySelector(`.card-body[data-card-id="${id}"]`);
     if (!pre) return;
@@ -3128,6 +3158,9 @@
       if (body) body.style.pointerEvents = ao < 0.05 ? 'auto' : 'none';
     });
     if (opts.instant) requestAnimationFrame(() => stackEl.classList.remove('is-dragging'));
+    // Wisch/Scrub: eine Karte, die eben noch verdeckt war und jetzt in
+    // Sichtweite rückt, malt hier ihren aufgestauten Output nach.
+    flushHiddenCards();
   }
 
   function setActive_syncDock() { if (typeof syncDockTerminal === 'function') syncDockTerminal(); }
@@ -4337,7 +4370,15 @@
     });
     const rc = host.querySelector('[data-fscancelrename]');
     if (rc) rc.addEventListener('click', () => { fsState.renaming = null; renderFilesScreen(); });
-    host.querySelectorAll('[data-fsgofav]').forEach(b => b.addEventListener('click', () => window.fsListDir(b.dataset.fsgofav)));
+    host.querySelectorAll('[data-fsgofav]').forEach(b => {
+      let lpTimer = null, lpFired = false;
+      b.addEventListener('pointerdown', () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => { lpFired = true; openFsFavMenu(b.dataset.fsgofav); }, 550);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => b.addEventListener(ev, () => clearTimeout(lpTimer)));
+      b.addEventListener('click', () => { if (lpFired) { lpFired = false; return; } window.fsListDir(b.dataset.fsgofav); });
+    });
     host.querySelectorAll('[data-fsbulk]').forEach(b => b.addEventListener('click', () => {
       const paths = Array.from(fsState.sel);
       const hasDir = fsState.entries.some(e => e.isDir && fsState.sel.has(e.path));
@@ -4556,6 +4597,34 @@
         fsState.renaming = p; renderFilesScreen();
         setTimeout(() => { const i = document.getElementById('fsRenameInput'); if (i) { i.focus(); i.select(); } }, 50);
       }
+    });
+  }
+  /** Favoriten-Chip hat keinen FileEntry (isDir/size) — nur der Pfad ist
+   *  bekannt. cd behandelt ihn deshalb wie einen Ordner, was zum bisherigen
+   *  Einzeltipp-Verhalten passt (der navigiert ja auch schon hinein). */
+  function openFsFavMenu(p) {
+    const old = document.getElementById('fsFavMenu');
+    if (old) old.remove();
+    const el = document.createElement('div');
+    el.id = 'fsFavMenu';
+    el.style.cssText = 'position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,.45)';
+    el.innerHTML = '<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px">' +
+      '<div style="font-weight:800;font-size:13px;padding:2px 4px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">★ ' + escapeHtml(p.split('/').pop() || p) + '</div>' +
+      '<button class="btn-chip" data-m="open">Öffnen</button>' +
+      '<button class="btn-chip" data-m="copyPath">Pfad kopieren</button>' +
+      '<button class="btn-chip" data-m="cd">Im Terminal öffnen (cd)</button>' +
+      '<button class="btn-chip btn-chip--danger" data-m="unfav">Favorit entfernen</button>' +
+      '<button class="btn-chip" data-m="close">Abbrechen</button></div>';
+    document.body.appendChild(el);
+    el.addEventListener('click', ev => {
+      const btn = ev.target.closest('[data-m]');
+      if (!btn) { if (ev.target === el) el.remove(); return; }
+      const m = btn.dataset.m;
+      el.remove();
+      if (m === 'open') window.fsListDir(p);
+      else if (m === 'copyPath') window.fsAction('copyPath', { paths: [p] });
+      else if (m === 'cd') window.fsAction('cd', { path: p });
+      else if (m === 'unfav') window.fsAction('fav', { path: p });
     });
   }
   SCREEN_HOOKS.files = function () { if (!document.querySelector('[data-screen="files"] .fs-list')) renderFilesScreen(); };
