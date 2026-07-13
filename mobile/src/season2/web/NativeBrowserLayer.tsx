@@ -8,8 +8,8 @@
  * mockup keeps owning the tabs, the address bar, the progress bar and the
  * sheets, which is the whole design.
  */
-import React, { useMemo } from 'react';
-import { View, StyleSheet } from 'react-native';
+import React, { useMemo, useState, useEffect } from 'react';
+import { View, StyleSheet, Text, Pressable } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 export interface BrowserRect { x: number; y: number; w: number; h: number }
@@ -38,36 +38,95 @@ export function resolveUrl(input: string, serverHost?: string): string {
 
 export function NativeBrowserLayer({ visible, tabId, url, rect, serverHost, onTitle }: Props) {
   const resolved = useMemo(() => resolveUrl(url, serverHost), [url, serverHost]);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  if (!visible || !rect || !tabId || !resolved) return null;
+  // Ein neuer Tab / eine neue Adresse startet ohne alten Fehler.
+  useEffect(() => setError(null), [tabId, resolved]);
+
+  if (!rect || !tabId || !resolved) return null;
 
   return (
     <View
-      style={[styles.layer, { left: rect.x, top: rect.y, width: rect.w, height: rect.h }]}
-      pointerEvents="box-none"
+      // Unsichtbar heißt AUSGEBLENDET, nicht abgerissen: würde der WebView bei
+      // jedem Tab-Sheet aushängen, lüde die Seite danach komplett neu (und der
+      // Scroll-Stand wäre weg). display:'none' hält ihn am Leben.
+      style={[
+        styles.layer,
+        { left: rect.x, top: rect.y, width: rect.w, height: rect.h },
+        !visible && styles.hidden,
+      ]}
+      pointerEvents={visible ? 'box-none' : 'none'}
     >
       <WebView
         // A new key per tab is the isolation: no shared history, no shared JS
         // context. `incognito` on top means no cookies or cache survive either.
-        key={tabId}
+        key={`${tabId}:${reloadKey}`}
         source={{ uri: resolved }}
         incognito
         cacheEnabled={false}
         thirdPartyCookiesEnabled={false}
         javaScriptEnabled
-        domStorageEnabled={false}
+        // MUSS an sein. Ohne DOM-Storage wirft jede React-/Next-Seite beim
+        // ersten localStorage-Zugriff — die Seite lädt, der Titel kommt an,
+        // gerendert wird aber nichts: die weiße Seite. `incognito` sorgt weiter
+        // dafür, dass nichts davon die Sitzung überlebt.
+        domStorageEnabled
+        // Seiten auf dem eigenen Server laufen über http (Tailscale verschlüsselt),
+        // ziehen aber oft https-Unterressourcen — sonst bleibt die Seite leer.
+        mixedContentMode="always"
+        originWhitelist={['*']}
         allowsBackForwardNavigationGestures
         setSupportMultipleWindows={false}
         onNavigationStateChange={(nav) => {
           if (!nav.loading) onTitle(tabId, nav.title ?? '', nav.url ?? resolved);
         }}
+        // Fehler dürfen nicht mehr als weiße Fläche enden — sie werden benannt.
+        onError={(e) => setError(e.nativeEvent.description || 'Unbekannter Fehler')}
+        onHttpError={(e) =>
+          setError(`HTTP ${e.nativeEvent.statusCode} — ${e.nativeEvent.description || 'Seite nicht erreichbar'}`)
+        }
+        onRenderProcessGone={() => setError('Der Seiten-Prozess wurde beendet (zu wenig Speicher)')}
         style={styles.web}
       />
+      {error && (
+        <View style={styles.error}>
+          <Text style={styles.errorTitle}>Seite konnte nicht geladen werden</Text>
+          <Text style={styles.errorMsg} numberOfLines={3}>{error}</Text>
+          <Text style={styles.errorUrl} numberOfLines={1}>{resolved}</Text>
+          <Pressable
+            style={styles.errorBtn}
+            onPress={() => { setError(null); setReloadKey((k) => k + 1); }}
+          >
+            <Text style={styles.errorBtnText}>Erneut versuchen</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   layer: { position: 'absolute', overflow: 'hidden', borderRadius: 14 },
+  hidden: { display: 'none' },
   web: { flex: 1, backgroundColor: '#fff' },
+  error: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#12161f',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    gap: 8,
+  },
+  errorTitle: { color: '#E7ECF3', fontSize: 15, fontWeight: '700' },
+  errorMsg: { color: '#93A1B5', fontSize: 13, textAlign: 'center' },
+  errorUrl: { color: '#5C6B82', fontSize: 11, marginTop: 2 },
+  errorBtn: {
+    marginTop: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    backgroundColor: 'rgba(96,165,250,.18)',
+  },
+  errorBtnText: { color: '#60A5FA', fontSize: 13, fontWeight: '700' },
 });

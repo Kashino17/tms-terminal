@@ -439,12 +439,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'browser:sync':
-        setBrowser({
+        // Ein reines { visible: false } (Bildschirmwechsel, offenes Sheet) darf
+        // Tab, Adresse und Rechteck NICHT vergessen — sonst hängt der WebView
+        // aus und die Seite lädt beim Zurückkommen komplett neu.
+        setBrowser((b) => ({
           visible: !!payload.visible,
-          tabId: payload.tabId ?? null,
-          url: payload.url ?? '',
-          rect: payload.rect ?? null,
-        });
+          tabId: payload.tabId ?? (payload.rect ? null : b.tabId),
+          url: payload.url ?? (payload.rect ? '' : b.url),
+          rect: payload.rect ?? b.rect,
+        }));
         break;
 
       case 'browser:closeTab':

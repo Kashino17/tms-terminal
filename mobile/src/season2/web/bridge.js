@@ -859,9 +859,19 @@
     return !page || page.kind === 'newtab' ? '+' : '⊕';
   };
 
+  // Der native WebView liegt ÜBER der ganzen Deck-WebView — alles, was das Deck
+  // selbst als Overlay zeichnet (Tab-Liste, Menü, Werkzeuge, Spotlight, die
+  // aufgeklappte Insel, der Sperrbildschirm), läge sonst DAHINTER und wäre
+  // unbedienbar. Solange so ein Overlay offen ist, verschwindet die Seite.
+  function overlayOpen() {
+    if (document.body.classList.contains('is-locked')) return true;
+    var header = document.getElementById('statusHeader');
+    if (header && header.classList.contains('is-expanded')) return true;
+    return !!document.querySelector('.sheet-wrap:not([hidden])');
+  }
   function browserVisible() {
     var screen = document.querySelector('[data-screen="browser"]');
-    return !!screen && !screen.hidden;
+    return !!screen && !screen.hidden && !overlayOpen();
   }
   function syncNativeBrowser() {
     var tab = window.activeBrowserTab && window.activeBrowserTab();
@@ -898,6 +908,28 @@
     else post('browser:sync', { visible: false });
   };
   window.addEventListener('resize', function () { if (browserVisible()) syncNativeBrowser(); });
+
+  // Die Sheets öffnen/schließen sich im Deck ohne Umweg über die Bridge — also
+  // horchen wir direkt auf ihren Zustand, statt jede einzelne Funktion zu
+  // umwickeln. Beobachtet werden nur die Attribute weniger fester Elemente
+  // (keine Terminal-Ausgabe), das kostet praktisch nichts.
+  var overlayWatch = new MutationObserver(function () {
+    if (overlaySyncQueued) return;
+    overlaySyncQueued = true;
+    requestAnimationFrame(function () {
+      overlaySyncQueued = false;
+      syncNativeBrowser();
+    });
+  });
+  var overlaySyncQueued = false;
+  function watchOverlays() {
+    var opts = { attributes: true, attributeFilter: ['class', 'hidden'] };
+    overlayWatch.observe(document.body, opts);
+    var header = document.getElementById('statusHeader');
+    if (header) overlayWatch.observe(header, opts);
+    document.querySelectorAll('.sheet-wrap').forEach(function (el) { overlayWatch.observe(el, opts); });
+  }
+  watchOverlays();
 
   // ══ React Native → WebView (Manager / Cloud / Browser) ═════════════════════
   window.TMSBridge.setManager = function (messages) {
