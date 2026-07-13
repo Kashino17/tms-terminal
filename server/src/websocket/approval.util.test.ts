@@ -44,8 +44,42 @@ test('chooseApprovalKey refuses to auto-press on a free-text input prompt', () =
   assert.equal(chooseApprovalKey('What should I name it? ›'), null);
 });
 
-test('chooseApprovalKey falls back to Enter for generic yes/no confirmations', () => {
-  assert.equal(chooseApprovalKey('Are you sure you want to continue?'), '\r');
+// ── Echter Vorfall (2026-07-13, 18:16 UTC, Log-bewiesen): Der Nutzer tippte
+//    eine FRAGE in die Eingabezeile, machte 2s Pause — und die alte Regel
+//    "letzte Zeile enthält ein Fragezeichen → Enter" schickte seinen halb
+//    getippten Text ab. Dreimal. Ohne erkennbare Ja-Option wird ab jetzt
+//    grundsätzlich NICHTS gedrückt — nur benachrichtigt. ──
+test('chooseApprovalKey drückt NICHTS bei bloßen Fragezeichen/Confirm-Wörtern ohne Ja-Option', () => {
+  assert.equal(chooseApprovalKey('Are you sure you want to continue?'), null);
+  assert.equal(chooseApprovalKey('kannst du mir sagen wie das funktioniert?'), null);
+  assert.equal(chooseApprovalKey('soll ich das deployment starten oder lieber warten?'), null);
+});
+
+// ── Multiple-Choice/Select ist KEIN Ja/Nein: gleiche Box-Optik, gleicher
+//    "Esc to cancel"-Footer — aber Option 1 ist eine inhaltliche Antwort.
+//    Auto-Approve würde blind die erste Auswahl treffen. Stattdessen: null,
+//    die App zeigt ihren Rückfrage-Dialog. ──
+test('chooseApprovalKey drückt NICHTS bei einer Auswahlfrage (Optionen ohne Ja)', () => {
+  const select = 'WelcheChecks sollen laufen?\n❯1.Tests\n2.Lint\n3.Typecheck\nEsctocancel';
+  assert.equal(chooseApprovalKey(select), null);
+  const glued = 'Whichmodel?\n❯1.claude-sonnet\n2.claude-opus\nEsctocancel·Tabtoamend';
+  assert.equal(chooseApprovalKey(glued), null);
+});
+
+test('chooseApprovalKey: "Esc to cancel" allein (ohne sichtbare Ja-Option) reicht NICHT für Enter', () => {
+  assert.equal(chooseApprovalKey('irgendein Kontext\nEsctocancel·Tabtoamend'), null);
+});
+
+// ── Andere AI-CLIs: gleiche Semantik, leicht andere Wortwahl. Gemini CLI
+//    nummeriert mit "Yes, allow once"; Codex fragt mit end-anchored [y/N]. ──
+test('chooseApprovalKey erkennt Gemini-CLI-Stil (1. Yes, allow once)', () => {
+  const gemini = 'Apply this change?\n❯ 1. Yes, allow once\n  2. Yes, allow always\n  3. No (esc)';
+  assert.equal(chooseApprovalKey(gemini), '\r');
+});
+
+test('chooseApprovalKey: [y/N]/[Y/n] nur am Zeilenende, nicht mitten in Prosa', () => {
+  assert.equal(chooseApprovalKey('Proceed with install? ' + YN_NO), 'y\r');
+  assert.equal(chooseApprovalKey('Der Text erwähnt ' + YN_NO + ' nur beiläufig im Satz.'), null);
 });
 
 // ── Der Zwischenfall: Prosa ist kein Prompt ─────────────────────────────────

@@ -41,50 +41,64 @@ export function computePendingLen(prev: number, data: string): number {
 /**
  * Decide which keystroke approves a detected prompt, given the cleaned text the
  * match was found in. Returns the bytes to write, or `null` when we must NOT
- * blindly auto-press (a free-text input where Enter would submit garbage).
+ * blindly auto-press.
  *
- * Verified against Claude Code v2.1.193: the standard numbered prompt
- * pre-highlights "1. Yes", so a bare Enter approves. A `[y/N]` prompt defaults
- * to No, so Enter would DECLINE — we send "y" there instead.
+ * GRUNDSATZ (nach zwei echten Vorfällen, beide Server-Log-bewiesen): Enter
+ * wird NUR gedrückt, wenn das Fenster POSITIV beweist, dass eine Ja-Antwort
+ * zur Wahl steht — eine nummerierte Optionsliste, deren Option 1 mit
+ * Yes/Ja/Allow/Approve beginnt (Claude Code, Gemini CLI, Codex nummerieren
+ * alle so), oder ein end-anchored [y/N]/[Y/n]. Alles andere — Freitext,
+ * Auswahlfragen (Multiple Choice/Select), generische Sätze mit Fragezeichen —
+ * ist KEIN Ja/Nein und wird nur gemeldet, nie beantwortet:
+ *  - Vorfall 1: "letzte Zeile enthält ?" schickte den halb getippten Text
+ *    des Nutzers ab (sein Echo endete mit einem Fragezeichen).
+ *  - Vorfall 2 (latent): "Esc to cancel gesehen → Enter" hätte bei jeder
+ *    Auswahlfrage blind die erste Option gewählt — gleiche Box, gleicher
+ *    Footer, aber inhaltliche Antworten statt Ja/Nein.
  */
 export function chooseApprovalKey(window: string): string | null {
-  // SICHERHEIT — die Lehre aus einem echten Zwischenfall: Ein WARTENDER Prompt
-  // steht immer in der ALLERLETZTEN Zeile, dort blinkt der Cursor. Erwähnt eine
-  // KI dagegen nur im Fließtext ein "[y/N]" (oder ein Log-/Commit-Text tut es),
-  // steht das mitten im Fenster, und die letzte Zeile ist die Eingabebox der KI.
-  // Vorher wurde das GANZE Fenster durchsucht: die App tippte daraufhin "y" +
-  // Enter in die laufende KI-Sitzung und verschickte es als Nachricht.
-  // Der Fast-Path erwischt einen Prompt oft schon, BEVOR der nächste Chunk
-  // ("Esc to cancel…") nachgeladen ist — das Fenster endet dann auf einer
-  // oder mehreren leeren Zeilen, obwohl die Box selbst (❯1.Yes/…) längst da
-  // ist. Nachweis: reale Session lief deshalb 30+ Minuten nie durch (Server-
-  // Log). Leere Zeilen am Ende sind darum ein Rendering-Zwischenstand, kein
-  // Beleg für "der Cursor steht auf einer frischen Zeile, da wartet nichts".
+  // Leere Zeilen am Ende sind ein Rendering-Zwischenstand des Fast-Path
+  // (Fenster endet oft, bevor "Esc to cancel" nachgeladen ist) — abschneiden,
+  // sonst wird ein längst sichtbarer Prompt als "nichts wartet" verworfen.
   const lines = window.split('\n');
   while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
   const lastLine = (lines[lines.length - 1] ?? '').trim();
-
-  // Nach dem Abschneiden wirklich nichts als Text übrig: da wartet nichts.
   if (!lastLine) return null;
 
-  // 1. [y/N] — capital-N default means bare Enter declines; send 'y'.
-  if (/\[y\/N\]/.test(lastLine)) return 'y\r';
+  // 1. Klassisches [y/N]/[Y/n] — nur am ZEILENENDE (dort blinkt der Cursor);
+  //    mitten im Satz ist es Prosa, kein wartender Prompt. Optional folgt dem
+  //    Marker noch ein ":"/Leerzeichen ("Proceed? [y/N]: ").
+  if (/\[y\/N\]\s*:?\s*$/.test(lastLine)) return 'y\r'; // Default No — Enter würde ablehnen
+  if (/\[Y\/n\]\s*:?\s*$/.test(lastLine)) return '\r';  // Default Yes — Enter bestätigt
 
-  // 2. Standard Claude Code numbered prompt — option 1 (Yes) is the default. The
-  //    option words arrive ANSI-glued ("1.Yes" / "Esctocancel"), so match loosely.
-  if (/1\.?\s*Yes/i.test(lastLine) || /Esc\s*to\s*cancel/i.test(lastLine)) return '\r';
+  // 2. Nummerierte Optionsliste im Schwanz des Fensters einsammeln. Nach dem
+  //    ANSI-Strip kommen die Wörter oft ZUSAMMENGEKLEBT an ("❯1.Yes"), mit
+  //    echten Leerzeichen ("❯ 1. Yes, allow once") oder mit Klammer ("1)").
+  const tail = lines.slice(-12);
+  const options: Array<{ n: number; text: string }> = [];
+  for (const raw of tail) {
+    const m = /^\s*(?:❯\s*)?([1-9])[.)]\s*(\S.*)$/.exec(raw.trim());
+    if (m) options.push({ n: Number(m[1]), text: m[2].trim() });
+  }
 
-  // 3. [Y/n] / explicit yes-default confirmations — Enter approves.
-  if (/\[Y\/n\]/.test(lastLine)) return '\r';
+  if (options.length > 0) {
+    // Prompt-Chrome muss sichtbar sein (Auswahl-Cursor ❯ oder der
+    // Esc-Footer) — eine bloße nummerierte Aufzählung im Fließtext ist keine
+    // wartende Box.
+    const hasChrome = tail.some(l => /❯/.test(l) || /Esc\s*to\s*cancel/i.test(l));
+    const first = options.find(o => o.n === 1);
+    // Ja-artige Option 1 = echter Berechtigungs-Prompt (Enter nimmt den
+    // vorausgewählten Default). Alles andere ist eine inhaltliche
+    // Auswahlfrage — die beantwortet der Nutzer im App-Dialog, nie wir.
+    const yesish = !!first && /^(yes|ja|allow|approve|proceed|continue)\b/i.test(first.text)
+      // ANSI-geklebt: "Yes,andalwaysallow…" hat kein Wortende nach "Yes" —
+      // Komma/Großbuchstabe direkt nach dem Ja-Wort zählt auch.
+      || (!!first && /^(yes|ja|allow|approve)[,A-Z]/i.test(first.text));
+    return yesish && hasChrome ? '\r' : null;
+  }
 
-  // 4. Free-text input prompt ("Question? ›" / "? [" / "? (") with no yes-option
-  //    above — do NOT auto-press; let the user answer.
-  if (/\?\s*(›|\[|\()/.test(lastLine)) return null;
-
-  // 5. Generische Ja/Nein-Bestätigung: Enter. Aber NUR, wenn die letzte Zeile
-  //    auch wirklich nach einer Frage aussieht — sonst lieber gar nichts drücken
-  //    und den Nutzer fragen, als blind in eine KI-Sitzung zu tippen.
-  if (/\?|\by\/n\b|proceed|continue|are you sure|confirm/i.test(lastLine)) return '\r';
+  // Keine Optionsliste, kein end-anchored y/N: kein Beweis für ein wartendes
+  // Ja/Nein. Nur melden — nie drücken.
   return null;
 }
 
