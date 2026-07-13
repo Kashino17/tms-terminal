@@ -300,6 +300,36 @@ export async function handleMove(req: http.IncomingMessage, res: http.ServerResp
   }
 }
 
+// ── POST /files/rename ────────────────────────────────────────────────
+
+export async function handleRename(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const body = await parseJsonBody(req);
+    const raw: string = body?.path;
+    const name: string = body?.name;
+    if (!raw || !name) return err(res, 400, 'path and name required');
+    if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
+      return err(res, 400, 'Invalid name');
+    }
+
+    const src = resolvePath(raw);
+    if (!isWithinHome(src)) return err(res, 403, 'Access denied: path is outside home directory');
+    if (isDeniedPath(src)) return err(res, 403, 'Access denied: sensitive path');
+    if (!fs.existsSync(src)) return err(res, 400, 'Path not found');
+
+    const target = path.join(path.dirname(src), name);
+    if (!isWithinHome(target)) return err(res, 403, 'Access denied: target is outside home directory');
+    if (isDeniedPath(target)) return err(res, 403, 'Access denied: sensitive target path');
+    if (fs.existsSync(target)) return err(res, 409, 'A file or directory with that name already exists');
+
+    fs.renameSync(src, target);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, path: target }));
+  } catch (e: unknown) {
+    err(res, 400, e instanceof Error ? e.message : String(e));
+  }
+}
+
 // ── POST /files/trash ─────────────────────────────────────────────────
 
 export async function handleTrash(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

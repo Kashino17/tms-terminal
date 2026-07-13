@@ -4,7 +4,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { handleFileDownload } from './file.handler';
+import { handleFileDownload, handleRename } from './file.handler';
 
 let server: http.Server;
 let base = '';
@@ -16,6 +16,7 @@ before(async () => {
   fs.writeFileSync(path.join(dir, 'data.bin'), Buffer.from('0123456789'));
   server = http.createServer((req, res) => {
     if (req.url!.startsWith('/files/download')) return handleFileDownload(req, res);
+    if (req.url!.startsWith('/files/rename')) return void handleRename(req, res);
     res.writeHead(404); res.end();
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -57,4 +58,35 @@ test('unsatisfiable Range: 416 + bytes */TOTAL', async () => {
   const r = await dl('bytes=99-');
   assert.strictEqual(r.status, 416);
   assert.strictEqual(r.headers.get('content-range'), 'bytes */10');
+});
+
+const rename = (p: string, name: string) => fetch(`${base}/files/rename`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ path: p, name }),
+});
+
+test('rename: benennt Datei um', async () => {
+  const src = path.join(dir, 'alt.txt');
+  fs.writeFileSync(src, 'x');
+  const r = await rename(src, 'neu.txt');
+  assert.strictEqual(r.status, 200);
+  assert.ok(fs.existsSync(path.join(dir, 'neu.txt')));
+  assert.ok(!fs.existsSync(src));
+});
+
+test('rename: Konflikt -> 409', async () => {
+  const a = path.join(dir, 'a.txt'); const b = path.join(dir, 'b.txt');
+  fs.writeFileSync(a, 'a'); fs.writeFileSync(b, 'b');
+  assert.strictEqual((await rename(a, 'b.txt')).status, 409);
+});
+
+test('rename: Name mit Slash -> 400', async () => {
+  const c = path.join(dir, 'c.txt');
+  fs.writeFileSync(c, 'c');
+  assert.strictEqual((await rename(c, '../evil')).status, 400);
+});
+
+test('rename: ausserhalb Home -> 403', async () => {
+  assert.strictEqual((await rename('/etc/hosts', 'x')).status, 403);
 });

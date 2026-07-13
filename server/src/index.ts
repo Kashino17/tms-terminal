@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { config, loadServerConfig, ensureConfigDir } from './config';
 import { handleAuthRequest } from './auth/auth.controller';
-import { handleFileList, handleFileRead, handleFileDownload, handleMkdir, handleMove, handleTrash } from './files/file.handler';
+import { handleFileList, handleFileRead, handleFileDownload, handleMkdir, handleMove, handleTrash, handleRename } from './files/file.handler';
 import { handleUploadRequest, handleDrawingUpload } from './upload/upload.handler';
 import { validateToken } from './auth/jwt.service';
 import { createWebSocketServer } from './websocket/ws.server';
@@ -155,6 +155,7 @@ function main(): void {
       else if (req.url.startsWith('/files/mkdir') && req.method === 'POST')  handleMkdir(req, res);
       else if (req.url.startsWith('/files/move') && req.method === 'POST')   handleMove(req, res);
       else if (req.url.startsWith('/files/trash') && req.method === 'POST')  handleTrash(req, res);
+      else if (req.url.startsWith('/files/rename') && req.method === 'POST') handleRename(req, res);
       else { res.writeHead(404); res.end('Not found'); }
     } else if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
