@@ -4123,7 +4123,14 @@
       fsBulkbarHtml() + fsDlbarHtml();
     wireFilesScreen(host);
   }
-  function fsBulkbarHtml() { return ''; }   // Auswahl-Task füllt das
+  function fsBulkbarHtml() {
+    if (!fsState.selectMode || !fsState.sel.size) return '';
+    return '<div class="fs-bulkbar glass">' +
+      '<button class="btn-chip" data-fsbulk="download">⇩ Laden (' + fsState.sel.size + ')</button>' +
+      '<button class="btn-chip" data-fsbulk="copyPath">Pfade</button>' +
+      '<button class="btn-chip btn-chip--danger" data-fsbulk="trash">Löschen</button>' +
+      '</div>';
+  }
   function fsDlbarHtml() { return ''; }     // Viewer-Task füllt das
   function wireFilesScreen(host) {
     host.querySelectorAll('[data-crumb]').forEach(b => b.addEventListener('click', () => {
@@ -4182,6 +4189,24 @@
     const rc = host.querySelector('[data-fscancelrename]');
     if (rc) rc.addEventListener('click', () => { fsState.renaming = null; renderFilesScreen(); });
     host.querySelectorAll('[data-fsgofav]').forEach(b => b.addEventListener('click', () => window.fsListDir(b.dataset.fsgofav)));
+    host.querySelectorAll('[data-fsbulk]').forEach(b => b.addEventListener('click', () => {
+      const paths = Array.from(fsState.sel);
+      const hasDir = fsState.entries.some(e => e.isDir && fsState.sel.has(e.path));
+      const a = b.dataset.fsbulk;
+      if (a === 'download') window.fsAction('download', { paths: paths, zip: hasDir || paths.length > 1 });
+      else if (a === 'copyPath') window.fsAction('copyPath', { paths: paths });
+      else if (a === 'trash') {
+        if (b.dataset.confirmed) {
+          window.fsAction('trash', { paths: paths });
+          fsState.selectMode = false; fsState.sel.clear();
+          renderFilesScreen();
+        } else {
+          b.dataset.confirmed = '1';
+          b.textContent = paths.length + ' in den Papierkorb?';
+          setTimeout(() => { delete b.dataset.confirmed; if (document.contains(b)) renderFilesScreen(); }, 3000);
+        }
+      }
+    }));
     wireFsRows(host);
   }
   function wireFsRows(host) {
@@ -4214,7 +4239,51 @@
     }));
   }
   function openFsViewer(p) { toast('Viewer folgt: ' + (p.split('/').pop() || p)); }
-  function openFsRowMenu(p) { toast('Menü folgt'); }
+  function openFsRowMenu(p) {
+    const e = fsState.entries.find(x => x.path === p);
+    if (!e) return;
+    const old = document.getElementById('fsRowMenu');
+    if (old) old.remove();
+    const parent = e.isDir ? e.path : e.path.replace(/\/[^/]+$/, '');
+    const isFav = (window.__tmsFavs || []).indexOf(p) !== -1;
+    const el = document.createElement('div');
+    el.id = 'fsRowMenu';
+    el.style.cssText = 'position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,.45)';
+    el.innerHTML = '<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px">' +
+      '<div style="font-weight:800;font-size:13px;padding:2px 4px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.name) + '</div>' +
+      (e.isDir ? '' : '<button class="btn-chip" data-m="open">Öffnen</button>') +
+      '<button class="btn-chip" data-m="copyPath">Pfad kopieren</button>' +
+      '<button class="btn-chip" data-m="cd">Im Terminal öffnen (cd)</button>' +
+      '<button class="btn-chip" data-m="insert">In Eingabezeile einfügen</button>' +
+      '<button class="btn-chip" data-m="download">Herunterladen' + (e.isDir ? ' (ZIP)' : '') + '</button>' +
+      (e.isDir ? '' : '<button class="btn-chip" data-m="share">Teilen</button>') +
+      '<button class="btn-chip" data-m="rename">Umbenennen</button>' +
+      '<button class="btn-chip" data-m="fav">' + (isFav ? '★ Favorit entfernen' : '☆ Favorit') + '</button>' +
+      '<button class="btn-chip btn-chip--danger" data-m="trash">Löschen</button>' +
+      '<button class="btn-chip" data-m="close">Abbrechen</button></div>';
+    document.body.appendChild(el);
+    el.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-m]');
+      if (!btn) { if (ev.target === el) el.remove(); return; }
+      const m = btn.dataset.m;
+      if (m === 'trash' && !btn.dataset.confirmed) {
+        btn.dataset.confirmed = '1'; btn.textContent = 'Wirklich in den Papierkorb?'; return;
+      }
+      el.remove();
+      if (m === 'open') openFsViewer(p);
+      else if (m === 'copyPath') window.fsAction('copyPath', { paths: [p] });
+      else if (m === 'cd') window.fsAction('cd', { path: parent });
+      else if (m === 'insert') window.fsAction('insert', { path: p });
+      else if (m === 'download') window.fsAction('download', { paths: [p], zip: !!e.isDir });
+      else if (m === 'share') window.fsAction('share', { path: p });
+      else if (m === 'fav') window.fsAction('fav', { path: p });
+      else if (m === 'trash') window.fsAction('trash', { paths: [p] });
+      else if (m === 'rename') {
+        fsState.renaming = p; renderFilesScreen();
+        setTimeout(() => { const i = document.getElementById('fsRenameInput'); if (i) { i.focus(); i.select(); } }, 50);
+      }
+    });
+  }
   SCREEN_HOOKS.files = function () { if (!document.querySelector('[data-screen="files"] .fs-list')) renderFilesScreen(); };
 
   function buildFilesSheet() {
