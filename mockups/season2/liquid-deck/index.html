@@ -2807,6 +2807,10 @@
     renderTerminalWorkspace();
     if (typeof syncDockTerminal === 'function') syncDockTerminal();
     if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
+    // The overview grid isn't rebuilt on every status tick (see the
+    // no-flicker note below) — a closed card would sit as a ghost tile
+    // until the panel was toggled shut and reopened.
+    if (state.overviewOpen) renderOverview();
   }
   function closeTerminal(id) {
     // Demo: Karte weg. Die App beendet stattdessen die echte PTY-Session.
