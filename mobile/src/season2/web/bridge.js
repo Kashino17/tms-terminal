@@ -952,6 +952,57 @@
   // Pfad direkt in die Eingabezeile legen.
   window.__tmsCwd = '~';
   window.__tmsFavs = [];
+
+  // ── Files screen (real data layer) ─────────────────────────────────────
+  // The fullscreen explorer in the mockup renders through window.fs* hooks;
+  // here they get real URLs, real listings, and real actions.
+  var fsBase = '', fsToken = '';
+  window.TMSBridge.setFilesBase = function (base, token) { fsBase = base; fsToken = token; };
+  window.fsFileUrl = function (p) {
+    return fsBase ? fsBase + '/files/download?path=' + encodeURIComponent(p) + '&token=' + encodeURIComponent(fsToken) : '';
+  };
+  window.fsPdfUrl = function (p) {
+    return fsBase ? fsBase + '/files/pdfjs/web/viewer.html?file=' + encodeURIComponent(window.fsFileUrl(p)) : '';
+  };
+  window.fsListDir = function (path) { post('files:listRaw', { path: path }); };
+  window.TMSBridge.setFilesDir = function (path, entries) {
+    if (window.fsSetDir) window.fsSetDir(path, entries);
+    window.__tmsCwd = path; // Sheet und Screen teilen sich den Ort
+  };
+  window.fsReadFile = function (path) { post('files:readRaw', { path: path }); };
+  window.TMSBridge.fileContent = function (path, content, error) {
+    if (window.fsSetFileContent) window.fsSetFileContent(path, content, error);
+  };
+  window.TMSBridge.downloadProgress = function (id, name, pct, state) {
+    if (window.fsDownloadProgress) window.fsDownloadProgress(id, name, pct, state);
+  };
+  function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+  window.fsAction = function (a, pl) {
+    if (a === 'copyPath') {
+      window.copyText(pl.paths.join('\n'));
+      toast(pl.paths.length > 1 ? pl.paths.length + ' Pfade kopiert' : 'Pfad kopiert');
+    } else if (a === 'cd') {
+      var card = activeCardId();
+      if (!card) { toast('Kein Terminal offen'); return; }
+      window.__tmsInput(card, 'cd ' + shq(pl.path) + '\r');
+      window.show('terminals');
+    } else if (a === 'insert') {
+      insertIntoTerminal(pl.path, 'Pfad eingefügt');
+    } else if (a === 'download') {
+      post('files:downloadToFolder', { paths: pl.paths, zip: !!pl.zip });
+    } else if (a === 'share') {
+      post('files:share', { path: pl.path });
+    } else if (a === 'rename') {
+      post('files:rename', { path: pl.path, name: pl.name });
+    } else if (a === 'trash') {
+      post('files:trashMany', { paths: pl.paths });
+    } else if (a === 'fav') {
+      post('files:fav', { path: pl.path });
+    } else if (a === 'mkdir') {
+      post('files:mkdirAbs', { path: pl.path });
+    }
+  };
+
   var filesFilter = '';
   var filesMenuFor = null;   // Pfad, dessen Aktionsleiste offen ist
   var filesRenaming = null;  // Pfad, der gerade umbenannt wird
@@ -1006,6 +1057,7 @@
         '<button class="btn-chip" data-cd="..">▴ Aufwärts</button>' +
         '<span class="fx-path mono-text">' + escapeHtml(window.__tmsCwd) + '</span>' +
         '<button class="btn-chip" data-fx="newfolder">+ Ordner</button>' +
+        '<button class="btn-chip" data-fx="fullscreen" aria-label="Vollbild-Explorer">⛶</button>' +
       '</div>' +
       '<input class="term-input fx-search" id="fxSearch" placeholder="Filtern…" value="' + escapeHtml(filesFilter) + '">' +
       favs + newFolder +
@@ -1074,6 +1126,11 @@
               }
               else if (a === 'cancel') { filesNewFolder = false; filesRenaming = null; rerender(); }
               else if (a === 'gofav') { filesMenuFor = null; post('files:goto', { path: t }); }
+              else if (a === 'fullscreen') {
+                var wrap2 = document.getElementById('toolSheetWrap');
+                if (wrap2 && typeof window.closeSheet === 'function') window.closeSheet(wrap2);
+                if (window.openFilesScreen) window.openFilesScreen(window.__tmsCwd);
+              }
             });
           });
         }
@@ -1093,6 +1150,7 @@
   };
   window.TMSBridge.setFavs = function (list) {
     window.__tmsFavs = list || [];
+    if (window.fsRerender) window.fsRerender();
   };
 
   /** Schreibt Text in das Terminal, das die Bottom-Bar gerade bedient. */
