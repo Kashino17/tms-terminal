@@ -219,7 +219,7 @@
     position: fixed; top: calc(var(--safe-top) + 8px); left: 50%; z-index: 60;
     transform: translateX(-50%);
     width: min(92vw, 400px);
-    border-radius: 24px; border: 1px solid var(--glass-border);
+    border-radius: 22px; border: 1px solid var(--glass-border);
     padding: 0; overflow: hidden; cursor: pointer;
     transition: width var(--dur-snappy) var(--spring-snappy),
                 border-radius var(--dur-snappy) var(--spring-snappy),
@@ -232,7 +232,21 @@
     box-shadow: 0 18px 50px rgba(0,0,0,.35);
   }
   #statusHeader::before { left: 14%; right: 14%; }
-  .island-compact { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 14px; }
+  .island-compact { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; }
+  /* Terminal-Bildschirm: die Insel wird zur Mini-Aktionsleiste (Neu/Stack/
+     Liste/Übersicht) statt Status zu zeigen — dafür ist ein Tap auf die
+     Insel weiterhin da (Details bleiben einen Tap entfernt). */
+  .island-term-actions { display: none; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+  #statusHeader.is-terminal-mode .status-hd__activity,
+  #statusHeader.is-terminal-mode .status-hd__metrics { display: none; }
+  #statusHeader.is-terminal-mode .island-term-actions { display: flex; }
+  .island-term-actions .overview-btn { width: 28px; height: 28px; border-radius: 9px; }
+  .island-term-actions .view-toggle { padding: 2px; gap: 2px; align-self: center; }
+  .island-term-actions .view-toggle__btn { min-height: 24px; padding: 5px 7px; }
+  /* Apple-artiger "Pop": ein kurzer Bounce, wenn der Insel-Inhalt wechselt
+     (Bildschirmwechsel rein/raus aus Terminals) — Compositor-only. */
+  @keyframes islandPop { 0% { transform: translateX(-50%) scale(1); } 45% { transform: translateX(-50%) scale(1.035); } 100% { transform: translateX(-50%) scale(1); } }
+  #statusHeader.is-popping { animation: islandPop 420ms var(--spring-snappy); }
   .island-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-gentle) var(--spring-gentle); }
   .island-body__inner {
     overflow: hidden; min-height: 0;
@@ -510,10 +524,6 @@
   /* ============================================================
      Terminal workspace — spatial swipeable stack
      ============================================================ */
-  .term-header { display: flex; flex-direction: column; gap: 10px; padding: 0 2px 12px; flex: none; }
-  .term-header__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .term-header__top h2 { margin: 0; font-size: var(--fs-title); font-weight: 700; letter-spacing: -.01em; }
-  .term-header__actions { display: flex; align-items: center; gap: 6px; flex: none; }
   .overview-btn { width: var(--touch); height: var(--touch); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color 200ms var(--spring), background 200ms var(--spring), transform 150ms var(--spring); }
   .overview-btn .ic { width: var(--icon-md); height: var(--icon-md); }
   .overview-btn:active { transform: scale(.94); }
@@ -633,6 +643,10 @@
   .overview-tile__head { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .overview-tile__name { font-size: 12.5px; font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .overview-tile__body { flex: 1; min-width: 0; min-height: 0; overflow: hidden; font: 10px/1.4 var(--font-mono); color: var(--text-dim); word-break: break-word; overflow-wrap: anywhere; }
+  .overview-tile__close { flex: none; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); background: rgba(var(--overlay-rgb),.08); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
+  .overview-tile__close .ic { width: 11px; height: 11px; }
+  .overview-tile__close:active { transform: scale(.9); }
+  .overview-tile__close.is-armed { color: var(--err); background: rgba(var(--err-rgb),.18); border-color: rgba(var(--err-rgb),.4); }
 
   /* ============================================================
      Liste view — vertical terminal stack (Command-Deck ergonomics,
@@ -1301,6 +1315,22 @@
         <span id="statusPrayerLabel">—</span>
       </span>
     </span>
+    <div class="island-term-actions" id="islandTermActions">
+      <button class="overview-btn glass" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">
+        <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <div class="view-toggle" id="viewToggle" role="tablist" aria-label="Ansicht">
+        <button class="view-toggle__btn" data-view="stack" role="tab" aria-selected="true" aria-label="Stack" title="Stack">
+          <svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="6.5" width="13" height="13" rx="2.5" opacity=".45"/><rect x="4.5" y="4.5" width="13" height="13" rx="2.5"/></svg>
+        </button>
+        <button class="view-toggle__btn" data-view="list" role="tab" aria-selected="false" aria-label="Liste" title="Liste">
+          <svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>
+        </button>
+      </div>
+      <button class="overview-btn glass" id="overviewBtn" aria-label="Übersicht" title="Übersicht">
+        <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/></svg>
+      </button>
+    </div>
   </div>
   <div class="island-body" aria-hidden="true">
     <div class="island-body__inner island-expanded" id="statusDetailBody"></div>
@@ -2109,6 +2139,19 @@
         to.addEventListener('animationend', () => to.classList.remove(cls), { once: true });
       }
     }
+    // The island swaps status readout for the terminal mini-toolbar only on
+    // this screen; the brief pop is the same "content just changed" bounce
+    // Apple's Dynamic Island does, not a generic screen-transition effect —
+    // so it only fires the moment terminal-mode itself flips, not on every nav.
+    const enteringTerminalMode = name === 'terminals' && prev !== 'terminals';
+    const leavingTerminalMode = name !== 'terminals' && prev === 'terminals';
+    if (enteringTerminalMode || leavingTerminalMode) {
+      statusHeaderEl.classList.toggle('is-terminal-mode', name === 'terminals');
+      statusHeaderEl.classList.remove('is-popping');
+      void statusHeaderEl.offsetWidth;
+      statusHeaderEl.classList.add('is-popping');
+      statusHeaderEl.addEventListener('animationend', () => statusHeaderEl.classList.remove('is-popping'), { once: true });
+    }
     currentScreen = name;
     if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
     // A pending permission/question prompt only shows its sheet on the Terminals
@@ -2211,32 +2254,20 @@
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
   function buildTerminalScreen() {
+    // The old title + action row now lives in the Dynamic Island (see
+    // #islandTermActions in the static header) — its buttons/ids are
+    // unchanged, so wireViewToggle() and the listeners below still just work
+    // wherever the elements physically sit. Freeing this row hands the extra
+    // height straight to .term-body-wrap (flex: 1 fills whatever is left).
     const host = document.querySelector('[data-screen="terminals"]');
     host.innerHTML = `
-      <div class="term-header">
-        <div class="term-header__top">
-          <h2>Terminals</h2>
-          <div class="term-header__actions">
-            <button class="overview-btn glass" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">${icon('plus')}</button>
-            <button class="overview-btn glass" id="overviewBtn" aria-label="Übersicht" title="Übersicht">${icon('grid')}</button>
-          </div>
-        </div>
-        <div class="view-toggle glass" id="viewToggle" role="tablist" aria-label="Ansicht">
-          <button class="view-toggle__btn" data-view="stack" role="tab" aria-selected="true">
-            ${icon('stack', 16)}<span>Stack</span>
-          </button>
-          <button class="view-toggle__btn" data-view="list" role="tab" aria-selected="false">
-            ${icon('list', 16)}<span>Liste</span>
-          </button>
-        </div>
-      </div>
       <div class="term-body-wrap" id="termBodyWrap">
         <div class="term-body" id="termBody"></div>
         <div class="overview-grid" id="overviewGrid"></div>
       </div>
     `;
-    document.getElementById('overviewBtn').addEventListener('click', () => toggleOverview());
-    document.getElementById('addTerminalBtn').addEventListener('click', () => addTerminal());
+    document.getElementById('overviewBtn').addEventListener('click', e => { e.stopPropagation(); toggleOverview(); });
+    document.getElementById('addTerminalBtn').addEventListener('click', e => { e.stopPropagation(); addTerminal(); });
     wireViewToggle();
     renderTerminalWorkspace();
   }
@@ -2283,6 +2314,7 @@
     toggle.addEventListener('click', e => {
       const btn = e.target.closest('.view-toggle__btn');
       if (!btn) return;
+      e.stopPropagation(); // lives inside the island now — a tap must not also expand it
       setTerminalView(btn.dataset.view);
     });
   }
@@ -3136,10 +3168,22 @@
       const previewLines = window.__tmsPreview ? window.__tmsPreview(id, 5) : cs.lines.slice(-4).map(l => ansiToHtml(l)).join('<br>');
       tile.dataset.id = id;
       tile.innerHTML = `
-        <div class="overview-tile__head"><span class="card-tag" style="background:${session.colorTag}"></span><span class="overview-tile__name">${escapeHtml(session.name)}</span><span class="status-chip" data-status="${session.status}"><span class="dot"></span></span></div>
+        <div class="overview-tile__head"><span class="card-tag" style="background:${session.colorTag}"></span><span class="overview-tile__name">${escapeHtml(session.name)}</span><span class="status-chip" data-status="${session.status}"><span class="dot"></span></span><button class="overview-tile__close" data-close-tile aria-label="Terminal beenden" title="Beenden">${icon('x', 11)}</button></div>
         <div class="overview-tile__body">${previewLines}</div>
       `;
       tile.addEventListener('click', () => { toggleOverview(false); focusTerminal(id); });
+      const closeBtn = tile.querySelector('[data-close-tile]');
+      closeBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (!closeBtn.classList.contains('is-armed')) {
+          closeBtn.classList.add('is-armed');
+          toast('Nochmal tippen: Terminal beenden');
+          setTimeout(() => closeBtn.classList.remove('is-armed'), 3000);
+          return;
+        }
+        closeBtn.classList.remove('is-armed');
+        closeTerminal(id);
+      });
       grid.appendChild(tile);
     });
   }
