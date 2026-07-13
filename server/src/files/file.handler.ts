@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as http from 'http';
 import { execSync } from 'child_process';
 import { getPlatform } from '../utils/platform';
+import { parseRange } from './range.util';
 
 export interface FileEntry {
   name: string;
@@ -129,6 +130,10 @@ const MIME_MAP: Record<string, string> = {
   pdf: 'application/pdf', mp4: 'video/mp4', mp3: 'audio/mpeg', wav: 'audio/wav',
   json: 'application/json', txt: 'text/plain', html: 'text/html', css: 'text/css',
   js: 'text/javascript', ts: 'text/plain',
+  mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska',
+  avi: 'video/x-msvideo', m4v: 'video/mp4',
+  m4a: 'audio/mp4', ogg: 'audio/ogg', flac: 'audio/flac',
+  md: 'text/markdown', heic: 'image/heic', zip: 'application/zip',
 };
 
 function getMimeType(filename: string): string {
@@ -152,16 +157,37 @@ export function handleFileDownload(req: http.IncomingMessage, res: http.ServerRe
 
     const filename = path.basename(filePath);
     const mime = getMimeType(filename);
-    const isInline = mime.startsWith('image/') || mime === 'application/pdf';
+    // video/audio must be inline too, or <video>/<audio> in the WebView
+    // triggers a download instead of playing.
+    const isInline = mime.startsWith('image/') || mime.startsWith('video/')
+      || mime.startsWith('audio/') || mime === 'application/pdf';
     const safeFilename = filename.replace(/"/g, '\\"');
 
-    res.writeHead(200, {
+    const range = parseRange(req.headers.range as string | undefined, stat.size);
+    if (range === 'unsatisfiable') {
+      res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+      res.end();
+      return;
+    }
+
+    const headers: Record<string, string> = {
       'Content-Type': mime,
       'Content-Disposition': `${isInline ? 'inline' : 'attachment'}; filename="${safeFilename}"`,
-      'Content-Length': String(stat.size),
+      'Accept-Ranges': 'bytes',
       'Cache-Control': 'max-age=300',
-    });
-    const stream = fs.createReadStream(filePath);
+    };
+
+    let stream: fs.ReadStream;
+    if (range) {
+      headers['Content-Range'] = `bytes ${range.start}-${range.end}/${stat.size}`;
+      headers['Content-Length'] = String(range.end - range.start + 1);
+      res.writeHead(206, headers);
+      stream = fs.createReadStream(filePath, { start: range.start, end: range.end });
+    } else {
+      headers['Content-Length'] = String(stat.size);
+      res.writeHead(200, headers);
+      stream = fs.createReadStream(filePath);
+    }
     stream.on('error', (e) => {
       if (!res.headersSent) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
       else { res.destroy(); }
