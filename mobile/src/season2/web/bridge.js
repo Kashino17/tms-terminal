@@ -260,6 +260,15 @@
       scheduleRender(cardId);
       return;
     }
+    // Unsichtbare Karten werden nicht gemalt — der xterm-Puffer läuft für jede
+    // Session ungebremst weiter, nur der teure innerHTML-Rebuild unter dem
+    // Backdrop-Blur ruht. Das Mockup zeichnet über flushHiddenCards() nach,
+    // sobald die Karte wieder zu sehen ist.
+    if (typeof window.__tmsCardVisible === 'function' && !window.__tmsCardVisible(cardId)) {
+      (window.__tmsPendingHidden || (window.__tmsPendingHidden = {}))[cardId] = 1;
+      return;
+    }
+    if (window.__tmsPendingHidden) delete window.__tmsPendingHidden[cardId];
 
     var buf = t.term.buffer.active;
     var end = buf.baseY + t.term.rows;                 // eine Zeile hinter der letzten
@@ -558,7 +567,9 @@
     var t = terms[id];
     var app = !!(t && t.term.modes && t.term.modes.applicationCursorKeysMode);
     var seq = {
-      ctrlc: '\x03', esc: '\x1b', tab: '\t', backspace: '\x7f',
+      ctrlc: '\x03', esc: '\x1b', tab: '\t',
+      // Ein Tap räumt einen ganzen Tippfehler/Pfad weg statt 30x einzeln tippen zu müssen.
+      backspace: '\x7f'.repeat(30),
       up:    app ? '\x1bOA' : '\x1b[A',
       down:  app ? '\x1bOB' : '\x1b[B',
       left:  app ? '\x1bOD' : '\x1b[D',
@@ -566,7 +577,7 @@
     }[key];
     if (seq) window.__tmsInput(id, seq);
     if (typeof window.flashKeyEcho === 'function') {
-      var echo = { ctrlc: '^C', esc: 'Esc', tab: 'Tab', up: '↑', down: '↓', left: '←', right: '→' }[key] || key;
+      var echo = { ctrlc: '^C', esc: 'Esc', tab: 'Tab', backspace: '⌫', up: '↑', down: '↓', left: '←', right: '→' }[key] || key;
       window.flashKeyEcho(echo);
     }
   };
