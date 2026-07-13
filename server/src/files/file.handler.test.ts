@@ -4,7 +4,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { handleFileDownload, handleRename } from './file.handler';
+import { handleFileDownload, handleRename, handleFileRead } from './file.handler';
 
 let server: http.Server;
 let base = '';
@@ -17,6 +17,7 @@ before(async () => {
   server = http.createServer((req, res) => {
     if (req.url!.startsWith('/files/download')) return handleFileDownload(req, res);
     if (req.url!.startsWith('/files/rename')) return void handleRename(req, res);
+    if (req.url!.startsWith('/files/read')) return void handleFileRead(req, res);
     res.writeHead(404); res.end();
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -89,4 +90,11 @@ test('rename: Name mit Slash -> 400', async () => {
 
 test('rename: ausserhalb Home -> 403', async () => {
   assert.strictEqual((await rename('/etc/hosts', 'x')).status, 403);
+});
+
+test('read: 3-MB-Textdatei ist jetzt erlaubt', async () => {
+  const big = path.join(dir, 'big.txt');
+  fs.writeFileSync(big, 'a'.repeat(3 * 1024 * 1024));
+  const r = await fetch(`${base}/files/read?path=${encodeURIComponent(big)}`);
+  assert.strictEqual(r.status, 200);
 });

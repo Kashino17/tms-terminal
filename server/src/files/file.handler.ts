@@ -104,7 +104,7 @@ export async function handleFileRead(req: http.IncomingMessage, res: http.Server
     const stat = await fsp.stat(filePath);
 
     if (stat.isDirectory()) return err(res, 400, 'Is a directory');
-    if (stat.size > 2 * 1024 * 1024) return err(res, 400, 'File too large to preview (>2 MB)');
+    if (stat.size > 5 * 1024 * 1024) return err(res, 400, 'File too large to preview (>5 MB)');
 
     const buf = await fsp.readFile(filePath);
 
