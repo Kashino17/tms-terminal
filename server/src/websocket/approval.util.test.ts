@@ -70,6 +70,21 @@ test('chooseApprovalKey presses NOTHING when the marker sits far above the curso
   assert.equal(chooseApprovalKey(`${YN_NO} kam hier oben vor.\nDanach kam noch viel Ausgabe.\nUnd noch mehr.`), null);
 });
 
+// ── Der Zuverlässigkeits-Bug (echter Vorfall, 2026-07-13): Der Fast-Path
+//    erwischt den Prompt oft schon, BEVOR "Esc to cancel" nachgeladen ist —
+//    die zuletzt eingetroffene Zeile ist dann noch eine leere Zeile NACH den
+//    Optionen. Der alte Code las das als "frische leere Zeile, da wartet
+//    nichts" und drückte 30+ Minuten lang nie Enter (Server-Log bewiesen). ──
+test('chooseApprovalKey erkennt den Prompt auch wenn das Fenster auf einer Leerzeile endet', () => {
+  assert.equal(chooseApprovalKey(NUMBERED + '\n'), '\r');
+  assert.equal(chooseApprovalKey(NUMBERED + '\n\n'), '\r');
+  assert.equal(chooseApprovalKey(NUMBERED + '\n   \n'), '\r');
+});
+
+test('chooseApprovalKey presses NOTHING when EVERY line is genuinely blank', () => {
+  assert.equal(chooseApprovalKey('\n\n   \n'), null);
+});
+
 // ── Der Zuverlässigkeits-Bug: „Nutzer tippt" durfte eine Freigabe nur
 //    VERSCHIEBEN, nie verschlucken. Die Gate-Funktion macht die Entscheidung
 //    pur und wiederholbar — der Handler ruft sie beim Retry einfach nochmal. ──

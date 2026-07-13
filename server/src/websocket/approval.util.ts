@@ -54,9 +54,17 @@ export function chooseApprovalKey(window: string): string | null {
   // steht das mitten im Fenster, und die letzte Zeile ist die Eingabebox der KI.
   // Vorher wurde das GANZE Fenster durchsucht: die App tippte daraufhin "y" +
   // Enter in die laufende KI-Sitzung und verschickte es als Nachricht.
-  const lastLine = window.slice(window.lastIndexOf('\n') + 1).trim();
+  // Der Fast-Path erwischt einen Prompt oft schon, BEVOR der nächste Chunk
+  // ("Esc to cancel…") nachgeladen ist — das Fenster endet dann auf einer
+  // oder mehreren leeren Zeilen, obwohl die Box selbst (❯1.Yes/…) längst da
+  // ist. Nachweis: reale Session lief deshalb 30+ Minuten nie durch (Server-
+  // Log). Leere Zeilen am Ende sind darum ein Rendering-Zwischenstand, kein
+  // Beleg für "der Cursor steht auf einer frischen Zeile, da wartet nichts".
+  const lines = window.split('\n');
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+  const lastLine = (lines[lines.length - 1] ?? '').trim();
 
-  // Cursor auf einer frischen, leeren Zeile: da wartet nichts.
+  // Nach dem Abschneiden wirklich nichts als Text übrig: da wartet nichts.
   if (!lastLine) return null;
 
   // 1. [y/N] — capital-N default means bare Enter declines; send 'y'.
