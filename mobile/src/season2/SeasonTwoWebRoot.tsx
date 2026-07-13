@@ -9,7 +9,7 @@
  * The classic UI is untouched — Season 2 is still just a settings toggle.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { AppState, View, StyleSheet } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -255,6 +255,22 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     }
     prevConnState.current = state;
   }, [ready, state, call]);
+
+  // ── … und nach jeder RÜCKKEHR AUS DEM HINTERGRUND. Android friert die App ein
+  //    und der Socket stirbt lautlos; der Server hängt daraufhin ab und puffert.
+  //    Kommt der Socket dann still zurück, sieht React nie einen Zustandswechsel
+  //    — und die Karten blieben eingefroren stehen, während man nur zuschaut.
+  //    Anhängen ist billig (der Server flusht nur den Rückstand), Nichtstun teuer.
+  useEffect(() => {
+    if (!ready) return;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active' || !restored.current) return;
+      // Kurz warten: der Socket braucht nach dem Aufwachen einen Moment.
+      setTimeout(() => call('reattachAll'), 300);
+      setTimeout(() => call('reattachAll'), 1500);
+    });
+    return () => sub.remove();
+  }, [ready, call]);
 
   // ── Once connected, hand the page the sessions that already exist.
   useEffect(() => {

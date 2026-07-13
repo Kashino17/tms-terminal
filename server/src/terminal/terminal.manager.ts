@@ -23,6 +23,8 @@ export class TerminalManager {
   private idleTimers = new Map<string, NodeJS.Timeout>();
   private batchIntervals = new Map<string, number>();  // per-session adaptive batch interval (ms)
   private attachGen = new Map<string, number>();       // monotonic generation counter — prevents stale detach
+  /** Sessions whose output currently goes to a live client (vs. into the detach buffer). */
+  private attachedIds = new Set<string>();
   private resizeTimers = new Map<string, NodeJS.Timeout>();                 // coalesce SIGWINCH-raising resizes
   private appliedDims = new Map<string, { cols: number; rows: number }>();  // last size actually sent to the pty
 
@@ -127,6 +129,7 @@ export class TerminalManager {
     });
 
     this.sessions.set(id, session);
+    this.attachedIds.add(id);
     logger.success(`Session created: ${id}`);
     return session;
   }
@@ -146,6 +149,7 @@ export class TerminalManager {
       return;
     }
     this.closeCallbacks.delete(sessionId);
+    this.attachedIds.delete(sessionId);
 
     // Snapshot CWD and foreground process before the client goes away (async, best-effort)
     const session = this.sessions.get(sessionId)!;
@@ -213,6 +217,7 @@ export class TerminalManager {
     // arriving during the flush goes to the new client instead of being dropped.
     this.outputCallbacks.set(sessionId, onOutput);
     this.closeCallbacks.set(sessionId, onClose);
+    this.attachedIds.add(sessionId);
 
     // Flush output buffered while client was away, trimmed to a clean line boundary
     const buffered = this.reattachBuffers.get(sessionId);
@@ -314,6 +319,12 @@ export class TerminalManager {
     }
   }
 
+  /** Läuft diese Session, ohne dass ihre Ausgabe bei einem Client landet?
+   *  Dann wandert alles in den Puffer — der Nutzer tippt ins Leere und sieht nichts. */
+  isDetached(sessionId: string): boolean {
+    return this.sessions.has(sessionId) && !this.attachedIds.has(sessionId);
+  }
+
   getSession(sessionId: string): TerminalSession | undefined {
     return this.sessions.get(sessionId);
   }
@@ -330,6 +341,7 @@ export class TerminalManager {
     this.reattachBuffers.delete(sessionId);
     this.batchIntervals.delete(sessionId);
     this.attachGen.delete(sessionId);
+    this.attachedIds.delete(sessionId);
     const t = this.outputTimers.get(sessionId);
     if (t) { clearTimeout(t); this.outputTimers.delete(sessionId); }
     const i = this.idleTimers.get(sessionId);

@@ -327,6 +327,48 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     (sid, itemId) => send(ws, { type: 'autopilot:prompt_done', sessionId: sid, payload: { id: itemId } } as any),
   );
 
+  /**
+   * Hängt eine laufende Session an DIESE Verbindung an: ab jetzt geht ihre
+   * Ausgabe hierher, und der Rückstand aus dem Detach-Puffer wird nachgespült.
+   * Die Größe bleibt, wie sie ist — der Aufrufer kennt die Maße des Clients nicht,
+   * und ein unnötiges SIGWINCH lässt Claude & Co. ihr ganzes Bild neu malen.
+   */
+  const attachToThisClient = (sessionId: string): boolean => {
+    const session = globalManager.reattachSession(
+      sessionId,
+      (sid, data) => {
+        send(ws, { type: 'terminal:output', sessionId: sid, payload: { data } });
+        promptDetector.feed(sid, data);
+        idleDetector.activity(sid);
+        resetAutopilotTimer(sid);
+        managerService.feedOutput(sid, data);
+      },
+      (sid, exitCode) => {
+        ownedSessions.delete(sid);
+        promptDetector.unwatch(sid);
+        idleDetector.unwatch(sid);
+        aiSessions.delete(sid);
+        autopilotService.clearSession(sid);
+        const apTimer = autopilotTimers.get(sid);
+        if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sid); }
+        send(ws, { type: 'terminal:closed', sessionId: sid, payload: { exitCode } });
+      },
+    );
+    if (!session) return false;
+
+    ownedSessions.add(session.id);
+    sessionGens.set(session.id, globalManager.getAttachGen(session.id));
+    idleDetector.unwatch(session.id);
+    watchSession(session.id, true); // reattach=true: Startphase & Dedup des Erkenners bleiben erhalten
+    watchSessionIdle(session.id);
+    send(ws, {
+      type: 'terminal:reattached',
+      sessionId: session.id,
+      payload: { cols: session.cols, rows: session.rows, cwd: session.cwd, processName: session.processName },
+    });
+    return true;
+  };
+
   ws.on('message', (raw: Buffer) => {
     let msg: ClientMessage;
     try {
@@ -821,54 +863,18 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           break;
         }
 
-        const session = globalManager.reattachSession(
-          msg.sessionId,
-          (sessionId, data) => {
-            send(ws, { type: 'terminal:output', sessionId, payload: { data } });
-            promptDetector.feed(sessionId, data);
-            idleDetector.activity(sessionId);
-            resetAutopilotTimer(sessionId);
-            managerService.feedOutput(sessionId, data);
-          },
-          (sessionId, exitCode) => {
-            ownedSessions.delete(sessionId);
-            promptDetector.unwatch(sessionId);
-            idleDetector.unwatch(sessionId);
-            aiSessions.delete(sessionId);
-            autopilotService.clearSession(sessionId);
-            const apTimer = autopilotTimers.get(sessionId);
-            if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sessionId); }
-            send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
-          },
-        );
-
-        if (session) {
-          ownedSessions.add(session.id);
-          sessionGens.set(session.id, globalManager.getAttachGen(session.id));
-          // rewatch (via reattach=true) keeps the startup grace + dedup state so a
-          // prompt arriving right after reconnect isn't dropped into a fresh blind
-          // window. Clear any stale pending-input count from the previous session.
-          pendingInputLen.set(session.id, 0);
-          idleDetector.unwatch(session.id);   // reset stale idle state before re-watching
-          watchSession(session.id, true);
-          watchSessionIdle(session.id);
-          // Set initial label — client will sync real names via manager:sync_labels
+        // Ein Anhänge-Pfad für alle: derselbe Helfer, den auch die Selbstheilung
+        // bei Eingabe/Resize benutzt. Nur hier kennen wir die echten Maße des
+        // Clients und dürfen die PTY darauf setzen.
+        if (attachToThisClient(msg.sessionId)) {
+          const session = globalManager.getSession(msg.sessionId)!;
+          pendingInputLen.set(session.id, 0); // alter Zählerstand der Vorgängerverbindung
           if (!managerService.getSessionList().find(s => s.sessionId === session.id)) {
             managerService.setSessionLabel(session.id, `Shell ${ownedSessions.size}`);
           }
           globalManager.resize(session.id, cols, rows);
-          send(ws, {
-            type: 'terminal:reattached',
-            sessionId: session.id,
-            payload: {
-              cols: session.cols,
-              rows: session.rows,
-              cwd: session.cwd,
-              processName: session.processName,
-            },
-          });
 
-          // Sync autopilot queue status — items may have been optimized while client was away
+          // Autopilot-Warteschlange nachziehen — sie lief weiter, während der Client weg war.
           const queue = autopilotService.getQueue(session.id);
           for (const item of queue) {
             if (item.status === 'queued' && item.optimizedPrompt) {
@@ -907,6 +913,21 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           break;
         }
 
+        // SELBSTHEILUNG: Eine LEBENDE Verbindung tippt in eine ABGEHÄNGTE Session.
+        //
+        // Das kann nur eines heißen: der Client ist wieder da, hat es aber nicht
+        // gemerkt (Funkloch, stiller Socket-Tausch, Ansichtswechsel) und darum nie
+        // ein terminal:reattach geschickt. Ohne Anhängen läuft sein Befehl zwar —
+        // aber die gesamte Ausgabe wandert in den Detach-Puffer. Der Nutzer sieht
+        // NICHTS und hält seine Nachricht für nicht abgeschickt. Genau dieser
+        // Zustand war reproduzierbar: Eingabe wirkt, Ausgabe kommt nie an.
+        //
+        // Wer tippt, will zusehen. Also hängen wir hier an und spülen den Rückstand.
+        if (globalManager.isDetached(msg.sessionId)) {
+          logger.info(`Input on a detached session ${msg.sessionId.slice(0, 8)} — reattaching this client`);
+          attachToThisClient(msg.sessionId);
+        }
+
         // Track user input for auto-approve typing pause + pending input detection
         lastUserInputAt.set(msg.sessionId, Date.now());
         trackPendingInput(msg.sessionId, data);
@@ -940,6 +961,13 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         if (!Number.isInteger(rows) || rows < 1 || rows > 200) {
           send(ws, { type: 'terminal:error', sessionId: msg.sessionId, payload: { message: 'Invalid rows: must be integer 1-200' } });
           break;
+        }
+
+        // Auch eine Größenmeldung kommt nur von einem Client, der die Karte vor
+        // Augen hat — dieselbe Selbstheilung wie bei der Eingabe.
+        if (globalManager.isDetached(msg.sessionId)) {
+          logger.info(`Resize on a detached session ${msg.sessionId.slice(0, 8)} — reattaching this client`);
+          attachToThisClient(msg.sessionId);
         }
 
         if (!globalManager.resize(msg.sessionId, cols, rows)) {
