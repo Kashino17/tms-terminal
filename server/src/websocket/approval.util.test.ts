@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computePendingLen, chooseApprovalKey } from './approval.util';
+import {
+  computePendingLen, chooseApprovalKey, evaluateApprovalGate,
+  TYPING_PAUSE_MS, PENDING_STALE_MS,
+} from './approval.util';
 
 // Never spell the yes/no markers out: node:test echoes test names and failing
 // fixtures back into the terminal, and inside a live AI session the server's own
@@ -65,6 +68,35 @@ test('chooseApprovalKey presses NOTHING when an AI merely writes about a yes/no 
 
 test('chooseApprovalKey presses NOTHING when the marker sits far above the cursor', () => {
   assert.equal(chooseApprovalKey(`${YN_NO} kam hier oben vor.\nDanach kam noch viel Ausgabe.\nUnd noch mehr.`), null);
+});
+
+// ── Der Zuverlässigkeits-Bug: „Nutzer tippt" durfte eine Freigabe nur
+//    VERSCHIEBEN, nie verschlucken. Die Gate-Funktion macht die Entscheidung
+//    pur und wiederholbar — der Handler ruft sie beim Retry einfach nochmal. ──
+
+const NUMBERED = 'Doyouwanttoproceed?\n❯1.Yes\n2.No\nEsctocancel·Tabtoamend';
+
+test('gate: frisches Tippen pausiert nur (retrybar), sendet nicht', () => {
+  assert.equal(evaluateApprovalGate({ window: NUMBERED, pendingLen: 0, sinceInputMs: 500 }).gate, 'paused-typing');
+});
+
+test('gate: unversendeter Text auf der Zeile blockiert (retrybar)', () => {
+  assert.equal(evaluateApprovalGate({ window: NUMBERED, pendingLen: 3, sinceInputMs: 5000 }).gate, 'blocked-pending');
+});
+
+test('gate: veralteter Pending-Zähler blockiert nicht mehr', () => {
+  const r = evaluateApprovalGate({ window: NUMBERED, pendingLen: 3, sinceInputMs: PENDING_STALE_MS + 1 });
+  assert.deepEqual(r, { gate: 'send', key: '\r' });
+});
+
+test('gate: ruhige Lage sendet Enter für den Standard-Prompt', () => {
+  const r = evaluateApprovalGate({ window: NUMBERED, pendingLen: 0, sinceInputMs: TYPING_PAUSE_MS + 1 });
+  assert.deepEqual(r, { gate: 'send', key: '\r' });
+});
+
+test('gate: Freitext-Rückfrage bleibt notify-only (kein Retry nötig)', () => {
+  const r = evaluateApprovalGate({ window: 'Wie soll die Datei heißen? ›', pendingLen: 0, sinceInputMs: 99_999 });
+  assert.equal(r.gate, 'notify-only');
 });
 
 test('chooseApprovalKey presses NOTHING on a blank trailing line (nothing is waiting)', () => {

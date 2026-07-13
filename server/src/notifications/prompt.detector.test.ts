@@ -162,3 +162,18 @@ test("Claude Code's multi-line permission box still fires", () => {
     ' Esc to cancel';
   assert.equal(fires(box), true);
 });
+
+// ── tailHash: der Handler prüft beim Auto-Approve-Retry, ob der Prompt noch
+//    unverändert auf dem Schirm steht (keine neue Ausgabe seit dem Feuern). ──
+test('tailHash ist stabil ohne neue Ausgabe und ändert sich mit ihr', () => {
+  let t = 100_000;
+  const det = new PromptDetector(() => t);
+  det.watch('s1', () => {});
+  t += PAST_GRACE;
+  det.feed('s1', 'irgendeine ausgabe\n');
+  const h1 = det.tailHash('s1');
+  assert.equal(det.tailHash('s1'), h1, 'ohne Ausgabe bleibt der Hash gleich');
+  det.feed('s1', 'neue zeile\n');
+  assert.notEqual(det.tailHash('s1'), h1, 'neue Ausgabe ändert den Hash');
+  det.unwatch('s1');
+});

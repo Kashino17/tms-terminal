@@ -11,7 +11,7 @@ import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 import { autopilotService } from '../autopilot/autopilot.service';
-import { computePendingLen, chooseApprovalKey } from './approval.util';
+import { computePendingLen, evaluateApprovalGate } from './approval.util';
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
 import { rewrite as rewritePrompt } from '../audio/prompt-rewriter-sidecar';
 import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
@@ -52,12 +52,8 @@ const serverAutoApprove = new Map<string, boolean>();
 
 // Track last user input per session — auto-approve pauses while user is typing.
 // Updated on every terminal:input message from the client.
+// (Typing/stale thresholds live in approval.util next to the gate decision.)
 const lastUserInputAt = new Map<string, number>();
-const TYPING_PAUSE_MS = 2000;
-// pendingInputLen is a best-effort estimate from client keystrokes; if no input
-// has arrived for this long, treat any leftover count as stale (desync) and
-// ignore it so a mis-tracked edit key can't permanently block auto-approve.
-const PENDING_STALE_MS = 15_000;
 
 // Track how many characters the user has on the current input line.
 // Auto-approve is blocked if pendingInputLen > 0 (user has unsent text).
@@ -130,6 +126,12 @@ let closeTerminalForManager: (sessionId: string) => boolean = () => false;
 // ── Autopilot state ──────────────────────────────────────────────────
 const aiSessions = new Set<string>(); // sessions where AI tool was detected
 const autopilotTimers = new Map<string, NodeJS.Timeout>();
+// Auto-approve retry chains: a prompt that fired while the user was typing is
+// DEFERRED, not dropped (the detector's dedup hash never changes while the
+// prompt sits waiting, so it would otherwise never fire again).
+const approvalRetryTimers = new Map<string, NodeJS.Timeout>();
+const APPROVAL_RETRY_MS = 1000;
+const APPROVAL_RETRY_MAX = 30; // ~30s of patience, then give up loudly
 const AUTOPILOT_IDLE_MS = 60_000; // 1 minute idle before sending next prompt
 
 /** Update pending input tracking from raw terminal input data. See computePendingLen. */
@@ -162,35 +164,57 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       // Server-side auto-approve: if enabled, send the approving keystroke directly
       // to the PTY. This works even when the client is backgrounded/disconnected.
       if (serverAutoApprove.get(sessionId)) {
-        const sinceInput = Date.now() - (lastUserInputAt.get(sessionId) ?? 0);
-        // Ignore a stale pending count (a mis-tracked edit key can desync it);
-        // otherwise it would silently block auto-approve forever.
-        const hasPending = (pendingInputLen.get(sessionId) ?? 0) > 0 && sinceInput < PENDING_STALE_MS;
-        const isTyping = sinceInput < TYPING_PAUSE_MS;
+        const firedHash = promptDetector.tailHash(sessionId);
+        const win = context?.window ?? snippet;
 
-        if (hasPending) {
-          logger.info(`Auto-approve: BLOCKED for session ${sessionId.slice(0, 8)} (unsent text on line)`);
-          // Fall through — notify client with hasPendingInput flag
-        } else if (isTyping) {
-          logger.info(`Auto-approve: PAUSED for session ${sessionId.slice(0, 8)} (user typing)`);
-          // Fall through to send prompt notification to client instead
-        } else {
-          // Pick the right keystroke for the prompt variant (Enter for the
-          // standard Claude numbered prompt, 'y' for [y/N], or null = don't
-          // auto-press a free-text prompt — notify the user instead).
-          const key = chooseApprovalKey(context?.window ?? snippet);
-          if (key === null) {
-            logger.info(`Auto-approve: NOTIFY-only for session ${sessionId.slice(0, 8)} (free-text prompt)`);
-            // Fall through to notify — let the user answer.
-          } else {
-            logger.info(`Auto-approve: sending ${JSON.stringify(key)} for session ${sessionId.slice(0, 8)}`);
-            globalManager.write(sessionId, key);
+        /** One gate evaluation; defers itself while the user is typing. */
+        const tryApprove = (attempt: number): 'sent' | 'deferred' | 'notify-only' | 'stale' | 'off' => {
+          if (!serverAutoApprove.get(sessionId)) return 'off';
+          // Any output since the fire (user answered, box torn down, new
+          // content) means this prompt is gone — stop, never double-press.
+          if (promptDetector.tailHash(sessionId) !== firedHash) return 'stale';
+          const gate = evaluateApprovalGate({
+            window: win,
+            pendingLen: pendingInputLen.get(sessionId) ?? 0,
+            sinceInputMs: Date.now() - (lastUserInputAt.get(sessionId) ?? 0),
+          });
+          if (gate.gate === 'send') {
+            logger.info(`Auto-approve: sending ${JSON.stringify(gate.key)} for session ${sessionId.slice(0, 8)}${attempt ? ` (retry ${attempt})` : ''}`);
+            globalManager.write(sessionId, gate.key);
             // Our own keystroke is not user input — clear any stale pending count.
             pendingInputLen.set(sessionId, 0);
             // Refresh the detector's refractory so the box teardown can't re-fire.
             promptDetector.noteApproved(sessionId);
-            return; // No WS notification needed
+            return 'sent';
           }
+          if (gate.gate === 'notify-only') return 'notify-only';
+          // paused-typing / blocked-pending: DEFER — dropping it here is how
+          // approvals used to vanish forever.
+          if (attempt < APPROVAL_RETRY_MAX) {
+            const prev = approvalRetryTimers.get(sessionId);
+            if (prev) clearTimeout(prev);
+            const t = setTimeout(() => { approvalRetryTimers.delete(sessionId); tryApprove(attempt + 1); }, APPROVAL_RETRY_MS);
+            t.unref();
+            approvalRetryTimers.set(sessionId, t);
+          } else {
+            logger.info(`Auto-approve: gave up after ${APPROVAL_RETRY_MAX} retries for session ${sessionId.slice(0, 8)}`);
+          }
+          return 'deferred';
+        };
+
+        // A fresh prompt supersedes any retry chain from an earlier one.
+        const prevTimer = approvalRetryTimers.get(sessionId);
+        if (prevTimer) { clearTimeout(prevTimer); approvalRetryTimers.delete(sessionId); }
+
+        const outcome = tryApprove(0);
+        if (outcome === 'sent') return; // No WS notification needed
+        if (outcome === 'deferred') {
+          logger.info(`Auto-approve: DEFERRED for session ${sessionId.slice(0, 8)} (user active) — retrying up to ${APPROVAL_RETRY_MAX}s`);
+        } else if (outcome === 'notify-only') {
+          // Evidence trail: log the (base64-masked) last line so a misclassified
+          // permission prompt can be diagnosed from the log alone.
+          const lastLine = win.slice(win.lastIndexOf('\n') + 1).trim();
+          logger.info(`Auto-approve: NOTIFY-only for session ${sessionId.slice(0, 8)} (free-text prompt) lastLine-b64=${Buffer.from(lastLine).toString('base64').slice(0, 96)}`);
         }
       }
 
@@ -999,6 +1023,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         serverAutoApprove.delete(msg.sessionId);
         lastUserInputAt.delete(msg.sessionId);
         pendingInputLen.delete(msg.sessionId);
+        const retryT = approvalRetryTimers.get(msg.sessionId);
+        if (retryT) { clearTimeout(retryT); approvalRetryTimers.delete(msg.sessionId); }
         promptDetector.unwatch(msg.sessionId);
         idleDetector.unwatch(msg.sessionId);
         aiSessions.delete(msg.sessionId);

@@ -328,6 +328,13 @@ export class PromptDetector {
    *  refractory timer from the moment of approval so the box tearing down AFTER
    *  Enter (whose residual can momentarily still match) can't trigger a re-fire.
    *  A genuinely new prompt fires once MIN_REFIRE_MS elapses. */
+  /** Hash of the current cleaned tail window. The auto-approve retry uses this
+   *  to verify the prompt is still sitting unchanged on screen: any new output
+   *  (answer echo, box teardown, fresh content) changes the hash. */
+  tailHash(sessionId: string): string {
+    return hashTail(this.fastTail.get(sessionId) ?? '');
+  }
+
   noteApproved(sessionId: string): void {
     this.lastFiredAt.set(sessionId, this.now());
   }

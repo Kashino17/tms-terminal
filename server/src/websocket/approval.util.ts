@@ -80,3 +80,31 @@ export function chooseApprovalKey(window: string): string | null {
   return null;
 }
 
+// ── Approval gate ─────────────────────────────────────────────────────
+// The full go/no-go decision as a pure function, so the handler can simply
+// re-run it on a retry. History: "user typing" used to swallow an approval
+// FOREVER (the detector's dedup hash never changes while a prompt just sits
+// there waiting), which is exactly how auto-approve felt unreliable.
+
+export const TYPING_PAUSE_MS = 2000;   // pause while the user typed <2s ago
+export const PENDING_STALE_MS = 15_000; // unsent-text counter expires after 15s
+
+export interface ApprovalGateInput {
+  window: string;       // cleaned tail window the prompt was detected in
+  pendingLen: number;   // tracked unsent input length for the session
+  sinceInputMs: number; // ms since the user's last keystroke
+}
+
+export type ApprovalGateResult =
+  | { gate: 'send'; key: string }
+  | { gate: 'blocked-pending' }   // retry later — user has text on the line
+  | { gate: 'paused-typing' }     // retry later — user typed just now
+  | { gate: 'notify-only' };      // free-text prompt — never auto-press
+
+export function evaluateApprovalGate(inp: ApprovalGateInput): ApprovalGateResult {
+  if (inp.pendingLen > 0 && inp.sinceInputMs < PENDING_STALE_MS) return { gate: 'blocked-pending' };
+  if (inp.sinceInputMs < TYPING_PAUSE_MS) return { gate: 'paused-typing' };
+  const key = chooseApprovalKey(inp.window);
+  return key === null ? { gate: 'notify-only' } : { gate: 'send', key };
+}
+
