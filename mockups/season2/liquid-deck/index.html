@@ -243,7 +243,12 @@
     box-shadow: 0 18px 50px rgba(0,0,0,.35);
   }
   #statusHeader::before { left: 14%; right: 14%; }
-  .island-compact { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; }
+  /* touch-action:none ist Pflicht für den Long-Press-Swipe unten — sonst
+     wertet der Browser das erste Fingerbewegen als Scroll-Versuch, kapert
+     die Geste und schickt uns nur ein pointercancel (genau wie beim
+     Terminal-Switcher, der das aus demselben Grund schon so macht). */
+  .island-compact { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
+    touch-action: none; -webkit-user-select: none; user-select: none; }
   /* Terminal-Bildschirm: die Aktivitätszeile (Punkt+"Bereit") weicht den
      vier Mini-Aktionen — Ping und Gebetszeit bleiben, wie überall sonst
      auch, einfach stehen. Die Insel selbst ist "fit-content": ohne die
