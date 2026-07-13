@@ -27,6 +27,7 @@ import { useManagerWire } from './manager/useManagerWire';
 import { useManagerStore } from '../store/managerStore';
 import { useManagerBridge, useCloudBridge } from './web/useSeasonTwoBackends';
 import { useSheetBridges } from './web/useSheetBridges';
+import { useFileExplorer } from './web/useFileExplorer';
 import { NativeBrowserLayer, type BrowserRect } from './web/NativeBrowserLayer';
 import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
 import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback } from './web/scrollbackStore';
@@ -83,6 +84,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     server ? (s.tabs[server.id] ?? []).find((t) => t.active)?.sessionId ?? (s.tabs[server.id] ?? [])[0]?.sessionId : undefined,
   );
   const sheets = useSheetBridges({ ready, call, wsService, server, token, activeSessionId });
+  const fileExplorer = useFileExplorer({ ready, call, server, token });
 
   // ── Pick up the saved server (the WebView has no server picker of its own).
   useEffect(() => {
@@ -326,6 +328,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (type === 'bridge:ready') { setReady(true); return; }
     if (!wsService || !server) return;
     if (sheets.handle(type, payload)) return;
+    if (fileExplorer.handle(type, payload)) return;
 
     switch (type) {
       case 'terminal:create':
@@ -468,7 +471,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         else setSeasonTwoEnabled(false);
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, sendManager, loadCloud, loadCloudDetail, sheets]);
+  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, sendManager, loadCloud, loadCloudDetail, sheets, fileExplorer]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
