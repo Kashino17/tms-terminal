@@ -2243,7 +2243,7 @@
   function show(name) {
     if (name !== 'cloud') stopCloudBuildTimer();
     if (name !== 'prayer') stopPrayerTick();
-    if (name !== 'terminals') { cancelDictation(); closeAllListRails(); }
+    if (name !== 'terminals') { cancelDictation(); closeAllListRails(); closeKeysPanel(); }
     if (name !== 'browser') stopBrowserProgressTimers();
     if (name !== 'terminals' && typeof setDockPage === 'function') setDockPage('nav');
     if (typeof renderTermSwitcher === 'function') setTimeout(renderTermSwitcher, 0);
