@@ -6,6 +6,7 @@ import { config, loadServerConfig, ensureConfigDir } from './config';
 import { handleAuthRequest } from './auth/auth.controller';
 import { handleFileList, handleFileRead, handleFileDownload, handleMkdir, handleMove, handleTrash, handleRename } from './files/file.handler';
 import { handleFileZip } from './files/zip.handler';
+import { handlePdfjsAsset } from './files/pdfjs.handler';
 import { handleUploadRequest, handleDrawingUpload } from './upload/upload.handler';
 import { validateToken } from './auth/jwt.service';
 import { createWebSocketServer } from './websocket/ws.server';
@@ -135,6 +136,9 @@ function main(): void {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
       fs.createReadStream(filePath).pipe(res);
     } else if (req.url?.startsWith('/files/')) {
+      // pdf.js viewer assets are public statics — the PDF itself still needs
+      // the token via /files/download.
+      if (req.url.startsWith('/files/pdfjs/')) { handlePdfjsAsset(req, res); return; }
       // JWT-protected file browser endpoints
       // Accept token from Authorization header OR ?token= query param (for Image/download URLs)
       const authHeader = req.headers['authorization'] ?? '';
