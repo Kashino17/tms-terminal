@@ -1999,19 +1999,27 @@
   // ============================================================
   // Bottom sheets (Mehr / permission)
   // ============================================================
+  // A close parks a hide-timer on the wrap; reopening within that window MUST
+  // cancel it, or the timer hides a sheet that is visibly open (stuck scrim).
+  const sheetCloseTimers = new WeakMap();
   function openSheet(wrapEl) {
+    const pending = sheetCloseTimers.get(wrapEl);
+    if (pending) { clearTimeout(pending); sheetCloseTimers.delete(wrapEl); }
     wrapEl.hidden = false;
-    requestAnimationFrame(() => {
+    // Double rAF: the un-hidden closed state must hit the compositor once,
+    // otherwise the enter transition occasionally skips (sheet pops in).
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       wrapEl.classList.add('is-open');
       if (!wrapEl.classList.contains('sheet-wrap--perm')) document.body.classList.add('sheet-open');
-    });
+    }));
   }
   function closeSheet(wrapEl) {
     wrapEl.classList.remove('is-open');
     if (!document.querySelector('.sheet-wrap.is-open:not(.sheet-wrap--perm)')) {
       document.body.classList.remove('sheet-open');
     }
-    setTimeout(() => { wrapEl.hidden = true; }, 420);
+    const t = setTimeout(() => { sheetCloseTimers.delete(wrapEl); wrapEl.hidden = true; }, 420);
+    sheetCloseTimers.set(wrapEl, t);
   }
 
   const mehrWrap = document.getElementById('mehrSheetWrap');

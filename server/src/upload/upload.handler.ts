@@ -28,17 +28,6 @@ const ALLOWED_VIDEO_MIMES = new Set([
   'video/webm',
 ]);
 
-const ALLOWED_AUDIO_MIMES = new Set([
-  'audio/mp3',
-  'audio/mpeg',
-  'audio/wav',
-  'audio/ogg',
-  'audio/x-m4a',
-  'audio/aac',
-  'audio/webm',
-  'audio/flac',
-]);
-
 function handleUpload(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -170,8 +159,7 @@ function handleMultipartUpload(
     // Validate MIME type
     const isImage = mimeType.startsWith('image/');
     const isVideo = ALLOWED_VIDEO_MIMES.has(mimeType);
-    const isAudio = ALLOWED_AUDIO_MIMES.has(mimeType);
-    if (!isImage && !isVideo && !isAudio) {
+    if (!isImage && !isVideo) {
       file.resume(); // drain
       respond(400, { error: `Unsupported file type: ${mimeType}` });
       return;

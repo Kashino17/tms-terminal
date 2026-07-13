@@ -1,12 +1,8 @@
 import * as http from 'http';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
 import { config, loadServerConfig, ensureConfigDir } from './config';
 import { handleAuthRequest } from './auth/auth.controller';
 import { handleFileList, handleFileRead, handleFileDownload, handleMkdir, handleMove, handleTrash } from './files/file.handler';
 import { handleUploadRequest, handleDrawingUpload } from './upload/upload.handler';
-import { transcriptionService } from './transcription/transcription.service';
 import { validateToken } from './auth/jwt.service';
 import { createWebSocketServer } from './websocket/ws.server';
 import { isPasswordSet } from './auth/password.service';
@@ -27,77 +23,6 @@ process.on('uncaughtException', (err) => {
   // Give the logger time to flush, then exit
   setTimeout(() => process.exit(1), 100);
 });
-
-function handleTranscribe(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-): void {
-  if (req.method !== 'POST') {
-    res.writeHead(405, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Method not allowed' }));
-    return;
-  }
-
-  // Auth via Bearer token
-  const authHeader = req.headers['authorization'];
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!token || !validateToken(token)) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Unauthorized' }));
-    return;
-  }
-
-  let responded = false;
-  const respond = (status: number, body: object) => {
-    if (responded) return;
-    responded = true;
-    res.writeHead(status, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(body));
-  };
-
-  // Accept JSON body: { path: string }
-  let body = '';
-  req.setEncoding('utf8');
-  req.on('data', (chunk: string) => { body += chunk; });
-  req.on('end', () => {
-    let filePath: string | undefined;
-    try {
-      const parsed = JSON.parse(body);
-      filePath = typeof parsed === 'string' ? parsed : parsed.path;
-    } catch {
-      // If not JSON, treat raw body as file path
-      if (body.trim()) filePath = body.trim();
-    }
-
-    if (!filePath) {
-      respond(400, { error: 'Missing file path' });
-      return;
-    }
-
-    // Security: prevent path traversal
-    const normalized = path.resolve(path.dirname(filePath), path.basename(filePath));
-    const allowedRoots = [path.join(os.homedir(), '.tms-terminal', 'uploads'), os.tmpdir()];
-    if (!allowedRoots.some((r) => normalized.startsWith(r))) {
-      respond(403, { error: 'Access denied' });
-      return;
-    }
-
-    if (!fs.existsSync(normalized)) {
-      respond(404, { error: 'File not found' });
-      return;
-    }
-
-    transcriptionService.transcribe(normalized).then((result) => {
-      if (result.error) {
-        respond(500, { error: result.error, text: '' });
-        return;
-      }
-      respond(200, { text: result.text, language: result.language });
-    }).catch((err) => {
-      respond(500, { error: err instanceof Error ? err.message : 'Transcription failed', text: '' });
-    });
-  });
-}
 
 function main(): void {
   ensureConfigDir();
@@ -144,62 +69,6 @@ function main(): void {
       handleUploadRequest(req, res);
     } else if (req.url === '/upload/drawing') {
       handleDrawingUpload(req, res);
-    } else if (req.url?.startsWith('/generated-images/')) {
-      // Serve generated images (JWT-protected)
-      const authHeader = req.headers['authorization'] ?? '';
-      let token = authHeader.replace(/^Bearer\s+/i, '');
-      if (!token) {
-        try {
-          const u = new URL(req.url, 'http://localhost');
-          token = u.searchParams.get('token') ?? '';
-        } catch {}
-      }
-      if (!token || !validateToken(token)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized' }));
-        return;
-      }
-      const filename = decodeURIComponent(req.url.replace('/generated-images/', '').split('?')[0]);
-      // Prevent path traversal
-      if (filename.includes('..') || filename.includes('/')) {
-        res.writeHead(400); res.end('Bad request'); return;
-      }
-      const filePath = path.join(os.homedir(), 'Desktop', 'Image Generations', filename);
-      if (!fs.existsSync(filePath)) {
-        res.writeHead(404); res.end('Not found'); return;
-      }
-      const ext = path.extname(filename).toLowerCase();
-      const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'application/octet-stream';
-      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=86400' });
-      fs.createReadStream(filePath).pipe(res);
-    } else if (req.url?.startsWith('/generated-presentations/')) {
-      // Serve generated presentations (JWT-protected)
-      const authHeader = req.headers['authorization'] ?? '';
-      let token = authHeader.replace(/^Bearer\s+/i, '');
-      if (!token) {
-        try {
-          const u = new URL(req.url, 'http://localhost');
-          token = u.searchParams.get('token') ?? '';
-        } catch {}
-      }
-      if (!token || !validateToken(token)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized' }));
-        return;
-      }
-      const filename = decodeURIComponent(req.url.replace('/generated-presentations/', '').split('?')[0]);
-      // Prevent path traversal
-      if (filename.includes('..') || filename.includes('/')) {
-        res.writeHead(400); res.end('Bad request'); return;
-      }
-      const filePath = path.join(__dirname, '..', 'generated-presentations', filename);
-      if (!fs.existsSync(filePath)) {
-        res.writeHead(404); res.end('Not found'); return;
-      }
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
-      fs.createReadStream(filePath).pipe(res);
-    } else if (req.url === '/transcribe') {
-      handleTranscribe(req, res);
     } else if (req.url?.startsWith('/files/')) {
       // JWT-protected file browser endpoints
       // Accept token from Authorization header OR ?token= query param (for Image/download URLs)
