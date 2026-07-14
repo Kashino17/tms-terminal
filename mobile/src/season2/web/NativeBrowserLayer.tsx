@@ -8,11 +8,17 @@
  * mockup keeps owning the tabs, the address bar, the progress bar and the
  * sheets, which is the whole design.
  */
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import { View, StyleSheet, Text, Pressable } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 export interface BrowserRect { x: number; y: number; w: number; h: number }
+
+/** Was die Seite dem nativen Browser befehlen kann. */
+export interface BrowserHandle {
+  reload: () => void;
+  clearCache: () => void;
+}
 
 interface Props {
   visible: boolean;
@@ -36,13 +42,36 @@ export function resolveUrl(input: string, serverHost?: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(t)}`;
 }
 
-export function NativeBrowserLayer({ visible, tabId, url, rect, serverHost, onTitle }: Props) {
+export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function NativeBrowserLayer(
+  { visible, tabId, url, rect, serverHost, onTitle }: Props,
+  ref,
+) {
   const resolved = useMemo(() => resolveUrl(url, serverHost), [url, serverHost]);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const webRef = useRef<WebView>(null);
+
+  // WICHTIG: Die Quelle MUSS ihre Identität behalten, solange sich die Adresse
+  // nicht ändert. Als Inline-Objekt (`source={{ uri: resolved }}`) war sie bei
+  // JEDEM Rendern neu — und gerendert wird bei jedem browser:sync, also auch,
+  // wenn die Seite nur eine Body-Klasse umlegt (Ruhemodus, Tastenleiste, Theme).
+  // Der native WebView bekam so laufend eine "neue" Quelle gereicht und lud die
+  // Seite immer wieder neu: das weiße Bild.
+  const source = useMemo(() => ({ uri: resolved }), [resolved]);
 
   // Ein neuer Tab / eine neue Adresse startet ohne alten Fehler.
   useEffect(() => setError(null), [tabId, resolved]);
+
+  useImperativeHandle(ref, () => ({
+    reload: () => { setError(null); webRef.current?.reload(); },
+    clearCache: () => {
+      // Erst den nativen Cache wegwerfen, dann den WebView neu aufbauen: nur der
+      // Neuaufbau wirft auch die Sitzung (incognito) und den Speicher der Seite weg.
+      webRef.current?.clearCache?.(true);
+      setError(null);
+      setReloadKey((k) => k + 1);
+    },
+  }), []);
 
   if (!rect || !tabId || !resolved) return null;
 
@@ -59,10 +88,11 @@ export function NativeBrowserLayer({ visible, tabId, url, rect, serverHost, onTi
       pointerEvents={visible ? 'box-none' : 'none'}
     >
       <WebView
+        ref={webRef}
         // A new key per tab is the isolation: no shared history, no shared JS
         // context. `incognito` on top means no cookies or cache survive either.
         key={`${tabId}:${reloadKey}`}
-        source={{ uri: resolved }}
+        source={source}
         incognito
         cacheEnabled={false}
         thirdPartyCookiesEnabled={false}
@@ -86,7 +116,14 @@ export function NativeBrowserLayer({ visible, tabId, url, rect, serverHost, onTi
         onHttpError={(e) =>
           setError(`HTTP ${e.nativeEvent.statusCode} — ${e.nativeEvent.description || 'Seite nicht erreichbar'}`)
         }
-        onRenderProcessGone={() => setError('Der Seiten-Prozess wurde beendet (zu wenig Speicher)')}
+        // Stirbt der Seiten-Prozess (Android killt ihn bei Speichermangel), ist die
+        // WebView-Instanz TOT — eine Fehlermeldung allein liesse sie tot. Also neu
+        // aufbauen: ein frischer key erzeugt eine lebende Instanz, die die Adresse
+        // wieder lädt.
+        onRenderProcessGone={() => {
+          setError(null);
+          setReloadKey((k) => k + 1);
+        }}
         style={styles.web}
       />
       {error && (
@@ -104,7 +141,7 @@ export function NativeBrowserLayer({ visible, tabId, url, rect, serverHost, onTi
       )}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   layer: { position: 'absolute', overflow: 'hidden', borderRadius: 14 },

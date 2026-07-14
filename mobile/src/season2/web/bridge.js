@@ -1034,17 +1034,30 @@
     var screen = document.querySelector('[data-screen="browser"]');
     return !!screen && !screen.hidden && !overlayOpen();
   }
+  // Nur melden, wenn sich wirklich etwas geändert hat. Der Beobachter unten hängt
+  // an den Body-Klassen — und die legt die Seite dauernd um (Ruhemodus, Tastenleiste,
+  // Theme). Jede Meldung ließ React Native neu rendern und reichte dem nativen
+  // WebView eine frische Quelle: er lud die Seite immer wieder neu. Weißes Bild.
+  var lastSync = '';
+  function postSync(payload) {
+    var sig = JSON.stringify(payload);
+    if (sig === lastSync) return;
+    lastSync = sig;
+    post('browser:sync', payload);
+  }
   function syncNativeBrowser() {
     var tab = window.activeBrowserTab && window.activeBrowserTab();
     var host = document.getElementById('browserContent');
-    if (!tab || !host) { post('browser:sync', { visible: false }); return; }
+    if (!tab || !host) { postSync({ visible: false }); return; }
     var page = tab.history[tab.historyIndex] || {};
     var r = host.getBoundingClientRect();
-    post('browser:sync', {
+    postSync({
       visible: browserVisible() && page.kind !== 'newtab',
       tabId: tab.id,
       url: page.kind === 'newtab' ? '' : page.url || '',
-      rect: { x: r.left, y: r.top, w: r.width, h: r.height },
+      // Auf ganze Pixel runden: Sub-Pixel-Zittern beim Scrollen erzeugte sonst
+      // endlos "neue" Rechtecke und damit endlos Meldungen.
+      rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
     });
   }
   var origRenderTab = window.renderBrowserActiveTab;
@@ -1059,6 +1072,13 @@
     syncNativeBrowser();
   };
   window.browserReload = function () { post('browser:reload', {}); };
+  // Der Entwurf "leerte" nur seine eigenen Attrappen-Sitzungen und malte einen
+  // leeren Platzhalter — der native Browser behielt Cache und Anmeldungen. Jetzt
+  // geht der Befehl dorthin, wo die Seite wirklich lebt.
+  window.clearAllBrowserCache = function () {
+    post('browser:clearCache', {});
+    if (typeof window.toast === 'function') window.toast('Cache geleert — Seite wird neu geladen');
+  };
 
   // Screen changes drive the overlay: it must never float over Terminals.
   // Zugleich die Stelle, an der die Bildschirm-Historie mitgeschrieben wird —

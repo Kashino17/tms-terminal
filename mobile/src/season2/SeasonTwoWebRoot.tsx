@@ -28,7 +28,7 @@ import { useManagerStore } from '../store/managerStore';
 import { useManagerBridge, useCloudBridge } from './web/useSeasonTwoBackends';
 import { useSheetBridges } from './web/useSheetBridges';
 import { useFileExplorer } from './web/useFileExplorer';
-import { NativeBrowserLayer, type BrowserRect } from './web/NativeBrowserLayer';
+import { NativeBrowserLayer, type BrowserRect, type BrowserHandle } from './web/NativeBrowserLayer';
 import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
 import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flushScrollback } from './web/scrollbackStore';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
@@ -62,6 +62,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   /** Zeitpunkt des letzten Zurück auf dem Startbildschirm — für „nochmal zum Beenden". */
   const lastBackAt = useRef(0);
   const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, tabId: null, url: '', rect: null });
+  /** Griff auf den nativen Browser — Neuladen und Cache-Leeren gehen nur über ihn. */
+  const browserRef = useRef<BrowserHandle>(null);
 
   // Die gesicherte Historie muss da sein, BEVOR das erste Terminal anhängt.
   const scrollbackReady = useRef(false);
@@ -482,6 +484,18 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         setBrowser((b) => (b.tabId === payload.tabId ? { ...b, visible: false, tabId: null } : b));
         break;
 
+      // Diese beiden Befehle wurden bisher ins Leere geschickt: die Seite postete
+      // sie, hier gab es keinen Fall dafür. "Hart neu laden" tat also NICHTS (und
+      // meldete trotzdem Erfolg), und "Cache leeren" hat den nativen WebView nie
+      // erreicht — es setzte nur Attrappen-Flags im Entwurf zurück.
+      case 'browser:reload':
+        browserRef.current?.reload();
+        break;
+
+      case 'browser:clearCache':
+        browserRef.current?.clearCache();
+        break;
+
       case 'terminal:rename': {
         const tab = useTerminalStore.getState().getTabs(server.id).find((t) => t.id === payload.cardId);
         if (tab && payload.field === 'name' && payload.value) {
@@ -545,6 +559,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         style={styles.web}
       />
       <NativeBrowserLayer
+        ref={browserRef}
         visible={browser.visible}
         tabId={browser.tabId}
         url={browser.url}
