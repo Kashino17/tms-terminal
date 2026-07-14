@@ -568,6 +568,9 @@
     var app = !!(t && t.term.modes && t.term.modes.applicationCursorKeysMode);
     var seq = {
       ctrlc: '\x03', esc: '\x1b', tab: '\t',
+      // Shift+Tab ist kein eigenes Zeichen, sondern CSI Z („back-tab") — damit
+      // springt man in Claudes Auswahl und in Formularen rückwärts.
+      shifttab: '\x1b[Z',
       // Ein Tap räumt einen ganzen Tippfehler/Pfad weg statt 30x einzeln tippen zu müssen.
       backspace: '\x7f'.repeat(30),
       up:    app ? '\x1bOA' : '\x1b[A',
@@ -577,7 +580,7 @@
     }[key];
     if (seq) window.__tmsInput(id, seq);
     if (typeof window.flashKeyEcho === 'function') {
-      var echo = { ctrlc: '^C', esc: 'Esc', tab: 'Tab', backspace: '⌫', up: '↑', down: '↓', left: '←', right: '→' }[key] || key;
+      var echo = { ctrlc: '^C', esc: 'Esc', tab: 'Tab', shifttab: '⇧Tab', backspace: '⌫', up: '↑', down: '↓', left: '←', right: '→' }[key] || key;
       window.flashKeyEcho(echo);
     }
   };

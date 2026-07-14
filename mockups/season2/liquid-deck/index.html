@@ -842,10 +842,14 @@
   .keys-panel:not([hidden]) { flex: none; margin: 0 8px 8px; padding: 7px 8px; border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 6px; }
   .keys-panel__row { display: flex; align-items: center; gap: 7px; }
   .keys-panel__spacer { flex: 1 1 auto; }
-  /* In der Leiste sitzen jetzt auch ^C und Esc — die Chips rücken enger
-     zusammen, damit die erste Reihe auf 380dp nicht überläuft. */
-  .keys-panel .tt-key { height: 34px; min-width: 34px; padding: 0 10px; font-size: var(--fs-caption); border-radius: var(--radius-sm); }
-  .keys-panel .tt-key--icon { width: 34px; padding: 0; }
+  /* In der Leiste sitzen jetzt auch ^C, Esc und ⇧Tab — die Chips rücken enger
+     zusammen, und wenn es trotzdem eng wird (schmale Geräte), schiebt sich die
+     Tastengruppe seitlich; das ✕ bleibt dabei stehen, wo es hingehört. */
+  .keys-panel .tt-key { height: 34px; min-width: 32px; padding: 0 8px; font-size: var(--fs-caption); border-radius: var(--radius-sm); flex: none; }
+  .keys-panel .tt-key--icon { width: 32px; padding: 0; }
+  .keys-panel__keys { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px;
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .keys-panel__keys::-webkit-scrollbar { display: none; }
   .keys-panel__arrows { display: flex; align-items: center; gap: 6px; }
   .keys-panel__arrows button { width: 34px; height: 34px; flex: none; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring); }
   .keys-panel__arrows button .ic { width: var(--icon-sm); height: var(--icon-sm); }
@@ -2604,13 +2608,15 @@
     return `
         <div class="keys-panel glass" data-keys-panel${state.keysPanelOpen ? '' : ' hidden'}>
           <div class="keys-panel__row">
-            <button class="tt-key tt-key--danger" data-tt-key="ctrlc" aria-label="Strg+C senden" title="Strg+C">^C</button>
-            <button class="tt-key" data-tt-key="esc" aria-label="Escape" title="Esc">Esc</button>
-            <button class="tt-key" data-tt-key="tab">Tab</button>
-            <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode" aria-label="Auswahlmodus" title="Auswahl">Aa</button>
-            <button class="tt-key tt-key--icon" data-tt-key="backspace" aria-label="Zeichen löschen" title="Löschen (⌫)">${icon('backspace', 17)}</button>
-            <button class="tt-key tt-key--danger tt-key--icon" data-tt-key="clear" aria-label="Terminal leeren" title="Leeren">${icon('trash', 16)}</button>
-            <span class="keys-panel__spacer"></span>
+            <div class="keys-panel__keys">
+              <button class="tt-key tt-key--danger" data-tt-key="ctrlc" aria-label="Strg+C senden" title="Strg+C">^C</button>
+              <button class="tt-key" data-tt-key="esc" aria-label="Escape" title="Esc">Esc</button>
+              <button class="tt-key" data-tt-key="tab">Tab</button>
+              <button class="tt-key" data-tt-key="shifttab" aria-label="Umschalt+Tab" title="Umschalt+Tab (rückwärts)">⇧Tab</button>
+              <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode" aria-label="Auswahlmodus" title="Auswahl">Aa</button>
+              <button class="tt-key tt-key--icon" data-tt-key="backspace" aria-label="Zeichen löschen" title="Löschen (⌫)">${icon('backspace', 17)}</button>
+              <button class="tt-key tt-key--danger tt-key--icon" data-tt-key="clear" aria-label="Terminal leeren" title="Leeren">${icon('trash', 16)}</button>
+            </div>
             <button class="keys-panel__close" data-tt-key="closepanel" aria-label="Tasten schließen" title="Schließen">${icon('x', 15)}</button>
           </div>
           <div class="keys-panel__row keys-panel__row--tools">
@@ -2646,7 +2652,7 @@
         e.stopPropagation();
         const k = btn.dataset.ttKey;
         // Tab hat im Mockup nur geblinkt — die Taste muss das Terminal erreichen.
-        if (k === 'tab') handleTermKey('tab', id);
+        if (k === 'tab' || k === 'shifttab') handleTermKey(k, id);
         // ^C und Esc wohnen jetzt hier statt links in der Eingabezeile.
         else if (k === 'ctrlc' || k === 'esc') handleTermKey(k, id);
         else if (k === 'backspace') handleTermKey('backspace', id);
@@ -3042,6 +3048,7 @@
     if (key === 'ctrlc') sendCtrlC(id);
     else if (key === 'esc') flashKeyEcho('Esc');
     else if (key === 'tab') flashKeyEcho('Tab');
+    else if (key === 'shifttab') flashKeyEcho('⇧Tab');
     else flashKeyEcho(key);
   }
 
