@@ -157,11 +157,15 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       }
       const next = [...uploaded.reverse(), ...shots];
       setShots(next);
-      call('setTool', 'screenshots', next);
       // Ein Bild hochzuladen hat nur einen Zweck: die KI soll es ansehen. Also
-      // landet der Serverpfad sofort im Terminal.
-      call('insertIntoTerminal', next.slice(0, uploaded.length).map((s) => s.path).join(' '),
-        uploaded.length > 1 ? `${uploaded.length} Bilder eingefügt` : 'Bild eingefügt');
+      // landet der Serverpfad sofort im Terminal — still (null), die Meldung
+      // kommt gleich gebündelt.
+      call('insertIntoTerminal', next.slice(0, uploaded.length).map((s) => s.path).join(' '), null);
+      // Und KEIN setTool: die Galerie soll sich hinterher nicht wieder
+      // aufklappen. Liste still nachführen, Sheet zu, kurz bestätigen.
+      const n = uploaded.length;
+      call('uploadFinished', next,
+        n > 1 ? `${n} Bilder hochgeladen und eingefügt` : 'Bild hochgeladen und eingefügt');
     } catch (e: any) {
       call('uploadProgress', 1, 1); // Fortschritt wieder ausblenden
       call('toast', `Screenshot: ${e?.message ?? 'Upload fehlgeschlagen'}`);

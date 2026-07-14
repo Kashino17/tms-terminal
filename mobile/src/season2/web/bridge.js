@@ -900,12 +900,69 @@
   window.browserReload = function () { post('browser:reload', {}); };
 
   // Screen changes drive the overlay: it must never float over Terminals.
+  // Zugleich die Stelle, an der die Bildschirm-Historie mitgeschrieben wird —
+  // ohne sie hätte die Zurück-Geste nichts, wohin sie zurückgehen könnte.
+  var screenHistory = [];
+  var curScreen = 'terminals';
+  var goingBack = false;
   var origShow = window.show;
   window.show = function (name) {
+    if (!goingBack && name !== curScreen) {
+      screenHistory.push(curScreen);
+      if (screenHistory.length > 20) screenHistory.shift();
+    }
+    curScreen = name;
     origShow(name);
     post('nav:screen', { screen: name });
     if (name === 'browser') setTimeout(syncNativeBrowser, 80);
     else post('browser:sync', { visible: false });
+  };
+
+  // ══ Zurück-Geste ══════════════════════════════════════════════════════════
+  // Android schickt jedes Zurück-Wischen hierher, statt die App zu beenden.
+  // Abgeräumt wird von oben nach unten: erst was über dem Bildschirm liegt,
+  // dann der Bildschirm selbst. Erst wenn nichts mehr übrig ist, darf React
+  // Native ans Beenden denken (und fragt dann noch einmal nach).
+  window.TMSBridge.handleBack = function () {
+    // 1. Ein offenes Sheet (Tab-Liste, Werkzeuge, Menü, Spotlight …). Bewusst
+    //    .is-open und nicht :not([hidden]) — ein gerade zufallendes Sheet würde
+    //    sonst den Zurück-Druck schlucken, ohne noch etwas zu tun.
+    var sheet = document.querySelector('.sheet-wrap.is-open');
+    if (sheet && typeof window.closeSheet === 'function') { window.closeSheet(sheet); return; }
+    // 2. Die aufgeklappte Insel
+    var header = document.getElementById('statusHeader');
+    if (header && header.classList.contains('is-expanded')) {
+      var scrim = document.getElementById('islandScrim');
+      if (scrim) scrim.click();
+      return;
+    }
+    // 3. Die Terminal-Übersicht
+    if (window.__tmsState && window.__tmsState.overviewOpen && typeof window.toggleOverview === 'function') {
+      window.toggleOverview(false);
+      return;
+    }
+    // 4. Die Tastenleiste
+    if (window.__tmsState && window.__tmsState.keysPanelOpen && typeof window.closeKeysPanel === 'function') {
+      window.closeKeysPanel();
+      return;
+    }
+    // 5. Der vorherige Bildschirm
+    if (screenHistory.length) {
+      goingBack = true;
+      var prev = screenHistory.pop();
+      window.show(prev);
+      goingBack = false;
+      return;
+    }
+    // 6. Kein Weg mehr zurück, aber auch nicht auf den Terminals: dorthin.
+    if (curScreen !== 'terminals') {
+      goingBack = true;
+      window.show('terminals');
+      goingBack = false;
+      return;
+    }
+    // 7. Wirklich am Anfang — jetzt entscheidet React Native.
+    post('nav:exit', {});
   };
   window.addEventListener('resize', function () { if (browserVisible()) syncNativeBrowser(); });
 
@@ -1289,7 +1346,9 @@
     } else {
       window.__tmsInput(card, text);
     }
-    toast(okMsg || 'Eingefügt');
+    // okMsg === null heißt bewusst „still" — der Aufrufer meldet selbst (siehe
+    // uploadFinished), sonst stünden zwei Meldungen übereinander.
+    if (okMsg !== null) toast(okMsg || 'Eingefügt');
   }
   window.__tmsInsert = insertIntoTerminal;
 
@@ -1546,6 +1605,23 @@
   window.TMSBridge.uploadProgress = function (done, total) {
     uploadState = (done >= total) ? null : { done: done, total: total };
     window.TMSBridge.setTool('screenshots', window.TMS_DATA.screenshots || []);
+  };
+
+  /**
+   * Nach dem Hochladen: die Galerie NICHT wieder aufklappen. Die Pfade stehen
+   * in dem Moment schon im Terminal — das Sheet wäre nur noch eine Ansicht, die
+   * man erst wieder wegwischen muss. Also: Liste still nachführen, Sheet zu,
+   * eine kurze Bestätigung. (setTool täte genau das Gegenteil: es baut das
+   * offene Sheet neu auf.)
+   */
+  window.TMSBridge.uploadFinished = function (shots, msg) {
+    window.TMS_DATA.screenshots = shots || [];
+    uploadState = null;
+    shotSelect = false;
+    shotSel = {};
+    var wrap = document.getElementById('toolSheetWrap');
+    if (wrap && !wrap.hidden && typeof window.closeSheet === 'function') window.closeSheet(wrap);
+    if (msg) toast(msg);
   };
 
   // ══ Notizen & Todos pro Terminal ══════════════════════════════════════════

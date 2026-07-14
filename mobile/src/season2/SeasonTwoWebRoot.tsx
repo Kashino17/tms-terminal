@@ -9,7 +9,7 @@
  * The classic UI is untouched — Season 2 is still just a settings toggle.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, View, StyleSheet } from 'react-native';
+import { AppState, BackHandler, View, StyleSheet } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -59,6 +59,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
    *  status event, so the state has to be derived from the stream itself. */
   const idleTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const updateUrl = useRef<string | null>(null);
+  /** Zeitpunkt des letzten Zurück auf dem Startbildschirm — für „nochmal zum Beenden". */
+  const lastBackAt = useRef(0);
   const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, tabId: null, url: '', rect: null });
 
   // Die gesicherte Historie muss da sein, BEVOR das erste Terminal anhängt.
@@ -473,8 +475,30 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         if (payload.screen === 'settings') navigation.navigate('Settings');
         else setSeasonTwoEnabled(false);
         break;
+
+      // Die Seite hat nichts mehr zum Zurückgehen. Beenden wird trotzdem nicht
+      // einfach durchgewinkt: erst der zweite Druck innerhalb von zwei Sekunden.
+      case 'nav:exit':
+        if (Date.now() - lastBackAt.current < 2000) BackHandler.exitApp();
+        else {
+          lastBackAt.current = Date.now();
+          call('toast', 'Nochmal zurück zum Beenden');
+        }
+        break;
     }
   }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, sendManager, loadCloud, loadCloudDetail, sheets, fileExplorer]);
+
+  // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
+  // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
+  // bedeutet, entscheidet die Seite (offenes Sheet? Insel? vorheriger
+  // Bildschirm?) — siehe TMSBridge.handleBack im Bridge.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      call('handleBack');
+      return true; // immer abgefangen — beendet wird nur über nav:exit
+    });
+    return () => sub.remove();
+  }, [call]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
