@@ -200,6 +200,7 @@
   var PALETTE = ['#1e2126','#e05561','#8cc265','#d18f52','#4aa5f0','#c162de','#42b3c2','#d7dae0',
                  '#6b7280','#ff6b74','#a5e075','#f0a45d','#66b8ff','#d67bef','#5fd0dd','#f0f2f6'];
   var MAX_ROWS = 800;   // so viel Scrollback halten wir als DOM vor
+  var WIN_SLACK = 200;  // so weit darf das DOM-Fenster überwachsen, bevor beschnitten wird
   // URLs zuerst; Pfade nur, wenn davor kein / : ~ oder Wortzeichen steht — sonst
   // wird die zweite Hälfte einer umgebrochenen URL als eigener "Pfad" erkannt.
   var URL_RE = /(https?:\/\/[^\s"'<>()]+)|((?<![\w:\/~])(?:~|\.{0,2})\/[\w.\-]+(?:\/[\w.\-]+)+)/g;
@@ -304,6 +305,7 @@
     var t = terms[cardId];
     if (!t) return;
     t.rc = null; t.rcMin = 0; t.dom = null; t.domStart = undefined; t.domLen = 0;
+    t.winStart = undefined; // Reflow verschiebt die absoluten Indizes — Fenster neu setzen
   }
 
   function renderTerm(cardId) {
@@ -327,8 +329,20 @@
 
     var buf = t.term.buffer.active;
     var end = buf.baseY + t.term.rows;                 // eine Zeile hinter der letzten
-    var start = Math.max(0, end - MAX_ROWS);
     var baseY = buf.baseY;
+
+    // ── Klebriges Fenster ─────────────────────────────────────────────────
+    // Ein mitwanderndes Fenster (immer die letzten MAX_ROWS) verschiebt bei JEDER
+    // neuen Zeile alle Indizes — und data-i ist die Adresse, unter der die
+    // Selektion ihre Zeilen findet. Es müssten also pro Ausgabe-Tick alle 800
+    // Attribute neu geschrieben werden. Stattdessen bleibt der Anfang stehen und
+    // das Fenster wächst; erst wenn es MAX_ROWS + SLACK überschreitet, wird auf
+    // MAX_ROWS zurückgeschnitten. Neunummeriert wird damit einmal pro SLACK
+    // Zeilen statt einmal pro Zeile.
+    var start = t.winStart;
+    if (start === undefined || start > end) start = Math.max(0, end - MAX_ROWS);
+    if (end - start > MAX_ROWS + WIN_SLACK) start = Math.max(0, end - MAX_ROWS);
+    t.winStart = start;
 
     // ── Zeilen-Cache über ABSOLUTE Pufferindizes ──────────────────────────
     // Alles unterhalb von baseY ist aus dem Viewport gescrollte Historie und
@@ -502,6 +516,9 @@
       renderTerm(cardId);
     }, 60);
   }
+  // Der Demo-Ticker des Mockups würfelt die Latenz — am echten Server aus.
+  if (typeof window.__tmsStopLatencyDemo === 'function') window.__tmsStopLatencyDemo();
+
   window.__tmsRenderTerm = renderTerm;
   /** Karten mit echter PTY rendert die Bridge (farbig, inkrementell). Das
    *  Mockup fragt hier, bevor sein renderCardLines() den Karteninhalt mit
@@ -547,6 +564,7 @@
   function refreshPreview(cardId) {
     clearTimeout(previewTimers[cardId]);
     previewTimers[cardId] = setTimeout(function () {
+      if (window.__tmsAppInactive) return; // niemand schaut hin (natives AppState-Signal)
       // offsetParent === null ⇒ ein display:none-Vorfahr (z. B. Rail auf dem
       // Frontdisplay): dann weder Puffer durchlaufen noch DOM schreiben.
       var tile = document.querySelector('.overview-tile[data-id="' + cardId + '"] .overview-tile__body');
@@ -907,6 +925,14 @@
       if (!cardId || !terms[cardId]) { (queued[sessionId] = queued[sessionId] || []).push(chunk); return; }
       terms[cardId].term.write(chunk, function () { scheduleRender(cardId); });
       refreshPreview(cardId);
+    },
+    /** App im Vordergrund? Im Hintergrund ruht das Malen (siehe __tmsCardVisible). */
+    setAppActive: function (active) {
+      var wasInactive = !!window.__tmsAppInactive;
+      window.__tmsAppInactive = !active;
+      if (active && wasInactive && typeof window.__tmsFlushHidden === 'function') {
+        window.__tmsFlushHidden(); // nachzeichnen, was in der Pause aufgelaufen ist
+      }
     },
     /** Session state -> the mockup's own status chip. */
     setSessionStatus: function (sessionId, status) {

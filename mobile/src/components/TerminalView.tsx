@@ -24,13 +24,33 @@ import * as Haptics from 'expo-haptics';
 // Replayed into a fresh xterm.js instance when the WebView remounts.
 const VIEW_BUFFER_MAX = 400_000; // 400 KB per session
 const MAX_VIEW_BUFFERS = 20;
-const viewBuffers = new Map<string, string>();
+/** WÄRME: Häppchenweise gesammelt, NICHT pro Nachricht zusammengefügt. Vorher
+ *  kostete jedes Häppchen ein `alt + neu` über bis zu 400 KB — bei laufender
+ *  Ausgabe megabyteweise Kopierarbeit pro Sekunde, die der GC gleich wieder
+ *  einsammeln musste. Zusammengefügt wird erst, wenn den Text jemand liest
+ *  (Reattach, Oberflächenwechsel) — also selten. */
+const viewBuffers = new Map<string, string[]>();
+const viewLens = new Map<string, number>();
+
+/** Häppchen zu einem String verschmelzen und das Ergebnis behalten. */
+function joinViewBuffer(sessionId: string): string {
+  const parts = viewBuffers.get(sessionId);
+  if (!parts) return '';
+  if (parts.length > 1) {
+    const joined = parts.join('');
+    viewBuffers.set(sessionId, [joined]);
+    viewLens.set(sessionId, joined.length);
+    return joined;
+  }
+  return parts[0] ?? '';
+}
 
 /** Die zuletzt gesehene Ausgabe einer Session — der Server liefert beim
  *  Reattach nur, was seit dem Trennen dazukam. Season 2 nutzt denselben
  *  Speicher, damit die Historie auch beim Umschalten der Oberfläche steht. */
 export function getViewBuffer(sessionId: string): string | undefined {
-  return viewBuffers.get(sessionId);
+  if (!viewBuffers.has(sessionId)) return undefined;
+  return joinViewBuffer(sessionId);
 }
 export function recordViewBuffer(sessionId: string, data: string): void {
   appendViewBuffer(sessionId, data);
@@ -40,23 +60,31 @@ function appendViewBuffer(sessionId: string, data: string) {
   // Cap total number of sessions to prevent unbounded memory growth
   if (!viewBuffers.has(sessionId) && viewBuffers.size >= MAX_VIEW_BUFFERS) {
     const oldest = viewBuffers.keys().next().value;
-    if (oldest) viewBuffers.delete(oldest);
+    if (oldest) { viewBuffers.delete(oldest); viewLens.delete(oldest); }
   }
 
-  const existing = viewBuffers.get(sessionId) ?? '';
-  const combined = existing + data;
-  if (combined.length > VIEW_BUFFER_MAX) {
-    const sliced = combined.slice(combined.length - VIEW_BUFFER_MAX);
+  const parts = viewBuffers.get(sessionId) ?? [];
+  parts.push(data);
+  viewBuffers.set(sessionId, parts);
+  const len = (viewLens.get(sessionId) ?? 0) + data.length;
+  viewLens.set(sessionId, len);
+
+  // Erst kürzen, wenn spürbar zu viel angefallen ist — bei jedem Häppchen zu
+  // kürzen hieße, bei jedem Häppchen zu verschmelzen: genau die alte Kopiererei.
+  if (len > VIEW_BUFFER_MAX * 1.5) {
+    const full = joinViewBuffer(sessionId);
+    const sliced = full.slice(full.length - VIEW_BUFFER_MAX);
     const firstNl = sliced.indexOf('\n');
-    viewBuffers.set(sessionId, firstNl >= 0 ? sliced.slice(firstNl + 1) : sliced);
-  } else {
-    viewBuffers.set(sessionId, combined);
+    const trimmed = firstNl >= 0 ? sliced.slice(firstNl + 1) : sliced;
+    viewBuffers.set(sessionId, [trimmed]);
+    viewLens.set(sessionId, trimmed.length);
   }
 }
 
 /** Call this when a tab/session is permanently closed (not just navigated away). */
 export function clearViewBuffer(sessionId: string) {
   viewBuffers.delete(sessionId);
+  viewLens.delete(sessionId);
   const rec = bufferRecorders.get(sessionId);
   if (rec) { rec.unsub(); bufferRecorders.delete(sessionId); }
 }
@@ -550,7 +578,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
         // Replay saved output into the fresh xterm.js instance BEFORE requesting
         // terminal:reattach, so history appears instantly and new output appends after.
         if (sessionId) {
-          const buffered = viewBuffers.get(sessionId);
+          const buffered = getViewBuffer(sessionId); // fügt die Häppchen erst hier zusammen
           if (buffered) {
             sendToTerminal('output', buffered);
             // Feed the cached buffer through the thinking detector too — without

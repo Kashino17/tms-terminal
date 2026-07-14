@@ -30,7 +30,7 @@ import { useSheetBridges } from './web/useSheetBridges';
 import { useFileExplorer } from './web/useFileExplorer';
 import { NativeBrowserLayer, type BrowserRect } from './web/NativeBrowserLayer';
 import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
-import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback } from './web/scrollbackStore';
+import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flushScrollback } from './web/scrollbackStore';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
 
 interface BrowserOverlay { visible: boolean; tabId: string | null; url: string; rect: BrowserRect | null }
@@ -285,6 +285,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   useEffect(() => {
     if (!ready) return;
     const sub = AppState.addEventListener('change', (next) => {
+      // WÄRME: Im Hintergrund malt die Seite nicht mehr. Der Server streamt weiter
+      // (Benachrichtigungen brauchen das), der Emulator-Puffer füllt sich weiter —
+      // aber Rendern, Scrollen und Compositing ruhen, bis das Display wieder da ist.
+      // document.hidden allein reicht auf Android-WebViews nicht: es feuert nicht
+      // zuverlässig, wenn die Activity nur pausiert (Bildschirm aus, App im Hintergrund).
+      call('setAppActive', next === 'active');
+      // Die Historie wird jetzt erst geschrieben, wenn der Strom zur Ruhe kommt —
+      // beim Verlassen der App darf sie nicht im Ruhe-Fenster hängen bleiben.
+      if (next !== 'active') flushScrollback();
       if (next !== 'active' || !restored.current) return;
       // Kurz warten: der Socket braucht nach dem Aufwachen einen Moment.
       setTimeout(() => call('reattachAll'), 300);

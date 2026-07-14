@@ -172,6 +172,13 @@
   }
   .glass--strong { background: var(--glass-strong); }
   .glass--dark { background: var(--term-surface); -webkit-backdrop-filter: var(--blur-term); backdrop-filter: var(--blur-term); }
+  /* WÄRME: Der Terminal-Boden ist der eine Ort, an dem ein Blur nicht sein darf.
+     Er ist zu 82% deckend (--term-surface) und liegt VOR einer bereits geblurrten
+     Glaskarte — sichtbar trägt der Filter also nichts bei (A/B geprüft: identisch).
+     Er kostet aber eine Filter-Fläche unter genau dem Element, das sich bei jeder
+     Ausgabe neu befüllt und ans Ende scrollt: der Compositor muss die Fläche dann
+     immer wieder anfassen. Blur bleibt auf der Karte, verschwindet vom Inhalt. */
+  .card-body.glass, .card-body.glass--dark { -webkit-backdrop-filter: none; backdrop-filter: none; }
   .glass::before {
     content: ''; position: absolute; left: 10%; right: 10%; top: 0; height: 1px;
     background: linear-gradient(90deg, transparent, rgba(var(--sheen-rgb),var(--sheen-a)), transparent);
@@ -2335,12 +2342,13 @@
     if (state.islandOpen) renderIslandExpanded();
   }
   let latencyTickerStarted = false;
+  let latencyTimer = 0;
   function startLatencyTicker() {
     if (latencyTickerStarted) return;
     latencyTickerStarted = true;
     const baseline = TMS_DATA.servers[0].latency;
     updateLatencyDisplay();
-    setInterval(() => {
+    latencyTimer = setInterval(() => {
       if (document.body.classList.contains('is-locked')) return; // paused while locked
       const mag = 1 + Math.floor(Math.random() * 4); // 1..4
       const jitter = Math.random() < 0.5 ? -mag : mag;
@@ -2348,6 +2356,12 @@
       updateLatencyDisplay();
     }, 4000);
   }
+  /** Am echten Server ist dieser Ticker nicht nur überflüssig, er ist FALSCH: er
+   *  überschrieb den gemessenen Ping alle 4s mit einer erwürfelten Zahl. Die
+   *  Bridge schaltet ihn ab; die echte Latenz kommt über TMSBridge.setStatus. */
+  window.__tmsStopLatencyDemo = function () {
+    if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = 0; }
+  };
 
   // ============================================================
   // Bottom sheets (Mehr / permission)
@@ -3295,6 +3309,16 @@
   // flushHiddenCards() in einem Rutsch nachgezeichnet.
   function pendingHiddenCards() { return window.__tmsPendingHidden || (window.__tmsPendingHidden = {}); }
   window.__tmsCardVisible = function (id) {
+    // WÄRME: Liegt das Handy in der Tasche, während Claude weiterläuft, malte die
+    // Seite trotzdem jede Ausgabe — Rendern, Scrollen, Compositing für niemanden.
+    // Der Emulator-Puffer läuft weiter (die Historie bleibt vollständig); gemalt
+    // wird erst wieder beim Aufwachen, über denselben Weg wie unsichtbare Karten.
+    //
+    // NUR das native AppState-Signal aus React Native (TMSBridge.setAppActive)
+    // zählt hier — bewusst NICHT document.hidden: dessen Semantik schwankt je
+    // nach Android-WebView, und ein falsches "hidden" hieße: das Terminal malt
+    // im Vordergrund nichts mehr. Im Zweifel wird gemalt, nicht eingefroren.
+    if (window.__tmsAppInactive) return false;
     const pre = document.querySelector(`.card-body[data-card-id="${id}"]`);
     if (!pre) return false;
     const idx = state.order.indexOf(id);
@@ -3319,6 +3343,9 @@
     });
   }
   window.__tmsFlushHidden = flushHiddenCards;
+  // Zusatzsignal, nie ein Riegel: Wird die Seite wieder sichtbar, zeichnen wir
+  // nach. Ins Pausieren redet visibilitychange NICHT hinein (siehe __tmsCardVisible).
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) flushHiddenCards(); });
   // Liste: Karten, die in den Viewport scrollen, holen ihren Output nach.
   // Scroll-Events der .term-list erreichen weder Section noch document
   // zuverlässig (empirisch, auch capture nicht) — deshalb ein Wächter, der
