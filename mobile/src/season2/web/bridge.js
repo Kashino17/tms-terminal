@@ -24,8 +24,6 @@
   var queued = {};       // sessionId -> [chunk] — arrived before its card existed
   var restoring = false;
 
-  window.__tmsLastLine = {};
-
   function cardOf(sessionId) {
     for (var id in byCard) if (byCard[id] === sessionId) return id;
     return null;
@@ -123,6 +121,9 @@
     else t.pinRows = Math.max(t.pinRows || rowsFit, rowsFit);
     if (t.term.cols !== cols || t.term.rows !== t.pinRows) {
       try { t.term.resize(cols, t.pinRows); } catch (e) { return false; }
+      // Ein Resize reflowt den Puffer: alle absoluten Zeilenindizes verschieben
+      // sich — der inkrementelle Zeilen-Cache ist damit wertlos.
+      invalidateRowCache(cardId);
     }
     return true;
   }
@@ -141,9 +142,16 @@
     }, 60);
   }
 
-  /** Alle Emulatoren leben unsichtbar hier — sie rendern nichts mehr selbst. */
+  /** Alle Emulatoren leben unsichtbar hier — sie rendern nichts mehr selbst.
+   *  WICHTIG: komplett aus dem sichtbaren Bereich schieben. Im Body-Fluss lagen
+   *  sie HINTER halbtransparenten Glasflächen — der Browser hat sie bei jedem
+   *  write() mitgemalt und obendrein die backdrop-filter darüber invalidiert.
+   *  Offscreen wird nichts gerastert; Layout, Vermessung und der Tastatur-Fokus
+   *  der xterm-Textarea funktionieren dort unverändert (display:none täte das
+   *  nicht: kaputte Glyphen-Messung, kein Fokus). */
   var emuHost = document.createElement('div');
   emuHost.id = 'tmsEmulators';
+  emuHost.style.cssText = 'position:fixed;top:0;left:-4000px;';
   document.body.appendChild(emuHost);
 
   function mountTerm(cardId) {
@@ -251,6 +259,53 @@
    * Umgebrochene Links werden über die LOGISCHE Zeile erkannt, damit ein Tipp
    * die ganze URL liefert statt der Hälfte bis zum Zeilenumbruch.
    */
+  /** Baut den Inhalt einer .term-line (den inneren __text-Span) für EINE Zeile. */
+  function buildRowInner(line, linkRanges) {
+    if (!line) return '<span class="term-line__text"></span>';
+    var runs = rowRuns(line);
+    var col = 0, html = '';
+    for (var q = 0; q < runs.length; q++) {
+      var run = runs[q], style = runStyle(run.cell), txt = run.text;
+      // Den Abschnitt an Link-Grenzen zerlegen, damit die URL anklickbar wird.
+      var pos = 0;
+      while (pos < txt.length) {
+        var abs = col + pos;
+        var hit = null;
+        for (var li = 0; li < linkRanges.length; li++) {
+          if (abs >= linkRanges[li].from && abs < linkRanges[li].to) { hit = linkRanges[li]; break; }
+        }
+        var stop = txt.length;
+        for (var lj = 0; lj < linkRanges.length; lj++) {
+          var bnd = hit ? linkRanges[lj].to : linkRanges[lj].from;
+          if (bnd > abs && bnd - col < stop) stop = bnd - col;
+        }
+        var piece = txt.slice(pos, stop);
+        if (piece) {
+          var inner = '<span style="' + style + '">' + escapeHtml(piece) + '</span>';
+          html += hit
+            ? '<span class="wrapped-link" data-url="' + escapeHtml(hit.url) +
+              '" data-short="' + escapeHtml(hit.url.slice(-10)) + '" role="link">' + inner + '</span>'
+            : inner;
+        }
+        pos = stop;
+      }
+      col += txt.length;
+    }
+    return '<span class="term-line__text">' + html + '</span>';
+  }
+
+  function rowWrapper(k, inner) {
+    // data-b markiert Bridge-eigene Zeilen: daran erkennt der Patcher fremde
+    // Rebuilds (renderCardLines des Mockups) und fällt auf den Vollaufbau zurück.
+    return '<span class="term-line" data-b="1" data-i="' + k + '">' + inner + '</span>';
+  }
+
+  function invalidateRowCache(cardId) {
+    var t = terms[cardId];
+    if (!t) return;
+    t.rc = null; t.rcMin = 0; t.dom = null; t.domStart = undefined; t.domLen = 0;
+  }
+
   function renderTerm(cardId) {
     var t = terms[cardId];
     var pre = t && t.host;
@@ -273,23 +328,57 @@
     var buf = t.term.buffer.active;
     var end = buf.baseY + t.term.rows;                 // eine Zeile hinter der letzten
     var start = Math.max(0, end - MAX_ROWS);
+    var baseY = buf.baseY;
 
-    // Logische Zeilen (über Umbrüche hinweg) für die Link-Erkennung.
-    var rows = [];
-    for (var i = start; i < end; i++) {
-      var line = buf.getLine(i);
-      rows.push(line ? { line: line, text: line.translateToString(true), wrapped: !!line.isWrapped } : null);
+    // ── Zeilen-Cache über ABSOLUTE Pufferindizes ──────────────────────────
+    // Alles unterhalb von baseY ist aus dem Viewport gescrollte Historie und
+    // ändert sich nie wieder — nur der lebende Viewport (~Terminalhöhe) wird
+    // pro Durchlauf neu aus dem Puffer gelesen. Vorher wurden hier bei jeder
+    // Ausgabe alle 800 Zeilen zellenweise neu gebaut: der größte CPU-Fresser
+    // des ganzen Layouts.
+    var rc = t.rc || (t.rc = {}, t.rcMin = start, t.rc);
+    if (start > (t.rcMin || 0)) {
+      for (var d = t.rcMin || 0; d < start; d++) delete rc[d];
+      t.rcMin = start;
     }
+
+    // Eine am Viewport-Rand umgebrochene logische Zeile reicht in die Historie
+    // hinein — ihren Anfang mit auffrischen, damit eine wachsende URL ihre
+    // Link-Spanne über die Umbruchgrenze bekommt.
+    var liveFrom = Math.min(baseY, end);
+    while (liveFrom > start) {
+      var probeC = rc[liveFrom];
+      var probeW = probeC ? probeC.wrapped
+        : (function () { var l = buf.getLine(liveFrom); return !!(l && l.isWrapped); })();
+      if (!probeW) break;
+      liveFrom--;
+    }
+
+    var total = end - start;
+    var rows = new Array(total);
+    for (var i = start; i < end; i++) {
+      var k = i - start;
+      var c = rc[i];
+      if (c && i < liveFrom) { rows[k] = c; continue; }
+      var line = buf.getLine(i);
+      rows[k] = rc[i] = {
+        text: line ? line.translateToString(true) : '',
+        wrapped: !!(line && line.isWrapped),
+        inner: null,           // wird unten gebaut, sobald die Links bekannt sind
+        sig: null,
+      };
+    }
+
+    // Logische Zeilen (über Umbrüche hinweg) für die Link-Erkennung — reine
+    // String-Arbeit auf den gecachten Texten, kein Zellen-Lesen.
     var links = {}; // rowIndex -> [{from, to, url}]
     var g = 0;
-    while (g < rows.length) {
-      if (!rows[g]) { g++; continue; }
+    while (g < total) {
       var group = [g], text = rows[g].text;
-      var k = g + 1;
+      var k2 = g + 1;
       var cols = t.term.cols;
-      while (k < rows.length && rows[k] &&
-             (rows[k].wrapped || (rows[k - 1] && rows[k - 1].text.length >= cols))) {
-        group.push(k); text += rows[k].text; k++;
+      while (k2 < total && (rows[k2].wrapped || rows[k2 - 1].text.length >= cols)) {
+        group.push(k2); text += rows[k2].text; k2++;
       }
       var m;
       URL_RE.lastIndex = 0;
@@ -304,59 +393,93 @@
           off += len;
         }
       }
-      g = k;
+      g = k2;
     }
 
-    var out = [];
-    for (var r = 0; r < rows.length; r++) {
+    // Inneres HTML nur für Zeilen (neu) bauen, deren Inhalt oder Link-Lage sich
+    // geändert hat. Gecachte Historie mit unveränderter Link-Signatur ist fertig.
+    for (var r = 0; r < total; r++) {
       var row = rows[r];
-      var idx = out.length;
-      if (!row) { out.push('<span class="term-line" data-i="' + idx + '"><span class="term-line__text"></span></span>'); continue; }
-      var runs = rowRuns(row.line);
-      var linkRanges = links[r] || [];
-      var col = 0, html = '';
-      for (var q = 0; q < runs.length; q++) {
-        var run = runs[q], style = runStyle(run.cell), txt = run.text;
-        // Den Abschnitt an Link-Grenzen zerlegen, damit die URL anklickbar wird.
-        var pos = 0;
-        while (pos < txt.length) {
-          var abs = col + pos;
-          var hit = null;
-          for (var li = 0; li < linkRanges.length; li++) {
-            if (abs >= linkRanges[li].from && abs < linkRanges[li].to) { hit = linkRanges[li]; break; }
-          }
-          var stop = txt.length;
-          for (var lj = 0; lj < linkRanges.length; lj++) {
-            var bnd = hit ? linkRanges[lj].to : linkRanges[lj].from;
-            if (bnd > abs && bnd - col < stop) stop = bnd - col;
-          }
-          var piece = txt.slice(pos, stop);
-          if (piece) {
-            var inner = '<span style="' + style + '">' + escapeHtml(piece) + '</span>';
-            html += hit
-              ? '<span class="wrapped-link" data-url="' + escapeHtml(hit.url) +
-                '" data-short="' + escapeHtml(hit.url.slice(-10)) + '" role="link">' + inner + '</span>'
-              : inner;
-          }
-          pos = stop;
-        }
-        col += txt.length;
-      }
-      out.push('<span class="term-line" data-i="' + idx + '"><span class="term-line__text">' + (html || '') + '</span></span>');
+      var ranges = links[r] || [];
+      var sig = '';
+      for (var si = 0; si < ranges.length; si++) sig += ranges[si].from + ':' + ranges[si].to + ':' + ranges[si].url + ';';
+      if (row.inner !== null && row.sig === sig) continue;
+      row.inner = buildRowInner(buf.getLine(start + r), ranges);
+      row.sig = sig;
     }
 
     var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
-    pre.innerHTML = out.join('');
+
+    // ── DOM abgleichen statt neu bauen ────────────────────────────────────
+    // Der komplette innerHTML-Tausch hat pro Ausgabe-Tick hunderte KB HTML
+    // geparst und die ganze Karte relayoutet. Jetzt: oben rausgescrollte
+    // Zeilen entfernen, geänderte ersetzen, neue unten anhängen.
+    var lineEls = pre.getElementsByClassName('term-line'); // live
+    var dom = t.dom;
+    var canPatch = dom && t.domStart !== undefined && start >= t.domStart &&
+      lineEls.length === t.domLen &&
+      (t.domLen === 0 || (lineEls[0] && lineEls[0].dataset.b === '1'));
+
+    if (!canPatch) {
+      var out = new Array(total);
+      for (var f = 0; f < total; f++) out[f] = rowWrapper(f, rows[f].inner);
+      pre.innerHTML = out.join('');
+      dom = t.dom = {};
+      for (var f2 = 0; f2 < total; f2++) dom[start + f2] = rows[f2].inner;
+    } else {
+      var dropTop = start - t.domStart;
+      for (var d2 = 0; d2 < dropTop && lineEls.length; d2++) {
+        delete dom[t.domStart + d2];
+        lineEls[0].remove();
+      }
+      var keep = Math.min(lineEls.length, total);
+      for (var p = 0; p < keep; p++) {
+        var absI = start + p;
+        if (dom[absI] !== rows[p].inner) {
+          lineEls[p].innerHTML = rows[p].inner;
+          dom[absI] = rows[p].inner;
+        }
+      }
+      // Sollte das DOM je LÄNGER sein als das Fenster (kommt regulär nicht
+      // vor), überzählige Zeilen am Ende entfernen.
+      while (lineEls.length > total) { delete dom[start + lineEls.length - 1]; lineEls[lineEls.length - 1].remove(); }
+      if (total > keep) {
+        var addHtml = '';
+        for (var n = keep; n < total; n++) {
+          addHtml += rowWrapper(n, rows[n].inner);
+          dom[start + n] = rows[n].inner;
+        }
+        if (keep > 0) lineEls[keep - 1].insertAdjacentHTML('afterend', addHtml);
+        else pre.insertAdjacentHTML('afterbegin', addHtml);
+      }
+      // Nach einem Fenster-Shift stimmen die relativen Indizes nicht mehr —
+      // data-i ist die Adresse der Selektion, also nachziehen (reine
+      // Attribut-Schreiber, kein Layout).
+      if (dropTop > 0) {
+        for (var ri2 = 0; ri2 < lineEls.length; ri2++) {
+          if (lineEls[ri2].dataset.i !== String(ri2)) lineEls[ri2].dataset.i = ri2;
+        }
+      }
+    }
+    t.domStart = start;
+    t.domLen = lineEls.length;
+
     var cs = window.__tmsCardState && window.__tmsCardState[cardId];
     if (cs) {
       pre.classList.toggle('selection-mode', !!cs.selectionMode);
-      cs.lines = rows.map(function (x) { return x ? x.text : ''; }); // Kopieren/Selektion lesen daraus
+      cs.lines = rows.map(function (x) { return x.text; }); // Kopieren/Selektion lesen daraus
       cs._renderedLen = cs.lines.length;
+      if (cs.selection && cs.selection.end >= total) cs.selection = null;
       if (cs.selection) {
-        if (cs.selection.end >= out.length) cs.selection = null;
-        else pre.querySelectorAll('.term-line').forEach(function (l, i) {
+        pre.querySelectorAll('.term-line').forEach(function (l, i) {
           l.classList.toggle('is-selected', i >= cs.selection.start && i <= cs.selection.end);
         });
+      } else {
+        // Beim Patchen überleben die Elemente — eine erloschene Auswahl muss
+        // ihre Markierung explizit verlieren (der alte Voll-Rebuild tat das
+        // als Nebenwirkung).
+        var stale = pre.querySelectorAll('.term-line.is-selected');
+        for (var sv = 0; sv < stale.length; sv++) stale[sv].classList.remove('is-selected');
       }
     }
     // Wer gerade markiert, will lesen — nicht ans Ende springen.
@@ -380,6 +503,15 @@
     }, 60);
   }
   window.__tmsRenderTerm = renderTerm;
+  /** Karten mit echter PTY rendert die Bridge (farbig, inkrementell). Das
+   *  Mockup fragt hier, bevor sein renderCardLines() den Karteninhalt mit
+   *  einem Klartext-Rebuild überschreibt — der zerstörte nebenbei den
+   *  DOM-Abgleich des Patchers. */
+  window.__tmsBridgeRenders = function (cardId) {
+    if (!terms[cardId] || !byCard[cardId]) return false;
+    renderTerm(cardId);
+    return true;
+  };
 
   // Nur echte Größenänderungen, und nur eine pro Ruhephase: jedes SIGWINCH lässt
   // Claude & Co. ihre Ausgabe neu zeichnen — ein Resize-Sturm erzeugt genau die
@@ -415,10 +547,12 @@
   function refreshPreview(cardId) {
     clearTimeout(previewTimers[cardId]);
     previewTimers[cardId] = setTimeout(function () {
+      // offsetParent === null ⇒ ein display:none-Vorfahr (z. B. Rail auf dem
+      // Frontdisplay): dann weder Puffer durchlaufen noch DOM schreiben.
       var tile = document.querySelector('.overview-tile[data-id="' + cardId + '"] .overview-tile__body');
-      if (tile) tile.innerHTML = window.__tmsPreview(cardId, 5);
+      if (tile && tile.offsetParent) tile.innerHTML = window.__tmsPreview(cardId, 5);
       var rail = document.querySelector('.rail-item[data-id="' + cardId + '"] .rail-item__preview');
-      if (rail) rail.innerHTML = window.__tmsPreview(cardId, 2);
+      if (rail && rail.offsetParent) rail.innerHTML = window.__tmsPreview(cardId, 2);
     }, 350);
   }
 
@@ -773,8 +907,6 @@
       if (!cardId || !terms[cardId]) { (queued[sessionId] = queued[sessionId] || []).push(chunk); return; }
       terms[cardId].term.write(chunk, function () { scheduleRender(cardId); });
       refreshPreview(cardId);
-      var plain = chunk.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').split('\n').filter(function (l) { return l.trim(); }).pop();
-      if (plain) window.__tmsLastLine[cardId] = plain;
     },
     /** Session state -> the mockup's own status chip. */
     setSessionStatus: function (sessionId, status) {

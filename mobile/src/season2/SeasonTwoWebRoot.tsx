@@ -108,18 +108,31 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (conn.state === 'disconnected') conn.connect({ host: server.host, port: server.port, token });
   }, [server, token]);
 
+  /** Letzter in die Seite gemeldeter Status pro Session — jeder Output-Chunk
+   *  meldete früher stumpf 'running' (30×/s): zwei Bridge-Übertritte plus ein
+   *  DOM-Update pro Häppchen. Gemeldet wird nur noch ein echter Wechsel. */
+  const sessionStatus = useRef<Record<string, string>>({});
+  const setSessionStatus = useCallback((sessionId: string, status: string) => {
+    if (sessionStatus.current[sessionId] === status) return;
+    sessionStatus.current[sessionId] = status;
+    call('setSessionStatus', sessionId, status);
+  }, [call]);
+
   /** Output means the tool is working; silence for a while means it is done. */
   const markBusy = useCallback((sessionId: string) => {
-    call('setSessionStatus', sessionId, 'running');
+    setSessionStatus(sessionId, 'running');
     clearTimeout(idleTimers.current[sessionId]);
     idleTimers.current[sessionId] = setTimeout(() => {
-      call('setSessionStatus', sessionId, 'idle');
+      setSessionStatus(sessionId, 'idle');
     }, 2500);
-  }, [call]);
+  }, [setSessionStatus]);
 
   // ── Server → page.
   useEffect(() => {
     if (!wsService || !server || !ready) return;
+    // Frisch geladene Seite kennt keine Stati — das Dedupe-Gedächtnis leeren,
+    // sonst unterdrückt es die erste Meldung nach einem Reload.
+    sessionStatus.current = {};
 
     const unsub = wsService.addMessageListener((m: any) => {
       if (m?.type === 'terminal:output' && m.sessionId && m.payload?.data) {
@@ -153,6 +166,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         const tab = useTerminalStore.getState().getTabs(server.id).find((t) => t.sessionId === m.sessionId);
         if (tab) useTerminalStore.getState().removeTab(server.id, tab.id);
         dropScrollback(m.sessionId);
+        delete sessionStatus.current[m.sessionId];
+        clearTimeout(idleTimers.current[m.sessionId]);
         call('sessionClosed', m.sessionId); // die Seite räumt die Karte weg
         return;
       }
@@ -171,6 +186,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         const dead = useTerminalStore.getState().getTabs(server.id).find((t) => t.sessionId === m.sessionId);
         if (dead) useTerminalStore.getState().removeTab(server.id, dead.id);
         dropScrollback(m.sessionId);
+        delete sessionStatus.current[m.sessionId];
+        clearTimeout(idleTimers.current[m.sessionId]);
         call('sessionExpired', m.sessionId);
         return;
       }
@@ -182,7 +199,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         const info = describePrompt(m.payload?.snippet ?? '');
         const autoOn = useAutoApproveStore.getState().enabled[sid] ?? true;
 
-        call('setSessionStatus', sid, 'waiting');
+        setSessionStatus(sid, 'waiting');
 
         // Echte Rückfragen (Auswahl / Freitext) darf niemand automatisch
         // beantworten — die kommen IMMER vor den Nutzer.
@@ -202,7 +219,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       }
     });
     return unsub;
-  }, [wsService, server, ready, call, markBusy]);
+  }, [wsService, server, ready, call, markBusy, setSessionStatus]);
 
   useEffect(() => () => {
     Object.values(idleTimers.current).forEach(clearTimeout);

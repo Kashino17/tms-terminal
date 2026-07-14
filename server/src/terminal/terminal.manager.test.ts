@@ -55,3 +55,38 @@ test('eine geschlossene Session gilt nicht als abgehängt (sie ist einfach weg)'
   await sleep(200);
   assert.equal(mgr.isDetached(id), false, 'kein Wiederanhängen für etwas, das es nicht mehr gibt');
 });
+
+/**
+ * Wärme-Fix: Claude & Co. malen ihre Spinner als endlosen Strom winziger
+ * PTY-Häppchen (≤ 32 Bytes). Der Sofort-Flush-Pfad war für Tasten-Echos
+ * gedacht, hat aber jeden Spinner-Frame als EIGENE WS-Nachricht aufs Handy
+ * gefeuert — dort kostet jede Nachricht zwei Bridge-Übertritte plus Rendering.
+ * Sofort geflusht wird nur noch kurz nach echter Nutzereingabe; ohne
+ * Tastendruck werden auch Mini-Häppchen gebündelt.
+ */
+test('Spinner-Häppchen ohne aktuellen Tastendruck werden gebündelt statt einzeln verschickt', async () => {
+  const mgr = new TerminalManager();
+  const msgs: string[] = [];
+  const session = mgr.createSession({ cols: 200, rows: 24 }, (_id, data) => msgs.push(data), () => {});
+  assert.ok(session, 'Session wurde angelegt');
+  const id = session!.id;
+
+  // Die Login-Shell braucht einen Moment — Eingabe vor ihrer Bereitschaft
+  // verpufft und der Test sähe gar keine Spinner-Bytes.
+  await sleep(1500);
+
+  // Der Befehl selbst ist die letzte Eingabe. Danach schweigt die "Tastatur",
+  // und ab ~1,4 s tröpfeln 12 Ein-Byte-Häppchen im 30-ms-Takt — ein Spinner.
+  mgr.write(id, `sh -c 'sleep 1.4; i=0; while [ $i -lt 12 ]; do printf Q; sleep 0.03; i=$((i+1)); done'\r`);
+  await sleep(4500);
+
+  const spinner = msgs.filter((m) => m.includes('Q') && !m.includes('printf'));
+  const totalQ = spinner.reduce((n, m) => n + (m.match(/Q/g) || []).length, 0);
+  assert.ok(totalQ >= 12, `alle Spinner-Bytes kommen an (gesehen: ${totalQ})`);
+  assert.ok(
+    spinner.length <= 6,
+    `12 Mini-Häppchen kamen in ${spinner.length} Nachrichten — erwartet: gebündelt (≤ 6)`,
+  );
+
+  mgr.closeSession(id);
+});

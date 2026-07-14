@@ -643,7 +643,11 @@
   .stack.is-dragging .stack-card { transition: none !important; }
 
   .stack-card { position: absolute; inset: 0; margin: 0 auto; width: 100%; max-width: 480px; display: flex; flex-direction: column; overflow: hidden;
-    transition: transform 380ms var(--spring), opacity 380ms var(--spring); will-change: transform, opacity; }
+    transition: transform 380ms var(--spring), opacity 380ms var(--spring); }
+  /* will-change nur während der Geste: dauerhaft gesetzt hält es für JEDE
+     Karte einen bildschirmgroßen GPU-Layer am Leben (≥10 MB VRAM pro Karte,
+     Compositing-Arbeit in jedem Frame). Transitionen promoten sich selbst. */
+  .stack.is-dragging .stack-card { will-change: transform, opacity; }
   .card-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; cursor: grab; }
   .card-tag { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   /* Die Terminalfarbe ist der obere Rand der Karte: halbtransparent, folgt der
@@ -3354,6 +3358,9 @@
   bumpCalm();
 
   function renderCardLines(id) {
+    // Live-Terminals malt die Bridge selbst (farbig, inkrementell) — dieser
+    // Klartext-Rebuild ist nur noch für Demo-Karten und den Cloud-Log-Viewer.
+    if (window.__tmsBridgeRenders && window.__tmsBridgeRenders(id)) return;
     const pre = document.querySelector(`.card-body[data-card-id="${id}"]`);
     if (!pre) return;
     if (!window.__tmsCardVisible(id)) { pendingHiddenCards()[id] = 1; return; }
@@ -3424,10 +3431,15 @@
 
   function updateStatusChip(id, status) {
     const session = TMS_DATA.sessions.find(s => s.id === id);
+    if (!session) return;
+    // Rail und Übersicht nur bei einem ECHTEN Statuswechsel neu bauen — dieser
+    // Aufruf kam früher mit jedem Output-Häppchen (30×/s) und hat jedes Mal die
+    // komplette Rail samt Glas-Layern weggeworfen und neu erzeugt.
+    const changed = session.status !== status;
     session.status = status;
     const chip = document.querySelector(`.term-card[data-id="${id}"] .status-chip`);
     if (chip) { chip.dataset.status = status; chip.querySelector('.status-chip__label').textContent = STATUS_LABELS[status] || status; }
-    refreshPreviews();
+    if (changed) refreshPreviews();
   }
 
   function refreshPreviews() {
@@ -3580,9 +3592,15 @@
   // ============================================================
   // Rail (expanded ≥700px) — mini previews, drag-to-swap
   // ============================================================
+  let railStale = false;
   function renderRail() {
     const rail = document.getElementById('rail');
     if (!rail) return;
+    // Auf dem Frontdisplay ist die Rail display:none (offsetParent == null):
+    // dort weder Puffer-Previews rechnen noch Glas-Items bauen. Beim
+    // Auffalten holt der resize-Listener unten den Aufbau nach.
+    if (!rail.offsetParent) { railStale = true; return; }
+    railStale = false;
     rail.innerHTML = '';
     state.order.forEach((id, i) => {
       const session = TMS_DATA.sessions.find(s => s.id === id);
@@ -3601,6 +3619,11 @@
       rail.appendChild(item);
     });
   }
+
+  window.addEventListener('resize', () => {
+    const rail = document.getElementById('rail');
+    if (railStale && rail && rail.offsetParent) renderRail();
+  });
 
   function wireRailDrag(item) {
     item.addEventListener('pointerdown', e => {

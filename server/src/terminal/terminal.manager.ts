@@ -12,6 +12,14 @@ const IDLE_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
 const REATTACH_BUFFER_MAX = 300_000; // 300 KB — captured while client is away
 const OUTPUT_BUFFER_FLUSH_SIZE = 8192; // 8 KB — flush immediately when buffer exceeds this
 const MAX_SESSIONS = 50;
+// Tiny chunks are only treated as keystroke echo (→ instant flush) this soon
+// after real user input. Outside this window the same tiny chunks are TUI
+// spinner frames — an endless stream that would hit the phone as one WS
+// message each, keeping its CPU/GPU permanently busy.
+const ECHO_WINDOW_MS = 1000;
+// Batch interval while the user is NOT typing: latency is invisible when
+// merely watching output scroll by, and it cuts the message rate ~3×.
+const IDLE_BATCH_MS = 100;
 
 export class TerminalManager {
   private sessions = new Map<string, TerminalSession>();
@@ -22,6 +30,7 @@ export class TerminalManager {
   private outputTimers = new Map<string, NodeJS.Timeout>();
   private idleTimers = new Map<string, NodeJS.Timeout>();
   private batchIntervals = new Map<string, number>();  // per-session adaptive batch interval (ms)
+  private lastInputAt = new Map<string, number>();     // last real user keystroke — gates the echo fast-path
   private attachGen = new Map<string, number>();       // monotonic generation counter — prevents stale detach
   /** Sessions whose output currently goes to a live client (vs. into the detach buffer). */
   private attachedIds = new Set<string>();
@@ -81,8 +90,12 @@ export class TerminalManager {
       const combined = existing + data;
       this.outputBuffers.set(id, combined);
 
-      // Small buffer = likely keystroke echo → flush immediately (no timer delay)
-      if (combined.length <= 32) {
+      const sinceInput = Date.now() - (this.lastInputAt.get(id) ?? 0);
+
+      // Small buffer = keystroke echo → flush immediately, but ONLY while the
+      // user is actually typing. TUI spinners emit identical tiny chunks
+      // forever; without this gate every frame became its own WS message.
+      if (combined.length <= 32 && sinceInput < ECHO_WINDOW_MS) {
         const pendingTimer = this.outputTimers.get(id);
         if (pendingTimer) { clearTimeout(pendingTimer); this.outputTimers.delete(id); }
         this.outputCallbacks.get(id)?.(id, combined);
@@ -99,9 +112,13 @@ export class TerminalManager {
         return;
       }
 
-      // Medium buffer (> 32 bytes, < 8 KB) = bulk output → batch with timer
+      // Medium buffer (> 32 bytes, < 8 KB) = bulk output → batch with timer.
+      // While nobody is typing, batch coarser: watching output scroll can't
+      // tell 32 ms from 100 ms, but the phone pays per message.
       if (!this.outputTimers.has(id)) {
-        const batchMs = this.batchIntervals.get(id) ?? config.outputBufferMs;
+        const batchMs = sinceInput < ECHO_WINDOW_MS
+          ? (this.batchIntervals.get(id) ?? config.outputBufferMs)
+          : Math.max(IDLE_BATCH_MS, this.batchIntervals.get(id) ?? config.outputBufferMs);
         const timer = setTimeout(() => {
           const buffered = this.outputBuffers.get(id);
           if (buffered) {
@@ -264,6 +281,7 @@ export class TerminalManager {
   write(sessionId: string, data: string): boolean {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
+    this.lastInputAt.set(sessionId, Date.now());
     session.pty.write(data);
     return true;
   }
@@ -340,6 +358,7 @@ export class TerminalManager {
     this.outputBuffers.delete(sessionId);
     this.reattachBuffers.delete(sessionId);
     this.batchIntervals.delete(sessionId);
+    this.lastInputAt.delete(sessionId);
     this.attachGen.delete(sessionId);
     this.attachedIds.delete(sessionId);
     const t = this.outputTimers.get(sessionId);
