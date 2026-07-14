@@ -2390,7 +2390,12 @@
   }
 
   const mehrWrap = document.getElementById('mehrSheetWrap');
-  document.querySelectorAll('.mehr-item').forEach(btn => {
+  // NUR die Knöpfe im Mehr-Sheet. Vorher stand hier document.querySelectorAll —
+  // und .mehr-item ist auch die Klasse der Browser-Menü-Knöpfe (Hard Reload,
+  // Cache leeren, Passwörter). Die haben kein data-target, also lief bei jedem
+  // Klick dort ein show(undefined) mit: das blendete JEDEN Bildschirm aus und
+  // keinen ein — die App stand leer da.
+  mehrWrap.querySelectorAll('.mehr-item').forEach(btn => {
     btn.addEventListener('click', () => {
       closeSheet(mehrWrap);
       const target = btn.dataset.target;
@@ -2433,6 +2438,11 @@
   window.addEventListener('resize', positionDockPill);
 
   function show(name) {
+    // Ohne Ziel wird NICHT navigiert. Die Zeile darunter blendet jeden Bildschirm
+    // aus, dessen Name nicht passt — bei name === undefined trifft das auf ALLE zu,
+    // und die App steht leer da (genau so ist der Browser "abgestürzt"). Ein
+    // Fehlaufruf darf die Oberfläche nie wieder auslöschen.
+    if (!name || !document.querySelector(`[data-screen="${name}"]`)) return;
     if (name !== 'cloud') stopCloudBuildTimer();
     if (name !== 'prayer') stopPrayerTick();
     if (name !== 'terminals') { cancelDictation(); closeAllListRails(); closeKeysPanel(); }
