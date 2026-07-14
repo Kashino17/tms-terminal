@@ -4464,7 +4464,6 @@
         '<span class="fs-cell"><span class="fs-name">' + escapeHtml(e.name) + '</span>' +
         '<span class="fs-sub">' + (e.isDir ? 'Ordner' : escapeHtml(fsFmtSize(e.size))) +
         (e.modified ? ' · ' + fsFmtDate(e.modified) : '') + '</span></span>' +
-        (fsState.selectMode ? '' : '<span class="fx-more" data-fsmenu="' + escapeHtml(e.path) + '">⋯</span>') +
       '</button></div>';
   }
 
@@ -4618,23 +4617,22 @@
         lpFired = false;
         lpTimer = setTimeout(() => {
           lpFired = true;
-          if (!fsState.selectMode) { fsState.selectMode = true; fsState.sel.add(row.dataset.fspath); renderFilesScreen(); }
-        }, 550);
+          // Langes Drücken zeigt die Aktionen der Zeile — dieselbe Geste wie bei
+          // den Favoriten. Das ⋯ an jeder Zeile ist dafür weggefallen. In der
+          // Mehrfachauswahl bleibt es beim Hinzu-/Abwählen.
+          if (fsState.selectMode) { fsState.sel.add(row.dataset.fspath); renderFilesScreen(); }
+          else openFsRowMenu(row.dataset.fspath);
+        }, 500);
       });
       ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => row.addEventListener(ev, () => clearTimeout(lpTimer)));
       row.addEventListener('click', (ev) => {
         if (lpFired) { lpFired = false; return; }
-        if (ev.target.closest('[data-fsmenu]')) return;
         const p = row.dataset.fspath, isDir = row.dataset.fsdir === '1';
         if (fsState.selectMode) { fsState.sel.has(p) ? fsState.sel.delete(p) : fsState.sel.add(p); renderFilesScreen(); return; }
         if (isDir) window.fsListDir(p);
         else openFsViewer(p);
       });
     });
-    host.querySelectorAll('[data-fsmenu]').forEach(b => b.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      openFsRowMenu(b.dataset.fsmenu);
-    }));
   }
   function fsMdToHtml(md) {
     let h = md
@@ -4775,6 +4773,7 @@
     el.innerHTML = '<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px">' +
       '<div style="font-weight:800;font-size:13px;padding:2px 4px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.name) + '</div>' +
       (e.isDir ? '' : '<button class="btn-chip" data-m="open">Öffnen</button>') +
+      '<button class="btn-chip" data-m="select">Auswählen …</button>' +
       '<button class="btn-chip" data-m="copyPath">Pfad kopieren</button>' +
       '<button class="btn-chip" data-m="cd">Im Terminal öffnen (cd)</button>' +
       '<button class="btn-chip" data-m="insert">In Eingabezeile einfügen</button>' +
@@ -4794,6 +4793,9 @@
       }
       el.remove();
       if (m === 'open') openFsViewer(p);
+      // Der Long-Press zeigt jetzt dieses Menü — die Mehrfachauswahl startet
+      // deshalb von hier aus, mit dieser Zeile schon angehakt.
+      else if (m === 'select') { fsState.selectMode = true; fsState.sel.add(p); renderFilesScreen(); }
       else if (m === 'copyPath') window.fsAction('copyPath', { paths: [p] });
       else if (m === 'cd') window.fsAction('cd', { path: parent });
       else if (m === 'insert') window.fsAction('insert', { path: p });

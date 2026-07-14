@@ -1112,65 +1112,104 @@
   var filesConfirmDel = null;
   var filesNewFolder = false;
 
+  // Kein ⋯ mehr an jeder Zeile: die Aktionen kommen — wie bei den Favoriten —
+  // per langem Drücken. Die Zeile gehört damit wieder dem Namen, und Tippen
+  // bleibt eindeutig „öffnen/einfügen".
   function fileRowHtml(f) {
     var isDir = f.type === 'dir';
     var path = f.path || '';
-    var head = '<button class="tool-row is-tap" ' + (isDir ? 'data-cd="' : 'data-path="') + escapeHtml(isDir ? f.name : path) + '">' +
+    var head = '<button class="tool-row is-tap" ' + (isDir ? 'data-cd="' : 'data-path="') + escapeHtml(isDir ? f.name : path) + '"' +
+      ' data-fxpath="' + escapeHtml(path) + '" data-fxdir="' + (isDir ? '1' : '0') + '" data-fxname="' + escapeHtml(f.name) + '">' +
       '<span class="tool-row__icon">' + (isDir ? '▸' : '·') + '</span>' +
       '<span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
       '<span class="tool-row__meta">' + escapeHtml(isDir ? 'öffnen' : (f.size || '') + ' · einfügen') + '</span>' +
-      '</button>' +
-      '<button class="fx-more" data-fx="menu" data-target="' + escapeHtml(path) + '" aria-label="Aktionen">⋯</button>';
-
-    var menu = '';
-    if (filesMenuFor === path) {
-      var fav = window.__tmsFavs.indexOf(path) !== -1;
-      menu = '<div class="fx-actions">' +
-        '<button class="btn-chip" data-fx="copyPath" data-target="' + escapeHtml(path) + '">Pfad kopieren</button>' +
-        (isDir ? '<button class="btn-chip" data-fx="cd" data-target="' + escapeHtml(path) + '">Im Terminal öffnen (cd)</button>' : '') +
-        (isDir ? '' : '<button class="btn-chip" data-fx="insert" data-target="' + escapeHtml(path) + '">Einfügen</button>' +
-                      '<button class="btn-chip" data-fx="preview" data-target="' + escapeHtml(path) + '">Vorschau</button>' +
-                      '<button class="btn-chip" data-fx="download" data-target="' + escapeHtml(path) + '">Laden</button>') +
-        '<button class="btn-chip" data-fx="rename" data-target="' + escapeHtml(path) + '">Umbenennen</button>' +
-        '<button class="btn-chip" data-fx="fav" data-target="' + escapeHtml(path) + '">' + (fav ? '★ Favorit' : '☆ Favorit') + '</button>' +
-        '<button class="btn-chip btn-chip--danger" data-fx="del" data-target="' + escapeHtml(path) + '">' +
-          (filesConfirmDel === path ? 'Wirklich löschen?' : 'Löschen') + '</button>' +
-        '</div>';
-    }
-    return '<div class="fx-row">' + head + menu + '</div>';
+      '</button>';
+    return '<div class="fx-row">' + head + '</div>';
   }
 
-  /** Kleines Menü für einen Favoriten-Chip — kein FileEntry bekannt, nur der
-   *  Pfad, darum nur die drei Aktionen, die ohne isDir/Größe auskommen. */
-  function openFavMenu(p) {
+  /**
+   * Das gemeinsame Aktionsmenü — eine Liste von Knöpfen, die von unten
+   * hereinfährt. Favoriten und Dateizeilen teilen es sich, damit langes Drücken
+   * überall dasselbe bedeutet und auch gleich aussieht.
+   * items: [{ label, danger, confirm, run }] — confirm heißt: erst der zweite
+   * Tipp führt aus (Löschen).
+   */
+  function openActionSheet(title, items) {
     var old = document.getElementById('fxFavMenu');
     if (old) old.remove();
     var el = document.createElement('div');
     el.id = 'fxFavMenu';
     el.style.cssText = 'position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,.45)';
-    el.innerHTML = '<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px">' +
-      '<div style="font-weight:800;font-size:13px;padding:2px 4px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">★ ' + escapeHtml(p.split('/').pop() || p) + '</div>' +
-      '<button class="btn-chip" data-fm="open">Öffnen</button>' +
-      '<button class="btn-chip" data-fm="copyPath">Pfad kopieren</button>' +
-      '<button class="btn-chip" data-fm="cd">Im Terminal öffnen (cd)</button>' +
-      '<button class="btn-chip btn-chip--danger" data-fm="unfav">Favorit entfernen</button>' +
+    el.innerHTML = '<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px;max-height:80vh;overflow-y:auto">' +
+      '<div style="font-weight:800;font-size:13px;padding:2px 4px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(title) + '</div>' +
+      items.map(function (it, i) {
+        return '<button class="btn-chip' + (it.danger ? ' btn-chip--danger' : '') + '" data-fm="' + i + '">' + escapeHtml(it.label) + '</button>';
+      }).join('') +
       '<button class="btn-chip" data-fm="close">Abbrechen</button></div>';
     document.body.appendChild(el);
+    if (navigator.vibrate) navigator.vibrate(8);
     el.addEventListener('click', function (ev) {
       var btn = ev.target.closest('[data-fm]');
       if (!btn) { if (ev.target === el) el.remove(); return; }
-      var m = btn.dataset.fm;
-      el.remove();
-      if (m === 'open') post('files:goto', { path: p });
-      else if (m === 'copyPath') window.fsAction('copyPath', { paths: [p] });
-      else if (m === 'cd') {
-        var wrap = document.getElementById('toolSheetWrap');
-        if (wrap && typeof window.closeSheet === 'function') window.closeSheet(wrap);
-        window.fsAction('cd', { path: p });
+      if (btn.dataset.fm === 'close') { el.remove(); return; }
+      var it = items[Number(btn.dataset.fm)];
+      if (!it) return;
+      // Löschen fragt einmal nach — im Menü selbst, ohne es zu schließen.
+      if (it.confirm && btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = 'Wirklich löschen?';
+        return;
       }
-      else if (m === 'unfav') post('files:fav', { path: p });
+      el.remove();
+      it.run();
     });
   }
+
+  /** Favorit (nur der Pfad bekannt — daher die drei Aktionen ohne isDir/Größe). */
+  function openFavMenu(p) {
+    openActionSheet('★ ' + (p.split('/').pop() || p), [
+      { label: 'Öffnen', run: function () { post('files:goto', { path: p }); } },
+      { label: 'Pfad kopieren', run: function () { window.fsAction('copyPath', { paths: [p] }); } },
+      { label: 'Im Terminal öffnen (cd)', run: function () { closeToolSheet(); window.fsAction('cd', { path: p }); } },
+      { label: 'Favorit entfernen', danger: true, run: function () { post('files:fav', { path: p }); } },
+    ]);
+  }
+
+  function closeToolSheet() {
+    var wrap = document.getElementById('toolSheetWrap');
+    if (wrap && typeof window.closeSheet === 'function') window.closeSheet(wrap);
+  }
+
+  /** Dateizeile: alles, was vorher hinter dem ⋯ steckte. */
+  function openFileMenu(path, isDir, name) {
+    var fav = window.__tmsFavs.indexOf(path) !== -1;
+    var items = [];
+    if (isDir) {
+      items.push({ label: 'Öffnen', run: function () { post('files:goto', { path: path }); } });
+      items.push({ label: 'Im Terminal öffnen (cd)', run: function () { closeToolSheet(); window.fsAction('cd', { path: path }); } });
+    } else {
+      items.push({ label: 'Einfügen', run: function () { insertIntoTerminal(path, 'Pfad eingefügt'); } });
+      items.push({ label: 'Vorschau', run: function () { post('files:preview', { path: path }); } });
+      items.push({ label: 'Laden', run: function () { post('files:download', { path: path }); } });
+    }
+    items.push({ label: 'Pfad kopieren', run: function () { window.fsAction('copyPath', { paths: [path] }); } });
+    items.push({ label: 'Umbenennen', run: function () { filesRenaming = path; window.TMSBridge.setTool('files', window.TMS_DATA.files, window.__tmsCwd); } });
+    items.push({ label: fav ? '★ Favorit entfernen' : '☆ Als Favorit merken', run: function () { post('files:fav', { path: path }); } });
+    items.push({ label: 'Löschen', danger: true, confirm: true, run: function () { post('files:trash', { path: path }); } });
+    openActionSheet((isDir ? '▸ ' : '') + (name || path.split('/').pop() || path), items);
+  }
+
+  // Langes Drücken auf eine Dateizeile öffnet ihr Menü — dasselbe Signal wie
+  // überall sonst in der App (contextmenu; die native Textauswahl ist app-weit
+  // aus, das Ereignis ist also frei).
+  var fxLpAt = 0;
+  document.addEventListener('contextmenu', function (e) {
+    var row = e.target.closest && e.target.closest('[data-fxpath]');
+    if (!row) return;
+    e.preventDefault();
+    fxLpAt = Date.now();
+    openFileMenu(row.dataset.fxpath, row.dataset.fxdir === '1', row.dataset.fxname);
+  });
 
   window.buildFilesSheet = function () {
     var all = window.TMS_DATA.files || [];
@@ -1235,15 +1274,23 @@
 
         function rerender() { filesFilter = filesFilter; window.TMSBridge.setTool('files', window.TMS_DATA.files, window.__tmsCwd); }
 
+        // Nach einem langen Drücken darf der Tipp NICHT auch noch feuern —
+        // sonst öffnete sich mit dem Menü zugleich der Ordner.
+        function justLongPressed() { return Date.now() - fxLpAt < 800; }
+
         function wireRows() {
           body.querySelectorAll('[data-cd]').forEach(function (btn) {
             btn.addEventListener('click', function () {
+              if (justLongPressed()) return;
               filesMenuFor = null; filesConfirmDel = null; filesFilter = '';
               post('files:cd', { name: btn.dataset.cd });
             });
           });
           body.querySelectorAll('[data-path]').forEach(function (btn) {
-            btn.addEventListener('click', function () { insertIntoTerminal(btn.dataset.path, 'Pfad eingefügt'); });
+            btn.addEventListener('click', function () {
+              if (justLongPressed()) return;
+              insertIntoTerminal(btn.dataset.path, 'Pfad eingefügt');
+            });
           });
           body.querySelectorAll('[data-fx]').forEach(function (btn) {
             // Favoriten-Chips: Long-Press öffnet ein Mini-Menü (Pfad kopieren,
