@@ -2591,6 +2591,8 @@
       const card = document.createElement('div');
       card.className = 'glass server-card';
       card.dataset.status = srv.status;
+      // Auch ein online-Server, der nicht der aktive ist, ist antippbar (Wechsel).
+      if (online) card.dataset.status = 'online';
       card.innerHTML = `
         <div class="server-orb">${SERVER_ICON}</div>
         <div class="server-info">
@@ -2605,8 +2607,11 @@
         </div>
       `;
       card.addEventListener('click', () => {
-        if (online) { goToTerminals(); }
-        else { toast('Server offline — zuletzt gesehen vor 2 Std'); }
+        if (srv.active) { goToTerminals(); return; }          // schon verbunden
+        if (!online) { toast(`${srv.name} ist offline`); return; }
+        // Anderer, laufender Server: die App schaltet die Verbindung um.
+        if (window.__tmsSwitchServer) { window.__tmsSwitchServer(srv.id); goToTerminals(); }
+        else goToTerminals();
       });
       grid.appendChild(card);
     });

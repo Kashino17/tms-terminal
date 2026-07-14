@@ -2101,6 +2101,10 @@
     }
   };
 
+  // Tippt der Nutzer eine andere (laufende) Server-Karte an, schaltet React
+  // Native die Verbindung um (Terminals des alten Servers weg, die des neuen rein).
+  window.__tmsSwitchServer = function (id) { post('server:switch', { id: id }); };
+
   // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
   window.TMSBridge.setServers = function (servers) {
     window.TMS_DATA.servers = servers;
@@ -2185,6 +2189,23 @@
     if (terms[cardId]) { try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {} delete terms[cardId]; }
     if (typeof window.removeTerminalCard === 'function') window.removeTerminalCard(cardId);
     if (typeof window.toast === 'function') window.toast('Terminal beendet');
+  };
+
+  /** Beim Server-Wechsel: alle Karten des alten Servers abräumen, ohne die PTYs
+   *  zu schließen (die laufen auf dem Server weiter). Danach bestückt
+   *  restoreSessions die Seite mit den Terminals des neuen Servers. */
+  window.TMSBridge.clearAllTerminals = function () {
+    Object.keys(terms).forEach(function (cardId) {
+      try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {}
+      delete terms[cardId];
+    });
+    Object.keys(bound).forEach(function (k) { delete bound[k]; });
+    Object.keys(byCard).forEach(function (k) { delete byCard[k]; });
+    (window.TMS_DATA.sessions || []).slice().forEach(function (s) {
+      if (typeof window.removeTerminalCard === 'function') window.removeTerminalCard(s.id);
+    });
+    if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
+    if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
   };
 
   // ── Kein Flackern in der Übersicht ────────────────────────────────────────
