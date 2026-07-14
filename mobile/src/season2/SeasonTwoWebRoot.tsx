@@ -231,6 +231,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('setManagerMemory', items.slice(-40).reverse());
         return;
       }
+      // Ein fehlgeschlagenes terminal:create antwortet mit sessionId 'none' —
+      // das wurde bisher stumm verworfen. Die Karte, die auf diese PTY wartete,
+      // blieb dann für immer leer, kam nie in den Store und war beim nächsten
+      // Wiederherstellen spurlos weg. Jetzt: Grund zeigen und die Karte freigeben.
+      if (m?.type === 'terminal:error' && m.sessionId === 'none') {
+        const waiting = pendingCards.current.shift();
+        call('toast', `Terminal konnte nicht erstellt werden: ${m.payload?.message ?? 'unbekannter Fehler'}`);
+        if (waiting) call('sessionCreateFailed', waiting.cardId);
+        return;
+      }
       if (m?.type === 'terminal:error' && m.sessionId && m.sessionId !== 'none') {
         // "Session not found": die gespeicherte Session gibt es nicht mehr. Wie
         // die klassische App: toten Tab austragen und die Karte neu bestücken —

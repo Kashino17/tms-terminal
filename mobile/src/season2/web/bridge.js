@@ -373,13 +373,20 @@
     for (var i = start; i < end; i++) {
       var k = i - start;
       var c = rc[i];
-      if (c && i < liveFrom) { rows[k] = c; continue; }
+      // Ein Cache-Eintrag ist nur dann endgültig, wenn er gelesen wurde, als die
+      // Zeile BEREITS Historie war (unter baseY). Zeilen, die beim Lesen noch im
+      // lebenden Viewport standen, ändern sich danach ja weiter — sie einfach
+      // wiederzuverwenden, sobald sie nach unten rausgescrollt sind, fror den
+      // Stand von damals ein: leere Historie ("Grenze nach oben") und alte
+      // Inhalte an neuen Zeilennummern (die Dopplungen/Verschiebungen).
+      if (c && c.frozen && i < liveFrom) { rows[k] = c; continue; }
       var line = buf.getLine(i);
       rows[k] = rc[i] = {
         text: line ? line.translateToString(true) : '',
         wrapped: !!(line && line.isWrapped),
         inner: null,           // wird unten gebaut, sobald die Links bekannt sind
         sig: null,
+        frozen: i < baseY,     // fertig gescrollt = ändert sich nie wieder
       };
     }
 
@@ -876,6 +883,12 @@
     /** Re-create cards for PTY sessions that already exist on the server. */
     restoreSessions: function (list) {
       restoring = true;
+      // Wiederherstellen ist kein Erstellen: addTerminal() ist der Weg des
+      // Nutzers und meldet jede Karte per Toast ("Shell 2 erstellt"). Beim
+      // Server-Wechsel prasselten so Meldungen über Terminals herein, die es
+      // längst gab. Für die Dauer des Wiederherstellens schweigt der Toast.
+      var origToast = window.toast;
+      window.toast = function () {};
       list.forEach(function (item) {
         window.addTerminal();
         var ids = [].map.call(document.querySelectorAll('.card-body[data-card-id]'), function (el) {
@@ -900,6 +913,7 @@
         post('terminal:attach', { cardId: cardId, sessionId: item.sessionId, cols: td.cols, rows: td.rows });
       });
       restoring = false;
+      window.toast = origToast;
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
       if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
       // addTerminal() arms the rename field for a brand-new terminal; a restored
@@ -2181,6 +2195,16 @@
       post('terminal:attach', { cardId: cardId, sessionId: sid, cols: d.cols, rows: d.rows });
     });
   };
+  /** Der Server konnte für diese Karte keine PTY anlegen. Ohne das hier bliebe
+   *  sie als Geisterkarte stehen: leer, nie gebunden, beim nächsten
+   *  Wiederherstellen spurlos verschwunden. Weg damit — den Grund sagt der Toast. */
+  window.TMSBridge.sessionCreateFailed = function (cardId) {
+    delete bound[cardId];
+    delete byCard[cardId];
+    if (terms[cardId]) { try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {} delete terms[cardId]; }
+    if (typeof window.removeTerminalCard === 'function') window.removeTerminalCard(cardId);
+  };
+
   window.TMSBridge.sessionClosed = function (sessionId) {
     var cardId = cardOf(sessionId);
     if (!cardId) return;
