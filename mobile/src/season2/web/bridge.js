@@ -1188,6 +1188,17 @@
     if (managerMic) managerMic.classList.remove('is-recording');
     if (typeof window.renderManagerChat === 'function') window.renderManagerChat();
   };
+  // Name + Profilbild des Managers (aus den Persönlichkeits-Einstellungen). Der
+  // Kopf sitzt in der Shell, darum bei Änderung die ganze Manager-Ansicht neu
+  // aufbauen — passiert selten (nur wenn man Name/Bild ändert).
+  window.TMSBridge.setManagerPersona = function (name, avatar) {
+    var p = window.TMS_DATA.manager.persona || (window.TMS_DATA.manager.persona = {});
+    p.name = name || 'Manager';
+    p.avatar = avatar || null;
+    if (typeof window.renderManagerShell === 'function' && typeof window.rerenderManager === 'function') {
+      window.rerenderManager();
+    }
+  };
   window.TMSBridge.setCloud = function (projects) {
     window.TMS_DATA.cloudProjects = projects;
     if (typeof window.renderCloudGroups === 'function') window.renderCloudGroups();

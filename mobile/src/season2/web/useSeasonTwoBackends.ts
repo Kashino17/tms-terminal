@@ -26,9 +26,10 @@ function toMockupMessages(messages: ManagerMessage[], streaming: string) {
     text: m.text,
     _id: m.id || `msg${i}`,
   }));
-  // A streaming answer is just the bubble that is still growing.
+  // A streaming answer is just the bubble that is still growing. Marked so the
+  // chat header can show "tippt …" while it grows.
   if (streaming) {
-    out.push({ type: 'text', from: 'manager', time: '', text: streaming, _id: 'streaming' });
+    out.push({ type: 'text', from: 'manager', time: '', text: streaming, _id: 'streaming', _streaming: true } as never);
   }
   return out;
 }
@@ -36,11 +37,20 @@ function toMockupMessages(messages: ManagerMessage[], streaming: string) {
 export function useManagerBridge(wsService: WebSocketService | null, ready: boolean, call: Call) {
   useEffect(() => {
     if (!ready) return;
+    let lastPersona = '';
     const push = () => {
       const s = useManagerStore.getState();
       const chat = s.activeChat;
       const msgs = (s.messages ?? []).filter((m) => !m.targetSessionId || m.targetSessionId === chat);
       call('setManager', toMockupMessages(msgs, s.streamingText ?? ''));
+      // Name + Profilbild nur schicken, wenn sie sich wirklich geändert haben —
+      // sie bauen die ganze Manager-Ansicht neu auf, das soll nicht bei jeder
+      // eintreffenden Nachricht passieren.
+      const persona = JSON.stringify([s.personality.agentName, s.personality.agentAvatarUri ?? null]);
+      if (persona !== lastPersona) {
+        lastPersona = persona;
+        call('setManagerPersona', s.personality.agentName || 'Manager', s.personality.agentAvatarUri ?? null);
+      }
     };
     push();
     return useManagerStore.subscribe(push);
