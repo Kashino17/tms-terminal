@@ -1021,9 +1021,37 @@
   .mgr-header { flex: none; display: flex; align-items: center; gap: 12px; padding: 2px 2px 12px; }
   .mgr-header__meta { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .mgr-header__name { font-size: 17px; font-weight: 700; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mgr-header__status { font-size: 12px; color: var(--ok); font-weight: 600; display: flex; align-items: center; gap: 5px; }
+  .mgr-header__sub { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .mgr-header__status { font-size: 12px; color: var(--ok); font-weight: 600; display: flex; align-items: center; gap: 5px; flex: none; }
   .mgr-header__status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .mgr-header__status.is-typing { color: var(--accent); }
+  /* Aktuelles KI-Modell — kleiner Chip, Antippen öffnet die Auswahl. */
+  .mgr-model { flex: none; display: inline-flex; align-items: center; gap: 4px; max-width: 46vw;
+    padding: 2px 9px 2px 7px; border-radius: 999px; font: 600 11px var(--font-ui); color: var(--text-dim);
+    background: rgba(var(--overlay-rgb),.07); border: 1px solid var(--glass-border); transition: background 200ms var(--spring); }
+  .mgr-model:active { background: rgba(var(--overlay-rgb),.14); }
+  .mgr-model .ic { color: var(--accent); flex: none; }
+  .mgr-model span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mgr-menu-btn { flex: none; margin-left: auto; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); background: transparent; transition: background 200ms var(--spring); }
+  .mgr-menu-btn:active { background: rgba(var(--overlay-rgb),.1); }
+
+  /* Anhang-Knopf + Miniatur-Reihe über der Eingabezeile. */
+  .attach-btn { flex: none; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); background: transparent; transition: color 200ms var(--spring), background 200ms var(--spring); }
+  .attach-btn:active { background: rgba(var(--overlay-rgb),.1); color: var(--accent); }
+  .chat-attach-row:not([hidden]) { flex: none; display: flex; gap: 8px; padding: 8px 2px 2px; overflow-x: auto; scrollbar-width: none; }
+  .chat-attach-row::-webkit-scrollbar { display: none; }
+  .attach-thumb { position: relative; flex: none; width: 56px; height: 56px; border-radius: 12px; overflow: hidden; border: 1px solid var(--glass-border); background: rgba(var(--overlay-rgb),.06); }
+  .attach-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .attach-thumb__x { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.6); color: #fff; font-size: 12px; line-height: 1; }
+  .attach-thumb.is-uploading::after { content: ''; position: absolute; inset: 0; background: rgba(0,0,0,.45); }
+  /* Modell-Auswahl-Zeilen im Bottom-Sheet. */
+  .mgr-model-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; }
+  .mgr-model-row.is-on { color: var(--accent); background: rgba(var(--accent-rgb),.16); border-color: rgba(var(--accent-rgb),.4); }
+  .mgr-model-row[data-off] { opacity: .55; }
+  .mgr-model-row__check { flex: none; font-weight: 800; }
   /* Profilbild — Bild oder Initialen; ein Kreis, überall gleich. */
   .mgr-ava { flex: none; border-radius: 50%; object-fit: cover; display: inline-flex; align-items: center; justify-content: center;
     background: linear-gradient(135deg, rgba(var(--accent-rgb),.9), rgba(var(--accent-warm-rgb),.9)); color: var(--on-accent);
@@ -5153,8 +5181,16 @@
         ${managerAvatarHtml(42)}
         <div class="mgr-header__meta">
           <strong class="mgr-header__name">${escapeHtml(p.name || 'Manager')}</strong>
-          <small class="mgr-header__status" id="mgrPresence">online</small>
+          <span class="mgr-header__sub">
+            <span class="mgr-header__status" id="mgrPresence">online</span>
+            <button class="mgr-model" id="mgrModelChip" type="button" aria-label="KI-Modell wählen">
+              ${icon('bolt', 12)}<span id="mgrModelName">${escapeHtml(activeManagerModelName())}</span>
+            </button>
+          </span>
         </div>
+        <button class="mgr-menu-btn" id="mgrMenuBtn" type="button" aria-label="Mehr">
+          <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></svg>
+        </button>
       </div>
       <div class="screen-col manager-col">
         <div class="subtabs" id="managerTabs">
@@ -5166,7 +5202,9 @@
           <div class="chat-scroll" id="managerChat"></div>
           <div id="managerArtifacts" hidden></div>
           <div id="managerMemory" hidden></div>
+          <div class="chat-attach-row" id="managerAttachRow" hidden></div>
           <div class="chat-input-row" id="managerInputRow">
+            <button class="attach-btn" id="managerAttachBtn" aria-label="Bild anhängen">${icon('camera', 19)}</button>
             <input type="text" id="managerTextInput" placeholder="Nachricht an Manager…" autocomplete="off">
             <button class="mic-btn glass" id="managerMicBtn" aria-label="Sprachnachricht aufnehmen">${icon('mic')}</button>
           </div>
@@ -5304,6 +5342,97 @@
     });
   }
 
+  // Name des aktiven Modells für den Kopf-Chip.
+  function activeManagerModelName() {
+    const m = TMS_DATA.manager;
+    const p = (m.providers || []).find(x => x.id === m.activeProvider);
+    return (p && p.name) || 'Modell';
+  }
+  window.activeManagerModelName = activeManagerModelName;
+
+  // Miniaturbilder über der Eingabezeile — was gerade angehängt ist.
+  function renderManagerAttachments() {
+    const row = document.getElementById('managerAttachRow');
+    if (!row) return;
+    const list = TMS_DATA.manager.attachments || [];
+    row.hidden = list.length === 0;
+    row.innerHTML = list.map((a, i) => `
+      <div class="attach-thumb${a.uploading ? ' is-uploading' : ''}">
+        <img src="${a.uri || a.url || ''}" alt="">
+        <button class="attach-thumb__x" data-rm="${i}" aria-label="Entfernen">✕</button>
+      </div>`).join('');
+    row.querySelectorAll('[data-rm]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const i = Number(btn.dataset.rm);
+        TMS_DATA.manager.attachments.splice(i, 1);
+        renderManagerAttachments();
+        if (typeof window.managerRemoveAttachment === 'function') window.managerRemoveAttachment(i);
+      });
+    });
+  }
+  window.renderManagerAttachments = renderManagerAttachments;
+
+  // Ein leichtes Bottom-Sheet für die Kopf-Menüs (⋮ und Modell-Auswahl).
+  function managerSheet(title, bodyHtml, onClick) {
+    const old = document.getElementById('mgrSheet');
+    if (old) old.remove();
+    const el = document.createElement('div');
+    el.id = 'mgrSheet';
+    el.style.cssText = 'position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,.45)';
+    el.innerHTML = `<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px;max-height:75vh;overflow-y:auto">
+      <div style="font-weight:800;font-size:13px;padding:2px 4px 8px">${escapeHtml(title)}</div>
+      ${bodyHtml}
+      <button class="btn-chip" data-mgr="close">Abbrechen</button></div>`;
+    document.body.appendChild(el);
+    el.addEventListener('click', e => {
+      const btn = e.target.closest('[data-mgr]');
+      if (!btn) { if (e.target === el) el.remove(); return; }
+      if (btn.dataset.mgr === 'close') { el.remove(); return; }
+      onClick(btn, el);
+    });
+    return el;
+  }
+
+  function openManagerModelSheet() {
+    const m = TMS_DATA.manager;
+    const rows = (m.providers || []).map(p => {
+      const on = p.id === m.activeProvider;
+      const off = p.configured === false;
+      return `<button class="btn-chip mgr-model-row${on ? ' is-on' : ''}" data-mgr="pick" data-id="${escapeHtml(p.id)}"${off ? ' data-off="1"' : ''}>
+        <span>${escapeHtml(p.name)}${off ? ' <small style="opacity:.6">— nicht eingerichtet</small>' : ''}</span>
+        ${on ? '<span class="mgr-model-row__check">✓</span>' : ''}</button>`;
+    }).join('') || '<div style="padding:10px 4px;color:var(--text-dim);font-size:12.5px">Keine Modelle gemeldet.</div>';
+    managerSheet('KI-Modell', rows, (btn, el) => {
+      if (btn.dataset.mgr !== 'pick') return;
+      if (btn.dataset.off) { toast('Modell ist nicht eingerichtet'); return; }
+      const id = btn.dataset.id;
+      el.remove();
+      // Demo sofort umstellen; die Bridge bestätigt später über setManagerProviders.
+      m.activeProvider = id;
+      const nameEl = document.getElementById('mgrModelName');
+      if (nameEl) nameEl.textContent = activeManagerModelName();
+      if (typeof window.managerSelectProvider === 'function') window.managerSelectProvider(id);
+    });
+  }
+
+  function openManagerMenu() {
+    const body = `
+      <button class="btn-chip" data-mgr="model">KI-Modell wählen · ${escapeHtml(activeManagerModelName())}</button>
+      <button class="btn-chip btn-chip--danger" data-mgr="clear">Chat-Verlauf löschen</button>`;
+    managerSheet(TMS_DATA.manager.persona?.name || 'Manager', body, (btn, el) => {
+      if (btn.dataset.mgr === 'model') { el.remove(); openManagerModelSheet(); }
+      else if (btn.dataset.mgr === 'clear') {
+        // Zweistufig: erst „Wirklich?", dann löschen — kein versehentlicher Verlust.
+        if (btn.dataset.armed !== '1') { btn.dataset.armed = '1'; btn.textContent = 'Wirklich löschen?'; return; }
+        el.remove();
+        TMS_DATA.manager.messages = [];
+        renderManagerChat();
+        if (typeof window.managerClearChat === 'function') window.managerClearChat();
+        else toast('Verlauf gelöscht');
+      }
+    });
+  }
+
   function wireManagerInput() {
     const micBtn = document.getElementById('managerMicBtn');
     micBtn.addEventListener('click', () => {
@@ -5311,11 +5440,11 @@
       micBtn.classList.add('is-recording');
       setTimeout(() => {
         micBtn.classList.remove('is-recording');
-        const now = new Date();
-        const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-        TMS_DATA.manager.messages.push({ type: 'voice', from: 'user', time, duration: 8, transcript: null, transcribing: true, _id: 'msg' + TMS_DATA.manager.messages.length });
-        renderManagerChat();
-      }, 2000);
+        // Demo: Transkription landet in der Eingabezeile (nicht direkt gesendet).
+        const input = document.getElementById('managerTextInput');
+        input.value = (input.value ? input.value + ' ' : '') + '(Demo-Transkript)';
+        input.focus();
+      }, 1500);
     });
     document.getElementById('managerTextInput').addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
@@ -5328,7 +5457,19 @@
       input.value = '';
       renderManagerChat();
     });
+    // Kopf-Menü, Modell-Chip, Anhang.
+    const menuBtn = document.getElementById('mgrMenuBtn');
+    if (menuBtn) menuBtn.addEventListener('click', openManagerMenu);
+    const modelChip = document.getElementById('mgrModelChip');
+    if (modelChip) modelChip.addEventListener('click', openManagerModelSheet);
+    const attachBtn = document.getElementById('managerAttachBtn');
+    if (attachBtn) attachBtn.addEventListener('click', () => {
+      if (typeof window.managerAttach === 'function') window.managerAttach();
+      else toast('Demo: Bild anhängen');
+    });
+    renderManagerAttachments();
   }
+  window.openManagerModelSheet = openManagerModelSheet;
 
   function initManagerScreen() {
     renderManagerShell();
@@ -5343,6 +5484,9 @@
       const btn = document.querySelector(`#managerTabs button[data-tab="${state.managerTab}"]`);
       if (btn) btn.click();
     }
+    // Nach jedem Aufbau die reale Eingabe-Verdrahtung nachziehen (die frischen
+    // Elemente tragen sonst nur das Demo-Verhalten).
+    if (typeof window.__tmsWireManagerInput === 'function') window.__tmsWireManagerInput();
   }
   window.rerenderManager = initManagerScreen;
 

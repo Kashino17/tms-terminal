@@ -12,6 +12,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, BackHandler, View, StyleSheet } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
@@ -69,6 +71,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const updateUrl = useRef<string | null>(null);
   /** Zeitpunkt des letzten Zurück auf dem Startbildschirm — für „nochmal zum Beenden". */
   const lastBackAt = useRef(0);
+  /** Bilder, die an die nächste Manager-Nachricht angehängt werden (Upload-Pfade + lokale URI). */
+  const mgrAttachments = useRef<Array<{ uri: string; path?: string }>>([]);
   const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, onScreen: false, tabId: null, url: '', rect: null });
   /** Griff auf den nativen Browser — Neuladen und Cache-Leeren gehen nur über ihn. */
   const browserRef = useRef<BrowserHandle>(null);
@@ -87,6 +91,44 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     const js = `window.TMSBridge && window.TMSBridge.${fn}(${args.map((a) => JSON.stringify(a)).join(',')});true;`;
     webRef.current?.injectJavaScript(js);
   }, []);
+
+  // Bild(er) für die Manager-Nachricht wählen, hochladen, als Miniaturen zeigen.
+  // Spiegelt den klassischen Screen: Upload nach /upload/screenshot; die lokale
+  // URI bleibt für die Vorschau, der Serverpfad geht später mit der Nachricht raus.
+  const pickManagerImages = useCallback(async () => {
+    if (!server || !token) { call('toast', 'Kein Server verbunden'); return; }
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) { call('toast', 'Galerie-Berechtigung fehlt'); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsMultipleSelection: true,
+      selectionLimit: 4,
+    });
+    if (result.canceled || !result.assets.length) return;
+    // Erst als „lädt" zeigen, damit man sofort sieht, dass es ankommt.
+    const pending = result.assets.map((a) => ({ uri: a.uri, uploading: true }));
+    mgrAttachments.current = [...mgrAttachments.current, ...pending.map(({ uri }) => ({ uri }))];
+    call('setManagerAttachments', [...mgrAttachments.current.slice(0, -pending.length), ...pending]);
+    for (let i = 0; i < result.assets.length; i++) {
+      const asset = result.assets[i];
+      try {
+        const data = asset.base64
+          ?? (await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
+        const res = await fetch(`http://${server.host}:${server.port}/upload/screenshot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ filename: asset.fileName ?? `manager_${i}.jpg`, data, mimeType: 'image/jpeg' }),
+        });
+        const json = res.ok ? await res.json() : null;
+        const idx = mgrAttachments.current.findIndex((a) => a.uri === asset.uri);
+        if (idx >= 0 && json?.path) mgrAttachments.current[idx].path = json.path;
+      } catch {
+        call('toast', 'Ein Bild konnte nicht hochgeladen werden');
+      }
+    }
+    call('setManagerAttachments', mgrAttachments.current);
+  }, [server, token, call]);
 
   // Manager answers must land in the store even while another screen is open.
   useManagerWire(wsService);
@@ -341,14 +383,17 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       const card = micCard.current;
       micCard.current = null;
       if (micDiscard.current) { micDiscard.current = false; return; } // abgebrochen
-      if (card === MANAGER_MIC) sendManager(text);
+      // Manager-Diktat landet in der Eingabezeile zum Prüfen/Ändern, nicht
+      // sofort gesendet — sonst könnte man ein Fehl-Transkript nicht mehr fangen.
+      if (card === MANAGER_MIC) call('injectManagerInput', text);
       else call('dictationResult', card ?? '', text);
     },
     onError: (msg: string) => {
       const card = micCard.current;
       micCard.current = null;
       micDiscard.current = false;
-      if (card !== MANAGER_MIC) call('dictationResult', card ?? '', '');
+      if (card === MANAGER_MIC) call('managerMicStopped');
+      else call('dictationResult', card ?? '', '');
       call('toast', msg);
     },
   });
@@ -439,14 +484,44 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         Clipboard.setStringAsync(payload.text ?? '').then(() => call('toast', 'Kopiert'));
         break;
 
-      case 'manager:send':
-        sendManager(payload.text);
+      case 'manager:send': {
+        // Angehängte Bilder als Serverpfade an den Text hängen, damit das Modell
+        // sie lesen kann (wie im klassischen Screen), dann die Anhänge leeren.
+        const paths = mgrAttachments.current.map((a) => a.path).filter(Boolean);
+        const text = paths.length
+          ? `${payload.text}\n\n[Angehängte Bilder: ${paths.join(', ')}]`
+          : payload.text;
+        sendManager(text);
+        if (mgrAttachments.current.length) {
+          mgrAttachments.current = [];
+          call('setManagerAttachments', []);
+        }
         break;
+      }
 
       case 'manager:mic':
         micCard.current = MANAGER_MIC;
         micDiscard.current = false;
         toggleMic();
+        break;
+
+      case 'manager:setProvider':
+        useManagerStore.getState().setActiveProvider(payload.providerId);
+        wsService?.send({ type: 'manager:set_provider', payload: { providerId: payload.providerId } });
+        break;
+
+      case 'manager:clear':
+        // Nur den sichtbaren Verlauf des aktiven Chats — Gedächtnis bleibt.
+        useManagerStore.getState().clearSessionMessages(useManagerStore.getState().activeChat);
+        break;
+
+      case 'manager:attach':
+        pickManagerImages();
+        break;
+
+      case 'manager:removeAttachment':
+        mgrAttachments.current = mgrAttachments.current.filter((_, i) => i !== payload.index);
+        call('setManagerAttachments', mgrAttachments.current);
         break;
 
       case 'cloud:open':
@@ -535,7 +610,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, sendManager, loadCloud, loadCloudDetail, sheets, fileExplorer]);
+  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, sendManager, loadCloud, loadCloudDetail, sheets, fileExplorer, pickManagerImages]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"

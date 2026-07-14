@@ -975,24 +975,63 @@
     el.parentNode.replaceChild(clone, el);
     return clone;
   }
-  var managerInput = rewire('managerTextInput');
-  var managerMic = rewire('managerMicBtn');
-  if (managerInput) {
-    managerInput.addEventListener('keydown', function (e) {
-      if (e.key !== 'Enter') return;
-      var text = managerInput.value.trim();
-      if (!text) return;
-      managerInput.value = '';
-      post('manager:send', { text: text });
-    });
+  var managerMic = null;
+  // Die reale Verdrahtung der Eingabezeile. Ein voller Shell-Rebuild (neuer
+  // Name/Provider) erzeugt frische Elemente — deshalb steckt sie in einer
+  // Funktion, die initManagerScreen nach jedem Aufbau erneut aufruft.
+  function wireManagerInputReal() {
+    var managerInput = rewire('managerTextInput');
+    managerMic = rewire('managerMicBtn');
+    if (managerInput) {
+      managerInput.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        var text = managerInput.value.trim();
+        if (!text) return;
+        managerInput.value = '';
+        post('manager:send', { text: text });
+      });
+    }
+    if (managerMic) {
+      managerMic.addEventListener('click', function () {
+        if (managerMic.classList.contains('is-recording')) { post('manager:mic', { stop: true }); return; }
+        managerMic.classList.add('is-recording');
+        post('manager:mic', { stop: false });
+      });
+    }
   }
-  if (managerMic) {
-    managerMic.addEventListener('click', function () {
-      if (managerMic.classList.contains('is-recording')) { post('manager:mic', { stop: true }); return; }
-      managerMic.classList.add('is-recording');
-      post('manager:mic', { stop: false });
-    });
-  }
+  window.__tmsWireManagerInput = wireManagerInputReal;
+  wireManagerInputReal();
+
+  // Kopf-Menü-Aktionen: das Mockup ruft diese window-Hooks, die Bridge macht
+  // daraus echte Server-/RN-Aufrufe (sonst blieben es Demo-Toasts).
+  window.managerSelectProvider = function (id) { post('manager:setProvider', { providerId: id }); };
+  window.managerClearChat = function () { post('manager:clear', {}); };
+  window.managerAttach = function () { post('manager:attach', {}); };
+  window.managerRemoveAttachment = function (index) { post('manager:removeAttachment', { index: index }); };
+
+  // RN → Seite: Modelle, Anhänge, Transkript in die Eingabezeile.
+  window.TMSBridge.setManagerProviders = function (providers, active) {
+    window.TMS_DATA.manager.providers = providers || [];
+    window.TMS_DATA.manager.activeProvider = active || '';
+    var nameEl = document.getElementById('mgrModelName');
+    if (nameEl && typeof window.activeManagerModelName === 'function') nameEl.textContent = window.activeManagerModelName();
+  };
+  window.TMSBridge.setManagerAttachments = function (list) {
+    window.TMS_DATA.manager.attachments = list || [];
+    if (typeof window.renderManagerAttachments === 'function') window.renderManagerAttachments();
+  };
+  // Transkript des Manager-Mikros: landet in der Eingabezeile zum Prüfen/Ändern,
+  // NICHT sofort gesendet.
+  window.TMSBridge.injectManagerInput = function (text) {
+    var el = document.getElementById('managerTextInput');
+    if (!el || !text) return;
+    el.value = (el.value ? el.value + ' ' : '') + text;
+    if (managerMic) managerMic.classList.remove('is-recording');
+    el.focus();
+  };
+  window.TMSBridge.managerMicStopped = function () {
+    if (managerMic) managerMic.classList.remove('is-recording');
+  };
 
   // ══ Cloud ═════════════════════════════════════════════════════════════════
   var origOpenCloud = window.openCloudDetail;

@@ -38,6 +38,7 @@ export function useManagerBridge(wsService: WebSocketService | null, ready: bool
   useEffect(() => {
     if (!ready) return;
     let lastPersona = '';
+    let lastProviders = '';
     const push = () => {
       const s = useManagerStore.getState();
       const chat = s.activeChat;
@@ -50,6 +51,13 @@ export function useManagerBridge(wsService: WebSocketService | null, ready: bool
       if (persona !== lastPersona) {
         lastPersona = persona;
         call('setManagerPersona', s.personality.agentName || 'Manager', s.personality.agentAvatarUri ?? null);
+      }
+      // Modell-Liste + aktives Modell, nur bei echter Änderung — sie aktualisiert
+      // nur den Kopf-Chip, kein teurer Rebuild.
+      const provs = JSON.stringify([s.providers, s.activeProvider]);
+      if (provs !== lastProviders) {
+        lastProviders = provs;
+        call('setManagerProviders', s.providers ?? [], s.activeProvider ?? '');
       }
     };
     push();
