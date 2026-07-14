@@ -446,6 +446,14 @@
   #dock[data-page="nav"]  .dock-page--term, #dock[data-page="rec"] .dock-page--term { transform: translateX(30%); }
   #dock[data-page="term"] .dock-page--nav,  #dock[data-page="rec"] .dock-page--nav  { transform: translateX(-30%); }
   #dock[data-page="term"] .dock-page--rec,  #dock[data-page="nav"] .dock-page--rec  { transform: translateY(60%); }
+  /* Browser-Seite: kommt wie die Terminal-Zeile von rechts hereingeschoben. */
+  .dock-page--web { gap: 3px; padding: 0 2px; }
+  #dock[data-page="nav"] .dock-page--web, #dock[data-page="term"] .dock-page--web,
+  #dock[data-page="rec"] .dock-page--web { transform: translateX(30%); }
+  #dock[data-page="web"] .dock-page--nav  { transform: translateX(-30%); }
+  #dock[data-page="web"] .dock-page--term { transform: translateX(30%); }
+  #dock[data-page="web"] .dock-page--rec  { transform: translateY(60%); }
+  #browserUrlInput { -webkit-user-select: text; user-select: text; touch-action: pan-y; }
   .dock-switch-hint { position: absolute; left: 50%; bottom: 2px; width: 34px; height: 3px; border-radius: 2px;
     background: rgba(var(--overlay-rgb),.22); transform: translateX(-50%); opacity: 0; transition: opacity 200ms ease; }
   #dock.is-switching .dock-switch-hint { opacity: 1; }
@@ -1177,6 +1185,10 @@
   .browser-address__reload { flex: none; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color 200ms var(--spring), background 200ms var(--spring); }
   .browser-address__reload:active { background: rgba(var(--overlay-rgb),.1); color: var(--accent); }
   .browser-address__reload .ic { width: var(--icon-sm); height: var(--icon-sm); }
+  /* In der Bottom-Bar sind die Knöpfe schmaler — sonst frisst die Navigation
+     das Adressfeld auf einem 380er-Display auf. */
+  .dock-page--web .browser-nav-btn { width: 38px; height: 38px; }
+  .dock-page--web .browser-address { height: 40px; background: rgba(var(--overlay-rgb),.08); border: 1px solid var(--glass-border); }
   .browser-progress { height: 3px; margin: 8px 4px 0; border-radius: 3px; overflow: hidden; opacity: 0; transition: opacity 200ms ease-out; }
   .browser-progress.is-active { opacity: 1; }
   .browser-progress__bar { height: 100%; width: 0%; border-radius: 3px; background: linear-gradient(90deg, rgba(var(--accent-rgb),.6), var(--accent)); }
@@ -1594,6 +1606,20 @@
     <button class="term-input-btn term-mic-btn" id="dockMicBtn" aria-label="Diktieren"></button>
     <button class="term-input-btn term-send-btn" id="dockSendBtn" aria-label="Senden"></button>
     <button class="term-input-btn term-keys-btn" id="dockKeysBtn" aria-label="Tasten"></button>
+  </div>
+
+  <!-- Browser-Leiste: dieselbe Bar, andere Seite. Adressfeld + Navigation
+       wohnen unten am Daumen, genau wie die Terminal-Eingabezeile. -->
+  <div class="dock-page dock-page--web" id="dockWeb">
+    <button class="browser-nav-btn" id="browserBackBtn" aria-label="Zurück" disabled></button>
+    <button class="browser-nav-btn" id="browserFwdBtn" aria-label="Vor" disabled></button>
+    <div class="browser-address">
+      <span class="browser-address__incognito" id="browserIncognito" title="Inkognito · isoliert · keine Cookies"></span>
+      <input type="text" id="browserUrlInput" class="browser-address__input" placeholder="Suchen oder Adresse eingeben…" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
+      <button class="browser-address__reload" id="browserReloadBtn" aria-label="Neu laden" type="button"></button>
+    </div>
+    <button class="browser-nav-btn browser-tabs-btn" id="browserTabsBtn" aria-label="Tabs anzeigen"><span class="browser-tabs-btn__count" id="browserTabCount">1</span></button>
+    <button class="browser-nav-btn" id="browserMenuBtn" aria-label="Browser-Menü"></button>
   </div>
 
   <div class="dock-page dock-page--rec" id="dockRec">
@@ -2494,7 +2520,9 @@
     if (name !== 'prayer') stopPrayerTick();
     if (name !== 'terminals') { cancelDictation(); closeAllListRails(); closeKeysPanel(); }
     if (name !== 'browser') stopBrowserProgressTimers();
-    if (name !== 'terminals' && typeof setDockPage === 'function') setDockPage('nav');
+    // Terminals und Browser haben ihre eigene Bar-Seite (Eingabezeile bzw.
+    // Adressleiste) — überall sonst ist die Navigation die Voreinstellung.
+    if (name !== 'terminals' && name !== 'browser' && typeof setDockPage === 'function') setDockPage('nav');
     if (typeof renderTermSwitcher === 'function') setTimeout(renderTermSwitcher, 0);
     const prev = currentScreen;
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
@@ -6195,26 +6223,21 @@
   // ---- Shell + chrome wiring ----
   function renderBrowserShell() {
     const host = document.querySelector('[data-screen="browser"]');
+    // Die Leiste selbst steht nicht mehr hier, sondern als vierte Seite in der
+    // Bottom-Bar (#dockWeb). Im Screen bleibt nur Inhalt + Ladebalken, der
+    // direkt über der Bar sitzt — dort, wo jetzt das Adressfeld ist.
     host.innerHTML = `
       <div class="browser-col">
-        <div class="browser-chrome">
-          <div class="browser-toolbar">
-            <button class="browser-nav-btn" id="browserBackBtn" aria-label="Zurück" disabled>${icon('chevronLeft')}</button>
-            <button class="browser-nav-btn" id="browserFwdBtn" aria-label="Vor" disabled>${icon('chevronRight')}</button>
-            <div class="browser-address glass">
-              <span class="browser-address__incognito" title="Inkognito · isoliert · keine Cookies">${icon('incognito', 15)}</span>
-              <input type="text" id="browserUrlInput" class="browser-address__input" placeholder="Suchen oder Adresse eingeben…" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
-              <button class="browser-address__reload" id="browserReloadBtn" aria-label="Neu laden" type="button">${icon('replay', 16)}</button>
-            </div>
-            <button class="browser-nav-btn browser-tabs-btn" id="browserTabsBtn" aria-label="Tabs anzeigen"><span class="browser-tabs-btn__count" id="browserTabCount">1</span></button>
-            <button class="browser-nav-btn" id="browserMenuBtn" aria-label="Browser-Menü">${icon('dots')}</button>
-          </div>
-          <div class="browser-progress" id="browserProgress"><div class="browser-progress__bar" id="browserProgressBar"></div></div>
-        </div>
         <div class="browser-content" id="browserContent"></div>
+        <div class="browser-progress" id="browserProgress"><div class="browser-progress__bar" id="browserProgressBar"></div></div>
       </div>`;
   }
   function wireBrowserChrome() {
+    document.getElementById('browserBackBtn').innerHTML = icon('chevronLeft');
+    document.getElementById('browserFwdBtn').innerHTML = icon('chevronRight');
+    document.getElementById('browserIncognito').innerHTML = icon('incognito', 15);
+    document.getElementById('browserReloadBtn').innerHTML = icon('replay', 16);
+    document.getElementById('browserMenuBtn').innerHTML = icon('dots');
     document.getElementById('browserBackBtn').addEventListener('click', browserGoBack);
     document.getElementById('browserFwdBtn').addEventListener('click', browserGoForward);
     document.getElementById('browserReloadBtn').addEventListener('click', () => browserReload());
@@ -6235,7 +6258,8 @@
     createBrowserTab(true);
     renderBrowserActiveTab({ progress: false });
   }
-  SCREEN_HOOKS.browser = syncBrowserChrome;
+  // Auf dem Browser-Tab ist die Adressleiste die Voreinstellung der Bottom-Bar.
+  SCREEN_HOOKS.browser = () => { setDockPage('web'); syncBrowserChrome(); };
 
   // ============================================================
   // Settings screen
@@ -6683,6 +6707,7 @@
   const dockPages = {
     nav: document.getElementById('dockNav'),
     term: document.getElementById('dockTerm'),
+    web: document.getElementById('dockWeb'),
     rec: document.getElementById('dockRec'),
   };
   document.getElementById('dockMicBtn').innerHTML = icon('mic');
@@ -6701,6 +6726,7 @@
     Object.keys(dockPages).forEach(k => dockPages[k].classList.toggle('is-active', k === page));
     if (page === 'nav') positionDockPill();
     if (page === 'term') syncDockTerminal();
+    if (page === 'web') syncBrowserChrome();
     // Nav- und Terminal-Seite sind unterschiedlich hoch: was auf der Bar steht
     // (die Tastenleiste) muss die neue Höhe kennen, sonst überlappt sie.
     syncDockHeight();
@@ -6905,10 +6931,15 @@
     setTimeout(() => { dockSuppressClick = false; }, 400);
     const input = document.getElementById('dockInput');
     if (input) input.blur();
+    const urlField = document.getElementById('browserUrlInput');
+    if (urlField) urlField.blur();
     dockEl.classList.add('is-switching');
     setTimeout(() => dockEl.classList.remove('is-switching'), 260);
     if (navigator.vibrate) navigator.vibrate(8);
-    setDockPage(state.dockPage === 'nav' ? 'term' : 'nav');
+    // Der Wisch schaltet zwischen Navigation und der Seite, die zum aktuellen
+    // Screen gehört: Eingabezeile im Terminal, Adressleiste im Browser.
+    const own = currentScreen === 'browser' ? 'web' : 'term';
+    setDockPage(state.dockPage === 'nav' ? own : 'nav');
   });
   dockEl.addEventListener('click', e => {
     if (!dockSuppressClick) return;
