@@ -296,6 +296,9 @@
     font: 600 12px var(--font-ui); color: var(--text); white-space: nowrap; }
   .island-swipe-hint.is-visible { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
   .island-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-gentle) var(--spring-gentle); }
+  /* Ohne diese Zeile bleibt die Rasterzeile auf 0fr — der Körper der Insel
+     klappte nie auf, sichtbar war nur der Streifen aus seiner Polsterung. */
+  #statusHeader.is-expanded .island-body { grid-template-rows: 1fr; }
   .island-body__inner {
     overflow: hidden; min-height: 0;
     opacity: 0; transform: translateY(-6px);
@@ -341,6 +344,45 @@
   .island-activity-feed { font: 12.5px/1.5 var(--font-mono); color: var(--text-dim); background: rgba(var(--well-rgb),var(--well-a)); border-radius: var(--radius-sm); padding: 10px 12px; white-space: pre-wrap; word-break: break-word; }
   .island-activity-feed .sgr-g { color: var(--ok); } .island-activity-feed .sgr-r { color: var(--err); } .island-activity-feed .sgr-b { font-weight: 700; } .island-activity-feed .sgr-d { opacity: .6; }
   .island-close-hint { text-align: center; font-size: 11px; color: var(--text-dim); padding-top: 12px; opacity: .7; }
+  /* ── Aufgeklappte Insel: Kopf, Status-Karte, Menü ────────────────────────
+     Die Insel ist jetzt auch das, was früher „Mehr" in der Bottom-Bar war —
+     sie trägt deshalb einen echten Kopf (mit ✕), eine zusammengefasste
+     Status-Karte und darunter die Menüzeilen mit Chevron. */
+  .isl-head { display: flex; align-items: center; gap: 11px; padding: 2px 2px 14px; }
+  .isl-head__icon { flex: none; width: 34px; height: 34px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
+    background: rgba(var(--accent-rgb),.18); color: var(--accent); }
+  .isl-head__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .isl-head__text strong { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .isl-head__text small { font-size: 11.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .isl-close { flex: none; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); background: rgba(var(--overlay-rgb),.10); transition: background 200ms var(--spring), transform 150ms var(--spring); }
+  .isl-close:active { transform: scale(.9); background: rgba(var(--overlay-rgb),.18); }
+
+  .isl-card { border-radius: 16px; overflow: hidden; margin-bottom: 14px;
+    background: rgba(var(--overlay-rgb),.05); border: 1px solid var(--glass-border); }
+  .isl-stat { display: flex; align-items: center; gap: 10px; padding: 12px 12px;
+    border-top: 1px solid rgba(var(--overlay-rgb),.07); }
+  .isl-stat:first-child { border-top: none; }
+  .isl-stat--live { background: rgba(var(--ok-rgb),.10); }
+  .isl-stat__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+  .isl-stat__label { font-size: 13.5px; font-weight: 600; }
+  .isl-stat__val { margin-left: auto; font-size: 12.5px; color: var(--text-dim); font-variant-numeric: tabular-nums;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+  .isl-stat__act { flex: none; font-size: 12.5px; font-weight: 700; color: var(--text-dim); }
+  .isl-stat__act.is-ok { color: var(--ok); }
+
+  .isl-menu { display: flex; flex-direction: column; margin-top: 14px; }
+  .isl-item { display: flex; align-items: center; gap: 12px; padding: 12px 8px; border-radius: 12px; text-align: left;
+    color: var(--text); transition: background 200ms var(--spring); }
+  .isl-item:active { background: rgba(var(--overlay-rgb),.09); }
+  .isl-item > .ic { flex: none; color: var(--text-dim); }
+  /* Das Label nimmt den Platz — dadurch steht der Wert (falls es einen gibt)
+     immer direkt links vom Chevron, egal ob die Zeile einen hat oder nicht. */
+  .isl-item__label { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; }
+  .isl-item__val { flex: none; font-size: 12.5px; color: var(--text-dim); }
+  .isl-item__chev { flex: none; display: flex; color: var(--text-dim); opacity: .5; transform: rotate(-90deg); }
+  .isl-item--danger > .ic, .isl-item--danger .isl-item__label { color: var(--err); }
+
   /* Quick-access sun/moon theme toggle inside the expanded island card. */
   .island-theme-toggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 2px; border-top: 1px solid rgba(var(--overlay-rgb),.08); color: var(--text); font: 600 13.5px var(--font-ui); text-align: left; cursor: pointer; border-radius: 10px; transition: background 200ms var(--spring); }
   .island-theme-toggle:active { background: rgba(var(--overlay-rgb),.08); }
@@ -1484,10 +1526,6 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/></svg>
     <span>Browser</span>
   </button>
-  <button class="dock-btn" data-nav="mehr">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>
-    <span>Mehr</span>
-  </button>
   </div>
 
   <div class="dock-page dock-page--term" id="dockTerm">
@@ -2037,23 +2075,63 @@
         <span class="island-row__name">${escapeHtml(s.name)}</span>
         <span class="island-row__meta">${escapeHtml(STATUS_LABELS[s.status] || s.status)}</span>
       </div>`).join('');
+    const chev = '<span class="isl-item__chev">' + icon('chevron', 15) + '</span>';
+    const online = connSrv.status === 'online';
     statusDetailBody.innerHTML = `
-      <h4>Aktive Sitzungen</h4>
-      ${sessionRows}
+      <div class="isl-head">
+        <span class="isl-head__icon">${icon('bolt', 17)}</span>
+        <span class="isl-head__text">
+          <strong>${escapeHtml(connSrv.name)}</strong>
+          <small>${escapeHtml(connSrv.host || 'TMS Terminal')}</small>
+        </span>
+        <button class="isl-close" id="islandCloseBtn" type="button" aria-label="Schließen">${icon('x', 15)}</button>
+      </div>
+
+      <div class="isl-card">
+        <div class="isl-stat ${online ? 'isl-stat--live' : ''}">
+          <span class="isl-stat__dot" style="background:${online ? 'var(--ok)' : 'var(--text-dim)'}"></span>
+          <span class="isl-stat__label">Verbindung</span>
+          <span class="isl-stat__val">${connSrv.latency != null ? connSrv.latency + ' ms' : '—'}</span>
+          <span class="isl-stat__act ${online ? 'is-ok' : ''}">${online ? 'Online' : 'Offline'}</span>
+        </div>
+        <div class="isl-stat">
+          <span class="isl-stat__dot" style="background:var(--accent-warm)"></span>
+          <span class="isl-stat__label">${escapeHtml(np.name)}</span>
+          <span class="isl-stat__val">${escapeHtml(np.time)}</span>
+          <span class="isl-stat__act">in ${np.countdown}</span>
+        </div>
+        <div class="isl-stat">
+          <span class="isl-stat__dot" style="background:${building ? 'var(--warn)' : 'var(--text-dim)'}"></span>
+          <span class="isl-stat__label">Deploy</span>
+          <span class="isl-stat__val">${building ? escapeHtml(building.name) : 'keiner aktiv'}</span>
+          <span class="isl-stat__act">${building ? 'läuft …' : ''}</span>
+        </div>
+      </div>
+
+      <div class="isl-menu">
+        <button class="isl-item" data-isl="tools" type="button">
+          ${icon('tools', 18)}<span class="isl-item__label">Werkzeuge</span>${chev}
+        </button>
+        <button class="isl-item" data-isl="prayer" type="button">
+          ${icon('moon', 18)}<span class="isl-item__label">Gebetszeiten</span>
+          <span class="isl-item__val">${escapeHtml(np.name)}</span>${chev}
+        </button>
+        <button class="isl-item" data-isl="theme" type="button">
+          ${state.theme === 'dark' ? icon('moon', 18) : icon('sun', 18)}<span class="isl-item__label">Erscheinungsbild</span>
+          <span class="isl-item__val">${state.theme === 'dark' ? 'Dunkel' : 'Hell'}</span>${chev}
+        </button>
+        <button class="isl-item" data-isl="settings" type="button">
+          ${icon('gear', 18)}<span class="isl-item__label">Einstellungen</span>${chev}
+        </button>
+        <button class="isl-item isl-item--danger" data-isl="lock" type="button">
+          ${icon('lock', 18)}<span class="isl-item__label">Sperren</span>${chev}
+        </button>
+      </div>
+
+      ${sessionRows ? `<h4>Aktive Sitzungen</h4>${sessionRows}` : ''}
+
       <h4>Agent-Aktivität</h4>
       <div class="island-activity-feed">${renderBufferLine(lastLine) || '—'}</div>
-      <h4>Verbindung</h4>
-      <div class="island-row"><span class="island-row__dot" style="background:var(--ok)"></span><span class="island-row__name">${escapeHtml(connSrv.name)} · ${connSrv.latency != null ? connSrv.latency + ' ms' : '—'}</span><span class="island-row__meta">${connSrv.status === 'online' ? 'Online' : 'Offline'}</span></div>
-      <h4>Nächstes Gebet</h4>
-      <div class="island-row"><span class="island-row__dot" style="background:var(--accent-warm)"></span><span class="island-row__name">${escapeHtml(np.name)} · ${escapeHtml(np.time)}</span><span class="island-row__meta">in ${np.countdown}</span></div>
-      <h4>Deploy</h4>
-      <div class="island-row"><span class="island-row__dot" style="background:var(--warn)"></span><span class="island-row__name">${building ? escapeHtml(building.name) : 'Keine aktiven Builds'}</span><span class="island-row__meta">${building ? 'Build läuft…' : ''}</span></div>
-      <h4>Erscheinungsbild</h4>
-      <button class="island-theme-toggle" id="islandThemeToggle" type="button" aria-label="Theme wechseln">
-        <span class="island-theme-toggle__icon">${state.theme === 'dark' ? icon('moon', 13) : icon('sun', 13)}</span>
-        <span>${state.theme === 'dark' ? 'Dunkel' : 'Hell'}</span>
-        <span class="island-theme-toggle__meta">Antippen zum Wechseln</span>
-      </button>
     `;
     statusDetailBody.querySelectorAll('[data-session]').forEach(row => {
       row.addEventListener('click', e => {
@@ -2064,9 +2142,21 @@
         focusTerminal(id);
       });
     });
-    document.getElementById('islandThemeToggle').addEventListener('click', e => {
+    document.getElementById('islandCloseBtn').addEventListener('click', e => {
       e.stopPropagation();
-      toggleTheme();
+      closeIsland();
+    });
+    // Das frühere „Mehr" der Bottom-Bar wohnt jetzt hier: die Insel ist die
+    // Stelle, an der ohnehin schon alles Übergreifende steht.
+    statusDetailBody.querySelectorAll('[data-isl]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const to = btn.dataset.isl;
+        if (to === 'theme') { toggleTheme(); renderIslandExpanded(); return; }
+        closeIsland();
+        if (to === 'lock') lockApp();
+        else show(to);
+      });
     });
   }
 
