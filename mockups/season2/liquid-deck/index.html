@@ -406,7 +406,10 @@
      ============================================================ */
   #dock { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); transform: translateX(-50%); z-index: 40;
     width: min(calc(100vw - 24px), 520px); padding: 6px; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
-    border: 1px solid var(--glass-border); border-radius: 999px; overflow: hidden; touch-action: pan-y;
+    /* touch-action: none — sonst wertet Android das Hochwischen auf der Leiste
+       als Scroll-Versuch, kapert die Geste und schickt nur ein pointercancel.
+       Das Eingabefeld setzt sich sein pan-y selbst wieder (siehe .term-input). */
+    border: 1px solid var(--glass-border); border-radius: 999px; overflow: hidden; touch-action: none;
     transition: transform 340ms var(--spring), box-shadow 340ms var(--spring); }
   /* Long-press lifts the bar: the sign that it can now be swiped to the other one. */
   /* Langes Drücken darf NIRGENDS Androids Textauswahl oder sein App-Menü öffnen.
@@ -1497,7 +1500,6 @@
   </section>
 </main>
 
-<div class="pull-hint glass" id="pullHint" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Spotlight</span></div>
 
 <div class="term-switcher" id="termSwitcher" hidden aria-label="Terminal wechseln">
   <div class="term-switcher__label" id="tsLabel"><span></span></div>
@@ -2474,26 +2476,12 @@
     toast('Kommt in Teil 2');
   }
 
-  // Dock buttons: short tap navigates as usual; long-press (550ms) on ANY
-  // dock button opens Spotlight instead — a secondary universal-search
-  // gesture living alongside the primary pull-down-to-search gesture.
+  // Ein Knopf der Leiste tut genau eine Sache: navigieren. Das lange Drücken
+  // öffnete hier früher Spotlight — es ist raus, damit die Leiste dem Wischen
+  // nach oben (Seitenwechsel) gehört und nichts mehr um dieselbe Geste streitet.
   function wireNav() {
-    const LONG_PRESS_MS = 550;
     document.querySelectorAll('#dock [data-nav]').forEach(btn => {
-      const name = btn.dataset.nav;
-      let timer = null, longPressed = false;
-      btn.addEventListener('pointerdown', () => {
-        longPressed = false;
-        timer = setTimeout(() => { longPressed = true; openSpotlight(); }, LONG_PRESS_MS);
-      });
-      const cancelTimer = () => clearTimeout(timer);
-      btn.addEventListener('pointerup', cancelTimer);
-      btn.addEventListener('pointerleave', cancelTimer);
-      btn.addEventListener('pointercancel', cancelTimer);
-      btn.addEventListener('click', e => {
-        if (longPressed) { e.preventDefault(); longPressed = false; return; }
-        handleDockTap(name);
-      });
+      btn.addEventListener('click', () => handleDockTap(btn.dataset.nav));
     });
   }
 
@@ -6411,73 +6399,6 @@
     return section;
   }
 
-  function wirePullToSpotlight() {
-    const screensEl = document.getElementById('screens');
-    const hint = document.getElementById('pullHint');
-    let tracking = false, pulled = false, startX = 0, startY = 0, scrollEl = null, pointerId = null;
-    function beginTrack(target, x, y) {
-      if (document.body.classList.contains('is-locked')) return false;
-      // The terminals spatial stack + rail own horizontal swipe / drag-reorder
-      // gestures, and the ⊞ overview grid is a transient overlay you're
-      // actively tapping into — never arm the vertical pull-to-search
-      // tracker there. Liste is a plain vertical scroller and is NOT
-      // excluded: findScrollTarget() below resolves #termList as its own
-      // nearest scrollable ancestor, so pull-to-search still works exactly
-      // like on every other screen (scrolled list ≠ trigger; pull at top does).
-      if (target.closest('.workspace, .overview-grid, #dock, .keys-panel')) return false;
-      if (typeof dockSwitching !== 'undefined' && dockSwitching) return false;
-      const section = target.closest('section[data-screen]:not([hidden])');
-      if (!section) return false;
-      const el = findScrollTarget(target, section);
-      if (el.scrollTop > 0) return false;
-      tracking = true; pulled = false; startX = x; startY = y; scrollEl = el;
-      return true;
-    }
-    function moveTrack(x, y) {
-      if (!tracking) return;
-      if (scrollEl.scrollTop > 0) { tracking = false; hint.classList.remove('show'); return; }
-      const dy = y - startY, dx = x - startX;
-      if (dy <= 0 || dy < 1.5 * Math.abs(dx)) { hint.classList.remove('show'); return; }
-      if (dy > 30) hint.classList.add('show'); else hint.classList.remove('show');
-      pulled = dy > 78;
-    }
-    function endTrack() {
-      if (tracking && pulled) openSpotlight();
-      tracking = false; pulled = false;
-      hint.classList.remove('show');
-    }
-    // Mouse/pen path — pointer events. TOUCH IS EXCLUDED here and handled by
-    // the touch-event listeners below: on a real device the browser claims a
-    // vertical pan for native scrolling after ~10px of slop and kills the
-    // pointer stream with pointercancel, long before the 78px pull threshold —
-    // the tracker never saw a full pull on the phone. Passive touchmove keeps
-    // streaming even while the browser scrolls/overscrolls natively, so the
-    // touch path observes the entire gesture. All tracking state is shared;
-    // a mouse drag and a touch pan cannot be interleaved in practice.
-    screensEl.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'touch') return;
-      if (beginTrack(e.target, e.clientX, e.clientY)) pointerId = e.pointerId;
-    }, { passive: true });
-    screensEl.addEventListener('pointermove', e => {
-      if (e.pointerType === 'touch' || !tracking || e.pointerId !== pointerId) return;
-      moveTrack(e.clientX, e.clientY);
-    }, { passive: true });
-    screensEl.addEventListener('pointerup', e => { if (e.pointerType !== 'touch') endTrack(); });
-    screensEl.addEventListener('pointercancel', e => { if (e.pointerType !== 'touch') endTrack(); });
-    screensEl.addEventListener('touchstart', e => {
-      if (e.touches.length !== 1) { tracking = false; hint.classList.remove('show'); return; }
-      const t = e.touches[0];
-      beginTrack(e.target, t.clientX, t.clientY);
-    }, { passive: true });
-    screensEl.addEventListener('touchmove', e => {
-      if (!tracking || e.touches.length !== 1) return;
-      const t = e.touches[0];
-      moveTrack(t.clientX, t.clientY);
-    }, { passive: true });
-    screensEl.addEventListener('touchend', endTrack, { passive: true });
-    screensEl.addEventListener('touchcancel', endTrack, { passive: true });
-  }
-
   // ============================================================
   // Init
   // ============================================================
@@ -6696,50 +6617,62 @@
     e.target.blur();
   });
 
-  // Lange drücken hebt die Leiste an, dann wischen (oder die andere antippen).
-  let dockHold = null, dockSwitching = false, dockSwitched = false, dockStartX = 0, dockSuppressClick = false;
-  dockEl.addEventListener('pointerdown', e => {
-    // In der Terminal-Leiste ist die Mitte das Eingabefeld — dort MUSS das
-    // lange Drücken trotzdem greifen, sonst bliebe kaum Fläche dafür übrig.
-    // Nur wer gerade wirklich tippt, wird in Ruhe gelassen.
+  // Vom UNTEREN BILDSCHIRMRAND nach oben wischen wechselt die Leiste
+  // (Navigation ⇄ Eingabezeile). Vorher musste man sie lange drücken — das lag
+  // über jedem Knopf und war nicht zu erraten. Die Geste beginnt bewusst nur
+  // unten: alles ab der Oberkante der Leiste abwärts zählt als Rand, überall
+  // sonst passiert nichts.
+  const DOCK_SWIPE_UP = 34;   // px, ab hier zählt es als Wisch
+  let dockSwiping = false, dockSwitched = false, dockStartX = 0, dockStartY = 0, dockSuppressClick = false;
+
+  /** Liegt der Punkt im unteren Rand — also auf der Leiste oder darunter? */
+  function inBottomEdge(y) {
+    const r = dockEl.getBoundingClientRect();
+    if (!r.height) return false;          // Leiste versteckt (Sperrbildschirm)
+    return y >= r.top - 8;
+  }
+  document.addEventListener('pointerdown', e => {
+    dockSwiping = false;
+    if (document.body.classList.contains('is-locked')) return;
+    if (!inBottomEdge(e.clientY)) return;
+    // Wer gerade wirklich IM Eingabefeld tippt, wird in Ruhe gelassen — dort
+    // gehört das Wischen dem Cursor-Schrubber.
     const input = document.getElementById('dockInput');
-    // Nur wer gerade wirklich IM Eingabefeld tippt, wird in Ruhe gelassen —
-    // überall sonst auf der Leiste greift das lange Drücken.
     if (document.activeElement === input && e.target.closest('#dockInput')) return;
+    dockSwiping = true;
+    dockSwitched = false;
     dockStartX = e.clientX;
-    dockHold = setTimeout(() => {
-      dockSwitching = true;
-      dockSuppressClick = true;
-      if (input) input.blur();
-      dockEl.classList.add('is-switching');
-      if (navigator.vibrate) navigator.vibrate(8);
-    }, 420);
+    dockStartY = e.clientY;
   });
-  // Das lange Drücken darf den Knopf darunter nicht mit auslösen.
+  document.addEventListener('pointermove', e => {
+    // Ein Wisch = EIN Wechsel. Ohne die Sperre kippt die Leiste während einer
+    // einzigen Bewegung mehrfach hin und her.
+    if (!dockSwiping || dockSwitched) return;
+    const up = dockStartY - e.clientY;              // nach oben = positiv
+    const side = Math.abs(e.clientX - dockStartX);
+    if (up < DOCK_SWIPE_UP || up < side) return;    // eindeutig nach oben, nicht quer
+    dockSwitched = true;
+    dockSuppressClick = true;                       // der Knopf darunter darf nicht mit auslösen
+    // Sicherheitsnetz: kommt nach dem Wisch gar kein Klick mehr (Android
+    // verschluckt ihn oft), verfällt die Sperre von selbst — sonst fräße sie
+    // den nächsten ECHTEN Knopfdruck.
+    setTimeout(() => { dockSuppressClick = false; }, 400);
+    const input = document.getElementById('dockInput');
+    if (input) input.blur();
+    dockEl.classList.add('is-switching');
+    setTimeout(() => dockEl.classList.remove('is-switching'), 260);
+    if (navigator.vibrate) navigator.vibrate(8);
+    setDockPage(state.dockPage === 'nav' ? 'term' : 'nav');
+  });
   dockEl.addEventListener('click', e => {
     if (!dockSuppressClick) return;
     dockSuppressClick = false;
     e.stopPropagation();
     e.preventDefault();
   }, true);
-  dockEl.addEventListener('pointermove', e => {
-    // Ein Wisch = EIN Wechsel. Ohne die Sperre kippt die Leiste während einer
-    // einzigen Bewegung mehrfach hin und her.
-    if (!dockSwitching || dockSwitched || Math.abs(e.clientX - dockStartX) < 45) return;
-    dockSwitched = true;
-    setDockPage(state.dockPage === 'nav' ? 'term' : 'nav');
-  });
-  function endDockHold() {
-    clearTimeout(dockHold);
-    if (!dockSwitching) return;
-    // Gedrückt gehalten, aber nicht gewischt? Dann ist das Antippen der Wechsel.
-    if (!dockSwitched) setDockPage(state.dockPage === 'nav' ? 'term' : 'nav');
-    dockSwitching = false;
-    dockSwitched = false;
-    dockEl.classList.remove('is-switching');
-  }
-  dockEl.addEventListener('pointerup', endDockHold);
-  dockEl.addEventListener('pointercancel', endDockHold);
+  function endDockSwipe() { dockSwiping = false; }
+  document.addEventListener('pointerup', endDockSwipe);
+  document.addEventListener('pointercancel', endDockSwipe);
 
   // ── Diktat: die Leiste wird zur Aufnahme.
   let recStart = 0, recTick = null;
@@ -6921,7 +6854,6 @@
   wireNav();
   wireTermToolsSheet();
   wireSpotlight();
-  wirePullToSpotlight();
 
   initLiveSession();
   startLatencyTicker();
