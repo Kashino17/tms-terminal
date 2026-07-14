@@ -46,6 +46,11 @@ export function useManagerWire(wsService: WebSocketService | null) {
         case 'manager:status':
           store.setEnabled(m.payload.enabled);
           break;
+        case 'manager:model_loading':
+          // Ein lokales Modell wird gerade in LM Studio geladen — der Chip/das
+          // Sheet zeigt "lädt…", bis loading:false zurückkommt.
+          store.setModelLoading(m.payload?.loading ? m.payload.providerId : null);
+          break;
         case 'manager:personality_configured':
           if (m.payload) {
             store.setPersonality(m.payload);

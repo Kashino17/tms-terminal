@@ -133,6 +133,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // Manager answers must land in the store even while another screen is open.
   useManagerWire(wsService);
   const sendManager = useManagerBridge(wsService, ready, call);
+
+  // Modell-Liste holen, sobald verbunden. Der Server schickt sie sonst nur bei
+  // manager:toggle (das Season 2 nie sendet) — daher stand im Modell-Sheet
+  // "Keine Modelle gemeldet". Reine Abfrage, startet den Manager nicht.
+  useEffect(() => {
+    if (!wsService || state !== 'connected') return;
+    wsService.send({ type: 'manager:get_providers' });
+  }, [wsService, state]);
   const { loadProjects: loadCloud, loadDetail: loadCloudDetail } = useCloudBridge(ready, call);
   const activeSessionId = useTerminalStore((s) =>
     server ? (s.tabs[server.id] ?? []).find((t) => t.active)?.sessionId ?? (s.tabs[server.id] ?? [])[0]?.sessionId : undefined,
@@ -551,10 +559,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         toggleMic();
         break;
 
-      case 'manager:setProvider':
-        useManagerStore.getState().setActiveProvider(payload.providerId);
-        wsService?.send({ type: 'manager:set_provider', payload: { providerId: payload.providerId } });
+      case 'manager:setProvider': {
+        // Ein lokales Modell wird erst geladen, bevor es aktiv ist — optimistisch
+        // vorstellen, aber den Ladezustand zeigen, bis der Server bestätigt.
+        const st = useManagerStore.getState();
+        st.setActiveProvider(payload.providerId);
+        if (typeof payload.contextLength === 'number') st.setModelLoading(payload.providerId);
+        wsService?.send({
+          type: 'manager:set_provider',
+          payload: {
+            providerId: payload.providerId,
+            ...(typeof payload.contextLength === 'number' ? { contextLength: payload.contextLength } : {}),
+          },
+        });
         break;
+      }
 
       case 'manager:clear':
         // Nur den sichtbaren Verlauf des aktiven Chats — Gedächtnis bleibt.

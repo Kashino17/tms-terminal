@@ -5378,6 +5378,10 @@
   // Name des aktiven Modells für den Kopf-Chip.
   function activeManagerModelName() {
     const m = TMS_DATA.manager;
+    if (m.modelLoadingId) {
+      const lp = (m.providers || []).find(x => x.id === m.modelLoadingId);
+      return (lp ? lp.name : 'Modell') + ' · lädt…';
+    }
     const p = (m.providers || []).find(x => x.id === m.activeProvider);
     return (p && p.name) || 'Modell';
   }
@@ -5426,27 +5430,107 @@
     return el;
   }
 
+  // Welches lokale Modell ist im Sheet gerade aufgeklappt (Context-Regler sichtbar)?
+  let modelSheetExpandedId = null;
+  // Zuletzt am Regler gewählter Wert je Modell — überlebt ein Neuaufbau des Sheets
+  // (wenn währenddessen frische Provider-/Ladedaten eintreffen).
+  const modelSheetCtx = {};
+  const CTX_MIN = 4096;
+
+  function clampCtx(v, max) { return Math.max(CTX_MIN, Math.min(max || 32768, Math.round(v) || CTX_MIN)); }
+
   function openManagerModelSheet() {
     const m = TMS_DATA.manager;
-    const rows = (m.providers || []).map(p => {
+    const loadingId = m.modelLoadingId || '';
+    const list = m.providers || [];
+    const body = list.map(p => {
       const on = p.id === m.activeProvider;
       const off = p.configured === false;
-      return `<button class="btn-chip mgr-model-row${on ? ' is-on' : ''}" data-mgr="pick" data-id="${escapeHtml(p.id)}"${off ? ' data-off="1"' : ''}>
-        <span>${escapeHtml(p.name)}${off ? ' <small style="opacity:.6">— nicht eingerichtet</small>' : ''}</span>
+      const isLocal = !!p.isLocal;
+      const loading = loadingId === p.id;
+      const unavailable = isLocal && p.available === false; // in LM Studio nicht installiert
+      const dis = off || unavailable;
+      const meta = loading ? ' <small style="opacity:.7">— lädt…</small>'
+        : off ? ' <small style="opacity:.6">— nicht eingerichtet</small>'
+        : unavailable ? ' <small style="opacity:.6">— in LM Studio nicht gefunden</small>'
+        : isLocal && p.maxContext ? ` <small style="opacity:.55">— bis ${(p.maxContext/1024).toFixed(0)}k Ctx</small>` : '';
+      const row = `<button class="btn-chip mgr-model-row${on ? ' is-on' : ''}" data-mgr="${isLocal ? 'expand' : 'pick'}" data-id="${escapeHtml(p.id)}"${dis ? ' data-off="1"' : ''}>
+        <span>${escapeHtml(p.name)}${meta}</span>
         ${on ? '<span class="mgr-model-row__check">✓</span>' : ''}</button>`;
+      // Aufgeklapptes lokales Modell: Context-Regler + Zahlenfeld + Laden-Knopf.
+      if (isLocal && modelSheetExpandedId === p.id && !dis) {
+        const max = p.maxContext || 32768;
+        const def = modelSheetCtx[p.id] != null ? modelSheetCtx[p.id]
+          : clampCtx(p.loadedContext || 8192, max);
+        modelSheetCtx[p.id] = def;
+        const ctl = `<div class="mgr-ctx" data-ctx-for="${escapeHtml(p.id)}" style="padding:8px 6px 12px;display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-dim)">
+            <span>Context-Window</span>
+            <input type="number" class="mgr-ctx-num" min="${CTX_MIN}" max="${max}" step="1024" value="${def}"
+              style="width:96px;text-align:right;padding:6px 8px;border-radius:9px;background:rgba(var(--well-rgb),var(--well-a));border:1px solid var(--glass-border);color:var(--text);font:600 13px var(--font-mono)">
+          </div>
+          <input type="range" class="mgr-ctx-slider" min="${CTX_MIN}" max="${max}" step="1024" value="${def}" style="width:100%">
+          <button class="btn-chip is-primary mgr-ctx-load" data-mgr="load" data-id="${escapeHtml(p.id)}"${loading ? ' disabled style="opacity:.6"' : ''}>
+            ${loading ? 'lädt…' : `Laden mit <span class="mgr-ctx-load-n">${def.toLocaleString('de-DE')}</span> Tokens`}</button>
+        </div>`;
+        return row + ctl;
+      }
+      return row;
     }).join('') || '<div style="padding:10px 4px;color:var(--text-dim);font-size:12.5px">Keine Modelle gemeldet.</div>';
-    managerSheet('KI-Modell', rows, (btn, el) => {
-      if (btn.dataset.mgr !== 'pick') return;
-      if (btn.dataset.off) { toast('Modell ist nicht eingerichtet'); return; }
+
+    managerSheet('KI-Modell', body, (btn, el) => {
       const id = btn.dataset.id;
-      el.remove();
-      // Demo sofort umstellen; die Bridge bestätigt später über setManagerProviders.
-      m.activeProvider = id;
-      const nameEl = document.getElementById('mgrModelName');
-      if (nameEl) nameEl.textContent = activeManagerModelName();
-      if (typeof window.managerSelectProvider === 'function') window.managerSelectProvider(id);
+      if (btn.dataset.mgr === 'pick') {
+        if (btn.dataset.off) { toast('Modell ist nicht eingerichtet'); return; }
+        el.remove();
+        m.activeProvider = id;
+        const nameEl = document.getElementById('mgrModelName');
+        if (nameEl) nameEl.textContent = activeManagerModelName();
+        if (typeof window.managerSelectProvider === 'function') window.managerSelectProvider(id);
+        return;
+      }
+      if (btn.dataset.mgr === 'expand') {
+        if (btn.dataset.off) { toast('Modell ist in LM Studio nicht verfügbar'); return; }
+        modelSheetExpandedId = (modelSheetExpandedId === id) ? null : id; // toggeln
+        openManagerModelSheet(); // neu aufbauen mit/ohne Regler
+        return;
+      }
+      if (btn.dataset.mgr === 'load') {
+        const ctx = clampCtx(modelSheetCtx[id] || CTX_MIN, (list.find(x => x.id === id) || {}).maxContext);
+        el.remove();
+        m.activeProvider = id;
+        const nameEl = document.getElementById('mgrModelName');
+        if (nameEl) nameEl.textContent = activeManagerModelName();
+        if (typeof window.managerSelectProvider === 'function') window.managerSelectProvider(id, ctx);
+        return;
+      }
     });
+
+    // Regler + Zahlenfeld synchron halten (kein Delegations-Weg für input-Events).
+    const sheet = document.getElementById('mgrSheet');
+    if (!sheet) return;
+    const wrap = sheet.querySelector('.mgr-ctx');
+    if (!wrap) return;
+    const id = wrap.getAttribute('data-ctx-for');
+    const max = (list.find(x => x.id === id) || {}).maxContext || 32768;
+    const slider = wrap.querySelector('.mgr-ctx-slider');
+    const num = wrap.querySelector('.mgr-ctx-num');
+    const loadN = wrap.querySelector('.mgr-ctx-load-n');
+    const sync = (v, from) => {
+      const val = clampCtx(v, max);
+      modelSheetCtx[id] = val;
+      if (from !== 'slider') slider.value = val;
+      if (from !== 'num') num.value = val;
+      if (loadN) loadN.textContent = val.toLocaleString('de-DE');
+    };
+    if (slider) slider.addEventListener('input', () => sync(+slider.value, 'slider'));
+    if (num) num.addEventListener('change', () => sync(+num.value, 'num'));
   }
+  // RN kann das offene Sheet mit frischen Daten (Ladezustand, echte Context-Länge)
+  // neu bauen — ohne die aktuelle Regler-Position zu verlieren (modelSheetCtx).
+  window.__tmsRefreshModelSheet = function () {
+    if (document.getElementById('mgrSheet') && document.querySelector('.mgr-model-row')) openManagerModelSheet();
+  };
 
   function openManagerMenu() {
     const body = `

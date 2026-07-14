@@ -1018,7 +1018,11 @@
 
   // Kopf-Menü-Aktionen: das Mockup ruft diese window-Hooks, die Bridge macht
   // daraus echte Server-/RN-Aufrufe (sonst blieben es Demo-Toasts).
-  window.managerSelectProvider = function (id) { post('manager:setProvider', { providerId: id }); };
+  window.managerSelectProvider = function (id, contextLength) {
+    var payload = { providerId: id };
+    if (typeof contextLength === 'number' && contextLength > 0) payload.contextLength = contextLength;
+    post('manager:setProvider', payload);
+  };
   window.managerClearChat = function () { post('manager:clear', {}); };
   window.managerAttach = function () { post('manager:attach', {}); };
   window.managerRemoveAttachment = function (index) { post('manager:removeAttachment', { index: index }); };
@@ -1029,6 +1033,15 @@
     window.TMS_DATA.manager.activeProvider = active || '';
     var nameEl = document.getElementById('mgrModelName');
     if (nameEl && typeof window.activeManagerModelName === 'function') nameEl.textContent = window.activeManagerModelName();
+    // Ein offenes Modell-Sheet mit den frischen Daten (Ladezustand, Context) neu bauen.
+    if (typeof window.__tmsRefreshModelSheet === 'function') window.__tmsRefreshModelSheet();
+  };
+  /** providerId, dessen lokales Modell gerade geladen wird ('' = keins). */
+  window.TMSBridge.setManagerModelLoading = function (providerId) {
+    window.TMS_DATA.manager.modelLoadingId = providerId || '';
+    var nameEl = document.getElementById('mgrModelName');
+    if (nameEl && typeof window.activeManagerModelName === 'function') nameEl.textContent = window.activeManagerModelName();
+    if (typeof window.__tmsRefreshModelSheet === 'function') window.__tmsRefreshModelSheet();
   };
   window.TMSBridge.setManagerAttachments = function (list) {
     window.TMS_DATA.manager.attachments = list || [];
