@@ -1030,9 +1030,14 @@
     if (header && header.classList.contains('is-expanded')) return true;
     return !!document.querySelector('.sheet-wrap:not([hidden])');
   }
-  function browserVisible() {
+  /** Steht der Browser-Bildschirm vorn? (Overlays darüber zählen hier NICHT.) */
+  function browserVisible2() {
     var screen = document.querySelector('[data-screen="browser"]');
-    return !!screen && !screen.hidden && !overlayOpen();
+    return !!screen && !screen.hidden;
+  }
+  /** Und ist die Seite selbst gerade zu SEHEN — also kein Overlay darüber? */
+  function browserVisible() {
+    return browserVisible2() && !overlayOpen();
   }
   // Nur melden, wenn sich wirklich etwas geändert hat. Der Beobachter unten hängt
   // an den Body-Klassen — und die legt die Seite dauernd um (Ruhemodus, Tastenleiste,
@@ -1048,11 +1053,17 @@
   function syncNativeBrowser() {
     var tab = window.activeBrowserTab && window.activeBrowserTab();
     var host = document.getElementById('browserContent');
-    if (!tab || !host) { postSync({ visible: false }); return; }
+    if (!tab || !host) { postSync({ visible: false, onBrowserScreen: browserVisible2() }); return; }
     var page = tab.history[tab.historyIndex] || {};
     var r = host.getBoundingClientRect();
     postSync({
       visible: browserVisible() && page.kind !== 'newtab',
+      // WÄRME: „verdeckt" und „Bildschirm verlassen" sind zweierlei. Ein offenes
+      // Sheet blendet die Seite nur aus (sie bleibt am Leben, sonst lüde sie beim
+      // Schließen neu). Verlässt man den Browser aber ganz, muss der native
+      // WebView WEG — ausgeblendet führt Android sein JavaScript weiter aus, und
+      // ein Dashboard-Tab pollt und animiert dann stundenlang im Hintergrund.
+      onBrowserScreen: browserVisible2(),
       tabId: tab.id,
       url: page.kind === 'newtab' ? '' : page.url || '',
       // Auf ganze Pixel runden: Sub-Pixel-Zittern beim Scrollen erzeugte sonst
@@ -1096,7 +1107,9 @@
     origShow(name);
     post('nav:screen', { screen: name });
     if (name === 'browser') setTimeout(syncNativeBrowser, 80);
-    else post('browser:sync', { visible: false });
+    // Bildschirm verlassen: der native WebView wird nicht nur unsichtbar, er wird
+    // ABGEBAUT (onBrowserScreen: false) — sonst liefe seine Seite im Hintergrund weiter.
+    else post('browser:sync', { visible: false, onBrowserScreen: false });
   };
 
   // ══ Zurück-Geste ══════════════════════════════════════════════════════════

@@ -33,7 +33,15 @@ import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
 import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flushScrollback } from './web/scrollbackStore';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
 
-interface BrowserOverlay { visible: boolean; tabId: string | null; url: string; rect: BrowserRect | null }
+interface BrowserOverlay {
+  /** Wird die Seite gezeichnet? (Ein offenes Sheet blendet sie aus, ohne sie abzubauen.) */
+  visible: boolean;
+  /** Steht der Browser-Bildschirm vorn? Nein = WebView abbauen, sonst läuft seine Seite weiter. */
+  onScreen: boolean;
+  tabId: string | null;
+  url: string;
+  rect: BrowserRect | null;
+}
 
 interface Props {
   navigation: NativeStackNavigationProp<RootStackParamList, 'SeasonTwo'>;
@@ -61,7 +69,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const updateUrl = useRef<string | null>(null);
   /** Zeitpunkt des letzten Zurück auf dem Startbildschirm — für „nochmal zum Beenden". */
   const lastBackAt = useRef(0);
-  const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, tabId: null, url: '', rect: null });
+  const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, onScreen: false, tabId: null, url: '', rect: null });
   /** Griff auf den nativen Browser — Neuladen und Cache-Leeren gehen nur über ihn. */
   const browserRef = useRef<BrowserHandle>(null);
 
@@ -474,6 +482,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // aus und die Seite lädt beim Zurückkommen komplett neu.
         setBrowser((b) => ({
           visible: !!payload.visible,
+          onScreen: !!payload.onBrowserScreen,
           tabId: payload.tabId ?? (payload.rect ? null : b.tabId),
           url: payload.url ?? (payload.rect ? '' : b.url),
           rect: payload.rect ?? b.rect,
@@ -561,6 +570,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       <NativeBrowserLayer
         ref={browserRef}
         visible={browser.visible}
+        onScreen={browser.onScreen}
         tabId={browser.tabId}
         url={browser.url}
         rect={browser.rect}

@@ -21,7 +21,10 @@ export interface BrowserHandle {
 }
 
 interface Props {
+  /** Wird die Seite gezeichnet? (Overlay der Deck-Seite darüber → false.) */
   visible: boolean;
+  /** Steht der Browser-Bildschirm vorn? Sonst wird der WebView abgebaut. */
+  onScreen: boolean;
   tabId: string | null;
   url: string;
   rect: BrowserRect | null;
@@ -43,7 +46,7 @@ export function resolveUrl(input: string, serverHost?: string): string {
 }
 
 export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function NativeBrowserLayer(
-  { visible, tabId, url, rect, serverHost, onTitle }: Props,
+  { visible, onScreen, tabId, url, rect, serverHost, onTitle }: Props,
   ref,
 ) {
   const resolved = useMemo(() => resolveUrl(url, serverHost), [url, serverHost]);
@@ -73,7 +76,13 @@ export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function Nati
     },
   }), []);
 
-  if (!rect || !tabId || !resolved) return null;
+  // WÄRME: Ausgeblendet ist nicht ausgeschaltet. Ein Android-WebView führt sein
+  // JavaScript auch mit display:'none' weiter aus — ein Dashboard-Tab (Render,
+  // Vercel …) pollt und animiert dann stundenlang weiter, während man im Terminal
+  // sitzt. Verlässt man den Browser-Bildschirm, wird er deshalb ABGEBAUT. Nur für
+  // Overlays (Tab-Liste, Menü) bleibt er montiert und wird bloß versteckt — dort
+  // wäre ein Neuladen beim Zurückkommen die schlechtere Wahl.
+  if (!onScreen || !rect || !tabId || !resolved) return null;
 
   return (
     <View
