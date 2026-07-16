@@ -114,21 +114,15 @@ ws.handler ──[audio:transcription {text}]──► App   (ggf. nach rewriteP
 | Sidecar-Start-Timeout (90s) | `audio:error`, Status `failed` |
 | Leeres/kaputtes WAV | `audio:error` „Keine Audiodaten"/Decode-Fehler |
 
-## Offener Entscheidungspunkt: Chunk-Fallback-Policy (Teil 3)
+## Chunk-Fallback-Policy (Teil 3) — entschieden: **Policy A**
 
-Wenn ein Chunk endgültig (nach Retry) scheitert, was kommt an dieser Stelle in den Text?
-Trade-offs:
-
-- **A) Stiller Platzhalter** (`[…]` o.ä.) — Text bleibt lesbar, User sieht dass etwas fehlt,
-  aber die Lücke ist klar markiert. Gut fürs Diktat.
-- **B) Leerstring** — nahtloser Text, aber die Lücke ist unsichtbar; User merkt evtl. nicht,
-  dass ein Stück fehlt. Riskant bei wichtigem Inhalt.
-- **C) Fehler-Marker mit Zeit** (`[Fehler bei Min 3–4]`) — maximal transparent, aber
-  „technischer" im Fließtext.
+Wenn ein Chunk endgültig (nach 1 Retry) scheitert, kommt an dieser Stelle ein **stiller
+Platzhalter** (`[…]`) in den Text. Der Fließtext bleibt lesbar, die Lücke ist klar
+markiert, die restlichen Chunks werden normal weiter transkribiert.
 
 Diese Policy wird in `whisper_sidecar_mlx.py` in einer kleinen Funktion
 `chunk_failure_placeholder(chunk_index, total_chunks, error)` gekapselt, die der User
-selbst schreibt (5–10 Zeilen), da sie eine UX-Entscheidung ist.
+selbst schreibt (5–10 Zeilen). Watchdog-Grenze: **45s** (`CHUNK_STALL_TIMEOUT_MS`).
 
 ## Test-Strategie
 
