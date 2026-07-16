@@ -172,6 +172,13 @@
   }
   .glass--strong { background: var(--glass-strong); }
   .glass--dark { background: var(--term-surface); -webkit-backdrop-filter: var(--blur-term); backdrop-filter: var(--blur-term); }
+  /* WÄRME: Der Terminal-Boden ist der eine Ort, an dem ein Blur nicht sein darf.
+     Er ist zu 82% deckend (--term-surface) und liegt VOR einer bereits geblurrten
+     Glaskarte — sichtbar trägt der Filter also nichts bei (A/B geprüft: identisch).
+     Er kostet aber eine Filter-Fläche unter genau dem Element, das sich bei jeder
+     Ausgabe neu befüllt und ans Ende scrollt: der Compositor muss die Fläche dann
+     immer wieder anfassen. Blur bleibt auf der Karte, verschwindet vom Inhalt. */
+  .card-body.glass, .card-body.glass--dark { -webkit-backdrop-filter: none; backdrop-filter: none; }
   .glass::before {
     content: ''; position: absolute; left: 10%; right: 10%; top: 0; height: 1px;
     background: linear-gradient(90deg, transparent, rgba(var(--sheen-rgb),var(--sheen-a)), transparent);
@@ -254,13 +261,22 @@
      auch, einfach stehen. Die Insel selbst ist "fit-content": ohne die
      Aktivitätszeile zieht sie sich von selbst schmaler, statt die Icons in
      eine unverändert breite Hülle zu klatschen. */
-  .island-term-actions { display: none; align-items: center; gap: 3px; flex: none;
-    padding: 3px; border-radius: 11px; background: rgba(var(--overlay-rgb),.06); }
+  .island-term-actions { display: none; align-items: center; gap: 5px; flex: 1 1 auto;
+    justify-content: center; margin: 0 2px; }
   #statusHeader.is-terminal-mode .status-hd__activity { display: none; }
   #statusHeader.is-terminal-mode .island-term-actions { display: flex; }
-  .island-term-actions .overview-btn { width: 26px; height: 26px; border-radius: 8px; }
-  .island-term-actions .view-toggle { padding: 2px; gap: 2px; align-self: center; background: transparent; }
-  .island-term-actions .view-toggle__btn { min-height: 22px; padding: 4px 6px; }
+  /* Alle vier Insel-Knöpfe teilen sich EINE Grundform — gleiche Größe, gleiche
+     Rundung, gleicher Glasrahmen. Nur der Zustand (aktiv/gewählt) färbt sie
+     ein; vorher war „+" ein Glas-Chip, die Ansichts-Umschalter ein Segment
+     ohne Rahmen und die Übersicht wieder etwas anderes. */
+  .island-act { flex: none; width: 28px; height: 28px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center; color: var(--text-dim);
+    background: rgba(var(--overlay-rgb),.07); border: 1px solid var(--glass-border);
+    transition: color 200ms var(--spring), background 200ms var(--spring), transform 150ms var(--spring); }
+  .island-act .ic { width: 15px; height: 15px; }
+  .island-act:active { transform: scale(.9); }
+  .island-act.is-on,
+  .island-act[aria-selected="true"] { color: var(--accent); background: rgba(var(--accent-rgb),.2); border-color: rgba(var(--accent-rgb),.42); }
   /* Apple-artiger "Pop": ein kurzer Bounce, wenn der Insel-Inhalt wechselt
      (Bildschirmwechsel rein/raus aus Terminals) — Compositor-only. */
   @keyframes islandPop { 0% { transform: translateX(-50%) scale(1); } 45% { transform: translateX(-50%) scale(1.035); } 100% { transform: translateX(-50%) scale(1); } }
@@ -269,10 +285,11 @@
   /* Browser-Badge — grün wenn irgendwo ein Tab aktiv navigiert ist, auf
      jedem Bildschirm sichtbar (auch im Terminal-Modus), Tap springt direkt
      in den Browser. */
-  .island-browser-badge { display: none; flex: none; width: 26px; height: 26px; border-radius: 8px;
+  .island-browser-badge { display: none; flex: none; width: 28px; height: 28px; border-radius: 9px;
     align-items: center; justify-content: center; color: #22C55E;
     background: rgba(34,197,94,.16); border: 1px solid rgba(34,197,94,.35);
     transition: transform 150ms var(--spring); }
+  .island-browser-badge .ic { width: 15px; height: 15px; }
   .island-browser-badge:active { transform: scale(.9); }
   .island-browser-badge.is-visible { display: flex; }
 
@@ -286,6 +303,9 @@
     font: 600 12px var(--font-ui); color: var(--text); white-space: nowrap; }
   .island-swipe-hint.is-visible { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
   .island-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-gentle) var(--spring-gentle); }
+  /* Ohne diese Zeile bleibt die Rasterzeile auf 0fr — der Körper der Insel
+     klappte nie auf, sichtbar war nur der Streifen aus seiner Polsterung. */
+  #statusHeader.is-expanded .island-body { grid-template-rows: 1fr; }
   .island-body__inner {
     overflow: hidden; min-height: 0;
     opacity: 0; transform: translateY(-6px);
@@ -331,6 +351,45 @@
   .island-activity-feed { font: 12.5px/1.5 var(--font-mono); color: var(--text-dim); background: rgba(var(--well-rgb),var(--well-a)); border-radius: var(--radius-sm); padding: 10px 12px; white-space: pre-wrap; word-break: break-word; }
   .island-activity-feed .sgr-g { color: var(--ok); } .island-activity-feed .sgr-r { color: var(--err); } .island-activity-feed .sgr-b { font-weight: 700; } .island-activity-feed .sgr-d { opacity: .6; }
   .island-close-hint { text-align: center; font-size: 11px; color: var(--text-dim); padding-top: 12px; opacity: .7; }
+  /* ── Aufgeklappte Insel: Kopf, Status-Karte, Menü ────────────────────────
+     Die Insel ist jetzt auch das, was früher „Mehr" in der Bottom-Bar war —
+     sie trägt deshalb einen echten Kopf (mit ✕), eine zusammengefasste
+     Status-Karte und darunter die Menüzeilen mit Chevron. */
+  .isl-head { display: flex; align-items: center; gap: 11px; padding: 2px 2px 14px; }
+  .isl-head__icon { flex: none; width: 34px; height: 34px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
+    background: rgba(var(--accent-rgb),.18); color: var(--accent); }
+  .isl-head__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .isl-head__text strong { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .isl-head__text small { font-size: 11.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .isl-close { flex: none; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); background: rgba(var(--overlay-rgb),.10); transition: background 200ms var(--spring), transform 150ms var(--spring); }
+  .isl-close:active { transform: scale(.9); background: rgba(var(--overlay-rgb),.18); }
+
+  .isl-card { border-radius: 16px; overflow: hidden; margin-bottom: 14px;
+    background: rgba(var(--overlay-rgb),.05); border: 1px solid var(--glass-border); }
+  .isl-stat { display: flex; align-items: center; gap: 10px; padding: 12px 12px;
+    border-top: 1px solid rgba(var(--overlay-rgb),.07); }
+  .isl-stat:first-child { border-top: none; }
+  .isl-stat--live { background: rgba(var(--ok-rgb),.10); }
+  .isl-stat__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+  .isl-stat__label { font-size: 13.5px; font-weight: 600; }
+  .isl-stat__val { margin-left: auto; font-size: 12.5px; color: var(--text-dim); font-variant-numeric: tabular-nums;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+  .isl-stat__act { flex: none; font-size: 12.5px; font-weight: 700; color: var(--text-dim); }
+  .isl-stat__act.is-ok { color: var(--ok); }
+
+  .isl-menu { display: flex; flex-direction: column; margin-top: 14px; }
+  .isl-item { display: flex; align-items: center; gap: 12px; padding: 12px 8px; border-radius: 12px; text-align: left;
+    color: var(--text); transition: background 200ms var(--spring); }
+  .isl-item:active { background: rgba(var(--overlay-rgb),.09); }
+  .isl-item > .ic { flex: none; color: var(--text-dim); }
+  /* Das Label nimmt den Platz — dadurch steht der Wert (falls es einen gibt)
+     immer direkt links vom Chevron, egal ob die Zeile einen hat oder nicht. */
+  .isl-item__label { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; }
+  .isl-item__val { flex: none; font-size: 12.5px; color: var(--text-dim); }
+  .isl-item__chev { flex: none; display: flex; color: var(--text-dim); opacity: .5; transform: rotate(-90deg); }
+  .isl-item--danger > .ic, .isl-item--danger .isl-item__label { color: var(--err); }
+
   /* Quick-access sun/moon theme toggle inside the expanded island card. */
   .island-theme-toggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 2px; border-top: 1px solid rgba(var(--overlay-rgb),.08); color: var(--text); font: 600 13.5px var(--font-ui); text-align: left; cursor: pointer; border-radius: 10px; transition: background 200ms var(--spring); }
   .island-theme-toggle:active { background: rgba(var(--overlay-rgb),.08); }
@@ -354,7 +413,10 @@
      ============================================================ */
   #dock { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); transform: translateX(-50%); z-index: 40;
     width: min(calc(100vw - 24px), 520px); padding: 6px; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
-    border: 1px solid var(--glass-border); border-radius: 999px; overflow: hidden; touch-action: pan-y;
+    /* touch-action: none — sonst wertet Android das Hochwischen auf der Leiste
+       als Scroll-Versuch, kapert die Geste und schickt nur ein pointercancel.
+       Das Eingabefeld setzt sich sein pan-y selbst wieder (siehe .term-input). */
+    border: 1px solid var(--glass-border); border-radius: 999px; overflow: hidden; touch-action: none;
     transition: transform 340ms var(--spring), box-shadow 340ms var(--spring); }
   /* Long-press lifts the bar: the sign that it can now be swiped to the other one. */
   /* Langes Drücken darf NIRGENDS Androids Textauswahl oder sein App-Menü öffnen.
@@ -363,14 +425,15 @@
   html, body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
   input, textarea, .fx-preview { -webkit-user-select: text; user-select: text; }
   #dock { -webkit-user-select: none; user-select: none; }
-  /* Schreib-Modus: sobald die Tastatur offen ist, weichen ^C, Esc und das Mikro,
-     damit die Eingabezeile den Platz bekommt. Übrig bleiben Senden und Tasten. */
+  /* ^C und Esc sind aus der Zeile ausgezogen — sie wohnen jetzt in der
+     Tastenleiste bei den Pfeiltasten. Übrig bleiben Prompt, Feld, Mikro,
+     Senden und Tasten; die Zeile darf dafür auf drei Zeilen wachsen, und
+     die Knöpfe bleiben dabei unten am Feldrand kleben. */
+  .dock-page--term { align-items: flex-end; }
   .dock-page--term > * { transition: max-width 280ms var(--ease-out),
     opacity 160ms ease-out, margin 280ms var(--ease-out), transform 280ms var(--ease-out); }
-  /* Das Mikro bleibt beim Tippen sichtbar — Diktat IST Tippen per Stimme. */
-  #dock.is-typing .dock-page--term > .term-key {
-    max-width: 0; min-width: 0; width: 0; opacity: 0; margin: 0; padding: 0; border-width: 0;
-    transform: scale(.8); overflow: hidden; }
+  .dock-page--term > .term-input-btn { margin-bottom: 1px; }
+  .dock-page--term > .term-input-row__prompt { margin-bottom: 8px; }
   #dock.is-typing .term-input { font-size: 15px; }
   #dock.is-typing .term-input-row__prompt { margin-left: 4px; }
   #dockInput { -webkit-user-select: text; user-select: text; }
@@ -383,6 +446,14 @@
   #dock[data-page="nav"]  .dock-page--term, #dock[data-page="rec"] .dock-page--term { transform: translateX(30%); }
   #dock[data-page="term"] .dock-page--nav,  #dock[data-page="rec"] .dock-page--nav  { transform: translateX(-30%); }
   #dock[data-page="term"] .dock-page--rec,  #dock[data-page="nav"] .dock-page--rec  { transform: translateY(60%); }
+  /* Browser-Seite: kommt wie die Terminal-Zeile von rechts hereingeschoben. */
+  .dock-page--web { gap: 3px; padding: 0 2px; }
+  #dock[data-page="nav"] .dock-page--web, #dock[data-page="term"] .dock-page--web,
+  #dock[data-page="rec"] .dock-page--web { transform: translateX(30%); }
+  #dock[data-page="web"] .dock-page--nav  { transform: translateX(-30%); }
+  #dock[data-page="web"] .dock-page--term { transform: translateX(30%); }
+  #dock[data-page="web"] .dock-page--rec  { transform: translateY(60%); }
+  #browserUrlInput { -webkit-user-select: text; user-select: text; touch-action: pan-y; }
   .dock-switch-hint { position: absolute; left: 50%; bottom: 2px; width: 34px; height: 3px; border-radius: 2px;
     background: rgba(var(--overlay-rgb),.22); transform: translateX(-50%); opacity: 0; transition: opacity 200ms ease; }
   #dock.is-switching .dock-switch-hint { opacity: 1; }
@@ -407,8 +478,15 @@
   .dock-btn span { font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; }
   .dock-btn.active { color: var(--text); }
   .dock-btn:active { transform: scale(.94); }
-  /* The sliding glass pill IS the active-state background. */
-  #dockPill { position: absolute; top: 6px; bottom: 6px; left: 0; width: 58px; border-radius: var(--radius-pill);
+  /* The sliding glass pill IS the active-state background.
+     Sie MUSS im selben Koordinatensystem messen wie die Knöpfe, die sie
+     unterlegt. Die Nav-Seite ist deshalb immer ein eigener Bezugsrahmen
+     (position: relative) — vorher war sie nur als INAKTIVE Seite positioniert
+     (inset: 6px) und nur dann bezog sich offsetLeft auf sie. Die Pille wurde
+     also mal gegen das Dock, mal gegen die Seite gerechnet und sprang bei
+     jeder Rückkehr von den Terminals um die 6px Dock-Polsterung daneben. */
+  .dock-page--nav { position: relative; }
+  #dockPill { position: absolute; top: 0; bottom: 0; left: 0; width: 58px; border-radius: var(--radius-pill);
     background: rgba(var(--accent-rgb),.16); border: 1px solid rgba(var(--accent-rgb),.22);
     opacity: 0; z-index: 0; pointer-events: none;
     transition: transform var(--dur-snappy) var(--spring-snappy), width var(--dur-snappy) var(--spring-snappy), opacity 200ms ease; }
@@ -583,7 +661,11 @@
   .stack.is-dragging .stack-card { transition: none !important; }
 
   .stack-card { position: absolute; inset: 0; margin: 0 auto; width: 100%; max-width: 480px; display: flex; flex-direction: column; overflow: hidden;
-    transition: transform 380ms var(--spring), opacity 380ms var(--spring); will-change: transform, opacity; }
+    transition: transform 380ms var(--spring), opacity 380ms var(--spring); }
+  /* will-change nur während der Geste: dauerhaft gesetzt hält es für JEDE
+     Karte einen bildschirmgroßen GPU-Layer am Leben (≥10 MB VRAM pro Karte,
+     Compositing-Arbeit in jedem Frame). Transitionen promoten sich selbst. */
+  .stack.is-dragging .stack-card { will-change: transform, opacity; }
   .card-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; cursor: grab; }
   .card-tag { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   /* Die Terminalfarbe ist der obere Rand der Karte: halbtransparent, folgt der
@@ -755,9 +837,13 @@
      toggleKeysPanel()/keysPanelHtml() in the script. ============================================================ */
   .keys-panel[hidden] { display: none; }
   /* Die Tastenleiste schwebt über der Bottom-Bar, statt die Karte zu stauchen. */
+  /* --dock-h ist die ECHTE Höhe der Bottom-Bar; sie ändert sich, sobald die
+     Eingabezeile auf zwei oder drei Zeilen wächst (siehe autoGrowInput). */
   .keys-panel--global { position: fixed; left: 50%; transform: translateX(-50%); z-index: 39;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + var(--dock-h, 62px));
     width: min(calc(100vw - 24px), 520px); margin: 0 !important;
+    /* bottom hängt an --dock-h und springt mit der Bar im selben Frame um —
+       eine eigene Transition hier würde die Leiste von der Bar abkoppeln. */
     transition: transform 380ms var(--spring); }
   body.has-switcher .keys-panel--global { transform: translateX(-50%) translateY(-34px); }
   /* Der Stapel endet ÜBER dem Slider, nicht darunter. Der Wechsel ist bewusst
@@ -776,7 +862,7 @@
   body.typing.has-switcher .stack { bottom: 0; }
   /* Beim Tippen sind die Punkte weg — die Leiste rückt nach unten nach,
      und die Karte muss nur noch die Leiste selbst freihalten. */
-  body.typing .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + 62px); }
+  body.typing .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + var(--dock-h, 62px)); }
   body.typing.keys-open .stack,
   body.typing.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px); }
 
@@ -820,6 +906,19 @@
   .keys-panel:not([hidden]) { flex: none; margin: 0 8px 8px; padding: 7px 8px; border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 6px; }
   .keys-panel__row { display: flex; align-items: center; gap: 7px; }
   .keys-panel__spacer { flex: 1 1 auto; }
+  /* In der Leiste sitzen jetzt auch ^C, Esc und ⇧Tab — die Chips rücken enger
+     zusammen, und wenn es trotzdem eng wird (schmale Geräte), schiebt sich die
+     Tastengruppe seitlich; das ✕ bleibt dabei stehen, wo es hingehört. */
+  .keys-panel .tt-key { height: 34px; min-width: 32px; padding: 0 8px; font-size: var(--fs-caption); border-radius: var(--radius-sm); flex: none; }
+  .keys-panel .tt-key--icon { width: 32px; padding: 0; }
+  /* Enter sitzt an der Stelle des früheren Mikros und füllt den freien Platz
+     zwischen den Pfeilen und der Werkzeuggruppe — breit und als Primäraktion
+     im Akzentton, wie der Senden-Knopf der Eingabezeile. */
+  .keys-panel .tt-key--enter { flex: 1 1 auto; width: auto; min-width: 44px; padding: 0 12px; color: var(--accent); background: rgba(var(--accent-rgb),.16); border-color: rgba(var(--accent-rgb),.32); }
+  .keys-panel .tt-key--enter:active { background: rgba(var(--accent-rgb),.3); }
+  .keys-panel__keys { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px;
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .keys-panel__keys::-webkit-scrollbar { display: none; }
   .keys-panel__arrows { display: flex; align-items: center; gap: 6px; }
   .keys-panel__arrows button { width: 34px; height: 34px; flex: none; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring); }
   .keys-panel__arrows button .ic { width: var(--icon-sm); height: var(--icon-sm); }
@@ -931,12 +1030,59 @@
   #managerArtifacts:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 0 12px; overflow: hidden; }
   #managerMemory:not([hidden]) { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 2px 12px; display: flex; flex-direction: column; gap: 4px; }
 
-  .chat-row { display: flex; }
+  /* ── Manager-Kopf: Profilbild, Name, Präsenz (Messenger-Kopfzeile) ───────── */
+  .mgr-header { flex: none; display: flex; align-items: center; gap: 12px; padding: 2px 2px 12px; }
+  .mgr-header__meta { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .mgr-header__name { font-size: 17px; font-weight: 700; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mgr-header__sub { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .mgr-header__status { font-size: 12px; color: var(--ok); font-weight: 600; display: flex; align-items: center; gap: 5px; flex: none; }
+  .mgr-header__status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .mgr-header__status.is-typing { color: var(--accent); }
+  /* Aktuelles KI-Modell — kleiner Chip, Antippen öffnet die Auswahl. */
+  .mgr-model { flex: none; display: inline-flex; align-items: center; gap: 4px; max-width: 46vw;
+    padding: 2px 9px 2px 7px; border-radius: 999px; font: 600 11px var(--font-ui); color: var(--text-dim);
+    background: rgba(var(--overlay-rgb),.07); border: 1px solid var(--glass-border); transition: background 200ms var(--spring); }
+  .mgr-model:active { background: rgba(var(--overlay-rgb),.14); }
+  .mgr-model .ic { color: var(--accent); flex: none; }
+  .mgr-model span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mgr-menu-btn { flex: none; margin-left: auto; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); background: transparent; transition: background 200ms var(--spring); }
+  .mgr-menu-btn:active { background: rgba(var(--overlay-rgb),.1); }
+
+  /* Anhang-Knopf + Miniatur-Reihe über der Eingabezeile. */
+  .attach-btn { flex: none; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); background: transparent; transition: color 200ms var(--spring), background 200ms var(--spring); }
+  .attach-btn:active { background: rgba(var(--overlay-rgb),.1); color: var(--accent); }
+  .chat-attach-row:not([hidden]) { flex: none; display: flex; gap: 8px; padding: 8px 2px 2px; overflow-x: auto; scrollbar-width: none; }
+  .chat-attach-row::-webkit-scrollbar { display: none; }
+  .attach-thumb { position: relative; flex: none; width: 56px; height: 56px; border-radius: 12px; overflow: hidden; border: 1px solid var(--glass-border); background: rgba(var(--overlay-rgb),.06); }
+  .attach-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .attach-thumb__x { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.6); color: #fff; font-size: 12px; line-height: 1; }
+  .attach-thumb.is-uploading::after { content: ''; position: absolute; inset: 0; background: rgba(0,0,0,.45); }
+  /* Modell-Auswahl-Zeilen im Bottom-Sheet. */
+  .mgr-model-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; }
+  .mgr-model-row.is-on { color: var(--accent); background: rgba(var(--accent-rgb),.16); border-color: rgba(var(--accent-rgb),.4); }
+  .mgr-model-row[data-off] { opacity: .55; }
+  .mgr-model-row__check { flex: none; font-weight: 800; }
+  /* Profilbild — Bild oder Initialen; ein Kreis, überall gleich. */
+  .mgr-ava { flex: none; border-radius: 50%; object-fit: cover; display: inline-flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, rgba(var(--accent-rgb),.9), rgba(var(--accent-warm-rgb),.9)); color: var(--on-accent);
+    font-weight: 700; letter-spacing: .01em; user-select: none; }
+
+  .chat-row { display: flex; align-items: flex-end; gap: 8px; }
   .chat-row[data-from="user"] { justify-content: flex-end; }
-  .chat-bubble { max-width: 82%; padding: 10px 13px; border-radius: 18px; font-size: 13px; line-height: 1.5; }
-  .chat-row[data-from="manager"] .chat-bubble { background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); border-bottom-left-radius: 6px; }
-  .chat-row[data-from="user"] .chat-bubble { background: rgba(var(--accent-rgb),.22); border: 1px solid rgba(var(--accent-rgb),.4); border-bottom-right-radius: 6px; }
-  .chat-bubble__time { display: block; margin-top: 4px; font: 10.5px var(--font-mono); color: var(--text-dim); }
+  /* In einer Gruppe rücken die Blasen desselben Absenders eng zusammen. */
+  .chat-row.is-grouped { margin-top: -8px; }
+  .chat-row__avatar { flex: none; width: 26px; align-self: flex-end; }
+  .chat-bubble { max-width: 76%; padding: 9px 12px; border-radius: 16px; font-size: 13px; line-height: 1.45; word-break: break-word; }
+  .chat-row[data-from="manager"] .chat-bubble { background: var(--glass-strong); border: 1px solid var(--glass-border); border-bottom-left-radius: 16px; }
+  .chat-row[data-from="user"] .chat-bubble { background: rgba(var(--accent-rgb),.20); border: 1px solid rgba(var(--accent-rgb),.34); border-bottom-right-radius: 16px; }
+  /* Nur die LETZTE Blase einer Gruppe bekommt das Schwänzchen. */
+  .chat-row.is-tail[data-from="manager"] .chat-bubble { border-bottom-left-radius: 5px; }
+  .chat-row.is-tail[data-from="user"] .chat-bubble { border-bottom-right-radius: 5px; }
+  /* Uhrzeit sitzt wie im Messenger unten rechts, leicht in die Blase gezogen. */
+  .chat-bubble__time { float: right; margin: 6px -3px -2px 10px; font: 10px var(--font-ui); color: var(--text-dim); }
 
   .voice-pill { display: flex; align-items: center; gap: 9px; min-width: 180px; cursor: pointer; }
   .voice-pill__play { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: flex; align-items: center; justify-content: center; font-size: 10px; box-shadow: 0 0 14px rgba(var(--accent-rgb),.5); }
@@ -974,6 +1120,20 @@
   .chip-group button { padding: 7px 13px; border-radius: 999px; font: 600 12px var(--font-ui); color: var(--text-dim); background: rgba(var(--overlay-rgb),.05); border: 1px solid var(--glass-border); cursor: pointer; transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
   .chip-group button.active { color: var(--text); background: rgba(var(--accent-rgb),.18); border-color: rgba(var(--accent-rgb),.4); }
   .cloud-toolbar__spacer { flex: 1; }
+
+  /* ---------- Cloud account linking ---------- */
+  .cloud-connect-card { padding: 18px 16px; margin-bottom: 12px; }
+  .cloud-connect-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font: 700 15px var(--font-ui); }
+  .cloud-connect-card p { margin: 0 0 12px; font: 12.5px var(--font-ui); color: var(--text-dim); }
+  .cloud-connect-row { display: flex; gap: 8px; }
+  .cloud-connect-row input { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(var(--overlay-rgb),.14); background: rgba(var(--overlay-rgb),.05); color: inherit; font: 13px var(--font-mono); }
+  .cloud-account-row { padding: 14px 4px; border-top: 1px solid rgba(var(--overlay-rgb),.08); }
+  .cloud-account-row:first-child { border-top: none; }
+  .cloud-account-row__head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .cloud-account-row__name { flex: 1; font: 700 14px var(--font-ui); }
+  .cloud-account-key { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cloud-account-key code { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12.5px var(--font-mono); color: var(--text-dim); }
+  .cloud-key-invalid { color: #e03131; font: 12px var(--font-ui); margin-top: 6px; }
 
   .folder-group { padding: 6px 8px 8px; margin-bottom: 14px; }
   .folder-group__head { display: flex; align-items: center; gap: 8px; padding: 8px 6px; cursor: pointer; }
@@ -1044,6 +1204,10 @@
   .browser-address__reload { flex: none; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color 200ms var(--spring), background 200ms var(--spring); }
   .browser-address__reload:active { background: rgba(var(--overlay-rgb),.1); color: var(--accent); }
   .browser-address__reload .ic { width: var(--icon-sm); height: var(--icon-sm); }
+  /* In der Bottom-Bar sind die Knöpfe schmaler — sonst frisst die Navigation
+     das Adressfeld auf einem 380er-Display auf. */
+  .dock-page--web .browser-nav-btn { width: 38px; height: 38px; }
+  .dock-page--web .browser-address { height: 40px; background: rgba(var(--overlay-rgb),.08); border: 1px solid var(--glass-border); }
   .browser-progress { height: 3px; margin: 8px 4px 0; border-radius: 3px; overflow: hidden; opacity: 0; transition: opacity 200ms ease-out; }
   .browser-progress.is-active { opacity: 1; }
   .browser-progress__bar { height: 100%; width: 0%; border-radius: 3px; background: linear-gradient(90deg, rgba(var(--accent-rgb),.6), var(--accent)); }
@@ -1085,14 +1249,17 @@
   .unknown-page__hint { margin-top: 14px; font-size: 12px; max-width: 260px; line-height: 1.5; }
 
   .browser-tab-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .browser-tab-card { position: relative; padding: 14px 12px 12px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; transition: transform 200ms var(--spring), border-color 200ms var(--spring); border: 1px solid transparent; }
+  /* min-width:0 lets each card shrink to its 1fr track — ohne das bläht ein
+     langer nowrap-Titel (min-width:auto) die Karte über die Spalte hinaus und
+     die ganze Tab-Übersicht läuft seitlich über. */
+  .browser-tab-card { position: relative; min-width: 0; padding: 14px 12px 12px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; transition: transform 200ms var(--spring), border-color 200ms var(--spring); border: 1px solid transparent; }
   .browser-tab-card:active { transform: scale(.97); }
   .browser-tab-card.is-active { border-color: rgba(var(--accent-rgb),.5); }
   .browser-tab-card__close { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color 200ms var(--spring), background 200ms var(--spring); }
   .browser-tab-card__close .ic { width: 14px; height: 14px; }
   .browser-tab-card__close:active { background: rgba(var(--overlay-rgb),.1); color: var(--err); }
   .browser-tab-card__preview { height: 46px; border-radius: 10px; background: rgba(var(--overlay-rgb),.06); display: flex; align-items: center; justify-content: center; font: 700 15px var(--font-mono); color: var(--text-dim); }
-  .browser-tab-card__title { font: 600 12.5px var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 18px; }
+  .browser-tab-card__title { font: 600 12.5px var(--font-ui); min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 18px; }
   .browser-tab-card__badge { font: 600 10px var(--font-ui); color: var(--accent); opacity: .8; }
   .browser-tab-newcard { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 96px; color: var(--accent); font: 600 12.5px var(--font-ui); transition: background 200ms var(--spring), transform 200ms var(--spring); }
   .browser-tab-newcard:active { transform: scale(.96); }
@@ -1254,6 +1421,20 @@
   .term-input { flex: 1; min-width: 36px; background: none; border: none; outline: none; color: var(--text); font: var(--fs-body) var(--font-mono); padding: 8px 2px; }
   .term-input::placeholder { color: var(--text-dim); }
   .term-input:disabled { color: var(--text-dim); }
+  /* Die Eingabezeile ist ein Textfeld, kein Einzeiler mehr: sie wächst beim
+     Schreiben mit — bis zu drei Zeilen, danach scrollt sie in sich selbst.
+     Die Höhe setzt autoGrowInput() (JS), weil scrollHeight die einzige
+     ehrliche Quelle dafür ist; CSS deckelt sie nur.
+     touch-action: pan-y — ein waagerechtes Ziehen gehört dem Cursor-Schrubber
+     (langes Drücken im Feld), nicht dem Browser. */
+  textarea.term-input { resize: none; line-height: var(--term-input-lh, 20px);
+    max-height: calc(var(--term-input-lh, 20px) * 3 + 16px); overflow-y: hidden;
+    touch-action: pan-y; border-radius: 12px;
+    /* KEINE Höhen-Transition: die Bar, die Tastenleiste und das Feld müssen
+       exakt gleichzeitig umspringen. Animiert man nur das Feld, hinkt alles
+       darüber 180 ms hinterher — genau das sah „verschoben" aus. */
+    transition: background 200ms var(--spring); }
+  textarea.term-input.is-scrubbing { background: rgba(var(--accent-rgb),.10); }
   /* Quick-key chip (^C / Esc) — mono text label, hit-area ≥34px tall */
   .term-key { flex: none; height: 34px; min-width: 36px; padding: 0 9px; border-radius: var(--radius-pill); display: flex; align-items: center; justify-content: center; font: 700 var(--fs-caption) var(--font-mono); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: background 200ms var(--spring), color 200ms var(--spring), transform 150ms var(--spring); }
   .term-key:active { transform: scale(.92); background: rgba(var(--overlay-rgb),.14); }
@@ -1343,40 +1524,35 @@
 
 <header id="statusHeader" class="glass glass--strong" role="button" tabindex="0" aria-expanded="false" aria-label="Status – Details öffnen">
   <div class="island-compact" id="islandCompact">
+    <span class="status-hd__metric status-hd__metric--latency" id="statusLatencySeg">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h.01M8 20v-5M13 20v-9M18 20V6"/></svg>
+      <span id="statusLatencyLabel">— ms</span>
+    </span>
     <span class="status-hd__activity">
       <span class="status-dot" id="statusDot"></span>
       <span class="status-hd__label" id="statusActivityLabel">Bereit</span>
     </span>
-    <span class="status-hd__metrics">
-      <span class="status-hd__metric status-hd__metric--latency" id="statusLatencySeg">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h.01M8 20v-5M13 20v-9M18 20V6"/></svg>
-        <span id="statusLatencyLabel">— ms</span>
-      </span>
-      <span class="status-hd__divider"></span>
-      <span class="status-hd__metric status-hd__metric--prayer">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-        <span id="statusPrayerLabel">—</span>
-      </span>
-    </span>
-    <button class="island-browser-badge" id="islandBrowserBadge" aria-label="Browser öffnen" title="Browser">
-      <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/></svg>
-    </button>
-    <div class="island-term-actions" id="islandTermActions">
-      <button class="overview-btn glass" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">
-        <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    <div class="island-term-actions" id="islandTermActions" role="tablist" aria-label="Terminal-Aktionen">
+      <button class="island-act" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
-      <div class="view-toggle" id="viewToggle" role="tablist" aria-label="Ansicht">
-        <button class="view-toggle__btn" data-view="stack" role="tab" aria-selected="true" aria-label="Stack" title="Stack">
-          <svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="6.5" width="13" height="13" rx="2.5" opacity=".45"/><rect x="4.5" y="4.5" width="13" height="13" rx="2.5"/></svg>
-        </button>
-        <button class="view-toggle__btn" data-view="list" role="tab" aria-selected="false" aria-label="Liste" title="Liste">
-          <svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>
-        </button>
-      </div>
-      <button class="overview-btn glass" id="overviewBtn" aria-label="Übersicht" title="Übersicht">
-        <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/></svg>
+      <button class="island-act" data-view="stack" role="tab" aria-selected="true" aria-label="Stack" title="Stack">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="6.5" width="13" height="13" rx="2.5" opacity=".45"/><rect x="4.5" y="4.5" width="13" height="13" rx="2.5"/></svg>
+      </button>
+      <button class="island-act" data-view="list" role="tab" aria-selected="false" aria-label="Liste" title="Liste">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>
+      </button>
+      <button class="island-act" id="overviewBtn" aria-label="Übersicht" title="Übersicht">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/></svg>
       </button>
     </div>
+    <button class="island-browser-badge" id="islandBrowserBadge" aria-label="Browser öffnen" title="Browser">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/></svg>
+    </button>
+    <span class="status-hd__metric status-hd__metric--prayer">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+      <span id="statusPrayerLabel">—</span>
+    </span>
   </div>
   <div class="island-body" aria-hidden="true">
     <div class="island-body__inner island-expanded" id="statusDetailBody"></div>
@@ -1412,7 +1588,6 @@
   </section>
 </main>
 
-<div class="pull-hint glass" id="pullHint" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>Spotlight</span></div>
 
 <div class="term-switcher" id="termSwitcher" hidden aria-label="Terminal wechseln">
   <div class="term-switcher__label" id="tsLabel"><span></span></div>
@@ -1445,20 +1620,28 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/></svg>
     <span>Browser</span>
   </button>
-  <button class="dock-btn" data-nav="mehr">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>
-    <span>Mehr</span>
-  </button>
   </div>
 
   <div class="dock-page dock-page--term" id="dockTerm">
-    <button class="term-key term-key--danger" data-dock-key="ctrlc" aria-label="Strg+C senden">^C</button>
-    <button class="term-key" data-dock-key="esc" aria-label="Escape">Esc</button>
     <span class="term-input-row__prompt">$</span>
-    <input type="text" class="term-input" id="dockInput" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben">
+    <textarea class="term-input" id="dockInput" rows="1" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben"></textarea>
     <button class="term-input-btn term-mic-btn" id="dockMicBtn" aria-label="Diktieren"></button>
     <button class="term-input-btn term-send-btn" id="dockSendBtn" aria-label="Senden"></button>
     <button class="term-input-btn term-keys-btn" id="dockKeysBtn" aria-label="Tasten"></button>
+  </div>
+
+  <!-- Browser-Leiste: dieselbe Bar, andere Seite. Adressfeld + Navigation
+       wohnen unten am Daumen, genau wie die Terminal-Eingabezeile. -->
+  <div class="dock-page dock-page--web" id="dockWeb">
+    <button class="browser-nav-btn" id="browserBackBtn" aria-label="Zurück" disabled></button>
+    <button class="browser-nav-btn" id="browserFwdBtn" aria-label="Vor" disabled></button>
+    <div class="browser-address">
+      <span class="browser-address__incognito" id="browserIncognito" title="Inkognito · isoliert · keine Cookies"></span>
+      <input type="text" id="browserUrlInput" class="browser-address__input" placeholder="Suchen oder Adresse eingeben…" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
+      <button class="browser-address__reload" id="browserReloadBtn" aria-label="Neu laden" type="button"></button>
+    </div>
+    <button class="browser-nav-btn browser-tabs-btn" id="browserTabsBtn" aria-label="Tabs anzeigen"><span class="browser-tabs-btn__count" id="browserTabCount">1</span></button>
+    <button class="browser-nav-btn" id="browserMenuBtn" aria-label="Browser-Menü"></button>
   </div>
 
   <div class="dock-page dock-page--rec" id="dockRec">
@@ -1624,6 +1807,18 @@
       <button class="sheet-close-btn" id="browserPwClose">Schließen</button>
     </div>
     <div class="sheet-scroll-body" id="browserPwBody"></div>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="cloudAccountsSheetWrap" hidden>
+  <div class="sheet-backdrop" data-close-cloudaccounts></div>
+  <div class="sheet-panel glass glass--strong">
+    <div class="sheet-grabber"></div>
+    <div class="sheet-head-row">
+      <div class="sheet-title">Cloud-Konten</div>
+      <button class="sheet-close-btn" id="cloudAccountsSheetClose">Schließen</button>
+    </div>
+    <div class="sheet-scroll-body" id="cloudAccountsSheetBody"></div>
   </div>
 </div>
 
@@ -2000,23 +2195,63 @@
         <span class="island-row__name">${escapeHtml(s.name)}</span>
         <span class="island-row__meta">${escapeHtml(STATUS_LABELS[s.status] || s.status)}</span>
       </div>`).join('');
+    const chev = '<span class="isl-item__chev">' + icon('chevron', 15) + '</span>';
+    const online = connSrv.status === 'online';
     statusDetailBody.innerHTML = `
-      <h4>Aktive Sitzungen</h4>
-      ${sessionRows}
+      <div class="isl-head">
+        <span class="isl-head__icon">${icon('bolt', 17)}</span>
+        <span class="isl-head__text">
+          <strong>${escapeHtml(connSrv.name)}</strong>
+          <small>${escapeHtml(connSrv.host || 'TMS Terminal')}</small>
+        </span>
+        <button class="isl-close" id="islandCloseBtn" type="button" aria-label="Schließen">${icon('x', 15)}</button>
+      </div>
+
+      <div class="isl-card">
+        <div class="isl-stat ${online ? 'isl-stat--live' : ''}">
+          <span class="isl-stat__dot" style="background:${online ? 'var(--ok)' : 'var(--text-dim)'}"></span>
+          <span class="isl-stat__label">Verbindung</span>
+          <span class="isl-stat__val">${connSrv.latency != null ? connSrv.latency + ' ms' : '—'}</span>
+          <span class="isl-stat__act ${online ? 'is-ok' : ''}">${online ? 'Online' : 'Offline'}</span>
+        </div>
+        <div class="isl-stat">
+          <span class="isl-stat__dot" style="background:var(--accent-warm)"></span>
+          <span class="isl-stat__label">${escapeHtml(np.name)}</span>
+          <span class="isl-stat__val">${escapeHtml(np.time)}</span>
+          <span class="isl-stat__act">in ${np.countdown}</span>
+        </div>
+        <div class="isl-stat">
+          <span class="isl-stat__dot" style="background:${building ? 'var(--warn)' : 'var(--text-dim)'}"></span>
+          <span class="isl-stat__label">Deploy</span>
+          <span class="isl-stat__val">${building ? escapeHtml(building.name) : 'keiner aktiv'}</span>
+          <span class="isl-stat__act">${building ? 'läuft …' : ''}</span>
+        </div>
+      </div>
+
+      <div class="isl-menu">
+        <button class="isl-item" data-isl="tools" type="button">
+          ${icon('tools', 18)}<span class="isl-item__label">Werkzeuge</span>${chev}
+        </button>
+        <button class="isl-item" data-isl="prayer" type="button">
+          ${icon('moon', 18)}<span class="isl-item__label">Gebetszeiten</span>
+          <span class="isl-item__val">${escapeHtml(np.name)}</span>${chev}
+        </button>
+        <button class="isl-item" data-isl="theme" type="button">
+          ${state.theme === 'dark' ? icon('moon', 18) : icon('sun', 18)}<span class="isl-item__label">Erscheinungsbild</span>
+          <span class="isl-item__val">${state.theme === 'dark' ? 'Dunkel' : 'Hell'}</span>${chev}
+        </button>
+        <button class="isl-item" data-isl="settings" type="button">
+          ${icon('gear', 18)}<span class="isl-item__label">Einstellungen</span>${chev}
+        </button>
+        <button class="isl-item isl-item--danger" data-isl="lock" type="button">
+          ${icon('lock', 18)}<span class="isl-item__label">Sperren</span>${chev}
+        </button>
+      </div>
+
+      ${sessionRows ? `<h4>Aktive Sitzungen</h4>${sessionRows}` : ''}
+
       <h4>Agent-Aktivität</h4>
       <div class="island-activity-feed">${renderBufferLine(lastLine) || '—'}</div>
-      <h4>Verbindung</h4>
-      <div class="island-row"><span class="island-row__dot" style="background:var(--ok)"></span><span class="island-row__name">${escapeHtml(connSrv.name)} · ${connSrv.latency != null ? connSrv.latency + ' ms' : '—'}</span><span class="island-row__meta">${connSrv.status === 'online' ? 'Online' : 'Offline'}</span></div>
-      <h4>Nächstes Gebet</h4>
-      <div class="island-row"><span class="island-row__dot" style="background:var(--accent-warm)"></span><span class="island-row__name">${escapeHtml(np.name)} · ${escapeHtml(np.time)}</span><span class="island-row__meta">in ${np.countdown}</span></div>
-      <h4>Deploy</h4>
-      <div class="island-row"><span class="island-row__dot" style="background:var(--warn)"></span><span class="island-row__name">${building ? escapeHtml(building.name) : 'Keine aktiven Builds'}</span><span class="island-row__meta">${building ? 'Build läuft…' : ''}</span></div>
-      <h4>Erscheinungsbild</h4>
-      <button class="island-theme-toggle" id="islandThemeToggle" type="button" aria-label="Theme wechseln">
-        <span class="island-theme-toggle__icon">${state.theme === 'dark' ? icon('moon', 13) : icon('sun', 13)}</span>
-        <span>${state.theme === 'dark' ? 'Dunkel' : 'Hell'}</span>
-        <span class="island-theme-toggle__meta">Antippen zum Wechseln</span>
-      </button>
     `;
     statusDetailBody.querySelectorAll('[data-session]').forEach(row => {
       row.addEventListener('click', e => {
@@ -2027,9 +2262,21 @@
         focusTerminal(id);
       });
     });
-    document.getElementById('islandThemeToggle').addEventListener('click', e => {
+    document.getElementById('islandCloseBtn').addEventListener('click', e => {
       e.stopPropagation();
-      toggleTheme();
+      closeIsland();
+    });
+    // Das frühere „Mehr" der Bottom-Bar wohnt jetzt hier: die Insel ist die
+    // Stelle, an der ohnehin schon alles Übergreifende steht.
+    statusDetailBody.querySelectorAll('[data-isl]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const to = btn.dataset.isl;
+        if (to === 'theme') { toggleTheme(); renderIslandExpanded(); return; }
+        closeIsland();
+        if (to === 'lock') lockApp();
+        else show(to);
+      });
     });
   }
 
@@ -2093,6 +2340,13 @@
   const islandCompactEl = document.getElementById('islandCompact');
   const islandSwipeHintEl = document.getElementById('islandSwipeHint');
   let islHold = null, islArmed = false, islMoved = false, islStartX = 0, islX = 0, islRaf = 0, islFromIdx = 0;
+  // Seit die vier Terminal-Knöpfe mitten in der Insel sitzen, bliebe für die
+  // Geste kaum noch Fläche übrig, wenn die Knöpfe sie abwürgen. Sie darf
+  // deshalb ÜBERALL beginnen — auch auf einem Knopf. Erst wenn das lange
+  // Drücken wirklich scharf ist (260 ms), reißt die Insel die Geste an sich
+  // und der Klick des Knopfes darunter wird geschluckt. Ein kurzes Antippen
+  // bleibt ein ganz normaler Knopfdruck.
+  let islDownBtn = null, islSwallowBtnClick = false, islPointerId = null;
 
   function islIndexFromDx(dx) {
     const STEP = 56; // px pro Schritt — ein bequemer Daumen-Swipe
@@ -2106,29 +2360,62 @@
     islandSwipeHintEl.textContent = DOCK_SWIPE_LABEL[DOCK_SWIPE_ORDER[idx]] || '';
   }
   islandCompactEl.addEventListener('pointerdown', e => {
-    // Buttons/Toggles innerhalb der Insel behalten ihr eigenes Tap-Verhalten.
-    if (e.target.closest('.overview-btn, .view-toggle, .island-browser-badge')) return;
     islMoved = false;
+    islSwallowBtnClick = false;
+    islDownBtn = e.target.closest('.island-act, .island-browser-badge');
+    islPointerId = e.pointerId;
     islStartX = e.clientX; islX = e.clientX;
     islFromIdx = Math.max(0, DOCK_SWIPE_ORDER.indexOf(currentScreen));
     clearTimeout(islHold);
     islHold = setTimeout(() => {
       islArmed = true;
+      // Der Knopf unter dem Daumen darf jetzt nicht mehr auslösen — gehalten
+      // wurde die Insel, nicht er.
+      if (islDownBtn) islSwallowBtnClick = true;
+      // Ohne Capture verlöre der Zug die Ereignisse, sobald der Finger den
+      // Knopf verlässt, auf dem er gestartet ist.
+      try { islandCompactEl.setPointerCapture(islPointerId); } catch (err) { /* kein Capture nötig */ }
       if (navigator.vibrate) navigator.vibrate(6);
       islandSwipeHintEl.classList.add('is-visible');
       islFrame();
     }, 260);
   });
   islandCompactEl.addEventListener('pointermove', e => {
-    if (!islArmed) return;
+    if (!islArmed) {
+      // Wer sofort loszieht, wollte wischen und nicht drücken: kein Long-Press
+      // erzwingen, aber den Knopf-Klick auch nicht aus Versehen auslösen.
+      if (islHold && Math.abs(e.clientX - islStartX) > 12) { clearTimeout(islHold); islHold = null; }
+      return;
+    }
     islMoved = true;
     islX = e.clientX;
     if (!islRaf) islRaf = requestAnimationFrame(islFrame);
   });
+  // Läuft VOR den Klick-Handlern der Knöpfe (Capture-Phase) und schluckt den
+  // Klick, wenn die Geste ihn übernommen hat.
+  islandCompactEl.addEventListener('click', e => {
+    if (!islSwallowBtnClick) return;
+    islSwallowBtnClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+  // Sicherheitsnetz: bleibt der Klick nach dem Zug aus (Android verschluckt ihn
+  // bei gefangenem Pointer gern), verfällt das Flag von selbst — sonst fräße es
+  // den nächsten ECHTEN Knopfdruck.
+  function islArmSwallowExpiry() {
+    setTimeout(() => { islSwallowBtnClick = false; }, 400);
+  }
   function islEnd() {
     clearTimeout(islHold);
+    islHold = null;
+    islDownBtn = null;
+    if (islPointerId != null) {
+      try { islandCompactEl.releasePointerCapture(islPointerId); } catch (err) { /* nie gefangen */ }
+      islPointerId = null;
+    }
     if (!islArmed) { return; }
     islArmed = false;
+    if (islSwallowBtnClick) islArmSwallowExpiry();
     islSuppressClick = true; // war ein Long-Press-Zug, kein normaler Tap — Insel nicht zusätzlich auf/zu
     cancelAnimationFrame(islRaf); islRaf = 0;
     islandSwipeHintEl.classList.remove('is-visible');
@@ -2162,12 +2449,13 @@
     if (state.islandOpen) renderIslandExpanded();
   }
   let latencyTickerStarted = false;
+  let latencyTimer = 0;
   function startLatencyTicker() {
     if (latencyTickerStarted) return;
     latencyTickerStarted = true;
     const baseline = TMS_DATA.servers[0].latency;
     updateLatencyDisplay();
-    setInterval(() => {
+    latencyTimer = setInterval(() => {
       if (document.body.classList.contains('is-locked')) return; // paused while locked
       const mag = 1 + Math.floor(Math.random() * 4); // 1..4
       const jitter = Math.random() < 0.5 ? -mag : mag;
@@ -2175,6 +2463,12 @@
       updateLatencyDisplay();
     }, 4000);
   }
+  /** Am echten Server ist dieser Ticker nicht nur überflüssig, er ist FALSCH: er
+   *  überschrieb den gemessenen Ping alle 4s mit einer erwürfelten Zahl. Die
+   *  Bridge schaltet ihn ab; die echte Latenz kommt über TMSBridge.setStatus. */
+  window.__tmsStopLatencyDemo = function () {
+    if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = 0; }
+  };
 
   // ============================================================
   // Bottom sheets (Mehr / permission)
@@ -2203,7 +2497,12 @@
   }
 
   const mehrWrap = document.getElementById('mehrSheetWrap');
-  document.querySelectorAll('.mehr-item').forEach(btn => {
+  // NUR die Knöpfe im Mehr-Sheet. Vorher stand hier document.querySelectorAll —
+  // und .mehr-item ist auch die Klasse der Browser-Menü-Knöpfe (Hard Reload,
+  // Cache leeren, Passwörter). Die haben kein data-target, also lief bei jedem
+  // Klick dort ein show(undefined) mit: das blendete JEDEN Bildschirm aus und
+  // keinen ein — die App stand leer da.
+  mehrWrap.querySelectorAll('.mehr-item').forEach(btn => {
     btn.addEventListener('click', () => {
       closeSheet(mehrWrap);
       const target = btn.dataset.target;
@@ -2246,16 +2545,26 @@
   window.addEventListener('resize', positionDockPill);
 
   function show(name) {
+    // Ohne Ziel wird NICHT navigiert. Die Zeile darunter blendet jeden Bildschirm
+    // aus, dessen Name nicht passt — bei name === undefined trifft das auf ALLE zu,
+    // und die App steht leer da (genau so ist der Browser "abgestürzt"). Ein
+    // Fehlaufruf darf die Oberfläche nie wieder auslöschen.
+    if (!name || !document.querySelector(`[data-screen="${name}"]`)) return;
     if (name !== 'cloud') stopCloudBuildTimer();
     if (name !== 'prayer') stopPrayerTick();
     if (name !== 'terminals') { cancelDictation(); closeAllListRails(); closeKeysPanel(); }
     if (name !== 'browser') stopBrowserProgressTimers();
-    if (name !== 'terminals' && typeof setDockPage === 'function') setDockPage('nav');
+    // Terminals und Browser haben ihre eigene Bar-Seite (Eingabezeile bzw.
+    // Adressleiste) — überall sonst ist die Navigation die Voreinstellung.
+    if (name !== 'terminals' && name !== 'browser' && typeof setDockPage === 'function') setDockPage('nav');
     if (typeof renderTermSwitcher === 'function') setTimeout(renderTermSwitcher, 0);
     const prev = currentScreen;
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
     document.querySelectorAll('#dock [data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
     positionDockPill();
+    // Nach dem Entsperren ist die Bar zum ersten Mal überhaupt sichtbar — erst
+    // jetzt lässt sich ihre Höhe messen.
+    if (typeof syncDockHeight === 'function') syncDockHeight();
     // Zurück auf Terminals: verdeckte Karten holen ihren Output nach.
     if (name === 'terminals') flushHiddenCards();
     // Directional slide+fade between tab screens (transform/opacity only;
@@ -2300,26 +2609,12 @@
     toast('Kommt in Teil 2');
   }
 
-  // Dock buttons: short tap navigates as usual; long-press (550ms) on ANY
-  // dock button opens Spotlight instead — a secondary universal-search
-  // gesture living alongside the primary pull-down-to-search gesture.
+  // Ein Knopf der Leiste tut genau eine Sache: navigieren. Das lange Drücken
+  // öffnete hier früher Spotlight — es ist raus, damit die Leiste dem Wischen
+  // nach oben (Seitenwechsel) gehört und nichts mehr um dieselbe Geste streitet.
   function wireNav() {
-    const LONG_PRESS_MS = 550;
     document.querySelectorAll('#dock [data-nav]').forEach(btn => {
-      const name = btn.dataset.nav;
-      let timer = null, longPressed = false;
-      btn.addEventListener('pointerdown', () => {
-        longPressed = false;
-        timer = setTimeout(() => { longPressed = true; openSpotlight(); }, LONG_PRESS_MS);
-      });
-      const cancelTimer = () => clearTimeout(timer);
-      btn.addEventListener('pointerup', cancelTimer);
-      btn.addEventListener('pointerleave', cancelTimer);
-      btn.addEventListener('pointercancel', cancelTimer);
-      btn.addEventListener('click', e => {
-        if (longPressed) { e.preventDefault(); longPressed = false; return; }
-        handleDockTap(name);
-      });
+      btn.addEventListener('click', () => handleDockTap(btn.dataset.nav));
     });
   }
 
@@ -2358,6 +2653,8 @@
       const card = document.createElement('div');
       card.className = 'glass server-card';
       card.dataset.status = srv.status;
+      // Auch ein online-Server, der nicht der aktive ist, ist antippbar (Wechsel).
+      if (online) card.dataset.status = 'online';
       card.innerHTML = `
         <div class="server-orb">${SERVER_ICON}</div>
         <div class="server-info">
@@ -2372,8 +2669,11 @@
         </div>
       `;
       card.addEventListener('click', () => {
-        if (online) { goToTerminals(); }
-        else { toast('Server offline — zuletzt gesehen vor 2 Std'); }
+        if (srv.active) { goToTerminals(); return; }          // schon verbunden
+        if (!online) { toast(`${srv.name} ist offline`); return; }
+        // Anderer, laufender Server: die App schaltet die Verbindung um.
+        if (window.__tmsSwitchServer) { window.__tmsSwitchServer(srv.id); goToTerminals(); }
+        else goToTerminals();
       });
       grid.appendChild(card);
     });
@@ -2442,10 +2742,10 @@
   }
 
   function wireViewToggle() {
-    const toggle = document.getElementById('viewToggle');
+    const toggle = document.getElementById('islandTermActions');
     if (!toggle) return;
     toggle.addEventListener('click', e => {
-      const btn = e.target.closest('.view-toggle__btn');
+      const btn = e.target.closest('.island-act[data-view]');
       if (!btn) return;
       e.stopPropagation(); // lives inside the island now — a tap must not also expand it
       setTerminalView(btn.dataset.view);
@@ -2468,7 +2768,7 @@
     }
   }
   function updateViewToggleUI() {
-    document.querySelectorAll('.view-toggle__btn').forEach(btn => {
+    document.querySelectorAll('#islandTermActions .island-act[data-view]').forEach(btn => {
       btn.setAttribute('aria-selected', String(btn.dataset.view === state.terminalView));
     });
   }
@@ -2528,11 +2828,15 @@
     return `
         <div class="keys-panel glass" data-keys-panel${state.keysPanelOpen ? '' : ' hidden'}>
           <div class="keys-panel__row">
-            <button class="tt-key" data-tt-key="tab">Tab</button>
-            <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode" aria-label="Auswahlmodus" title="Auswahl">Aa</button>
-            <button class="tt-key tt-key--icon" data-tt-key="backspace" aria-label="Zeichen löschen" title="Löschen (⌫)">${icon('backspace', 17)}</button>
-            <button class="tt-key tt-key--danger tt-key--icon" data-tt-key="clear" aria-label="Terminal leeren" title="Leeren">${icon('trash', 16)}</button>
-            <span class="keys-panel__spacer"></span>
+            <div class="keys-panel__keys">
+              <button class="tt-key tt-key--danger" data-tt-key="ctrlc" aria-label="Strg+C senden" title="Strg+C">^C</button>
+              <button class="tt-key" data-tt-key="esc" aria-label="Escape" title="Esc">Esc</button>
+              <button class="tt-key" data-tt-key="tab">Tab</button>
+              <button class="tt-key" data-tt-key="shifttab" aria-label="Umschalt+Tab" title="Umschalt+Tab (rückwärts)">⇧Tab</button>
+              <button class="tt-key${cs.selectionMode ? ' is-on' : ''}" data-tt-key="selectmode" aria-label="Auswahlmodus" title="Auswahl">Aa</button>
+              <button class="tt-key tt-key--icon" data-tt-key="backspace" aria-label="Zeichen löschen" title="Löschen (⌫)">${icon('backspace', 17)}</button>
+              <button class="tt-key tt-key--danger tt-key--icon" data-tt-key="clear" aria-label="Terminal leeren" title="Leeren">${icon('trash', 16)}</button>
+            </div>
             <button class="keys-panel__close" data-tt-key="closepanel" aria-label="Tasten schließen" title="Schließen">${icon('x', 15)}</button>
           </div>
           <div class="keys-panel__row keys-panel__row--tools">
@@ -2542,8 +2846,7 @@
               <button data-tt-cursor="↓" aria-label="Runter">${arrow(0)}</button>
               <button data-tt-cursor="→" aria-label="Rechts">${arrow(-90)}</button>
             </div>
-            <span class="keys-panel__spacer"></span>
-            <button class="tt-key tt-key--icon" data-tt-key="mic" aria-label="Diktieren" title="Diktieren">${icon('mic', 17)}</button>
+            <button class="tt-key tt-key--enter" data-tt-key="enter" aria-label="Enter senden" title="Enter">${icon('enter', 18)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="screenshots" aria-label="Screenshots" title="Screenshots">${icon('camera', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="files" aria-label="Dateien" title="Dateien">${icon('folder', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="notes" aria-label="Notizen" title="Notizen">${icon('note', 17)}</button>
@@ -2568,7 +2871,9 @@
         e.stopPropagation();
         const k = btn.dataset.ttKey;
         // Tab hat im Mockup nur geblinkt — die Taste muss das Terminal erreichen.
-        if (k === 'tab') handleTermKey('tab', id);
+        if (k === 'tab' || k === 'shifttab') handleTermKey(k, id);
+        // ^C und Esc wohnen jetzt hier statt links in der Eingabezeile.
+        else if (k === 'ctrlc' || k === 'esc') handleTermKey(k, id);
         else if (k === 'backspace') handleTermKey('backspace', id);
         else if (k === 'clear') clearActiveTerminal(id);
         else if (k === 'selectmode') {
@@ -2576,7 +2881,19 @@
           const on = cardState[id].selectionMode;
           btn.classList.toggle('is-on', on);
           toast(on ? 'Auswahlmodus an' : 'Auswahlmodus aus');
-        } else if (k === 'mic') startDictation(id);
+        } else if (k === 'enter') {
+          // Der breite Enter-Knopf schickt den Feldinhalt ab (wie ↵ in der
+          // Eingabezeile); ist das Feld leer, geht ein blankes Enter ans PTY.
+          const input = document.getElementById('dockInput');
+          const cmd = input ? input.value.trim() : '';
+          if (cmd) {
+            sendTerminalCommand(id, cmd);
+            input.value = '';
+            if (typeof autoGrowInput === 'function') autoGrowInput(input);
+          } else {
+            handleTermKey('enter', id);
+          }
+        }
         else if (k === 'werkzeuge') openTermToolsSheet(id);
         else if (k === 'closepanel') closeKeysPanel();
       });
@@ -2962,6 +3279,8 @@
     if (key === 'ctrlc') sendCtrlC(id);
     else if (key === 'esc') flashKeyEcho('Esc');
     else if (key === 'tab') flashKeyEcho('Tab');
+    else if (key === 'shifttab') flashKeyEcho('⇧Tab');
+    else if (key === 'enter') flashKeyEcho('⏎');
     else flashKeyEcho(key);
   }
 
@@ -2971,8 +3290,12 @@
   // ============================================================
   let dictationTimers = [];
   function setIslandMicBadge(show) {
+    // Rotes Insel-Mikro entfernt (Nutzerwunsch): die laufende Aufnahme ist an
+    // der Eingabezeile (Wellenform + Timer + ✓/✕) ohnehin klar erkennbar. Das
+    // Badge bleibt immer aus — der `show`-Parameter wird bewusst ignoriert, so
+    // dass Demo- UND echter Aufnahmefluss es nicht mehr einblenden.
     const badge = document.getElementById('statusMicBadge');
-    if (badge) badge.hidden = !show;
+    if (badge) badge.hidden = true;
   }
   function startDictation(cardId) {
     if (state.dictation.active) return; // one at a time
@@ -3126,6 +3449,16 @@
   // flushHiddenCards() in einem Rutsch nachgezeichnet.
   function pendingHiddenCards() { return window.__tmsPendingHidden || (window.__tmsPendingHidden = {}); }
   window.__tmsCardVisible = function (id) {
+    // WÄRME: Liegt das Handy in der Tasche, während Claude weiterläuft, malte die
+    // Seite trotzdem jede Ausgabe — Rendern, Scrollen, Compositing für niemanden.
+    // Der Emulator-Puffer läuft weiter (die Historie bleibt vollständig); gemalt
+    // wird erst wieder beim Aufwachen, über denselben Weg wie unsichtbare Karten.
+    //
+    // NUR das native AppState-Signal aus React Native (TMSBridge.setAppActive)
+    // zählt hier — bewusst NICHT document.hidden: dessen Semantik schwankt je
+    // nach Android-WebView, und ein falsches "hidden" hieße: das Terminal malt
+    // im Vordergrund nichts mehr. Im Zweifel wird gemalt, nicht eingefroren.
+    if (window.__tmsAppInactive) return false;
     const pre = document.querySelector(`.card-body[data-card-id="${id}"]`);
     if (!pre) return false;
     const idx = state.order.indexOf(id);
@@ -3150,6 +3483,9 @@
     });
   }
   window.__tmsFlushHidden = flushHiddenCards;
+  // Zusatzsignal, nie ein Riegel: Wird die Seite wieder sichtbar, zeichnen wir
+  // nach. Ins Pausieren redet visibilitychange NICHT hinein (siehe __tmsCardVisible).
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) flushHiddenCards(); });
   // Liste: Karten, die in den Viewport scrollen, holen ihren Output nach.
   // Scroll-Events der .term-list erreichen weder Section noch document
   // zuverlässig (empirisch, auch capture nicht) — deshalb ein Wächter, der
@@ -3177,6 +3513,9 @@
   bumpCalm();
 
   function renderCardLines(id) {
+    // Live-Terminals malt die Bridge selbst (farbig, inkrementell) — dieser
+    // Klartext-Rebuild ist nur noch für Demo-Karten und den Cloud-Log-Viewer.
+    if (window.__tmsBridgeRenders && window.__tmsBridgeRenders(id)) return;
     const pre = document.querySelector(`.card-body[data-card-id="${id}"]`);
     if (!pre) return;
     if (!window.__tmsCardVisible(id)) { pendingHiddenCards()[id] = 1; return; }
@@ -3247,10 +3586,15 @@
 
   function updateStatusChip(id, status) {
     const session = TMS_DATA.sessions.find(s => s.id === id);
+    if (!session) return;
+    // Rail und Übersicht nur bei einem ECHTEN Statuswechsel neu bauen — dieser
+    // Aufruf kam früher mit jedem Output-Häppchen (30×/s) und hat jedes Mal die
+    // komplette Rail samt Glas-Layern weggeworfen und neu erzeugt.
+    const changed = session.status !== status;
     session.status = status;
     const chip = document.querySelector(`.term-card[data-id="${id}"] .status-chip`);
     if (chip) { chip.dataset.status = status; chip.querySelector('.status-chip__label').textContent = STATUS_LABELS[status] || status; }
-    refreshPreviews();
+    if (changed) refreshPreviews();
   }
 
   function refreshPreviews() {
@@ -3296,6 +3640,11 @@
     // Switching the active card in Stack changes which card's ⏬ orb (if
     // any) is allowed to show — re-evaluate every card, cheap at this count.
     state.order.forEach(id => updateJumpOrb(id));
+    // Whichever way the focus moved (swipe, rail tap, overview pick, arrow
+    // keys), the dock bar must follow it: placeholder, enabled-state and the
+    // is-target ring all key off dockTargetId(). This is the single choke
+    // point for user-driven terminal switches, so syncing here covers them all.
+    setActive_syncDock();
   }
 
   function wireStackDrag() {
@@ -3403,9 +3752,15 @@
   // ============================================================
   // Rail (expanded ≥700px) — mini previews, drag-to-swap
   // ============================================================
+  let railStale = false;
   function renderRail() {
     const rail = document.getElementById('rail');
     if (!rail) return;
+    // Auf dem Frontdisplay ist die Rail display:none (offsetParent == null):
+    // dort weder Puffer-Previews rechnen noch Glas-Items bauen. Beim
+    // Auffalten holt der resize-Listener unten den Aufbau nach.
+    if (!rail.offsetParent) { railStale = true; return; }
+    railStale = false;
     rail.innerHTML = '';
     state.order.forEach((id, i) => {
       const session = TMS_DATA.sessions.find(s => s.id === id);
@@ -3424,6 +3779,11 @@
       rail.appendChild(item);
     });
   }
+
+  window.addEventListener('resize', () => {
+    const rail = document.getElementById('rail');
+    if (railStale && rail && rail.offsetParent) renderRail();
+  });
 
   function wireRailDrag(item) {
     item.addEventListener('pointerdown', e => {
@@ -4377,7 +4737,6 @@
         '<span class="fs-cell"><span class="fs-name">' + escapeHtml(e.name) + '</span>' +
         '<span class="fs-sub">' + (e.isDir ? 'Ordner' : escapeHtml(fsFmtSize(e.size))) +
         (e.modified ? ' · ' + fsFmtDate(e.modified) : '') + '</span></span>' +
-        (fsState.selectMode ? '' : '<span class="fx-more" data-fsmenu="' + escapeHtml(e.path) + '">⋯</span>') +
       '</button></div>';
   }
 
@@ -4531,23 +4890,22 @@
         lpFired = false;
         lpTimer = setTimeout(() => {
           lpFired = true;
-          if (!fsState.selectMode) { fsState.selectMode = true; fsState.sel.add(row.dataset.fspath); renderFilesScreen(); }
-        }, 550);
+          // Langes Drücken zeigt die Aktionen der Zeile — dieselbe Geste wie bei
+          // den Favoriten. Das ⋯ an jeder Zeile ist dafür weggefallen. In der
+          // Mehrfachauswahl bleibt es beim Hinzu-/Abwählen.
+          if (fsState.selectMode) { fsState.sel.add(row.dataset.fspath); renderFilesScreen(); }
+          else openFsRowMenu(row.dataset.fspath);
+        }, 500);
       });
       ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => row.addEventListener(ev, () => clearTimeout(lpTimer)));
       row.addEventListener('click', (ev) => {
         if (lpFired) { lpFired = false; return; }
-        if (ev.target.closest('[data-fsmenu]')) return;
         const p = row.dataset.fspath, isDir = row.dataset.fsdir === '1';
         if (fsState.selectMode) { fsState.sel.has(p) ? fsState.sel.delete(p) : fsState.sel.add(p); renderFilesScreen(); return; }
         if (isDir) window.fsListDir(p);
         else openFsViewer(p);
       });
     });
-    host.querySelectorAll('[data-fsmenu]').forEach(b => b.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      openFsRowMenu(b.dataset.fsmenu);
-    }));
   }
   function fsMdToHtml(md) {
     let h = md
@@ -4688,6 +5046,7 @@
     el.innerHTML = '<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px">' +
       '<div style="font-weight:800;font-size:13px;padding:2px 4px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(e.name) + '</div>' +
       (e.isDir ? '' : '<button class="btn-chip" data-m="open">Öffnen</button>') +
+      '<button class="btn-chip" data-m="select">Auswählen …</button>' +
       '<button class="btn-chip" data-m="copyPath">Pfad kopieren</button>' +
       '<button class="btn-chip" data-m="cd">Im Terminal öffnen (cd)</button>' +
       '<button class="btn-chip" data-m="insert">In Eingabezeile einfügen</button>' +
@@ -4707,6 +5066,9 @@
       }
       el.remove();
       if (m === 'open') openFsViewer(p);
+      // Der Long-Press zeigt jetzt dieses Menü — die Mehrfachauswahl startet
+      // deshalb von hier aus, mit dieser Zeile schon angehakt.
+      else if (m === 'select') { fsState.selectMode = true; fsState.sel.add(p); renderFilesScreen(); }
       else if (m === 'copyPath') window.fsAction('copyPath', { paths: [p] });
       else if (m === 'cd') window.fsAction('cd', { path: parent });
       else if (m === 'insert') window.fsAction('insert', { path: p });
@@ -4901,8 +5263,23 @@
   // ============================================================
   function renderManagerShell() {
     const host = document.querySelector('[data-screen="manager"]');
+    const p = TMS_DATA.manager.persona || { name: 'Manager' };
     host.innerHTML = `
-      <h1 class="screen-title">Manager</h1>
+      <div class="mgr-header">
+        ${managerAvatarHtml(42)}
+        <div class="mgr-header__meta">
+          <strong class="mgr-header__name">${escapeHtml(p.name || 'Manager')}</strong>
+          <span class="mgr-header__sub">
+            <span class="mgr-header__status" id="mgrPresence">online</span>
+            <button class="mgr-model" id="mgrModelChip" type="button" aria-label="KI-Modell wählen">
+              ${icon('bolt', 12)}<span id="mgrModelName">${escapeHtml(activeManagerModelName())}</span>
+            </button>
+          </span>
+        </div>
+        <button class="mgr-menu-btn" id="mgrMenuBtn" type="button" aria-label="Mehr">
+          <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></svg>
+        </button>
+      </div>
       <div class="screen-col manager-col">
         <div class="subtabs" id="managerTabs">
           <button data-tab="chat" class="active">Chat</button>
@@ -4913,7 +5290,9 @@
           <div class="chat-scroll" id="managerChat"></div>
           <div id="managerArtifacts" hidden></div>
           <div id="managerMemory" hidden></div>
+          <div class="chat-attach-row" id="managerAttachRow" hidden></div>
           <div class="chat-input-row" id="managerInputRow">
+            <button class="attach-btn" id="managerAttachBtn" aria-label="Bild anhängen">${icon('camera', 19)}</button>
             <input type="text" id="managerTextInput" placeholder="Nachricht an Manager…" autocomplete="off">
             <button class="mic-btn glass" id="managerMicBtn" aria-label="Sprachnachricht aufnehmen">${icon('mic')}</button>
           </div>
@@ -4937,36 +5316,63 @@
     }, 2500);
   }
 
-  function renderChatMessageHtml(m) {
+  // Rundes Profilbild — echtes Bild, sonst Initialen auf getöntem Kreis.
+  function managerAvatarHtml(size, extra) {
+    const p = TMS_DATA.manager.persona || {};
+    const cls = 'mgr-ava' + (extra ? ' ' + extra : '');
+    const dim = `width:${size}px;height:${size}px`;
+    const init = (p.name || 'M').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'M';
+    // Lädt das Bild nicht (Datei-URI im WebView), fällt es sauber auf die
+    // Initialen zurück, statt ein kaputtes Bild-Symbol zu zeigen.
+    if (p.avatar) return `<img class="${cls}" style="${dim}" src="${p.avatar}" alt=""` +
+      ` onerror="this.outerHTML='<span class=\\'${cls} mgr-ava--init\\' style=\\'${dim};font-size:${Math.round(size * 0.4)}px\\'>${escapeHtml(init)}</span>'">`;
+    return `<span class="${cls} mgr-ava--init" style="${dim};font-size:${Math.round(size * 0.4)}px">${escapeHtml(init)}</span>`;
+  }
+
+  // WhatsApp-Prinzip: aufeinanderfolgende Nachrichten desselben Absenders bilden
+  // eine Gruppe. Nur die LETZTE der Gruppe trägt das Schwänzchen, die Uhrzeit und
+  // (beim Manager) das Profilbild — dazwischen rücken sie eng zusammen.
+  function renderChatMessageHtml(m, prev, next) {
+    const grouped = prev && prev.from === m.from;   // an die vorige angehängt
+    const last = !next || next.from !== m.from;      // letzte der Gruppe → Schwänzchen
+    const avatar = m.from === 'manager'
+      ? `<span class="chat-row__avatar">${last ? managerAvatarHtml(26) : ''}</span>`
+      : '';
+    const rowCls = 'chat-row' + (grouped ? ' is-grouped' : '') + (last ? ' is-tail' : '');
+    const time = last ? `<span class="chat-bubble__time">${escapeHtml(m.time)}</span>` : '';
+
+    let body;
     if (m.type === 'voice') {
       const bars = Array.from({ length: 18 }, (_, i) => `<span style="height:${6 + ((i * 37) % 14)}px"></span>`).join('');
       let inner = '';
       if (m.transcribing) inner = `<div class="voice-transcribing">Transkribiere… <span class="dots"><span>●</span><span>●</span><span>●</span></span></div>`;
       else if (m.transcript) inner = `<div class="voice-transcript">${escapeHtml(m.transcript)}</div>`;
-      return `
-        <div class="chat-row" data-from="${m.from}">
-          <div class="chat-bubble">
-            <div class="voice-pill" data-act="play">
-              <span class="voice-pill__play">${icon('play', 13)}</span>
-              <span class="voice-pill__wave">${bars}</span>
-              <span class="voice-pill__dur">0:${String(m.duration).padStart(2, '0')}</span>
-            </div>
-            ${inner}
-            <span class="chat-bubble__time">${escapeHtml(m.time)}</span>
-          </div>
-        </div>`;
+      body = `
+        <div class="voice-pill" data-act="play">
+          <span class="voice-pill__play">${icon('play', 13)}</span>
+          <span class="voice-pill__wave">${bars}</span>
+          <span class="voice-pill__dur">0:${String(m.duration).padStart(2, '0')}</span>
+        </div>${inner}${time}`;
+    } else {
+      body = `${escapeHtml(m.text)}${time}`;
     }
-    return `
-      <div class="chat-row" data-from="${m.from}">
-        <div class="chat-bubble">${escapeHtml(m.text)}<span class="chat-bubble__time">${escapeHtml(m.time)}</span></div>
-      </div>`;
+    return `<div class="${rowCls}" data-from="${m.from}">${avatar}<div class="chat-bubble">${body}</div></div>`;
   }
 
   function renderManagerChat() {
     const host = document.getElementById('managerChat');
     if (!host) return;
-    host.innerHTML = TMS_DATA.manager.messages.map(renderChatMessageHtml).join('');
+    const msgs = TMS_DATA.manager.messages;
+    host.innerHTML = msgs.map((m, i) => renderChatMessageHtml(m, msgs[i - 1], msgs[i + 1])).join('');
     host.scrollTop = host.scrollHeight;
+    // Präsenz wie im Messenger: „tippt …", solange die letzte Nachricht vom
+    // Manager noch wächst (Streaming), sonst „online".
+    const presence = document.getElementById('mgrPresence');
+    if (presence) {
+      const growing = msgs.length && msgs[msgs.length - 1].from === 'manager' && msgs[msgs.length - 1]._streaming;
+      presence.textContent = growing ? 'tippt …' : 'online';
+      presence.classList.toggle('is-typing', !!growing);
+    }
     wireManagerChatInteractions();
     // Arm transcription timers only while the Manager screen is visible, so the
     // seed message's "Transkribiere… → transcript" demo moment plays on first
@@ -5024,6 +5430,181 @@
     });
   }
 
+  // Name des aktiven Modells für den Kopf-Chip.
+  function activeManagerModelName() {
+    const m = TMS_DATA.manager;
+    if (m.modelLoadingId) {
+      const lp = (m.providers || []).find(x => x.id === m.modelLoadingId);
+      return (lp ? lp.name : 'Modell') + ' · lädt…';
+    }
+    const p = (m.providers || []).find(x => x.id === m.activeProvider);
+    return (p && p.name) || 'Modell';
+  }
+  window.activeManagerModelName = activeManagerModelName;
+
+  // Miniaturbilder über der Eingabezeile — was gerade angehängt ist.
+  function renderManagerAttachments() {
+    const row = document.getElementById('managerAttachRow');
+    if (!row) return;
+    const list = TMS_DATA.manager.attachments || [];
+    row.hidden = list.length === 0;
+    row.innerHTML = list.map((a, i) => `
+      <div class="attach-thumb${a.uploading ? ' is-uploading' : ''}">
+        <img src="${a.uri || a.url || ''}" alt="">
+        <button class="attach-thumb__x" data-rm="${i}" aria-label="Entfernen">✕</button>
+      </div>`).join('');
+    row.querySelectorAll('[data-rm]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const i = Number(btn.dataset.rm);
+        TMS_DATA.manager.attachments.splice(i, 1);
+        renderManagerAttachments();
+        if (typeof window.managerRemoveAttachment === 'function') window.managerRemoveAttachment(i);
+      });
+    });
+  }
+  window.renderManagerAttachments = renderManagerAttachments;
+
+  // Ein leichtes Bottom-Sheet für die Kopf-Menüs (⋮ und Modell-Auswahl).
+  function managerSheet(title, bodyHtml, onClick) {
+    const old = document.getElementById('mgrSheet');
+    if (old) old.remove();
+    const el = document.createElement('div');
+    el.id = 'mgrSheet';
+    el.style.cssText = 'position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,.45)';
+    el.innerHTML = `<div class="glass" style="border-radius:22px 22px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:6px;max-height:75vh;overflow-y:auto">
+      <div style="font-weight:800;font-size:13px;padding:2px 4px 8px">${escapeHtml(title)}</div>
+      ${bodyHtml}
+      <button class="btn-chip" data-mgr="close">Abbrechen</button></div>`;
+    document.body.appendChild(el);
+    el.addEventListener('click', e => {
+      const btn = e.target.closest('[data-mgr]');
+      if (!btn) { if (e.target === el) el.remove(); return; }
+      if (btn.dataset.mgr === 'close') { el.remove(); return; }
+      onClick(btn, el);
+    });
+    return el;
+  }
+
+  // Welches lokale Modell ist im Sheet gerade aufgeklappt (Context-Regler sichtbar)?
+  let modelSheetExpandedId = null;
+  // Zuletzt am Regler gewählter Wert je Modell — überlebt ein Neuaufbau des Sheets
+  // (wenn währenddessen frische Provider-/Ladedaten eintreffen).
+  const modelSheetCtx = {};
+  const CTX_MIN = 4096;
+
+  function clampCtx(v, max) { return Math.max(CTX_MIN, Math.min(max || 32768, Math.round(v) || CTX_MIN)); }
+
+  function openManagerModelSheet() {
+    const m = TMS_DATA.manager;
+    const loadingId = m.modelLoadingId || '';
+    const list = m.providers || [];
+    const body = list.map(p => {
+      const on = p.id === m.activeProvider;
+      const off = p.configured === false;
+      const isLocal = !!p.isLocal;
+      const loading = loadingId === p.id;
+      const unavailable = isLocal && p.available === false; // in LM Studio nicht installiert
+      const dis = off || unavailable;
+      const meta = loading ? ' <small style="opacity:.7">— lädt…</small>'
+        : off ? ' <small style="opacity:.6">— nicht eingerichtet</small>'
+        : unavailable ? ' <small style="opacity:.6">— in LM Studio nicht gefunden</small>'
+        : isLocal && p.maxContext ? ` <small style="opacity:.55">— bis ${(p.maxContext/1024).toFixed(0)}k Ctx</small>` : '';
+      const row = `<button class="btn-chip mgr-model-row${on ? ' is-on' : ''}" data-mgr="${isLocal ? 'expand' : 'pick'}" data-id="${escapeHtml(p.id)}"${dis ? ' data-off="1"' : ''}>
+        <span>${escapeHtml(p.name)}${meta}</span>
+        ${on ? '<span class="mgr-model-row__check">✓</span>' : ''}</button>`;
+      // Aufgeklapptes lokales Modell: Context-Regler + Zahlenfeld + Laden-Knopf.
+      if (isLocal && modelSheetExpandedId === p.id && !dis) {
+        const max = p.maxContext || 32768;
+        const def = modelSheetCtx[p.id] != null ? modelSheetCtx[p.id]
+          : clampCtx(p.loadedContext || 8192, max);
+        modelSheetCtx[p.id] = def;
+        const ctl = `<div class="mgr-ctx" data-ctx-for="${escapeHtml(p.id)}" style="padding:8px 6px 12px;display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-dim)">
+            <span>Context-Window</span>
+            <input type="number" class="mgr-ctx-num" min="${CTX_MIN}" max="${max}" step="1024" value="${def}"
+              style="width:96px;text-align:right;padding:6px 8px;border-radius:9px;background:rgba(var(--well-rgb),var(--well-a));border:1px solid var(--glass-border);color:var(--text);font:600 13px var(--font-mono)">
+          </div>
+          <input type="range" class="mgr-ctx-slider" min="${CTX_MIN}" max="${max}" step="1024" value="${def}" style="width:100%">
+          <button class="btn-chip is-primary mgr-ctx-load" data-mgr="load" data-id="${escapeHtml(p.id)}"${loading ? ' disabled style="opacity:.6"' : ''}>
+            ${loading ? 'lädt…' : `Laden mit <span class="mgr-ctx-load-n">${def.toLocaleString('de-DE')}</span> Tokens`}</button>
+        </div>`;
+        return row + ctl;
+      }
+      return row;
+    }).join('') || '<div style="padding:10px 4px;color:var(--text-dim);font-size:12.5px">Keine Modelle gemeldet.</div>';
+
+    managerSheet('KI-Modell', body, (btn, el) => {
+      const id = btn.dataset.id;
+      if (btn.dataset.mgr === 'pick') {
+        if (btn.dataset.off) { toast('Modell ist nicht eingerichtet'); return; }
+        el.remove();
+        m.activeProvider = id;
+        const nameEl = document.getElementById('mgrModelName');
+        if (nameEl) nameEl.textContent = activeManagerModelName();
+        if (typeof window.managerSelectProvider === 'function') window.managerSelectProvider(id);
+        return;
+      }
+      if (btn.dataset.mgr === 'expand') {
+        if (btn.dataset.off) { toast('Modell ist in LM Studio nicht verfügbar'); return; }
+        modelSheetExpandedId = (modelSheetExpandedId === id) ? null : id; // toggeln
+        openManagerModelSheet(); // neu aufbauen mit/ohne Regler
+        return;
+      }
+      if (btn.dataset.mgr === 'load') {
+        const ctx = clampCtx(modelSheetCtx[id] || CTX_MIN, (list.find(x => x.id === id) || {}).maxContext);
+        el.remove();
+        m.activeProvider = id;
+        const nameEl = document.getElementById('mgrModelName');
+        if (nameEl) nameEl.textContent = activeManagerModelName();
+        if (typeof window.managerSelectProvider === 'function') window.managerSelectProvider(id, ctx);
+        return;
+      }
+    });
+
+    // Regler + Zahlenfeld synchron halten (kein Delegations-Weg für input-Events).
+    const sheet = document.getElementById('mgrSheet');
+    if (!sheet) return;
+    const wrap = sheet.querySelector('.mgr-ctx');
+    if (!wrap) return;
+    const id = wrap.getAttribute('data-ctx-for');
+    const max = (list.find(x => x.id === id) || {}).maxContext || 32768;
+    const slider = wrap.querySelector('.mgr-ctx-slider');
+    const num = wrap.querySelector('.mgr-ctx-num');
+    const loadN = wrap.querySelector('.mgr-ctx-load-n');
+    const sync = (v, from) => {
+      const val = clampCtx(v, max);
+      modelSheetCtx[id] = val;
+      if (from !== 'slider') slider.value = val;
+      if (from !== 'num') num.value = val;
+      if (loadN) loadN.textContent = val.toLocaleString('de-DE');
+    };
+    if (slider) slider.addEventListener('input', () => sync(+slider.value, 'slider'));
+    if (num) num.addEventListener('change', () => sync(+num.value, 'num'));
+  }
+  // RN kann das offene Sheet mit frischen Daten (Ladezustand, echte Context-Länge)
+  // neu bauen — ohne die aktuelle Regler-Position zu verlieren (modelSheetCtx).
+  window.__tmsRefreshModelSheet = function () {
+    if (document.getElementById('mgrSheet') && document.querySelector('.mgr-model-row')) openManagerModelSheet();
+  };
+
+  function openManagerMenu() {
+    const body = `
+      <button class="btn-chip" data-mgr="model">KI-Modell wählen · ${escapeHtml(activeManagerModelName())}</button>
+      <button class="btn-chip btn-chip--danger" data-mgr="clear">Chat-Verlauf löschen</button>`;
+    managerSheet(TMS_DATA.manager.persona?.name || 'Manager', body, (btn, el) => {
+      if (btn.dataset.mgr === 'model') { el.remove(); openManagerModelSheet(); }
+      else if (btn.dataset.mgr === 'clear') {
+        // Zweistufig: erst „Wirklich?", dann löschen — kein versehentlicher Verlust.
+        if (btn.dataset.armed !== '1') { btn.dataset.armed = '1'; btn.textContent = 'Wirklich löschen?'; return; }
+        el.remove();
+        TMS_DATA.manager.messages = [];
+        renderManagerChat();
+        if (typeof window.managerClearChat === 'function') window.managerClearChat();
+        else toast('Verlauf gelöscht');
+      }
+    });
+  }
+
   function wireManagerInput() {
     const micBtn = document.getElementById('managerMicBtn');
     micBtn.addEventListener('click', () => {
@@ -5031,11 +5612,11 @@
       micBtn.classList.add('is-recording');
       setTimeout(() => {
         micBtn.classList.remove('is-recording');
-        const now = new Date();
-        const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-        TMS_DATA.manager.messages.push({ type: 'voice', from: 'user', time, duration: 8, transcript: null, transcribing: true, _id: 'msg' + TMS_DATA.manager.messages.length });
-        renderManagerChat();
-      }, 2000);
+        // Demo: Transkription landet in der Eingabezeile (nicht direkt gesendet).
+        const input = document.getElementById('managerTextInput');
+        input.value = (input.value ? input.value + ' ' : '') + '(Demo-Transkript)';
+        input.focus();
+      }, 1500);
     });
     document.getElementById('managerTextInput').addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
@@ -5048,7 +5629,19 @@
       input.value = '';
       renderManagerChat();
     });
+    // Kopf-Menü, Modell-Chip, Anhang.
+    const menuBtn = document.getElementById('mgrMenuBtn');
+    if (menuBtn) menuBtn.addEventListener('click', openManagerMenu);
+    const modelChip = document.getElementById('mgrModelChip');
+    if (modelChip) modelChip.addEventListener('click', openManagerModelSheet);
+    const attachBtn = document.getElementById('managerAttachBtn');
+    if (attachBtn) attachBtn.addEventListener('click', () => {
+      if (typeof window.managerAttach === 'function') window.managerAttach();
+      else toast('Demo: Bild anhängen');
+    });
+    renderManagerAttachments();
   }
+  window.openManagerModelSheet = openManagerModelSheet;
 
   function initManagerScreen() {
     renderManagerShell();
@@ -5057,7 +5650,17 @@
     renderManagerArtifacts();
     renderManagerMemory();
     renderManagerChat();
+    // Nach dem Wiederaufbau steht wieder der Chat-Tab vorn — die Bridge ruft das,
+    // wenn sich Name oder Profilbild des Managers ändern.
+    if (typeof state.managerTab === 'string' && state.managerTab !== 'chat') {
+      const btn = document.querySelector(`#managerTabs button[data-tab="${state.managerTab}"]`);
+      if (btn) btn.click();
+    }
+    // Nach jedem Aufbau die reale Eingabe-Verdrahtung nachziehen (die frischen
+    // Elemente tragen sonst nur das Demo-Verhalten).
+    if (typeof window.__tmsWireManagerInput === 'function') window.__tmsWireManagerInput();
   }
+  window.rerenderManager = initManagerScreen;
 
   SCREEN_HOOKS.manager = renderManagerChat;
 
@@ -5080,6 +5683,9 @@
             <div class="chip-group" id="cloudViewToggle">
               <button data-view="folder" class="active">Ordner</button>
               <button data-view="list">Liste</button>
+            </div>
+            <div class="chip-group">
+              <button id="cloudAccountsBtn" type="button">Konten</button>
             </div>
           </div>
           <div id="cloudGroups"></div>
@@ -5107,7 +5713,9 @@
   const CLOUD_GLYPH = { vercel: '▲', render: 'R' };
 
   function cloudFilteredProjects() {
-    return TMS_DATA.cloudProjects.filter(p => state.cloudProviderFilter === 'all' || p.provider === state.cloudProviderFilter);
+    const connected = cloudConnectedProviders();
+    return TMS_DATA.cloudProjects.filter(p => connected.includes(p.provider))
+      .filter(p => state.cloudProviderFilter === 'all' || p.provider === state.cloudProviderFilter);
   }
 
   function cloudRowHtml(p) {
@@ -5125,31 +5733,156 @@
       </button>`;
   }
 
+  const CLOUD_PROVIDER_LABEL = { vercel: 'Vercel', render: 'Render' };
+  const CLOUD_KEY_HINT = {
+    vercel: 'vercel.com → Account Settings → Tokens',
+    render: 'dashboard.render.com → Account Settings → API Keys',
+  };
+
+  function cloudConnectedProviders() {
+    const acc = TMS_DATA.cloudAccounts || {};
+    return ['vercel', 'render'].filter(p => acc[p] && acc[p].connected);
+  }
+
+  function cloudConnectCardHtml(provider) {
+    return `
+      <div class="cloud-connect-card glass" data-connect-card="${provider}">
+        <h3><span class="provider-glyph">${CLOUD_GLYPH[provider]}</span>${CLOUD_PROVIDER_LABEL[provider]} verbinden</h3>
+        <p>API-Key erstellen unter: ${escapeHtml(CLOUD_KEY_HINT[provider])}</p>
+        <div class="cloud-connect-row">
+          <input type="password" placeholder="API-Key" data-connect-input="${provider}" autocomplete="off">
+          <button class="btn-chip is-on" data-connect-btn="${provider}" type="button">Verbinden</button>
+        </div>
+      </div>`;
+  }
+
+  function bindCloudConnectCards(host) {
+    host.querySelectorAll('[data-connect-btn]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const provider = btn.dataset.connectBtn;
+        const input = host.querySelector(`[data-connect-input="${provider}"]`);
+        const token = (input.value || '').trim();
+        if (!token) { toast('Bitte API-Key eingeben'); return; }
+        window.requestCloudConnect(provider, token);
+      });
+    });
+  }
+
   function renderCloudGroups() {
     const host = document.getElementById('cloudGroups');
+    const connected = cloudConnectedProviders();
+    if (connected.length === 0) {
+      host.innerHTML = cloudConnectCardHtml('vercel') + cloudConnectCardHtml('render');
+      bindCloudConnectCards(host);
+      return;
+    }
     const list = cloudFilteredProjects();
     if (state.cloudView === 'list') {
       const sorted = [...list].sort((a, b) => (b.favorite - a.favorite));
       host.innerHTML = `<div class="folder-group glass"><div class="folder-group__rows">${sorted.map(cloudRowHtml).join('')}</div></div>`;
-      return;
+    } else {
+      const folders = {};
+      list.forEach(p => { (folders[p.folder] = folders[p.folder] || []).push(p); });
+      const folderNames = Object.keys(folders).sort();
+      host.innerHTML = folderNames.map(name => {
+        const rows = [...folders[name]].sort((a, b) => (b.favorite - a.favorite));
+        return `
+          <div class="folder-group glass" data-folder="${escapeHtml(name)}">
+            <div class="folder-group__head">
+              <span class="folder-group__name">${escapeHtml(name)}</span>
+              <span class="folder-group__count">${rows.length}</span>
+            </div>
+            <div class="folder-group__rows">${rows.map(cloudRowHtml).join('')}</div>
+          </div>`;
+      }).join('');
     }
-    const folders = {};
-    list.forEach(p => { (folders[p.folder] = folders[p.folder] || []).push(p); });
-    const folderNames = Object.keys(folders).sort();
-    host.innerHTML = folderNames.map(name => {
-      const rows = [...folders[name]].sort((a, b) => (b.favorite - a.favorite));
-      return `
-        <div class="folder-group glass" data-folder="${escapeHtml(name)}">
-          <div class="folder-group__head">
-            <span class="folder-group__name">${escapeHtml(name)}</span>
-            <span class="folder-group__count">${rows.length}</span>
-          </div>
-          <div class="folder-group__rows">${rows.map(cloudRowHtml).join('')}</div>
-        </div>`;
-    }).join('');
+    // One provider still unlinked → a quiet connect card below the projects.
+    const missing = ['vercel', 'render'].filter(p => !connected.includes(p));
+    if (missing.length === 1) {
+      host.insertAdjacentHTML('beforeend', cloudConnectCardHtml(missing[0]));
+      bindCloudConnectCards(host);
+    }
   }
 
+  let cloudRevealed = {}; // provider -> plaintext key while the eye is open
+
+  function renderCloudAccountsSheet() {
+    const body = document.getElementById('cloudAccountsSheetBody');
+    if (!body) return;
+    const acc = TMS_DATA.cloudAccounts || {};
+    body.innerHTML = ['vercel', 'render'].map(p => {
+      const a = acc[p] || { connected: false };
+      if (!a.connected) {
+        return `<div class="cloud-account-row">
+          <div class="cloud-account-row__head"><span class="provider-glyph">${CLOUD_GLYPH[p]}</span>
+            <span class="cloud-account-row__name">${CLOUD_PROVIDER_LABEL[p]}</span>
+            <span class="status-chip" data-status="inactive"><span class="dot"></span><span class="status-chip__label">nicht verbunden</span></span></div>
+          <div class="cloud-connect-row">
+            <input type="password" placeholder="API-Key" data-connect-input="${p}" autocomplete="off">
+            <button class="btn-chip is-on" data-connect-btn="${p}" type="button">Verbinden</button>
+          </div></div>`;
+      }
+      const key = cloudRevealed[p] || a.maskedKey || '••••';
+      return `<div class="cloud-account-row">
+        <div class="cloud-account-row__head"><span class="provider-glyph">${CLOUD_GLYPH[p]}</span>
+          <span class="cloud-account-row__name">${CLOUD_PROVIDER_LABEL[p]}</span>
+          <span class="status-chip" data-status="${a.invalid ? 'error' : 'ready'}"><span class="dot"></span><span class="status-chip__label">${a.invalid ? 'Key ungültig' : 'verbunden'}</span></span></div>
+        <div class="cloud-account-key">
+          <code>${escapeHtml(key)}</code>
+          <button class="btn-chip" data-reveal="${p}" type="button">${cloudRevealed[p] ? 'Verbergen' : 'Anzeigen'}</button>
+          <button class="btn-chip" data-copy="${p}" type="button">Kopieren</button>
+          <button class="btn-chip" data-disconnect="${p}" type="button">Trennen</button>
+        </div>
+        ${a.invalid ? '<div class="cloud-key-invalid">Key ungültig — bitte neu eingeben (erst trennen).</div>' : ''}
+      </div>`;
+    }).join('');
+
+    bindCloudConnectCards(body);
+    body.querySelectorAll('[data-reveal]').forEach(b => b.addEventListener('click', () => {
+      const p = b.dataset.reveal;
+      if (cloudRevealed[p]) { delete cloudRevealed[p]; renderCloudAccountsSheet(); }
+      else window.requestCloudRevealKey(p);
+    }));
+    body.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', () => window.requestCloudCopyKey(b.dataset.copy)));
+    body.querySelectorAll('[data-disconnect]').forEach(b => b.addEventListener('click', () => {
+      delete cloudRevealed[b.dataset.disconnect];
+      window.requestCloudDisconnect(b.dataset.disconnect);
+    }));
+  }
+  window.renderCloudAccountsSheet = renderCloudAccountsSheet;
+
+  /** Bridge answer to requestCloudRevealKey — shows the plaintext key. */
+  window.cloudKeyRevealed = function (provider, key) {
+    if (!key) return;
+    cloudRevealed[provider] = key;
+    renderCloudAccountsSheet();
+  };
+
+  // ── Demo stubs — the real app's bridge overrides all four with post() calls.
+  const CLOUD_DEMO_KEYS = { vercel: 'vc_a1b2c3d4e5f6g7h8i9zQ', render: 'rnd_BHdemoDEMOdemoDsp4' };
+  function maskCloudKey(k) { return k.length <= 8 ? '••••' : k.slice(0, 4) + '••••…' + k.slice(-3); }
+  window.requestCloudConnect = function (provider, token) {
+    TMS_DATA.cloudAccounts[provider] = { connected: true, maskedKey: maskCloudKey(token) };
+    CLOUD_DEMO_KEYS[provider] = token;
+    toast(CLOUD_PROVIDER_LABEL[provider] + ' verbunden (Demo)');
+    renderCloudGroups(); renderCloudAccountsSheet();
+  };
+  window.requestCloudDisconnect = function (provider) {
+    TMS_DATA.cloudAccounts[provider] = { connected: false, maskedKey: null };
+    toast(CLOUD_PROVIDER_LABEL[provider] + ' getrennt (Demo)');
+    renderCloudGroups(); renderCloudAccountsSheet();
+  };
+  window.requestCloudRevealKey = function (provider) { window.cloudKeyRevealed(provider, CLOUD_DEMO_KEYS[provider]); };
+  window.requestCloudCopyKey = function (provider) { toast('Kopiert (Demo)'); };
+
   function wireCloudToolbar() {
+    const accountsWrap = document.getElementById('cloudAccountsSheetWrap');
+    document.getElementById('cloudAccountsBtn').addEventListener('click', () => {
+      renderCloudAccountsSheet();
+      openSheet(accountsWrap);
+    });
+    document.getElementById('cloudAccountsSheetClose').addEventListener('click', () => closeSheet(accountsWrap));
+    accountsWrap.querySelector('[data-close-cloudaccounts]').addEventListener('click', () => closeSheet(accountsWrap));
     document.getElementById('cloudProviderFilter').addEventListener('click', e => {
       const btn = e.target.closest('button[data-provider]');
       if (!btn) return;
@@ -5759,26 +6492,21 @@
   // ---- Shell + chrome wiring ----
   function renderBrowserShell() {
     const host = document.querySelector('[data-screen="browser"]');
+    // Die Leiste selbst steht nicht mehr hier, sondern als vierte Seite in der
+    // Bottom-Bar (#dockWeb). Im Screen bleibt nur Inhalt + Ladebalken, der
+    // direkt über der Bar sitzt — dort, wo jetzt das Adressfeld ist.
     host.innerHTML = `
       <div class="browser-col">
-        <div class="browser-chrome">
-          <div class="browser-toolbar">
-            <button class="browser-nav-btn" id="browserBackBtn" aria-label="Zurück" disabled>${icon('chevronLeft')}</button>
-            <button class="browser-nav-btn" id="browserFwdBtn" aria-label="Vor" disabled>${icon('chevronRight')}</button>
-            <div class="browser-address glass">
-              <span class="browser-address__incognito" title="Inkognito · isoliert · keine Cookies">${icon('incognito', 15)}</span>
-              <input type="text" id="browserUrlInput" class="browser-address__input" placeholder="Suchen oder Adresse eingeben…" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
-              <button class="browser-address__reload" id="browserReloadBtn" aria-label="Neu laden" type="button">${icon('replay', 16)}</button>
-            </div>
-            <button class="browser-nav-btn browser-tabs-btn" id="browserTabsBtn" aria-label="Tabs anzeigen"><span class="browser-tabs-btn__count" id="browserTabCount">1</span></button>
-            <button class="browser-nav-btn" id="browserMenuBtn" aria-label="Browser-Menü">${icon('dots')}</button>
-          </div>
-          <div class="browser-progress" id="browserProgress"><div class="browser-progress__bar" id="browserProgressBar"></div></div>
-        </div>
         <div class="browser-content" id="browserContent"></div>
+        <div class="browser-progress" id="browserProgress"><div class="browser-progress__bar" id="browserProgressBar"></div></div>
       </div>`;
   }
   function wireBrowserChrome() {
+    document.getElementById('browserBackBtn').innerHTML = icon('chevronLeft');
+    document.getElementById('browserFwdBtn').innerHTML = icon('chevronRight');
+    document.getElementById('browserIncognito').innerHTML = icon('incognito', 15);
+    document.getElementById('browserReloadBtn').innerHTML = icon('replay', 16);
+    document.getElementById('browserMenuBtn').innerHTML = icon('dots');
     document.getElementById('browserBackBtn').addEventListener('click', browserGoBack);
     document.getElementById('browserFwdBtn').addEventListener('click', browserGoForward);
     document.getElementById('browserReloadBtn').addEventListener('click', () => browserReload());
@@ -5799,7 +6527,8 @@
     createBrowserTab(true);
     renderBrowserActiveTab({ progress: false });
   }
-  SCREEN_HOOKS.browser = syncBrowserChrome;
+  // Auf dem Browser-Tab ist die Adressleiste die Voreinstellung der Bottom-Bar.
+  SCREEN_HOOKS.browser = () => { setDockPage('web'); syncBrowserChrome(); };
 
   // ============================================================
   // Settings screen
@@ -6209,73 +6938,6 @@
     return section;
   }
 
-  function wirePullToSpotlight() {
-    const screensEl = document.getElementById('screens');
-    const hint = document.getElementById('pullHint');
-    let tracking = false, pulled = false, startX = 0, startY = 0, scrollEl = null, pointerId = null;
-    function beginTrack(target, x, y) {
-      if (document.body.classList.contains('is-locked')) return false;
-      // The terminals spatial stack + rail own horizontal swipe / drag-reorder
-      // gestures, and the ⊞ overview grid is a transient overlay you're
-      // actively tapping into — never arm the vertical pull-to-search
-      // tracker there. Liste is a plain vertical scroller and is NOT
-      // excluded: findScrollTarget() below resolves #termList as its own
-      // nearest scrollable ancestor, so pull-to-search still works exactly
-      // like on every other screen (scrolled list ≠ trigger; pull at top does).
-      if (target.closest('.workspace, .overview-grid, #dock, .keys-panel')) return false;
-      if (typeof dockSwitching !== 'undefined' && dockSwitching) return false;
-      const section = target.closest('section[data-screen]:not([hidden])');
-      if (!section) return false;
-      const el = findScrollTarget(target, section);
-      if (el.scrollTop > 0) return false;
-      tracking = true; pulled = false; startX = x; startY = y; scrollEl = el;
-      return true;
-    }
-    function moveTrack(x, y) {
-      if (!tracking) return;
-      if (scrollEl.scrollTop > 0) { tracking = false; hint.classList.remove('show'); return; }
-      const dy = y - startY, dx = x - startX;
-      if (dy <= 0 || dy < 1.5 * Math.abs(dx)) { hint.classList.remove('show'); return; }
-      if (dy > 30) hint.classList.add('show'); else hint.classList.remove('show');
-      pulled = dy > 78;
-    }
-    function endTrack() {
-      if (tracking && pulled) openSpotlight();
-      tracking = false; pulled = false;
-      hint.classList.remove('show');
-    }
-    // Mouse/pen path — pointer events. TOUCH IS EXCLUDED here and handled by
-    // the touch-event listeners below: on a real device the browser claims a
-    // vertical pan for native scrolling after ~10px of slop and kills the
-    // pointer stream with pointercancel, long before the 78px pull threshold —
-    // the tracker never saw a full pull on the phone. Passive touchmove keeps
-    // streaming even while the browser scrolls/overscrolls natively, so the
-    // touch path observes the entire gesture. All tracking state is shared;
-    // a mouse drag and a touch pan cannot be interleaved in practice.
-    screensEl.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'touch') return;
-      if (beginTrack(e.target, e.clientX, e.clientY)) pointerId = e.pointerId;
-    }, { passive: true });
-    screensEl.addEventListener('pointermove', e => {
-      if (e.pointerType === 'touch' || !tracking || e.pointerId !== pointerId) return;
-      moveTrack(e.clientX, e.clientY);
-    }, { passive: true });
-    screensEl.addEventListener('pointerup', e => { if (e.pointerType !== 'touch') endTrack(); });
-    screensEl.addEventListener('pointercancel', e => { if (e.pointerType !== 'touch') endTrack(); });
-    screensEl.addEventListener('touchstart', e => {
-      if (e.touches.length !== 1) { tracking = false; hint.classList.remove('show'); return; }
-      const t = e.touches[0];
-      beginTrack(e.target, t.clientX, t.clientY);
-    }, { passive: true });
-    screensEl.addEventListener('touchmove', e => {
-      if (!tracking || e.touches.length !== 1) return;
-      const t = e.touches[0];
-      moveTrack(t.clientX, t.clientY);
-    }, { passive: true });
-    screensEl.addEventListener('touchend', endTrack, { passive: true });
-    screensEl.addEventListener('touchcancel', endTrack, { passive: true });
-  }
-
   // ============================================================
   // Init
   // ============================================================
@@ -6314,6 +6976,7 @@
   const dockPages = {
     nav: document.getElementById('dockNav'),
     term: document.getElementById('dockTerm'),
+    web: document.getElementById('dockWeb'),
     rec: document.getElementById('dockRec'),
   };
   document.getElementById('dockMicBtn').innerHTML = icon('mic');
@@ -6332,6 +6995,10 @@
     Object.keys(dockPages).forEach(k => dockPages[k].classList.toggle('is-active', k === page));
     if (page === 'nav') positionDockPill();
     if (page === 'term') syncDockTerminal();
+    if (page === 'web') syncBrowserChrome();
+    // Nav- und Terminal-Seite sind unterschiedlich hoch: was auf der Bar steht
+    // (die Tastenleiste) muss die neue Höhe kennen, sonst überlappt sie.
+    syncDockHeight();
   }
 
   /** Which terminal the bar acts on: the one last tapped / typed into. */
@@ -6348,6 +7015,91 @@
     document.querySelectorAll('.term-card').forEach(c => c.classList.toggle('is-target', c.dataset.id === id));
     if (state.keysPanelOpen) applyKeysPanelVisibility();
   }
+  // ============================================================
+  // Eingabezeile: mitwachsen (bis 3 Zeilen) + Cursor-Schrubber
+  // ============================================================
+  // Die Bar sitzt unten fest — wächst das Feld, wächst sie nach OBEN. Alles,
+  // was auf ihr steht (Tastenleiste), hängt an --dock-h und rückt mit.
+  function syncDockHeight() {
+    // Auf dem Sperrbildschirm ist die Bar display:none — dann misst sie 0 und
+    // die Tastenleiste säße plötzlich HINTER ihr. Nur echte Höhen zählen.
+    const h = dockEl.offsetHeight;
+    if (h > 0) document.documentElement.style.setProperty('--dock-h', h + 'px');
+  }
+  window.addEventListener('resize', syncDockHeight);
+  function autoGrowInput(el) {
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    const lh = parseFloat(cs.lineHeight) || 20;
+    const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const max = lh * 3 + pad;
+    // Beim Messen MUSS das Feld auf overflow:hidden stehen. Steht es noch auf
+    // „scrollbar" (weil es eben noch dreizeilig war), rechnet Chrome scrollHeight
+    // mit dem alten Scroll-Inhalt — das Feld schrumpfte dann nie ganz zurück.
+    el.style.overflowY = 'hidden';
+    el.style.height = 'auto';
+    // Ist das Feld leer, misst Chrome den PLATZHALTER mit — der bricht auf zwei
+    // Zeilen um, und die Bar stünde im Ruhezustand zweizeilig da. Leer heißt
+    // immer genau eine Zeile.
+    const contentH = el.value ? el.scrollHeight : lh + pad;
+    const h = Math.min(contentH, max);
+    el.style.height = h + 'px';
+    // Erst ab der vierten Zeile scrollt das Feld in sich selbst.
+    el.style.overflowY = contentH > max + 1 ? 'auto' : 'hidden';
+    if (contentH <= max) el.scrollTop = 0;
+    // Feld und Bar wachsen im SELBEN Frame — eine Höhen-Animation hier hätte
+    // die Leiste darüber hinterherhinken lassen (und scrollHeight mitten im
+    // Übergang lügt ohnehin).
+    syncDockHeight();
+  }
+  // Gedrückt halten und waagerecht ziehen schiebt den Cursor durch den Text —
+  // die Alternative zu Androids Lupe, die im WebView nicht zuverlässig kommt.
+  // Greift nur im FOKUSSIERTEN Feld: unfokussiert gehört das lange Drücken
+  // weiterhin der Bar (Terminal-Wechsel), sonst würden sich beide beißen.
+  function wireCaretScrub(el) {
+    const HOLD_MS = 280, PX_PER_CHAR = 7, MOVE_CANCEL = 10;
+    let hold = null, scrubbing = false, startX = 0, startPos = 0;
+    const stop = () => {
+      clearTimeout(hold); hold = null;
+      if (!scrubbing) return;
+      scrubbing = false;
+      el.classList.remove('is-scrubbing');
+    };
+    el.addEventListener('pointerdown', e => {
+      if (document.activeElement !== el) return; // erst tippen, dann schrubben
+      startX = e.clientX;
+      clearTimeout(hold);
+      hold = setTimeout(() => {
+        scrubbing = true;
+        startPos = el.selectionStart == null ? el.value.length : el.selectionStart;
+        el.classList.add('is-scrubbing');
+        try { el.setPointerCapture(e.pointerId); } catch (err) { /* kein Capture nötig */ }
+        if (navigator.vibrate) navigator.vibrate(8);
+      }, HOLD_MS);
+    });
+    el.addEventListener('pointermove', e => {
+      if (!scrubbing) {
+        if (hold && Math.abs(e.clientX - startX) > MOVE_CANCEL) { clearTimeout(hold); hold = null; }
+        return;
+      }
+      e.preventDefault();
+      const pos = Math.max(0, Math.min(el.value.length,
+        startPos + Math.round((e.clientX - startX) / PX_PER_CHAR)));
+      try { el.setSelectionRange(pos, pos); } catch (err) { /* ignore */ }
+    });
+    el.addEventListener('pointerup', stop);
+    el.addEventListener('pointercancel', stop);
+    // Beim Schrubben darf Android weder Kontextmenü noch Wortauswahl aufmachen.
+    el.addEventListener('contextmenu', e => { if (scrubbing) e.preventDefault(); });
+    el.addEventListener('selectstart', e => { if (scrubbing) e.preventDefault(); });
+  }
+  document.getElementById('dockInput').addEventListener('input', e => autoGrowInput(e.target));
+  wireCaretScrub(document.getElementById('dockInput'));
+  requestAnimationFrame(syncDockHeight);
+  // Die Bridge leert das Feld selbst (dockReset) — sie muss es danach auch
+  // wieder schrumpfen lassen, sonst bleibt die Bar dreizeilig stehen.
+  window.autoGrowInput = autoGrowInput;
+
   // Beim Tippen darf das Terminal nicht hinter der Tastatur verschwinden.
   document.getElementById('dockInput').addEventListener('focus', () => {
     dockEl.classList.add('is-typing');
@@ -6367,10 +7119,46 @@
       }
     }, 120);
   });
+  // Android schließt die Tastatur oft OHNE blur-Event (System-Zurück-Taste,
+  // Wischgeste) — dann blieb body.typing kleben und der Terminal-Umschalter war
+  // dauerhaft ausgeblendet, obwohl die Tastatur längst zu war. Die echte
+  // Tastaturhöhe steckt in visualViewport: ist die Sicht wieder (fast) voll, ist
+  // die Tastatur zu → typing-Zustand aufräumen (egal ob das Feld noch Fokus hat)
+  // und die Umschalt-Punkte zurückholen.
+  if (window.visualViewport) {
+    const vvKeyboardSync = () => {
+      const kbOpen = (window.innerHeight - window.visualViewport.height) > 120;
+      if (!kbOpen && document.body.classList.contains('typing')) {
+        dockEl.classList.remove('is-typing');
+        document.body.classList.remove('typing');
+        if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
+      }
+    };
+    window.visualViewport.addEventListener('resize', vvKeyboardSync);
+  }
   // Die Knöpfe der Leiste dürfen den Fokus nicht klauen — sonst klappt die
   // Zeile beim Antippen von "Senden" zusammen, bevor der Klick durch ist.
   document.getElementById('dockTerm').addEventListener('pointerdown', e => {
     if (e.target.closest('button') && document.activeElement === document.getElementById('dockInput')) {
+      e.preventDefault();
+    }
+  });
+  // Dasselbe für die Tastenleiste (globale #globalKeys UND die Karten-Panels):
+  // Pfeiltasten, ^C/Esc/Tab, Screenshots/Dateien/Notizen — kein Knopf darf der
+  // Kommandozeile den Fokus klauen, sonst klappt die virtuelle Tastatur bei
+  // jedem Tastendruck zu. pointerdown-Default verhindern hält den Fokus auf
+  // #dockInput (Klick feuert weiter); natives Quer-Scrollen der Tool-Reihe
+  // bleibt, weil das touch-action steuert, nicht preventDefault. Delegiert auf
+  // document, damit es das Neubauen von #globalKeys übersteht.
+  // Gezielte Liste fokus-sicherer Terminal-Bedienelemente (KEIN pauschales
+  // "alle Buttons" — der Terminal-Name z.B. wird bewusst zum Feld fokussiert):
+  // Tastenleiste + der "nach unten springen"-Orb (⏬). Alle klauen sonst der
+  // Kommandozeile den Fokus und schließen die virtuelle Tastatur.
+  const FOCUS_SAFE_CONTROLS = '.keys-panel button, .jump-bottom-orb';
+  document.addEventListener('pointerdown', e => {
+    if (e.target.closest(FOCUS_SAFE_CONTROLS) &&
+        document.activeElement === document.getElementById('dockInput')) {
       e.preventDefault();
     }
   });
@@ -6384,6 +7172,7 @@
       const input = document.getElementById('dockInput');
       sendTerminalCommand(id, input.value);
       input.value = '';
+      autoGrowInput(input);
       input.blur();
     } else if (e.target.closest('#dockMicBtn')) {
       startDictation(id);
@@ -6394,57 +7183,78 @@
   });
   document.getElementById('dockInput').addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
+    // Im Textfeld würde Enter umbrechen statt zu senden — die Zeile wächst nur
+    // MIT dem Text (Umbruch), nicht durch selbst gesetzte Zeilenschaltungen.
+    e.preventDefault();
     const id = dockTargetId();
     if (!id) return;
     sendTerminalCommand(id, e.target.value);
     e.target.value = '';
+    autoGrowInput(e.target);
     e.target.blur();
   });
 
-  // Lange drücken hebt die Leiste an, dann wischen (oder die andere antippen).
-  let dockHold = null, dockSwitching = false, dockSwitched = false, dockStartX = 0, dockSuppressClick = false;
-  dockEl.addEventListener('pointerdown', e => {
-    // In der Terminal-Leiste ist die Mitte das Eingabefeld — dort MUSS das
-    // lange Drücken trotzdem greifen, sonst bliebe kaum Fläche dafür übrig.
-    // Nur wer gerade wirklich tippt, wird in Ruhe gelassen.
+  // Vom UNTEREN BILDSCHIRMRAND nach oben wischen wechselt die Leiste
+  // (Navigation ⇄ Eingabezeile). Vorher musste man sie lange drücken — das lag
+  // über jedem Knopf und war nicht zu erraten. Die Geste beginnt bewusst nur
+  // unten: alles ab der Oberkante der Leiste abwärts zählt als Rand, überall
+  // sonst passiert nichts.
+  const DOCK_SWIPE_UP = 34;   // px, ab hier zählt es als Wisch
+  let dockSwiping = false, dockSwitched = false, dockStartX = 0, dockStartY = 0, dockSuppressClick = false;
+
+  /** Liegt der Punkt im unteren Rand — also auf der Leiste oder darunter? */
+  function inBottomEdge(y) {
+    const r = dockEl.getBoundingClientRect();
+    if (!r.height) return false;          // Leiste versteckt (Sperrbildschirm)
+    return y >= r.top - 8;
+  }
+  document.addEventListener('pointerdown', e => {
+    dockSwiping = false;
+    if (document.body.classList.contains('is-locked')) return;
+    if (!inBottomEdge(e.clientY)) return;
+    // Wer gerade wirklich IM Eingabefeld tippt, wird in Ruhe gelassen — dort
+    // gehört das Wischen dem Cursor-Schrubber.
     const input = document.getElementById('dockInput');
-    // Nur wer gerade wirklich IM Eingabefeld tippt, wird in Ruhe gelassen —
-    // überall sonst auf der Leiste greift das lange Drücken.
     if (document.activeElement === input && e.target.closest('#dockInput')) return;
+    dockSwiping = true;
+    dockSwitched = false;
     dockStartX = e.clientX;
-    dockHold = setTimeout(() => {
-      dockSwitching = true;
-      dockSuppressClick = true;
-      if (input) input.blur();
-      dockEl.classList.add('is-switching');
-      if (navigator.vibrate) navigator.vibrate(8);
-    }, 420);
+    dockStartY = e.clientY;
   });
-  // Das lange Drücken darf den Knopf darunter nicht mit auslösen.
+  document.addEventListener('pointermove', e => {
+    // Ein Wisch = EIN Wechsel. Ohne die Sperre kippt die Leiste während einer
+    // einzigen Bewegung mehrfach hin und her.
+    if (!dockSwiping || dockSwitched) return;
+    const up = dockStartY - e.clientY;              // nach oben = positiv
+    const side = Math.abs(e.clientX - dockStartX);
+    if (up < DOCK_SWIPE_UP || up < side) return;    // eindeutig nach oben, nicht quer
+    dockSwitched = true;
+    dockSuppressClick = true;                       // der Knopf darunter darf nicht mit auslösen
+    // Sicherheitsnetz: kommt nach dem Wisch gar kein Klick mehr (Android
+    // verschluckt ihn oft), verfällt die Sperre von selbst — sonst fräße sie
+    // den nächsten ECHTEN Knopfdruck.
+    setTimeout(() => { dockSuppressClick = false; }, 400);
+    const input = document.getElementById('dockInput');
+    if (input) input.blur();
+    const urlField = document.getElementById('browserUrlInput');
+    if (urlField) urlField.blur();
+    dockEl.classList.add('is-switching');
+    setTimeout(() => dockEl.classList.remove('is-switching'), 260);
+    if (navigator.vibrate) navigator.vibrate(8);
+    // Der Wisch schaltet zwischen Navigation und der Seite, die zum aktuellen
+    // Screen gehört: Eingabezeile im Terminal, Adressleiste im Browser.
+    const own = currentScreen === 'browser' ? 'web' : 'term';
+    setDockPage(state.dockPage === 'nav' ? own : 'nav');
+  });
   dockEl.addEventListener('click', e => {
     if (!dockSuppressClick) return;
     dockSuppressClick = false;
     e.stopPropagation();
     e.preventDefault();
   }, true);
-  dockEl.addEventListener('pointermove', e => {
-    // Ein Wisch = EIN Wechsel. Ohne die Sperre kippt die Leiste während einer
-    // einzigen Bewegung mehrfach hin und her.
-    if (!dockSwitching || dockSwitched || Math.abs(e.clientX - dockStartX) < 45) return;
-    dockSwitched = true;
-    setDockPage(state.dockPage === 'nav' ? 'term' : 'nav');
-  });
-  function endDockHold() {
-    clearTimeout(dockHold);
-    if (!dockSwitching) return;
-    // Gedrückt gehalten, aber nicht gewischt? Dann ist das Antippen der Wechsel.
-    if (!dockSwitched) setDockPage(state.dockPage === 'nav' ? 'term' : 'nav');
-    dockSwitching = false;
-    dockSwitched = false;
-    dockEl.classList.remove('is-switching');
-  }
-  dockEl.addEventListener('pointerup', endDockHold);
-  dockEl.addEventListener('pointercancel', endDockHold);
+  function endDockSwipe() { dockSwiping = false; }
+  document.addEventListener('pointerup', endDockSwipe);
+  document.addEventListener('pointercancel', endDockSwipe);
 
   // ── Diktat: die Leiste wird zur Aufnahme.
   let recStart = 0, recTick = null;
@@ -6626,7 +7436,6 @@
   wireNav();
   wireTermToolsSheet();
   wireSpotlight();
-  wirePullToSpotlight();
 
   initLiveSession();
   startLatencyTicker();
