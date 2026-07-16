@@ -155,6 +155,15 @@ export function isBusy(): boolean {
   return activeRequest !== null;
 }
 
+// Start the sidecar ahead of the first enhanced dictation so the Llama load
+// (and any iCloud re-download of evicted venv files) never eats into a user
+// request. Failure is non-fatal — rewrite() falls back to lazy start.
+export function prewarm(): Promise<void> {
+  return ensureRunning().catch((err) => {
+    logger.warn(`[rewriter] Prewarm failed (will retry on first request): ${err.message}`);
+  });
+}
+
 export async function rewrite(transcript: string): Promise<string> {
   if (activeRequest) throw new RewriterBusyError();
 

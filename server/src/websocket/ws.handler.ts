@@ -755,6 +755,15 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       }
 
       // MLX sidecar uses a single turbo model for all lengths; no per-size model switch.
+      // Keep-alive heartbeat: the app gives up after 25s without any audio
+      // message, but single-chunk audio (<~72s) yields no progress events and
+      // a cold sidecar start or the enhance rewrite can exceed 25s. chunk 0 is
+      // never emitted by the sidecar, so clients that render chunk numbers
+      // skip it while the inactivity watchdogs still reset.
+      const keepAlive = setInterval(() => {
+        send(ws, { type: 'audio:progress', sessionId, payload: { chunk: 0, total: 0, text: '' } } as any);
+      }, 10_000);
+
       whisperTranscribe(audio, {
         onProgress: (info) => {
           send(ws, { type: 'audio:progress', sessionId, payload: { chunk: info.chunk, total: info.total, text: info.text } } as any);
@@ -777,6 +786,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         const message = err instanceof Error ? err.message : 'Transkription fehlgeschlagen';
         logger.warn(`[whisper] Transcription failed: ${message}`);
         send(ws, { type: 'audio:error', sessionId, payload: { message } } as any);
+      }).finally(() => {
+        clearInterval(keepAlive);
       });
       return;
     }

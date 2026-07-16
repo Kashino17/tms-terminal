@@ -16,8 +16,8 @@ import { getPlatform, getDefaultShell } from './utils/platform';
 import { fcmService } from './notifications/fcm.service';
 import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
-import { shutdown as shutdownWhisper } from './audio/whisper-sidecar';
-import { shutdown as shutdownRewriter } from './audio/prompt-rewriter-sidecar';
+import { shutdown as shutdownWhisper, prewarm as prewarmWhisper } from './audio/whisper-sidecar';
+import { shutdown as shutdownRewriter, prewarm as prewarmRewriter } from './audio/prompt-rewriter-sidecar';
 import { managerService } from './websocket/ws.handler';
 
 // ── Global error handlers ────────────────────────────────────────────
@@ -178,6 +178,11 @@ function main(): void {
   server.listen(port, '0.0.0.0', () => {
     logger.success(`Server listening on http://0.0.0.0:${port}`);
     logger.info('Waiting for connections...');
+
+    // Warm both audio sidecars in the background so the first dictation after
+    // a server restart never pays the model-load (or iCloud re-download) cost.
+    void prewarmWhisper();
+    void prewarmRewriter();
   });
 
   // Graceful shutdown

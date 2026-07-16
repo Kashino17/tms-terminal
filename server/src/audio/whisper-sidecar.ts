@@ -213,6 +213,14 @@ export async function transcribe(audioBase64: string, options: TranscribeOptions
   });
 }
 
+// Start the sidecar ahead of the first dictation so model load (and any
+// iCloud re-download of evicted venv files) never eats into a user request.
+export function prewarm(): Promise<void> {
+  return ensureRunning().catch((err) => {
+    logger.warn(`[whisper] Prewarm failed (will retry on first request): ${err.message}`);
+  });
+}
+
 export function shutdown(): void {
   if (sidecar && !sidecar.killed) {
     sidecar.kill('SIGTERM');
