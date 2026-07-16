@@ -9,16 +9,10 @@ interface PendingRequest {
   onProgress?: (info: { chunk: number; total: number; text: string }) => void;
 }
 
-// Dynamic timeout: 30s base + 15s per estimated minute of audio.
-// Base64 WAV at 16kHz/16bit/mono: ~1.33 MB per minute → ~1.78 MB Base64 per minute.
-const BASE_TIMEOUT_MS = 30_000;
-const TIMEOUT_PER_MB_BASE64 = 10_000; // 10s per MB of Base64 data
+// Watchdog: abort a request only if a single chunk makes no progress for this long.
+// Each progress message resets the timer, so total audio length is irrelevant.
+const CHUNK_STALL_TIMEOUT_MS = 45_000;
 const SIDECAR_START_TIMEOUT_MS = 90_000;
-
-function calcTimeout(base64Length: number): number {
-  const mbSize = base64Length / (1024 * 1024);
-  return Math.max(BASE_TIMEOUT_MS, Math.round(BASE_TIMEOUT_MS + mbSize * TIMEOUT_PER_MB_BASE64));
-}
 
 // Find the server root (directory containing package.json) by walking up from __dirname.
 function findServerRoot(): string {
@@ -94,8 +88,13 @@ function ensureRunning(): Promise<void> {
           const req = pending.get(id);
           if (!req) continue;
 
-          // Progress update (chunk completed but more to come)
+          // Progress update (chunk completed but more to come) — reset the watchdog.
           if (resp.progress) {
+            clearTimeout(req.timer);
+            req.timer = setTimeout(() => {
+              pending.delete(id);
+              req.reject(new Error(`Transkription Timeout (${CHUNK_STALL_TIMEOUT_MS / 1000}s). Chunk haengt.`));
+            }, CHUNK_STALL_TIMEOUT_MS);
             req.onProgress?.({ chunk: resp.chunk, total: resp.total, text: resp.text ?? '' });
             continue; // Don't resolve yet — more chunks coming
           }
@@ -158,16 +157,14 @@ export async function transcribe(audioBase64: string, options: TranscribeOptions
   }
 
   const id = `req-${++requestId}`;
-  const timeoutMs = calcTimeout(audioBase64.length);
 
-  logger.info(`[whisper] Transcription request ${id}: ${(audioBase64.length / 1024).toFixed(0)} KB Base64, timeout=${Math.round(timeoutMs / 1000)}s, model=${options.model ?? 'default'}`);
+  logger.info(`[whisper] Transcription request ${id}: ${(audioBase64.length / 1024).toFixed(0)} KB Base64, stallTimeout=${CHUNK_STALL_TIMEOUT_MS / 1000}s, model=${options.model ?? 'default'}`);
 
   return new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      const secs = Math.round(timeoutMs / 1000);
-      reject(new Error(`Transkription Timeout (${secs}s). Audio zu lang oder Model zu langsam.`));
-    }, timeoutMs);
+      reject(new Error(`Transkription Timeout (${CHUNK_STALL_TIMEOUT_MS / 1000}s). Chunk haengt oder Model zu langsam.`));
+    }, CHUNK_STALL_TIMEOUT_MS);
 
     pending.set(id, { resolve, reject, timer, onProgress: options.onProgress });
 
