@@ -1149,6 +1149,24 @@
     syncNativeBrowser();
   };
   window.browserReload = function () { post('browser:reload', {}); };
+  // Zurück/vor gehen NICHT mehr über die Deck-Attrappen-Historie (die kannte nur
+  // getippte Adressen, keine Link-Klicks), sondern über die echte Historie des
+  // nativen WebViews. Die Knopf-Aktivierung kommt aus den canGoBack/canGoForward-
+  // Meldungen des WebViews (siehe browserTitle + der syncBrowserChrome-Wrap unten).
+  window.browserGoBack = function () { post('browser:back', {}); };
+  window.browserGoForward = function () { post('browser:forward', {}); };
+  var origSyncChrome = window.syncBrowserChrome;
+  window.syncBrowserChrome = function () {
+    if (typeof origSyncChrome === 'function') origSyncChrome();
+    var tab = window.activeBrowserTab && window.activeBrowserTab();
+    var backBtn = document.getElementById('browserBackBtn');
+    var fwdBtn = document.getElementById('browserFwdBtn');
+    // Auf einer leeren neuen Seite gibt es keinen WebView → immer gesperrt.
+    var page = tab && tab.history[tab.historyIndex];
+    var live = !!tab && !!page && page.kind !== 'newtab';
+    if (backBtn) backBtn.disabled = !live || !tab._canGoBack;
+    if (fwdBtn) fwdBtn.disabled = !live || !tab._canGoForward;
+  };
   // Der Entwurf "leerte" nur seine eigenen Attrappen-Sitzungen und malte einen
   // leeren Platzhalter — der native Browser behielt Cache und Anmeldungen. Jetzt
   // geht der Befehl dorthin, wo die Seite wirklich lebt.
@@ -1278,13 +1296,19 @@
     if (typeof window.renderCloudDetail === 'function') window.renderCloudDetail();
   };
   /** The native page reported its real title — put it in the chrome. */
-  window.TMSBridge.browserTitle = function (tabId, title, url) {
+  window.TMSBridge.browserTitle = function (tabId, title, url, canGoBack, canGoForward) {
     var tab = (window.activeBrowserTab && window.activeBrowserTab()) || null;
     if (!tab || tab.id !== tabId) return;
+    // Die echte Navigierbarkeit des WebViews merken — daran hängen die Knöpfe.
+    tab._canGoBack = !!canGoBack;
+    tab._canGoForward = !!canGoForward;
     var page = tab.history[tab.historyIndex];
-    if (!page || page.kind === 'newtab') return;
-    if (title) page.display = title;
-    if (url) page.url = url;
+    if (page && page.kind !== 'newtab') {
+      if (title) page.display = title;
+      // Link-Klicks/Weiterleitungen ändern die Adresse im WebView — die Leiste
+      // zieht mit, ohne einen neuen Verlaufseintrag zu erfinden.
+      if (url) page.url = url;
+    }
     if (typeof window.syncBrowserChrome === 'function') window.syncBrowserChrome();
   };
   window.TMSBridge.browserSync = syncNativeBrowser;

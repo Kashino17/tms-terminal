@@ -645,6 +645,17 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         browserRef.current?.clearCache();
         break;
 
+      // Zurück/vor steuern die ECHTE WebView-Historie (Link-Klicks inklusive),
+      // nicht die Deck-Attrappe — sonst blieben die Knöpfe bei jeder Navigation
+      // innerhalb einer Seite wirkungslos.
+      case 'browser:back':
+        browserRef.current?.goBack();
+        break;
+
+      case 'browser:forward':
+        browserRef.current?.goForward();
+        break;
+
       case 'terminal:rename': {
         const tab = useTerminalStore.getState().getTabs(server.id).find((t) => t.id === payload.cardId);
         if (tab && payload.field === 'name' && payload.value) {
@@ -744,7 +755,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         url={browser.url}
         rect={browser.rect}
         serverHost={server?.host}
-        onTitle={(tabId, title, url) => call('browserTitle', tabId, title, url)}
+        onNav={(tabId, title, url, canGoBack, canGoForward) =>
+          call('browserTitle', tabId, title, url, canGoBack, canGoForward)}
       />
     </View>
   );

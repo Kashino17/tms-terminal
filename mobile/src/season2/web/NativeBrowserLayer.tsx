@@ -18,6 +18,9 @@ export interface BrowserRect { x: number; y: number; w: number; h: number }
 export interface BrowserHandle {
   reload: () => void;
   clearCache: () => void;
+  /** Zurück/vor in der ECHTEN Historie des WebViews (inkl. Link-Klicks). */
+  goBack: () => void;
+  goForward: () => void;
 }
 
 interface Props {
@@ -30,7 +33,8 @@ interface Props {
   rect: BrowserRect | null;
   /** Host of the connected server, so `3000` / `3000/api` / `/x` resolve to it. */
   serverHost?: string;
-  onTitle: (tabId: string, title: string, url: string) => void;
+  /** Meldet Titel, aktuelle URL und ob im WebView zurück/vor möglich ist. */
+  onNav: (tabId: string, title: string, url: string, canGoBack: boolean, canGoForward: boolean) => void;
 }
 
 /** `3000`, `:8080/api`, `/health` → the connected Tailscale host. */
@@ -46,7 +50,7 @@ export function resolveUrl(input: string, serverHost?: string): string {
 }
 
 export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function NativeBrowserLayer(
-  { visible, onScreen, tabId, url, rect, serverHost, onTitle }: Props,
+  { visible, onScreen, tabId, url, rect, serverHost, onNav }: Props,
   ref,
 ) {
   const resolved = useMemo(() => resolveUrl(url, serverHost), [url, serverHost]);
@@ -74,6 +78,10 @@ export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function Nati
       setError(null);
       setReloadKey((k) => k + 1);
     },
+    // Der WebView führt seine eigene, vollständige Historie (Link-Klicks,
+    // Weiterleitungen, Formulare) — die Deck-Knöpfe steuern genau die.
+    goBack: () => webRef.current?.goBack(),
+    goForward: () => webRef.current?.goForward(),
   }), []);
 
   // WÄRME: Ausgeblendet ist nicht ausgeschaltet. Ein Android-WebView führt sein
@@ -117,9 +125,12 @@ export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function Nati
         originWhitelist={['*']}
         allowsBackForwardNavigationGestures
         setSupportMultipleWindows={false}
-        onNavigationStateChange={(nav) => {
-          if (!nav.loading) onTitle(tabId, nav.title ?? '', nav.url ?? resolved);
-        }}
+        // Bei JEDER Navigation melden — auch bei Link-Klicks im WebView, die das
+        // Deck sonst nie mitbekäme. canGoBack/canGoForward treiben die Knöpfe;
+        // der Titel wird erst gemeldet, wenn er steht (sonst flackert die Leiste).
+        onNavigationStateChange={(nav) =>
+          onNav(tabId, nav.loading ? '' : (nav.title ?? ''), nav.url ?? resolved, !!nav.canGoBack, !!nav.canGoForward)
+        }
         // Fehler dürfen nicht mehr als weiße Fläche enden — sie werden benannt.
         onError={(e) => setError(e.nativeEvent.description || 'Unbekannter Fehler')}
         onHttpError={(e) =>
