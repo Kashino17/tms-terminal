@@ -34,8 +34,8 @@ function findServerRoot(): string {
 
 const SERVER_ROOT = findServerRoot();
 const SIDECAR_DIR = path.join(SERVER_ROOT, 'audio');
-const SIDECAR_SCRIPT = path.join(SIDECAR_DIR, 'whisper_sidecar.py');
-const VENV_PYTHON = path.join(SIDECAR_DIR, '.venv', 'bin', 'python3');
+const SIDECAR_SCRIPT = path.join(SIDECAR_DIR, 'whisper_sidecar_mlx.py');
+const VENV_PYTHON = path.join(SIDECAR_DIR, '.venv-mlx', 'bin', 'python3');
 
 let sidecar: ChildProcess | null = null;
 let lineBuffer = '';
