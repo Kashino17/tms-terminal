@@ -7,6 +7,9 @@ interface PendingRequest {
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
   onProgress?: (info: { chunk: number; total: number; text: string }) => void;
+  audioBase64: string;
+  options: TranscribeOptions;
+  attempts: number;
 }
 
 // Watchdog: abort a request only if a single chunk makes no progress for this long.
@@ -91,10 +94,7 @@ function ensureRunning(): Promise<void> {
           // Progress update (chunk completed but more to come) — reset the watchdog.
           if (resp.progress) {
             clearTimeout(req.timer);
-            req.timer = setTimeout(() => {
-              pending.delete(id);
-              req.reject(new Error(`Transkription Timeout (${CHUNK_STALL_TIMEOUT_MS / 1000}s). Chunk haengt.`));
-            }, CHUNK_STALL_TIMEOUT_MS);
+            armWatchdog(id, req);
             req.onProgress?.({ chunk: resp.chunk, total: resp.total, text: resp.text ?? '' });
             continue; // Don't resolve yet — more chunks coming
           }
@@ -117,15 +117,24 @@ function ensureRunning(): Promise<void> {
       clearTimeout(startTimer);
       sidecar = null;
       startPromise = null;
-      for (const [, req] of pending) {
-        clearTimeout(req.timer);
-        req.reject(new Error('Whisper sidecar exited unexpectedly'));
-      }
-      pending.clear();
+      for (const [, req] of pending) clearTimeout(req.timer);
+
       if (!resolved) {
         resolved = true;
-        reject(new Error('Whisper sidecar failed to start'));
+        reject(new Error(`Whisper sidecar failed to start (exit ${code})`));
+        return;
       }
+
+      if (pending.size === 0) return;
+      // Restart and retry each open request once.
+      ensureRunning()
+        .then(() => resendPending())
+        .catch((err) => {
+          for (const [id, req] of pending) {
+            pending.delete(id);
+            req.reject(new Error(`Whisper sidecar restart failed: ${err.message}`));
+          }
+        });
     });
 
     child.on('error', (err) => {
@@ -149,6 +158,38 @@ export interface TranscribeOptions {
   onProgress?: (info: { chunk: number; total: number; text: string }) => void;
 }
 
+function armWatchdog(id: string, req: PendingRequest): void {
+  req.timer = setTimeout(() => {
+    pending.delete(id);
+    req.reject(new Error(`Transkription Timeout (${CHUNK_STALL_TIMEOUT_MS / 1000}s). Chunk haengt oder Model zu langsam.`));
+  }, CHUNK_STALL_TIMEOUT_MS);
+}
+
+function writeRequest(id: string, req: PendingRequest): void {
+  const payload = JSON.stringify({
+    id,
+    audio_base64: req.audioBase64,
+    language: req.options.language ?? 'de',
+    model: req.options.model,
+  }) + '\n';
+  sidecar!.stdin!.write(payload);
+}
+
+function resendPending(): void {
+  for (const [id, req] of pending) {
+    if (req.attempts >= 2) {
+      pending.delete(id);
+      req.reject(new Error('Whisper sidecar crashed repeatedly'));
+      continue;
+    }
+    req.attempts += 1;
+    clearTimeout(req.timer);
+    armWatchdog(id, req);
+    writeRequest(id, req);
+    logger.info(`[whisper] Resent request ${id} (attempt ${req.attempts})`);
+  }
+}
+
 export async function transcribe(audioBase64: string, options: TranscribeOptions = {}): Promise<string> {
   await ensureRunning();
 
@@ -161,20 +202,14 @@ export async function transcribe(audioBase64: string, options: TranscribeOptions
   logger.info(`[whisper] Transcription request ${id}: ${(audioBase64.length / 1024).toFixed(0)} KB Base64, stallTimeout=${CHUNK_STALL_TIMEOUT_MS / 1000}s, model=${options.model ?? 'default'}`);
 
   return new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pending.delete(id);
-      reject(new Error(`Transkription Timeout (${CHUNK_STALL_TIMEOUT_MS / 1000}s). Chunk haengt oder Model zu langsam.`));
-    }, CHUNK_STALL_TIMEOUT_MS);
-
-    pending.set(id, { resolve, reject, timer, onProgress: options.onProgress });
-
-    const request = JSON.stringify({
-      id,
-      audio_base64: audioBase64,
-      language: options.language ?? 'de',
-      model: options.model,
-    }) + '\n';
-    sidecar!.stdin!.write(request);
+    const req: PendingRequest = {
+      resolve, reject, timer: null as unknown as NodeJS.Timeout,
+      onProgress: options.onProgress,
+      audioBase64, options, attempts: 1,
+    };
+    pending.set(id, req);
+    armWatchdog(id, req);
+    writeRequest(id, req);
   });
 }
 

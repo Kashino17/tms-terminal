@@ -62,4 +62,27 @@ describe('whisper-sidecar watchdog', () => {
     vi.advanceTimersByTime(45_001);
     await expect(p).rejects.toThrow(/Timeout/i);
   });
+
+  it('restarts sidecar and retries the request once on crash', async () => {
+    const mod = await import('../src/audio/whisper-sidecar');
+    const p = mod.transcribe('AAAA');
+    await flush();
+    const first = spawned.at(-1);
+
+    // Grab the exit handler the module registered, then simulate a crash.
+    const exitCall = first.on.mock.calls.find((c: any[]) => c[0] === 'exit');
+    expect(exitCall).toBeTruthy();
+    exitCall[1](1); // exit code 1
+    await flush();
+
+    // A new sidecar was spawned and becomes ready.
+    expect(spawned.length).toBe(2);
+    const second = spawned.at(-1);
+    second.stderr.emit('data', Buffer.from('[whisper-mlx] Ready for requests.\n'));
+    await flush();
+
+    // The retried request now resolves.
+    second.stdout.emit('data', Buffer.from(JSON.stringify({ id: 'req-1', text: 'recovered' }) + '\n'));
+    await expect(p).resolves.toBe('recovered');
+  });
 });
