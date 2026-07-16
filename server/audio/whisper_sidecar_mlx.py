@@ -2,7 +2,8 @@
 """Whisper sidecar (MLX runtime) — long-running transcription process.
 
 Reads JSON Lines from stdin, transcribes with mlx-whisper, writes JSON Lines to stdout.
-Same protocol as whisper_sidecar.py. Decodes WAV directly to a numpy array (no ffmpeg).
+Same protocol as whisper_sidecar.py. RIFF WAV is decoded in pure Python (fast path);
+any other container (Android AMR/AAC/3GP, m4a, WebM …) is decoded via ffmpeg.
 """
 
 import sys
@@ -10,15 +11,30 @@ import json
 import base64
 import wave
 import io
+import os
+import shutil
+import subprocess
 import numpy as np
 
 CHUNK_DURATION_SECS = 60
 MODEL_REPO = "mlx-community/whisper-large-v3-turbo"
+TARGET_RATE = 16000
 
 
-def wav_bytes_to_float32(wav_bytes):
-    """Decode 16-bit PCM WAV bytes to (float32 mono samples in [-1,1], sample_rate)."""
-    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+def _find_ffmpeg():
+    """Locate ffmpeg — node may spawn us with a PATH that omits Homebrew."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    for cand in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"):
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+def _wav_to_float32(raw):
+    """Fast path: decode 16-bit PCM WAV without spawning a subprocess."""
+    with wave.open(io.BytesIO(raw), "rb") as w:
         n_channels = w.getnchannels()
         sample_width = w.getsampwidth()
         rate = w.getframerate()
@@ -29,6 +45,36 @@ def wav_bytes_to_float32(wav_bytes):
     if n_channels > 1:
         samples = samples.reshape(-1, n_channels).mean(axis=1)
     return np.ascontiguousarray(samples, dtype=np.float32), rate
+
+
+def _ffmpeg_to_float32(raw):
+    """Robust path: let ffmpeg decode ANY container (AMR/M4A/3GP/WebM/WAV…)
+    to float32 mono @16kHz. Android's MediaRecorder never emits RIFF WAV, so
+    this is the real path on Android devices."""
+    ffmpeg = _find_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg not found — cannot decode non-WAV audio")
+    proc = subprocess.run(
+        [ffmpeg, "-nostdin", "-loglevel", "error", "-i", "pipe:0",
+         "-f", "f32le", "-ac", "1", "-ar", str(TARGET_RATE), "pipe:1"],
+        input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        err = proc.stderr.decode("utf-8", "replace").strip()[:300]
+        raise RuntimeError(f"ffmpeg decode failed: {err or 'no output'}")
+    samples = np.frombuffer(proc.stdout, dtype=np.float32)
+    return np.ascontiguousarray(samples, dtype=np.float32), TARGET_RATE
+
+
+def wav_bytes_to_float32(raw_bytes):
+    """Decode audio bytes to (float32 mono samples in [-1,1], sample_rate).
+
+    Tries the pure-Python WAV fast path first (iOS sends real PCM WAV); falls
+    back to ffmpeg for everything else. Android records AMR/AAC under a `.wav`
+    name, which has no RIFF header — that lands on the ffmpeg path."""
+    if raw_bytes[:4] == b"RIFF":
+        return _wav_to_float32(raw_bytes)
+    return _ffmpeg_to_float32(raw_bytes)
 
 
 def split_audio(samples, sample_rate, chunk_secs=CHUNK_DURATION_SECS):

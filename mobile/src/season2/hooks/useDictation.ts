@@ -17,12 +17,17 @@ const TRANSCRIPTION_TIMEOUT_MS = 25000;
 
 const RECORDING_OPTIONS = {
   android: {
-    extension: '.wav',
-    outputFormat: 3,
-    audioEncoder: 1,
+    // AAC in an MP4/m4a container. Android's MediaRecorder cannot emit RIFF
+    // WAV, so the server decodes this via ffmpeg (see whisper_sidecar_mlx.py).
+    // MediaRecorder constants: outputFormat 2 = MPEG_4, audioEncoder 3 = AAC.
+    // (Previously outputFormat 3 / encoder 1 = AMR_NB — 8 kHz narrowband,
+    //  poor transcription accuracy, and mislabelled `.wav`.)
+    extension: '.m4a',
+    outputFormat: 2,
+    audioEncoder: 3,
     sampleRate: 16000,
     numberOfChannels: 1,
-    bitRate: 256000,
+    bitRate: 64000,
   },
   ios: {
     extension: '.wav',
@@ -113,6 +118,9 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
         wsService.send({
           type: 'audio:transcribe',
           sessionId,
+          // `format: 'wav'` is a legacy gate string the server requires — the
+          // sidecar sniffs the real container by magic bytes (RIFF→WAV else
+          // ffmpeg), so iOS PCM-WAV and Android AAC/m4a both decode correctly.
           payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
         });
         armWatchdog();
