@@ -734,11 +734,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         return;
       }
 
-      // Auto-select model based on audio size: turbo for long audio (>2MB base64 ≈ 1+ min), large-v3 for short
-      const autoModel = audio.length > 2 * 1024 * 1024 ? 'turbo' : 'large-v3';
-
+      // MLX sidecar uses a single turbo model for all lengths; no per-size model switch.
       whisperTranscribe(audio, {
-        model: autoModel,
         onProgress: (info) => {
           send(ws, { type: 'audio:progress', sessionId, payload: { chunk: info.chunk, total: info.total, text: info.text } } as any);
         },
