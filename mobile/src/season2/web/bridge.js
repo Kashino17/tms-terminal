@@ -1224,6 +1224,14 @@
       window.closeKeysPanel();
       return;
     }
+    // 4b. Auf der Browser-Seite zuerst durch die ECHTE Seiten-Historie des
+    //     WebViews zurück (Link-Klicks, Weiterleitungen) — genau wie der ◄-Knopf.
+    //     Erst wenn die Seite nicht mehr zurück kann, verlässt der Zurück-Druck
+    //     den Browser-Bildschirm (Schritt 5). Wie in Chrome auf Android.
+    if (curScreen === 'browser') {
+      var bTab = window.activeBrowserTab && window.activeBrowserTab();
+      if (bTab && bTab._canGoBack) { post('browser:back', {}); return; }
+    }
     // 5. Der vorherige Bildschirm
     if (screenHistory.length) {
       goingBack = true;
