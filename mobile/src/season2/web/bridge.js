@@ -1848,7 +1848,11 @@
   /** Ladefortschritt: wie viele von wie vielen Bildern schon durch sind. */
   window.TMSBridge.uploadProgress = function (done, total) {
     uploadState = (done >= total) ? null : { done: done, total: total };
-    window.TMSBridge.setTool('screenshots', window.TMS_DATA.screenshots || []);
+    // NUR während des Uploads das offene Sheet mit Fortschritt neu bauen. Beim
+    // Abschluss NICHT: setTool→openSheet würde das Sheet erneut öffnen und dabei
+    // den Close-Timer canceln, den insertIntoTerminal/uploadFinished gleich
+    // setzen — dann bliebe die Karte offen. uploadFinished schließt sie.
+    if (uploadState) window.TMSBridge.setTool('screenshots', window.TMS_DATA.screenshots || []);
   };
 
   /**
@@ -1863,8 +1867,11 @@
     uploadState = null;
     shotSelect = false;
     shotSel = {};
+    // Bedingungslos schließen (kein !hidden-Guard): ein bereits geschlossenes
+    // Sheet erneut zu schließen ist harmlos, aber falls es noch offen ist,
+    // muss es JETZT zu — genau das war der Bug.
     var wrap = document.getElementById('toolSheetWrap');
-    if (wrap && !wrap.hidden && typeof window.closeSheet === 'function') window.closeSheet(wrap);
+    if (wrap && typeof window.closeSheet === 'function') window.closeSheet(wrap);
     if (msg) toast(msg);
   };
 
