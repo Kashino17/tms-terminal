@@ -68,3 +68,13 @@ test('per-session notes/todos and dictation demo present', () => {
   assert.ok(DATA.sessions.filter(s => s.todos.length > 0).length >= 3);
   assert.ok(typeof DATA.demo.dictation === 'string' && DATA.demo.dictation.length > 5);
 });
+
+test('cloud accounts: both providers seeded as connected with masked keys', () => {
+  const acc = DATA.cloudAccounts;
+  assert.ok(acc && acc.vercel && acc.render);
+  assert.equal(acc.vercel.connected, true);
+  assert.equal(acc.render.connected, true);
+  // Masked keys must never contain a full secret — middle is elided.
+  assert.match(acc.vercel.maskedKey, /••••…/);
+  assert.match(acc.render.maskedKey, /^rnd_/);
+});

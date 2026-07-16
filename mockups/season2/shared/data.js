@@ -91,7 +91,22 @@
         env: [ { key: 'CITY', value: 'Berlin' }, { key: 'METHOD', value: 'MWL' }, { key: 'TZ', value: 'Europe/Berlin' } ],
         logs: ['05:12:00 fajr trigger sent', '13:24:00 dhuhr trigger sent', '17:31:00 asr trigger sent', '21:26:00 maghrib trigger sent', '23:01:00 isha trigger sent', '23:01:02 sleeping until 05:11', '—', 'service suspended by owner'] },
     ],
+    // Cloud provider accounts: demo shows both linked so the project list has
+    // content; the real app overwrites this via TMSBridge.setCloudAccounts.
+    cloudAccounts: {
+      vercel: { connected: true, maskedKey: 'vc_a1••••…9zQ' },
+      render: { connected: true, maskedKey: 'rnd_BH••••…sp4' },
+    },
     manager: {
+      persona: { name: 'Kai', avatar: null, role: 'Dein Manager' },
+      activeProvider: 'glm',
+      providers: [
+        { id: 'glm', name: 'GLM-4.6', configured: true },
+        { id: 'kimi', name: 'Kimi K2', configured: true },
+        { id: 'gemini', name: 'Gemini 2.5 Flash', configured: true },
+        { id: 'gpt', name: 'GPT-4o', configured: false },
+      ],
+      attachments: [],
       messages: [
         { type: 'text',  from: 'user',    time: '13:41', text: 'Wie lief das Pinterest-Deployment?' },
         { type: 'text',  from: 'manager', time: '13:41', text: 'Deployment ist durch ✅ — Build in 68s, alle 27 Tests grün. Der Scraper-Worker hat direkt Job #4211 gezogen (480 Pins in 93s).' },
