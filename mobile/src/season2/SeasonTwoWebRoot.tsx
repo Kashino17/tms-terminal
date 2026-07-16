@@ -133,6 +133,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // Manager answers must land in the store even while another screen is open.
   useManagerWire(wsService);
   const sendManager = useManagerBridge(wsService, ready, call);
+
+  // Modell-Liste holen, sobald verbunden. Der Server schickt sie sonst nur bei
+  // manager:toggle (das Season 2 nie sendet) — daher stand im Modell-Sheet
+  // "Keine Modelle gemeldet". Reine Abfrage, startet den Manager nicht.
+  useEffect(() => {
+    if (!wsService || state !== 'connected') return;
+    wsService.send({ type: 'manager:get_providers' });
+  }, [wsService, state]);
   const { loadProjects: loadCloud, loadDetail: loadCloudDetail } = useCloudBridge(ready, call);
   const activeSessionId = useTerminalStore((s) =>
     server ? (s.tabs[server.id] ?? []).find((t) => t.active)?.sessionId ?? (s.tabs[server.id] ?? [])[0]?.sessionId : undefined,
@@ -231,6 +239,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('setManagerMemory', items.slice(-40).reverse());
         return;
       }
+      // Ein fehlgeschlagenes terminal:create antwortet mit sessionId 'none' —
+      // das wurde bisher stumm verworfen. Die Karte, die auf diese PTY wartete,
+      // blieb dann für immer leer, kam nie in den Store und war beim nächsten
+      // Wiederherstellen spurlos weg. Jetzt: Grund zeigen und die Karte freigeben.
+      if (m?.type === 'terminal:error' && m.sessionId === 'none') {
+        const waiting = pendingCards.current.shift();
+        call('toast', `Terminal konnte nicht erstellt werden: ${m.payload?.message ?? 'unbekannter Fehler'}`);
+        if (waiting) call('sessionCreateFailed', waiting.cardId);
+        return;
+      }
       if (m?.type === 'terminal:error' && m.sessionId && m.sessionId !== 'none') {
         // "Session not found": die gespeicherte Session gibt es nicht mehr. Wie
         // die klassische App: toten Tab austragen und die Karte neu bestücken —
@@ -285,22 +303,58 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     call('setStatus', { kind, label, latency: rtt, name: server?.name ?? '' });
   }, [ready, state, rtt, server, call]);
 
-  // ── The Server screen and its update banner, on real data.
+  // ── Server-Liste mit ECHTEM Status. Vorher galt pauschal: der verbundene
+  // Server ist online, alle anderen offline — ungeprüft. Ein laufender zweiter
+  // Server (z. B. Windows) stand deshalb immer auf „offline". Jetzt fragt jeder
+  // Server seinen /health-Endpunkt, mit kurzem Timeout, damit ein echt toter
+  // Server die Liste nicht sekundenlang blockiert.
+  const pushServers = useCallback(async () => {
+    const servers = await storageService.getServers().catch(() => []);
+    const checked = await Promise.all(servers.map(async (s) => {
+      // Der aktive, verbundene Server ist per Definition online — den WS-Zustand
+      // kennen wir schon, kein zweiter Roundtrip nötig.
+      if (s.id === server?.id && state === 'connected') {
+        return { s, online: true };
+      }
+      // /health mit 4s-Deckel: ein offline-Server hängt sonst am fetch-Default.
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 4000);
+      try {
+        const res = await fetch(`http://${s.host}:${s.port}/health`, { signal: ctrl.signal });
+        return { s, online: res.ok };
+      } catch {
+        return { s, online: false };
+      } finally {
+        clearTimeout(timer);
+      }
+    }));
+    call('setServers', checked.map(({ s, online }) => ({
+      id: s.id, name: s.name, host: s.host, port: s.port,
+      status: online ? 'online' : 'offline',
+      active: s.id === server?.id, // der aktuell verbundene — Tippen bleibt hier
+      sessions: useTerminalStore.getState().getTabs(s.id).length,
+      os: '',
+      latency: null, // die Seite pflegt die Latenz selbst (setStatus-Ticker)
+    })));
+  }, [server, state, call]);
+
+  // Beim Start, bei jeder Verbindungsänderung und danach alle 20s neu prüfen —
+  // so wird ein Server, den man nebenbei hochfährt, von selbst wieder „online".
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    const run = () => { if (!cancelled) pushServers(); };
+    run();
+    const t = setInterval(run, 20_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [ready, pushServers]);
+
+  // ── Update-Banner, getrennt vom Server-Status.
   const updateChecked = useRef(0);
   useEffect(() => {
     if (!ready || state !== 'connected') return;
     let cancelled = false;
     (async () => {
-      const servers = await storageService.getServers().catch(() => []);
-      if (cancelled) return;
-      call('setServers', servers.map((s) => ({
-        id: s.id, name: s.name, host: s.host, port: s.port,
-        status: s.id === server?.id ? 'online' : 'offline',
-        sessions: useTerminalStore.getState().getTabs(s.id).length,
-        os: '',
-        latency: null, // die Seite pflegt die Latenz selbst (setStatus-Ticker)
-      })));
-
       // Höchstens alle 30 Minuten: vorher hing `rtt` in den Abhängigkeiten,
       // der Effekt lief bei JEDEM RTT-Tick (alle 3s) und hämmerte die
       // GitHub-API — nach ~3 Minuten griff deren Rate-Limit (60/h) und das
@@ -314,7 +368,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
     })();
     return () => { cancelled = true; };
-  }, [ready, server, state, call]);
+  }, [ready, state, call]);
 
   // ── Nach jedem RECONNECT neu anhängen. Der Server hängt Sessions beim
   //    Verbindungsabriss ab und puffert ihren Output — ohne Reattach bliebe
@@ -505,10 +559,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         toggleMic();
         break;
 
-      case 'manager:setProvider':
-        useManagerStore.getState().setActiveProvider(payload.providerId);
-        wsService?.send({ type: 'manager:set_provider', payload: { providerId: payload.providerId } });
+      case 'manager:setProvider': {
+        // Ein lokales Modell wird erst geladen, bevor es aktiv ist — optimistisch
+        // vorstellen, aber den Ladezustand zeigen, bis der Server bestätigt.
+        const st = useManagerStore.getState();
+        st.setActiveProvider(payload.providerId);
+        if (typeof payload.contextLength === 'number') st.setModelLoading(payload.providerId);
+        wsService?.send({
+          type: 'manager:set_provider',
+          payload: {
+            providerId: payload.providerId,
+            ...(typeof payload.contextLength === 'number' ? { contextLength: payload.contextLength } : {}),
+          },
+        });
         break;
+      }
 
       case 'manager:clear':
         // Nur den sichtbaren Verlauf des aktiven Chats — Gedächtnis bleibt.
@@ -600,6 +665,35 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         else setSeasonTwoEnabled(false);
         break;
 
+      // Auf eine Server-Karte getippt: die WebSocket-Verbindung auf DIESEN Server
+      // umschalten. Season 2 verband sich bisher fest mit dem ersten gespeicherten
+      // Server; ein zweiter (z. B. Windows) war nie erreichbar.
+      case 'server:switch': {
+        const targetId = payload.id as string;
+        if (!targetId || targetId === server.id) break; // schon der aktive Server
+        (async () => {
+          const servers = await storageService.getServers().catch(() => []);
+          const target = servers.find((x) => x.id === targetId);
+          if (!target) return;
+          const tok = target.token ?? (await getToken(target.id)) ?? null;
+          if (!tok) {
+            call('toast', `Für „${target.name}" fehlt die Anmeldung — bitte einmal in der klassischen Ansicht verbinden`);
+            return;
+          }
+          // Die Terminals des alten Servers laufen dort weiter (der Store behält
+          // sie, beim Zurückwechseln kommen sie zurück) — aber ihre Karten gehören
+          // nicht zum neuen Server, also von der Seite abräumen.
+          call('clearAllTerminals');
+          restored.current = false;         // Restore läuft für den neuen Server neu
+          sessionStatus.current = {};       // Status-Dedupe gehört zur alten Verbindung
+          Object.values(idleTimers.current).forEach(clearTimeout);
+          idleTimers.current = {};
+          call('toast', `Verbinde mit ${target.name} …`);
+          setServer({ id: target.id, name: target.name, host: target.host, port: target.port, token: tok }, tok);
+        })();
+        break;
+      }
+
       // Die Seite hat nichts mehr zum Zurückgehen. Beenden wird trotzdem nicht
       // einfach durchgewinkt: erst der zweite Druck innerhalb von zwei Sekunden.
       case 'nav:exit':
@@ -610,7 +704,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, sendManager, loadCloud, loadCloudDetail, sheets, fileExplorer, pickManagerImages]);
+  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, sheets, fileExplorer, pickManagerImages]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"

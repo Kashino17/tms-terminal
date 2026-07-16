@@ -568,7 +568,17 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       }
       send(ws, { type: 'manager:status', payload: { enabled } } as any);
       // Also send provider list on toggle
-      send(ws, { type: 'manager:providers', payload: managerService.getProviders() } as any);
+      void managerService.getProviders().then((p) =>
+        send(ws, { type: 'manager:providers', payload: p } as any));
+      return;
+    }
+
+    // Reine Abfrage der Modell-Liste — ohne den Manager zu starten/stoppen.
+    // Season 2 braucht das beim Verbinden: der Server schickte die Liste bisher
+    // nur bei manager:toggle, das Season 2 nie sendet ("Keine Modelle gemeldet").
+    if (msgType === 'manager:get_providers') {
+      void managerService.getProviders().then((p) =>
+        send(ws, { type: 'manager:providers', payload: p } as any));
       return;
     }
 
@@ -608,14 +618,23 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
     if (msgType === 'manager:set_provider') {
       const providerId = (msg as any).payload?.providerId;
+      const contextLength = (msg as any).payload?.contextLength;
       if (typeof providerId === 'string') {
-        try {
-          managerService.setProvider(providerId);
-          send(ws, { type: 'manager:providers', payload: managerService.getProviders() } as any);
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          send(ws, { type: 'manager:error', payload: { message: errMsg } } as any);
-        }
+        void (async () => {
+          try {
+            // Ein lokales Modell wird jetzt geladen (kann ~1-2 min dauern) —
+            // der App vorher Bescheid geben, damit der Chip "lädt…" zeigt.
+            send(ws, { type: 'manager:model_loading', payload: { providerId, loading: true } } as any);
+            await managerService.setProvider(providerId, typeof contextLength === 'number' ? contextLength : undefined);
+            const p = await managerService.getProviders();
+            send(ws, { type: 'manager:providers', payload: p } as any);
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            send(ws, { type: 'manager:error', payload: { message: errMsg } } as any);
+          } finally {
+            send(ws, { type: 'manager:model_loading', payload: { providerId, loading: false } } as any);
+          }
+        })();
       }
       return;
     }
@@ -637,7 +656,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         else if (providerId === 'openai') updates.openaiApiKey = apiKey;
         managerService.updateProviderConfig(updates);
         saveManagerConfig(updates);
-        send(ws, { type: 'manager:providers', payload: managerService.getProviders() } as any);
+        void managerService.getProviders().then((p) =>
+          send(ws, { type: 'manager:providers', payload: p } as any));
       }
       return;
     }

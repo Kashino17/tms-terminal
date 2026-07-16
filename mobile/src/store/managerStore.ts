@@ -32,6 +32,12 @@ export interface ProviderInfo {
   name: string;
   configured: boolean;
   isLocal?: boolean;
+  /** Nur lokale Modelle: aus LM Studio angereichert (siehe getProviders). */
+  modelKey?: string;
+  maxContext?: number;        // trainiertes Context-Maximum → Regler-Obergrenze
+  loadedContext?: number | null; // aktuell in LM Studio geladene Länge
+  loaded?: boolean;           // ist das Modell gerade geladen?
+  available?: boolean;        // in LM Studio überhaupt installiert?
 }
 
 export interface ApiKeys {
@@ -104,6 +110,8 @@ interface ManagerState {
   messages: ManagerMessage[];
   activeProvider: string;
   providers: ProviderInfo[];
+  /** providerId, dessen lokales Modell gerade in LM Studio geladen wird (null = keins). */
+  modelLoadingId: string | null;
   /** Currently loading (waiting for AI response). */
   loading: boolean;
   /** Timestamp when the current request started (survives navigation). */
@@ -139,6 +147,7 @@ interface ManagerState {
   addError: (message: string, chatKey?: string) => void;
   setProviders: (providers: ProviderInfo[], active: string) => void;
   setActiveProvider: (id: string) => void;
+  setModelLoading: (providerId: string | null) => void;
   setLoading: (loading: boolean) => void;
   setThinking: (phase: string, detail?: string, elapsed?: number, chatKey?: string) => void;
   appendStreamChunk: (token: string, tokenStats?: { completionTokens: number; tps: number }) => void;
@@ -179,6 +188,7 @@ export const useManagerStore = create<ManagerState>()(
       messages: [],
       activeProvider: 'glm',
       providers: [],
+      modelLoadingId: null,
       loading: false,
       requestStartTime: null,
       thinking: null,
@@ -259,6 +269,8 @@ export const useManagerStore = create<ManagerState>()(
       }),
 
       setActiveProvider: (id) => set({ activeProvider: id }),
+
+      setModelLoading: (providerId) => set({ modelLoadingId: providerId }),
 
       setLoading: (loading) => set({
         loading,

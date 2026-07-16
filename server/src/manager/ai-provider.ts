@@ -575,6 +575,11 @@ class LMStudioProvider implements AiProvider {
     this.getBaseUrl = getBaseUrl;
   }
 
+  /** Der LM-Studio-Modellschlüssel (z. B. "qwen/qwen3.6-27b") — für Laden & Info. */
+  getModelKey(): string { return this.modelId; }
+  /** Die konfigurierte OpenAI-kompatible Basis-URL (…/v1). */
+  getUrl(): string { return this.getBaseUrl(); }
+
   isConfigured(): boolean {
     return true; // No API key needed, but might be offline
   }
@@ -885,11 +890,11 @@ export class AiProviderRegistry {
     const getUrl = () => this.config.lmStudioUrl ?? LMSTUDIO_DEFAULT_URL;
     const gemma = new LMStudioProvider('gemma-4', 'Gemma 4 31B', 'google/gemma-4-31b', getUrl);
     // LM Studio model IDs follow the form "<vendor>/<model>" — these match the
-    // identifiers shown in LM Studio's "Model" column. If the user installs
-    // the models under different IDs, the API call will 404 and we surface
-    // that as a normal request error.
-    const qwen27b = new LMStudioProvider('qwen-3-27b', 'Qwen 3 27B', 'qwen/qwen3-27b', getUrl);
-    const qwen35b = new LMStudioProvider('qwen-3-35b', 'Qwen 3 35B', 'qwen/qwen3-35b', getUrl);
+    // identifiers shown in LM Studio's "Model" column exactly (verifiziert gegen
+    // die installierten Modelle). Stimmen sie nicht, kann der Server das Modell
+    // weder laden noch ansprechen — daher die realen Schlüssel, nicht geraten.
+    const qwen27b = new LMStudioProvider('qwen-3-27b', 'Qwen 3.6 27B', 'qwen/qwen3.6-27b', getUrl);
+    const qwen35b = new LMStudioProvider('qwen-3-35b', 'Qwen 3.6 35B', 'qwen/qwen3.6-35b-a3b', getUrl);
 
     this.providers.set(kimi.id, kimi);
     this.providers.set(glm.id, glm);
@@ -939,6 +944,18 @@ export class AiProviderRegistry {
       configured: p.isConfigured(),
       isLocal: p.isLocal,
     }));
+  }
+
+  /** LM-Studio-Basis-URL (…/v1) — für die Modell-Info-Abfrage. */
+  getLmStudioUrl(): string {
+    return this.config.lmStudioUrl ?? LMSTUDIO_DEFAULT_URL;
+  }
+
+  /** Der LM-Studio-Modellschlüssel eines lokalen Providers, sonst null. */
+  getLocalModelKey(id: string): string | null {
+    const p = this.providers.get(id);
+    if (p && p.isLocal && p instanceof LMStudioProvider) return p.getModelKey();
+    return null;
   }
 
   updateConfig(updates: Partial<ProviderConfig>): void {
