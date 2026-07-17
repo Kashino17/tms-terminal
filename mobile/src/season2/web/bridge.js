@@ -1083,6 +1083,7 @@
   window.requestCloudDisconnect = function (provider) { post('cloud:disconnect', { provider: provider }); };
   window.requestCloudRevealKey = function (provider) { post('cloud:revealKey', { provider: provider }); };
   window.requestCloudCopyKey = function (provider) { post('cloud:copyKey', { provider: provider }); };
+  window.requestCloudOrgUpdate = function (org) { post('cloud:org:update', { org: org }); };
 
   // ══ Browser ═══════════════════════════════════════════════════════════════
   // The mockup's fake page renderer is replaced by a real, native incognito
@@ -1310,10 +1311,22 @@
   };
   window.TMSBridge.setCloud = function (projects) {
     window.TMS_DATA.cloudProjects = projects;
-    // React Native sends favorite:false — the saved favorites live in the
-    // page's localStorage and must be re-applied after every push, or every
-    // reload (and every app update) looked like it had wiped them.
-    if (typeof window.loadFavorites === 'function') window.loadFavorites();
+    if (typeof window.renderCloudFolderBar === 'function') window.renderCloudFolderBar();
+    if (typeof window.renderCloudGroups === 'function') window.renderCloudGroups();
+  };
+  window.TMSBridge.setCloudOrg = function (org) {
+    window.TMS_DATA.cloudOrg = org;
+    // One-time migration: favorites older versions kept in page-localStorage.
+    try {
+      var raw = localStorage.getItem('tms-liquid-deck-cloud-favorites');
+      if (raw) {
+        var legacy = JSON.parse(raw);
+        Object.keys(legacy).forEach(function (pid) { if (legacy[pid]) org.favorites[pid] = true; });
+        localStorage.removeItem('tms-liquid-deck-cloud-favorites');
+        window.requestCloudOrgUpdate(org);
+      }
+    } catch (e) {}
+    if (typeof window.renderCloudFolderBar === 'function') window.renderCloudFolderBar();
     if (typeof window.renderCloudGroups === 'function') window.renderCloudGroups();
   };
   window.TMSBridge.setCloudAccounts = function (accounts) {

@@ -45,6 +45,7 @@ window.TMS_DATA.screenshots = [];
 window.TMS_DATA.sql = { statements: [] };
 window.TMS_DATA.cloudProjects = [];
 window.TMS_DATA.cloudAccounts = { vercel: { connected: false, maskedKey: null }, render: { connected: false, maskedKey: null } };
+window.TMS_DATA.cloudOrg = { folders: [], assignments: {}, favorites: {}, startFolderId: null, defaultFilters: { provider: 'all', status: 'all' } };
 window.TMS_DATA.manager.messages = [];
 window.TMS_DATA.manager.artifacts = [];
 window.TMS_DATA.manager.memory = [];

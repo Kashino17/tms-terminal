@@ -29,6 +29,7 @@ import { useManagerWire } from './manager/useManagerWire';
 import { useManagerStore } from '../store/managerStore';
 import { useManagerBridge, useCloudBridge } from './web/useSeasonTwoBackends';
 import { useCloudAuthStore, type CloudPlatform } from '../store/cloudAuthStore';
+import { useCloudOrgStore } from '../store/cloudOrgStore';
 import { useSheetBridges } from './web/useSheetBridges';
 import { useFileExplorer } from './web/useFileExplorer';
 import { NativeBrowserLayer, type BrowserRect, type BrowserHandle } from './web/NativeBrowserLayer';
@@ -144,7 +145,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   }, [wsService, state]);
   const {
     loadProjects: loadCloud, loadDetail: loadCloudDetail,
-    connect: cloudConnect, disconnect: cloudDisconnect, reveal: cloudReveal, pushAccounts: pushCloudAccounts,
+    connect: cloudConnect, disconnect: cloudDisconnect, reveal: cloudReveal, pushAccounts: pushCloudAccounts, pushOrg: pushCloudOrg,
   } = useCloudBridge(ready, call);
   const activeSessionId = useTerminalStore((s) =>
     server ? (s.tabs[server.id] ?? []).find((t) => t.active)?.sessionId ?? (s.tabs[server.id] ?? [])[0]?.sessionId : undefined,
@@ -611,6 +612,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         cloudReveal(payload.provider);
         break;
 
+      case 'cloud:org:update':
+        useCloudOrgStore.getState().setOrg(payload.org);
+        break;
+
       case 'cloud:copyKey': {
         const key = useCloudAuthStore.getState().tokens[payload.provider as CloudPlatform];
         if (key) Clipboard.setStringAsync(key).then(() => call('toast', 'Key kopiert'));
@@ -618,7 +623,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       }
 
       case 'nav:screen':
-        if (payload.screen === 'cloud') { pushCloudAccounts(); loadCloud(); }
+        if (payload.screen === 'cloud') { pushCloudOrg(); pushCloudAccounts(); loadCloud(); }
         if (payload.screen === 'manager') {
           // Memory frisch vom Server; Artefakte aus den Manager-Nachrichten
           // (Bilder/Präsentationen), antippbar über den In-App-Browser.
@@ -739,7 +744,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, sheets, fileExplorer, pickManagerImages]);
+  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
