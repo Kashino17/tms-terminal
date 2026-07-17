@@ -740,6 +740,9 @@
       shifttab: '\x1b[Z',
       // Ein Tap räumt einen ganzen Tippfehler/Pfad weg statt 30x einzeln tippen zu müssen.
       backspace: '\x7f'.repeat(30),
+      // Enter/Return fehlte in der Map — der breite Enter-Knopf in der
+      // Tastenleiste schickte deshalb NICHTS ans PTY (leeres Feld -> handleTermKey(enter)).
+      enter: '\r',
       up:    app ? '\x1bOA' : '\x1b[A',
       down:  app ? '\x1bOB' : '\x1b[B',
       left:  app ? '\x1bOD' : '\x1b[D',
@@ -747,7 +750,7 @@
     }[key];
     if (seq) window.__tmsInput(id, seq);
     if (typeof window.flashKeyEcho === 'function') {
-      var echo = { ctrlc: '^C', esc: 'Esc', tab: 'Tab', shifttab: '⇧Tab', backspace: '⌫', up: '↑', down: '↓', left: '←', right: '→' }[key] || key;
+      var echo = { ctrlc: '^C', esc: 'Esc', tab: 'Tab', shifttab: '⇧Tab', backspace: '⌫', enter: '⏎', up: '↑', down: '↓', left: '←', right: '→' }[key] || key;
       window.flashKeyEcho(echo);
     }
   };
