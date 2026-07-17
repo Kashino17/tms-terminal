@@ -18,6 +18,7 @@ import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../aud
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
 import { ConnectionRateLimiter } from './rate-limiter';
+import { browserBridge } from '../browserbridge/browserbridge.manager';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -154,6 +155,16 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
   // Update the mutable WS reference so manager callbacks always use the current connection
   currentWs = ws;
+
+  // Browser-Bridge: when a captured browser-open is forwarded, push the URL to
+  // this connection (foreground auto-open) AND fire an FCM push so a backgrounded
+  // app still surfaces the login. See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
+  browserBridge.setNotifier((ev) => {
+    send(ws, { type: 'browserbridge:open', payload: ev });
+    if (deviceToken) {
+      void fcmService.send(deviceToken, '🔐 Login öffnen', ev.host || 'Terminal-Browser', { kind: 'browserbridge', url: ev.url });
+    }
+  });
 
   // Flush any manager messages that were buffered while disconnected
   flushPendingManagerMessages(ws);
@@ -822,6 +833,21 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         send(ws, { type: 'pong' });
         break;
 
+      case 'browserbridge:toggle': {
+        browserBridge.setEnabled(msg.payload.enabled);
+        logger.info(`Browser-Bridge: ${msg.payload.enabled ? 'ON' : 'OFF'}`);
+        break;
+      }
+
+      case 'browserbridge:callback': {
+        // The app's WebView hit a localhost callback; deliver it to the CLI's
+        // loopback listener on the PC so the login completes (Weg A — server-relay).
+        browserBridge.relayCallback(msg.payload.url)
+          .then((r) => send(ws, { type: 'browserbridge:callback_result', payload: r }))
+          .catch(() => send(ws, { type: 'browserbridge:callback_result', payload: { status: 0, html: '' } }));
+        break;
+      }
+
       case 'client:register_token': {
         deviceToken = msg.payload?.token;
         if (!deviceToken) {
@@ -1172,6 +1198,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     // Clear the current WS reference so manager messages get buffered
     if (currentWs === ws) {
       currentWs = null;
+      browserBridge.setNotifier(null); // no app connected → shim falls back to local open
     }
 
     for (const sessionId of ownedSessions) {
