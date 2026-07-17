@@ -24,6 +24,10 @@ import { getPlatform } from '../utils/platform';
 export interface LmModelInfo {
   /** Der Modell-Schlüssel wie in LM Studio, z. B. "qwen/qwen3.6-27b". */
   key: string;
+  /** Lesbar aufbereiteter Anzeigename (Vendor-Präfix gestrippt). */
+  displayName: string;
+  /** Modelltyp aus LM Studio: 'llm' | 'vlm' | 'embeddings' | … */
+  type: string;
   /** Trainiertes Context-Maximum (Obergrenze des Reglers). */
   maxContext: number;
   /** Aktuell geladene Context-Länge, falls das Modell geladen ist. */
@@ -37,27 +41,44 @@ function nativeApiBase(v1Url: string): string {
   return v1Url.replace(/\/v1\/?$/, '') + '/api/v0';
 }
 
-/** Alle in LM Studio bekannten Modelle mit ihrem Context-Maximum + Ladezustand. */
-export async function getModelsInfo(v1Url: string): Promise<Map<string, LmModelInfo>> {
+/** Aus dem Modell-Schlüssel einen lesbaren Namen ableiten: Vendor-Präfix weg,
+ *  Trenner zu Leerzeichen, Wortanfänge groß. Kosmetisch — Eindeutigkeit liefert der key. */
+export function deriveDisplayName(key: string): string {
+  const afterVendor = key.includes('/') ? key.slice(key.indexOf('/') + 1) : key;
+  const spaced = afterVendor.replace(/[-_]+/g, ' ').trim();
+  return spaced.replace(/\b([a-z])/g, (c) => c.toUpperCase());
+}
+
+/** Reine Umwandlung der /api/v0/models-Antwort in die Info-Map. Kein Filtern —
+ *  die Info bleibt vollständige Quelle; das Filtern (Embeddings) macht die Registry. */
+export function parseModelsResponse(json: unknown): Map<string, LmModelInfo> {
   const out = new Map<string, LmModelInfo>();
-  try {
-    const res = await fetch(`${nativeApiBase(v1Url)}/models`, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) return out;
-    const json = await res.json() as { data?: Array<Record<string, any>> };
-    for (const m of json.data ?? []) {
-      const key = String(m.id ?? '');
-      if (!key) continue;
-      out.set(key, {
-        key,
-        maxContext: Number(m.max_context_length) || 0,
-        loadedContext: m.loaded_context_length != null ? Number(m.loaded_context_length) : null,
-        state: String(m.state ?? 'not-loaded'),
-      });
-    }
-  } catch (err) {
-    logger.warn(`LM Studio: Modell-Info nicht lesbar (${err instanceof Error ? err.message : String(err)})`);
+  const data = (json as { data?: Array<Record<string, any>> })?.data ?? [];
+  for (const m of data) {
+    const key = String(m.id ?? '');
+    if (!key) continue;
+    out.set(key, {
+      key,
+      displayName: deriveDisplayName(key),
+      type: String(m.type ?? 'llm'),
+      maxContext: Number(m.max_context_length) || 0,
+      loadedContext: m.loaded_context_length != null ? Number(m.loaded_context_length) : null,
+      state: String(m.state ?? 'not-loaded'),
+    });
   }
   return out;
+}
+
+/** Alle in LM Studio bekannten Modelle mit Context-Maximum, Typ + Ladezustand. */
+export async function getModelsInfo(v1Url: string): Promise<Map<string, LmModelInfo>> {
+  try {
+    const res = await fetch(`${nativeApiBase(v1Url)}/models`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return new Map();
+    return parseModelsResponse(await res.json());
+  } catch (err) {
+    logger.warn(`LM Studio: Modell-Info nicht lesbar (${err instanceof Error ? err.message : String(err)})`);
+    return new Map();
+  }
 }
 
 /** Pfad zur `lms`-CLI: erst PATH, dann die Standard-Installation im Home. */
