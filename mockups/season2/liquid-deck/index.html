@@ -845,7 +845,10 @@
     /* bottom hängt an --dock-h und springt mit der Bar im selben Frame um —
        eine eigene Transition hier würde die Leiste von der Bar abkoppeln. */
     transition: transform 380ms var(--spring); }
-  body.has-switcher .keys-panel--global { transform: translateX(-50%) translateY(-34px); }
+  /* Die Shortcut-Leiste schließt direkt an die Eingabeleiste an — kein Lift mehr
+     über die Terminal-Punkte, denn die Punkte sitzen jetzt OBERHALB der Leiste
+     (direkt unter dem Terminal). */
+  body.has-switcher .keys-panel--global { transform: translateX(-50%); }
   /* Der Stapel endet ÜBER dem Slider, nicht darunter. Der Wechsel ist bewusst
      NICHT animiert: eine bottom-Transition würde die Karte (und damit das
      xterm) jeden Frame neu layouten — ein SIGWINCH-Sturm für die PTY. */
@@ -854,7 +857,9 @@
      --keys-h ist die ECHTE Panelhöhe (gesetzt beim Öffnen); statische Werte
      gingen auseinander, sobald die Tastatur den Viewport verkürzte. */
   body.keys-open .stack { bottom: calc(var(--keys-h, 100px) + 12px); }
-  body.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px + 40px); }
+  /* Die Punkte sitzen jetzt ÜBER der Tastenleiste — der Stapel muss zusätzlich
+     ihre Höhe (~46px) freihalten, sonst überlappt das Terminal die Punkte. */
+  body.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px + 40px + 46px); }
   body.keys-open .term-list { padding-bottom: calc(var(--keys-h, 100px) + 20px); }
   /* Tastatur offen: die Slider-Punkte weichen, das Terminal wird größer. */
   #termSwitcher { transition: opacity 220ms ease-out, transform 380ms var(--spring-pop); }
@@ -877,6 +882,10 @@
     display: flex; flex-direction: column; align-items: center;
     touch-action: none; -webkit-user-select: none; user-select: none; }
   .term-switcher[hidden] { display: none; }
+  /* Ist die Tastenleiste offen, heben sich die Punkte um deren Höhe an, damit
+     sie OBERHALB der Leiste (direkt unter dem Terminal) bleiben statt hinter
+     ihr zu verschwinden. Bei geschlossener Leiste bleiben sie über der Bar. */
+  body.keys-open .term-switcher { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + var(--dock-h, 62px) + var(--keys-h, 90px) + 14px); }
 
   .term-switcher__label { pointer-events: none; margin-bottom: 5px;
     opacity: 0; transform: translateY(4px) scale(.9);
