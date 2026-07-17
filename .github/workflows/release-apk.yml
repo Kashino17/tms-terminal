@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Manager-Chat: Die Sprachaufnahme funktioniert jetzt genau wie im Terminal. Tippe aufs Mikro und die untere Leiste wird zur Aufnahmeleiste (Wellenform, Timer, Abbrechen/Uebernehmen) — dieselbe UI und derselbe Ablauf wie beim Terminal-Diktat. Das fertige Transkript landet in der Manager-Eingabezeile zum Pruefen und Senden (kein Auto-Send)." \
+            --notes "Bottom-Bar-Fix: Der Inhalt der unteren Leiste (der $-Prompt bzw. die Kamera links, die Eingabezeile) verrutschte manchmal nach links und wurde am Rand abgeschnitten. Ursache war ein federnder Einlauf, der auf dem Geraet gelegentlich genau im Ueberschwinger haengen blieb. Die aktive Leisten-Seite ruht jetzt fest an ihrer Position — das Verrutschen kann nicht mehr auftreten." \
             --latest
