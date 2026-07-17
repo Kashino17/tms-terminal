@@ -97,6 +97,18 @@
       vercel: { connected: true, maskedKey: 'vc_a1••••…9zQ' },
       render: { connected: true, maskedKey: 'rnd_BH••••…sp4' },
     },
+    // Custom folder organisation — the app persists this in React Native
+    // (cloudOrgStore) and pushes it via TMSBridge.setCloudOrg.
+    cloudOrg: {
+      folders: [
+        { id: 'f-pin',   name: 'Pinterest', color: '#d6336c', order: 0 },
+        { id: 'f-infra', name: 'Infra',     color: '#1c7ed6', order: 1 },
+      ],
+      assignments: { c1: 'f-pin', c4: 'f-pin', c5: 'f-infra' },
+      favorites: { c1: true, c3: true, c5: true },
+      startFolderId: 'fav',
+      defaultFilters: { provider: 'all', status: 'all' },
+    },
     manager: {
       persona: { name: 'Kai', avatar: null, role: 'Dein Manager' },
       activeProvider: 'glm',

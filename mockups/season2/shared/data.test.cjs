@@ -78,3 +78,15 @@ test('cloud accounts: both providers seeded as connected with masked keys', () =
   assert.match(acc.vercel.maskedKey, /••••…/);
   assert.match(acc.render.maskedKey, /^rnd_/);
 });
+
+test('cloud org seed: folders, assignments, favorites, start folder, filters', () => {
+  const org = DATA.cloudOrg;
+  assert.ok(Array.isArray(org.folders) && org.folders.length >= 2);
+  for (const f of org.folders) assert.ok(f.id && f.name && /^#/.test(f.color) && typeof f.order === 'number');
+  const ids = new Set(DATA.cloudProjects.map(p => p.id));
+  for (const pid of Object.keys(org.assignments)) assert.ok(ids.has(pid));
+  for (const pid of Object.keys(org.favorites)) assert.ok(ids.has(pid));
+  assert.ok(['fav', 'all', 'unsorted'].includes(org.startFolderId) || org.folders.some(f => f.id === org.startFolderId));
+  assert.ok(['all', 'vercel', 'render'].includes(org.defaultFilters.provider));
+  assert.ok(['all', 'active', 'attention'].includes(org.defaultFilters.status));
+});
