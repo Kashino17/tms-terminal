@@ -9,7 +9,7 @@
  * The classic UI is untouched — Season 2 is still just a settings toggle.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, BackHandler, View, Text, Pressable, StyleSheet } from 'react-native';
+import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -35,6 +35,8 @@ import { useCloudOrgStore } from '../store/cloudOrgStore';
 import { useSheetBridges } from './web/useSheetBridges';
 import { useFileExplorer } from './web/useFileExplorer';
 import { NativeBrowserLayer, type BrowserRect, type BrowserHandle } from './web/NativeBrowserLayer';
+import { ActionSheet, ActionSheetOption } from '../components/ActionSheet';
+import { useServerStore } from '../store/serverStore';
 import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
 import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flushScrollback } from './web/scrollbackStore';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
@@ -53,7 +55,8 @@ const CLOUD_TOKEN_URL: Record<string, string> = {
 // das grosse Mockup umzubauen (der Build liest es cross-worktree, mit fremden
 // uncommitteten Aenderungen — riskant), reichern wir die Seite zur Laufzeit an:
 //  • ein "+" in der Titelzeile  → postet server:add
-//  • Long-Press / contextmenu auf eine Server-Karte → postet server:edit{id}
+//  • Long-Press / contextmenu auf eine Server-Karte → postet server:menu{id}
+//    (natives Aktions-Sheet: Bearbeiten + Löschen)
 // Die Karten tragen ihre id im Latenz-Chip ([data-latency-chip]); renderServers
 // ist global, also umhuellen wir es, damit das "+" jedes Neurendern ueberlebt.
 // Alles ist idempotent und degradiert lautlos, falls das Mockup-DOM sich aendert.
@@ -69,14 +72,14 @@ const SERVER_PAGE_MGMT_JS = `(function(){
     var card = e.target && e.target.closest ? e.target.closest('.server-card') : null;
     if (!card) return;
     lpMoved = false; lpId = idOf(card); cancelLp();
-    lpTimer = setTimeout(function(){ lpTimer = null; if (lpId && !lpMoved) post('server:edit', { id: lpId }); }, 500);
+    lpTimer = setTimeout(function(){ lpTimer = null; if (lpId && !lpMoved) post('server:menu', { id: lpId }); }, 500);
   }, { passive: true });
   document.addEventListener('touchmove', function(){ lpMoved = true; cancelLp(); }, { passive: true });
   document.addEventListener('touchend', cancelLp, { passive: true });
   document.addEventListener('touchcancel', cancelLp, { passive: true });
   document.addEventListener('contextmenu', function(e){
     var card = e.target && e.target.closest ? e.target.closest('.server-card') : null;
-    if (!card) return; e.preventDefault(); var id = idOf(card); if (id) post('server:edit', { id: id });
+    if (!card) return; e.preventDefault(); var id = idOf(card); if (id) post('server:menu', { id: id });
   });
   function addPlus(){
     var host = document.querySelector('[data-screen="servers"]'); if (!host) return;
@@ -134,6 +137,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   /** Bilder, die an die nächste Manager-Nachricht angehängt werden (Upload-Pfade + lokale URI). */
   const mgrAttachments = useRef<Array<{ uri: string; path?: string }>>([]);
   const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, onScreen: false, tabId: null, url: '', rect: null });
+  // Long-Press auf eine Server-Karte öffnet dieses native Aktions-Sheet
+  // (Bearbeiten + Löschen) — dieselbe Komponente wie im klassischen Layout.
+  const [serverSheet, setServerSheet] = useState<{ title: string; subtitle: string; options: ActionSheetOption[] } | null>(null);
   /** Griff auf den nativen Browser — Neuladen und Cache-Leeren gehen nur über ihn. */
   const browserRef = useRef<BrowserHandle>(null);
   // Browser-Bridge: session that triggered the current login-open, so its
@@ -467,6 +473,25 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     })));
   }, [server, state, call]);
 
+  // Server-Profil löschen (aus dem Long-Press-Aktions-Sheet). Ist es der gerade
+  // verbundene Server, wird erst getrennt: Karten abräumen, Restore-/Status-Refs
+  // zurücksetzen und setServer(null) baut den wsService ab. Danach das Profil
+  // entfernen (hält auch das klassische Layout via Store synchron) und die Liste
+  // neu prüfen/reinschieben.
+  const deleteServerNow = useCallback(async (id: string) => {
+    if (server && id === server.id) {
+      call('clearAllTerminals');
+      restored.current = false;
+      sessionStatus.current = {};
+      Object.values(idleTimers.current).forEach(clearTimeout);
+      idleTimers.current = {};
+      setServer(null, null);
+    }
+    await useServerStore.getState().deleteServer(id).catch(() => {});
+    call('toast', 'Server gelöscht');
+    pushServers();
+  }, [server, call, setServer, pushServers]);
+
   // Beim Start, bei jeder Verbindungsänderung und danach alle 20s neu prüfen —
   // so wird ein Server, den man nebenbei hochfährt, von selbst wieder „online".
   useEffect(() => {
@@ -594,16 +619,31 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (type === 'bridge:ready') { setReady(true); return; }
 
     // Server-Verwaltung muss IMMER gehen — auch ohne aktive Verbindung (der Guard
-    // unten würde sie sonst verschlucken). Nutzt den bestehenden klassischen Add-/
-    // Bearbeiten-Screen; der Focus-Listener liest danach neu ein.
+    // unten würde sie sonst verschlucken). Bearbeiten nutzt den bestehenden
+    // klassischen Add-/Bearbeiten-Screen; der Focus-Listener liest danach neu ein.
     if (type === 'server:add') { navigation.navigate('AddServer'); return; }
     if (type === 'server:manage') { navigation.navigate('ServerList'); return; }
-    if (type === 'server:edit') {
-      const editId = payload?.id;
+    if (type === 'server:menu') {
+      const menuId = payload?.id;
       (async () => {
         const list = await storageService.getServers().catch(() => []);
-        const target = list.find((x) => x.id === editId);
-        if (target) navigation.navigate('AddServer', { server: target as any });
+        const target = list.find((x) => x.id === menuId);
+        if (!target) return;
+        setServerSheet({
+          title: target.name,
+          subtitle: `${target.host}:${target.port}`,
+          options: [
+            { label: 'Bearbeiten', icon: 'edit-2', onPress: () => navigation.navigate('AddServer', { server: target as any }) },
+            {
+              label: 'Server löschen', icon: 'trash-2', destructive: true,
+              // Zweite Bestätigung, weil Löschen nicht rückgängig ist.
+              onPress: () => Alert.alert(`„${target.name}" löschen?`, `${target.host}:${target.port}`, [
+                { text: 'Abbrechen', style: 'cancel' },
+                { text: 'Löschen', style: 'destructive', onPress: () => { void deleteServerNow(target.id); } },
+              ]),
+            },
+          ],
+        });
       })();
       return;
     }
@@ -890,7 +930,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages]);
+  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
@@ -960,6 +1000,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           </Pressable>
         </View>
       )}
+      {/* Long-Press-Aktions-Sheet der Server-Karten (Bearbeiten + Löschen). */}
+      <ActionSheet
+        visible={!!serverSheet}
+        title={serverSheet?.title}
+        subtitle={serverSheet?.subtitle}
+        options={serverSheet?.options ?? []}
+        onClose={() => setServerSheet(null)}
+      />
     </View>
   );
 }
