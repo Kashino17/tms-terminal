@@ -40,6 +40,15 @@ interface Props {
   onLoopbackCallback?: (url: string) => void;
 }
 
+// A real Chrome-on-Android user agent (NO "wv" token). Embedded WebViews
+// otherwise get blocked from social sign-in: Google refuses OAuth from user
+// agents it flags as WebViews ("disallowed_useragent"), so "Mit Google
+// anmelden" spins forever. GitHub/Facebook are lenient but render better too.
+// (Google can still detect the WebView via the X-Requested-With header, which
+// react-native-webview can't strip — hence Google remains best-effort.)
+const BROWSER_UA =
+  'Mozilla/5.0 (Linux; Android 15; SM-F966B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
+
 /** `3000`, `:8080/api`, `/health` → the connected Tailscale host. */
 export function resolveUrl(input: string, serverHost?: string): string {
   const t = input.trim();
@@ -151,7 +160,14 @@ export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function Nati
         source={source}
         incognito
         cacheEnabled={false}
-        thirdPartyCookiesEnabled={false}
+        // Social-Quick-Login (Google/GitHub/Facebook …) braucht Cookies zu den
+        // Provider-Domains (accounts.google.com …) UND einen echten Browser-
+        // User-Agent (s. BROWSER_UA). Ohne Drittanbieter-Cookies initialisiert
+        // z.B. der Google-Button nie ("Wird geladen …" hängt); mit WebView-
+        // Kennung blockt Google den Login ganz. Incognito bleibt: es löscht nur
+        // EINMAL beim Start, Cookies der laufenden Sitzung funktionieren weiter.
+        thirdPartyCookiesEnabled
+        userAgent={BROWSER_UA}
         javaScriptEnabled
         // MUSS an sein. Ohne DOM-Storage wirft jede React-/Next-Seite beim
         // ersten localStorage-Zugriff — die Seite lädt, der Titel kommt an,
