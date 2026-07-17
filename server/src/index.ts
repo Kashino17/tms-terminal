@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { config, loadServerConfig, ensureConfigDir } from './config';
 import { handleAuthRequest } from './auth/auth.controller';
+import { handleOpenUrl } from './browserbridge/open-url.handler';
 import { handleFileList, handleFileRead, handleFileDownload, handleMkdir, handleMove, handleTrash, handleRename } from './files/file.handler';
 import { handleFileZip } from './files/zip.handler';
 import { handlePdfjsAsset } from './files/pdfjs.handler';
@@ -75,6 +76,18 @@ function main(): void {
 
   // Create HTTP server (Tailscale handles encryption)
   const server = http.createServer((req, res) => {
+    // Browser-Bridge: the tms-open shim (loopback + per-PTY secret) POSTs
+    // captured http(s) browser-opens here. See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
+    if (req.method === 'POST' && req.url === '/internal/open-url') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        const out = handleOpenUrl(body, req.socket.remoteAddress ?? undefined);
+        res.writeHead(out.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(out.json));
+      });
+      return;
+    }
     if (req.url?.startsWith('/auth/')) {
       handleAuthRequest(req, res);
     } else if (req.url === '/upload/screenshot' || req.url === '/upload/media') {
