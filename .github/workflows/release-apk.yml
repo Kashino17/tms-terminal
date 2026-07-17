@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Terminal bei offener Tastatur groß + Navigations-Punkte bleiben sichtbar. Zwei Darstellungsfehler behoben: (1) Die Terminal-Punkte (Sitzungs-Wechsler) verschwanden manchmal — sie bleiben jetzt IMMER sichtbar. (2) Wenn Punkte und Tastenleiste zu sehen waren, klaffte eine große Lücke und das Terminal war klein — jetzt füllt das Terminal den Platz bis knapp über die Punkte (keine Lücke) in allen Zuständen. Technisch: Das Layout hängt nicht mehr an der (auf manchen Geräten unzuverlässigen) Tastatur-Erkennung — die Leisten-Höhe ist überall gleich, das Terminal maximal groß." \
+            --notes "Rückfrage-/Umfrage-Dialoge entfernt. Automatisch erkannte Mehrfachauswahl-/Umfrage-Prompts (etwa Claude Codes eigene Sitzungs-Umfrage 'How is Claude doing this session? 1:Bad 2:Fine 3:Good') poppen nicht mehr als Auswahl-Sheet auf dem Handy auf — inklusive der zugehörigen Tab-Benachrichtigung und des 'Warte'-Status. Solche Prompts beantwortest du bei Bedarf direkt im Terminal. Die Erlauben/Ablehnen-Berechtigungs-Dialoge bleiben unverändert und respektieren weiter Auto-Approve." \
             --latest

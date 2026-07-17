@@ -271,17 +271,19 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // Er meldet nur, was er nicht selbst beantworten konnte oder durfte.
         const sid = m.sessionId as string;
         const info = describePrompt(m.payload?.snippet ?? '');
+
+        // Frage-/Umfrage-Dialoge wurden auf Wunsch entfernt: erkannte
+        // Mehrfachauswahl-/Umfrage-Prompts (z. B. Claude Codes
+        // "How is Claude doing this session?" oder ein AskUserQuestion-Menü)
+        // lösen KEIN Auswahl-Sheet, keine Tab-Benachrichtigung und keinen
+        // Warte-Status mehr aus. Solche Prompts beantwortet der Nutzer direkt
+        // im Terminal. Nur reine Berechtigungs-Prompts erscheinen weiterhin.
+        if (info.kind === 'question') return;
+
         const autoOn = useAutoApproveStore.getState().enabled[sid] ?? true;
 
         setSessionStatus(sid, 'waiting');
 
-        // Echte Rückfragen (Auswahl / Freitext) darf niemand automatisch
-        // beantworten — die kommen IMMER vor den Nutzer.
-        if (info.kind === 'question') {
-          useTerminalStore.getState().setTabNotification(server.id, sid);
-          call('prompt', sid, info);
-          return;
-        }
         // Reine Berechtigung bei aktivem Auto-Approve: kein Fenster. Genau das
         // soll Auto-Approve ja ersparen — der Server hat es entweder schon
         // bestätigt oder bewusst pausiert (etwa weil gerade getippt wird).
