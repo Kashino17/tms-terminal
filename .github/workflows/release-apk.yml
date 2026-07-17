@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Verbindungen jetzt per Long-Press verwalten: Ein langer Druck auf eine Server-Karte oeffnet ein Menue mit 'Bearbeiten' und 'Loeschen' (Loeschen fragt zur Sicherheit nach; loescht es die gerade aktive Verbindung, wird vorher getrennt). Das '+' oben rechts legt weiterhin neue Server an. (Baut auf v1.108.11 auf.)" \
+            --notes "Terminal-Eingabezeile aufgeraeumt: Das Tastatur-Symbol sitzt jetzt links statt rechts, und das Dollar-Zeichen liegt sauber auf einer Linie mit dem Text. (Baut auf v1.108.12 auf.)" \
             --latest
