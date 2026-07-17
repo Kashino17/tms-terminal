@@ -114,6 +114,15 @@ export interface ActiveTabMessage {
   type: 'client:active_tab';
   payload: { tabId: string; sessionId?: string };
 }
+// Browser-Bridge (terminal→app browser). See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
+export interface BrowserBridgeToggleMessage {
+  type: 'browserbridge:toggle';
+  payload: { enabled: boolean };
+}
+export interface BrowserBridgeCallbackMessage {
+  type: 'browserbridge:callback';
+  payload: { url: string; sessionId: string };
+}
 
 export type ClientMessage =
   | TerminalCreateMessage
@@ -142,7 +151,9 @@ export type ClientMessage =
   | ManagerMemoryWriteMessage
   | FileUploadMessage
   | AppStateMessage
-  | ActiveTabMessage;
+  | ActiveTabMessage
+  | BrowserBridgeToggleMessage
+  | BrowserBridgeCallbackMessage;
 
 // ── Server → Client ──────────────────────────────────────────────
 
@@ -343,6 +354,16 @@ export interface ManagerStreamEndMessage {
   };
 }
 
+// Browser-Bridge (terminal→app browser). See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
+export interface BrowserBridgeOpenMessage {
+  type: 'browserbridge:open';
+  payload: { url: string; host: string; sessionId: string };
+}
+export interface BrowserBridgeCallbackResultMessage {
+  type: 'browserbridge:callback_result';
+  payload: { status: number; html: string };
+}
+
 export type ServerMessage =
   | TerminalCreatedMessage
   | TerminalOutputMessage
@@ -368,4 +389,6 @@ export type ServerMessage =
   | ManagerMemoryDataMessage
   | ManagerThinkingMessage
   | ManagerStreamChunkMessage
-  | ManagerStreamEndMessage;
+  | ManagerStreamEndMessage
+  | BrowserBridgeOpenMessage
+  | BrowserBridgeCallbackResultMessage;
