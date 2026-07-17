@@ -35,6 +35,9 @@ interface Props {
   serverHost?: string;
   /** Meldet Titel, aktuelle URL und ob im WebView zurück/vor möglich ist. */
   onNav: (tabId: string, title: string, url: string, canGoBack: boolean, canGoForward: boolean) => void;
+  /** Browser-Bridge: a localhost OAuth callback was hit in the WebView — relay it
+   *  to the PC's CLI instead of loading it here (the phone has no such listener). */
+  onLoopbackCallback?: (url: string) => void;
 }
 
 /** `3000`, `:8080/api`, `/health` → the connected Tailscale host. */
@@ -49,8 +52,18 @@ export function resolveUrl(input: string, serverHost?: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(t)}`;
 }
 
+/** localhost / 127.0.0.1 / [::1] — the CLI's OAuth callback listener on the PC. */
+export function isLoopbackUrl(input: string): boolean {
+  try {
+    const host = new URL(input).hostname.replace(/^\[|\]$/g, '');
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
 export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function NativeBrowserLayer(
-  { visible, onScreen, tabId, url, rect, serverHost, onNav }: Props,
+  { visible, onScreen, tabId, url, rect, serverHost, onNav, onLoopbackCallback }: Props,
   ref,
 ) {
   const resolved = useMemo(() => resolveUrl(url, serverHost), [url, serverHost]);
@@ -131,6 +144,15 @@ export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function Nati
         onNavigationStateChange={(nav) =>
           onNav(tabId, nav.loading ? '' : (nav.title ?? ''), nav.url ?? resolved, !!nav.canGoBack, !!nav.canGoForward)
         }
+        // Browser-Bridge: a localhost OAuth callback can't be served on the phone —
+        // hand it to the PC's CLI via the bridge and cancel the native load.
+        onShouldStartLoadWithRequest={(req) => {
+          if (onLoopbackCallback && isLoopbackUrl(req.url)) {
+            onLoopbackCallback(req.url);
+            return false;
+          }
+          return true;
+        }}
         // Fehler dürfen nicht mehr als weiße Fläche enden — sie werden benannt.
         onError={(e) => setError(e.nativeEvent.description || 'Unbekannter Fehler')}
         onHttpError={(e) =>

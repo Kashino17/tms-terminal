@@ -22,6 +22,7 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useTerminalStore } from '../store/terminalStore';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
+import { consumePendingBrowserBridgeUrl } from '../services/notifications.service';
 import { checkForUpdate, downloadAndInstall, getCurrentVersion } from '../services/updater.service';
 import { getConnection } from '../services/websocket.service';
 import { useS2ConnStore, useS2Connection } from './screens/TerminalsScreen';
@@ -88,6 +89,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, onScreen: false, tabId: null, url: '', rect: null });
   /** Griff auf den nativen Browser — Neuladen und Cache-Leeren gehen nur über ihn. */
   const browserRef = useRef<BrowserHandle>(null);
+  // Browser-Bridge: session that triggered the current login-open, so its
+  // localhost callback can be tagged when relayed back to the server.
+  const pendingLoginSessionId = useRef<string | null>(null);
 
   // Die gesicherte Historie muss da sein, BEVOR das erste Terminal anhängt.
   const scrollbackReady = useRef(false);
@@ -312,9 +316,39 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('prompt', sid, info);
         return;
       }
+
+      // Browser-Bridge: a terminal opened a browser and the server routed it here.
+      if (m?.type === 'browserbridge:open') {
+        pendingLoginSessionId.current = m.payload.sessionId;
+        // Foreground: open the in-app browser immediately. Backgrounded: the FCM
+        // push surfaces it and the pending-URL consumer opens it on return.
+        if (AppState.currentState === 'active') call('openBrowser', m.payload.url);
+        return;
+      }
+      // Browser-Bridge: the server delivered the OAuth callback to the CLI. The
+      // WebView still shows the provider's post-login page (we cancelled the
+      // localhost nav), so a toast is the right confirmation.
+      if (m?.type === 'browserbridge:callback_result') {
+        const ok = m.payload.status >= 200 && m.payload.status < 400;
+        call('toast', ok ? 'Login abgeschlossen ✓' : 'Login fehlgeschlagen — im Terminal prüfen');
+        return;
+      }
     });
     return unsub;
   }, [wsService, server, ready, call, markBusy, setSessionStatus]);
+
+  // Browser-Bridge: open the login URL stashed by a tapped "Login öffnen" push —
+  // on cold start (ready) and whenever the app returns to the foreground.
+  useEffect(() => {
+    if (!ready) return;
+    const open = () => {
+      const u = consumePendingBrowserBridgeUrl();
+      if (u) call('openBrowser', u);
+    };
+    open();
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') open(); });
+    return () => sub.remove();
+  }, [ready, call]);
 
   useEffect(() => () => {
     Object.values(idleTimers.current).forEach(clearTimeout);
@@ -812,6 +846,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         serverHost={server?.host}
         onNav={(tabId, title, url, canGoBack, canGoForward) =>
           call('browserTitle', tabId, title, url, canGoBack, canGoForward)}
+        onLoopbackCallback={(loopbackUrl) =>
+          wsService?.send({ type: 'browserbridge:callback', payload: { url: loopbackUrl, sessionId: pendingLoginSessionId.current ?? '' } })}
       />
     </View>
   );

@@ -50,6 +50,18 @@ export function consumePendingCloudTarget(): { platform: 'render' | 'vercel'; pr
   return target;
 }
 
+// ── Pending browser-bridge login URL ─────────────────────────────────────────
+// When a "🔐 Login öffnen" notification is tapped, the login URL is stashed here;
+// SeasonTwoWebRoot consumes it and opens the in-app browser.
+let _pendingBrowserBridgeUrl: string | null = null;
+
+/** Read and consume the pending browser-bridge login URL (null if none). */
+export function consumePendingBrowserBridgeUrl(): string | null {
+  const u = _pendingBrowserBridgeUrl;
+  _pendingBrowserBridgeUrl = null;
+  return u;
+}
+
 /** Set up a listener for notification response (tap). */
 export function registerNotificationResponseHandler(): (() => void) {
   const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -63,6 +75,9 @@ export function registerNotificationResponseHandler(): (() => void) {
         platform: data.platform as 'render' | 'vercel',
         projectId: data.projectId as string,
       };
+    }
+    if (data?.kind === 'browserbridge' && typeof data.url === 'string') {
+      _pendingBrowserBridgeUrl = data.url;
     }
   });
   return () => subscription.remove();
@@ -129,6 +144,8 @@ export function registerForegroundHandler(): () => void {
     const data: Record<string, string> = {};
     if (remoteMessage.data?.sessionId) data.sessionId = String(remoteMessage.data.sessionId);
     if (remoteMessage.data?.type) data.type = String(remoteMessage.data.type);
+    if (remoteMessage.data?.kind) data.kind = String(remoteMessage.data.kind);
+    if (remoteMessage.data?.url) data.url = String(remoteMessage.data.url);
 
     // Show a local notification so it appears as a heads-up banner
     await Notifications.scheduleNotificationAsync({
