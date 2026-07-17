@@ -1306,6 +1306,10 @@
   };
   window.TMSBridge.setCloud = function (projects) {
     window.TMS_DATA.cloudProjects = projects;
+    // React Native sends favorite:false — the saved favorites live in the
+    // page's localStorage and must be re-applied after every push, or every
+    // reload (and every app update) looked like it had wiped them.
+    if (typeof window.loadFavorites === 'function') window.loadFavorites();
     if (typeof window.renderCloudGroups === 'function') window.renderCloudGroups();
   };
   window.TMSBridge.setCloudAccounts = function (accounts) {

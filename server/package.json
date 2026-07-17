@@ -14,6 +14,7 @@
     "test": "node --require ts-node/register --test 'src/**/*.test.ts'"
   },
   "dependencies": {
+    "@mapbox/node-pre-gyp": "^2.0.3",
     "archiver": "^7.0.1",
     "bcrypt": "^5.1.1",
     "busboy": "^1.6.0",

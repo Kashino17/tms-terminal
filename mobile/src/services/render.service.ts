@@ -28,7 +28,8 @@ const DEPLOY_STATUS_MAP: Record<string, DeploymentStatus> = {
   build_failed: 'error',
   update_failed: 'error',
   canceled: 'canceled',
-  deactivated: 'canceled',
+  // A replaced (formerly live) deploy — not canceled, just no longer serving.
+  deactivated: 'inactive',
 };
 
 async function fetchWithRetry(
@@ -54,6 +55,7 @@ async function fetchWithRetry(
 }
 
 export function createRenderService(token: string): CloudProvider {
+  let _ownerId: string | null = null; // cached from listProjects()/listOwners() for the /logs endpoint
   const headers = {
     Authorization: `Bearer ${token}`,
     Accept: 'application/json',
@@ -89,6 +91,7 @@ export function createRenderService(token: string): CloudProvider {
     },
 
     async listProjects(ownerId, cursor?) {
+      _ownerId = ownerId;
       const params = new URLSearchParams({ ownerId, limit: '20' });
       if (cursor) params.set('cursor', cursor);
       const res = await get(`/services?${params}`);
@@ -148,9 +151,20 @@ export function createRenderService(token: string): CloudProvider {
     },
 
     async getServiceLogs(projectId) {
-      const res = await get(`/services/${projectId}/logs`);
+      // Logs live on /v1/logs (ownerId + resource filter) — there is no
+      // /services/{id}/logs endpoint; that path 404s and yielded empty tabs.
+      if (!_ownerId) {
+        const ownersRes = await get('/owners');
+        const owners = await ownersRes.json();
+        _ownerId = (owners as any[])[0]?.owner?.id ?? null;
+      }
+      if (!_ownerId) return [];
+      const params = new URLSearchParams({ ownerId: _ownerId, limit: '100', direction: 'backward' });
+      params.append('resource', projectId);
+      const res = await get(`/logs?${params}`);
       const data = await res.json();
-      return (data as any[]).map((l: any) => ({
+      // backward = newest first; the viewer renders top→bottom chronologically.
+      return ((data.logs ?? []) as any[]).reverse().map((l: any) => ({
         timestamp: l.timestamp ?? new Date().toISOString(),
         level: (l.level ?? 'info') as LogEntry['level'],
         message: l.message ?? String(l),

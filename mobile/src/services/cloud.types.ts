@@ -24,7 +24,7 @@ export interface Project {
   latestDeployId?: string;
 }
 
-export type DeploymentStatus = 'ready' | 'building' | 'queued' | 'error' | 'canceled';
+export type DeploymentStatus = 'ready' | 'building' | 'queued' | 'error' | 'canceled' | 'inactive';
 
 export interface Deployment {
   id: string;
@@ -92,6 +92,7 @@ export const DEPLOYMENT_STATUS_COLORS: Record<DeploymentStatus, string> = {
   queued: '#3B82F6',
   error: '#EF4444',
   canceled: '#64748B',
+  inactive: '#64748B',
 };
 
 export class TokenExpiredError extends Error {
