@@ -72,7 +72,7 @@ export class TerminalManager {
     }
 
     const id = uuidv4();
-    const pty = createPty(options.cols, options.rows);
+    const pty = createPty(options.cols, options.rows, { TMS_SESSION_ID: id });
 
     const session: TerminalSession = {
       id,

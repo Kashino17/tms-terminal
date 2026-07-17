@@ -3,10 +3,12 @@ import { getDefaultShell, getShellArgs, getTermEnv, getPlatform } from '../utils
 import { logger } from '../utils/logger';
 import * as os from 'os';
 
-export function createPty(cols: number, rows: number): pty.IPty {
+export function createPty(cols: number, rows: number, extraEnv: Record<string, string> = {}): pty.IPty {
   const shell = getDefaultShell();
   const args = getShellArgs();
-  const env = getTermEnv();
+  // extraEnv carries per-session vars (e.g. TMS_SESSION_ID) that the cached,
+  // process-global getTermEnv() can't know.
+  const env = { ...getTermEnv(), ...extraEnv };
   const isWin = getPlatform() === 'win32';
 
   logger.info(`Spawning shell: ${shell} ${args.join(' ')} (${cols}x${rows})`);

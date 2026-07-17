@@ -1,4 +1,8 @@
 import * as os from 'os';
+import * as path from 'path';
+import { materializeShimDir } from '../browserbridge/shim';
+import { browserBridge } from '../browserbridge/browserbridge.manager';
+import { config, loadServerConfig } from '../config';
 
 export type Platform = 'darwin' | 'win32' | 'linux';
 
@@ -64,6 +68,17 @@ export function getTermEnv(): Record<string, string> {
     // setting in ~/.claude/settings.json. See code.claude.com/docs/en/fullscreen.
     CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1',
   };
+
+  // ── Browser-Bridge: capture http(s) browser-opens from CLIs and route them to
+  //    the phone. The shim opens locally as a fallback when the toggle is off or
+  //    no app is connected, so a browser-open is never swallowed. Computed once
+  //    (getTermEnv is cached); the shim dir + secret are stable per process.
+  //    See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
+  const shimDir = materializeShimDir();
+  env.PATH = shimDir + path.delimiter + (env.PATH ?? '');
+  env.BROWSER = path.join(shimDir, 'tms-open');
+  env.TMS_BROWSERBRIDGE_SECRET = browserBridge.secret;
+  env.TMS_SERVER_PORT = String(loadServerConfig().port || config.port);
 
   if (platform === 'win32') {
     // Force UTF-8 for Windows programs that check these
