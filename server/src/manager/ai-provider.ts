@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger';
+import type { LmModelInfo } from './lmstudio.manager';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,8 @@ export interface ProviderConfig {
   openaiApiKey?: string;
   activeProvider?: string;
   lmStudioUrl?: string;
+  /** Zuletzt gewählte Context-Länge je LM-Studio-Modell-Key (Regler-Gedächtnis). */
+  lmStudioModelContext?: Record<string, number>;
 }
 
 // ── Tool Calling Types ─────────────────────────────────────────────────────
@@ -560,20 +563,31 @@ class GlmProvider implements AiProvider {
 
 const LMSTUDIO_DEFAULT_URL = 'http://localhost:1234/v1';
 
+/** Moderater Context-Default für ein Modell: min(16384, max), geklemmt auf [4096, max]. */
+export function defaultContextFor(maxContext: number): number {
+  const cap = maxContext && maxContext > 0 ? maxContext : 32768;
+  return Math.max(4096, Math.min(16384, cap));
+}
+
 class LMStudioProvider implements AiProvider {
   id: string;
   name: string;
   isLocal = true;
   private modelId: string;
+  private modelType: string;
   private getBaseUrl: () => string;
   private available: boolean | null = null;
 
-  constructor(id: string, name: string, modelId: string, getBaseUrl: () => string) {
+  constructor(id: string, name: string, modelId: string, getBaseUrl: () => string, modelType = 'llm') {
     this.id = id;
     this.name = name;
     this.modelId = modelId;
+    this.modelType = modelType;
     this.getBaseUrl = getBaseUrl;
   }
+
+  /** Modelltyp aus LM Studio (für die Provider-Liste). */
+  getModelType(): string { return this.modelType; }
 
   /** Der LM-Studio-Modellschlüssel (z. B. "qwen/qwen3.6-27b") — für Laden & Info. */
   getModelKey(): string { return this.modelId; }
@@ -887,34 +901,67 @@ export class AiProviderRegistry {
 
     const kimi = new KimiProvider(() => this.config.kimiApiKey);
     const glm = new GlmProvider(() => this.config.glmApiKey);
-    const getUrl = () => this.config.lmStudioUrl ?? LMSTUDIO_DEFAULT_URL;
-    const gemma = new LMStudioProvider('gemma-4', 'Gemma 4 31B', 'google/gemma-4-31b', getUrl);
-    // LM Studio model IDs follow the form "<vendor>/<model>" — these match the
-    // identifiers shown in LM Studio's "Model" column exactly (verifiziert gegen
-    // die installierten Modelle). Stimmen sie nicht, kann der Server das Modell
-    // weder laden noch ansprechen — daher die realen Schlüssel, nicht geraten.
-    const qwen27b = new LMStudioProvider('qwen-3-27b', 'Qwen 3.6 27B', 'qwen/qwen3.6-27b', getUrl);
-    const qwen35b = new LMStudioProvider('qwen-3-35b', 'Qwen 3.6 35B', 'qwen/qwen3.6-35b-a3b', getUrl);
-
     this.providers.set(kimi.id, kimi);
     this.providers.set(glm.id, glm);
-    this.providers.set(gemma.id, gemma);
-    this.providers.set(qwen27b.id, qwen27b);
-    this.providers.set(qwen35b.id, qwen35b);
 
+    // Lokale LM-Studio-Modelle werden NICHT mehr hartkodiert — sie kommen per
+    // refreshLocalProviders() aus der Discovery. Bis dahin: nur Cloud-Provider.
     this.activeId = config.activeProvider && this.providers.has(config.activeProvider)
       ? config.activeProvider
       : 'glm';
-    logger.info(`Manager AI: ${this.providers.size} providers registered, active: ${this.activeId}`);
+    logger.info(`Manager AI: ${this.providers.size} cloud providers registered, active: ${this.activeId}`);
+  }
 
-    // Check LM Studio availability in background
-    gemma.checkAvailability()
-      .then((ok) => { if (ok) logger.info('LM Studio: Gemma 4 31B available'); })
-      .catch(() => {});
+  /** URL-Getter für dynamisch erzeugte LM-Studio-Provider. */
+  private lmStudioUrlGetter = () => this.config.lmStudioUrl ?? LMSTUDIO_DEFAULT_URL;
+
+  /**
+   * Lokale Provider aus der LM-Studio-Discovery synchronisieren: für jedes
+   * chat-fähige Modell (alles außer 'embeddings') einen Provider `lmstudio:<key>`
+   * anlegen/aktualisieren, verschwundene Modelle entfernen. Cloud-Provider bleiben.
+   */
+  refreshLocalProviders(info: Map<string, LmModelInfo>): void {
+    const wanted = new Set<string>();
+    for (const mi of info.values()) {
+      if (mi.type === 'embeddings') continue; // kein Chat möglich
+      const id = `lmstudio:${mi.key}`;
+      wanted.add(id);
+      const existing = this.providers.get(id);
+      if (existing && existing instanceof LMStudioProvider) {
+        existing.name = mi.displayName || mi.key; // Name aktualisieren
+      } else {
+        this.providers.set(id, new LMStudioProvider(id, mi.displayName || mi.key, mi.key, this.lmStudioUrlGetter, mi.type));
+      }
+    }
+    // Verschwundene lokale Provider entfernen.
+    for (const [id, p] of [...this.providers.entries()]) {
+      if (p.isLocal && !wanted.has(id)) this.providers.delete(id);
+    }
+  }
+
+  /** Gemerkte Context-Länge eines Modell-Keys, falls vorhanden. */
+  getSavedContext(key: string): number | undefined {
+    return this.config.lmStudioModelContext?.[key];
+  }
+
+  /** Context-Länge eines Modell-Keys merken (In-Memory; Persistenz macht der Aufrufer). */
+  rememberContext(key: string, contextLength: number): void {
+    this.config.lmStudioModelContext = { ...(this.config.lmStudioModelContext ?? {}), [key]: contextLength };
+  }
+
+  /** Die komplette Context-Gedächtnis-Map (für saveManagerConfig). */
+  getModelContextMap(): Record<string, number> {
+    return { ...(this.config.lmStudioModelContext ?? {}) };
   }
 
   getActive(): AiProvider {
-    return this.providers.get(this.activeId)!;
+    const p = this.providers.get(this.activeId);
+    if (p) return p;
+    // Aktives lokales Modell nicht verfügbar (LM Studio offline / deinstalliert)
+    // → auf den ersten konfigurierten Cloud-Provider ausweichen, statt zu crashen.
+    const cloud = [...this.providers.values()].find(x => !x.isLocal && x.isConfigured());
+    if (cloud) return cloud;
+    return this.providers.get('glm')!; // letzte Instanz; meldet ggf. "nicht eingerichtet"
   }
 
   /** Get the active provider as a ToolCallingProvider if it supports tools */
@@ -937,12 +984,13 @@ export class AiProviderRegistry {
     return this.activeId;
   }
 
-  list(): Array<{ id: string; name: string; configured: boolean; isLocal?: boolean }> {
+  list(): Array<{ id: string; name: string; configured: boolean; isLocal?: boolean; modelType?: string }> {
     return [...this.providers.values()].map(p => ({
       id: p.id,
       name: p.name,
       configured: p.isConfigured(),
       isLocal: p.isLocal,
+      modelType: p instanceof LMStudioProvider ? p.getModelType() : undefined,
     }));
   }
 
