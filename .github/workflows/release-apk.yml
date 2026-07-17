@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Terminal-Bedienleiste neu angeordnet. Die Terminal-Punkte (Sitzungs-Wechsler) sitzen jetzt direkt UNTER dem Terminal — oberhalb der Tasten-/Shortcut-Leiste. Die Shortcut-Leiste schließt dafür direkt an die Eingabezeile unten an. So liegen die Punkte näher am Terminal, das sie umschalten, und die häufig genutzten Tasten sind griffbereit direkt über dem Eingabefeld. Reine Layout-Änderung, keine Funktionsänderung." \
+            --notes "Terminal nutzt bei offener Tastatur den vollen Platz. Vorher blieb das Terminal winzig und darunter klaffte eine große Lücke, während die Sitzungs-Punkte sichtbar blieben. Ursache: Die App läuft mit adjustResize (die Tastatur verkleinert das ganze Fenster), wodurch die alte Tastatur-Erkennung fehlschlug und der Tipp-Modus sofort wieder abgeschaltet wurde. Jetzt erkennt die App die offene Tastatur zuverlässig: die Punkte blenden sich beim Tippen aus und das Terminal wächst nach unten bis zur Tastenleiste — beim Schließen der Tastatur kommen die Punkte zurück. Reine Layout-Verbesserung." \
             --latest
