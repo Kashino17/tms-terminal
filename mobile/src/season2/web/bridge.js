@@ -1084,6 +1084,9 @@
   window.requestCloudRevealKey = function (provider) { post('cloud:revealKey', { provider: provider }); };
   window.requestCloudCopyKey = function (provider) { post('cloud:copyKey', { provider: provider }); };
   window.requestCloudOrgUpdate = function (org) { post('cloud:org:update', { org: org }); };
+  // API-Key-Seite des Anbieters im geteilten Login-Tab (WebBrowser) öffnen — der
+  // isolierte In-App-WebView würde an Render/Vercel-OAuth (Google/GitHub) scheitern.
+  window.requestCloudTokenPage = function (provider) { post('cloud:openTokenPage', { provider: provider }); };
 
   // ══ Browser ═══════════════════════════════════════════════════════════════
   // The mockup's fake page renderer is replaced by a real, native incognito

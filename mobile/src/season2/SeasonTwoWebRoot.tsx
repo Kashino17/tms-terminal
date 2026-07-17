@@ -14,6 +14,7 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
+import * as WebBrowser from 'expo-web-browser';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
@@ -36,6 +37,15 @@ import { NativeBrowserLayer, type BrowserRect, type BrowserHandle } from './web/
 import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
 import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flushScrollback } from './web/scrollbackStore';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
+
+// Direktlinks zu den API-Key-/Token-Seiten der Cloud-Anbieter. Getippt in der
+// Verbinden-Karte (nur solange nicht verbunden) und geöffnet im geteilten
+// System-Browser-Tab (WebBrowser) — dort greift der bestehende Login, und
+// Render/Vercel-OAuth (Google/GitHub) läuft nicht im eingebetteten WebView.
+const CLOUD_TOKEN_URL: Record<string, string> = {
+  render: 'https://dashboard.render.com/settings#api-keys',
+  vercel: 'https://vercel.com/account/tokens',
+};
 
 interface BrowserOverlay {
   /** Wird die Seite gezeichnet? (Ein offenes Sheet blendet sie aus, ohne sie abzubauen.) */
@@ -619,6 +629,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       case 'cloud:copyKey': {
         const key = useCloudAuthStore.getState().tokens[payload.provider as CloudPlatform];
         if (key) Clipboard.setStringAsync(key).then(() => call('toast', 'Key kopiert'));
+        break;
+      }
+
+      case 'cloud:openTokenPage': {
+        // Öffnet die API-Key-Seite des Anbieters im geteilten Login-Tab, damit
+        // der Nutzer den Key direkt erstellen kann (statt im Dashboard zu suchen).
+        const url = CLOUD_TOKEN_URL[payload.provider];
+        if (url) WebBrowser.openBrowserAsync(url).catch(() => {});
         break;
       }
 

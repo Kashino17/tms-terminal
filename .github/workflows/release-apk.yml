@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Manager-Chat runderneuert. Die Dynamic Island oben zeigt jetzt Profilbild, Name und Online-Status des Managers statt Ping/Gebetszeit. Die untere Leiste wird auf dem Manager-Chat zur eigenen Eingabezeile — genau wie beim Terminal und Browser; per Long-Press + Hochwischen holst du die Navigation zurueck. Auf Artifacts/Memory zeigt die Leiste wieder die Navigation. Die Kopfzeile ist entschlackt (Tabs + Modell + Menue), und das Menue wird auf schmalen Displays nicht mehr abgeschnitten." \
+            --notes "Cloud: Direktlink zur API-Key-Seite. Solange Render oder Vercel nicht verbunden ist, zeigt die Verbinden-Karte (und das Konten-Sheet) jetzt einen Link 'API-Key bei <Anbieter> erstellen ↗'. Ein Tipp öffnet die Token-Seite des Anbieters direkt im Login-Tab (dashboard.render.com/settings#api-keys bzw. vercel.com/account/tokens) — Key erstellen, zurück, einfügen, fertig. Kein Suchen mehr im Dashboard. Geöffnet wird im geteilten System-Browser-Tab, damit der bestehende Login greift (Render/Vercel-OAuth läuft nicht im eingebetteten WebView)." \
             --latest
