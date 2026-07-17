@@ -1022,9 +1022,14 @@
     }
     if (managerMic) {
       managerMic.addEventListener('click', function () {
-        if (managerMic.classList.contains('is-recording')) { post('manager:mic', { stop: true }); return; }
-        managerMic.classList.add('is-recording');
-        post('manager:mic', { stop: false });
+        // Diktat wie im Terminal: das Dock wird zur Aufnahmeleiste (Wellenform +
+        // Timer + Abbrechen/Uebernehmen). Gleiche mic:start/stop/cancel-Pipeline,
+        // nur mit dem MANAGER_MIC-Token — RN routet das Transkript ueber
+        // injectManagerInput in die Manager-Eingabezeile. confirm/cancel der Leiste
+        // laufen ueber window.confirmDictation/cancelDictation (nutzen micCard).
+        micCard = '__manager__';
+        if (typeof window.dockRecordingStart === 'function') window.dockRecordingStart('mgr');
+        post('mic:start', { cardId: '__manager__' });
       });
     }
   }
@@ -1065,14 +1070,19 @@
   // Transkript des Manager-Mikros: landet in der Eingabezeile zum Prüfen/Ändern,
   // NICHT sofort gesendet.
   window.TMSBridge.injectManagerInput = function (text) {
+    micCard = null;
+    // Schliesst die Aufnahmeleiste und setzt das Transkript in die Manager-Zeile
+    // (dockRecordingEnd routet per Ziel 'mgr'); zum Pruefen/Senden, kein Auto-Send.
+    if (typeof window.dockRecordingEnd === 'function') { window.dockRecordingEnd(text || '', 'mgr'); return; }
     var el = document.getElementById('managerTextInput');
     if (!el || !text) return;
     el.value = (el.value ? el.value + ' ' : '') + text;
-    if (managerMic) managerMic.classList.remove('is-recording');
     el.focus();
   };
   window.TMSBridge.managerMicStopped = function () {
-    if (managerMic) managerMic.classList.remove('is-recording');
+    micCard = null;
+    // Fehler/Abbruch beim Manager-Diktat: Aufnahmeleiste schliessen, zurueck zur Zeile.
+    if (typeof window.dockRecordingEnd === 'function') window.dockRecordingEnd('', 'mgr');
   };
 
   // ══ Cloud ═════════════════════════════════════════════════════════════════

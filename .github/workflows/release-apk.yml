@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Neue Funktion (App-Seite): Terminal-Browser aufs Handy. Ein Schalter in den klassischen Einstellungen ('Terminal-Browser aufs Handy') leitet Browser-Logins aus dem Terminal — z.B. render login oder vercel login — in den App-Browser auf dem Handy um, statt am PC. Du loggst dich im App-Browser ein; der localhost-Callback des CLI wird ueber Tailscale zurueck an den PC gestellt, sodass der Login abschliesst und das CLI sein Token bekommt. Push '🔐 Login öffnen' + Auto-Öffnen im Vordergrund. Standardmaessig AUS. WICHTIG: aktiv wird das erst, sobald auch der TMS-Server aktualisiert und neu gestartet wurde (Server-Haelfte des Features)." \
+            --notes "Manager-Chat: Die Sprachaufnahme funktioniert jetzt genau wie im Terminal. Tippe aufs Mikro und die untere Leiste wird zur Aufnahmeleiste (Wellenform, Timer, Abbrechen/Uebernehmen) — dieselbe UI und derselbe Ablauf wie beim Terminal-Diktat. Das fertige Transkript landet in der Manager-Eingabezeile zum Pruefen und Senden (kein Auto-Send)." \
             --latest
