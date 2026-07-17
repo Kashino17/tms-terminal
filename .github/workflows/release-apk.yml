@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Bottom-Bar-Fix: Der Inhalt der unteren Leiste (der $-Prompt bzw. die Kamera links, die Eingabezeile) verrutschte manchmal nach links und wurde am Rand abgeschnitten. Ursache war ein federnder Einlauf, der auf dem Geraet gelegentlich genau im Ueberschwinger haengen blieb. Die aktive Leisten-Seite ruht jetzt fest an ihrer Position — das Verrutschen kann nicht mehr auftreten." \
+            --notes "Verbindungs-Fix: Nach einem Server-Neustart blieb die App manchmal dauerhaft ohne Verbindung — sie deutete die kurzen Verbindungsabbrueche waehrend des Neustarts faelschlich als Anmeldefehler und hoerte auf, es erneut zu versuchen (zusaetzlich ein Deckel nach ~5 Minuten). Ab jetzt gibt die App nie von selbst auf: sie verbindet sich im Hintergrund immer wieder, bis der Server zurueck ist. Nur ein bewusstes Trennen stoppt das." \
             --latest

@@ -10,7 +10,9 @@ const PING_INTERVAL_NORMAL = 12000;  // 12s — inside server's 15s heartbeat wi
 const PING_INTERVAL_FAST = 6000;     // 6s — adaptive: used when RTT is unstable
 const WATCHDOG_TIMEOUT = 30000; // 30s — 15s margin over server's 15s heartbeat
 const RTT_REPORT_INTERVAL = 5; // send RTT to server every 5 pings
-const MAX_RECONNECT_ATTEMPTS = 60; // ~5 min at max backoff — stop reconnecting after this
+// No max reconnect cap: a server restart can take arbitrarily long, and the
+// client must always be able to win the connection back on its own. Backoff is
+// bounded by RECONNECT_MAX so endless idle retries stay cheap.
 
 // RTT quality thresholds
 const RTT_GOOD = 80;          // <80ms = good (green)
@@ -47,10 +49,6 @@ export class WebSocketService {
   private pingCount = 0;
   private currentPingInterval = PING_INTERVAL_NORMAL;
   private consecutivePoorCount = 0;                     // track sustained poor RTT
-  // Auth failure detection: track quick closes (connection dying within 2s of open)
-  private connectTime = 0;
-  private quickCloseCount = 0;
-  private hasConnectedOnce = false;
 
   get state(): ConnectionState {
     return this._state;
@@ -122,7 +120,6 @@ export class WebSocketService {
 
     this.cleanup();
     this.setState('connecting');
-    this.connectTime = Date.now();
 
     // Token in URL query is standard for WebSocket auth (WS API doesn't support custom headers).
     // Connection uses ws:// (not wss://) because the server runs HTTP.
@@ -133,8 +130,6 @@ export class WebSocketService {
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
-      this.quickCloseCount = 0;
-      this.hasConnectedOnce = true;
       this.consecutivePoorCount = 0;
       this.setState('connected');
       this.startPing();
@@ -163,20 +158,10 @@ export class WebSocketService {
     this.ws.onclose = () => {
       this.stopPing();
       if (this._state !== 'disconnected') {
-        // Detect possible auth failure: connection closes within 2s of opening.
-        // Only count quick closes if we've successfully connected before (prevents
-        // false triggers during server restart where ECONNREFUSED causes quick closes).
-        const wasQuick = this.hasConnectedOnce && Date.now() - this.connectTime < 2000;
-        if (wasQuick) {
-          this.quickCloseCount++;
-          if (this.quickCloseCount >= 3) {
-            this.setState('disconnected');
-            // Don't retry — likely auth failure
-            console.warn('[WS] Possible auth failure — stopping reconnect');
-            return;
-          }
-        }
-
+        // A server restart (ECONNREFUSED, quick close) and a genuine auth failure
+        // look identical here, so we never give up on our own — a restarted server
+        // must always be able to win the client back. Reconnection stops ONLY when
+        // the app calls disconnect() explicitly (which sets state 'disconnected').
         this.setState('error');
         // First reconnect attempt is immediate (0ms delay) for fast recovery
         if (this.reconnectAttempts === 0) {
@@ -224,12 +209,10 @@ export class WebSocketService {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-      console.warn(`[WS] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) exceeded — giving up`);
-      this.setState('disconnected');
-      return;
-    }
-    const delay = Math.min(RECONNECT_BASE * Math.pow(2, this.reconnectAttempts), RECONNECT_MAX);
+    // Never give up. Backoff grows to RECONNECT_MAX and then stays there, so a
+    // server that is down for minutes or hours is retried forever at a cheap,
+    // fixed interval. The exponent is clamped so Math.pow can't overflow.
+    const delay = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempts, 10)), RECONNECT_MAX);
     this.reconnectAttempts++;
     this.reconnectTimer = setTimeout(() => this.doConnect(), delay);
   }
