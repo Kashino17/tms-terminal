@@ -153,6 +153,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (!wsService || state !== 'connected') return;
     wsService.send({ type: 'manager:get_providers' });
   }, [wsService, state]);
+  // Browser-Bridge: tell the server whether terminal browser-opens should be
+  // routed here. Fires on connect and whenever the toggle changes (incl. after
+  // a server switch, which re-connects). See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
+  const browserBridgeEnabled = useSettingsStore((s) => s.browserBridgeEnabled);
+  useEffect(() => {
+    if (!wsService || state !== 'connected') return;
+    wsService.send({ type: 'browserbridge:toggle', payload: { enabled: browserBridgeEnabled } });
+  }, [wsService, state, browserBridgeEnabled]);
   const {
     loadProjects: loadCloud, loadDetail: loadCloudDetail,
     connect: cloudConnect, disconnect: cloudDisconnect, reveal: cloudReveal, pushAccounts: pushCloudAccounts, pushOrg: pushCloudOrg,

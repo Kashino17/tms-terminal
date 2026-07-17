@@ -23,7 +23,7 @@ type Props = {
 export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
-  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection, voicePromptEnhanceEnabled, setVoicePromptEnhanceEnabled, managerChatRedesignEnabled, setManagerChatRedesignEnabled, seasonTwoEnabled, setSeasonTwoEnabled } = useSettingsStore();
+  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, browserBridgeEnabled, setBrowserBridgeEnabled, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection, voicePromptEnhanceEnabled, setVoicePromptEnhanceEnabled, managerChatRedesignEnabled, setManagerChatRedesignEnabled, seasonTwoEnabled, setSeasonTwoEnabled } = useSettingsStore();
   const { tokens, notificationsEnabled, pollingIntervalMs, setNotificationsEnabled, setPollingIntervalMs, clearPlatform } = useCloudAuthStore();
   const { clearCache } = useCloudProjectsStore();
   const { apiKeys, setApiKey } = useManagerStore();
@@ -330,6 +330,28 @@ export function SettingsScreen({ navigation }: Props) {
                 }}
                 trackColor={{ false: colors.border, true: '#10B981' + '88' }}
                 thumbColor={persistentConnection ? '#10B981' : colors.textDim}
+              />
+            </TouchableOpacity>
+            <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
+            <TouchableOpacity
+              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
+              onPress={() => setBrowserBridgeEnabled(!browserBridgeEnabled)}
+              activeOpacity={0.7}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: browserBridgeEnabled }}
+            >
+              <View style={styles.rowLeft}>
+                <Feather name="external-link" size={ri(18)} color={browserBridgeEnabled ? colors.primary : colors.textMuted} style={{ marginRight: rs(12) }} />
+                <View>
+                  <Text style={[styles.label, { fontSize: rf(16) }]}>Terminal-Browser aufs Handy</Text>
+                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Login-Seiten aus dem Terminal im App-Browser öffnen (z.B. render/vercel login)</Text>
+                </View>
+              </View>
+              <Switch
+                value={browserBridgeEnabled}
+                onValueChange={setBrowserBridgeEnabled}
+                trackColor={{ false: colors.border, true: colors.primary + '88' }}
+                thumbColor={browserBridgeEnabled ? colors.primary : colors.textDim}
               />
             </TouchableOpacity>
           </View>

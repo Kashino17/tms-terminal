@@ -15,6 +15,9 @@ interface SettingsState {
   /** Whether virtual keyboard is suppressed in terminal (for external keyboards). Default: false. */
   externalKeyboardMode: boolean;
   setExternalKeyboardMode: (enabled: boolean) => void;
+  /** Route http(s) browser-opens from terminals to the in-app browser. Default: false. */
+  browserBridgeEnabled: boolean;
+  setBrowserBridgeEnabled: (enabled: boolean) => void;
   /** Grace period in seconds after unlock before re-locking. 0 = always lock. Default: 0. */
   lockGraceSeconds: number;
   setLockGrace: (seconds: number) => void;
@@ -67,6 +70,10 @@ export const useSettingsStore = create<SettingsState>()(
       externalKeyboardMode: false,
       setExternalKeyboardMode(enabled: boolean) {
         set({ externalKeyboardMode: enabled });
+      },
+      browserBridgeEnabled: false,
+      setBrowserBridgeEnabled(enabled: boolean) {
+        set({ browserBridgeEnabled: enabled });
       },
       lockGraceSeconds: 0,
       setLockGrace(seconds: number) {
