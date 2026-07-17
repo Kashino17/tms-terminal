@@ -136,6 +136,9 @@ patch('body end', '</body>', `<style>${xterm.XTERM_CSS}
 /* Der Emulator hat schon umgebrochen — die CSS darf NICHT nochmal umbrechen. */
 .card-body .term-line { display: block; white-space: pre; }
 .card-body .term-line__text { white-space: pre; }
+/* Ausnahme Cloud-Log-Viewer: kein Emulator, lange API-Logzeilen sollen
+   umbrechen statt rechts abgeschnitten zu werden. */
+.log-viewer__pre .term-line, .log-viewer__pre .term-line__text { white-space: pre-wrap; word-break: break-word; }
 .up-progress { margin-bottom: 14px; }
 .up-progress__bar { height: 6px; border-radius: 3px; background: rgba(var(--overlay-rgb),.14); overflow: hidden; }
 .up-progress__bar span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 260ms var(--spring); }

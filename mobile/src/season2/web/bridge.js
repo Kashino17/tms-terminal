@@ -816,7 +816,11 @@
   }
   function exitAllSelections() {
     document.querySelectorAll('.card-body.selection-mode[data-card-id]').forEach(function (p) {
-      exitSelection(p.getAttribute('data-card-id'));
+      var id = p.getAttribute('data-card-id');
+      // Cloud log viewers manage their own selection via the toolbar button —
+      // this outside-tap exit killed the mode in the same click that enabled it.
+      if (id.indexOf('cloud-') === 0) return;
+      exitSelection(id);
     });
   }
 
