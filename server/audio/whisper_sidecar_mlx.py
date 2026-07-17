@@ -14,6 +14,7 @@ import io
 import os
 import shutil
 import subprocess
+import tempfile
 import numpy as np
 
 CHUNK_DURATION_SECS = 60
@@ -50,15 +51,29 @@ def _wav_to_float32(raw):
 def _ffmpeg_to_float32(raw):
     """Robust path: let ffmpeg decode ANY container (AMR/M4A/3GP/WebM/WAV…)
     to float32 mono @16kHz. Android's MediaRecorder never emits RIFF WAV, so
-    this is the real path on Android devices."""
+    this is the real path on Android devices.
+
+    The bytes go through a temp FILE, not a stdin pipe: MP4/M4A keeps its
+    moov index at the END of the file and ffmpeg cannot seek backwards in a
+    pipe — recordings larger than the probe buffer (~30s at 64kbps) then die
+    with "stream 0: partial file" while short clips appear to work."""
     ffmpeg = _find_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("ffmpeg not found — cannot decode non-WAV audio")
-    proc = subprocess.run(
-        [ffmpeg, "-nostdin", "-loglevel", "error", "-i", "pipe:0",
-         "-f", "f32le", "-ac", "1", "-ar", str(TARGET_RATE), "pipe:1"],
-        input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
+    tmp = tempfile.NamedTemporaryFile(prefix="tms-audio-", suffix=".bin", delete=False)
+    try:
+        tmp.write(raw)
+        tmp.close()
+        proc = subprocess.run(
+            [ffmpeg, "-nostdin", "-loglevel", "error", "-i", tmp.name,
+             "-f", "f32le", "-ac", "1", "-ar", str(TARGET_RATE), "pipe:1"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
     if proc.returncode != 0 or not proc.stdout:
         err = proc.stderr.decode("utf-8", "replace").strip()[:300]
         raise RuntimeError(f"ffmpeg decode failed: {err or 'no output'}")
