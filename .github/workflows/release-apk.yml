@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Zwei wichtige Fixes fuer Liquid 2.0: (1) Server hinzufuegen — bisher gab es in der Liquid-Oberflaeche KEINEN Weg, einen Server anzulegen; war keiner gespeichert, wirkte die App tot. Jetzt erscheint ein Bildschirm 'Kein Server verbunden' mit einem Knopf zum Hinzufuegen bzw. Verwalten. (2) Verbindungen gingen manchmal 'verloren' — ein kurzzeitiger Fehler beim Lesen des Zugangstokens aus dem sicheren Schluessel-Speicher warf die GANZE Serverliste weg (und konnte sie dauerhaft loeschen). Das Lesen ist jetzt pro Server abgesichert: ein Token-Fehler laesst den Server stehen, nichts geht mehr verloren." \
+            --notes "Server-Verwaltung direkt auf der Liquid-Serverseite: Ein '+' oben rechts legt einen neuen Server/ein neues Geraet an; ein langer Druck (Long-Press) auf eine vorhandene Verbindung oeffnet sie zum Bearbeiten. Beides funktioniert auch ohne aktive Verbindung. (Baut auf v1.108.10 auf: 'Kein Server'-Onboarding + kein Server-Verlust mehr.)" \
             --latest

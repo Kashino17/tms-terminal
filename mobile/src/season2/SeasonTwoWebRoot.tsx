@@ -48,6 +48,53 @@ const CLOUD_TOKEN_URL: Record<string, string> = {
   vercel: 'https://vercel.com/account/tokens',
 };
 
+// Die Liquid-Serverseite (im Mockup gerendert von renderServers()) hatte weder
+// einen "+"-Knopf zum Anlegen noch einen Weg, einen Server zu bearbeiten. Statt
+// das grosse Mockup umzubauen (der Build liest es cross-worktree, mit fremden
+// uncommitteten Aenderungen — riskant), reichern wir die Seite zur Laufzeit an:
+//  • ein "+" in der Titelzeile  → postet server:add
+//  • Long-Press / contextmenu auf eine Server-Karte → postet server:edit{id}
+// Die Karten tragen ihre id im Latenz-Chip ([data-latency-chip]); renderServers
+// ist global, also umhuellen wir es, damit das "+" jedes Neurendern ueberlebt.
+// Alles ist idempotent und degradiert lautlos, falls das Mockup-DOM sich aendert.
+const SERVER_PAGE_MGMT_JS = `(function(){
+  if (window.__tmsServerMgmt) return true;
+  window.__tmsServerMgmt = true;
+  var RN = window.ReactNativeWebView;
+  function post(type, payload){ try { RN.postMessage(JSON.stringify({ type: type, payload: payload || {} })); } catch (e) {} }
+  function idOf(card){ var el = card.querySelector('[data-latency-chip]'); return el ? el.getAttribute('data-latency-chip') : null; }
+  var lpTimer = null, lpId = null, lpMoved = false;
+  function cancelLp(){ if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } }
+  document.addEventListener('touchstart', function(e){
+    var card = e.target && e.target.closest ? e.target.closest('.server-card') : null;
+    if (!card) return;
+    lpMoved = false; lpId = idOf(card); cancelLp();
+    lpTimer = setTimeout(function(){ lpTimer = null; if (lpId && !lpMoved) post('server:edit', { id: lpId }); }, 500);
+  }, { passive: true });
+  document.addEventListener('touchmove', function(){ lpMoved = true; cancelLp(); }, { passive: true });
+  document.addEventListener('touchend', cancelLp, { passive: true });
+  document.addEventListener('touchcancel', cancelLp, { passive: true });
+  document.addEventListener('contextmenu', function(e){
+    var card = e.target && e.target.closest ? e.target.closest('.server-card') : null;
+    if (!card) return; e.preventDefault(); var id = idOf(card); if (id) post('server:edit', { id: id });
+  });
+  function addPlus(){
+    var host = document.querySelector('[data-screen="servers"]'); if (!host) return;
+    var row = host.querySelector('.screen-title-row'); if (!row || row.querySelector('#tmsAddServerBtn')) return;
+    var b = document.createElement('button');
+    b.id = 'tmsAddServerBtn'; b.className = 'icon-btn glass'; b.type = 'button';
+    b.setAttribute('aria-label', 'Server hinzuf\\u00fcgen'); b.style.marginLeft = 'auto';
+    b.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
+    b.addEventListener('click', function(){ post('server:add', {}); });
+    var gear = row.querySelector('#settingsBtn');
+    if (gear) row.insertBefore(b, gear); else row.appendChild(b);
+  }
+  var orig = window.renderServers;
+  window.renderServers = function(){ var r; if (typeof orig === 'function') r = orig.apply(this, arguments); addPlus(); return r; };
+  addPlus();
+  return true;
+})();`;
+
 interface BrowserOverlay {
   /** Wird die Seite gezeichnet? (Ein offenes Sheet blendet sie aus, ohne sie abzubauen.) */
   visible: boolean;
@@ -205,6 +252,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     });
     return unsub;
   }, [navigation, loadServer]);
+
+  // Reichert die Liquid-Serverseite mit "+" (hinzufügen) und Long-Press (bearbeiten)
+  // an, sobald die WebView bereit ist. Idempotent — der Script no-opt beim 2. Mal.
+  useEffect(() => {
+    if (ready) webRef.current?.injectJavaScript(SERVER_PAGE_MGMT_JS);
+  }, [ready]);
 
   useEffect(() => {
     if (!server || !token) return;
@@ -539,6 +592,22 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     const { type, payload } = msg;
 
     if (type === 'bridge:ready') { setReady(true); return; }
+
+    // Server-Verwaltung muss IMMER gehen — auch ohne aktive Verbindung (der Guard
+    // unten würde sie sonst verschlucken). Nutzt den bestehenden klassischen Add-/
+    // Bearbeiten-Screen; der Focus-Listener liest danach neu ein.
+    if (type === 'server:add') { navigation.navigate('AddServer'); return; }
+    if (type === 'server:manage') { navigation.navigate('ServerList'); return; }
+    if (type === 'server:edit') {
+      const editId = payload?.id;
+      (async () => {
+        const list = await storageService.getServers().catch(() => []);
+        const target = list.find((x) => x.id === editId);
+        if (target) navigation.navigate('AddServer', { server: target as any });
+      })();
+      return;
+    }
+
     if (!wsService || !server) return;
     if (sheets.handle(type, payload)) return;
     if (fileExplorer.handle(type, payload)) return;
@@ -698,18 +767,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         if (url) WebBrowser.openBrowserAsync(url).catch(() => {});
         break;
       }
-
-      // Server verwalten/hinzufügen — nutzt den bestehenden klassischen
-      // Add-/Listen-Screen; goBack() landet wieder hier und der Focus-Listener
-      // liest den neuen Server ein. (Die Seite kann das aus den Einstellungen
-      // senden; das native Onboarding-Overlay deckt den Leer-Zustand ohnehin ab.)
-      case 'server:add':
-        navigation.navigate('AddServer');
-        break;
-
-      case 'server:manage':
-        navigation.navigate('ServerList');
-        break;
 
       case 'nav:screen':
         if (payload.screen === 'cloud') { pushCloudOrg(); pushCloudAccounts(); loadCloud(); }
