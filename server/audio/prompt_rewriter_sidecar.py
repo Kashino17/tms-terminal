@@ -11,9 +11,26 @@ Protocol:
 
 import sys
 import json
+import re
 
 MODEL_ID = "mlx-community/Llama-3.2-3B-Instruct-4bit"
 MAX_TOKENS = 512
+
+# Llama 3.2 3B sometimes ignores the "no preamble" rule and prefixes the
+# output with a label like "Rewritten prompt:". Strip it deterministically so
+# the artifact never lands in the user's input field.
+PREAMBLE_RE = re.compile(
+    r"^\s*(?:(?:here is|here's|hier ist)[^:\n]{0,60}:|rewritten prompt\s*:|umgeschriebener prompt\s*:|prompt\s*:)\s*",
+    re.IGNORECASE,
+)
+
+
+def strip_preamble(text):
+    cleaned = PREAMBLE_RE.sub("", text.strip()).strip()
+    # Unwrap if the whole output got quoted.
+    if len(cleaned) >= 2 and cleaned[0] == '"' and cleaned[-1] == '"':
+        cleaned = cleaned[1:-1].strip()
+    return cleaned or text
 
 SYSTEM_PROMPT = (
     "You are a prompt rewriter for an AI coding assistant. "
@@ -79,7 +96,7 @@ def main():
                 max_tokens=MAX_TOKENS,
                 verbose=False,
             )
-            text = (output or "").strip()
+            text = strip_preamble((output or "").strip())
             if not text:
                 text = transcript
             print(json.dumps({"id": req_id, "text": text}))
