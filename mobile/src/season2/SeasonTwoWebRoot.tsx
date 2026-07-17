@@ -28,6 +28,7 @@ import { useDictation } from './hooks/useDictation';
 import { useManagerWire } from './manager/useManagerWire';
 import { useManagerStore } from '../store/managerStore';
 import { useManagerBridge, useCloudBridge } from './web/useSeasonTwoBackends';
+import { useCloudAuthStore, type CloudPlatform } from '../store/cloudAuthStore';
 import { useSheetBridges } from './web/useSheetBridges';
 import { useFileExplorer } from './web/useFileExplorer';
 import { NativeBrowserLayer, type BrowserRect, type BrowserHandle } from './web/NativeBrowserLayer';
@@ -141,7 +142,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (!wsService || state !== 'connected') return;
     wsService.send({ type: 'manager:get_providers' });
   }, [wsService, state]);
-  const { loadProjects: loadCloud, loadDetail: loadCloudDetail } = useCloudBridge(ready, call);
+  const {
+    loadProjects: loadCloud, loadDetail: loadCloudDetail,
+    connect: cloudConnect, disconnect: cloudDisconnect, reveal: cloudReveal, pushAccounts: pushCloudAccounts,
+  } = useCloudBridge(ready, call);
   const activeSessionId = useTerminalStore((s) =>
     server ? (s.tabs[server.id] ?? []).find((t) => t.active)?.sessionId ?? (s.tabs[server.id] ?? [])[0]?.sessionId : undefined,
   );
@@ -593,8 +597,26 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         loadCloudDetail(payload.projectId);
         break;
 
+      case 'cloud:connect':
+        cloudConnect(payload.provider, payload.token);
+        break;
+
+      case 'cloud:disconnect':
+        cloudDisconnect(payload.provider);
+        break;
+
+      case 'cloud:revealKey':
+        cloudReveal(payload.provider);
+        break;
+
+      case 'cloud:copyKey': {
+        const key = useCloudAuthStore.getState().tokens[payload.provider as CloudPlatform];
+        if (key) Clipboard.setStringAsync(key).then(() => call('toast', 'Key kopiert'));
+        break;
+      }
+
       case 'nav:screen':
-        if (payload.screen === 'cloud') loadCloud();
+        if (payload.screen === 'cloud') { pushCloudAccounts(); loadCloud(); }
         if (payload.screen === 'manager') {
           // Memory frisch vom Server; Artefakte aus den Manager-Nachrichten
           // (Bilder/Präsentationen), antippbar über den In-App-Browser.
@@ -715,7 +737,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, sheets, fileExplorer, pickManagerImages]);
+  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, sheets, fileExplorer, pickManagerImages]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"

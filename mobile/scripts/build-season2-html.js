@@ -44,6 +44,7 @@ window.TMS_DATA.notes = [];
 window.TMS_DATA.screenshots = [];
 window.TMS_DATA.sql = { statements: [] };
 window.TMS_DATA.cloudProjects = [];
+window.TMS_DATA.cloudAccounts = { vercel: { connected: false, maskedKey: null }, render: { connected: false, maskedKey: null } };
 window.TMS_DATA.manager.messages = [];
 window.TMS_DATA.manager.artifacts = [];
 window.TMS_DATA.manager.memory = [];

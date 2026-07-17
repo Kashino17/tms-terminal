@@ -1066,6 +1066,11 @@
     origOpenCloud(id, tab);
     post('cloud:open', { projectId: id });
   };
+  // Account linking: the mockup's demo stubs become real round-trips.
+  window.requestCloudConnect = function (provider, token) { post('cloud:connect', { provider: provider, token: token }); };
+  window.requestCloudDisconnect = function (provider) { post('cloud:disconnect', { provider: provider }); };
+  window.requestCloudRevealKey = function (provider) { post('cloud:revealKey', { provider: provider }); };
+  window.requestCloudCopyKey = function (provider) { post('cloud:copyKey', { provider: provider }); };
 
   // ══ Browser ═══════════════════════════════════════════════════════════════
   // The mockup's fake page renderer is replaced by a real, native incognito
@@ -1294,6 +1299,14 @@
   window.TMSBridge.setCloud = function (projects) {
     window.TMS_DATA.cloudProjects = projects;
     if (typeof window.renderCloudGroups === 'function') window.renderCloudGroups();
+  };
+  window.TMSBridge.setCloudAccounts = function (accounts) {
+    window.TMS_DATA.cloudAccounts = accounts;
+    if (typeof window.renderCloudGroups === 'function') window.renderCloudGroups();
+    if (typeof window.renderCloudAccountsSheet === 'function') window.renderCloudAccountsSheet();
+  };
+  window.TMSBridge.cloudKeyRevealed = function (provider, key) {
+    if (typeof window.cloudKeyRevealed === 'function') window.cloudKeyRevealed(provider, key);
   };
   window.TMSBridge.setCloudDetail = function (projectId, detail) {
     var p = (window.TMS_DATA.cloudProjects || []).find(function (x) { return x.id === projectId; });
