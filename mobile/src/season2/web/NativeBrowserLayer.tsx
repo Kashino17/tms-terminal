@@ -8,7 +8,7 @@
  * mockup keeps owning the tabs, the address bar, the progress bar and the
  * sheets, which is the whole design.
  */
-import React, { useMemo, useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { View, StyleSheet, Text, Pressable } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -68,8 +68,29 @@ export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function Nati
 ) {
   const resolved = useMemo(() => resolveUrl(url, serverHost), [url, serverHost]);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const webRef = useRef<WebView>(null);
+
+  // Browser-Bridge: the CLI's localhost OAuth callback must reach the PC exactly
+  // ONCE. onShouldStartLoadWithRequest alone is not enough on Android — it is a
+  // blocking sync call that "defaults to allow loading" on timeout and is often
+  // skipped for server 302 redirects, so the phone ends up trying to load
+  // 127.0.0.1 itself (ERR_CONNECTION_REFUSED) and the CLI never gets its code.
+  // We therefore forward from every place the URL can surface (shouldStart on
+  // iOS, navigationStateChange + the refused-load error on Android), deduped so
+  // the single-use code is only ever redeemed once.
+  const relayedLoopback = useRef<Set<string>>(new Set());
+  const relayLoopback = useCallback((u: string | undefined): boolean => {
+    if (!onLoopbackCallback || !u || !isLoopbackUrl(u)) return false;
+    if (!relayedLoopback.current.has(u)) {
+      relayedLoopback.current.add(u);
+      onLoopbackCallback(u);
+    }
+    setError(null);
+    setSuccess('Du kannst zum Terminal zurückkehren.');
+    return true;
+  }, [onLoopbackCallback]);
 
   // WICHTIG: Die Quelle MUSS ihre Identität behalten, solange sich die Adresse
   // nicht ändert. Als Inline-Objekt (`source={{ uri: resolved }}`) war sie bei
@@ -79,8 +100,13 @@ export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function Nati
   // Seite immer wieder neu: das weiße Bild.
   const source = useMemo(() => ({ uri: resolved }), [resolved]);
 
-  // Ein neuer Tab / eine neue Adresse startet ohne alten Fehler.
-  useEffect(() => setError(null), [tabId, resolved]);
+  // Ein neuer Tab / eine neue Adresse startet ohne alten Fehler, ohne alte
+  // Erfolgsmeldung und mit frischem Relay-Dedupe (der nächste Login darf wieder).
+  useEffect(() => {
+    setError(null);
+    setSuccess(null);
+    relayedLoopback.current.clear();
+  }, [tabId, resolved]);
 
   useImperativeHandle(ref, () => ({
     reload: () => { setError(null); webRef.current?.reload(); },
@@ -141,20 +167,24 @@ export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function Nati
         // Bei JEDER Navigation melden — auch bei Link-Klicks im WebView, die das
         // Deck sonst nie mitbekäme. canGoBack/canGoForward treiben die Knöpfe;
         // der Titel wird erst gemeldet, wenn er steht (sonst flackert die Leiste).
-        onNavigationStateChange={(nav) =>
-          onNav(tabId, nav.loading ? '' : (nav.title ?? ''), nav.url ?? resolved, !!nav.canGoBack, !!nav.canGoForward)
-        }
+        onNavigationStateChange={(nav) => {
+          // Browser-Bridge: on Android the 302 to the CLI's localhost callback
+          // usually shows up HERE (not in onShouldStartLoadWithRequest) — forward
+          // it and kill the doomed native load before the address bar even moves.
+          if (relayLoopback(nav.url)) { webRef.current?.stopLoading(); return; }
+          onNav(tabId, nav.loading ? '' : (nav.title ?? ''), nav.url ?? resolved, !!nav.canGoBack, !!nav.canGoForward);
+        }}
         // Browser-Bridge: a localhost OAuth callback can't be served on the phone —
         // hand it to the PC's CLI via the bridge and cancel the native load.
-        onShouldStartLoadWithRequest={(req) => {
-          if (onLoopbackCallback && isLoopbackUrl(req.url)) {
-            onLoopbackCallback(req.url);
-            return false;
-          }
-          return true;
-        }}
+        onShouldStartLoadWithRequest={(req) => !relayLoopback(req.url)}
         // Fehler dürfen nicht mehr als weiße Fläche enden — sie werden benannt.
-        onError={(e) => setError(e.nativeEvent.description || 'Unbekannter Fehler')}
+        // AUSNAHME: ERR_CONNECTION_REFUSED auf die localhost-Callback-URL ist KEIN
+        // Fehler — es ist der garantierte letzte Abfangpunkt (das Handy hat dort
+        // keinen Server), um die Callback-URL samt ?code=… an den PC zu relayen.
+        onError={(e) => {
+          if (relayLoopback(e.nativeEvent.url)) return;
+          setError(e.nativeEvent.description || 'Unbekannter Fehler');
+        }}
         onHttpError={(e) =>
           setError(`HTTP ${e.nativeEvent.statusCode} — ${e.nativeEvent.description || 'Seite nicht erreichbar'}`)
         }
@@ -181,6 +211,12 @@ export const NativeBrowserLayer = forwardRef<BrowserHandle, Props>(function Nati
           </Pressable>
         </View>
       )}
+      {success && !error && (
+        <View style={styles.error} pointerEvents="none">
+          <Text style={[styles.errorTitle, styles.successTitle]}>Login abgeschlossen ✓</Text>
+          <Text style={styles.errorMsg} numberOfLines={2}>{success}</Text>
+        </View>
+      )}
     </View>
   );
 });
@@ -198,6 +234,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   errorTitle: { color: '#E7ECF3', fontSize: 15, fontWeight: '700' },
+  successTitle: { color: '#34D399' },
   errorMsg: { color: '#93A1B5', fontSize: 13, textAlign: 'center' },
   errorUrl: { color: '#5C6B82', fontSize: 11, marginTop: 2 },
   errorBtn: {
