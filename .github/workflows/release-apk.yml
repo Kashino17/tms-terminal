@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Rückfrage-/Umfrage-Dialoge entfernt. Automatisch erkannte Mehrfachauswahl-/Umfrage-Prompts (etwa Claude Codes eigene Sitzungs-Umfrage 'How is Claude doing this session? 1:Bad 2:Fine 3:Good') poppen nicht mehr als Auswahl-Sheet auf dem Handy auf — inklusive der zugehörigen Tab-Benachrichtigung und des 'Warte'-Status. Solche Prompts beantwortest du bei Bedarf direkt im Terminal. Die Erlauben/Ablehnen-Berechtigungs-Dialoge bleiben unverändert und respektieren weiter Auto-Approve." \
+            --notes "Manager-Chat runderneuert. Die Dynamic Island oben zeigt jetzt Profilbild, Name und Online-Status des Managers statt Ping/Gebetszeit. Die untere Leiste wird auf dem Manager-Chat zur eigenen Eingabezeile — genau wie beim Terminal und Browser; per Long-Press + Hochwischen holst du die Navigation zurueck. Auf Artifacts/Memory zeigt die Leiste wieder die Navigation. Die Kopfzeile ist entschlackt (Tabs + Modell + Menue), und das Menue wird auf schmalen Displays nicht mehr abgeschnitten." \
             --latest
