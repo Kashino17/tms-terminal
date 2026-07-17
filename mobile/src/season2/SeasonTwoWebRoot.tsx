@@ -9,7 +9,7 @@
  * The classic UI is untouched — Season 2 is still just a settings toggle.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, BackHandler, View, StyleSheet } from 'react-native';
+import { AppState, BackHandler, View, Text, Pressable, StyleSheet } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -176,18 +176,35 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const fileExplorer = useFileExplorer({ ready, call, server, token });
 
   // ── Pick up the saved server (the WebView has no server picker of its own).
+  // `checkedServers` gates the native onboarding overlay so it only appears once
+  // we KNOW there is no saved server — never as a flash during the initial read.
+  const [checkedServers, setCheckedServers] = useState(false);
+  const loadServer = useCallback(async (): Promise<boolean> => {
+    const servers = await storageService.getServers().catch(() => []);
+    setCheckedServers(true);
+    if (!servers.length) return false;
+    const s = servers[0];
+    const tok = s.token ?? (await getToken(s.id).catch(() => null)) ?? null;
+    setServer({ id: s.id, name: s.name, host: s.host, port: s.port, token: tok }, tok);
+    return true;
+  }, [setServer]);
+
   useEffect(() => {
     if (server) return;
     let cancelled = false;
-    (async () => {
-      const servers = await storageService.getServers().catch(() => []);
-      if (cancelled || !servers.length) return;
-      const s = servers[0];
-      const tok = s.token ?? (await getToken(s.id)) ?? null;
-      setServer({ id: s.id, name: s.name, host: s.host, port: s.port, token: tok }, tok);
-    })();
+    (async () => { if (!cancelled) await loadServer(); })();
     return () => { cancelled = true; };
-  }, [server, setServer]);
+  }, [server, loadServer]);
+
+  // Adding a server happens on the classic Add-Server screen (navigated to from
+  // the onboarding overlay / settings); its goBack() lands here. Re-read on focus
+  // so a freshly added server is picked up and connects without a manual reload.
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => {
+      if (!useS2ConnStore.getState().server) void loadServer();
+    });
+    return unsub;
+  }, [navigation, loadServer]);
 
   useEffect(() => {
     if (!server || !token) return;
@@ -682,6 +699,18 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
       }
 
+      // Server verwalten/hinzufügen — nutzt den bestehenden klassischen
+      // Add-/Listen-Screen; goBack() landet wieder hier und der Focus-Listener
+      // liest den neuen Server ein. (Die Seite kann das aus den Einstellungen
+      // senden; das native Onboarding-Overlay deckt den Leer-Zustand ohnehin ab.)
+      case 'server:add':
+        navigation.navigate('AddServer');
+        break;
+
+      case 'server:manage':
+        navigation.navigate('ServerList');
+        break;
+
       case 'nav:screen':
         if (payload.screen === 'cloud') { pushCloudOrg(); pushCloudAccounts(); loadCloud(); }
         if (payload.screen === 'manager') {
@@ -849,6 +878,31 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         onLoopbackCallback={(loopbackUrl) =>
           wsService?.send({ type: 'browserbridge:callback', payload: { url: loopbackUrl, sessionId: pendingLoginSessionId.current ?? '' } })}
       />
+      {/* Onboarding / rescue: the Liquid page has no server picker, so with no
+          saved server there was NO way to add one — the app looked dead. This
+          native overlay guarantees an add path independent of the WebView. */}
+      {checkedServers && !server && (
+        <View style={styles.onboard}>
+          <Text style={styles.onboardTitle}>Kein Server verbunden</Text>
+          <Text style={styles.onboardSub}>
+            Füge deinen PC hinzu, um Liquid zu nutzen.
+          </Text>
+          <Pressable
+            style={styles.onboardBtn}
+            onPress={() => navigation.navigate('AddServer')}
+            accessibilityRole="button"
+          >
+            <Text style={styles.onboardBtnText}>+ Server hinzufügen</Text>
+          </Pressable>
+          <Pressable
+            style={styles.onboardLinkBtn}
+            onPress={() => navigation.navigate('ServerList')}
+            accessibilityRole="button"
+          >
+            <Text style={styles.onboardLink}>Gespeicherte Server verwalten</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
@@ -927,4 +981,23 @@ function describePrompt(snippet: string): {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#1e2126' },
   web: { flex: 1, backgroundColor: 'transparent' },
+  onboard: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#1e2126',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 28,
+    gap: 10,
+  },
+  onboardTitle: { color: '#E7ECF3', fontSize: 20, fontWeight: '700' },
+  onboardSub: { color: '#93A1B5', fontSize: 14, textAlign: 'center', marginBottom: 12 },
+  onboardBtn: {
+    backgroundColor: '#60A5FA',
+    paddingVertical: 13,
+    paddingHorizontal: 26,
+    borderRadius: 999,
+  },
+  onboardBtnText: { color: '#0B1220', fontSize: 15, fontWeight: '700' },
+  onboardLinkBtn: { marginTop: 6, paddingVertical: 8, paddingHorizontal: 12 },
+  onboardLink: { color: '#60A5FA', fontSize: 13, fontWeight: '600' },
 });

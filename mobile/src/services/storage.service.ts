@@ -7,20 +7,34 @@ const TOKEN_PREFIX = 'tms_token_';
 
 export const storageService = {
   async getServers(): Promise<ServerProfile[]> {
+    // Read the profile index. Profiles live in AsyncStorage; tokens live in the
+    // OS keychain (SecureStore). These MUST be treated independently: a keychain
+    // read can transiently fail (locked/not-ready keystore right after boot or an
+    // app update), and if that failure discards the whole list the user's servers
+    // "vanish" — and any following addServer() would then persist the shortened
+    // list, turning a transient glitch into permanent data loss.
+    let servers: ServerProfile[] = [];
     try {
       const data = await AsyncStorage.getItem(SERVERS_KEY);
-      const servers: ServerProfile[] = data ? JSON.parse(data) : [];
-      // Hydrate tokens from SecureStore
-      for (const server of servers) {
+      servers = data ? JSON.parse(data) : [];
+    } catch {
+      // The index itself is unreadable/corrupt — nothing we can safely return.
+      return [];
+    }
+    // Hydrate tokens per-server, isolating failures: a token that can't be read
+    // leaves its profile intact (token stays undefined) instead of dropping the
+    // whole list. The profile still shows and can reconnect once the token reads.
+    for (const server of servers) {
+      try {
         const token = await getToken(server.id);
         if (token) {
           server.token = token;
         }
+      } catch {
+        // Keep the profile without its token.
       }
-      return servers;
-    } catch {
-      return [];
     }
+    return servers;
   },
 
   async saveServers(servers: ServerProfile[]): Promise<void> {
