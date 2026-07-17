@@ -607,6 +607,9 @@
     timer = setTimeout(function () {
       document.querySelectorAll('.card-body[data-card-id]').forEach(function (host) {
         var cardId = host.getAttribute('data-card-id');
+        // The cloud log viewer reuses the card-body markup but is a read-only
+        // line view — creating a PTY for it put a Mac shell into the Logs tab.
+        if (cardId.indexOf('cloud-') === 0) return;
         mountTerm(cardId); // mounts, or re-homes an existing terminal
         if (!restoring && !(cardId in bound)) {
           bound[cardId] = 'pending';
@@ -654,7 +657,12 @@
   // Not a no-op: xterm owns the pixels, but the mockup still expects this to
   // (re)establish the per-line elements its selection UI works on.
   // Das Mockup zeichnet die Karte neu -> wir liefern die Zeilen aus dem Emulator.
-  window.renderCardLines = function (id) { renderTerm(id); };
+  var origRenderCardLines = window.renderCardLines;
+  window.renderCardLines = function (id) {
+    // Cloud log viewers are no terminals — keep the mockup's own renderer.
+    if (String(id).indexOf('cloud-') === 0) { origRenderCardLines(id); return; }
+    renderTerm(id);
+  };
   window.initLiveSession = function () { /* no simulator — output comes from the PTY */ };
   window.startQuestionScript = function () {};
   window.scheduleQuestionScript = function () {};
@@ -894,7 +902,7 @@
         var ids = [].map.call(document.querySelectorAll('.card-body[data-card-id]'), function (el) {
           return el.getAttribute('data-card-id');
         });
-        var cardId = ids.filter(function (id) { return !(id in bound); }).pop();
+        var cardId = ids.filter(function (id) { return !(id in bound) && id.indexOf('cloud-') !== 0; }).pop();
         if (!cardId) return;
         bound[cardId] = item.sessionId;
         byCard[cardId] = item.sessionId;
