@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Terminal-Eingabezeile aufgeraeumt: Das Tastatur-Symbol sitzt jetzt links statt rechts, und das Dollar-Zeichen liegt sauber auf einer Linie mit dem Text. (Baut auf v1.108.12 auf.)" \
+            --notes "Verbindung im Liquid-Layout (V2) repariert: Nach dem Zurueckholen aus dem Hintergrund (Android killt den Socket dann lautlos) baut die App die Verbindung jetzt AKTIV neu auf, statt auf 'Getrennt' haengen zu bleiben. Fehlt beim Kaltstart kurz der Zugangstoken, wird er nachgeladen und erneut verbunden. Und die Ping-/Latenzanzeige zeigt nur noch im verbundenen Zustand einen Wert (vorher hing eine alte Zahl, obwohl getrennt)." \
             --latest

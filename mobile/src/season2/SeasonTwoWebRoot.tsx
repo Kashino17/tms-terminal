@@ -265,11 +265,37 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (ready) webRef.current?.injectJavaScript(SERVER_PAGE_MGMT_JS);
   }, [ready]);
 
+  // Verbindet (oder verbindet NEU), sobald Server+Token da sind — Grundlage der
+  // Vordergrund-Selbstheilung unten. conn.connect() ist ein No-Op auf einem
+  // gesunden offenen Socket und baut einen toten Socket neu auf.
+  const ensureConnected = useCallback(async () => {
+    let srv = useS2ConnStore.getState().server;
+    let tok = useS2ConnStore.getState().token;
+    // Fehlt der Token (z. B. weil der Keychain beim Kaltstart kurz nicht lesbar
+    // war), einmal frisch aus dem Speicher nachladen, bevor wir verbinden.
+    if (!srv || !tok) {
+      await loadServer();
+      srv = useS2ConnStore.getState().server;
+      tok = useS2ConnStore.getState().token;
+    }
+    if (!srv || !tok) return;
+    getConnection(srv.id).connect({ host: srv.host, port: srv.port, token: tok });
+  }, [loadServer]);
+
   useEffect(() => {
-    if (!server || !token) return;
-    const conn = getConnection(server.id);
-    if (conn.state === 'disconnected') conn.connect({ host: server.host, port: server.port, token });
+    if (server && token) getConnection(server.id).connect({ host: server.host, port: server.port, token });
   }, [server, token]);
+
+  // ── Selbstheilung bei RÜCKKEHR IN DEN VORDERGRUND. Android killt den Socket im
+  //    Hintergrund lautlos; Season 2 trennt bewusst NICHT (der Server streamt für
+  //    Benachrichtigungen weiter), also bemerkt niemand den Tod — und ohne einen
+  //    aktiven connect() blieb die App auf „Getrennt" stehen. Das baut ihn neu auf.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void ensureConnected();
+    });
+    return () => sub.remove();
+  }, [ensureConnected]);
 
   /** Letzter in die Seite gemeldeter Status pro Session — jeder Output-Chunk
    *  meldete früher stumpf 'running' (30×/s): zwei Bridge-Übertritte plus ein
@@ -435,7 +461,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (!ready) return;
     const label = state === 'connected' ? 'Verbunden' : state === 'connecting' ? 'Verbinde…' : 'Getrennt';
     const kind = state === 'connected' ? 'ok' : state === 'connecting' ? 'warn' : 'idle';
-    call('setStatus', { kind, label, latency: rtt, name: server?.name ?? '' });
+    // Nur im verbundenen Zustand einen Ping zeigen — sonst hing die alte,
+    // eingefrorene Latenz sichtbar, obwohl längst getrennt.
+    call('setStatus', { kind, label, latency: state === 'connected' ? rtt : null, name: server?.name ?? '' });
   }, [ready, state, rtt, server, call]);
 
   // ── Server-Liste mit ECHTEM Status. Vorher galt pauschal: der verbundene
