@@ -38,6 +38,8 @@ export interface ProviderInfo {
   loadedContext?: number | null; // aktuell in LM Studio geladene Länge
   loaded?: boolean;           // ist das Modell gerade geladen?
   available?: boolean;        // in LM Studio überhaupt installiert?
+  savedContext?: number;      // vom Server: gemerkte/empfohlene Context-Länge (Regler-Default)
+  modelType?: string;         // 'llm' | 'vlm' | … (nur Info)
 }
 
 export interface ApiKeys {
