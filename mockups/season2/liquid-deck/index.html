@@ -711,11 +711,15 @@
   .card-name-wrap { flex: 1 1 0%; min-width: 0; }
   /* Name + description are both readonly inputs; triple-tap unlocks editing
      (see wireTripleTapEdit) so single taps never pop the keyboard. */
-  .card-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-section); font-weight: 700; letter-spacing: -.005em; background: none; border: none; padding: 1px 0; width: 100%; border-bottom: 1px solid transparent; cursor: default; }
+  .card-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-section); font-weight: 700; letter-spacing: -.005em; line-height: 1.2; background: none; border: none; padding: 0; width: 100%; border-bottom: 1px solid transparent; cursor: default; }
   .card-desc { display: block; min-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-caption); color: var(--text-dim); margin-top: 1px; background: none; border: none; padding: 1px 0; border-bottom: 1px solid transparent; cursor: default; }
   .card-name[data-editing="1"], .card-desc[data-editing="1"] { border-bottom: 1px solid var(--accent); outline: none; cursor: text; }
   .card-name[data-editing="1"] { text-overflow: clip; }
   .card-desc[data-editing="1"] { text-overflow: clip; }
+  /* Auto-info under the title: last folder of the working directory. Reuses the
+     .card-desc look but is a non-editable <span>. Empty -> collapses (no gap). */
+  .card-cwd { display: block; min-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-caption); color: var(--text-dim); margin-top: 0; line-height: 1.1; }
+  .card-cwd:empty { display: none; }
 
   /* Per-terminal Auto-Approve — 1-tap header pill, default ON. */
   .auto-toggle { flex: none; display: flex; align-items: center; justify-content: center; height: 30px; width: 34px; padding: 0; border-radius: var(--radius-pill); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
@@ -2094,7 +2098,7 @@
   // prompt now auto-resolves on first run; toggling a terminal OFF + replay
   // demoes the permission-sheet flow.
   TMS_DATA.sessions.forEach(s => {
-    cardState[s.id] = { lines: s.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
+    cardState[s.id] = { lines: s.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false, cwd: s.cwd || '' };
   });
   state.activeCardId = state.order[0] || null;
 
@@ -2119,11 +2123,11 @@
       colorTag: NEW_TERMINAL_COLORS[(num - 1) % NEW_TERMINAL_COLORS.length],
       status: 'idle', live: false,
       buffer: ['\x1b[2m~\x1b[0m $ '],
-      notes: [], todos: [],
+      notes: [], todos: [], cwd: '~',
     };
     TMS_DATA.sessions.push(session);
     state.order.push(id);
-    cardState[id] = { lines: session.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
+    cardState[id] = { lines: session.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false, cwd: session.cwd || '' };
     return session;
   }
 
@@ -2939,6 +2943,26 @@
   // Shared header markup for Stack + Liste. Name + description are readonly
   // inputs unlocked by triple-tap (wireTripleTapEdit); the Auto-Approve pill
   // is a 1-tap per-terminal control (default ON).
+  // Last path component of a (home-normalized) cwd. '~' and '/' pass through,
+  // empty -> '' so the .card-cwd line collapses.
+  function folderLabel(cwd) {
+    if (!cwd) return '';
+    if (cwd === '~' || cwd === '/') return cwd;
+    const parts = cwd.replace(/\/+$/, '').split('/');
+    return parts[parts.length - 1] || cwd;
+  }
+
+  // Bridge hook: server-reported working directory -> in-place patch of the
+  // grey .card-cwd line (Stack + Liste), no full re-render.
+  window.__tmsSetSessionCwd = function (cardId, cwd) {
+    const cs = cardState[cardId];
+    if (cs) cs.cwd = cwd;
+    const session = TMS_DATA.sessions.find(s => s.id === cardId);
+    if (session) session.cwd = cwd;
+    const label = folderLabel(cwd);
+    document.querySelectorAll(`.term-card[data-id="${cardId}"] .card-cwd`).forEach(el => { el.textContent = label; });
+  };
+
   function cardHeaderHtml(session, id, isList) {
     const cs = cardState[id];
     return `
@@ -2946,6 +2970,7 @@
           ${isList ? `<button class="chevron-btn" data-act="toggle" aria-label="Ein-/Ausklappen" title="Ein-/Ausklappen">${icon('chevron', 16)}</button>` : ''}
           <div class="card-name-wrap">
             <input class="card-name" value="${escapeHtml(session.name)}" readonly aria-label="Terminal-Name">
+            <span class="card-cwd" data-card-cwd>${escapeHtml(folderLabel(cs.cwd || ''))}</span>
           </div>
           <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
           <button class="auto-toggle${cs.autoApprove ? ' is-on' : ''}" data-act="auto" aria-pressed="${cs.autoApprove}" aria-label="Auto-Approve umschalten" title="Auto-Approve">${icon('bolt', 15)}</button>
