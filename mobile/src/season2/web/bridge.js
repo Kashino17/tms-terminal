@@ -606,25 +606,35 @@
     return true;
   };
 
-  // GLEICHSCHRITT: Sobald unser Emulator eine neue Größe hat, muss die PTY sie
-  // SO SCHNELL WIE MÖGLICH erfahren. Jede Millisekunde dazwischen malt die TUI
-  // Frames für die alte Breite in einen Puffer, der schon auf die neue
-  // umgebrochen ist — exakt daraus entstanden die verschränkten und
-  // gedoppelten Zeilen. Entprellt wird VOR dem Emulator-Resize (settleCols /
-  // Zeilen-Ratsche), nicht hier dahinter; die 16ms fangen nur noch
-  // Mehrfach-Feuer im selben Frame ab.
+  // SPALTEN SOFORT, ZEILEN IN RUHE. Eine Spaltenänderung MUSS im Gleichschritt
+  // zur PTY (16 ms): jede Millisekunde Versatz malt die TUI für die falsche
+  // Breite in einen schon umgebrochenen Puffer — die verschränkten Zeilen.
+  // Reines Zeilen-Wachstum dagegen ist Umbruch-NEUTRAL, kommt aber beim
+  // Karten-Aufbau als Serie (die Feder-Animation wächst die Ratsche
+  // 15→24→31→38). Jeder Schritt sofort weitergereicht wäre je ein SIGWINCH,
+  // auf das Claude sein komplettes Bild neu malt — die übereinander
+  // gestapelten Start-Banner. Darum wandern reine Zeilen-Änderungen erst zur
+  // PTY, wenn sie stabil stehen; gesendet wird der DANN aktuelle Stand.
   var resizeTimers = {}, lastDims = {};
+  var ROWS_SETTLE_MS = 350;
   function queueResize(cardId, cols, rows) {
     if (!cols || !rows) return;
+    var sid0 = byCard[cardId];
+    var lastCols = sid0 && lastDims[sid0] ? parseInt(lastDims[sid0], 10) : null;
+    var delay = lastCols === cols ? ROWS_SETTLE_MS : 16;
     clearTimeout(resizeTimers[cardId]);
     resizeTimers[cardId] = setTimeout(function () {
       var sid = byCard[cardId];
       if (!sid) return;
-      var key = cols + 'x' + rows;
+      // Während der Ruhephase weitergewachsen? Dann zählt der jetzige Stand.
+      var t = terms[cardId];
+      var c = (t && t.term.cols) || cols;
+      var r = (t && t.term.rows) || rows;
+      var key = c + 'x' + r;
       if (lastDims[sid] === key) return;
       lastDims[sid] = key;
-      post('terminal:resize', { sessionId: sid, cols: cols, rows: rows });
-    }, 16);
+      post('terminal:resize', { sessionId: sid, cols: c, rows: r });
+    }, delay);
   }
 
   /** Vorschau für Übersicht und Rail — aus dem echten Puffer. */

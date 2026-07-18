@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Eingabezeile und Schliessen-Rueckfrage gefixt: (1) Das \$-Zeichen sitzt jetzt exakt auf einer Ebene mit dem Eingabetext — gleiche Mono-Schrift, beim Tippen gleiche Schriftgroesse, und der Platzhalter (Befehl an ...) wird auf eine Zeile gekuerzt statt umzubrechen und unten abgeschnitten zu werden. (2) Das Drei-Punkte-Menue laeuft mit der Rueckfrage 'Wirklich schliessen?' nicht mehr rechts aus dem Bildschirm — es positioniert sich nach dem Umbau zur Bestaetigungszeile neu und bleibt komplett sichtbar." \
+            --notes "Gestapelte Claude-Start-Banner behoben: Beim Aufbau einer Terminal-Karte wuchs die Zeilenzahl waehrend der Einblende-Animation in mehreren Schritten, und seit dem Gleichschritt-Fix erreichte JEDER Schritt die PTY als eigenes SIGWINCH — Claude malte sein Startbild entsprechend oft uebereinander. Jetzt gehen nur noch Spalten-Aenderungen sofort an die PTY (die sind umbruch-kritisch); reine Zeilen-Aenderungen warten, bis die Groesse stabil steht, und kommen als EIN Resize an. Ergebnis: ein einziges sauberes Startbild, auch beim Erstellen von Terminals mit offener Tastatur." \
             --latest
