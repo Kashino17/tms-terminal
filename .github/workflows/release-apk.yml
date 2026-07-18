@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Tastatur-Button links in der Eingabezeile: Der Button, der die Shortcut-/Tastenleiste oeffnet, sass rechts hinter Mikro und Senden — er sitzt jetzt ganz links vor dem \$-Prompt und ist damit besser mit dem Daumen erreichbar. (Die Ordner-Anzeige unter dem Terminal-Titel und das Drei-Punkte-Menue aus v1.108.16 bleiben unveraendert; fuer die Live-Ordner-Anzeige den Server aktualisieren und neu starten.)" \
+            --notes "Eingabezeile und Schliessen-Rueckfrage gefixt: (1) Das \$-Zeichen sitzt jetzt exakt auf einer Ebene mit dem Eingabetext — gleiche Mono-Schrift, beim Tippen gleiche Schriftgroesse, und der Platzhalter (Befehl an ...) wird auf eine Zeile gekuerzt statt umzubrechen und unten abgeschnitten zu werden. (2) Das Drei-Punkte-Menue laeuft mit der Rueckfrage 'Wirklich schliessen?' nicht mehr rechts aus dem Bildschirm — es positioniert sich nach dem Umbau zur Bestaetigungszeile neu und bleibt komplett sichtbar." \
             --latest
