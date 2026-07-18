@@ -194,6 +194,13 @@ export interface TerminalReattachedMessage {
   };
 }
 
+export interface TerminalCwdMessage {
+  type: 'terminal:cwd';
+  sessionId: string;
+  /** Working directory, home-normalized to `~`. Pushed live when it changes. */
+  payload: { cwd: string };
+}
+
 export interface TerminalPromptDetectedMessage {
   type: 'terminal:prompt_detected';
   sessionId: string;
@@ -370,6 +377,7 @@ export type ServerMessage =
   | TerminalClosedMessage
   | TerminalErrorMessage
   | TerminalReattachedMessage
+  | TerminalCwdMessage
   | TerminalPromptDetectedMessage
   | PongMessage
   | WatcherListResponseMessage

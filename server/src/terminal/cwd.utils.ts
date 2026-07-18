@@ -2,6 +2,17 @@ import { execFile as execFileCb } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 
+/** Collapse the user's home directory to `~` for compact display.
+ *  `/Users/x` -> `~`, `/Users/x/proj` -> `~/proj`, other paths unchanged.
+ *  Only collapses at a path boundary so `/Users/x-backup` is left intact. */
+export function normalizeCwd(p: string, home: string = os.homedir()): string {
+  if (!p) return p;
+  const clean = p.length > 1 ? p.replace(/\/+$/, '') : p;
+  if (clean === home) return '~';
+  if (clean.startsWith(home + '/')) return '~' + clean.slice(home.length);
+  return clean;
+}
+
 /** Safe exec helper — uses execFile (no shell) to prevent command injection. */
 function execFileAsync(bin: string, args: string[], timeout = 2000): Promise<string> {
   return new Promise((resolve) => {
