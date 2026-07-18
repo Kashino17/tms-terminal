@@ -331,6 +331,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         markBusy(m.sessionId);
         return;
       }
+      if (m?.type === 'terminal:cwd' && m.sessionId && typeof m.payload?.cwd === 'string') {
+        call('setSessionCwd', m.sessionId, m.payload.cwd);
+        return;
+      }
       if (m?.type === 'terminal:created' && m.sessionId) {
         const pending = pendingCards.current.shift();
         const cardId = pending?.cardId ?? null;

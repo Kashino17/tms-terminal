@@ -968,6 +968,11 @@
       var cardId = cardOf(sessionId);
       if (cardId && typeof window.updateStatusChip === 'function') window.updateStatusChip(cardId, status);
     },
+    /** Server-reported working directory -> the mockup's folder subtitle. */
+    setSessionCwd: function (sessionId, cwd) {
+      var cardId = cardOf(sessionId);
+      if (cardId && typeof window.__tmsSetSessionCwd === 'function') window.__tmsSetSessionCwd(cardId, cwd);
+    },
     /** A permission / question prompt from the AI tool. */
     prompt: function (sessionId, data) {
       var cardId = cardOf(sessionId);
