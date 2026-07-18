@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Terminal-Darstellung grundsaniert — keine verschraenkten, doppelten oder zerrissenen Zeilen mehr: (1) Emulator und Server-PTY aendern ihre Groesse jetzt im Gleichschritt (vorher malte Claude bis zu ~0,6s fuer die alte Breite weiter — die Hauptquelle des Zeilensalats). (2) Beim Wiederverbinden schickt der Server kein rohes Replay mehr, sondern ein fertiges Vollbild in der aktuellen Breite (tmux-Prinzip, inkl. Historie — dafuer Server aktualisieren und neu starten!). (3) Lange Sessions: Der Renderer zeigte nach ~5000 Zeilen alte Zeilen an falschen Stellen an — behoben. (4) Terminals starten mit ihrer echten Groesse statt 80x24. Dazu: Ordner-Anzeige pro Terminal (cwd) vom Server." \
+            --notes "Ordner-Anzeige & Terminal-Menue: (1) Unter jedem Terminal-Titel steht jetzt klein und grau der aktuelle Ordner — nur der letzte Ordnername, live beim cd aktualisiert (der Server erkennt den Verzeichniswechsel und schickt ihn sofort; dafuer Server aktualisieren und neu starten!). (2) Der Auto-Approve-Blitz oben rechts ist einem Drei-Punkte-Menue gewichen — darin schaltest du Auto-Approve per Schalter und schliesst das Terminal (mit kurzer Rueckfrage)." \
             --latest
