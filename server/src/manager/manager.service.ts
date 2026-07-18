@@ -1,5 +1,6 @@
-import { AiProviderRegistry, ChatMessage, ProviderConfig, ToolDefinition, StreamResult, RawToolCall, ToolCallingProvider } from './ai-provider';
-import { getModelsInfo, loadLocalModel } from './lmstudio.manager';
+import { AiProviderRegistry, ChatMessage, ProviderConfig, ToolDefinition, StreamResult, RawToolCall, ToolCallingProvider, defaultContextFor } from './ai-provider';
+import { getModelsInfo, loadLocalModel, type LmModelInfo } from './lmstudio.manager';
+import { saveManagerConfig } from './manager.config';
 import { globalManager } from '../terminal/terminal.manager';
 import { logger } from '../utils/logger';
 import { fcmService } from '../notifications/fcm.service';
@@ -4091,22 +4092,25 @@ BEISPIEL:
    *  Ist LM Studio nicht erreichbar, bleiben die Felder leer und die Liste
    *  funktioniert wie bisher. */
   async getProviders() {
-    const base = this.registry.list();
-    let info: Map<string, { maxContext: number; loadedContext: number | null; state: string }> = new Map();
-    if (base.some(p => p.isLocal)) {
-      try { info = await getModelsInfo(this.registry.getLmStudioUrl()); } catch { /* offline */ }
-    }
-    const providers = base.map(p => {
+    let info = new Map<string, LmModelInfo>();
+    try { info = await getModelsInfo(this.registry.getLmStudioUrl()); } catch { /* offline */ }
+    // Lokale Provider aus der Discovery synchronisieren (anlegen/entfernen).
+    this.registry.refreshLocalProviders(info);
+
+    const providers = this.registry.list().map(p => {
       if (!p.isLocal) return p;
       const key = this.registry.getLocalModelKey(p.id);
       const mi = key ? info.get(key) : undefined;
+      const maxContext = mi?.maxContext ?? 0;
+      const saved = key ? this.registry.getSavedContext(key) : undefined;
       return {
         ...p,
         modelKey: key ?? undefined,
-        maxContext: mi?.maxContext ?? 0,
+        maxContext,
         loadedContext: mi?.loadedContext ?? null,
         loaded: mi?.state === 'loaded',
         available: !!mi, // in LM Studio überhaupt vorhanden?
+        savedContext: saved ?? defaultContextFor(maxContext),
       };
     });
     return { providers, active: this.registry.getActiveId() };
@@ -4119,6 +4123,11 @@ BEISPIEL:
     const key = this.registry.getLocalModelKey(id);
     if (key) {
       await loadLocalModel(key, contextLength ?? 0);
+      // Erst nach erfolgreichem Laden merken + persistieren (Regler-Gedächtnis).
+      if (contextLength && contextLength > 0) {
+        this.registry.rememberContext(key, contextLength);
+        saveManagerConfig({ lmStudioModelContext: this.registry.getModelContextMap() });
+      }
     }
     this.registry.setActive(id);
   }

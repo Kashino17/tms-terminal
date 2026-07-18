@@ -563,10 +563,11 @@ class GlmProvider implements AiProvider {
 
 const LMSTUDIO_DEFAULT_URL = 'http://localhost:1234/v1';
 
-/** Moderater Context-Default für ein Modell: min(16384, max), geklemmt auf [4096, max]. */
+/** Moderater Context-Default für ein Modell: min(16384, max). Überschreitet NIE das
+ *  Modell-Maximum (ein Default > max würde beim Laden scheitern). Unbekanntes max → 16384. */
 export function defaultContextFor(maxContext: number): number {
   const cap = maxContext && maxContext > 0 ? maxContext : 32768;
-  return Math.max(4096, Math.min(16384, cap));
+  return Math.min(16384, cap);
 }
 
 class LMStudioProvider implements AiProvider {

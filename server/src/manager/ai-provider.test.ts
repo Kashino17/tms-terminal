@@ -60,9 +60,10 @@ test('rememberContext + getSavedContext round-trip', () => {
   assert.equal(reg.getModelContextMap()['qwen/q27b'], 20000);
 });
 
-test('defaultContextFor: moderate default, clamps to model range', () => {
+test('defaultContextFor: moderate default, never exceeds model max', () => {
   assert.equal(defaultContextFor(128000), 16384);
   assert.equal(defaultContextFor(8192), 8192);
-  assert.equal(defaultContextFor(2048), 4096); // floor
+  assert.equal(defaultContextFor(4096), 4096);
+  assert.equal(defaultContextFor(2048), 2048); // respektiert kleines Modell-Max, kein Über-Max-Default
   assert.equal(defaultContextFor(0), 16384);   // unknown max
 });
