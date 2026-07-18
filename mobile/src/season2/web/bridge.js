@@ -97,30 +97,78 @@
     return { w: r.width / 100, h: r.height };
   }
 
+  /** Karte vermessen → gewünschte Spalten/Zeilen. null, wenn (noch) ohne Größe. */
+  function measureFit(t) {
+    var host = t.host;
+    if (!host || !host.clientWidth || !host.clientHeight) return null;
+    var cell = measureCell(host);
+    if (!cell.w || !cell.h) return null;
+    var cs = getComputedStyle(host);
+    var innerW = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var innerH = host.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    return {
+      cols: Math.max(20, Math.floor(innerW / cell.w)),
+      rows: Math.max(5, Math.floor(innerH / cell.h)),
+    };
+  }
+
+  /** SPALTEN-FREEZE: eine neue Breite wird erst übernommen, wenn sie so lange
+   *  stabil ansteht. Jede Spaltenänderung reflowt den xterm-Puffer UND lässt
+   *  die TUI auf das SIGWINCH ihr komplettes Bild neu malen — gegen die frisch
+   *  umgebrochenen alten Zeilen entstehen genau die verklebten/gedoppelten
+   *  Ausgaben. Zwischenwerte laufender Karten-Animationen (520ms-Feder) laufen
+   *  hier ins Leere; nur Falten, Drehen und Schriftgröße kommen durch. */
+  var COLS_SETTLE_MS = 350;
+  function settleCols(cardId, want) {
+    var t = terms[cardId];
+    if (!t) return;
+    if (t.colsWant === want && t.colsTimer) return; // Timer läuft schon auf dieses Ziel
+    t.colsWant = want;
+    clearTimeout(t.colsTimer);
+    t.colsTimer = setTimeout(function () {
+      t.colsTimer = null;
+      var tt = terms[cardId];
+      if (!tt) return;
+      var fit = measureFit(tt);
+      if (!fit || fit.cols === tt.pinCols) return;      // zurückgeschnappt — Fehlalarm
+      if (fit.cols !== tt.colsWant) { settleCols(cardId, fit.cols); return; } // noch in Bewegung
+      // Echte neue Breite: Ratsche zurücksetzen und EINMAL sauber umstellen.
+      tt.pinCols = fit.cols;
+      tt.pinRows = fit.rows;
+      if (tt.term.cols !== tt.pinCols || tt.term.rows !== tt.pinRows) {
+        try { tt.term.resize(tt.pinCols, tt.pinRows); } catch (e) { return; }
+        invalidateRowCache(cardId);
+        renderTerm(cardId);
+      }
+    }, COLS_SETTLE_MS);
+  }
+
   /** Sofort vermessen. Gibt false zurück, wenn die Karte (noch) keine Größe hat. */
   function fitNow(cardId) {
     var t = terms[cardId];
     if (!t) return false;
-    var host = t.host;
-    if (!host || !host.clientWidth || !host.clientHeight) return false;
-    var cell = measureCell(host);
-    if (!cell.w || !cell.h) return false;
-    var cs = getComputedStyle(host);
-    var innerW = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-    var innerH = host.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-    var cols = Math.max(20, Math.floor(innerW / cell.w));
-    var rowsFit = Math.max(5, Math.floor(innerH / cell.h));
+    var fit = measureFit(t);
+    if (!fit) return false;
     // ZEILEN-RATSCHE — der Kern gegen Dopplungen: Tastatur, Tastenleiste und
     // Tipp-Modus ändern die Kartenhöhe ständig, und jede Zeilen-Änderung ist
     // ein SIGWINCH, auf das Claude & Co. ihre KOMPLETTE Oberfläche neu malen —
     // der alte Frame bleibt als Leiche im Scrollback (die "Dopplungen").
     // Deshalb: rows wächst nur auf das größte gesehene Maß und schrumpft nie;
-    // wird die Karte kleiner, scrollt sie einfach. Nur eine ECHTE Breiten-
-    // änderung (Falten, Drehen) setzt die Ratsche zurück.
-    if (t.pinCols !== cols) { t.pinCols = cols; t.pinRows = rowsFit; }
-    else t.pinRows = Math.max(t.pinRows || rowsFit, rowsFit);
-    if (t.term.cols !== cols || t.term.rows !== t.pinRows) {
-      try { t.term.resize(cols, t.pinRows); } catch (e) { return false; }
+    // wird die Karte kleiner, scrollt sie einfach. Spalten sind zusätzlich
+    // EINGEFROREN: ein neuer Messwert wandert über settleCols() und wird erst
+    // übernommen, wenn er stabil ansteht (Falten, Drehen, Schriftgröße).
+    if (t.pinCols === undefined) {
+      t.pinCols = fit.cols;                    // Erstvermessung: sofort übernehmen
+      t.pinRows = fit.rows;
+    } else if (fit.cols !== t.pinCols) {
+      settleCols(cardId, fit.cols);            // Kandidat — Puffer bleibt unangetastet
+      t.pinRows = Math.max(t.pinRows || fit.rows, fit.rows);
+    } else {
+      if (t.colsTimer) { clearTimeout(t.colsTimer); t.colsTimer = null; } // zurückgeschnappt
+      t.pinRows = Math.max(t.pinRows || fit.rows, fit.rows);
+    }
+    if (t.term.cols !== t.pinCols || t.term.rows !== t.pinRows) {
+      try { t.term.resize(t.pinCols, t.pinRows); } catch (e) { return false; }
       // Ein Resize reflowt den Puffer: alle absoluten Zeilenindizes verschieben
       // sich — der inkrementelle Zeilen-Cache ist damit wertlos.
       invalidateRowCache(cardId);
@@ -190,7 +238,14 @@
     term.onData(function (d) { window.__tmsInput(cardId, d); });
     term.onResize(function (sz) { queueResize(cardId, sz.cols, sz.rows); });
 
-    terms[cardId] = { term: term, box: box, host: host };
+    terms[cardId] = { term: term, box: box, host: host, scrollTotal: 0 };
+    // Monotoner Scroll-Zähler: die Basis der GLOBALEN Zeilen-IDs des Renderers.
+    // Absolute Puffer-Indizes allein taugen nicht als Adresse — sobald der
+    // xterm-Ringpuffer voll ist (baseY sättigt am Scrollback-Limit), verschiebt
+    // JEDE neue Zeile alle Inhalte unter ihren alten Indizes. Der eingefrorene
+    // Zeilen-Cache zeigte ab da alte Zeilen an falschen Stellen — die
+    // "Dopplungen" in jeder langen Claude-Session.
+    term.onScroll(function () { var tt = terms[cardId]; if (tt) tt.scrollTotal++; });
     fitSoon(cardId);
     flush(cardId);
     renderTerm(cardId);
@@ -306,6 +361,10 @@
     if (!t) return;
     t.rc = null; t.rcMin = 0; t.dom = null; t.domStart = undefined; t.domLen = 0;
     t.winStart = undefined; // Reflow verschiebt die absoluten Indizes — Fenster neu setzen
+    // Globale IDs neu eichen: nach Resize-Reflow (und term.clear/reset) stimmt
+    // das Verhältnis Scroll-Zähler ↔ baseY nicht mehr; ab hier gilt wieder
+    // "keine getrimmten Zeilen" als Ausgangslage.
+    t.scrollTotal = t.term.buffer.active.baseY;
   }
 
   function renderTerm(cardId) {
@@ -328,8 +387,15 @@
     if (window.__tmsPendingHidden) delete window.__tmsPendingHidden[cardId];
 
     var buf = t.term.buffer.active;
-    var end = buf.baseY + t.term.rows;                 // eine Zeile hinter der letzten
     var baseY = buf.baseY;
+    // ── Globale Zeilen-IDs ────────────────────────────────────────────────
+    // Adresse einer Zeile ist NICHT ihr Puffer-Index (der verschiebt sich,
+    // sobald der Ringpuffer voll ist oder CSI 3J die Historie leert), sondern
+    // eine monotone globale Nummer: pufferIndex + trimmed. `trimmed` = wie
+    // viele Zeilen der Ringpuffer schon oben verworfen hat.
+    if (t.scrollTotal === undefined || t.scrollTotal < baseY) t.scrollTotal = baseY;
+    var trimmed = t.scrollTotal - baseY;
+    var end = trimmed + baseY + t.term.rows;           // global: eine Zeile hinter der letzten
 
     // ── Klebriges Fenster ─────────────────────────────────────────────────
     // Ein mitwanderndes Fenster (immer die letzten MAX_ROWS) verschiebt bei JEDER
@@ -342,6 +408,9 @@
     var start = t.winStart;
     if (start === undefined || start > end) start = Math.max(0, end - MAX_ROWS);
     if (end - start > MAX_ROWS + WIN_SLACK) start = Math.max(0, end - MAX_ROWS);
+    // Zeilen, die der Ringpuffer schon verworfen hat (oder die ein CSI 3J des
+    // Servers gelöscht hat), sind nicht mehr lesbar — das Fenster rückt nach.
+    if (start < trimmed) start = trimmed;
     t.winStart = start;
 
     // ── Zeilen-Cache über ABSOLUTE Pufferindizes ──────────────────────────
@@ -359,11 +428,11 @@
     // Eine am Viewport-Rand umgebrochene logische Zeile reicht in die Historie
     // hinein — ihren Anfang mit auffrischen, damit eine wachsende URL ihre
     // Link-Spanne über die Umbruchgrenze bekommt.
-    var liveFrom = Math.min(baseY, end);
+    var liveFrom = Math.min(trimmed + baseY, end);
     while (liveFrom > start) {
       var probeC = rc[liveFrom];
       var probeW = probeC ? probeC.wrapped
-        : (function () { var l = buf.getLine(liveFrom); return !!(l && l.isWrapped); })();
+        : (function () { var l = buf.getLine(liveFrom - trimmed); return !!(l && l.isWrapped); })();
       if (!probeW) break;
       liveFrom--;
     }
@@ -380,13 +449,13 @@
       // Stand von damals ein: leere Historie ("Grenze nach oben") und alte
       // Inhalte an neuen Zeilennummern (die Dopplungen/Verschiebungen).
       if (c && c.frozen && i < liveFrom) { rows[k] = c; continue; }
-      var line = buf.getLine(i);
+      var line = buf.getLine(i - trimmed);
       rows[k] = rc[i] = {
         text: line ? line.translateToString(true) : '',
         wrapped: !!(line && line.isWrapped),
         inner: null,           // wird unten gebaut, sobald die Links bekannt sind
         sig: null,
-        frozen: i < baseY,     // fertig gescrollt = ändert sich nie wieder
+        frozen: i - trimmed < baseY, // fertig gescrollt = ändert sich nie wieder
       };
     }
 
@@ -425,7 +494,7 @@
       var sig = '';
       for (var si = 0; si < ranges.length; si++) sig += ranges[si].from + ':' + ranges[si].to + ':' + ranges[si].url + ';';
       if (row.inner !== null && row.sig === sig) continue;
-      row.inner = buildRowInner(buf.getLine(start + r), ranges);
+      row.inner = buildRowInner(buf.getLine(start + r - trimmed), ranges);
       row.sig = sig;
     }
 
@@ -537,9 +606,13 @@
     return true;
   };
 
-  // Nur echte Größenänderungen, und nur eine pro Ruhephase: jedes SIGWINCH lässt
-  // Claude & Co. ihre Ausgabe neu zeichnen — ein Resize-Sturm erzeugt genau die
-  // doppelten und zerrissenen Zeilen.
+  // GLEICHSCHRITT: Sobald unser Emulator eine neue Größe hat, muss die PTY sie
+  // SO SCHNELL WIE MÖGLICH erfahren. Jede Millisekunde dazwischen malt die TUI
+  // Frames für die alte Breite in einen Puffer, der schon auf die neue
+  // umgebrochen ist — exakt daraus entstanden die verschränkten und
+  // gedoppelten Zeilen. Entprellt wird VOR dem Emulator-Resize (settleCols /
+  // Zeilen-Ratsche), nicht hier dahinter; die 16ms fangen nur noch
+  // Mehrfach-Feuer im selben Frame ab.
   var resizeTimers = {}, lastDims = {};
   function queueResize(cardId, cols, rows) {
     if (!cols || !rows) return;
@@ -551,7 +624,7 @@
       if (lastDims[sid] === key) return;
       lastDims[sid] = key;
       post('terminal:resize', { sessionId: sid, cols: cols, rows: rows });
-    }, 250);
+    }, 16);
   }
 
   /** Vorschau für Übersicht und Rail — aus dem echten Puffer. */
@@ -598,10 +671,26 @@
     };
   }
 
+  /** Anhängen erst mit ECHTEN Maßen. Mit erfundenen 80×24 schickte der Server
+   *  seinen Rückstand (bzw. jetzt sein Snapshot) in falscher Breite, und der
+   *  direkt folgende Resize ließ alles noch einmal umbrechen — der klassische
+   *  Start "mit Zeilensalat ab der ersten Sekunde". Warten, bis die Karte
+   *  messbar ist (max ~2,4 s), dann anhängen; danach nur noch echte Resizes. */
+  function attachSized(cardId, sessionId, tries) {
+    if (!fitNow(cardId) && (tries || 0) < 40) {
+      setTimeout(function () { attachSized(cardId, sessionId, (tries || 0) + 1); }, 60);
+      return;
+    }
+    var d = dims(cardId);
+    lastDims[sessionId] = d.cols + 'x' + d.rows;
+    post('terminal:attach', { cardId: cardId, sessionId: sessionId, cols: d.cols, rows: d.rows });
+  }
+
   // Cards appear/disappear whenever the mockup rebuilds its workspace. Follow
   // the DOM instead of duplicating that logic: an unseen card means a terminal
   // we still have to create server-side.
   var timer = null;
+  var createTries = {}; // cardId -> Anläufe, die Karte vor dem Anlegen zu vermessen
   function syncTerms() {
     clearTimeout(timer);
     timer = setTimeout(function () {
@@ -612,8 +701,16 @@
         if (cardId.indexOf('cloud-') === 0) return;
         mountTerm(cardId); // mounts, or re-homes an existing terminal
         if (!restoring && !(cardId in bound)) {
+          // Nie mit erfundenen 80×24 anlegen: Die Shell malt ihre ersten Zeilen
+          // für DIESE Breite, und der nachgereichte Resize auf die echten ~46
+          // Spalten ließ sie gleich als Erstes umbrechen und neu malen. Warten,
+          // bis die Karte messbar ist (max ~2,4 s), erst dann anlegen.
+          if (!fitNow(cardId)) {
+            createTries[cardId] = (createTries[cardId] || 0) + 1;
+            if (createTries[cardId] < 40) { setTimeout(syncTerms, 60); return; }
+          }
+          delete createTries[cardId];
           bound[cardId] = 'pending';
-          fitNow(cardId); // beste verfügbare Größe — aber wir warten nicht darauf
           var tc = terms[cardId];
           var sessName = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
           post('terminal:create', {
@@ -755,7 +852,8 @@
     }
   };
   window.clearActiveTerminal = function (id) {
-    if (terms[id]) { terms[id].term.clear(); renderTerm(id); }
+    // clear() wirft Historie weg → baseY springt; globale IDs neu eichen.
+    if (terms[id]) { terms[id].term.clear(); invalidateRowCache(id); renderTerm(id); }
     if (typeof window.toast === 'function') window.toast('Geleert');
   };
   // scrollTerminalToBottom und updateJumpOrb bleiben die des Mockups: die
@@ -920,12 +1018,9 @@
           if (nameEl) nameEl.value = item.name;
         }
         mountTerm(cardId);
-        fitNow(cardId);
         // Ohne das hier hängt die Karte für immer leer da: der Server erfährt
         // nie, dass wir wieder da sind, und schickt entsprechend nichts.
-        var td = dims(cardId);
-        lastDims[item.sessionId] = td.cols + 'x' + td.rows;
-        post('terminal:attach', { cardId: cardId, sessionId: item.sessionId, cols: td.cols, rows: td.rows });
+        attachSized(cardId, item.sessionId);
       });
       restoring = false;
       window.toast = origToast;
@@ -943,10 +1038,7 @@
       mountTerm(cardId);
       flush(cardId);
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
-      fitNow(cardId);
-      var bd = dims(cardId);
-      lastDims[sessionId] = bd.cols + 'x' + bd.rows;
-      post('terminal:attach', { cardId: cardId, sessionId: sessionId, cols: bd.cols, rows: bd.rows });
+      attachSized(cardId, sessionId);
     },
     /** PTY output. */
     output: function (sessionId, chunk) {
@@ -2214,7 +2306,7 @@
     delete byCard[cardId];
     bound[cardId] = 'pending';
     var t = terms[cardId];
-    if (t) { try { t.term.reset(); } catch (e) {} renderTerm(cardId); }
+    if (t) { try { t.term.reset(); } catch (e) {} invalidateRowCache(cardId); renderTerm(cardId); }
     if (typeof window.toast === 'function') window.toast('Session abgelaufen — starte neu');
     var d = dims(cardId);
     var sessName = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
