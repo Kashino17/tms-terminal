@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Ordner-Anzeige & Terminal-Menue: (1) Unter jedem Terminal-Titel steht jetzt klein und grau der aktuelle Ordner — nur der letzte Ordnername, live beim cd aktualisiert (der Server erkennt den Verzeichniswechsel und schickt ihn sofort; dafuer Server aktualisieren und neu starten!). (2) Der Auto-Approve-Blitz oben rechts ist einem Drei-Punkte-Menue gewichen — darin schaltest du Auto-Approve per Schalter und schliesst das Terminal (mit kurzer Rueckfrage)." \
+            --notes "Tastatur-Button links in der Eingabezeile: Der Button, der die Shortcut-/Tastenleiste oeffnet, sass rechts hinter Mikro und Senden — er sitzt jetzt ganz links vor dem \$-Prompt und ist damit besser mit dem Daumen erreichbar. (Die Ordner-Anzeige unter dem Terminal-Titel und das Drei-Punkte-Menue aus v1.108.16 bleiben unveraendert; fuer die Live-Ordner-Anzeige den Server aktualisieren und neu starten.)" \
             --latest
