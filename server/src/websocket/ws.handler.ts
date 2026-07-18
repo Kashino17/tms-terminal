@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import { globalManager } from '../terminal/terminal.manager';
+import { readProcessCwd, normalizeCwd } from '../terminal/cwd.utils';
 import { promptDetector } from '../notifications/prompt.detector';
 import { idleDetector } from '../notifications/idle.detector';
 import { fcmService } from '../notifications/fcm.service';
@@ -33,6 +34,51 @@ function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify(msg));
   }
+}
+
+// ── Live working-directory tracking ──────────────────────────────────
+// A cd/pushd changes the shell's cwd. Rather than parse the output text,
+// we re-read the real cwd once the terminal output settles after a command,
+// and push it only when it actually changed. Timers are unref'd; a timer
+// that fires after the session is gone is a no-op (getSession returns
+// undefined), so no explicit teardown is required for correctness.
+const cwdCheckTimers = new Map<string, NodeJS.Timeout>();
+const CWD_SETTLE_MS = 500;
+
+/** Read the shell's real cwd and push it if it differs from the last known. */
+async function refreshCwd(ws: WebSocket, sessionId: string): Promise<void> {
+  const session = globalManager.getSession(sessionId);
+  if (!session) return;
+  const raw = await readProcessCwd(session.pty.pid);
+  if (!raw || raw === session.cwd) return;
+  session.cwd = raw; // store raw absolute path (consistent with factory/detach)
+  send(ws, { type: 'terminal:cwd', sessionId, payload: { cwd: normalizeCwd(raw) } });
+}
+
+/** Debounced cwd re-read — called on every output chunk. */
+function scheduleCwdCheck(ws: WebSocket, sessionId: string): void {
+  const prev = cwdCheckTimers.get(sessionId);
+  if (prev) clearTimeout(prev);
+  const t = setTimeout(() => {
+    cwdCheckTimers.delete(sessionId);
+    void refreshCwd(ws, sessionId);
+  }, CWD_SETTLE_MS);
+  t.unref();
+  cwdCheckTimers.set(sessionId, t);
+}
+
+/** Cancel a pending cwd re-read (called from a session's exit callback). */
+function clearCwdCheck(sessionId: string): void {
+  const t = cwdCheckTimers.get(sessionId);
+  if (t) { clearTimeout(t); cwdCheckTimers.delete(sessionId); }
+}
+
+/** Push the current best-known cwd immediately (on attach/create) so the
+ *  folder label is correct right away; scheduleCwdCheck then keeps it live. */
+function pushInitialCwd(ws: WebSocket, sessionId: string): void {
+  const session = globalManager.getSession(sessionId);
+  if (!session?.cwd) return;
+  send(ws, { type: 'terminal:cwd', sessionId, payload: { cwd: normalizeCwd(session.cwd) } });
 }
 
 function isValidSessionId(sessionId: unknown): sessionId is string {
@@ -273,6 +319,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           send(ws, { type: 'terminal:output', sessionId, payload: { data } });
           promptDetector.feed(sessionId, data);
           idleDetector.activity(sessionId);
+          scheduleCwdCheck(ws, sessionId);
           resetAutopilotTimer(sessionId);
           managerService.feedOutput(sessionId, data);
         },
@@ -280,6 +327,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           ownedSessions.delete(sessionId);
           promptDetector.unwatch(sessionId);
           idleDetector.unwatch(sessionId);
+          clearCwdCheck(sessionId);
           aiSessions.delete(sessionId);
           send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
         },
@@ -288,6 +336,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       sessionGens.set(session.id, globalManager.getAttachGen(session.id));
       watchSession(session.id);
       watchSessionIdle(session.id);
+      pushInitialCwd(ws, session.id);
 
       const shellNum = ownedSessions.size;
       const sessionLabel = label || `Shell ${shellNum}`;
@@ -368,13 +417,14 @@ export function handleConnection(ws: WebSocket, ip: string): void {
    * Die Größe bleibt, wie sie ist — der Aufrufer kennt die Maße des Clients nicht,
    * und ein unnötiges SIGWINCH lässt Claude & Co. ihr ganzes Bild neu malen.
    */
-  const attachToThisClient = (sessionId: string): boolean => {
+  const attachToThisClient = (sessionId: string, clientCols?: number, clientRows?: number): boolean => {
     const session = globalManager.reattachSession(
       sessionId,
       (sid, data) => {
         send(ws, { type: 'terminal:output', sessionId: sid, payload: { data } });
         promptDetector.feed(sid, data);
         idleDetector.activity(sid);
+        scheduleCwdCheck(ws, sid);
         resetAutopilotTimer(sid);
         managerService.feedOutput(sid, data);
       },
@@ -382,12 +432,15 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         ownedSessions.delete(sid);
         promptDetector.unwatch(sid);
         idleDetector.unwatch(sid);
+        clearCwdCheck(sid);
         aiSessions.delete(sid);
         autopilotService.clearSession(sid);
         const apTimer = autopilotTimers.get(sid);
         if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sid); }
         send(ws, { type: 'terminal:closed', sessionId: sid, payload: { exitCode } });
       },
+      clientCols,
+      clientRows,
     );
     if (!session) return false;
 
@@ -401,6 +454,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       sessionId: session.id,
       payload: { cols: session.cols, rows: session.rows, cwd: session.cwd, processName: session.processName },
     });
+    pushInitialCwd(ws, session.id);
     return true;
   };
 
@@ -886,6 +940,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
               send(ws, { type: 'terminal:output', sessionId, payload: { data } });
               promptDetector.feed(sessionId, data);
               idleDetector.activity(sessionId);
+              scheduleCwdCheck(ws, sessionId);
               resetAutopilotTimer(sessionId);
               managerService.feedOutput(sessionId, data);
             },
@@ -893,6 +948,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
               ownedSessions.delete(sessionId);
               promptDetector.unwatch(sessionId);
               idleDetector.unwatch(sessionId);
+              clearCwdCheck(sessionId);
               aiSessions.delete(sessionId);
               autopilotService.clearSession(sessionId);
               const apTimer = autopilotTimers.get(sessionId);
@@ -904,6 +960,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           sessionGens.set(session.id, globalManager.getAttachGen(session.id));
           watchSession(session.id);
           watchSessionIdle(session.id);
+          pushInitialCwd(ws, session.id);
           // Register session with manager — initial label, client will sync real names
           const shellNum = ownedSessions.size;
           managerService.setSessionLabel(session.id, `Shell ${shellNum}`);
@@ -944,7 +1001,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         // Ein Anhänge-Pfad für alle: derselbe Helfer, den auch die Selbstheilung
         // bei Eingabe/Resize benutzt. Nur hier kennen wir die echten Maße des
         // Clients und dürfen die PTY darauf setzen.
-        if (attachToThisClient(msg.sessionId)) {
+        if (attachToThisClient(msg.sessionId, cols, rows)) {
           const session = globalManager.getSession(msg.sessionId)!;
           pendingInputLen.set(session.id, 0); // alter Zählerstand der Vorgängerverbindung
           if (!managerService.getSessionList().find(s => s.sessionId === session.id)) {
@@ -1042,10 +1099,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         }
 
         // Auch eine Größenmeldung kommt nur von einem Client, der die Karte vor
-        // Augen hat — dieselbe Selbstheilung wie bei der Eingabe.
+        // Augen hat — dieselbe Selbstheilung wie bei der Eingabe. Die Maße
+        // kennen wir hier: mitgeben, damit ein Breitenwechsel den veralteten
+        // Puffer verwirft statt ihn in falscher Breite abzuspielen.
         if (globalManager.isDetached(msg.sessionId)) {
           logger.info(`Resize on a detached session ${msg.sessionId.slice(0, 8)} — reattaching this client`);
-          attachToThisClient(msg.sessionId);
+          attachToThisClient(msg.sessionId, cols, rows);
         }
 
         if (!globalManager.resize(msg.sessionId, cols, rows)) {
