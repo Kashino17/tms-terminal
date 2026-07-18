@@ -293,6 +293,23 @@
   .island-browser-badge:active { transform: scale(.9); }
   .island-browser-badge.is-visible { display: flex; }
 
+  /* Manager-Bildschirm: die Insel trägt die Messenger-Identität statt
+     Ping/Aktivität/Gebetszeit — Bild · Name · Online, wie die Kopfzeile eines
+     Chats. Dieselbe „fit-content"-Mechanik wie im Terminal-Modus. */
+  .island-mgr { display: none; align-items: center; gap: 7px; min-width: 0; max-width: 62vw; }
+  #statusHeader.is-manager-mode .island-mgr { display: flex; }
+  #statusHeader.is-manager-mode .status-hd__metric,
+  #statusHeader.is-manager-mode .status-hd__activity,
+  #statusHeader.is-manager-mode .island-browser-badge { display: none; }
+  .island-mgr__ava { flex: none; display: inline-flex; }
+  .island-mgr__ava .mgr-ava { width: 22px; height: 22px; font-size: 9px; }
+  .island-mgr__name { font-weight: 700; font-size: 13.5px; letter-spacing: -.01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .island-mgr__presence { flex: none; display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 600; color: var(--ok); }
+  .island-mgr__presence::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .island-mgr__presence.is-typing { color: var(--accent); }
+
   /* Long-Press + Ziehen auf der Insel wechselt den Bildschirm — der Hinweis
      schwebt knapp darunter, genau wie das Terminal-Switcher-Label. */
   .island-swipe-hint { position: fixed; top: calc(var(--safe-top) + 8px + 44px); left: 50%; z-index: 61;
@@ -433,14 +450,31 @@
   .dock-page--term > * { transition: max-width 280ms var(--ease-out),
     opacity 160ms ease-out, margin 280ms var(--ease-out), transform 280ms var(--ease-out); }
   .dock-page--term > .term-input-btn { margin-bottom: 1px; }
-  .dock-page--term > .term-input-row__prompt { margin-bottom: 8px; }
+  /* Prompt-Zeichen exakt auf die erste Textzeile legen: gleiche Zeilenbox
+     (line-height) wie die Textarea und unten bündig. Das eigene align-self
+     ist nötig, weil die generische .dock-page-Regel (align-items: center)
+     später im Stylesheet steht und das flex-end der Zeile überstimmt — sonst
+     schwebt das $ ~4px über der Textzeile. margin-bottom = padding-bottom der
+     Textarea. So sitzt das $ auf einer Ebene mit dem Text. */
+  .dock-page--term > .term-input-row__prompt { align-self: flex-end; margin-bottom: 8px; line-height: var(--term-input-lh, 20px); }
   #dock.is-typing .term-input { font-size: 15px; }
-  #dock.is-typing .term-input-row__prompt { margin-left: 4px; }
+  /* Beim Tippen wächst der Feldtext auf 15px — das $ muss mitziehen, sonst
+     stimmen die Baselines der beiden Zeilenkästen wieder nicht überein. */
+  #dock.is-typing .term-input-row__prompt { margin-left: 4px; font-size: 15px; }
   #dockInput { -webkit-user-select: text; user-select: text; }
   #dock.is-switching { transform: translateX(-50%) translateY(-6px) scale(1.03); box-shadow: 0 16px 40px rgba(0,0,0,.42); }
   .dock-page { display: flex; align-items: center; gap: 2px; width: 100%;
     transition: transform 360ms var(--spring), opacity 240ms ease; }
   .dock-page:not(.is-active) { position: absolute; inset: 6px; opacity: 0; pointer-events: none; }
+  /* Die aktive (sichtbare, bedienbare) Seite ruht IMMER bei translateX(0) — ihr
+     Transform wird NICHT mit-transitioniert, sie blendet nur per Deckkraft ein.
+     Der federnde Einlauf (--spring schwingt nach links ÜBER die 0 hinaus) blieb
+     auf echten Android-WebViews (backdrop-filter + overflow:hidden) manchmal
+     genau im Überschwinger hängen — dann stand der Bar-Inhalt (Prompt/Kamera)
+     links abgeschnitten. Ohne Transform-Transition gibt es keinen Frame, in dem
+     die aktive Seite hängen bleiben könnte. Die AUSlaufenden Seiten gleiten
+     weiterhin (sie sind dabei ohnehin unsichtbar: opacity 0 / pointer-events none). */
+  .dock-page.is-active { transition: opacity 240ms ease; }
   .dock-page--nav { justify-content: space-between; }
   .dock-page--term, .dock-page--rec { gap: 5px; }
   #dock[data-page="nav"]  .dock-page--term, #dock[data-page="rec"] .dock-page--term { transform: translateX(30%); }
@@ -452,7 +486,21 @@
   #dock[data-page="rec"] .dock-page--web { transform: translateX(30%); }
   #dock[data-page="web"] .dock-page--nav  { transform: translateX(-30%); }
   #dock[data-page="web"] .dock-page--term { transform: translateX(30%); }
+  #dock[data-page="web"] .dock-page--mgr  { transform: translateX(30%); }
   #dock[data-page="web"] .dock-page--rec  { transform: translateY(60%); }
+  /* Manager-Seite: die Chat-Eingabezeile, gleiche Herein-Mechanik wie Browser. */
+  .dock-page--mgr { gap: 6px; align-items: center; padding: 0 4px; }
+  .mgr-dock-input { flex: 1; min-width: 36px; height: 40px; padding: 0 14px; border-radius: 999px;
+    font: 14px var(--font-ui); color: var(--text); background: rgba(var(--overlay-rgb),.08);
+    border: 1px solid var(--glass-border); outline: none; -webkit-user-select: text; user-select: text;
+    touch-action: pan-y; }
+  .mgr-dock-input::placeholder { color: var(--text-dim); }
+  #dock[data-page="nav"] .dock-page--mgr, #dock[data-page="term"] .dock-page--mgr,
+  #dock[data-page="rec"] .dock-page--mgr { transform: translateX(30%); }
+  #dock[data-page="mgr"] .dock-page--nav  { transform: translateX(-30%); }
+  #dock[data-page="mgr"] .dock-page--term { transform: translateX(30%); }
+  #dock[data-page="mgr"] .dock-page--web  { transform: translateX(30%); }
+  #dock[data-page="mgr"] .dock-page--rec  { transform: translateY(60%); }
   #browserUrlInput { -webkit-user-select: text; user-select: text; touch-action: pan-y; }
   .dock-switch-hint { position: absolute; left: 50%; bottom: 2px; width: 34px; height: 3px; border-radius: 2px;
     background: rgba(var(--overlay-rgb),.22); transform: translateX(-50%); opacity: 0; transition: opacity 200ms ease; }
@@ -680,18 +728,40 @@
   .card-name-wrap { flex: 1 1 0%; min-width: 0; }
   /* Name + description are both readonly inputs; triple-tap unlocks editing
      (see wireTripleTapEdit) so single taps never pop the keyboard. */
-  .card-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-section); font-weight: 700; letter-spacing: -.005em; background: none; border: none; padding: 1px 0; width: 100%; border-bottom: 1px solid transparent; cursor: default; }
+  .card-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-section); font-weight: 700; letter-spacing: -.005em; line-height: 1.2; background: none; border: none; padding: 0; width: 100%; border-bottom: 1px solid transparent; cursor: default; }
   .card-desc { display: block; min-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-caption); color: var(--text-dim); margin-top: 1px; background: none; border: none; padding: 1px 0; border-bottom: 1px solid transparent; cursor: default; }
   .card-name[data-editing="1"], .card-desc[data-editing="1"] { border-bottom: 1px solid var(--accent); outline: none; cursor: text; }
   .card-name[data-editing="1"] { text-overflow: clip; }
   .card-desc[data-editing="1"] { text-overflow: clip; }
+  /* Auto-info under the title: last folder of the working directory. Reuses the
+     .card-desc look but is a non-editable <span>. Empty -> collapses (no gap). */
+  .card-cwd { display: block; min-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-caption); color: var(--text-dim); margin-top: 0; line-height: 1.1; }
+  .card-cwd:empty { display: none; }
 
-  /* Per-terminal Auto-Approve — 1-tap header pill, default ON. */
-  .auto-toggle { flex: none; display: flex; align-items: center; justify-content: center; height: 30px; width: 34px; padding: 0; border-radius: var(--radius-pill); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
-  .auto-toggle .ic { width: var(--icon-sm); height: var(--icon-sm); flex: none; }
-  .auto-toggle__label { letter-spacing: .01em; }
-  .auto-toggle.is-on { color: var(--ok); background: rgba(var(--ok-rgb),var(--chip-a)); border-color: rgba(var(--ok-rgb),.4); }
-  .auto-toggle:active { transform: scale(.94); }
+  /* Per-terminal ⋮ menu button (replaces the old ⚡ auto-toggle). */
+  .card-menu-btn { flex: none; display: flex; align-items: center; justify-content: center; height: 30px; width: 30px; padding: 0; border-radius: var(--radius-pill); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 160ms var(--spring), background 160ms var(--spring); }
+  .card-menu-btn .ic { width: var(--icon-sm); height: var(--icon-sm); flex: none; }
+  .card-menu-btn:active { transform: scale(.94); }
+  .card-menu-btn[aria-expanded="true"] { color: var(--text); background: rgba(var(--overlay-rgb),.12); }
+
+  /* Body-appended dropdown so it never clips inside a card (Stack + Liste). */
+  /* max-width: das Menü darf nie breiter werden als der Bildschirm — die
+     Bestätigungszeile (Label + Ja + Abbrechen) ist breiter als die zwei
+     Menüzeilen; notfalls ellipsiert das Label statt rechts rauszulaufen. */
+  .card-menu { position: fixed; z-index: 200; min-width: 200px; max-width: calc(100vw - 16px); padding: 5px; border-radius: 14px; display: flex; flex-direction: column; gap: 2px; box-shadow: 0 14px 44px rgba(0,0,0,.45); }
+  .card-menu__row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 11px; border: none; background: none; color: var(--text); font-size: var(--fs-body); border-radius: 10px; cursor: pointer; text-align: left; }
+  .card-menu__row:active { background: rgba(var(--overlay-rgb),.10); }
+  .card-menu__row .ic { flex: none; color: var(--text-dim); }
+  .card-menu__label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-menu__row--danger, .card-menu__row--danger .ic { color: var(--err); }
+  .card-menu__switch { flex: none; width: 34px; height: 20px; border-radius: 999px; background: rgba(var(--overlay-rgb),.25); position: relative; transition: background 160ms var(--spring); }
+  .card-menu__switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 160ms var(--spring); }
+  .card-menu__switch[data-on="true"] { background: var(--ok); }
+  .card-menu__switch[data-on="true"]::after { transform: translateX(14px); }
+  .card-menu__confirm { display: flex; align-items: center; gap: 8px; padding: 10px 11px; }
+  .card-menu__confirm .card-menu__label { color: var(--err); }
+  .card-menu__confirm button { flex: none; padding: 5px 12px; border-radius: 8px; font-size: var(--fs-label); border: 1px solid var(--glass-border); background: rgba(var(--overlay-rgb),.08); color: var(--text); cursor: pointer; }
+  .card-menu__confirm .card-menu__confirm-yes { color: var(--err); border-color: rgba(var(--err-rgb),.4); background: rgba(var(--err-rgb),.12); }
   .status-chip { flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .02em; padding: 4px 9px; border-radius: 999px; display: flex; align-items: center; gap: 5px; text-transform: uppercase; }
   .status-chip .dot { width: 6px; height: 6px; border-radius: 50%; }
   .status-chip[data-status="running"] { color: var(--accent); background: rgba(var(--accent-rgb),var(--chip-a)); }
@@ -852,24 +922,24 @@
   /* Der Stapel endet ÜBER dem Slider, nicht darunter. Der Wechsel ist bewusst
      NICHT animiert: eine bottom-Transition würde die Karte (und damit das
      xterm) jeden Frame neu layouten — ein SIGWINCH-Sturm für die PTY. */
-  body.has-switcher .stack { bottom: 52px; }
+  body.has-switcher .stack { bottom: 40px; }
   /* Die Tastenleiste liegt nicht AUF dem Terminal — es macht ihr Platz.
      --keys-h ist die ECHTE Panelhöhe (gesetzt beim Öffnen); statische Werte
      gingen auseinander, sobald die Tastatur den Viewport verkürzte. */
   body.keys-open .stack { bottom: calc(var(--keys-h, 100px) + 12px); }
-  /* Die Punkte sitzen jetzt ÜBER der Tastenleiste — der Stapel muss zusätzlich
-     ihre Höhe (~46px) freihalten, sonst überlappt das Terminal die Punkte. */
-  body.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px + 40px + 46px); }
+  /* Die Punkte sitzen über der Tastenleiste — der Stapel hält genau ihre Höhe
+     frei, sodass das Terminal knapp über den Punkten endet (keine Lücke). */
+  body.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px + 30px); }
   body.keys-open .term-list { padding-bottom: calc(var(--keys-h, 100px) + 20px); }
-  /* Tastatur offen: die Slider-Punkte weichen, das Terminal wird größer. */
-  #termSwitcher { transition: opacity 220ms ease-out, transform 380ms var(--spring-pop); }
-  body.typing #termSwitcher { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(24px) scale(.9); }
-  body.typing.has-switcher .stack { bottom: 0; }
-  /* Beim Tippen sind die Punkte weg — die Leiste rückt nach unten nach,
-     und die Karte muss nur noch die Leiste selbst freihalten. */
+  /* Die Terminal-Punkte bleiben IMMER sichtbar — auch beim Tippen. Sie sind die
+     Terminal-Navigation und dürfen nicht verschwinden. Früher wurden sie beim
+     Tippen ausgeblendet und das Terminal wuchs in ihren Platz; das führte zu
+     „Navigation weg" (Punkte plötzlich fort) und uneinheitlichen Höhen. Jetzt ist
+     die Bar-Höhe in ALLEN Zuständen gleich — das Terminal ist maximal groß und
+     füllt bis knapp über die Punkte, ohne Lücke, egal ob Tastatur auf/zu ist. */
+  #termSwitcher { transition: transform 380ms var(--spring-pop); }
+  /* Beim Tippen bleibt die Tastenleiste an der Eingabe (identisch zum Normalfall). */
   body.typing .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + var(--dock-h, 62px)); }
-  body.typing.keys-open .stack,
-  body.typing.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 12px); }
 
   /* ── Terminal-Slider ──────────────────────────────────────────────────────
      Nur Punkte. Antippen springt, gedrückt halten und ziehen schiebt den Stapel
@@ -920,6 +990,11 @@
      Tastengruppe seitlich; das ✕ bleibt dabei stehen, wo es hingehört. */
   .keys-panel .tt-key { height: 34px; min-width: 32px; padding: 0 8px; font-size: var(--fs-caption); border-radius: var(--radius-sm); flex: none; }
   .keys-panel .tt-key--icon { width: 32px; padding: 0; }
+  /* Enter sitzt an der Stelle des früheren Mikros und füllt den freien Platz
+     zwischen den Pfeilen und der Werkzeuggruppe — breit und als Primäraktion
+     im Akzentton, wie der Senden-Knopf der Eingabezeile. */
+  .keys-panel .tt-key--enter { flex: 1 1 auto; width: auto; min-width: 44px; padding: 0 12px; color: var(--accent); background: rgba(var(--accent-rgb),.16); border-color: rgba(var(--accent-rgb),.32); }
+  .keys-panel .tt-key--enter:active { background: rgba(var(--accent-rgb),.3); }
   .keys-panel__keys { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px;
     overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .keys-panel__keys::-webkit-scrollbar { display: none; }
@@ -1034,6 +1109,17 @@
   #managerArtifacts:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 0 12px; overflow: hidden; }
   #managerMemory:not([hidden]) { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 2px 12px; display: flex; flex-direction: column; gap: 4px; }
 
+  /* ── Manager-Topbar: schlanke Leiste (Tabs · Modell · Menü). Die Identität
+     (Bild · Name · Online) trägt jetzt die Dynamic Island. ───────────────── */
+  .mgr-topbar { flex: none; display: flex; align-items: center; gap: 8px; padding: 2px 2px 8px;
+    width: 100%; max-width: 640px; margin: 0 auto; }
+  /* Tabs nehmen den freien Platz und scrollen notfalls in sich — Modell-Badge
+     und Menü bleiben als flex:none rechts angepinnt und NIE abgeschnitten. */
+  .mgr-topbar .subtabs { margin: 0; flex: 1 1 0; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .mgr-topbar .subtabs::-webkit-scrollbar { display: none; }
+  .mgr-topbar .subtabs button { flex: none; }
+  .mgr-topbar .mgr-model { flex: none; margin-left: 0; max-width: 38vw; }
+  .mgr-topbar .mgr-menu-btn { flex: none; margin-left: 0; }
   /* ── Manager-Kopf: Profilbild, Name, Präsenz (Messenger-Kopfzeile) ───────── */
   .mgr-header { flex: none; display: flex; align-items: center; gap: 12px; padding: 2px 2px 12px; }
   .mgr-header__meta { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -1059,6 +1145,12 @@
   .attach-btn:active { background: rgba(var(--overlay-rgb),.1); color: var(--accent); }
   .chat-attach-row:not([hidden]) { flex: none; display: flex; gap: 8px; padding: 8px 2px 2px; overflow-x: auto; scrollbar-width: none; }
   .chat-attach-row::-webkit-scrollbar { display: none; }
+  /* Die Eingabezeile wohnt jetzt im Dock — die Anhang-Miniaturen schweben
+     deshalb knapp über der Bar, statt in der Karte zu kleben. */
+  #managerAttachRow.chat-attach-row:not([hidden]) { position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px + var(--dock-h, 62px) + 8px); z-index: 41;
+    width: min(560px, 92vw); padding: 8px 10px; border-radius: 16px;
+    background: var(--glass); border: 1px solid var(--glass-border); backdrop-filter: blur(12px); }
   .attach-thumb { position: relative; flex: none; width: 56px; height: 56px; border-radius: 12px; overflow: hidden; border: 1px solid var(--glass-border); background: rgba(var(--overlay-rgb),.06); }
   .attach-thumb img { width: 100%; height: 100%; object-fit: cover; }
   .attach-thumb__x { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
@@ -1124,6 +1216,74 @@
   .chip-group button { padding: 7px 13px; border-radius: 999px; font: 600 12px var(--font-ui); color: var(--text-dim); background: rgba(var(--overlay-rgb),.05); border: 1px solid var(--glass-border); cursor: pointer; transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
   .chip-group button.active { color: var(--text); background: rgba(var(--accent-rgb),.18); border-color: rgba(var(--accent-rgb),.4); }
   .cloud-toolbar__spacer { flex: 1; }
+
+  /* ---------- Cloud folder bar ---------- */
+  .cloud-folderbar { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 10px; scrollbar-width: none; }
+  .cloud-folderbar::-webkit-scrollbar { display: none; }
+  .folder-chip { flex: none; display: flex; align-items: center; gap: 7px; padding: 8px 13px; border-radius: 999px; font: 600 12.5px var(--font-ui); color: var(--text-dim); background: rgba(var(--overlay-rgb),.05); border: 1px solid var(--glass-border); cursor: pointer; transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
+  .folder-chip.active { color: var(--text); background: rgba(var(--accent-rgb),.16); border-color: rgba(var(--accent-rgb),.4); }
+  .folder-chip__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .folder-chip__count { font: 600 11px var(--font-mono); color: var(--text-dim); }
+  .folder-chip__warn { color: #f59f00; font-size: 11px; }
+  .folder-chip--add { padding: 8px 12px; font-size: 15px; line-height: 1; }
+
+  /* ---------- Cloud filter row ---------- */
+  .cloud-filterrow { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .cloud-filterrow .chip-group button { padding: 6px 10px; font-size: 11.5px; }
+  .cloud-search { flex: 1; min-width: 110px; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--glass-border); background: rgba(var(--overlay-rgb),.05); color: inherit; font: 12.5px var(--font-ui); }
+
+  /* ---------- Dense service rows ---------- */
+  .svc-row { display: flex; align-items: center; gap: 11px; width: 100%; padding: 10px 10px; text-align: left; cursor: pointer; border-radius: 12px; border: none; border-left: 3px solid transparent; background: none; color: inherit; font: inherit; }
+  .svc-row:active { background: rgba(var(--overlay-rgb),.05); }
+  .svc-row + .svc-row { margin-top: 2px; }
+  .svc-row--error { border-left-color: #f03e3e; background: rgba(240,62,62,.06); }
+  .svc-glyph { flex: none; width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font: 700 13px var(--font-mono); background: rgba(var(--overlay-rgb),.08); }
+  .svc-glyph--vercel { color: var(--text); }
+  .svc-glyph--render { color: #9775fa; }
+  .svc-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .svc-row__name { font: 700 13.5px var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .svc-row__repo { font: 11px var(--font-mono); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+  .svc-row__side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+  .svc-status { display: flex; align-items: center; gap: 5px; font: 11px var(--font-mono); color: var(--text-dim); }
+  .svc-status .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .svc-status[data-s="ready"] .dot, .svc-status[data-s="live"] .dot, .svc-status[data-s="done"] .dot { background: rgba(55,178,77,.55); }
+  .svc-status[data-s="queued"] .dot { background: #1c7ed6; }
+  .svc-status[data-s="canceled"] .dot { background: #64748B; }
+  .svc-status[data-s="building"] .dot { background: #f59f00; animation: dotBreathe 1.3s ease-in-out infinite; }
+  .svc-status[data-s="error"] .dot { background: #f03e3e; }
+  .svc-status[data-s="suspended"] .dot, .svc-status[data-s="inactive"] .dot { background: #64748B; }
+  .svc-check { flex: none; width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid var(--glass-border); display: none; align-items: center; justify-content: center; font-size: 12px; }
+  .cloud-selecting .svc-check { display: flex; }
+  .svc-row.is-checked .svc-check { background: rgba(var(--accent-rgb),.3); border-color: var(--accent); }
+
+  /* ---------- Selection action bar + org sheets ---------- */
+  .cloud-actionbar { position: sticky; bottom: 8px; display: flex; gap: 8px; padding: 10px; border-radius: 14px; margin-top: 10px; }
+  .cloud-actionbar .btn-chip { flex: 1; text-align: center; }
+  .cloud-empty { text-align: center; color: var(--text-dim); font: 12.5px var(--font-ui); padding: 28px 0 16px; }
+  .org-color-row { display: flex; gap: 10px; margin: 12px 0 16px; flex-wrap: wrap; }
+  .org-color { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+  .org-color.is-sel { border-color: var(--text); }
+  .org-name-input { width: 100%; padding: 11px 13px; border-radius: 12px; border: 1px solid var(--glass-border); background: rgba(var(--overlay-rgb),.05); color: inherit; font: 13.5px var(--font-ui); margin-bottom: 4px; box-sizing: border-box; }
+  .org-list-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 13px 6px; border-top: 1px solid rgba(var(--overlay-rgb),.08); font: 600 13.5px var(--font-ui); cursor: pointer; text-align: left; background: none; border-left: none; border-right: none; border-bottom: none; color: inherit; }
+  .org-list-row:first-child { border-top: none; }
+
+  /* ---------- Cloud account linking ---------- */
+  .cloud-connect-card { padding: 18px 16px; margin-bottom: 12px; }
+  .cloud-connect-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font: 700 15px var(--font-ui); }
+  .cloud-connect-card p { margin: 0 0 12px; font: 12.5px var(--font-ui); color: var(--text-dim); }
+  /* Direktlink zur API-Key-Seite des Anbieters (nur solange nicht verbunden). */
+  .cloud-key-link { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 12px; padding: 0;
+    background: none; border: none; color: var(--accent); font: 600 12.5px var(--font-ui); text-align: left; cursor: pointer; }
+  .cloud-key-link:active { opacity: .55; }
+  .cloud-connect-row { display: flex; gap: 8px; }
+  .cloud-connect-row input { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(var(--overlay-rgb),.14); background: rgba(var(--overlay-rgb),.05); color: inherit; font: 13px var(--font-mono); }
+  .cloud-account-row { padding: 14px 4px; border-top: 1px solid rgba(var(--overlay-rgb),.08); }
+  .cloud-account-row:first-child { border-top: none; }
+  .cloud-account-row__head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .cloud-account-row__name { flex: 1; font: 700 14px var(--font-ui); }
+  .cloud-account-key { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cloud-account-key code { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12.5px var(--font-mono); color: var(--text-dim); }
+  .cloud-key-invalid { color: #e03131; font: 12px var(--font-ui); margin-top: 6px; }
 
   .folder-group { padding: 6px 8px 8px; margin-bottom: 14px; }
   .folder-group__head { display: flex; align-items: center; gap: 8px; padding: 8px 6px; cursor: pointer; }
@@ -1239,14 +1399,17 @@
   .unknown-page__hint { margin-top: 14px; font-size: 12px; max-width: 260px; line-height: 1.5; }
 
   .browser-tab-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .browser-tab-card { position: relative; padding: 14px 12px 12px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; transition: transform 200ms var(--spring), border-color 200ms var(--spring); border: 1px solid transparent; }
+  /* min-width:0 lets each card shrink to its 1fr track — ohne das bläht ein
+     langer nowrap-Titel (min-width:auto) die Karte über die Spalte hinaus und
+     die ganze Tab-Übersicht läuft seitlich über. */
+  .browser-tab-card { position: relative; min-width: 0; padding: 14px 12px 12px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; transition: transform 200ms var(--spring), border-color 200ms var(--spring); border: 1px solid transparent; }
   .browser-tab-card:active { transform: scale(.97); }
   .browser-tab-card.is-active { border-color: rgba(var(--accent-rgb),.5); }
   .browser-tab-card__close { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color 200ms var(--spring), background 200ms var(--spring); }
   .browser-tab-card__close .ic { width: 14px; height: 14px; }
   .browser-tab-card__close:active { background: rgba(var(--overlay-rgb),.1); color: var(--err); }
   .browser-tab-card__preview { height: 46px; border-radius: 10px; background: rgba(var(--overlay-rgb),.06); display: flex; align-items: center; justify-content: center; font: 700 15px var(--font-mono); color: var(--text-dim); }
-  .browser-tab-card__title { font: 600 12.5px var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 18px; }
+  .browser-tab-card__title { font: 600 12.5px var(--font-ui); min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 18px; }
   .browser-tab-card__badge { font: 600 10px var(--font-ui); color: var(--accent); opacity: .8; }
   .browser-tab-newcard { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 96px; color: var(--accent); font: 600 12.5px var(--font-ui); transition: background 200ms var(--spring), transform 200ms var(--spring); }
   .browser-tab-newcard:active { transform: scale(.96); }
@@ -1404,7 +1567,11 @@
      bar. The toggle no longer opens a sheet — it shows/hides the non-modal
      .keys-panel (see below) so the terminal stays visible while typing. ===== */
   .term-input-row { flex: none; display: flex; align-items: center; gap: 5px; margin: 0 8px 8px; padding: 5px 6px; border-radius: var(--radius-pill); font-family: var(--font-mono); }
-  .term-input-row__prompt { flex: none; margin: 0 1px 0 7px; color: var(--text-dim); font-size: var(--fs-body); font-weight: 700; }
+  /* font-family explizit: in der Karte erbt das $ die Mono-Schrift vom
+     .term-input-row-Wrapper, im Dock ist es ein Direktkind der Bar-Seite —
+     dort lief es in der UI-Sans, deren andere Baseline das $ ein paar Pixel
+     neben die Mono-Textzeile setzte. */
+  .term-input-row__prompt { flex: none; margin: 0 1px 0 7px; color: var(--text-dim); font-size: var(--fs-body); font-weight: 700; font-family: var(--font-mono); }
   .term-input { flex: 1; min-width: 36px; background: none; border: none; outline: none; color: var(--text); font: var(--fs-body) var(--font-mono); padding: 8px 2px; }
   .term-input::placeholder { color: var(--text-dim); }
   .term-input:disabled { color: var(--text-dim); }
@@ -1536,6 +1703,13 @@
     <button class="island-browser-badge" id="islandBrowserBadge" aria-label="Browser öffnen" title="Browser">
       <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/></svg>
     </button>
+    <!-- Manager-Modus: die Insel trägt die Messenger-Identität (Bild · Name ·
+         Online) statt Ping/Gebetszeit — analog zur Terminal-Mini-Toolbar. -->
+    <div class="island-mgr" id="islandMgr" aria-hidden="true">
+      <span class="island-mgr__ava" id="islandMgrAva" aria-hidden="true"></span>
+      <span class="island-mgr__name" id="islandMgrName">Manager</span>
+      <span class="island-mgr__presence" id="mgrPresence">online</span>
+    </div>
     <span class="status-hd__metric status-hd__metric--prayer">
       <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
       <span id="statusPrayerLabel">—</span>
@@ -1610,11 +1784,11 @@
   </div>
 
   <div class="dock-page dock-page--term" id="dockTerm">
+    <button class="term-input-btn term-keys-btn" id="dockKeysBtn" aria-label="Tasten"></button>
     <span class="term-input-row__prompt">$</span>
     <textarea class="term-input" id="dockInput" rows="1" placeholder="Befehl eingeben…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Befehl eingeben"></textarea>
     <button class="term-input-btn term-mic-btn" id="dockMicBtn" aria-label="Diktieren"></button>
     <button class="term-input-btn term-send-btn" id="dockSendBtn" aria-label="Senden"></button>
-    <button class="term-input-btn term-keys-btn" id="dockKeysBtn" aria-label="Tasten"></button>
   </div>
 
   <!-- Browser-Leiste: dieselbe Bar, andere Seite. Adressfeld + Navigation
@@ -1629,6 +1803,16 @@
     </div>
     <button class="browser-nav-btn browser-tabs-btn" id="browserTabsBtn" aria-label="Tabs anzeigen"><span class="browser-tabs-btn__count" id="browserTabCount">1</span></button>
     <button class="browser-nav-btn" id="browserMenuBtn" aria-label="Browser-Menü"></button>
+  </div>
+
+  <!-- Manager-Leiste: dieselbe Bar, andere Seite. Die Chat-Eingabezeile wohnt
+       unten am Daumen, genau wie Terminal-Eingabe und Browser-Adresse. Gleiche
+       IDs wie zuvor in der Karte — die Bridge (rewire/injectManagerInput) greift
+       unverändert. Die Anhang-Miniaturen (#managerAttachRow) schweben darüber. -->
+  <div class="dock-page dock-page--mgr" id="dockMgr">
+    <button class="attach-btn" id="managerAttachBtn" aria-label="Bild anhängen"></button>
+    <input type="text" id="managerTextInput" class="mgr-dock-input" placeholder="Nachricht an Manager…" autocomplete="off" autocapitalize="sentences" enterkeyhint="send">
+    <button class="mic-btn glass" id="managerMicBtn" aria-label="Sprachnachricht aufnehmen"></button>
   </div>
 
   <div class="dock-page dock-page--rec" id="dockRec">
@@ -1797,6 +1981,30 @@
   </div>
 </div>
 
+<div class="sheet-wrap" id="cloudOrgSheetWrap" hidden>
+  <div class="sheet-backdrop" data-close-cloudorg></div>
+  <div class="sheet-panel glass glass--strong">
+    <div class="sheet-grabber"></div>
+    <div class="sheet-head-row">
+      <div class="sheet-title" id="cloudOrgSheetTitle"></div>
+      <button class="sheet-close-btn" id="cloudOrgSheetClose">Schließen</button>
+    </div>
+    <div class="sheet-scroll-body" id="cloudOrgSheetBody"></div>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="cloudAccountsSheetWrap" hidden>
+  <div class="sheet-backdrop" data-close-cloudaccounts></div>
+  <div class="sheet-panel glass glass--strong">
+    <div class="sheet-grabber"></div>
+    <div class="sheet-head-row">
+      <div class="sheet-title">Cloud-Konten</div>
+      <button class="sheet-close-btn" id="cloudAccountsSheetClose">Schließen</button>
+    </div>
+    <div class="sheet-scroll-body" id="cloudAccountsSheetBody"></div>
+  </div>
+</div>
+
 <div class="sheet-wrap sheet-wrap--top" id="spotlightWrap" hidden>
   <div class="sheet-backdrop" data-close-spotlight></div>
   <div class="spotlight-panel glass glass--strong" role="dialog" aria-modal="true" aria-label="Spotlight-Suche">
@@ -1918,7 +2126,8 @@
     keysPanelOpen: false,
     // Task 6
     managerTab: 'chat',
-    cloudView: 'folder', cloudProviderFilter: 'all', cloudDetailId: null, cloudDetailTab: 'env', cloudBuildTimer: null,
+    cloudFolder: 'all', cloudProviderFilter: 'all', cloudStatusFilter: 'all', cloudSearch: '', cloudSelect: null,
+    cloudDetailId: null, cloudDetailTab: 'env', cloudBuildTimer: null,
     autoLock: false, pushNotif: true, adhanNotif: true,
     pin: TMS_DATA.demo.pin, lockDigits: '',
     // Feature 2 — dictation is a single-flight flow: only one card's mic can
@@ -1936,7 +2145,7 @@
   // prompt now auto-resolves on first run; toggling a terminal OFF + replay
   // demoes the permission-sheet flow.
   TMS_DATA.sessions.forEach(s => {
-    cardState[s.id] = { lines: s.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
+    cardState[s.id] = { lines: s.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false, cwd: s.cwd || '' };
   });
   state.activeCardId = state.order[0] || null;
 
@@ -1961,11 +2170,11 @@
       colorTag: NEW_TERMINAL_COLORS[(num - 1) % NEW_TERMINAL_COLORS.length],
       status: 'idle', live: false,
       buffer: ['\x1b[2m~\x1b[0m $ '],
-      notes: [], todos: [],
+      notes: [], todos: [], cwd: '~',
     };
     TMS_DATA.sessions.push(session);
     state.order.push(id);
-    cardState[id] = { lines: session.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false };
+    cardState[id] = { lines: session.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false, cwd: session.cwd || '' };
     return session;
   }
 
@@ -2027,6 +2236,7 @@
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/>',
     chevronLeft: '<path d="m15 6-6 6 6 6"/>',
     dots: '<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+    dotsV: '<circle cx="12" cy="5.5" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="18.5" r="1.4" fill="currentColor" stroke="none"/>',
     // Incognito "hat + glasses" glyph — address-bar isolation badge + new-tab notice.
     incognito: '<path d="M5 10Q12 2 19 10"/><path d="M3 10h18"/><circle cx="8" cy="13" r="3"/><circle cx="16" cy="13" r="3"/><path d="M11 13h2"/>',
     key: '<circle cx="7" cy="17" r="4"/><path d="M10 14 20 4"/><path d="M15 9l3 3"/><path d="M18 6l2.5 2.5"/>',
@@ -2529,9 +2739,10 @@
     if (name !== 'prayer') stopPrayerTick();
     if (name !== 'terminals') { cancelDictation(); closeAllListRails(); closeKeysPanel(); }
     if (name !== 'browser') stopBrowserProgressTimers();
-    // Terminals und Browser haben ihre eigene Bar-Seite (Eingabezeile bzw.
-    // Adressleiste) — überall sonst ist die Navigation die Voreinstellung.
-    if (name !== 'terminals' && name !== 'browser' && typeof setDockPage === 'function') setDockPage('nav');
+    // Terminals, Browser UND Manager haben ihre eigene Bar-Seite (Eingabezeile,
+    // Adressleiste bzw. Chat-Eingabe) — überall sonst ist die Navigation die
+    // Voreinstellung. Der jeweilige SCREEN_HOOK setzt danach die eigene Seite.
+    if (name !== 'terminals' && name !== 'browser' && name !== 'manager' && typeof setDockPage === 'function') setDockPage('nav');
     if (typeof renderTermSwitcher === 'function') setTimeout(renderTermSwitcher, 0);
     const prev = currentScreen;
     document.querySelectorAll('[data-screen]').forEach(s => s.hidden = s.dataset.screen !== name);
@@ -2559,10 +2770,16 @@
     // this screen; the brief pop is the same "content just changed" bounce
     // Apple's Dynamic Island does, not a generic screen-transition effect —
     // so it only fires the moment terminal-mode itself flips, not on every nav.
+    // Manager verhält sich genauso: die Insel tauscht Ping/Gebetszeit gegen die
+    // Messenger-Identität (Bild · Name · Online). Der Pop feuert nur im Moment
+    // des Moduswechsels, nicht bei jeder Navigation.
     const enteringTerminalMode = name === 'terminals' && prev !== 'terminals';
     const leavingTerminalMode = name !== 'terminals' && prev === 'terminals';
-    if (enteringTerminalMode || leavingTerminalMode) {
+    const enteringManagerMode = name === 'manager' && prev !== 'manager';
+    const leavingManagerMode = name !== 'manager' && prev === 'manager';
+    if (enteringTerminalMode || leavingTerminalMode || enteringManagerMode || leavingManagerMode) {
       statusHeaderEl.classList.toggle('is-terminal-mode', name === 'terminals');
+      statusHeaderEl.classList.toggle('is-manager-mode', name === 'manager');
       statusHeaderEl.classList.remove('is-popping');
       void statusHeaderEl.offsetWidth;
       statusHeaderEl.classList.add('is-popping');
@@ -2774,6 +2991,26 @@
   // Shared header markup for Stack + Liste. Name + description are readonly
   // inputs unlocked by triple-tap (wireTripleTapEdit); the Auto-Approve pill
   // is a 1-tap per-terminal control (default ON).
+  // Last path component of a (home-normalized) cwd. '~' and '/' pass through,
+  // empty -> '' so the .card-cwd line collapses.
+  function folderLabel(cwd) {
+    if (!cwd) return '';
+    if (cwd === '~' || cwd === '/') return cwd;
+    const parts = cwd.replace(/\/+$/, '').split('/');
+    return parts[parts.length - 1] || cwd;
+  }
+
+  // Bridge hook: server-reported working directory -> in-place patch of the
+  // grey .card-cwd line (Stack + Liste), no full re-render.
+  window.__tmsSetSessionCwd = function (cardId, cwd) {
+    const cs = cardState[cardId];
+    if (cs) cs.cwd = cwd;
+    const session = TMS_DATA.sessions.find(s => s.id === cardId);
+    if (session) session.cwd = cwd;
+    const label = folderLabel(cwd);
+    document.querySelectorAll(`.term-card[data-id="${cardId}"] .card-cwd`).forEach(el => { el.textContent = label; });
+  };
+
   function cardHeaderHtml(session, id, isList) {
     const cs = cardState[id];
     return `
@@ -2781,9 +3018,10 @@
           ${isList ? `<button class="chevron-btn" data-act="toggle" aria-label="Ein-/Ausklappen" title="Ein-/Ausklappen">${icon('chevron', 16)}</button>` : ''}
           <div class="card-name-wrap">
             <input class="card-name" value="${escapeHtml(session.name)}" readonly aria-label="Terminal-Name">
+            <span class="card-cwd" data-card-cwd>${escapeHtml(folderLabel(cs.cwd || ''))}</span>
           </div>
           <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
-          <button class="auto-toggle${cs.autoApprove ? ' is-on' : ''}" data-act="auto" aria-pressed="${cs.autoApprove}" aria-label="Auto-Approve umschalten" title="Auto-Approve">${icon('bolt', 15)}</button>
+          <button class="card-menu-btn" data-act="menu" aria-haspopup="menu" aria-expanded="false" aria-label="Terminal-Menü" title="Menü">${icon('dotsV', 18)}</button>
         </div>`;
   }
 
@@ -2821,8 +3059,7 @@
               <button data-tt-cursor="↓" aria-label="Runter">${arrow(0)}</button>
               <button data-tt-cursor="→" aria-label="Rechts">${arrow(-90)}</button>
             </div>
-            <span class="keys-panel__spacer"></span>
-            <button class="tt-key tt-key--icon" data-tt-key="mic" aria-label="Diktieren" title="Diktieren">${icon('mic', 17)}</button>
+            <button class="tt-key tt-key--enter" data-tt-key="enter" aria-label="Enter senden" title="Enter">${icon('enter', 18)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="screenshots" aria-label="Screenshots" title="Screenshots">${icon('camera', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="files" aria-label="Dateien" title="Dateien">${icon('folder', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="notes" aria-label="Notizen" title="Notizen">${icon('note', 17)}</button>
@@ -2857,7 +3094,19 @@
           const on = cardState[id].selectionMode;
           btn.classList.toggle('is-on', on);
           toast(on ? 'Auswahlmodus an' : 'Auswahlmodus aus');
-        } else if (k === 'mic') startDictation(id);
+        } else if (k === 'enter') {
+          // Der breite Enter-Knopf schickt den Feldinhalt ab (wie ↵ in der
+          // Eingabezeile); ist das Feld leer, geht ein blankes Enter ans PTY.
+          const input = document.getElementById('dockInput');
+          const cmd = input ? input.value.trim() : '';
+          if (cmd) {
+            sendTerminalCommand(id, cmd);
+            input.value = '';
+            if (typeof autoGrowInput === 'function') autoGrowInput(input);
+          } else {
+            handleTermKey('enter', id);
+          }
+        }
         else if (k === 'werkzeuge') openTermToolsSheet(id);
         else if (k === 'closepanel') closeKeysPanel();
       });
@@ -3080,6 +3329,7 @@
   // into whichever view is mounted, and drops straight into inline rename
   // (same click-to-edit flow as an existing card's name field).
   function removeTerminalCard(id) {
+    if (typeof closeCardMenu === 'function') closeCardMenu();
     const idx = state.order.indexOf(id);
     if (idx === -1) return;
     state.order.splice(idx, 1);
@@ -3198,8 +3448,8 @@
     const session = TMS_DATA.sessions.find(s => s.id === id);
     wireEditableField(card.querySelector('.card-name'), 'name', session);
     wireEditableField(card.querySelector('.card-desc'), 'description', session);
-    const auto = card.querySelector('.auto-toggle');
-    if (auto) auto.addEventListener('click', e => { e.stopPropagation(); toggleCardAutoApprove(id); });
+    const menuBtn = card.querySelector('.card-menu-btn');
+    if (menuBtn) menuBtn.addEventListener('click', e => { e.stopPropagation(); openCardMenu(id, menuBtn); });
   }
 
   // ============================================================
@@ -3244,6 +3494,7 @@
     else if (key === 'esc') flashKeyEcho('Esc');
     else if (key === 'tab') flashKeyEcho('Tab');
     else if (key === 'shifttab') flashKeyEcho('⇧Tab');
+    else if (key === 'enter') flashKeyEcho('⏎');
     else flashKeyEcho(key);
   }
 
@@ -3253,8 +3504,12 @@
   // ============================================================
   let dictationTimers = [];
   function setIslandMicBadge(show) {
+    // Rotes Insel-Mikro entfernt (Nutzerwunsch): die laufende Aufnahme ist an
+    // der Eingabezeile (Wellenform + Timer + ✓/✕) ohnehin klar erkennbar. Das
+    // Badge bleibt immer aus — der `show`-Parameter wird bewusst ignoriert, so
+    // dass Demo- UND echter Aufnahmefluss es nicht mehr einblenden.
     const badge = document.getElementById('statusMicBadge');
-    if (badge) badge.hidden = !show;
+    if (badge) badge.hidden = true;
   }
   function startDictation(cardId) {
     if (state.dictation.active) return; // one at a time
@@ -3599,6 +3854,11 @@
     // Switching the active card in Stack changes which card's ⏬ orb (if
     // any) is allowed to show — re-evaluate every card, cheap at this count.
     state.order.forEach(id => updateJumpOrb(id));
+    // Whichever way the focus moved (swipe, rail tap, overview pick, arrow
+    // keys), the dock bar must follow it: placeholder, enabled-state and the
+    // is-target ring all key off dockTargetId(). This is the single choke
+    // point for user-driven terminal switches, so syncing here covers them all.
+    setActive_syncDock();
   }
 
   function wireStackDrag() {
@@ -3611,7 +3871,7 @@
       if (!card) return;
       const idx = state.order.indexOf(card.dataset.id);
       const isActiveCard = idx === Math.round(state.activeFloat);
-      if (isActiveCard && e.target.closest('.card-body-shell, .card-name, .card-desc, .status-chip, .auto-toggle, .replay-pill, .keys-panel, .term-input-row')) return;
+      if (isActiveCard && e.target.closest('.card-body-shell, .card-name, .card-desc, .status-chip, .card-menu-btn, .replay-pill, .keys-panel, .term-input-row')) return;
       pointerId = e.pointerId; startX = e.clientX; startY = e.clientY; startFloat = state.activeFloat; moved = false;
       cardWidthPx = card.getBoundingClientRect().width || 300;
       dragging = true;
@@ -4073,13 +4333,97 @@
     cs.sim.respond();
   }
   document.getElementById('questionSubmitBtn').addEventListener('click', () => submitQuestionAnswer());
-  // Per-terminal Auto-Approve toggle (header pill + the sheet's Auto button).
-  function updateAutoToggleUI(id) {
-    const on = cardState[id].autoApprove;
-    document.querySelectorAll(`.term-card[data-id="${id}"] .auto-toggle`).forEach(btn => {
-      btn.classList.toggle('is-on', on);
-      btn.setAttribute('aria-pressed', String(on));
+  // ── Per-card ⋮ menu: Auto-Approve switch + „Terminal schließen" (confirm) ──
+  // Body-appended popover so it never clips inside a card. Only one open.
+  let openMenuEl = null;
+  function onMenuOutside(e) {
+    if (openMenuEl && !openMenuEl.contains(e.target) && !e.target.closest('.card-menu-btn')) closeCardMenu();
+  }
+  function onMenuKey(e) { if (e.key === 'Escape') closeCardMenu(); }
+  function closeCardMenu() {
+    if (!openMenuEl) return;
+    const btn = document.querySelector(`.term-card[data-id="${openMenuEl.dataset.id}"] .card-menu-btn`);
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    openMenuEl.remove();
+    openMenuEl = null;
+    document.removeEventListener('pointerdown', onMenuOutside, true);
+    document.removeEventListener('keydown', onMenuKey, true);
+  }
+  function openCardMenu(id, btn) {
+    if (openMenuEl && openMenuEl.dataset.id === id) { closeCardMenu(); return; }
+    closeCardMenu();
+    const on = cardState[id] ? cardState[id].autoApprove : true;
+    const menu = document.createElement('div');
+    menu.className = 'card-menu glass glass--dark';
+    menu.dataset.id = id;
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML = `
+      <button class="card-menu__row" data-menu="auto" role="menuitemcheckbox" aria-checked="${on}">
+        <span class="card-menu__label">Auto-Approve</span>
+        <span class="card-menu__switch" data-on="${on}"></span>
+      </button>
+      <button class="card-menu__row card-menu__row--danger" data-menu="close" role="menuitem">
+        <span class="card-menu__label">Terminal schließen</span>
+        ${icon('trash', 16)}
+      </button>`;
+    document.body.appendChild(menu);
+    placeCardMenu(menu, btn);
+    btn.setAttribute('aria-expanded', 'true');
+    openMenuEl = menu;
+    menu.querySelector('[data-menu="auto"]').addEventListener('click', e => {
+      e.stopPropagation();
+      toggleCardAutoApprove(id); // updates the switch via updateAutoToggleUI
     });
+    menu.querySelector('[data-menu="close"]').addEventListener('click', e => {
+      e.stopPropagation();
+      armCloseConfirm(menu, id);
+    });
+    setTimeout(() => {
+      document.addEventListener('pointerdown', onMenuOutside, true);
+      document.addEventListener('keydown', onMenuKey, true);
+    }, 0);
+  }
+  // Rechtsbündig am ⋮-Knopf, an den Bildschirmrändern geklemmt. Eigene
+  // Funktion, weil sie zweimal laufen muss: beim Öffnen UND nachdem die
+  // Bestätigungszeile das Menü verbreitert hat (armCloseConfirm) — die beim
+  // Öffnen geklemmte left-Kante gilt nur für die alte Breite.
+  function placeCardMenu(menu, btn) {
+    const r = btn.getBoundingClientRect();
+    const mw = menu.offsetWidth;
+    let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+    left = Math.max(8, left);
+    menu.style.left = left + 'px';
+    menu.style.top = (r.bottom + 6) + 'px';
+  }
+  function armCloseConfirm(menu, id) {
+    const row = menu.querySelector('[data-menu="close"]');
+    const confirm = document.createElement('div');
+    confirm.className = 'card-menu__confirm';
+    confirm.innerHTML = `
+      <span class="card-menu__label">Wirklich schließen?</span>
+      <button class="card-menu__confirm-yes" data-menu="close-yes">Ja</button>
+      <button class="card-menu__confirm-no" data-menu="close-no">Abbrechen</button>`;
+    row.replaceWith(confirm);
+    const btn = document.querySelector(`.term-card[data-id="${menu.dataset.id}"] .card-menu-btn`);
+    if (btn) placeCardMenu(menu, btn);
+    confirm.querySelector('[data-menu="close-yes"]').addEventListener('click', e => {
+      e.stopPropagation(); closeCardMenu(); closeTerminal(id);
+    });
+    confirm.querySelector('[data-menu="close-no"]').addEventListener('click', e => {
+      e.stopPropagation(); closeCardMenu();
+    });
+  }
+
+  // Reflect the per-terminal Auto-Approve flag on the open ⋮ menu switch
+  // (if any) and the permission sheet's Auto button.
+  function updateAutoToggleUI(id) {
+    const on = cardState[id] ? cardState[id].autoApprove : false;
+    if (openMenuEl && openMenuEl.dataset.id === id) {
+      const sw = openMenuEl.querySelector('.card-menu__switch');
+      if (sw) sw.setAttribute('data-on', String(on));
+      const row = openMenuEl.querySelector('[data-menu="auto"]');
+      if (row) row.setAttribute('aria-checked', String(on));
+    }
     const permBtn = document.getElementById('permAutoBtn');
     if (permBtn && state.pendingPromptId === id) permBtn.setAttribute('aria-pressed', String(on));
   }
@@ -4474,7 +4818,7 @@
     function onCancel() { const wd = dragging; cleanup(); if (wd) { if (wasOpen) openListRail(card); else closeListRail(card); } }
     surface.addEventListener('pointerdown', e => {
       // Controls with their own gestures never start a swipe.
-      if (e.target.closest('.term-input-row, .card-name, .card-desc, .auto-toggle, .status-chip, .chevron-btn, .replay-pill, .jump-bottom-orb, .keys-panel')) return;
+      if (e.target.closest('.term-input-row, .card-name, .card-desc, .card-menu-btn, .status-chip, .chevron-btn, .replay-pill, .jump-bottom-orb, .keys-panel')) return;
       pointerId = e.pointerId; startX = e.clientX; startY = e.clientY;
       dragging = false; decided = false; cleaned = false;
       railW = rail.getBoundingClientRect().width || 260;
@@ -5218,38 +5562,29 @@
   function renderManagerShell() {
     const host = document.querySelector('[data-screen="manager"]');
     const p = TMS_DATA.manager.persona || { name: 'Manager' };
+    // Identität (Bild · Name · Online) trägt jetzt die Dynamic Island, die
+    // Eingabezeile wohnt im Dock. Hier bleibt nur eine schlanke Leiste:
+    // Tabs + Modell-Badge + Menü. Alle bridge-relevanten IDs bleiben erhalten.
     host.innerHTML = `
-      <div class="mgr-header">
-        ${managerAvatarHtml(42)}
-        <div class="mgr-header__meta">
-          <strong class="mgr-header__name">${escapeHtml(p.name || 'Manager')}</strong>
-          <span class="mgr-header__sub">
-            <span class="mgr-header__status" id="mgrPresence">online</span>
-            <button class="mgr-model" id="mgrModelChip" type="button" aria-label="KI-Modell wählen">
-              ${icon('bolt', 12)}<span id="mgrModelName">${escapeHtml(activeManagerModelName())}</span>
-            </button>
-          </span>
-        </div>
-        <button class="mgr-menu-btn" id="mgrMenuBtn" type="button" aria-label="Mehr">
-          <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></svg>
-        </button>
-      </div>
-      <div class="screen-col manager-col">
+      <div class="mgr-topbar">
         <div class="subtabs" id="managerTabs">
           <button data-tab="chat" class="active">Chat</button>
           <button data-tab="artifacts">Artifacts</button>
           <button data-tab="memory">Memory</button>
         </div>
+        <button class="mgr-model" id="mgrModelChip" type="button" aria-label="KI-Modell wählen">
+          ${icon('bolt', 12)}<span id="mgrModelName">${escapeHtml(activeManagerModelName())}</span>
+        </button>
+        <button class="mgr-menu-btn" id="mgrMenuBtn" type="button" aria-label="Mehr">
+          <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></svg>
+        </button>
+      </div>
+      <div class="screen-col manager-col">
         <div class="manager-view">
           <div class="chat-scroll" id="managerChat"></div>
           <div id="managerArtifacts" hidden></div>
           <div id="managerMemory" hidden></div>
           <div class="chat-attach-row" id="managerAttachRow" hidden></div>
-          <div class="chat-input-row" id="managerInputRow">
-            <button class="attach-btn" id="managerAttachBtn" aria-label="Bild anhängen">${icon('camera', 19)}</button>
-            <input type="text" id="managerTextInput" placeholder="Nachricht an Manager…" autocomplete="off">
-            <button class="mic-btn glass" id="managerMicBtn" aria-label="Sprachnachricht aufnehmen">${icon('mic')}</button>
-          </div>
         </div>
       </div>
     `;
@@ -5378,9 +5713,14 @@
       state.managerTab = tab;
       document.querySelectorAll('#managerTabs button').forEach(b => b.classList.toggle('active', b === btn));
       document.getElementById('managerChat').hidden = tab !== 'chat';
-      document.getElementById('managerInputRow').hidden = tab !== 'chat';
       document.getElementById('managerArtifacts').hidden = tab !== 'artifacts';
       document.getElementById('managerMemory').hidden = tab !== 'memory';
+      // Die Eingabezeile lebt jetzt im Dock — sie ergibt nur im Chat Sinn.
+      // Auf Artifacts/Memory zeigt das Dock wieder die Navigation.
+      if (typeof setDockPage === 'function') setDockPage(tab === 'chat' ? 'mgr' : 'nav');
+      // Anhang-Miniaturen gehören nur zum Chat.
+      const attach = document.getElementById('managerAttachRow');
+      if (attach) { if (tab === 'chat') renderManagerAttachments(); else attach.hidden = true; }
     });
   }
 
@@ -5446,7 +5786,11 @@
   const modelSheetCtx = {};
   const CTX_MIN = 4096;
 
-  function clampCtx(v, max) { return Math.max(CTX_MIN, Math.min(max || 32768, Math.round(v) || CTX_MIN)); }
+  function clampCtx(v, max) {
+    const cap = max || 32768;
+    const lo = Math.min(CTX_MIN, cap); // bei winzigem Modell-Max nicht darüber schießen
+    return Math.max(lo, Math.min(cap, Math.round(v) || lo));
+  }
 
   function openManagerModelSheet() {
     const m = TMS_DATA.manager;
@@ -5469,16 +5813,19 @@
       // Aufgeklapptes lokales Modell: Context-Regler + Zahlenfeld + Laden-Knopf.
       if (isLocal && modelSheetExpandedId === p.id && !dis) {
         const max = p.maxContext || 32768;
+        const ctxMin = Math.min(CTX_MIN, max); // Regler-Untergrenze nie über dem Modell-Max
+        // Default: gemerkter Regler-Wert → sonst vom Server empfohlener savedContext
+        // → sonst geladene Länge → moderater Fallback.
         const def = modelSheetCtx[p.id] != null ? modelSheetCtx[p.id]
-          : clampCtx(p.loadedContext || 8192, max);
+          : clampCtx(p.savedContext || p.loadedContext || 8192, max);
         modelSheetCtx[p.id] = def;
         const ctl = `<div class="mgr-ctx" data-ctx-for="${escapeHtml(p.id)}" style="padding:8px 6px 12px;display:flex;flex-direction:column;gap:9px">
           <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-dim)">
             <span>Context-Window</span>
-            <input type="number" class="mgr-ctx-num" min="${CTX_MIN}" max="${max}" step="1024" value="${def}"
+            <input type="number" class="mgr-ctx-num" min="${ctxMin}" max="${max}" step="1024" value="${def}"
               style="width:96px;text-align:right;padding:6px 8px;border-radius:9px;background:rgba(var(--well-rgb),var(--well-a));border:1px solid var(--glass-border);color:var(--text);font:600 13px var(--font-mono)">
           </div>
-          <input type="range" class="mgr-ctx-slider" min="${CTX_MIN}" max="${max}" step="1024" value="${def}" style="width:100%">
+          <input type="range" class="mgr-ctx-slider" min="${ctxMin}" max="${max}" step="1024" value="${def}" style="width:100%">
           <button class="btn-chip is-primary mgr-ctx-load" data-mgr="load" data-id="${escapeHtml(p.id)}"${loading ? ' disabled style="opacity:.6"' : ''}>
             ${loading ? 'lädt…' : `Laden mit <span class="mgr-ctx-load-n">${def.toLocaleString('de-DE')}</span> Tokens`}</button>
         </div>`;
@@ -5562,15 +5909,11 @@
   function wireManagerInput() {
     const micBtn = document.getElementById('managerMicBtn');
     micBtn.addEventListener('click', () => {
-      if (micBtn.classList.contains('is-recording')) return;
-      micBtn.classList.add('is-recording');
-      setTimeout(() => {
-        micBtn.classList.remove('is-recording');
-        // Demo: Transkription landet in der Eingabezeile (nicht direkt gesendet).
-        const input = document.getElementById('managerTextInput');
-        input.value = (input.value ? input.value + ' ' : '') + '(Demo-Transkript)';
-        input.focus();
-      }, 1500);
+      // Diktat wie im Terminal: das Dock wird zur Aufnahmeleiste (Wellenform +
+      // Timer + ✗/✓). Das Transkript landet danach in der Manager-Eingabezeile
+      // (dockRecordingEnd routet per recTarget='mgr'). Die Bridge ersetzt diese
+      // Demo im echten App-Betrieb durch die echte mic:start-Pipeline.
+      dockRecordingStart('mgr');
     });
     document.getElementById('managerTextInput').addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
@@ -5613,10 +5956,31 @@
     // Nach jedem Aufbau die reale Eingabe-Verdrahtung nachziehen (die frischen
     // Elemente tragen sonst nur das Demo-Verhalten).
     if (typeof window.__tmsWireManagerInput === 'function') window.__tmsWireManagerInput();
+    // Die Insel-Identität hängt an derselben Persona wie der Shell — nach jedem
+    // Rebuild (neuer Name/neues Bild) mitziehen.
+    if (typeof syncIslandManager === 'function') syncIslandManager();
   }
   window.rerenderManager = initManagerScreen;
 
-  SCREEN_HOOKS.manager = renderManagerChat;
+  // Füllt die Manager-Insel (Bild · Name) aus der aktuellen Persona. Aufgerufen
+  // beim Betreten der Seite und nach jedem Shell-Rebuild (die Bridge kann Name/
+  // Bild ändern). Die Präsenz (#mgrPresence) pflegt weiterhin renderManagerChat.
+  function syncIslandManager() {
+    const p = (TMS_DATA.manager && TMS_DATA.manager.persona) || {};
+    const ava = document.getElementById('islandMgrAva');
+    if (ava) ava.innerHTML = managerAvatarHtml(22);
+    const nameEl = document.getElementById('islandMgrName');
+    if (nameEl) nameEl.textContent = p.name || 'Manager';
+  }
+  window.syncIslandManager = syncIslandManager;
+
+  // Beim Betreten des Managers: Dock → Chat-Eingabe (nur auf dem Chat-Tab),
+  // Insel-Identität auffrischen, Chat rendern.
+  SCREEN_HOOKS.manager = function () {
+    if (typeof setDockPage === 'function') setDockPage(state.managerTab === 'chat' ? 'mgr' : 'nav');
+    syncIslandManager();
+    renderManagerChat();
+  };
 
   // ============================================================
   // Cloud screen (Vercel + Render): folders/favorites, Env/Logs/Deploys
@@ -5627,16 +5991,22 @@
       <h1 class="screen-title">Cloud</h1>
       <div class="screen-col">
         <div id="cloudList">
-          <div class="cloud-toolbar">
+          <div class="cloud-folderbar" id="cloudFolderBar"></div>
+          <div class="cloud-filterrow">
             <div class="chip-group" id="cloudProviderFilter">
               <button data-provider="all" class="active">Alle</button>
-              <button data-provider="vercel">Vercel</button>
-              <button data-provider="render">Render</button>
+              <button data-provider="vercel">▲</button>
+              <button data-provider="render">R</button>
             </div>
-            <span class="cloud-toolbar__spacer"></span>
-            <div class="chip-group" id="cloudViewToggle">
-              <button data-view="folder" class="active">Ordner</button>
-              <button data-view="list">Liste</button>
+            <div class="chip-group" id="cloudStatusFilter">
+              <button data-status="all" class="active">Alle</button>
+              <button data-status="active">Aktiv</button>
+              <button data-status="attention">Probleme</button>
+            </div>
+            <input type="search" class="cloud-search" id="cloudSearch" placeholder="Suchen…" autocomplete="off">
+            <div class="chip-group">
+              <button id="cloudDefaultBtn" type="button" title="Filter als Standard">Standard</button>
+              <button id="cloudAccountsBtn" type="button">Konten</button>
             </div>
           </div>
           <div id="cloudGroups"></div>
@@ -5646,93 +6016,435 @@
     `;
   }
 
-  const FAV_KEY = 'tms-liquid-deck-cloud-favorites';
-  function loadFavorites() {
-    try {
-      const raw = localStorage.getItem(FAV_KEY);
-      if (!raw) return;
-      const map = JSON.parse(raw);
-      TMS_DATA.cloudProjects.forEach(p => { if (Object.prototype.hasOwnProperty.call(map, p.id)) p.favorite = !!map[p.id]; });
-    } catch (e) { /* corrupt/unavailable storage: keep seed favorites */ }
-  }
-  function saveFavorites() {
-    const map = {};
-    TMS_DATA.cloudProjects.forEach(p => { map[p.id] = p.favorite; });
-    try { localStorage.setItem(FAV_KEY, JSON.stringify(map)); } catch (e) { /* storage unavailable */ }
-  }
-
   const CLOUD_GLYPH = { vercel: '▲', render: 'R' };
+  const CLOUD_FOLDER_PALETTE = ['#f03e3e', '#f76707', '#f59f00', '#37b24d', '#1c7ed6', '#7048e8', '#d6336c', '#64748B'];
+  const VIRTUAL_FOLDERS = [
+    { id: 'fav', name: '★ Favoriten' },
+    { id: 'all', name: 'Alle' },
+    { id: 'unsorted', name: 'Unsortiert' },
+  ];
 
-  function cloudFilteredProjects() {
-    return TMS_DATA.cloudProjects.filter(p => state.cloudProviderFilter === 'all' || p.provider === state.cloudProviderFilter);
+  function cloudOrg() { return TMS_DATA.cloudOrg; }
+  function folderOf(pid) { return cloudOrg().assignments[pid] || null; }
+  function repoShort(p) {
+    const raw = String(p.folder || '');
+    const seg = raw.replace(/\/+$/, '').split('/').pop() || '';
+    return (seg || p.provider).toLowerCase();
+  }
+  function isAttention(p) { return p.status === 'error' || p.status === 'suspended'; }
+
+  function projectsInFolder(folderId) {
+    const org = cloudOrg();
+    const connected = cloudConnectedProviders();
+    return TMS_DATA.cloudProjects.filter(p => {
+      if (!connected.includes(p.provider)) return false;
+      if (folderId === 'all') return true;
+      if (folderId === 'fav') return !!org.favorites[p.id];
+      if (folderId === 'unsorted') return !folderOf(p.id);
+      return folderOf(p.id) === folderId;
+    });
   }
 
-  function cloudRowHtml(p) {
+  function visibleCloudProjects() {
+    const q = state.cloudSearch.trim().toLowerCase();
+    return projectsInFolder(state.cloudFolder).filter(p =>
+      (state.cloudProviderFilter === 'all' || p.provider === state.cloudProviderFilter) &&
+      (state.cloudStatusFilter === 'all' ||
+        (state.cloudStatusFilter === 'active' ? ['ready', 'live', 'building', 'queued'].includes(p.status) : isAttention(p))) &&
+      (!q || p.name.toLowerCase().includes(q)));
+  }
+
+  /** Single write path: hand the whole org to the app (or the demo stub). */
+  function cloudOrgChanged() {
+    window.requestCloudOrgUpdate(JSON.parse(JSON.stringify(cloudOrg())));
+    renderCloudFolderBar();
+    renderCloudList();
+  }
+
+  function renderCloudFolderBar() {
+    const bar = document.getElementById('cloudFolderBar');
+    if (!bar) return;
+    const org = cloudOrg();
+    const customs = [...org.folders].sort((a, b) => a.order - b.order);
+    const chips = [...VIRTUAL_FOLDERS, ...customs].map(f => {
+      const list = projectsInFolder(f.id);
+      const warn = list.some(isAttention) ? '<span class="folder-chip__warn">⚠</span>' : '';
+      const dot = f.color ? `<span class="folder-chip__dot" style="background:${f.color}"></span>` : '';
+      return `<button class="folder-chip${state.cloudFolder === f.id ? ' active' : ''}" data-folder="${f.id}">
+        ${dot}<span>${escapeHtml(f.name)}</span><span class="folder-chip__count">${list.length}</span>${warn}</button>`;
+    }).join('');
+    bar.innerHTML = chips + '<button class="folder-chip folder-chip--add" id="cloudFolderAdd" type="button">+</button>';
+  }
+  window.renderCloudFolderBar = renderCloudFolderBar;
+
+  function svcRowHtml(p) {
+    const org = cloudOrg();
+    const checked = state.cloudSelect && state.cloudSelect.ids.has(p.id);
     return `
-      <button class="cloud-row" data-project="${p.id}">
-        <span class="provider-glyph">${CLOUD_GLYPH[p.provider] || '?'}</span>
-        <span class="cloud-row__main">
-          <span class="cloud-row__name">${escapeHtml(p.name)}</span>
-          <span class="cloud-row__meta">
-            <span class="status-chip" data-status="${p.status}"><span class="dot"></span><span class="status-chip__label">${escapeHtml(p.status)}</span></span>
-            <span class="cloud-row__deploy">${escapeHtml(p.lastDeploy)}</span>
-          </span>
+      <button class="svc-row${p.status === 'error' ? ' svc-row--error' : ''}${checked ? ' is-checked' : ''}" data-project="${p.id}">
+        <span class="svc-check">${checked ? '✓' : ''}</span>
+        <span class="svc-glyph svc-glyph--${p.provider}">${CLOUD_GLYPH[p.provider] || '?'}</span>
+        <span class="svc-row__main">
+          <span class="svc-row__name">${escapeHtml(p.name)}</span>
+          <span class="svc-row__repo">${escapeHtml(repoShort(p))}</span>
         </span>
-        <span class="fav-btn${p.favorite ? ' is-fav' : ''}" data-fav="${p.id}" role="button" aria-label="Favorit">${icon('star')}</span>
+        <span class="svc-row__side">
+          <span class="svc-status" data-s="${p.status}"><span class="dot"></span>${p.status === 'suspended' ? '⏸ ' : ''}${escapeHtml(p.lastDeploy)}</span>
+        </span>
+        <span class="fav-btn${org.favorites[p.id] ? ' is-fav' : ''}" data-fav="${p.id}" role="button" aria-label="Favorit">${icon('star')}</span>
       </button>`;
   }
 
-  function renderCloudGroups() {
+  const CLOUD_PROVIDER_LABEL = { vercel: 'Vercel', render: 'Render' };
+  // Direktlinks zu den API-Key-Seiten der Anbieter — damit man den Key sofort
+  // dort erstellen kann, ohne im Dashboard danach zu suchen. In der echten App
+  // öffnet die Bridge (cloud:openTokenPage) diese im geteilten Login-Tab
+  // (WebBrowser); im Demo-Mockup via window.open.
+  const CLOUD_KEY_URL = {
+    vercel: 'https://vercel.com/account/tokens',
+    render: 'https://dashboard.render.com/settings#api-keys',
+  };
+
+  function cloudConnectedProviders() {
+    const acc = TMS_DATA.cloudAccounts || {};
+    return ['vercel', 'render'].filter(p => acc[p] && acc[p].connected);
+  }
+
+  function cloudConnectCardHtml(provider) {
+    return `
+      <div class="cloud-connect-card glass" data-connect-card="${provider}">
+        <h3><span class="provider-glyph">${CLOUD_GLYPH[provider]}</span>${CLOUD_PROVIDER_LABEL[provider]} verbinden</h3>
+        <button class="cloud-key-link" data-token-page="${provider}" type="button">API-Key bei ${CLOUD_PROVIDER_LABEL[provider]} erstellen ↗</button>
+        <div class="cloud-connect-row">
+          <input type="password" placeholder="API-Key" data-connect-input="${provider}" autocomplete="off">
+          <button class="btn-chip is-on" data-connect-btn="${provider}" type="button">Verbinden</button>
+        </div>
+      </div>`;
+  }
+
+  function bindCloudConnectCards(host) {
+    host.querySelectorAll('[data-connect-btn]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const provider = btn.dataset.connectBtn;
+        const input = host.querySelector(`[data-connect-input="${provider}"]`);
+        const token = (input.value || '').trim();
+        if (!token) { toast('Bitte API-Key eingeben'); return; }
+        window.requestCloudConnect(provider, token);
+      });
+    });
+    // Direktlink zur API-Key-Seite des Anbieters (öffnet den Login-Tab).
+    host.querySelectorAll('[data-token-page]').forEach(link => {
+      link.addEventListener('click', () => window.requestCloudTokenPage(link.dataset.tokenPage));
+    });
+  }
+
+  function renderCloudList() {
     const host = document.getElementById('cloudGroups');
-    const list = cloudFilteredProjects();
-    if (state.cloudView === 'list') {
-      const sorted = [...list].sort((a, b) => (b.favorite - a.favorite));
-      host.innerHTML = `<div class="folder-group glass"><div class="folder-group__rows">${sorted.map(cloudRowHtml).join('')}</div></div>`;
+    if (!host) return;
+    const connected = cloudConnectedProviders();
+    if (connected.length === 0) {
+      host.innerHTML = cloudConnectCardHtml('vercel') + cloudConnectCardHtml('render');
+      bindCloudConnectCards(host);
       return;
     }
-    const folders = {};
-    list.forEach(p => { (folders[p.folder] = folders[p.folder] || []).push(p); });
-    const folderNames = Object.keys(folders).sort();
-    host.innerHTML = folderNames.map(name => {
-      const rows = [...folders[name]].sort((a, b) => (b.favorite - a.favorite));
-      return `
-        <div class="folder-group glass" data-folder="${escapeHtml(name)}">
-          <div class="folder-group__head">
-            <span class="folder-group__name">${escapeHtml(name)}</span>
-            <span class="folder-group__count">${rows.length}</span>
-          </div>
-          <div class="folder-group__rows">${rows.map(cloudRowHtml).join('')}</div>
-        </div>`;
+    const list = visibleCloudProjects();
+    host.classList.toggle('cloud-selecting', !!state.cloudSelect);
+    const rows = list.map(svcRowHtml).join('');
+    const empty = list.length ? '' : '<div class="cloud-empty">Keine Services hier — Filter prüfen oder Services über Long-Press zuweisen.</div>';
+    const bar = state.cloudSelect ? `
+      <div class="cloud-actionbar glass glass--strong">
+        <button class="btn-chip is-on" id="selMoveBtn" type="button">In Ordner ▾</button>
+        <button class="btn-chip" id="selFavBtn" type="button">★ Favorit</button>
+        <button class="btn-chip" id="selDoneBtn" type="button">Fertig (${state.cloudSelect.ids.size})</button>
+      </div>` : '';
+    host.innerHTML = `<div class="folder-group glass"><div class="folder-group__rows">${rows}</div></div>${empty}${bar}`;
+    // One provider still unlinked → a quiet connect card below (only on "Alle").
+    const missing = ['vercel', 'render'].filter(pv => !connected.includes(pv));
+    if (missing.length === 1 && state.cloudFolder === 'all') {
+      host.insertAdjacentHTML('beforeend', cloudConnectCardHtml(missing[0]));
+      bindCloudConnectCards(host);
+    }
+    if (state.cloudSelect) {
+      document.getElementById('selMoveBtn').addEventListener('click', openMoveSheet);
+      document.getElementById('selFavBtn').addEventListener('click', () => {
+        const org = cloudOrg();
+        state.cloudSelect.ids.forEach(id => { if (org.favorites[id]) delete org.favorites[id]; else org.favorites[id] = true; });
+        cloudOrgChanged();
+      });
+      document.getElementById('selDoneBtn').addEventListener('click', () => { state.cloudSelect = null; renderCloudList(); });
+    }
+  }
+  window.renderCloudGroups = renderCloudList; // bridge + alte Aufrufer
+
+  let cloudRevealed = {}; // provider -> plaintext key while the eye is open
+
+  function renderCloudAccountsSheet() {
+    const body = document.getElementById('cloudAccountsSheetBody');
+    if (!body) return;
+    const acc = TMS_DATA.cloudAccounts || {};
+    body.innerHTML = ['vercel', 'render'].map(p => {
+      const a = acc[p] || { connected: false };
+      if (!a.connected) {
+        return `<div class="cloud-account-row">
+          <div class="cloud-account-row__head"><span class="provider-glyph">${CLOUD_GLYPH[p]}</span>
+            <span class="cloud-account-row__name">${CLOUD_PROVIDER_LABEL[p]}</span>
+            <span class="status-chip" data-status="inactive"><span class="dot"></span><span class="status-chip__label">nicht verbunden</span></span></div>
+          <button class="cloud-key-link" data-token-page="${p}" type="button">API-Key bei ${CLOUD_PROVIDER_LABEL[p]} erstellen ↗</button>
+          <div class="cloud-connect-row">
+            <input type="password" placeholder="API-Key" data-connect-input="${p}" autocomplete="off">
+            <button class="btn-chip is-on" data-connect-btn="${p}" type="button">Verbinden</button>
+          </div></div>`;
+      }
+      const key = cloudRevealed[p] || a.maskedKey || '••••';
+      return `<div class="cloud-account-row">
+        <div class="cloud-account-row__head"><span class="provider-glyph">${CLOUD_GLYPH[p]}</span>
+          <span class="cloud-account-row__name">${CLOUD_PROVIDER_LABEL[p]}</span>
+          <span class="status-chip" data-status="${a.invalid ? 'error' : 'ready'}"><span class="dot"></span><span class="status-chip__label">${a.invalid ? 'Key ungültig' : 'verbunden'}</span></span></div>
+        <div class="cloud-account-key">
+          <code>${escapeHtml(key)}</code>
+          <button class="btn-chip" data-reveal="${p}" type="button">${cloudRevealed[p] ? 'Verbergen' : 'Anzeigen'}</button>
+          <button class="btn-chip" data-copy="${p}" type="button">Kopieren</button>
+          <button class="btn-chip" data-disconnect="${p}" type="button">Trennen</button>
+        </div>
+        ${a.invalid ? '<div class="cloud-key-invalid">Key ungültig — bitte neu eingeben (erst trennen).</div>' : ''}
+      </div>`;
     }).join('');
+
+    bindCloudConnectCards(body);
+    body.querySelectorAll('[data-reveal]').forEach(b => b.addEventListener('click', () => {
+      const p = b.dataset.reveal;
+      if (cloudRevealed[p]) { delete cloudRevealed[p]; renderCloudAccountsSheet(); }
+      else window.requestCloudRevealKey(p);
+    }));
+    body.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', () => window.requestCloudCopyKey(b.dataset.copy)));
+    body.querySelectorAll('[data-disconnect]').forEach(b => b.addEventListener('click', () => {
+      delete cloudRevealed[b.dataset.disconnect];
+      window.requestCloudDisconnect(b.dataset.disconnect);
+    }));
+  }
+  window.renderCloudAccountsSheet = renderCloudAccountsSheet;
+
+  /** Bridge answer to requestCloudRevealKey — shows the plaintext key. */
+  window.cloudKeyRevealed = function (provider, key) {
+    if (!key) return;
+    cloudRevealed[provider] = key;
+    renderCloudAccountsSheet();
+  };
+
+  // ── Demo stubs — the real app's bridge overrides all four with post() calls.
+  const CLOUD_DEMO_KEYS = { vercel: 'vc_a1b2c3d4e5f6g7h8i9zQ', render: 'rnd_BHdemoDEMOdemoDsp4' };
+  function maskCloudKey(k) { return k.length <= 8 ? '••••' : k.slice(0, 4) + '••••…' + k.slice(-3); }
+  window.requestCloudConnect = function (provider, token) {
+    TMS_DATA.cloudAccounts[provider] = { connected: true, maskedKey: maskCloudKey(token) };
+    CLOUD_DEMO_KEYS[provider] = token;
+    toast(CLOUD_PROVIDER_LABEL[provider] + ' verbunden (Demo)');
+    renderCloudGroups(); renderCloudAccountsSheet();
+  };
+  window.requestCloudDisconnect = function (provider) {
+    TMS_DATA.cloudAccounts[provider] = { connected: false, maskedKey: null };
+    toast(CLOUD_PROVIDER_LABEL[provider] + ' getrennt (Demo)');
+    renderCloudGroups(); renderCloudAccountsSheet();
+  };
+  window.requestCloudRevealKey = function (provider) { window.cloudKeyRevealed(provider, CLOUD_DEMO_KEYS[provider]); };
+  window.requestCloudCopyKey = function (provider) { toast('Kopiert (Demo)'); };
+  window.requestCloudOrgUpdate = function (org) { TMS_DATA.cloudOrg = org; /* demo: nur lokal */ };
+  window.requestCloudTokenPage = function (provider) {
+    var url = CLOUD_KEY_URL[provider];
+    if (url) window.open(url, '_blank'); // Demo: die echte App-Bridge öffnet den geteilten Login-Tab
+  };
+
+  // ── Cloud org sheets: create/edit folder, manage folder, move selection ──
+  function openCloudOrgSheet(title, bodyHtml, bind) {
+    document.getElementById('cloudOrgSheetTitle').textContent = title;
+    const body = document.getElementById('cloudOrgSheetBody');
+    body.innerHTML = bodyHtml;
+    if (bind) bind(body);
+    openSheet(document.getElementById('cloudOrgSheetWrap'));
+  }
+  const closeCloudOrgSheet = () => closeSheet(document.getElementById('cloudOrgSheetWrap'));
+
+  /** Create (folderId == null) or rename/recolor an existing folder. */
+  function openFolderEditSheet(folderId) {
+    const org = cloudOrg();
+    const f = folderId ? org.folders.find(x => x.id === folderId) : null;
+    const sel = f ? f.color : CLOUD_FOLDER_PALETTE[4];
+    openCloudOrgSheet(f ? 'Ordner bearbeiten' : 'Neuer Ordner', `
+      <input class="org-name-input" id="orgName" placeholder="Ordnername" value="${f ? escapeHtml(f.name) : ''}">
+      <div class="org-color-row">${CLOUD_FOLDER_PALETTE.map(c =>
+        `<button class="org-color${c === sel ? ' is-sel' : ''}" data-color="${c}" style="background:${c}"></button>`).join('')}</div>
+      <button class="btn-chip is-on" id="orgSaveBtn" style="width:100%;text-align:center;">${f ? 'Speichern' : 'Erstellen'}</button>
+    `, body => {
+      let color = sel;
+      body.querySelectorAll('.org-color').forEach(b => b.addEventListener('click', () => {
+        color = b.dataset.color;
+        body.querySelectorAll('.org-color').forEach(x => x.classList.toggle('is-sel', x === b));
+      }));
+      body.querySelector('#orgSaveBtn').addEventListener('click', () => {
+        const name = body.querySelector('#orgName').value.trim();
+        if (!name) { toast('Bitte Namen eingeben'); return; }
+        if (f) { f.name = name; f.color = color; }
+        else {
+          const id = 'f-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+          if (!id || id === 'f-') { toast('Bitte Namen eingeben'); return; }
+          if (org.folders.some(x => x.id === id)) { toast('Ordner existiert schon'); return; }
+          org.folders.push({ id, name, color, order: org.folders.length });
+          // Creating from the move flow: put the selection right in.
+          if (state.cloudSelect) {
+            state.cloudSelect.ids.forEach(pid => { org.assignments[pid] = id; });
+            state.cloudSelect = null;
+            toast('Erstellt & verschoben');
+          }
+          state.cloudFolder = id;
+        }
+        closeCloudOrgSheet(); cloudOrgChanged();
+      });
+    });
+  }
+
+  /** Long-press on a folder chip: start folder, edit, delete. */
+  function openFolderManageSheet(folderId) {
+    const org = cloudOrg();
+    const custom = org.folders.find(x => x.id === folderId);
+    const isStart = org.startFolderId === folderId;
+    const virtualName = (VIRTUAL_FOLDERS.find(v => v.id === folderId) || {}).name || 'Ordner';
+    openCloudOrgSheet(custom ? custom.name : virtualName, `
+      <button class="org-list-row" data-act="start">${isStart ? '✓ ' : ''}Als Start-Ordner festlegen</button>
+      ${custom ? '<button class="org-list-row" data-act="edit">Umbenennen / Farbe</button>' : ''}
+      ${custom ? '<button class="org-list-row" data-act="delete" style="color:#f03e3e">Löschen (Services → Unsortiert)</button>' : ''}
+    `, body => {
+      body.querySelector('[data-act="start"]').addEventListener('click', () => {
+        org.startFolderId = folderId; closeCloudOrgSheet(); cloudOrgChanged(); toast('Start-Ordner gesetzt');
+      });
+      const ed = body.querySelector('[data-act="edit"]');
+      if (ed) ed.addEventListener('click', () => { closeCloudOrgSheet(); openFolderEditSheet(folderId); });
+      const del = body.querySelector('[data-act="delete"]');
+      if (del) del.addEventListener('click', () => {
+        org.folders = org.folders.filter(x => x.id !== folderId);
+        Object.keys(org.assignments).forEach(pid => { if (org.assignments[pid] === folderId) delete org.assignments[pid]; });
+        if (org.startFolderId === folderId) org.startFolderId = 'all';
+        if (state.cloudFolder === folderId) state.cloudFolder = 'all';
+        closeCloudOrgSheet(); cloudOrgChanged();
+      });
+    });
+  }
+
+  /** Move every selected service into a folder (or back to Unsortiert). */
+  function openMoveSheet() {
+    const org = cloudOrg();
+    openCloudOrgSheet('In Ordner verschieben', `
+      ${[...org.folders].sort((a, b) => a.order - b.order).map(f =>
+        `<button class="org-list-row" data-move="${f.id}"><span class="folder-chip__dot" style="background:${f.color}"></span>${escapeHtml(f.name)}</button>`).join('')}
+      <button class="org-list-row" data-move="unsorted">Unsortiert</button>
+      <button class="org-list-row" data-move="__new">＋ Neuer Ordner…</button>
+    `, body => {
+      body.querySelectorAll('[data-move]').forEach(b => b.addEventListener('click', () => {
+        const target = b.dataset.move;
+        if (target === '__new') { closeCloudOrgSheet(); openFolderEditSheet(null); return; }
+        state.cloudSelect.ids.forEach(pid => {
+          if (target === 'unsorted') delete org.assignments[pid];
+          else org.assignments[pid] = target;
+        });
+        state.cloudSelect = null;
+        closeCloudOrgSheet(); cloudOrgChanged(); toast('Verschoben');
+      }));
+    });
   }
 
   function wireCloudToolbar() {
+    const accountsWrap = document.getElementById('cloudAccountsSheetWrap');
+    document.getElementById('cloudAccountsBtn').addEventListener('click', () => {
+      renderCloudAccountsSheet();
+      openSheet(accountsWrap);
+    });
+    document.getElementById('cloudAccountsSheetClose').addEventListener('click', () => closeSheet(accountsWrap));
+    accountsWrap.querySelector('[data-close-cloudaccounts]').addEventListener('click', () => closeSheet(accountsWrap));
+    const orgWrap = document.getElementById('cloudOrgSheetWrap');
+    document.getElementById('cloudOrgSheetClose').addEventListener('click', () => closeSheet(orgWrap));
+    orgWrap.querySelector('[data-close-cloudorg]').addEventListener('click', () => closeSheet(orgWrap));
+
+    function syncDefaultBtn() {
+      const d = cloudOrg().defaultFilters;
+      document.getElementById('cloudDefaultBtn').classList.toggle('is-on',
+        d.provider === state.cloudProviderFilter && d.status === state.cloudStatusFilter);
+    }
+    window.__syncCloudDefaultBtn = syncDefaultBtn;
+
     document.getElementById('cloudProviderFilter').addEventListener('click', e => {
       const btn = e.target.closest('button[data-provider]');
       if (!btn) return;
       state.cloudProviderFilter = btn.dataset.provider;
       document.querySelectorAll('#cloudProviderFilter button').forEach(b => b.classList.toggle('active', b === btn));
-      renderCloudGroups();
+      renderCloudList(); syncDefaultBtn();
     });
-    document.getElementById('cloudViewToggle').addEventListener('click', e => {
-      const btn = e.target.closest('button[data-view]');
+    document.getElementById('cloudStatusFilter').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-status]');
       if (!btn) return;
-      state.cloudView = btn.dataset.view;
-      document.querySelectorAll('#cloudViewToggle button').forEach(b => b.classList.toggle('active', b === btn));
-      renderCloudGroups();
+      state.cloudStatusFilter = btn.dataset.status;
+      document.querySelectorAll('#cloudStatusFilter button').forEach(b => b.classList.toggle('active', b === btn));
+      renderCloudList(); syncDefaultBtn();
+    });
+    document.getElementById('cloudSearch').addEventListener('input', e => {
+      state.cloudSearch = e.target.value; renderCloudList();
+    });
+    document.getElementById('cloudDefaultBtn').addEventListener('click', () => {
+      cloudOrg().defaultFilters = { provider: state.cloudProviderFilter, status: state.cloudStatusFilter };
+      cloudOrgChanged(); syncDefaultBtn(); toast('Filter als Standard gespeichert');
+    });
+    document.getElementById('cloudFolderBar').addEventListener('click', e => {
+      if (e.target.closest('#cloudFolderAdd')) { openFolderEditSheet(null); return; }
+      const chip = e.target.closest('[data-folder]');
+      if (!chip) return;
+      state.cloudFolder = chip.dataset.folder;
+      renderCloudFolderBar(); renderCloudList();
     });
     document.getElementById('cloudGroups').addEventListener('click', e => {
       const favBtn = e.target.closest('[data-fav]');
       if (favBtn) {
-        const p = TMS_DATA.cloudProjects.find(x => x.id === favBtn.dataset.fav);
-        if (p) { p.favorite = !p.favorite; saveFavorites(); renderCloudGroups(); }
+        const org = cloudOrg();
+        const pid = favBtn.dataset.fav;
+        if (org.favorites[pid]) delete org.favorites[pid]; else org.favorites[pid] = true;
+        cloudOrgChanged();
         return;
       }
-      const folderHead = e.target.closest('.folder-group__head');
-      if (folderHead) { folderHead.closest('.folder-group').classList.toggle('is-collapsed'); return; }
-      const row = e.target.closest('.cloud-row');
-      if (row) openCloudDetail(row.dataset.project, 'env');
+      const row = e.target.closest('.svc-row');
+      if (!row) return;
+      if (state.cloudSelect) {
+        const pid = row.dataset.project;
+        if (state.cloudSelect.ids.has(pid)) state.cloudSelect.ids.delete(pid); else state.cloudSelect.ids.add(pid);
+        if (!state.cloudSelect.ids.size) state.cloudSelect = null;
+        renderCloudList();
+        return;
+      }
+      openCloudDetail(row.dataset.project, 'env');
     });
+
+    // Long-press: rows start multi-select, folder chips open the manage sheet.
+    let cloudHold = null, cloudHoldMoved = false, cloudHoldStart = null;
+    const cloudScreenEl = document.querySelector('[data-screen="cloud"]');
+    cloudScreenEl.addEventListener('pointerdown', e => {
+      const row = e.target.closest('.svc-row');
+      const chip = e.target.closest('.folder-chip[data-folder]');
+      if (!row && !chip) return;
+      cloudHoldMoved = false;
+      cloudHoldStart = { x: e.clientX, y: e.clientY };
+      clearTimeout(cloudHold);
+      cloudHold = setTimeout(() => {
+        if (cloudHoldMoved) return;
+        if (row) {
+          if (!state.cloudSelect) state.cloudSelect = { ids: new Set() };
+          state.cloudSelect.ids.add(row.dataset.project);
+          renderCloudList();
+        } else {
+          openFolderManageSheet(chip.dataset.folder);
+        }
+        if (navigator.vibrate) navigator.vibrate(10);
+      }, 550);
+    });
+    cloudScreenEl.addEventListener('pointermove', e => {
+      if (!cloudHoldStart) return;
+      if (Math.abs(e.clientX - cloudHoldStart.x) > 8 || Math.abs(e.clientY - cloudHoldStart.y) > 8) { cloudHoldMoved = true; clearTimeout(cloudHold); }
+    });
+    ['pointerup', 'pointercancel'].forEach(ev => cloudScreenEl.addEventListener(ev, () => { clearTimeout(cloudHold); cloudHoldStart = null; }));
   }
 
   function stopCloudBuildTimer() {
@@ -5900,7 +6612,21 @@
       </div>`).join('');
   }
 
-  SCREEN_HOOKS.cloud = showCloudList;
+  SCREEN_HOOKS.cloud = function () {
+    showCloudList();
+    // Opening the screen applies the configured start folder + default filters.
+    const org = cloudOrg();
+    state.cloudFolder = org.startFolderId || (Object.keys(org.favorites).length ? 'fav' : 'all');
+    state.cloudProviderFilter = org.defaultFilters.provider;
+    state.cloudStatusFilter = org.defaultFilters.status;
+    state.cloudSearch = '';
+    state.cloudSelect = null;
+    document.querySelectorAll('#cloudProviderFilter button').forEach(b => b.classList.toggle('active', b.dataset.provider === state.cloudProviderFilter));
+    document.querySelectorAll('#cloudStatusFilter button').forEach(b => b.classList.toggle('active', b.dataset.status === state.cloudStatusFilter));
+    const s = document.getElementById('cloudSearch'); if (s) s.value = '';
+    if (typeof window.__syncCloudDefaultBtn === 'function') window.__syncCloudDefaultBtn();
+    renderCloudFolderBar(); renderCloudList();
+  };
 
   // ============================================================
   // Browser screen — app-wide, replaces the old per-terminal Browser tool.
@@ -6766,8 +7492,6 @@
   // Init
   // ============================================================
   ensureMessageIds();
-  loadFavorites();
-
   renderServers();
   buildTerminalScreen();
 
@@ -6776,7 +7500,8 @@
   initManagerScreen();
 
   renderCloudShell();
-  renderCloudGroups();
+  renderCloudFolderBar();
+  renderCloudList();
   wireCloudToolbar();
 
   initBrowserScreen();
@@ -6801,11 +7526,16 @@
     nav: document.getElementById('dockNav'),
     term: document.getElementById('dockTerm'),
     web: document.getElementById('dockWeb'),
+    mgr: document.getElementById('dockMgr'),
     rec: document.getElementById('dockRec'),
   };
   document.getElementById('dockMicBtn').innerHTML = icon('mic');
   document.getElementById('dockSendBtn').innerHTML = icon('enter');
   document.getElementById('dockKeysBtn').innerHTML = icon('keyboard');
+  // Manager-Leiste: Kamera + Mikro (Textfeld dazwischen). Gleiche Icons wie in
+  // der alten Karten-Eingabezeile.
+  document.getElementById('managerAttachBtn').innerHTML = icon('camera', 19);
+  document.getElementById('managerMicBtn').innerHTML = icon('mic');
   document.getElementById('recCancelBtn').innerHTML = icon('x');
   document.getElementById('recConfirmBtn').innerHTML = icon('check');
   document.getElementById('recWave').innerHTML =
@@ -6833,7 +7563,8 @@
     const id = dockTargetId();
     const session = TMS_DATA.sessions.find(s => s.id === id);
     const input = document.getElementById('dockInput');
-    input.placeholder = session ? `Befehl an ${session.name}…` : 'Kein Terminal';
+    input.dataset.phFull = session ? `Befehl an ${session.name}…` : 'Kein Terminal';
+    fitDockPlaceholder(input);
     input.disabled = !session;
     document.getElementById('dockKeysBtn').classList.toggle('is-on', !!state.keysPanelOpen);
     document.querySelectorAll('.term-card').forEach(c => c.classList.toggle('is-target', c.dataset.id === id));
@@ -6851,6 +7582,30 @@
     if (h > 0) document.documentElement.style.setProperty('--dock-h', h + 'px');
   }
   window.addEventListener('resize', syncDockHeight);
+  // Der Platzhalter darf NIE umbrechen: das leere Feld ist fix einzeilig
+  // (autoGrowInput misst leer = eine Zeile), die umgebrochene zweite
+  // Platzhalter-Zeile malt Chrome trotzdem — halb abgeschnitten an der
+  // Feldunterkante. Passt „Befehl an <Name>…" nicht in die Breite, wird auf …
+  // gekürzt. Der volle Text bleibt in dataset.phFull, damit ein breiteres
+  // Fenster (Fold aufgeklappt) wieder mehr davon zeigt.
+  function fitDockPlaceholder(input) {
+    const full = input.dataset.phFull || input.placeholder;
+    // Nicht messbar (Feld gefüllt oder unsichtbar, z. B. Sperrbildschirm):
+    // Platzhalter UNANGETASTET lassen — ihn hier schon auf den vollen Text
+    // zurückzusetzen hieße, beim späteren Leeren des Felds kurz die
+    // umgebrochene Fassung zu zeigen, bis das nächste resize/sync kürzt.
+    if (input.value || input.clientWidth === 0) return;
+    input.placeholder = full;
+    const cs = getComputedStyle(input);
+    const oneLine = (parseFloat(cs.lineHeight) || 20)
+      + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 1;
+    let text = full;
+    while (text.length > 2 && input.scrollHeight > oneLine) {
+      text = text.slice(0, -2) + '…';
+      input.placeholder = text;
+    }
+  }
+  window.addEventListener('resize', () => fitDockPlaceholder(document.getElementById('dockInput')));
   function autoGrowInput(el) {
     if (!el) return;
     const cs = getComputedStyle(el);
@@ -6875,6 +7630,10 @@
     // die Leiste darüber hinterherhinken lassen (und scrollHeight mitten im
     // Übergang lügt ohnehin).
     syncDockHeight();
+    // Wird das Feld leer (Nutzer löscht, Bridge-dockReset nach Senden), taucht
+    // der Platzhalter wieder auf — sofort auf die AKTUELLE Schriftgröße
+    // einpassen (beim Tippen 15px statt 14px), nicht erst beim nächsten resize.
+    if (!el.value && el.dataset.phFull) fitDockPlaceholder(el);
   }
   // Gedrückt halten und waagerecht ziehen schiebt den Cursor durch den Text —
   // die Alternative zu Androids Lupe, die im WebView nicht zuverlässig kommt.
@@ -6943,10 +7702,62 @@
       }
     }, 120);
   });
+  // Tastatur auf/zu erkennen und den typing-Zustand halten, SOLANGE sie oben ist.
+  // Ohne das blieben bei offener Tastatur die Umschalt-Punkte sichtbar und das
+  // Terminal winzig (viel ungenutzter Platz).
+  //
+  // WICHTIG: Die App läuft mit android:windowSoftInputMode="adjustResize" — beim
+  // Öffnen der Tastatur schrumpft der GANZE WebView, also window.innerHeight
+  // selbst; visualViewport zeigt dann KEINEN separaten Tastatur-Abzug. Die alte
+  // Prüfung (innerHeight − visualViewport.height > 120) war deshalb immer ~0 und
+  // entfernte typing sofort wieder nach dem focus → die Punkte blieben, das
+  // Terminal wuchs nie. Wir merken uns stattdessen die volle Höhe (Tastatur zu)
+  // und werten einen großen Einbruch als „offen" (deckt auch overlay/adjustPan ab).
+  let keyboardBaseVH = window.innerHeight;
+  let kbWasOpen = false;
+  const vpHeight = () => (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+  const keyboardIsOpen = () => (keyboardBaseVH - vpHeight()) > 120;
+  const syncKeyboardState = () => {
+    if (keyboardIsOpen()) {
+      kbWasOpen = true; // typing bleibt (vom focus-Handler gesetzt) — Punkte weg, Terminal groß
+    } else {
+      // Volle Höhe auffrischen. Nur aufräumen, wenn die Tastatur wirklich von
+      // offen→zu ging (nicht schon während der Öffnen-Animation, sonst flackert
+      // typing) — deckt auch Androids Zurück-Taste ab, die oft KEIN blur feuert.
+      keyboardBaseVH = Math.max(keyboardBaseVH, window.innerHeight);
+      if (kbWasOpen && document.body.classList.contains('typing')) {
+        dockEl.classList.remove('is-typing');
+        document.body.classList.remove('typing');
+        if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
+      }
+      kbWasOpen = false;
+    }
+  };
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', syncKeyboardState);
+  window.addEventListener('resize', syncKeyboardState);
   // Die Knöpfe der Leiste dürfen den Fokus nicht klauen — sonst klappt die
   // Zeile beim Antippen von "Senden" zusammen, bevor der Klick durch ist.
   document.getElementById('dockTerm').addEventListener('pointerdown', e => {
     if (e.target.closest('button') && document.activeElement === document.getElementById('dockInput')) {
+      e.preventDefault();
+    }
+  });
+  // Dasselbe für die Tastenleiste (globale #globalKeys UND die Karten-Panels):
+  // Pfeiltasten, ^C/Esc/Tab, Screenshots/Dateien/Notizen — kein Knopf darf der
+  // Kommandozeile den Fokus klauen, sonst klappt die virtuelle Tastatur bei
+  // jedem Tastendruck zu. pointerdown-Default verhindern hält den Fokus auf
+  // #dockInput (Klick feuert weiter); natives Quer-Scrollen der Tool-Reihe
+  // bleibt, weil das touch-action steuert, nicht preventDefault. Delegiert auf
+  // document, damit es das Neubauen von #globalKeys übersteht.
+  // Gezielte Liste fokus-sicherer Terminal-Bedienelemente (KEIN pauschales
+  // "alle Buttons" — der Terminal-Name z.B. wird bewusst zum Feld fokussiert):
+  // Tastenleiste + der "nach unten springen"-Orb (⏬). Alle klauen sonst der
+  // Kommandozeile den Fokus und schließen die virtuelle Tastatur.
+  const FOCUS_SAFE_CONTROLS = '.keys-panel button, .jump-bottom-orb';
+  document.addEventListener('pointerdown', e => {
+    if (e.target.closest(FOCUS_SAFE_CONTROLS) &&
+        document.activeElement === document.getElementById('dockInput')) {
       e.preventDefault();
     }
   });
@@ -7004,6 +7815,10 @@
     // gehört das Wischen dem Cursor-Schrubber.
     const input = document.getElementById('dockInput');
     if (document.activeElement === input && e.target.closest('#dockInput')) return;
+    // Dasselbe für die Manager-Eingabezeile: wer dort tippt, dem gehört das
+    // Wischen dem Cursor, nicht dem Leisten-Wechsel.
+    const mgrInput = document.getElementById('managerTextInput');
+    if (mgrInput && document.activeElement === mgrInput && e.target.closest('#managerTextInput')) return;
     dockSwiping = true;
     dockSwitched = false;
     dockStartX = e.clientX;
@@ -7031,7 +7846,7 @@
     if (navigator.vibrate) navigator.vibrate(8);
     // Der Wisch schaltet zwischen Navigation und der Seite, die zum aktuellen
     // Screen gehört: Eingabezeile im Terminal, Adressleiste im Browser.
-    const own = currentScreen === 'browser' ? 'web' : 'term';
+    const own = currentScreen === 'browser' ? 'web' : currentScreen === 'manager' ? 'mgr' : 'term';
     setDockPage(state.dockPage === 'nav' ? own : 'nav');
   });
   dockEl.addEventListener('click', e => {
@@ -7045,8 +7860,10 @@
   document.addEventListener('pointercancel', endDockSwipe);
 
   // ── Diktat: die Leiste wird zur Aufnahme.
-  let recStart = 0, recTick = null;
-  function dockRecordingStart() {
+  let recStart = 0, recTick = null, recTarget = 'term';
+  function dockRecordingStart(target) {
+    // Wohin geht das Transkript am Ende? 'mgr' = Manager-Eingabezeile, sonst Terminal.
+    recTarget = target === 'mgr' ? 'mgr' : 'term';
     setDockPage('rec');
     dockPages.rec.classList.remove('is-transcribing');
     document.getElementById('recConfirmBtn').disabled = false;
@@ -7065,19 +7882,22 @@
     document.getElementById('recConfirmBtn').disabled = true;
     document.getElementById('recTimer').textContent = '…';
   }
-  function dockRecordingEnd(text) {
+  function dockRecordingEnd(text, target) {
     clearInterval(recTick);
     dockPages.rec.classList.remove('is-transcribing');
-    setDockPage('term');
+    // Ziel: Manager-Eingabezeile ('mgr') oder Terminal-Eingabe (default).
+    const mgr = (target || recTarget) === 'mgr';
+    setDockPage(mgr ? 'mgr' : 'term');
     if (text) {
-      const input = document.getElementById('dockInput');
-      // Erst fokussieren, dann schreiben, dann melden: die Bridge schickt die
-      // DIFFERENZ zum Feldinhalt an die PTY. Andersherum wäre sie leer — das
-      // Diktat stünde im Feld, käme aber nie im Terminal an.
+      const input = document.getElementById(mgr ? 'managerTextInput' : 'dockInput');
+      // Erst fokussieren, dann schreiben: im Terminal schickt die Bridge die
+      // DIFFERENZ zum Feldinhalt an die PTY (input-Event). Beim Manager bleibt
+      // das Transkript nur zum Prüfen/Senden in der Zeile (kein Auto-Send).
       input.focus();
       input.value = (input.value ? input.value + ' ' : '') + text;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      if (!mgr) input.dispatchEvent(new Event('input', { bubbles: true }));
     }
+    recTarget = 'term';
   }
   document.getElementById('recCancelBtn').addEventListener('click', () => {
     cancelDictation();
