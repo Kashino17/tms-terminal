@@ -450,14 +450,31 @@
   .dock-page--term > * { transition: max-width 280ms var(--ease-out),
     opacity 160ms ease-out, margin 280ms var(--ease-out), transform 280ms var(--ease-out); }
   .dock-page--term > .term-input-btn { margin-bottom: 1px; }
-  .dock-page--term > .term-input-row__prompt { margin-bottom: 8px; }
+  /* Prompt-Zeichen exakt auf die erste Textzeile legen: gleiche Zeilenbox
+     (line-height) wie die Textarea und unten bündig. Das eigene align-self
+     ist nötig, weil die generische .dock-page-Regel (align-items: center)
+     später im Stylesheet steht und das flex-end der Zeile überstimmt — sonst
+     schwebt das $ ~4px über der Textzeile. margin-bottom = padding-bottom der
+     Textarea. So sitzt das $ auf einer Ebene mit dem Text. */
+  .dock-page--term > .term-input-row__prompt { align-self: flex-end; margin-bottom: 8px; line-height: var(--term-input-lh, 20px); }
   #dock.is-typing .term-input { font-size: 15px; }
-  #dock.is-typing .term-input-row__prompt { margin-left: 4px; }
+  /* Beim Tippen wächst der Feldtext auf 15px — das $ muss mitziehen, sonst
+     stimmen die Baselines der beiden Zeilenkästen wieder nicht überein. */
+  #dock.is-typing .term-input-row__prompt { margin-left: 4px; font-size: 15px; }
   #dockInput { -webkit-user-select: text; user-select: text; }
   #dock.is-switching { transform: translateX(-50%) translateY(-6px) scale(1.03); box-shadow: 0 16px 40px rgba(0,0,0,.42); }
   .dock-page { display: flex; align-items: center; gap: 2px; width: 100%;
     transition: transform 360ms var(--spring), opacity 240ms ease; }
   .dock-page:not(.is-active) { position: absolute; inset: 6px; opacity: 0; pointer-events: none; }
+  /* Die aktive (sichtbare, bedienbare) Seite ruht IMMER bei translateX(0) — ihr
+     Transform wird NICHT mit-transitioniert, sie blendet nur per Deckkraft ein.
+     Der federnde Einlauf (--spring schwingt nach links ÜBER die 0 hinaus) blieb
+     auf echten Android-WebViews (backdrop-filter + overflow:hidden) manchmal
+     genau im Überschwinger hängen — dann stand der Bar-Inhalt (Prompt/Kamera)
+     links abgeschnitten. Ohne Transform-Transition gibt es keinen Frame, in dem
+     die aktive Seite hängen bleiben könnte. Die AUSlaufenden Seiten gleiten
+     weiterhin (sie sind dabei ohnehin unsichtbar: opacity 0 / pointer-events none). */
+  .dock-page.is-active { transition: opacity 240ms ease; }
   .dock-page--nav { justify-content: space-between; }
   .dock-page--term, .dock-page--rec { gap: 5px; }
   #dock[data-page="nav"]  .dock-page--term, #dock[data-page="rec"] .dock-page--term { transform: translateX(30%); }
@@ -728,7 +745,10 @@
   .card-menu-btn[aria-expanded="true"] { color: var(--text); background: rgba(var(--overlay-rgb),.12); }
 
   /* Body-appended dropdown so it never clips inside a card (Stack + Liste). */
-  .card-menu { position: fixed; z-index: 200; min-width: 200px; padding: 5px; border-radius: 14px; display: flex; flex-direction: column; gap: 2px; box-shadow: 0 14px 44px rgba(0,0,0,.45); }
+  /* max-width: das Menü darf nie breiter werden als der Bildschirm — die
+     Bestätigungszeile (Label + Ja + Abbrechen) ist breiter als die zwei
+     Menüzeilen; notfalls ellipsiert das Label statt rechts rauszulaufen. */
+  .card-menu { position: fixed; z-index: 200; min-width: 200px; max-width: calc(100vw - 16px); padding: 5px; border-radius: 14px; display: flex; flex-direction: column; gap: 2px; box-shadow: 0 14px 44px rgba(0,0,0,.45); }
   .card-menu__row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 11px; border: none; background: none; color: var(--text); font-size: var(--fs-body); border-radius: 10px; cursor: pointer; text-align: left; }
   .card-menu__row:active { background: rgba(var(--overlay-rgb),.10); }
   .card-menu__row .ic { flex: none; color: var(--text-dim); }
@@ -1091,11 +1111,15 @@
 
   /* ── Manager-Topbar: schlanke Leiste (Tabs · Modell · Menü). Die Identität
      (Bild · Name · Online) trägt jetzt die Dynamic Island. ───────────────── */
-  .mgr-topbar { flex: none; display: flex; align-items: center; gap: 10px; padding: 2px 2px 8px;
+  .mgr-topbar { flex: none; display: flex; align-items: center; gap: 8px; padding: 2px 2px 8px;
     width: 100%; max-width: 640px; margin: 0 auto; }
-  .mgr-topbar .subtabs { margin: 0; flex: 0 1 auto; flex-wrap: nowrap; min-width: 0; overflow: hidden; }
-  .mgr-topbar .mgr-model { margin-left: auto; }
-  .mgr-topbar .mgr-menu-btn { margin-left: 0; }
+  /* Tabs nehmen den freien Platz und scrollen notfalls in sich — Modell-Badge
+     und Menü bleiben als flex:none rechts angepinnt und NIE abgeschnitten. */
+  .mgr-topbar .subtabs { margin: 0; flex: 1 1 0; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .mgr-topbar .subtabs::-webkit-scrollbar { display: none; }
+  .mgr-topbar .subtabs button { flex: none; }
+  .mgr-topbar .mgr-model { flex: none; margin-left: 0; max-width: 38vw; }
+  .mgr-topbar .mgr-menu-btn { flex: none; margin-left: 0; }
   /* ── Manager-Kopf: Profilbild, Name, Präsenz (Messenger-Kopfzeile) ───────── */
   .mgr-header { flex: none; display: flex; align-items: center; gap: 12px; padding: 2px 2px 12px; }
   .mgr-header__meta { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -1247,6 +1271,10 @@
   .cloud-connect-card { padding: 18px 16px; margin-bottom: 12px; }
   .cloud-connect-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font: 700 15px var(--font-ui); }
   .cloud-connect-card p { margin: 0 0 12px; font: 12.5px var(--font-ui); color: var(--text-dim); }
+  /* Direktlink zur API-Key-Seite des Anbieters (nur solange nicht verbunden). */
+  .cloud-key-link { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 12px; padding: 0;
+    background: none; border: none; color: var(--accent); font: 600 12.5px var(--font-ui); text-align: left; cursor: pointer; }
+  .cloud-key-link:active { opacity: .55; }
   .cloud-connect-row { display: flex; gap: 8px; }
   .cloud-connect-row input { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(var(--overlay-rgb),.14); background: rgba(var(--overlay-rgb),.05); color: inherit; font: 13px var(--font-mono); }
   .cloud-account-row { padding: 14px 4px; border-top: 1px solid rgba(var(--overlay-rgb),.08); }
@@ -1539,7 +1567,11 @@
      bar. The toggle no longer opens a sheet — it shows/hides the non-modal
      .keys-panel (see below) so the terminal stays visible while typing. ===== */
   .term-input-row { flex: none; display: flex; align-items: center; gap: 5px; margin: 0 8px 8px; padding: 5px 6px; border-radius: var(--radius-pill); font-family: var(--font-mono); }
-  .term-input-row__prompt { flex: none; margin: 0 1px 0 7px; color: var(--text-dim); font-size: var(--fs-body); font-weight: 700; }
+  /* font-family explizit: in der Karte erbt das $ die Mono-Schrift vom
+     .term-input-row-Wrapper, im Dock ist es ein Direktkind der Bar-Seite —
+     dort lief es in der UI-Sans, deren andere Baseline das $ ein paar Pixel
+     neben die Mono-Textzeile setzte. */
+  .term-input-row__prompt { flex: none; margin: 0 1px 0 7px; color: var(--text-dim); font-size: var(--fs-body); font-weight: 700; font-family: var(--font-mono); }
   .term-input { flex: 1; min-width: 36px; background: none; border: none; outline: none; color: var(--text); font: var(--fs-body) var(--font-mono); padding: 8px 2px; }
   .term-input::placeholder { color: var(--text-dim); }
   .term-input:disabled { color: var(--text-dim); }
@@ -4335,12 +4367,7 @@
         ${icon('trash', 16)}
       </button>`;
     document.body.appendChild(menu);
-    const r = btn.getBoundingClientRect();
-    const mw = menu.offsetWidth;
-    let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
-    left = Math.max(8, left);
-    menu.style.left = left + 'px';
-    menu.style.top = (r.bottom + 6) + 'px';
+    placeCardMenu(menu, btn);
     btn.setAttribute('aria-expanded', 'true');
     openMenuEl = menu;
     menu.querySelector('[data-menu="auto"]').addEventListener('click', e => {
@@ -4356,6 +4383,18 @@
       document.addEventListener('keydown', onMenuKey, true);
     }, 0);
   }
+  // Rechtsbündig am ⋮-Knopf, an den Bildschirmrändern geklemmt. Eigene
+  // Funktion, weil sie zweimal laufen muss: beim Öffnen UND nachdem die
+  // Bestätigungszeile das Menü verbreitert hat (armCloseConfirm) — die beim
+  // Öffnen geklemmte left-Kante gilt nur für die alte Breite.
+  function placeCardMenu(menu, btn) {
+    const r = btn.getBoundingClientRect();
+    const mw = menu.offsetWidth;
+    let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+    left = Math.max(8, left);
+    menu.style.left = left + 'px';
+    menu.style.top = (r.bottom + 6) + 'px';
+  }
   function armCloseConfirm(menu, id) {
     const row = menu.querySelector('[data-menu="close"]');
     const confirm = document.createElement('div');
@@ -4365,6 +4404,8 @@
       <button class="card-menu__confirm-yes" data-menu="close-yes">Ja</button>
       <button class="card-menu__confirm-no" data-menu="close-no">Abbrechen</button>`;
     row.replaceWith(confirm);
+    const btn = document.querySelector(`.term-card[data-id="${menu.dataset.id}"] .card-menu-btn`);
+    if (btn) placeCardMenu(menu, btn);
     confirm.querySelector('[data-menu="close-yes"]').addEventListener('click', e => {
       e.stopPropagation(); closeCardMenu(); closeTerminal(id);
     });
@@ -5745,7 +5786,11 @@
   const modelSheetCtx = {};
   const CTX_MIN = 4096;
 
-  function clampCtx(v, max) { return Math.max(CTX_MIN, Math.min(max || 32768, Math.round(v) || CTX_MIN)); }
+  function clampCtx(v, max) {
+    const cap = max || 32768;
+    const lo = Math.min(CTX_MIN, cap); // bei winzigem Modell-Max nicht darüber schießen
+    return Math.max(lo, Math.min(cap, Math.round(v) || lo));
+  }
 
   function openManagerModelSheet() {
     const m = TMS_DATA.manager;
@@ -5768,16 +5813,19 @@
       // Aufgeklapptes lokales Modell: Context-Regler + Zahlenfeld + Laden-Knopf.
       if (isLocal && modelSheetExpandedId === p.id && !dis) {
         const max = p.maxContext || 32768;
+        const ctxMin = Math.min(CTX_MIN, max); // Regler-Untergrenze nie über dem Modell-Max
+        // Default: gemerkter Regler-Wert → sonst vom Server empfohlener savedContext
+        // → sonst geladene Länge → moderater Fallback.
         const def = modelSheetCtx[p.id] != null ? modelSheetCtx[p.id]
-          : clampCtx(p.loadedContext || 8192, max);
+          : clampCtx(p.savedContext || p.loadedContext || 8192, max);
         modelSheetCtx[p.id] = def;
         const ctl = `<div class="mgr-ctx" data-ctx-for="${escapeHtml(p.id)}" style="padding:8px 6px 12px;display:flex;flex-direction:column;gap:9px">
           <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-dim)">
             <span>Context-Window</span>
-            <input type="number" class="mgr-ctx-num" min="${CTX_MIN}" max="${max}" step="1024" value="${def}"
+            <input type="number" class="mgr-ctx-num" min="${ctxMin}" max="${max}" step="1024" value="${def}"
               style="width:96px;text-align:right;padding:6px 8px;border-radius:9px;background:rgba(var(--well-rgb),var(--well-a));border:1px solid var(--glass-border);color:var(--text);font:600 13px var(--font-mono)">
           </div>
-          <input type="range" class="mgr-ctx-slider" min="${CTX_MIN}" max="${max}" step="1024" value="${def}" style="width:100%">
+          <input type="range" class="mgr-ctx-slider" min="${ctxMin}" max="${max}" step="1024" value="${def}" style="width:100%">
           <button class="btn-chip is-primary mgr-ctx-load" data-mgr="load" data-id="${escapeHtml(p.id)}"${loading ? ' disabled style="opacity:.6"' : ''}>
             ${loading ? 'lädt…' : `Laden mit <span class="mgr-ctx-load-n">${def.toLocaleString('de-DE')}</span> Tokens`}</button>
         </div>`;
@@ -5861,15 +5909,11 @@
   function wireManagerInput() {
     const micBtn = document.getElementById('managerMicBtn');
     micBtn.addEventListener('click', () => {
-      if (micBtn.classList.contains('is-recording')) return;
-      micBtn.classList.add('is-recording');
-      setTimeout(() => {
-        micBtn.classList.remove('is-recording');
-        // Demo: Transkription landet in der Eingabezeile (nicht direkt gesendet).
-        const input = document.getElementById('managerTextInput');
-        input.value = (input.value ? input.value + ' ' : '') + '(Demo-Transkript)';
-        input.focus();
-      }, 1500);
+      // Diktat wie im Terminal: das Dock wird zur Aufnahmeleiste (Wellenform +
+      // Timer + ✗/✓). Das Transkript landet danach in der Manager-Eingabezeile
+      // (dockRecordingEnd routet per recTarget='mgr'). Die Bridge ersetzt diese
+      // Demo im echten App-Betrieb durch die echte mic:start-Pipeline.
+      dockRecordingStart('mgr');
     });
     document.getElementById('managerTextInput').addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
@@ -6052,9 +6096,13 @@
   }
 
   const CLOUD_PROVIDER_LABEL = { vercel: 'Vercel', render: 'Render' };
-  const CLOUD_KEY_HINT = {
-    vercel: 'vercel.com → Account Settings → Tokens',
-    render: 'dashboard.render.com → Account Settings → API Keys',
+  // Direktlinks zu den API-Key-Seiten der Anbieter — damit man den Key sofort
+  // dort erstellen kann, ohne im Dashboard danach zu suchen. In der echten App
+  // öffnet die Bridge (cloud:openTokenPage) diese im geteilten Login-Tab
+  // (WebBrowser); im Demo-Mockup via window.open.
+  const CLOUD_KEY_URL = {
+    vercel: 'https://vercel.com/account/tokens',
+    render: 'https://dashboard.render.com/settings#api-keys',
   };
 
   function cloudConnectedProviders() {
@@ -6066,7 +6114,7 @@
     return `
       <div class="cloud-connect-card glass" data-connect-card="${provider}">
         <h3><span class="provider-glyph">${CLOUD_GLYPH[provider]}</span>${CLOUD_PROVIDER_LABEL[provider]} verbinden</h3>
-        <p>API-Key erstellen unter: ${escapeHtml(CLOUD_KEY_HINT[provider])}</p>
+        <button class="cloud-key-link" data-token-page="${provider}" type="button">API-Key bei ${CLOUD_PROVIDER_LABEL[provider]} erstellen ↗</button>
         <div class="cloud-connect-row">
           <input type="password" placeholder="API-Key" data-connect-input="${provider}" autocomplete="off">
           <button class="btn-chip is-on" data-connect-btn="${provider}" type="button">Verbinden</button>
@@ -6083,6 +6131,10 @@
         if (!token) { toast('Bitte API-Key eingeben'); return; }
         window.requestCloudConnect(provider, token);
       });
+    });
+    // Direktlink zur API-Key-Seite des Anbieters (öffnet den Login-Tab).
+    host.querySelectorAll('[data-token-page]').forEach(link => {
+      link.addEventListener('click', () => window.requestCloudTokenPage(link.dataset.tokenPage));
     });
   }
 
@@ -6137,6 +6189,7 @@
           <div class="cloud-account-row__head"><span class="provider-glyph">${CLOUD_GLYPH[p]}</span>
             <span class="cloud-account-row__name">${CLOUD_PROVIDER_LABEL[p]}</span>
             <span class="status-chip" data-status="inactive"><span class="dot"></span><span class="status-chip__label">nicht verbunden</span></span></div>
+          <button class="cloud-key-link" data-token-page="${p}" type="button">API-Key bei ${CLOUD_PROVIDER_LABEL[p]} erstellen ↗</button>
           <div class="cloud-connect-row">
             <input type="password" placeholder="API-Key" data-connect-input="${p}" autocomplete="off">
             <button class="btn-chip is-on" data-connect-btn="${p}" type="button">Verbinden</button>
@@ -6195,6 +6248,10 @@
   window.requestCloudRevealKey = function (provider) { window.cloudKeyRevealed(provider, CLOUD_DEMO_KEYS[provider]); };
   window.requestCloudCopyKey = function (provider) { toast('Kopiert (Demo)'); };
   window.requestCloudOrgUpdate = function (org) { TMS_DATA.cloudOrg = org; /* demo: nur lokal */ };
+  window.requestCloudTokenPage = function (provider) {
+    var url = CLOUD_KEY_URL[provider];
+    if (url) window.open(url, '_blank'); // Demo: die echte App-Bridge öffnet den geteilten Login-Tab
+  };
 
   // ── Cloud org sheets: create/edit folder, manage folder, move selection ──
   function openCloudOrgSheet(title, bodyHtml, bind) {
@@ -7506,7 +7563,8 @@
     const id = dockTargetId();
     const session = TMS_DATA.sessions.find(s => s.id === id);
     const input = document.getElementById('dockInput');
-    input.placeholder = session ? `Befehl an ${session.name}…` : 'Kein Terminal';
+    input.dataset.phFull = session ? `Befehl an ${session.name}…` : 'Kein Terminal';
+    fitDockPlaceholder(input);
     input.disabled = !session;
     document.getElementById('dockKeysBtn').classList.toggle('is-on', !!state.keysPanelOpen);
     document.querySelectorAll('.term-card').forEach(c => c.classList.toggle('is-target', c.dataset.id === id));
@@ -7524,6 +7582,30 @@
     if (h > 0) document.documentElement.style.setProperty('--dock-h', h + 'px');
   }
   window.addEventListener('resize', syncDockHeight);
+  // Der Platzhalter darf NIE umbrechen: das leere Feld ist fix einzeilig
+  // (autoGrowInput misst leer = eine Zeile), die umgebrochene zweite
+  // Platzhalter-Zeile malt Chrome trotzdem — halb abgeschnitten an der
+  // Feldunterkante. Passt „Befehl an <Name>…" nicht in die Breite, wird auf …
+  // gekürzt. Der volle Text bleibt in dataset.phFull, damit ein breiteres
+  // Fenster (Fold aufgeklappt) wieder mehr davon zeigt.
+  function fitDockPlaceholder(input) {
+    const full = input.dataset.phFull || input.placeholder;
+    // Nicht messbar (Feld gefüllt oder unsichtbar, z. B. Sperrbildschirm):
+    // Platzhalter UNANGETASTET lassen — ihn hier schon auf den vollen Text
+    // zurückzusetzen hieße, beim späteren Leeren des Felds kurz die
+    // umgebrochene Fassung zu zeigen, bis das nächste resize/sync kürzt.
+    if (input.value || input.clientWidth === 0) return;
+    input.placeholder = full;
+    const cs = getComputedStyle(input);
+    const oneLine = (parseFloat(cs.lineHeight) || 20)
+      + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 1;
+    let text = full;
+    while (text.length > 2 && input.scrollHeight > oneLine) {
+      text = text.slice(0, -2) + '…';
+      input.placeholder = text;
+    }
+  }
+  window.addEventListener('resize', () => fitDockPlaceholder(document.getElementById('dockInput')));
   function autoGrowInput(el) {
     if (!el) return;
     const cs = getComputedStyle(el);
@@ -7548,6 +7630,10 @@
     // die Leiste darüber hinterherhinken lassen (und scrollHeight mitten im
     // Übergang lügt ohnehin).
     syncDockHeight();
+    // Wird das Feld leer (Nutzer löscht, Bridge-dockReset nach Senden), taucht
+    // der Platzhalter wieder auf — sofort auf die AKTUELLE Schriftgröße
+    // einpassen (beim Tippen 15px statt 14px), nicht erst beim nächsten resize.
+    if (!el.value && el.dataset.phFull) fitDockPlaceholder(el);
   }
   // Gedrückt halten und waagerecht ziehen schiebt den Cursor durch den Text —
   // die Alternative zu Androids Lupe, die im WebView nicht zuverlässig kommt.
@@ -7774,8 +7860,10 @@
   document.addEventListener('pointercancel', endDockSwipe);
 
   // ── Diktat: die Leiste wird zur Aufnahme.
-  let recStart = 0, recTick = null;
-  function dockRecordingStart() {
+  let recStart = 0, recTick = null, recTarget = 'term';
+  function dockRecordingStart(target) {
+    // Wohin geht das Transkript am Ende? 'mgr' = Manager-Eingabezeile, sonst Terminal.
+    recTarget = target === 'mgr' ? 'mgr' : 'term';
     setDockPage('rec');
     dockPages.rec.classList.remove('is-transcribing');
     document.getElementById('recConfirmBtn').disabled = false;
@@ -7794,19 +7882,22 @@
     document.getElementById('recConfirmBtn').disabled = true;
     document.getElementById('recTimer').textContent = '…';
   }
-  function dockRecordingEnd(text) {
+  function dockRecordingEnd(text, target) {
     clearInterval(recTick);
     dockPages.rec.classList.remove('is-transcribing');
-    setDockPage('term');
+    // Ziel: Manager-Eingabezeile ('mgr') oder Terminal-Eingabe (default).
+    const mgr = (target || recTarget) === 'mgr';
+    setDockPage(mgr ? 'mgr' : 'term');
     if (text) {
-      const input = document.getElementById('dockInput');
-      // Erst fokussieren, dann schreiben, dann melden: die Bridge schickt die
-      // DIFFERENZ zum Feldinhalt an die PTY. Andersherum wäre sie leer — das
-      // Diktat stünde im Feld, käme aber nie im Terminal an.
+      const input = document.getElementById(mgr ? 'managerTextInput' : 'dockInput');
+      // Erst fokussieren, dann schreiben: im Terminal schickt die Bridge die
+      // DIFFERENZ zum Feldinhalt an die PTY (input-Event). Beim Manager bleibt
+      // das Transkript nur zum Prüfen/Senden in der Zeile (kein Auto-Send).
       input.focus();
       input.value = (input.value ? input.value + ' ' : '') + text;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      if (!mgr) input.dispatchEvent(new Event('input', { bubbles: true }));
     }
+    recTarget = 'term';
   }
   document.getElementById('recCancelBtn').addEventListener('click', () => {
     cancelDictation();
