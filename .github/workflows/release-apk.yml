@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Verbindung im Liquid-Layout (V2) repariert: Nach dem Zurueckholen aus dem Hintergrund (Android killt den Socket dann lautlos) baut die App die Verbindung jetzt AKTIV neu auf, statt auf 'Getrennt' haengen zu bleiben. Fehlt beim Kaltstart kurz der Zugangstoken, wird er nachgeladen und erneut verbunden. Und die Ping-/Latenzanzeige zeigt nur noch im verbundenen Zustand einen Wert (vorher hing eine alte Zahl, obwohl getrennt)." \
+            --notes "Terminal-Darstellung grundsaniert — keine verschraenkten, doppelten oder zerrissenen Zeilen mehr: (1) Emulator und Server-PTY aendern ihre Groesse jetzt im Gleichschritt (vorher malte Claude bis zu ~0,6s fuer die alte Breite weiter — die Hauptquelle des Zeilensalats). (2) Beim Wiederverbinden schickt der Server kein rohes Replay mehr, sondern ein fertiges Vollbild in der aktuellen Breite (tmux-Prinzip, inkl. Historie — dafuer Server aktualisieren und neu starten!). (3) Lange Sessions: Der Renderer zeigte nach ~5000 Zeilen alte Zeilen an falschen Stellen an — behoben. (4) Terminals starten mit ihrer echten Groesse statt 80x24. Dazu: Ordner-Anzeige pro Terminal (cwd) vom Server." \
             --latest
