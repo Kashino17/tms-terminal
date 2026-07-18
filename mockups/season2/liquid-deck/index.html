@@ -721,12 +721,27 @@
   .card-cwd { display: block; min-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-caption); color: var(--text-dim); margin-top: 0; line-height: 1.1; }
   .card-cwd:empty { display: none; }
 
-  /* Per-terminal Auto-Approve — 1-tap header pill, default ON. */
-  .auto-toggle { flex: none; display: flex; align-items: center; justify-content: center; height: 30px; width: 34px; padding: 0; border-radius: var(--radius-pill); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 200ms var(--spring), background 200ms var(--spring), border-color 200ms var(--spring); }
-  .auto-toggle .ic { width: var(--icon-sm); height: var(--icon-sm); flex: none; }
-  .auto-toggle__label { letter-spacing: .01em; }
-  .auto-toggle.is-on { color: var(--ok); background: rgba(var(--ok-rgb),var(--chip-a)); border-color: rgba(var(--ok-rgb),.4); }
-  .auto-toggle:active { transform: scale(.94); }
+  /* Per-terminal ⋮ menu button (replaces the old ⚡ auto-toggle). */
+  .card-menu-btn { flex: none; display: flex; align-items: center; justify-content: center; height: 30px; width: 30px; padding: 0; border-radius: var(--radius-pill); color: var(--text-dim); background: rgba(var(--overlay-rgb),.06); border: 1px solid var(--glass-border); transition: color 160ms var(--spring), background 160ms var(--spring); }
+  .card-menu-btn .ic { width: var(--icon-sm); height: var(--icon-sm); flex: none; }
+  .card-menu-btn:active { transform: scale(.94); }
+  .card-menu-btn[aria-expanded="true"] { color: var(--text); background: rgba(var(--overlay-rgb),.12); }
+
+  /* Body-appended dropdown so it never clips inside a card (Stack + Liste). */
+  .card-menu { position: fixed; z-index: 200; min-width: 200px; padding: 5px; border-radius: 14px; display: flex; flex-direction: column; gap: 2px; box-shadow: 0 14px 44px rgba(0,0,0,.45); }
+  .card-menu__row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 11px; border: none; background: none; color: var(--text); font-size: var(--fs-body); border-radius: 10px; cursor: pointer; text-align: left; }
+  .card-menu__row:active { background: rgba(var(--overlay-rgb),.10); }
+  .card-menu__row .ic { flex: none; color: var(--text-dim); }
+  .card-menu__label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-menu__row--danger, .card-menu__row--danger .ic { color: var(--err); }
+  .card-menu__switch { flex: none; width: 34px; height: 20px; border-radius: 999px; background: rgba(var(--overlay-rgb),.25); position: relative; transition: background 160ms var(--spring); }
+  .card-menu__switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 160ms var(--spring); }
+  .card-menu__switch[data-on="true"] { background: var(--ok); }
+  .card-menu__switch[data-on="true"]::after { transform: translateX(14px); }
+  .card-menu__confirm { display: flex; align-items: center; gap: 8px; padding: 10px 11px; }
+  .card-menu__confirm .card-menu__label { color: var(--err); }
+  .card-menu__confirm button { flex: none; padding: 5px 12px; border-radius: 8px; font-size: var(--fs-label); border: 1px solid var(--glass-border); background: rgba(var(--overlay-rgb),.08); color: var(--text); cursor: pointer; }
+  .card-menu__confirm .card-menu__confirm-yes { color: var(--err); border-color: rgba(var(--err-rgb),.4); background: rgba(var(--err-rgb),.12); }
   .status-chip { flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .02em; padding: 4px 9px; border-radius: 999px; display: flex; align-items: center; gap: 5px; text-transform: uppercase; }
   .status-chip .dot { width: 6px; height: 6px; border-radius: 50%; }
   .status-chip[data-status="running"] { color: var(--accent); background: rgba(var(--accent-rgb),var(--chip-a)); }
@@ -2189,6 +2204,7 @@
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.9 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.9-3.8-9S9.5 5.6 12 3Z"/>',
     chevronLeft: '<path d="m15 6-6 6 6 6"/>',
     dots: '<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+    dotsV: '<circle cx="12" cy="5.5" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="18.5" r="1.4" fill="currentColor" stroke="none"/>',
     // Incognito "hat + glasses" glyph — address-bar isolation badge + new-tab notice.
     incognito: '<path d="M5 10Q12 2 19 10"/><path d="M3 10h18"/><circle cx="8" cy="13" r="3"/><circle cx="16" cy="13" r="3"/><path d="M11 13h2"/>',
     key: '<circle cx="7" cy="17" r="4"/><path d="M10 14 20 4"/><path d="M15 9l3 3"/><path d="M18 6l2.5 2.5"/>',
@@ -2973,7 +2989,7 @@
             <span class="card-cwd" data-card-cwd>${escapeHtml(folderLabel(cs.cwd || ''))}</span>
           </div>
           <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
-          <button class="auto-toggle${cs.autoApprove ? ' is-on' : ''}" data-act="auto" aria-pressed="${cs.autoApprove}" aria-label="Auto-Approve umschalten" title="Auto-Approve">${icon('bolt', 15)}</button>
+          <button class="card-menu-btn" data-act="menu" aria-haspopup="menu" aria-expanded="false" aria-label="Terminal-Menü" title="Menü">${icon('dotsV', 18)}</button>
         </div>`;
   }
 
@@ -3281,6 +3297,7 @@
   // into whichever view is mounted, and drops straight into inline rename
   // (same click-to-edit flow as an existing card's name field).
   function removeTerminalCard(id) {
+    if (typeof closeCardMenu === 'function') closeCardMenu();
     const idx = state.order.indexOf(id);
     if (idx === -1) return;
     state.order.splice(idx, 1);
@@ -3399,8 +3416,8 @@
     const session = TMS_DATA.sessions.find(s => s.id === id);
     wireEditableField(card.querySelector('.card-name'), 'name', session);
     wireEditableField(card.querySelector('.card-desc'), 'description', session);
-    const auto = card.querySelector('.auto-toggle');
-    if (auto) auto.addEventListener('click', e => { e.stopPropagation(); toggleCardAutoApprove(id); });
+    const menuBtn = card.querySelector('.card-menu-btn');
+    if (menuBtn) menuBtn.addEventListener('click', e => { e.stopPropagation(); openCardMenu(id, menuBtn); });
   }
 
   // ============================================================
@@ -3822,7 +3839,7 @@
       if (!card) return;
       const idx = state.order.indexOf(card.dataset.id);
       const isActiveCard = idx === Math.round(state.activeFloat);
-      if (isActiveCard && e.target.closest('.card-body-shell, .card-name, .card-desc, .status-chip, .auto-toggle, .replay-pill, .keys-panel, .term-input-row')) return;
+      if (isActiveCard && e.target.closest('.card-body-shell, .card-name, .card-desc, .status-chip, .card-menu-btn, .replay-pill, .keys-panel, .term-input-row')) return;
       pointerId = e.pointerId; startX = e.clientX; startY = e.clientY; startFloat = state.activeFloat; moved = false;
       cardWidthPx = card.getBoundingClientRect().width || 300;
       dragging = true;
@@ -4284,13 +4301,88 @@
     cs.sim.respond();
   }
   document.getElementById('questionSubmitBtn').addEventListener('click', () => submitQuestionAnswer());
-  // Per-terminal Auto-Approve toggle (header pill + the sheet's Auto button).
-  function updateAutoToggleUI(id) {
-    const on = cardState[id].autoApprove;
-    document.querySelectorAll(`.term-card[data-id="${id}"] .auto-toggle`).forEach(btn => {
-      btn.classList.toggle('is-on', on);
-      btn.setAttribute('aria-pressed', String(on));
+  // ── Per-card ⋮ menu: Auto-Approve switch + „Terminal schließen" (confirm) ──
+  // Body-appended popover so it never clips inside a card. Only one open.
+  let openMenuEl = null;
+  function onMenuOutside(e) {
+    if (openMenuEl && !openMenuEl.contains(e.target) && !e.target.closest('.card-menu-btn')) closeCardMenu();
+  }
+  function onMenuKey(e) { if (e.key === 'Escape') closeCardMenu(); }
+  function closeCardMenu() {
+    if (!openMenuEl) return;
+    const btn = document.querySelector(`.term-card[data-id="${openMenuEl.dataset.id}"] .card-menu-btn`);
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    openMenuEl.remove();
+    openMenuEl = null;
+    document.removeEventListener('pointerdown', onMenuOutside, true);
+    document.removeEventListener('keydown', onMenuKey, true);
+  }
+  function openCardMenu(id, btn) {
+    if (openMenuEl && openMenuEl.dataset.id === id) { closeCardMenu(); return; }
+    closeCardMenu();
+    const on = cardState[id] ? cardState[id].autoApprove : true;
+    const menu = document.createElement('div');
+    menu.className = 'card-menu glass glass--dark';
+    menu.dataset.id = id;
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML = `
+      <button class="card-menu__row" data-menu="auto" role="menuitemcheckbox" aria-checked="${on}">
+        <span class="card-menu__label">Auto-Approve</span>
+        <span class="card-menu__switch" data-on="${on}"></span>
+      </button>
+      <button class="card-menu__row card-menu__row--danger" data-menu="close" role="menuitem">
+        <span class="card-menu__label">Terminal schließen</span>
+        ${icon('trash', 16)}
+      </button>`;
+    document.body.appendChild(menu);
+    const r = btn.getBoundingClientRect();
+    const mw = menu.offsetWidth;
+    let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+    left = Math.max(8, left);
+    menu.style.left = left + 'px';
+    menu.style.top = (r.bottom + 6) + 'px';
+    btn.setAttribute('aria-expanded', 'true');
+    openMenuEl = menu;
+    menu.querySelector('[data-menu="auto"]').addEventListener('click', e => {
+      e.stopPropagation();
+      toggleCardAutoApprove(id); // updates the switch via updateAutoToggleUI
     });
+    menu.querySelector('[data-menu="close"]').addEventListener('click', e => {
+      e.stopPropagation();
+      armCloseConfirm(menu, id);
+    });
+    setTimeout(() => {
+      document.addEventListener('pointerdown', onMenuOutside, true);
+      document.addEventListener('keydown', onMenuKey, true);
+    }, 0);
+  }
+  function armCloseConfirm(menu, id) {
+    const row = menu.querySelector('[data-menu="close"]');
+    const confirm = document.createElement('div');
+    confirm.className = 'card-menu__confirm';
+    confirm.innerHTML = `
+      <span class="card-menu__label">Wirklich schließen?</span>
+      <button class="card-menu__confirm-yes" data-menu="close-yes">Ja</button>
+      <button class="card-menu__confirm-no" data-menu="close-no">Abbrechen</button>`;
+    row.replaceWith(confirm);
+    confirm.querySelector('[data-menu="close-yes"]').addEventListener('click', e => {
+      e.stopPropagation(); closeCardMenu(); closeTerminal(id);
+    });
+    confirm.querySelector('[data-menu="close-no"]').addEventListener('click', e => {
+      e.stopPropagation(); closeCardMenu();
+    });
+  }
+
+  // Reflect the per-terminal Auto-Approve flag on the open ⋮ menu switch
+  // (if any) and the permission sheet's Auto button.
+  function updateAutoToggleUI(id) {
+    const on = cardState[id] ? cardState[id].autoApprove : false;
+    if (openMenuEl && openMenuEl.dataset.id === id) {
+      const sw = openMenuEl.querySelector('.card-menu__switch');
+      if (sw) sw.setAttribute('data-on', String(on));
+      const row = openMenuEl.querySelector('[data-menu="auto"]');
+      if (row) row.setAttribute('aria-checked', String(on));
+    }
     const permBtn = document.getElementById('permAutoBtn');
     if (permBtn && state.pendingPromptId === id) permBtn.setAttribute('aria-pressed', String(on));
   }
@@ -4685,7 +4777,7 @@
     function onCancel() { const wd = dragging; cleanup(); if (wd) { if (wasOpen) openListRail(card); else closeListRail(card); } }
     surface.addEventListener('pointerdown', e => {
       // Controls with their own gestures never start a swipe.
-      if (e.target.closest('.term-input-row, .card-name, .card-desc, .auto-toggle, .status-chip, .chevron-btn, .replay-pill, .jump-bottom-orb, .keys-panel')) return;
+      if (e.target.closest('.term-input-row, .card-name, .card-desc, .card-menu-btn, .status-chip, .chevron-btn, .replay-pill, .jump-bottom-orb, .keys-panel')) return;
       pointerId = e.pointerId; startX = e.clientX; startY = e.clientY;
       dragging = false; decided = false; cleaned = false;
       railW = rail.getBoundingClientRect().width || 260;
