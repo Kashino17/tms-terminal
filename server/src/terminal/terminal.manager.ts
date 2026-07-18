@@ -2,6 +2,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { createPty } from './terminal.factory';
 import { TerminalSession, CreateSessionOptions } from './terminal.types';
 import { readProcessCwd, readForegroundProcess } from './cwd.utils';
+import { planReattach, wantsSnapshot, CLEAR_SEQUENCE } from './reattach.policy';
+import { SessionMirror } from './emulator.mirror';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
@@ -27,6 +29,8 @@ export class TerminalManager {
   private closeCallbacks = new Map<string, CloseCallback>();
   private outputBuffers = new Map<string, string>();   // output-batching buffer (short-lived)
   private reattachBuffers = new Map<string, string>(); // output captured while detached
+  /** Detach-Puffer ist übergelaufen — sein Anfang wurde abgeschnitten. */
+  private reattachOverflow = new Set<string>();
   private outputTimers = new Map<string, NodeJS.Timeout>();
   private idleTimers = new Map<string, NodeJS.Timeout>();
   private batchIntervals = new Map<string, number>();  // per-session adaptive batch interval (ms)
@@ -36,6 +40,8 @@ export class TerminalManager {
   private attachedIds = new Set<string>();
   private resizeTimers = new Map<string, NodeJS.Timeout>();                 // coalesce SIGWINCH-raising resizes
   private appliedDims = new Map<string, { cols: number; rows: number }>();  // last size actually sent to the pty
+  /** Spiegel-Emulator pro Session — die Quelle für Snapshot-Reattaches (emulator.mirror.ts). */
+  private mirrors = new Map<string, SessionMirror>();
 
   /** Optional callback invoked during detached buffering — allows prompt detector
    *  to keep receiving data for server-side auto-approve and FCM push notifications. */
@@ -85,7 +91,19 @@ export class TerminalManager {
     this.outputCallbacks.set(id, onOutput);
     this.closeCallbacks.set(id, onClose);
 
+    // Der Spiegel ist Komfort, kein Muss: schlägt er fehl, laufen Reattaches
+    // über den alten Replay/Clear-Weg weiter.
+    try {
+      this.mirrors.set(id, new SessionMirror(options.cols, options.rows));
+    } catch (e) {
+      logger.error(`Session mirror creation failed for ${id}: ${(e as Error).message}`);
+    }
+
     pty.onData((data: string) => {
+      // Zuerst in den Spiegel — dieselben Bytes in derselben Reihenfolge wie
+      // zum Client. Nur so ist ein späteres Snapshot byte-genau äquivalent.
+      this.mirrors.get(id)?.feed(data);
+
       const existing = this.outputBuffers.get(id) || '';
       const combined = existing + data;
       this.outputBuffers.set(id, combined);
@@ -147,6 +165,9 @@ export class TerminalManager {
 
     this.sessions.set(id, session);
     this.attachedIds.add(id);
+    // Die Startgröße IST schon angewandt — sonst hebt der erste identische
+    // Resize des Clients ein unnötiges SIGWINCH (und damit einen Voll-Repaint).
+    this.appliedDims.set(id, { cols: options.cols, rows: options.rows });
     logger.success(`Session created: ${id}`);
     return session;
   }
@@ -182,6 +203,7 @@ export class TerminalManager {
     this.outputCallbacks.set(sessionId, (_id, data) => {
       const existing = this.reattachBuffers.get(sessionId) || '';
       const combined = existing + data;
+      if (combined.length >= REATTACH_BUFFER_MAX) this.reattachOverflow.add(sessionId);
       this.reattachBuffers.set(
         sessionId,
         combined.length >= REATTACH_BUFFER_MAX
@@ -211,13 +233,22 @@ export class TerminalManager {
   }
 
   /** Reattach new callbacks to an existing session.
-   *  Flushes any output buffered during detachment to the new client first.
-   *  The reattach buffer is trimmed to a clean line boundary to avoid sending
-   *  partial ANSI escape sequences that could corrupt the client terminal. */
+   *
+   *  Mit Spiegel-Emulator (Normalfall): weicht der Client-Stand vom
+   *  Server-Stand ab (verpasste Ausgabe, andere Breite, Puffer-Überlauf),
+   *  bekommt der Client KEIN Replay des rohen Detach-Puffers mehr, sondern
+   *  Clear + ein in seiner Breite serialisiertes Vollbild inkl. Historie.
+   *  Cursor-relative Frames aus der Abwesenheit können so nie wieder gegen
+   *  falsche Breiten oder mitten im Frame abgespielt werden.
+   *
+   *  Ohne Spiegel (Anlage fehlgeschlagen): alter Weg — Replay, bei
+   *  Breitenwechsel/Überlauf Clear (siehe reattach.policy.ts). */
   reattachSession(
     sessionId: string,
     onOutput: OutputCallback,
     onClose: CloseCallback,
+    clientCols?: number,
+    clientRows?: number,
   ): TerminalSession | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
@@ -236,15 +267,59 @@ export class TerminalManager {
     this.closeCallbacks.set(sessionId, onClose);
     this.attachedIds.add(sessionId);
 
-    // Flush output buffered while client was away, trimmed to a clean line boundary
     const buffered = this.reattachBuffers.get(sessionId);
+    const overflowed = this.reattachOverflow.has(sessionId);
+    const mirror = this.mirrors.get(sessionId);
+
+    if (mirror && wantsSnapshot(session.cols, clientCols, buffered?.length ?? 0, overflowed)) {
+      this.reattachBuffers.delete(sessionId);
+      this.reattachOverflow.delete(sessionId);
+      // In Client-Größe reflowen, BEVOR serialisiert wird — das Snapshot muss
+      // exakt für die Breite gelten, in der der Client es anzeigen wird.
+      if (clientCols && clientRows) mirror.resize(clientCols, clientRows);
+      // Bis zum Schnittpunkt schlucken: alles, was der Batcher jetzt noch
+      // flusht, ist bereits im Spiegel und damit gleich im Snapshot enthalten.
+      this.outputCallbacks.set(sessionId, () => {});
+      void mirror.flushed().then(() => {
+        // Direkt nach flushed() (Microtask) kann kein neues PTY-Ereignis
+        // dazwischengelaufen sein — dies ist der exakte Schnittpunkt.
+        if (this.attachGen.get(sessionId) !== nextGen) return; // neuerer Attach übernahm
+        if (!this.sessions.has(sessionId)) return;             // Session starb währenddessen
+        // Batch-Reste sind Schnittpunkt-Vergangenheit → stecken im Snapshot.
+        const pending = this.outputTimers.get(sessionId);
+        if (pending) { clearTimeout(pending); this.outputTimers.delete(sessionId); }
+        this.outputBuffers.delete(sessionId);
+        onOutput(sessionId, CLEAR_SEQUENCE + mirror.serializeNow());
+        this.outputCallbacks.set(sessionId, onOutput);
+      });
+      logger.success(
+        `Session reattached via snapshot: ${sessionId.slice(0, 8)} ` +
+        `(cols ${session.cols}→${clientCols ?? '?'}, missed=${buffered?.length ?? 0}B, overflow=${overflowed})`,
+      );
+      return session;
+    }
+
+    // ── Fallback ohne Spiegel: Rückstand abspielen — oder bei Breitenwechsel/
+    // Überlauf erst leeren; das frische Bild malt die TUI dann selbst, sobald
+    // der auf den Reattach folgende Resize SIGWINCH hebt.
+    const plan = planReattach(session.cols, clientCols, overflowed);
+    if (plan.clear) {
+      logger.info(
+        `Reattach ${sessionId.slice(0, 8)}: clearing client (cols ${session.cols}→${clientCols ?? '?'}, ` +
+        `overflow=${overflowed}, buffered=${buffered?.length ?? 0}B)`,
+      );
+      onOutput(sessionId, CLEAR_SEQUENCE);
+    }
     if (buffered) {
-      const trimmed = this.trimToLineBoundary(buffered);
-      if (trimmed.length > 0) {
-        onOutput(sessionId, trimmed);
+      if (plan.replay) {
+        const trimmed = this.trimToLineBoundary(buffered);
+        if (trimmed.length > 0) {
+          onOutput(sessionId, trimmed);
+        }
       }
       this.reattachBuffers.delete(sessionId);
     }
+    this.reattachOverflow.delete(sessionId);
 
     logger.success(`Session reattached: ${sessionId}`);
     return session;
@@ -302,6 +377,12 @@ export class TerminalManager {
     // stable size matters, so debounce: wait until the resizes stop, then raise
     // exactly ONE SIGWINCH — and skip it entirely if the real pty size is
     // unchanged (the common reattach case: client re-sends the current dims).
+    //
+    // 60 ms statt 200 ms: Ein Sturm feuert im 16-ms-Takt und hält den Timer
+    // ohnehin zurück, bis Ruhe ist — für den EINZELNEN echten Resize aber war
+    // jede Wartemilli ein Fenster, in dem die TUI für die alte Breite in einen
+    // Client malt, der schon auf die neue umgebrochen hat (die verschränkten
+    // Zeilen). Der Client debounct seit dem Spalten-Freeze selbst sauber.
     const existing = this.resizeTimers.get(sessionId);
     if (existing) clearTimeout(existing);
     this.resizeTimers.set(sessionId, setTimeout(() => {
@@ -311,8 +392,11 @@ export class TerminalManager {
       const applied = this.appliedDims.get(sessionId);
       if (applied && applied.cols === s.cols && applied.rows === s.rows) return; // real size unchanged → no SIGWINCH
       s.pty.resize(s.cols, s.rows);
+      // Der Spiegel folgt der PTY — nur so gilt sein Snapshot für die Breite,
+      // in der die TUI wirklich malt.
+      this.mirrors.get(sessionId)?.resize(s.cols, s.rows);
       this.appliedDims.set(sessionId, { cols: s.cols, rows: s.rows });
-    }, 200));
+    }, 60));
     return true;
   }
 
@@ -357,6 +441,7 @@ export class TerminalManager {
     this.closeCallbacks.delete(sessionId);
     this.outputBuffers.delete(sessionId);
     this.reattachBuffers.delete(sessionId);
+    this.reattachOverflow.delete(sessionId);
     this.batchIntervals.delete(sessionId);
     this.lastInputAt.delete(sessionId);
     this.attachGen.delete(sessionId);
@@ -368,6 +453,8 @@ export class TerminalManager {
     const r = this.resizeTimers.get(sessionId);
     if (r) { clearTimeout(r); this.resizeTimers.delete(sessionId); }
     this.appliedDims.delete(sessionId);
+    this.mirrors.get(sessionId)?.dispose();
+    this.mirrors.delete(sessionId);
   }
 }
 

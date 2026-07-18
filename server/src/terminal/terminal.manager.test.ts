@@ -90,3 +90,50 @@ test('Spinner-Häppchen ohne aktuellen Tastendruck werden gebündelt statt einze
 
   mgr.closeSession(id);
 });
+
+/**
+ * Snapshot-Reattach (Spiegel-Emulator): Wer mit ANDERER Breite zurückkommt oder
+ * Ausgabe verpasst hat, bekommt kein Roh-Replay mehr (das erzeugte bei
+ * Breitenwechsel die verschränkten/gedoppelten Zeilen der Screenshots),
+ * sondern Clear + ein fertiges Vollbild — jede Zeile genau einmal.
+ */
+test('Reattach mit anderer Breite liefert Clear + Snapshot statt Roh-Replay', async () => {
+  const mgr = new TerminalManager();
+  const session = mgr.createSession({ cols: 80, rows: 24 }, () => {}, () => {});
+  assert.ok(session, 'Session wurde angelegt');
+  const id = session!.id;
+
+  await sleep(1500); // Login-Shell bereit werden lassen
+
+  mgr.detachSession(id);
+  mgr.write(id, 'printf "MARKER_%s_ENDE" SNAP\r');
+  await sleep(800); // Ausgabe landet im Detach-Puffer (und im Spiegel)
+
+  const seen: string[] = [];
+  // Client kommt mit 46 statt 80 Spalten zurück (gefaltet) → Snapshot-Weg.
+  mgr.reattachSession(id, (_i, data) => seen.push(data), () => {}, 46, 20);
+  await sleep(800); // Snapshot kommt asynchron (Parser-Flush)
+
+  const all = seen.join('');
+  assert.ok(all.includes('\x1b[2J') && all.includes('\x1b[3J'), 'Snapshot beginnt mit einem echten Clear');
+  const hits = all.split('MARKER_SNAP_ENDE').length - 1;
+  assert.equal(hits, 1, `die verpasste Ausgabe steht GENAU EINMAL im Snapshot (gesehen: ${hits}×)`);
+
+  mgr.closeSession(id);
+});
+
+test('Reattach ohne verpasste Ausgabe bei gleicher Breite lässt den Client unangetastet', async () => {
+  const mgr = new TerminalManager();
+  const session = mgr.createSession({ cols: 80, rows: 24 }, () => {}, () => {});
+  const id = session!.id;
+  await sleep(1200);
+
+  mgr.detachSession(id);
+  // Nichts passiert während der Abwesenheit.
+  const seen: string[] = [];
+  mgr.reattachSession(id, (_i, data) => seen.push(data), () => {}, 80, 24);
+  await sleep(400);
+
+  assert.equal(seen.join(''), '', 'kein Clear, kein Snapshot, kein Replay — nichts zu tun');
+  mgr.closeSession(id);
+});
