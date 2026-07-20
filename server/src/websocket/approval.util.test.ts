@@ -151,3 +151,45 @@ test('gate: Freitext-Rückfrage bleibt notify-only (kein Retry nötig)', () => {
 test('chooseApprovalKey presses NOTHING on a blank trailing line (nothing is waiting)', () => {
   assert.equal(chooseApprovalKey('Fertig.\nAlles erledigt.\n\n'), null);
 });
+
+// ── Task-Liste unter der Box (Screenshot 2026-07-20 20:27): Claude Code
+//    rendert seine Todo-Liste UNTER der Berechtigungsbox. Die Optionszeilen
+//    rutschen damit aus dem 12-Zeilen-Tail — das Gate sagte notify-only,
+//    obwohl eine glasklare Ja-Option vorausgewählt wartete. ──
+const TODO_FOOTER =
+  '\n15tasks(8done,2inprogress,5\n' +
+  'open)\n' +
+  '■SDDTask8:PhaseCVer…\n' +
+  '■SDDTask10:AdsListVie…\n' +
+  '□SDDTask11:PhaseAVe…\n' +
+  '□SDDTask12:Shoporuor…\n' +
+  '□SDDTask13:ad_product…\n' +
+  '…+2pending,8completed\n';
+
+test('chooseApprovalKey sendet Enter trotz Task-Liste unter der Box', () => {
+  const win =
+    'Doyouwanttoproceed?\n' +
+    '❯1.Yes\n' +
+    '2.Yes,allowreadingfromTMSSolvado/fromthisproject\n' +
+    '3.No\n\n' +
+    'Esctocancel·Tabtoamend·ctrl+e\n' +
+    'toexplain\n' + TODO_FOOTER;
+  assert.equal(chooseApprovalKey(win), '\r');
+});
+
+test('Auswahlfrage + Task-Liste bleibt null (kein blindes Enter)', () => {
+  const sel = 'Whichmodel?\n❯1.claude-sonnet\n2.claude-opus\nEsctocancel' + TODO_FOOTER;
+  assert.equal(chooseApprovalKey(sel), null);
+});
+
+// ── Prosa-Aufzählung ÜBER einer inhaltlichen Auswahlbox: die "1. Ja"-Zeile
+//    aus dem Fließtext darf nicht als Option 1 der Box gelten — es zählt der
+//    JÜNGSTE nummerierte Block (die wartende Box ist immer der letzte). ──
+test('Prosa-Ja-Aufzählung über einer Auswahlbox erzwingt kein Enter', () => {
+  const w =
+    'Meine Empfehlung:\n' +
+    '1.Yes,zuerst das Gate fixen\n' +
+    '2.Dann der Rest\n\n' +
+    'Whichcheck?\n❯1.Tests\n2.Lint\nEsctocancel';
+  assert.equal(chooseApprovalKey(w), null);
+});

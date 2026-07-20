@@ -6,6 +6,8 @@
 // - Robust against dup-fires: buffer-hash cooldown after each successful match.
 // - Minimal false positives: strict patterns, AI detection requires strong signals.
 
+import { stripStatusFooter } from '../websocket/approval.util';
+
 const ANSI_STRIP = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]/g;
 
 // ── Interactive Prompt Patterns ──────────────────────────────────────────────
@@ -165,10 +167,13 @@ function lastLines(s: string, n: number = PROMPT_TAIL_LINES): string {
  */
 function matchPrompt(text: string): RegExp | undefined {
   if (!text) return undefined;
-  const tail = lastLines(text);
+  // Claude Code rendert seine Task-Liste UNTER der Box — sie ist Status-Chrome,
+  // kein Inhalt, und darf den Prompt nicht aus dem Zeilenfenster schieben.
+  const stripped = stripStatusFooter(text.split('\n')).join('\n');
+  const tail = lastLines(stripped);
   const box = BOX_PATTERNS.find((p) => p.test(tail));
   if (box) return box;
-  const lastLine = lastLines(text, 1);
+  const lastLine = lastLines(stripped, 1);
   return lastLine.trim() ? PROMPT_PATTERNS.find((p) => p.test(lastLine)) : undefined;
 }
 
@@ -408,8 +413,9 @@ export class PromptDetector {
 
   /** Extract a short, human-readable body from cleaned terminal text. */
   private _extractSnippet(text: string): string {
-    const lines = text
-      .split('\n')
+    // Task-Listen-Footer weglassen — die Notification soll die FRAGE zeigen,
+    // nicht die Todo-Zeilen, die Claude Code darunter rendert.
+    const lines = stripStatusFooter(text.split('\n'))
       .map((l) => l.replace(/\r/g, '').trim())
       .filter((l) => {
         if (!l || l.length < 3) return false;

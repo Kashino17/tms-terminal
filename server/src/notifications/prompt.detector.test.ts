@@ -163,6 +163,43 @@ test("Claude Code's multi-line permission box still fires", () => {
   assert.equal(fires(box), true);
 });
 
+// ── Task-Liste unter der Box (echter Vorfall, Screenshot 2026-07-20 20:27):
+//    Claude Code rendert seine Todo-Liste UNTER der Berechtigungsbox. Die Box
+//    ist dann nicht mehr das Letzte auf dem Schirm — die 6-Zeilen-Strenge von
+//    matchPrompt verlor sie, der Detector feuerte nie, Auto-Approve stand. ──
+// Verklebte Post-Strip-Form, Zeilenumbrüche wie auf dem Fold (380dp) gerendert.
+const TODO_FOOTER =
+  '\n15tasks(8done,2inprogress,5\n' +
+  'open)\n' +
+  '■SDDTask8:PhaseCVer…\n' +
+  '■SDDTask10:AdsListVie…\n' +
+  '□SDDTask11:PhaseAVe…\n' +
+  '□SDDTask12:Shoporuor…\n' +
+  '□SDDTask13:ad_product…\n' +
+  '…+2pending,8completed\n';
+
+test('permission box with the task list rendered below it still fires', () => {
+  assert.equal(fires(promptGlued('rmfoo') + TODO_FOOTER), true,
+    'the todo footer below the box must not hide the prompt');
+});
+
+test('permission box with wrapped footer rows (Fold width) still fires', () => {
+  const boxWrapped =
+    'Doyouwanttoproceed?\n' +
+    '❯1.Yes\n' +
+    '2.Yes,allowreadingfromTMSSolvado/fromthisproject\n' +
+    '3.No\n\n' +
+    'Esctocancel·Tabtoamend·ctrl+e\n' +
+    'toexplain\n';
+  assert.equal(fires(boxWrapped + TODO_FOOTER), true,
+    'wrapped hint rows between box and todo list must not hide the prompt');
+});
+
+test('the task list alone (no box above it) is not a prompt', () => {
+  assert.equal(fires('Ich bin fertig, alles erledigt.\n' + TODO_FOOTER), false,
+    'a todo list without a waiting box must not fire');
+});
+
 // ── tailHash: der Handler prüft beim Auto-Approve-Retry, ob der Prompt noch
 //    unverändert auf dem Schirm steht (keine neue Ausgabe seit dem Feuern). ──
 test('tailHash ist stabil ohne neue Ausgabe und ändert sich mit ihr', () => {

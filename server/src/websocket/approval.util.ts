@@ -38,6 +38,49 @@ export function computePendingLen(prev: number, data: string): number {
   return len;
 }
 
+// ── Status-Footer unter der Prompt-Box ──────────────────────────────────────
+// Claude Code rendert seine Task-Liste UNTER der Berechtigungsbox ("15 tasks
+// (8 done, …)", ■/□-Zeilen, "… +2 pending"). Die Box ist dann nicht mehr das
+// Letzte auf dem Schirm, und jede "der Prompt steht am Ende"-Heuristik verliert
+// sie (Vorfall 2026-07-20: Auto-Approve stand, sobald Tasks liefen). Diese
+// Zeilen sind eindeutig Status-Chrome — keine KI-Prosa schreibt sie —, also
+// werden sie vor der Tail-Analyse abgeschnitten. Wird KEIN Footer erkannt,
+// bleibt die Eingabe unverändert: die Prosa-Strenge von matchPrompt und
+// chooseApprovalKey gilt dann exakt wie zuvor.
+const FOOTER_LINE_PATTERNS = [
+  /^[■□◻◼▪▫☐✓✔○●]/,      // Task-Bullet
+  /\d+\s*tasks?\s*\(/i,    // "15 tasks (8 done, 2 in progress, …" — auch ANSI-verklebt
+  /\+\s*\d+\s*pending/i,   // "… +2 pending, 8 completed"
+  /^…/,                    // Summen-/Abschneidezeile
+];
+// Zeilen, die zur Box selbst gehören — hier endet das Abschneiden sofort.
+const BOX_LINE_PATTERNS = [
+  /❯/,
+  /^\s*[1-9][.)]/,         // nummerierte Option
+  /Esc\s*to\s*cancel/i,
+];
+
+/** Schneidet einen erkannten Status-Footer (Task-Liste) vom Zeilen-Ende ab.
+ *  `grace` erlaubt einzelne umbrochene Fortsetzungszeilen ZWISCHEN erkannten
+ *  Footer-Zeilen (schmale Terminals brechen "…, 5 open)" auf zwei Zeilen um). */
+export function stripStatusFooter(lines: string[]): string[] {
+  const out = [...lines];
+  let sawFooter = false;
+  let grace = 0;
+  let budget = 20; // nie mehr als ~einen Screen abschneiden
+  while (out.length > 0 && budget > 0) {
+    const line = out[out.length - 1].trim();
+    if (!line) { out.pop(); budget--; continue; }
+    if (BOX_LINE_PATTERNS.some((p) => p.test(line))) break;
+    if (FOOTER_LINE_PATTERNS.some((p) => p.test(line))) {
+      out.pop(); budget--; sawFooter = true; grace = 2; continue;
+    }
+    if (sawFooter && grace > 0) { out.pop(); budget--; grace--; continue; }
+    break;
+  }
+  return sawFooter ? out : lines;
+}
+
 /**
  * Decide which keystroke approves a detected prompt, given the cleaned text the
  * match was found in. Returns the bytes to write, or `null` when we must NOT
@@ -60,7 +103,8 @@ export function chooseApprovalKey(window: string): string | null {
   // Leere Zeilen am Ende sind ein Rendering-Zwischenstand des Fast-Path
   // (Fenster endet oft, bevor "Esc to cancel" nachgeladen ist) — abschneiden,
   // sonst wird ein längst sichtbarer Prompt als "nichts wartet" verworfen.
-  const lines = window.split('\n');
+  // Ebenso die Task-Liste, die Claude Code UNTER die Box rendert.
+  const lines = stripStatusFooter(window.split('\n'));
   while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
   const lastLine = (lines[lines.length - 1] ?? '').trim();
   if (!lastLine) return null;
@@ -86,7 +130,10 @@ export function chooseApprovalKey(window: string): string | null {
     // Esc-Footer) — eine bloße nummerierte Aufzählung im Fließtext ist keine
     // wartende Box.
     const hasChrome = tail.some(l => /❯/.test(l) || /Esc\s*to\s*cancel/i.test(l));
-    const first = options.find(o => o.n === 1);
+    // Bei mehreren "1."-Zeilen im Tail (Prosa-Aufzählung ÜBER der Box) zählt
+    // die LETZTE — die wartende Box ist immer der jüngste nummerierte Block.
+    const firsts = options.filter(o => o.n === 1);
+    const first = firsts.length > 0 ? firsts[firsts.length - 1] : undefined;
     // Ja-artige Option 1 = echter Berechtigungs-Prompt (Enter nimmt den
     // vorausgewählten Default). Alles andere ist eine inhaltliche
     // Auswahlfrage — die beantwortet der Nutzer im App-Dialog, nie wir.
