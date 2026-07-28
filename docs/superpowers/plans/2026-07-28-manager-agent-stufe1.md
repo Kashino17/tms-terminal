@@ -2672,11 +2672,47 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Modify: `/Users/ayysir/Desktop/TMS Terminal/mockups/season2/liquid-deck/index.html` (**Dev-Worktree** — siehe Global Constraints)
 - Modify: `~/Desktop/tms-terminal/mobile/src/season2/web/bridge.js`
+- Modify: `~/Desktop/tms-terminal/mobile/src/season2/SeasonTwoWebRoot.tsx` ← **die Übersetzungsschicht**
 - Generated: `~/Desktop/tms-terminal/mobile/src/season2/liquidDeckHtml.ts`
+
+### Der tatsächliche Nachrichtenweg (am 2026-07-28 im Code verifiziert)
+
+Es sind **vier** Schichten, nicht zwei. Das Mockup ist eine Attrappe; es kennt weder
+`postMessage` noch die Protokollnamen. Die Bridge verkabelt es nachträglich:
+
+```
+Seite → bridge.js: post('manager:agendaList', {…})       // App-interner Name!
+      → SeasonTwoWebRoot.tsx: case 'manager:agendaList'  // Übersetzung
+      → WebSocket: { type: 'manager:agenda', … }         // Protokollname
+
+WebSocket: { type: 'manager:agenda_data', … }
+      → SeasonTwoWebRoot.tsx: if (m?.type === 'manager:agenda_data')
+      → call('setAgenda', items)                          // injectJavaScript
+      → window.TMSBridge.setAgenda(items)                 // in bridge.js definiert
+      → Seite: renderManagerAgenda()
+```
+
+Belege im Code: `bridge.js:16-18` (`post` → `RN.postMessage`), `bridge.js:1144`
+(`post('manager:send', …)`), `SeasonTwoWebRoot.tsx:766` (`case 'manager:send'`),
+`SeasonTwoWebRoot.tsx:158-162` (`call` → `injectJavaScript` auf `window.TMSBridge.*`),
+`SeasonTwoWebRoot.tsx:375-381` (`manager:memory_data` → `call('setManagerMemory', …)`).
+
+**Vorbild zum Abschauen:** der komplette `manager:memory_data`-Pfad. Er macht genau
+das, was Agenda und Notizen brauchen, und ist nur ein paar Zeilen lang.
+
+**Namenskonvention:** App-interne Namen sind camelCase ohne Unterstrich
+(`manager:agendaList`), Protokollnamen bleiben snake_case (`manager:agenda_data`).
+Die beiden nicht verwechseln — sie sehen ähnlich aus und werden an verschiedenen
+Stellen geprüft.
 
 **Interfaces:**
 - Consumes: `manager:agenda_data`, `manager:entries_data` (Task 8)
-- Produces: `renderManagerAgenda()`, `renderManagerEntries()`, `window.tmsSetAgenda(items)`, `window.tmsSetEntries(entries)`
+- Produces:
+  - Mockup: `renderManagerAgenda()`, `renderManagerEntries()`
+  - bridge.js: `TMSBridge.setAgenda(items)`, `TMSBridge.setEntries(entries)`,
+    `post('manager:agendaList')`, `post('manager:entriesList')`,
+    `post('manager:entryToggle', { id, done })`
+  - SeasonTwoWebRoot.tsx: die drei `case`-Zweige und die zwei Inbound-Prüfungen
 
 - [ ] **Step 1: Add the two data buckets**
 
@@ -2841,35 +2877,32 @@ Replace the body of `wireManagerTabs()` with:
       if (!row) return;
       const id = row.dataset.entryId;
       const nowDone = box.getAttribute('aria-pressed') !== 'true';
-      sendManagerMessage({ type: 'manager:entries', payload: { action: nowDone ? 'complete' : 'reopen', args: { id } } });
+      window.managerEntryToggle(id, nowDone);
     });
   }
 
   function requestAgenda() {
-    sendManagerMessage({ type: 'manager:agenda', payload: { action: 'list' } });
+    if (typeof window.managerAgendaList === 'function') window.managerAgendaList();
   }
   function requestEntries() {
-    sendManagerMessage({ type: 'manager:entries', payload: { action: 'list' } });
+    if (typeof window.managerEntriesList === 'function') window.managerEntriesList();
   }
 
   // Bridge-Einstiegspunkte — die native Seite ruft diese auf.
-  window.tmsSetAgenda = function (items) {
+  window.TMSBridge.setAgenda = function (items) {
     TMS_DATA.manager.agenda = Array.isArray(items) ? items : [];
     renderManagerAgenda();
   };
-  window.tmsSetEntries = function (entries) {
+  window.TMSBridge.setEntries = function (entries) {
     TMS_DATA.manager.entries = Array.isArray(entries) ? entries : [];
     renderManagerEntries();
   };
 ```
 
-`sendManagerMessage` must post to the native side. Find the existing helper the mockup uses to talk to the bridge:
-
-```bash
-cd "/Users/ayysir/Desktop/TMS Terminal" && grep -n "ReactNativeWebView\|postMessage" mockups/season2/liquid-deck/index.html | head -10
-```
-
-Use that existing mechanism; do **not** invent a second channel. If the helper has a different name, use the real one everywhere instead of `sendManagerMessage`.
+The `window.manager*` functions above are **defined in bridge.js** (Step 6a), not in
+the mockup. The mockup only calls them, guarded by a `typeof` check so the page still
+works standalone in a browser where no bridge is present — that is exactly how the
+existing mockup treats `window.managerAttach`.
 
 In the `#mgrMenuBtn` handler, add two entries that switch to the `artifacts` and `memory` tabs (they are no longer reachable from the sub-tabs). Find the handler with:
 
@@ -2877,26 +2910,79 @@ In the `#mgrMenuBtn` handler, add two entries that switch to the `artifacts` and
 cd "/Users/ayysir/Desktop/TMS Terminal" && grep -n "mgrMenuBtn" mockups/season2/liquid-deck/index.html
 ```
 
-- [ ] **Step 6: Forward the new messages in the bridge**
+- [ ] **Step 6a: Define the inbound hooks in bridge.js**
 
-In `~/Desktop/tms-terminal/mobile/src/season2/web/bridge.js`, where incoming server messages are dispatched, add:
+`bridge.js` does **not** see WebSocket messages — it only exposes functions that
+`SeasonTwoWebRoot` calls via `injectJavaScript`. Add them next to the other
+`window.TMSBridge.*` definitions:
 
 ```js
-    if (msg.type === 'manager:agenda_data') {
-      post({ call: 'tmsSetAgenda', args: [msg.payload.items] });
-      return;
-    }
-    if (msg.type === 'manager:entries_data') {
-      post({ call: 'tmsSetEntries', args: [msg.payload.entries] });
-      return;
-    }
+  window.TMSBridge.setAgenda = function (items) {
+    window.TMS_DATA.manager.agenda = items || [];
+    if (typeof window.renderManagerAgenda === 'function') window.renderManagerAgenda();
+  };
+  window.TMSBridge.setEntries = function (entries) {
+    window.TMS_DATA.manager.entries = entries || [];
+    if (typeof window.renderManagerEntries === 'function') window.renderManagerEntries();
+  };
 ```
 
-Match the surrounding style — read the file first and copy how existing `manager:*` messages are forwarded:
+This mirrors `bridge.js:2441-2444` (`setManagerMemory`) line for line. The `window.`
+prefixes matter: the mockup's functions are top-level declarations in its script block,
+so they land on `window` — and that is the only way bridge.js can reach them, since the
+bridge is injected as a separate script and shares no closure with the page.
+
+And the outbound calls the page triggers:
+
+```js
+  window.managerAgendaList = function () { post('manager:agendaList', {}); };
+  window.managerEntriesList = function () { post('manager:entriesList', {}); };
+  window.managerEntryToggle = function (id, done) { post('manager:entryToggle', { id: id, done: done }); };
+```
+
+- [ ] **Step 6b: Translate in SeasonTwoWebRoot.tsx**
+
+This is the layer the page cannot reach on its own. Outbound — next to
+`case 'manager:send'` (around line 766):
+
+```tsx
+      case 'manager:agendaList':
+        sendJson({ type: 'manager:agenda', payload: { action: 'list' } });
+        break;
+
+      case 'manager:entriesList':
+        sendJson({ type: 'manager:entries', payload: { action: 'list' } });
+        break;
+
+      case 'manager:entryToggle':
+        sendJson({
+          type: 'manager:entries',
+          payload: { action: payload.done ? 'complete' : 'reopen', args: { id: payload.id } },
+        });
+        break;
+```
+
+Inbound — next to the `manager:memory_data` check (around line 375):
+
+```tsx
+      if (m?.type === 'manager:agenda_data') {
+        call('setAgenda', m.payload?.items ?? []);
+        return;
+      }
+      if (m?.type === 'manager:entries_data') {
+        call('setEntries', m.payload?.entries ?? []);
+        return;
+      }
+```
+
+**Find the real name of the WebSocket send helper first** — `sendManager(text)` is
+chat-specific and will not do. Check what is available:
 
 ```bash
-cd ~/Desktop/tms-terminal && grep -n "manager:" mobile/src/season2/web/bridge.js | head -20
+cd ~/Desktop/tms-terminal && grep -n "sendJson\|const send\|ws.send\|sendMessage" mobile/src/season2/SeasonTwoWebRoot.tsx | head -10
 ```
+
+Use whatever that reveals; do not invent a second channel.
 
 - [ ] **Step 7: Build and verify visually**
 
@@ -2938,10 +3024,17 @@ Der sichtbare Teil des proaktiven Kanals — die Zahl, die dich im Terminal erre
 **Files:**
 - Modify: `/Users/ayysir/Desktop/TMS Terminal/mockups/season2/liquid-deck/index.html`
 - Modify: `~/Desktop/tms-terminal/mobile/src/season2/web/bridge.js`
+- Modify: `~/Desktop/tms-terminal/mobile/src/season2/SeasonTwoWebRoot.tsx` ← **die Übersetzungsschicht**
+- Generated: `~/Desktop/tms-terminal/mobile/src/season2/liquidDeckHtml.ts`
+
+Derselbe vierschichtige Weg wie in Task 9 — dort ist er ausführlich beschrieben.
 
 **Interfaces:**
 - Consumes: `manager:proactive`, `manager:unread` (Task 8)
-- Produces: `window.tmsSetUnread(n)`, `window.tmsProactive(msg)`
+- Produces:
+  - bridge.js: `TMSBridge.setUnread(n)`, `TMSBridge.proactive(msg)`, `post('manager:outboxRead')`
+  - SeasonTwoWebRoot.tsx: Inbound-Prüfungen auf `manager:proactive` und `manager:unread`,
+    Outbound-Fall `manager:outboxRead`
 
 - [ ] **Step 1: Add the badge markup**
 
@@ -3002,12 +3095,12 @@ Next to `syncIslandManager()` add:
     }
   }
 
-  window.tmsSetUnread = function (n) {
+  window.TMSBridge.setUnread = function (n) {
     managerUnread = Number(n) || 0;
     syncIslandBadge();
   };
 
-  window.tmsProactive = function (msg) {
+  window.TMSBridge.proactive = function (msg) {
     // Proaktive Nachrichten sind normale Chat-Nachrichten — das Gespräch bleibt durchgehend.
     if (!msg || typeof msg.text !== 'string') return;
     TMS_DATA.manager.messages.push({ role: 'assistant', text: msg.text, time: '', _id: 'out' + msg.id });
@@ -3023,7 +3116,7 @@ Wire the click — it jumps to the manager and clears the badge:
   document.getElementById('islandMgrBadge').addEventListener('click', ev => {
     ev.stopPropagation(); // darf die Insel nicht aufklappen
     show('manager');
-    sendManagerMessage({ type: 'manager:outbox_read' });
+    if (typeof window.managerOutboxRead === 'function') window.managerOutboxRead();
     managerUnread = 0;
     syncIslandBadge();
   });
@@ -3031,19 +3124,45 @@ Wire the click — it jumps to the manager and clears the badge:
 
 Call `syncIslandBadge()` wherever `syncIslandManager()` is already called after a shell rebuild, so the badge survives re-renders.
 
-- [ ] **Step 4: Forward the messages in the bridge**
-
-In `bridge.js`:
+- [ ] **Step 4a: Define the hooks in bridge.js**
 
 ```js
-    if (msg.type === 'manager:unread') {
-      post({ call: 'tmsSetUnread', args: [msg.payload.unread] });
-      return;
-    }
-    if (msg.type === 'manager:proactive') {
-      post({ call: 'tmsProactive', args: [msg.payload] });
-      return;
-    }
+  window.TMSBridge.setUnread = function (n) {
+    try { if (typeof applyManagerUnread === 'function') applyManagerUnread(n); } catch (e) {}
+  };
+
+  window.TMSBridge.proactive = function (msg) {
+    try { if (typeof applyManagerProactive === 'function') applyManagerProactive(msg); } catch (e) {}
+  };
+
+  window.managerOutboxRead = function () { post('manager:outboxRead', {}); };
+```
+
+`applyManagerUnread` and `applyManagerProactive` are the page-side functions from
+Step 3 — name them exactly so, since `window.tmsSetUnread`-style globals do not fit
+the `TMSBridge` convention the rest of the app uses.
+
+- [ ] **Step 4b: Translate in SeasonTwoWebRoot.tsx**
+
+Outbound, next to the other `case` branches:
+
+```tsx
+      case 'manager:outboxRead':
+        sendJson({ type: 'manager:outbox_read' });
+        break;
+```
+
+Inbound, next to the `manager:memory_data` check:
+
+```tsx
+      if (m?.type === 'manager:unread') {
+        call('setUnread', m.payload?.unread ?? 0);
+        return;
+      }
+      if (m?.type === 'manager:proactive') {
+        call('proactive', m.payload ?? {});
+        return;
+      }
 ```
 
 - [ ] **Step 5: Build and verify visually**
@@ -3052,7 +3171,7 @@ In `bridge.js`:
 cd ~/Desktop/tms-terminal/mobile && npm run build:season2
 ```
 
-Screenshot headless at **380×915** and **412×915** on the **terminal** screen, once with the badge hidden and once after running `window.tmsSetUnread(3)` in the page console.
+Screenshot headless at **380×915** and **412×915** on the **terminal** screen, once with the badge hidden and once after running `applyManagerUnread(3)` in the page console.
 
 Check:
 - Bei 380 dp passt der Badge in die Insel, ohne dass die Terminal-Buttons abgeschnitten werden oder die Insel umbricht.
