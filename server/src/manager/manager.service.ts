@@ -7,6 +7,7 @@ import type { OutboxMessage } from './outbox/outbox.types';
 import { AgendaScheduler } from './agenda/agenda.scheduler';
 import { loadAgenda, saveAgenda } from './agenda/agenda.store';
 import { takeCorruptionReports } from './store';
+import { OscTitleTracker } from './context/osc';
 import { getModelsInfo, loadLocalModel, type LmModelInfo } from './lmstudio.manager';
 import { saveManagerConfig } from './manager.config';
 import { globalManager } from '../terminal/terminal.manager';
@@ -250,6 +251,8 @@ export class ManagerService {
   /** Proactive messages to the user, with the dosage rules that keep the agent welcome. */
   private outbox = new Outbox(() => Date.now());
   private proactiveCallback: ((msg: OutboxMessage, unread: number) => void) | null = null;
+  /** Live topic per terminal, read from the OSC title Claude Code emits. */
+  private oscTitles = new OscTitleTracker();
 
   /** Fires due reminders once a minute. Never touches a model. */
   private agendaScheduler = new AgendaScheduler(
@@ -449,6 +452,14 @@ export class ManagerService {
   feedOutput(sessionId: string, data: string): void {
     if (!this.enabled) return;
 
+    // Read the terminal title BEFORE stripping — ANSI_STRIP deletes OSC sequences,
+    // and that is where Claude Code announces what it is working on.
+    const newTitle = this.oscTitles.feed(sessionId, data);
+    if (newTitle !== null) {
+      const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
+      logger.info(`Manager: "${label}" title → ${newTitle}`);
+    }
+
     const clean = data.replace(ANSI_STRIP, '');
     if (!clean.trim()) return;
 
@@ -560,6 +571,7 @@ export class ManagerService {
 
   /** Remove buffers when a session is closed. */
   clearSession(sessionId: string): void {
+    this.oscTitles.clear(sessionId);
     this.outputBuffers.delete(sessionId);
     this.lastSummaryAt.delete(sessionId);
     this.sessionLabels.delete(sessionId);
