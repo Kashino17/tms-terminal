@@ -327,13 +327,15 @@ export class TerminalManager {
     return session;
   }
 
-  /** Reattach carries the client's dimensions — use them to self-heal a stale
-   *  PTY width instead of trusting the follow-up terminal:resize to arrive.
-   *  If that resize is ever lost (socket flap mid-storm), the PTY keeps
-   *  rendering for the OLD width while the client wraps at the NEW one — the
-   *  overlapping/wrapped spinner lines users see. Goes through resize() so the
-   *  debounce coalesces with any client resize that does arrive, and the
-   *  same-size case stays a no-op (no spurious SIGWINCH repaint). */
+  /** DIAGNOSIS ONLY — never resizes. An earlier version healed the PTY to the
+   *  reattach dims; terminal-history evidence killed it: the client's attach
+   *  dims are unreliable (rows measured mid-animation — 9 rows with the
+   *  keyboard open —, widths bleeding across cards: four sessions all
+   *  reattached as 39x32). Every heal raised SIGWINCH, Claude Code repainted
+   *  its whole live region, and the repaint landed BELOW the old copy — the
+   *  duplicated/overlapping paragraphs users reported. The client re-asserts
+   *  its true xterm dims through the settle-protected resize path instead;
+   *  this log line stays so a real stale-width case remains visible. */
   private healPtyDims(
     sessionId: string,
     session: TerminalSession,
@@ -341,12 +343,12 @@ export class TerminalManager {
     clientRows?: number,
   ): void {
     if (!clientCols || !clientRows) return;
-    if (session.cols === clientCols && session.rows === clientRows) return;
-    logger.info(
-      `Reattach ${sessionId.slice(0, 8)}: healing pty dims ` +
-      `${session.cols}x${session.rows} → ${clientCols}x${clientRows}`,
-    );
-    this.resize(sessionId, clientCols, clientRows);
+    if (session.cols !== clientCols) {
+      logger.info(
+        `Reattach ${sessionId.slice(0, 8)}: client cols differ ` +
+        `(pty ${session.cols}x${session.rows}, client ${clientCols}x${clientRows}) — not healing, awaiting client resize`,
+      );
+    }
   }
 
   /** Trim a buffer to a clean boundary at the start (skip any partial line and

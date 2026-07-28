@@ -1003,6 +1003,23 @@
 
   // ── React Native → WebView ────────────────────────────────────────────────
   window.TMSBridge = {
+    /** Nach einem Reattach die WAHREN xterm-Maße über den normalen,
+     *  beruhigten Resize-Weg bestätigen. Stimmen sie mit der PTY überein,
+     *  ist das serverseitig ein No-op (kein SIGWINCH, kein Repaint); ging
+     *  unterwegs ein Resize verloren, korrigiert genau EIN Resize mit der
+     *  echten Breite. Die Maße aus dem Attach selbst sind dafür ungeeignet —
+     *  sie entstehen mitten in Animationen und trugen schon fremde
+     *  Kartenbreiten (vier Sessions, alle "39x32"). */
+    assertDims: function (sessionId) {
+      var cardId = cardOf(sessionId);
+      var t = cardId && terms[cardId];
+      if (!t || !t.term) return;
+      // Dedupe aufheben: wurde das letzte Resize GESENDET, aber nie
+      // zugestellt (Socket-Abriss), hielte lastDims die Bestätigung zurück.
+      delete lastDims[sessionId];
+      queueResize(cardId, t.term.cols, t.term.rows);
+    },
+
     /** Re-create cards for PTY sessions that already exist on the server. */
     restoreSessions: function (list) {
       restoring = true;

@@ -335,6 +335,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('setSessionCwd', m.sessionId, m.payload.cwd);
         return;
       }
+      if (m?.type === 'terminal:reattached' && m.sessionId) {
+        // Die Seite bestätigt ihre echten xterm-Maße (settle-geschützter
+        // Resize-Weg). Heilt eine unterwegs verlorene Breite, ohne den
+        // unzuverlässigen Attach-Maßen zu vertrauen — die haben als
+        // Server-Heal die Doppel-Absätze erzeugt (SIGWINCH-Repaints).
+        call('assertDims', m.sessionId);
+        return;
+      }
       if (m?.type === 'terminal:created' && m.sessionId) {
         const pending = pendingCards.current.shift();
         const cardId = pending?.cardId ?? null;
