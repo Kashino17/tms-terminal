@@ -309,6 +309,22 @@
   #statusHeader.is-manager-mode .island-browser-badge { display: none; }
   .island-mgr__ava { flex: none; display: inline-flex; }
   .island-mgr__ava .mgr-ava { width: 22px; height: 22px; font-size: 9px; }
+
+  /* Ungelesen-Badge — sichtbar in JEDEM Insel-Modus, denn der Sinn ist gerade,
+     dass er dich erreicht, während du im Terminal arbeitest. */
+  .island-mgr-badge { display: none; align-items: center; gap: 5px; flex: none;
+    height: 26px; padding: 0 8px 0 3px; border-radius: 13px;
+    background: rgba(var(--accent-rgb),.18); border: 1px solid rgba(var(--accent-rgb),.42);
+    color: var(--accent); cursor: pointer; }
+  .island-mgr-badge:not([hidden]) { display: flex; }
+  .island-mgr-badge:active { transform: scale(.92); }
+  .island-mgr-badge__ava .mgr-ava { width: 20px; height: 20px; font-size: 8px; }
+  .island-mgr-badge__count { font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  /* Bei ungelesenen Nachrichten weicht die Latenz-Anzeige — auf dem Außendisplay
+     (~380 dp) ist kein Platz für beides, und die Zahl ist dann wichtiger. */
+  #statusHeader.has-unread .status-hd__metric--latency { display: none; }
+  /* Im Manager selbst ist der Badge überflüssig — da steht die Nachricht ja. */
+  #statusHeader.is-manager-mode .island-mgr-badge { display: none; }
   .island-mgr__name { font-weight: 700; font-size: 13.5px; letter-spacing: -.01em;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .island-mgr__presence { flex: none; display: inline-flex; align-items: center; gap: 4px;
@@ -1715,6 +1731,11 @@
       <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h.01M8 20v-5M13 20v-9M18 20V6"/></svg>
       <span id="statusLatencyLabel">— ms</span>
     </span>
+    <button class="island-mgr-badge" id="islandMgrBadge" type="button" hidden
+            aria-label="Ungelesene Manager-Nachrichten">
+      <span class="island-mgr-badge__ava" id="islandMgrBadgeAva"></span>
+      <span class="island-mgr-badge__count" id="islandMgrBadgeCount">0</span>
+    </button>
     <span class="status-hd__activity">
       <span class="status-dot" id="statusDot"></span>
       <span class="status-hd__label" id="statusActivityLabel">Bereit</span>
@@ -6108,6 +6129,7 @@
     // Die Insel-Identität hängt an derselben Persona wie der Shell — nach jedem
     // Rebuild (neuer Name/neues Bild) mitziehen.
     if (typeof syncIslandManager === 'function') syncIslandManager();
+    if (typeof syncIslandBadge === 'function') syncIslandBadge();
   }
   window.rerenderManager = initManagerScreen;
 
@@ -6122,6 +6144,57 @@
     if (nameEl) nameEl.textContent = p.name || 'Manager';
   }
   window.syncIslandManager = syncIslandManager;
+
+  // ── Ungelesene Manager-Nachrichten ────────────────────────────────────────
+  let managerUnread = 0;
+
+  function syncIslandBadge() {
+    const badge = document.getElementById('islandMgrBadge');
+    const header = document.getElementById('statusHeader');
+    if (!badge || !header) return;
+    const show = managerUnread > 0;
+    badge.hidden = !show;
+    header.classList.toggle('has-unread', show);
+    if (!show) return;
+    document.getElementById('islandMgrBadgeCount').textContent = managerUnread > 99 ? '99+' : String(managerUnread);
+    const ava = document.getElementById('islandMgrBadgeAva');
+    if (ava) ava.innerHTML = managerAvatarHtml(20);
+  }
+
+  function applyManagerUnread(n) {
+    managerUnread = Number(n) || 0;
+    syncIslandBadge();
+  }
+
+  // Proaktive Nachrichten sind normale Chat-Nachrichten — so bleibt das
+  // Gespräch durchgehend und du kannst direkt darauf antworten.
+  function applyManagerProactive(msg) {
+    if (!msg || typeof msg.text !== 'string') return;
+    const d = new Date(msg.createdAt || Date.now());
+    const p = n => String(n).padStart(2, '0');
+    TMS_DATA.manager.messages.push({
+      type: 'text', from: 'manager', time: `${p(d.getHours())}:${p(d.getMinutes())}`,
+      text: msg.text, _id: 'out' + (msg.id || TMS_DATA.manager.messages.length),
+    });
+    if (typeof renderManagerChat === 'function') renderManagerChat();
+    managerUnread = Number(msg.unread) || (managerUnread + 1);
+    syncIslandBadge();
+  }
+
+  window.applyManagerUnread = applyManagerUnread;
+  window.applyManagerProactive = applyManagerProactive;
+  window.syncIslandBadge = syncIslandBadge;
+
+  {
+    const badge = document.getElementById('islandMgrBadge');
+    if (badge) badge.addEventListener('click', ev => {
+      ev.stopPropagation(); // darf die Insel nicht aufklappen
+      show('manager');
+      if (typeof window.managerOutboxRead === 'function') window.managerOutboxRead();
+      managerUnread = 0;
+      syncIslandBadge();
+    });
+  }
 
   // Beim Betreten des Managers: Dock → Chat-Eingabe (nur auf dem Chat-Tab),
   // Insel-Identität auffrischen, Chat rendern.
