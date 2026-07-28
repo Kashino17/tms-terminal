@@ -1,6 +1,8 @@
 import { AiProviderRegistry, ChatMessage, ProviderConfig, ToolDefinition, StreamResult, RawToolCall, ToolCallingProvider, defaultContextFor } from './ai-provider';
 import { MANAGER_TOOLS } from './tools/definitions';
 import { buildSystemPrompt, DEFAULT_PERSONALITY, type PersonalityConfig } from './tools/system-prompt';
+import { handleAgendaTool, handleEntriesTool, buildOverview, handleNotifyUser } from './tools/stufe1.handlers';
+import { Outbox } from './outbox/outbox';
 import { getModelsInfo, loadLocalModel, type LmModelInfo } from './lmstudio.manager';
 import { saveManagerConfig } from './manager.config';
 import { globalManager } from '../terminal/terminal.manager';
@@ -36,7 +38,8 @@ const MAX_CONTEXT_PER_SESSION = 8_000; // chars sent to AI per session per summa
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface ManagerAction {
-  type: 'write_to_terminal' | 'send_enter' | 'send_keys' | 'create_terminal' | 'close_terminal' | 'list_terminals' | 'generate_image' | 'self_education' | 'update_task' | 'create_cron_job' | 'list_cron_jobs' | 'toggle_cron_job' | 'delete_cron_job' | 'create_presentation' | 'read_terminal' | 'read_file' | 'write_file' | 'fetch_url' | 'system_info' | 'clipboard' | 'open_url' | 'git_info' | 'switch_model' | 'undo_last';
+  type: 'write_to_terminal' | 'send_enter' | 'send_keys' | 'create_terminal' | 'close_terminal' | 'list_terminals' | 'generate_image' | 'self_education' | 'update_task' | 'create_cron_job' | 'list_cron_jobs' | 'toggle_cron_job' | 'delete_cron_job' | 'create_presentation' | 'read_terminal' | 'read_file' | 'write_file' | 'fetch_url' | 'system_info' | 'clipboard' | 'open_url' | 'git_info' | 'switch_model' | 'undo_last'
+    | 'get_overview' | 'get_project' | 'agenda' | 'entries' | 'notify_user';
   sessionId: string;
   detail: string;
 }
@@ -240,6 +243,8 @@ function parsePersonalityConfig(text: string): PersonalityConfig | null {
 
 export class ManagerService {
   private registry: AiProviderRegistry;
+  /** Proactive messages to the user, with the dosage rules that keep the agent welcome. */
+  private outbox = new Outbox(() => Date.now());
   private outputBuffers = new Map<string, { data: string; lastUpdated: number }>();
   private lastSummaryAt = new Map<string, number>();
   private sessionLabels = new Map<string, string>();
@@ -850,6 +855,18 @@ BEISPIEL:
       // Handle tools that don't need a sessionId
       if (tc.name === 'list_terminals') {
         actions.push({ type: 'list_terminals', sessionId: '', detail: '' });
+        continue;
+      }
+      if (tc.name === 'get_overview') {
+        actions.push({ type: 'get_overview', sessionId: '', detail: '' });
+        continue;
+      }
+      if (tc.name === 'get_project') {
+        actions.push({ type: 'get_project', sessionId: '', detail: tc.arguments.name ?? '' });
+        continue;
+      }
+      if (tc.name === 'agenda' || tc.name === 'entries' || tc.name === 'notify_user') {
+        actions.push({ type: tc.name, sessionId: '', detail: JSON.stringify(tc.arguments ?? {}) });
         continue;
       }
       if (tc.name === 'create_terminal') {
@@ -1646,6 +1663,42 @@ BEISPIEL:
 
   private async executeAction(action: ManagerAction): Promise<{ text: string; images?: string[]; presentations?: string[] } | null> {
     switch (action.type) {
+      case 'get_overview': {
+        const terminals = this.buildTerminalContexts().map(c => ({
+          label: c.label,
+          status: c.status,
+          cwd: c.cwd,
+        }));
+        return { text: buildOverview({ nowMs: Date.now(), terminals }) };
+      }
+
+      case 'get_project': {
+        // Phase A: no collector yet — answer from what the terminals reveal.
+        const needle = action.detail.toLowerCase();
+        const match = this.buildTerminalContexts().find(c =>
+          (c.cwd ?? '').toLowerCase().includes(needle) ||
+          (c.project ?? '').toLowerCase().includes(needle));
+        if (match === undefined) {
+          return { text: `Kein Projekt gefunden, das zu "${action.detail}" passt.` };
+        }
+        return { text: `${match.label} — ${match.cwd ?? 'kein Pfad'} — Status: ${match.status}` };
+      }
+
+      case 'agenda': {
+        const args = JSON.parse(action.detail || '{}') as Record<string, string>;
+        return { text: handleAgendaTool(args, Date.now()) };
+      }
+
+      case 'entries': {
+        const args = JSON.parse(action.detail || '{}') as Record<string, string>;
+        return { text: handleEntriesTool(args) };
+      }
+
+      case 'notify_user': {
+        const args = JSON.parse(action.detail || '{}') as Record<string, string>;
+        return { text: handleNotifyUser(args, this.outbox) };
+      }
+
       case 'write_to_terminal': {
         const label = this.sessionLabels.get(action.sessionId) ?? action.sessionId.slice(0, 8);
 

@@ -373,4 +373,87 @@ export const MANAGER_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  // ── Stufe 1: Überblick, Agenda, Einträge, proaktiver Kanal ──────────────
+  {
+    type: 'function',
+    function: {
+      name: 'get_overview',
+      description: 'Der aktuelle Gesamtstand: offene Terminals, offene To-dos, anstehende Termine, plus das heutige Datum. Rufe das auf, wenn der Nutzer fragt wie es läuft, was ansteht, oder bevor du ein Datum ausrechnest.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_project',
+      description: 'Ein einzelnes Projekt im Detail: Pfad, Git-Branch, letzte Sitzungsthemen, Auszug der CLAUDE.md, offene To-dos dazu.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Projektname oder Teil des Pfads, z.B. "TMS Terminal"' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'agenda',
+      description: 'Termine und Erinnerungen verwalten. WICHTIG: "at" muss immer das Format YYYY-MM-DDTHH:MM haben (lokale Zeit) — rechne relative Angaben wie "in einer Woche" selbst aus, das heutige Datum steht in get_overview. Für Geburtstage: all_day=true und repeat=yearly.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: 'list, add, update oder delete' },
+          id: { type: 'string', description: 'Termin-ID (für update/delete)' },
+          title: { type: 'string', description: 'Titel, z.B. "Zahnarzt" oder "Geburtstag Mama"' },
+          at: { type: 'string', description: 'Zeitpunkt als YYYY-MM-DDTHH:MM, z.B. "2026-08-04T14:00"' },
+          all_day: { type: 'string', description: '"true" für ganztägig (Geburtstage)' },
+          repeat: { type: 'string', description: 'none, daily, weekly, monthly oder yearly' },
+          reminder_offsets: { type: 'string', description: 'Minuten VOR dem Termin, komma-getrennt. "2880,1440,60" = 2 Tage, 1 Tag und 1 Stunde vorher. "0" = zum Termin.' },
+          note: { type: 'string', description: 'Freitext — was der Nutzer wörtlich gesagt hat' },
+          days: { type: 'string', description: 'Für list: wie viele Tage voraus. Standard 30.' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'entries',
+      description: 'Notizen und To-dos verwalten. checkable=true macht ein abhakbares To-do, sonst ist es eine reine Notiz. Schau hier rein, bevor du beurteilst was noch offen ist.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: 'list, add, complete, reopen, update oder delete' },
+          id: { type: 'string', description: 'Eintrags-ID' },
+          text: { type: 'string', description: 'Der Text des Eintrags' },
+          checkable: { type: 'string', description: '"true" für ein abhakbares To-do, sonst Notiz' },
+          due: { type: 'string', description: 'Optionale Frist als YYYY-MM-DDTHH:MM' },
+          project: { type: 'string', description: 'Optionale Projektzuordnung' },
+          only_open: { type: 'string', description: 'Für list: "true" zeigt nur offene To-dos' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'notify_user',
+      description: 'Schreibe dem Nutzer von dir aus — für eigene Beobachtungen und Vorschläge. Setze topic_key auf einen stabilen Schlüssel des Themas, damit dasselbe nie zweimal kommt. Wenn die Dosierung ablehnt, versuche es NICHT erneut. Vom Nutzer beauftragte Erinnerungen gehören nicht hierher, sondern in agenda.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'Die Nachricht an den Nutzer' },
+          kind: { type: 'string', description: 'stuck (er hängt fest), suggestion (Idee), event (Ereignis), checkin (Tageszusammenfassung)' },
+          topic_key: { type: 'string', description: 'Stabiler Themenschlüssel, z.B. "stuck:<fehler-hash>"' },
+          project: { type: 'string', description: 'Betroffenes Projekt' },
+          session_id: { type: 'string', description: 'Betroffenes Terminal' },
+        },
+        required: ['text'],
+      },
+    },
+  },
 ];

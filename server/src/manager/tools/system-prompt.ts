@@ -240,6 +240,17 @@ MOBILE-DESIGN-REGELN:
 ## Antwort-Format
 Antworte natürlich und menschlich. Wenn du einen Befehl ausführst, sag kurz was du tust.`;
 
+  // Without today's date the model cannot turn "in einer Woche um 14 Uhr" into a
+  // concrete YYYY-MM-DDTHH:MM, which every agenda call needs.
+  const now = new Date();
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  const weekdays = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+  prompt += `\n\n## Heutiges Datum\n`
+    + `Heute ist ${weekdays[now.getDay()]}, der ${pad(now.getDate())}.${pad(now.getMonth() + 1)}.${now.getFullYear()}, `
+    + `${pad(now.getHours())}:${pad(now.getMinutes())} Uhr.\n`
+    + `Rechne relative Zeitangaben ("morgen", "in einer Woche", "nächsten Freitag") davon ausgehend `
+    + `selbst in das Format YYYY-MM-DDTHH:MM um, bevor du agenda aufrufst.`;
+
   if (p.customInstruction) {
     prompt += `\n\n## Zusätzliche Anweisung vom Nutzer\n${p.customInstruction}`;
   }
