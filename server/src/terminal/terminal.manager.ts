@@ -77,8 +77,10 @@ export class TerminalManager {
       throw new Error(`Maximum session limit reached (${MAX_SESSIONS}). Close existing sessions first.`);
     }
 
-    const id = uuidv4();
-    const pty = createPty(options.cols, options.rows, { TMS_SESSION_ID: id });
+    // Eine vorgegebene ID kommt nur von der Wiederherstellung nach einem
+    // Neustart — die App findet ihre Reiter über genau diese ID wieder.
+    const id = options.id ?? uuidv4();
+    const pty = createPty(options.cols, options.rows, { TMS_SESSION_ID: id }, options.cwd);
 
     const session: TerminalSession = {
       id,
@@ -455,6 +457,11 @@ export class TerminalManager {
 
   getSession(sessionId: string): TerminalSession | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  /** All live sessions — the snapshotter needs pid, dims and cwd of each. */
+  listSessions(): TerminalSession[] {
+    return [...this.sessions.values()];
   }
 
   getSessionCount(): number {

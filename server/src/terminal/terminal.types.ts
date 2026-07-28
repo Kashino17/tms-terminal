@@ -15,4 +15,11 @@ export interface TerminalSession {
 export interface CreateSessionOptions {
   cols: number;
   rows: number;
+  /**
+   * Vorgegebene Session-ID. Nur für die Wiederherstellung nach einem Neustart:
+   * die App hält ihre Reiter an dieser ID fest. Sonst weglassen.
+   */
+  id?: string;
+  /** Startverzeichnis der Shell. Standard: Home. */
+  cwd?: string;
 }
