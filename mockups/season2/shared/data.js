@@ -135,6 +135,32 @@
         { id: 'm2', text: 'User bevorzugt Deploys vor 15 Uhr', time: 'gestern' },
         { id: 'm3', text: 'Hetzner-Server ist Staging, Mac ist Produktion', time: 'vor 3 Tagen' },
       ],
+      // Termine. occurrenceAt ist der ausgerechnete Zeitpunkt (der Server liefert
+      // ihn mit), tz fehlt bei mitreisenden Terminen.
+      // occurrenceAt aus dem Datum ausgerechnet statt hartkodiert — sonst zeigt
+      // die Demo eine Uhrzeit, die nicht zum "at" daneben passt.
+      agenda: [
+        { id: 'ag1', title: 'Zahnarzt', at: '2026-08-04T14:00', allDay: false, repeat: 'none',
+          tz: 'Asia/Bangkok', reminderOffsets: [2880, 1440, 60],
+          occurrenceAt: new Date(2026, 7, 4, 14, 0).getTime() },
+        { id: 'ag2', title: 'Geburtstag Mama', at: '2026-07-30T00:00', allDay: true, repeat: 'yearly',
+          reminderOffsets: [1440],
+          occurrenceAt: new Date(2026, 6, 30, 0, 0).getTime() },
+        { id: 'ag3', title: 'Vitamin nehmen', at: '2026-07-29T08:00', allDay: false, repeat: 'daily',
+          reminderOffsets: [0],
+          occurrenceAt: new Date(2026, 6, 29, 8, 0).getTime() },
+      ],
+      // Ein Eintragstyp: checkable=false ist eine reine Notiz.
+      entries: [
+        { id: 'en1', text: 'Server nach dem Update neu starten', checkable: true, done: false,
+          project: 'TMS Terminal', updatedAt: 1785220000000 },
+        { id: 'en2', text: 'Pinterest-Scraper: Rate-Limit prüfen', checkable: true, done: false,
+          updatedAt: 1785210000000 },
+        { id: 'en3', text: 'Idee: Manager könnte Deploy-Fenster vorschlagen', checkable: false, done: false,
+          updatedAt: 1785200000000 },
+        { id: 'en4', text: 'Env-Variablen dokumentieren', checkable: true, done: true,
+          project: 'TMS Terminal', updatedAt: 1785190000000 },
+      ],
     },
     prayerTimes: [
       { name: 'Fajr', time: '03:12' }, { name: 'Dhuhr', time: '13:24' }, { name: 'Asr', time: '17:31' },
