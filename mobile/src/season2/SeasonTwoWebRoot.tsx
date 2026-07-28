@@ -372,6 +372,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('sessionClosed', m.sessionId); // die Seite räumt die Karte weg
         return;
       }
+      if (m?.type === 'manager:unread') {
+        call('setUnread', m.payload?.unread ?? 0);
+        return;
+      }
+      if (m?.type === 'manager:proactive') {
+        call('proactive', m.payload ?? {});
+        return;
+      }
       if (m?.type === 'manager:agenda_data') {
         call('setAgenda', m.payload?.items ?? []);
         return;
@@ -785,6 +793,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
       }
+
+      case 'manager:outboxRead':
+        wsService?.send({ type: 'manager:outbox_read' });
+        break;
 
       case 'manager:agendaList':
         wsService?.send({ type: 'manager:agenda', payload: { action: 'list' } });

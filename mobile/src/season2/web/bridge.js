@@ -2448,6 +2448,15 @@
     window.TMS_DATA.manager.entries = entries || [];
     if (typeof window.renderManagerEntries === 'function') window.renderManagerEntries();
   };
+  // Proaktiver Kanal: Ungelesen-Zahl auf der Insel + Nachricht in den Chat.
+  window.TMSBridge.setUnread = function (n) {
+    if (typeof window.applyManagerUnread === 'function') window.applyManagerUnread(n);
+  };
+  window.TMSBridge.proactive = function (msg) {
+    if (typeof window.applyManagerProactive === 'function') window.applyManagerProactive(msg);
+  };
+  window.managerOutboxRead = function () { post('manager:outboxRead', {}); };
+
   window.managerAgendaList = function () { post('manager:agendaList', {}); };
   window.managerEntriesList = function () { post('manager:entriesList', {}); };
   window.managerEntryToggle = function (id, done) { post('manager:entryToggle', { id: id, done: done }); };
