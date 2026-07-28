@@ -296,6 +296,7 @@ export class TerminalManager {
         `Session reattached via snapshot: ${sessionId.slice(0, 8)} ` +
         `(cols ${session.cols}→${clientCols ?? '?'}, missed=${buffered?.length ?? 0}B, overflow=${overflowed})`,
       );
+      this.healPtyDims(sessionId, session, clientCols, clientRows);
       return session;
     }
 
@@ -322,7 +323,30 @@ export class TerminalManager {
     this.reattachOverflow.delete(sessionId);
 
     logger.success(`Session reattached: ${sessionId}`);
+    this.healPtyDims(sessionId, session, clientCols, clientRows);
     return session;
+  }
+
+  /** Reattach carries the client's dimensions — use them to self-heal a stale
+   *  PTY width instead of trusting the follow-up terminal:resize to arrive.
+   *  If that resize is ever lost (socket flap mid-storm), the PTY keeps
+   *  rendering for the OLD width while the client wraps at the NEW one — the
+   *  overlapping/wrapped spinner lines users see. Goes through resize() so the
+   *  debounce coalesces with any client resize that does arrive, and the
+   *  same-size case stays a no-op (no spurious SIGWINCH repaint). */
+  private healPtyDims(
+    sessionId: string,
+    session: TerminalSession,
+    clientCols?: number,
+    clientRows?: number,
+  ): void {
+    if (!clientCols || !clientRows) return;
+    if (session.cols === clientCols && session.rows === clientRows) return;
+    logger.info(
+      `Reattach ${sessionId.slice(0, 8)}: healing pty dims ` +
+      `${session.cols}x${session.rows} → ${clientCols}x${clientRows}`,
+    );
+    this.resize(sessionId, clientCols, clientRows);
   }
 
   /** Trim a buffer to a clean boundary at the start (skip any partial line and

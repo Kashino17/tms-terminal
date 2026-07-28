@@ -472,8 +472,13 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
     // ── Rate limiting ────────────────────────────────────────────────
     if (!rateLimiter.consume(msgType)) {
-      if (rateLimiter.isBlocked()) {
-        send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Rate limit exceeded — connection temporarily blocked' } });
+      // Drops are rare with the generous buckets — but a silently dropped
+      // create/reattach would leave a ghost card and a dropped transcribe a
+      // stuck spinner, so those get an explicit error back.
+      if (msgType === 'terminal:create' || msgType === 'terminal:reattach') {
+        send(ws, { type: 'terminal:error', sessionId: (msg as any).sessionId ?? 'none', payload: { message: 'Zu viele Anfragen — bitte kurz warten' } });
+      } else if (msgType === 'audio:transcribe') {
+        send(ws, { type: 'audio:error', sessionId: (msg as any).sessionId ?? 'none', payload: { message: 'Zu viele Anfragen — bitte kurz warten' } } as any);
       }
       return;
     }

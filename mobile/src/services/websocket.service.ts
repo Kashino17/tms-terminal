@@ -18,7 +18,13 @@ const RTT_REPORT_INTERVAL = 5; // send RTT to server every 5 pings
 const RTT_GOOD = 80;          // <80ms = good (green)
 const RTT_FAIR = 200;         // <200ms = fair (yellow)
 const RTT_POOR = 500;         // <500ms = poor (orange), >=500ms = bad (red)
-const RTT_STALE_THRESHOLD = 800; // if smoothed RTT exceeds this, force reconnect
+
+// Payloads above this size (dictation audio, file uploads) saturate the socket
+// for many seconds — queued pings/pongs stall BEHIND them in the ordered
+// stream. The watchdog must not treat that silence as a dead connection, or it
+// kills the client's own upload mid-flight.
+const LARGE_SEND_THRESHOLD = 256 * 1024;
+const LARGE_SEND_GRACE_MS = 120_000;
 
 // EMA smoothing factor: lower = smoother (less reactive to spikes)
 const EMA_ALPHA = 0.3;
@@ -49,6 +55,7 @@ export class WebSocketService {
   private pingCount = 0;
   private currentPingInterval = PING_INTERVAL_NORMAL;
   private consecutivePoorCount = 0;                     // track sustained poor RTT
+  private largeTransferUntil = 0;                       // watchdog grace window during big uploads
 
   get state(): ConnectionState {
     return this._state;
@@ -131,6 +138,7 @@ export class WebSocketService {
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
       this.consecutivePoorCount = 0;
+      this.largeTransferUntil = 0;
       this.setState('connected');
       this.startPing();
       this.resetWatchdog();
@@ -144,7 +152,14 @@ export class WebSocketService {
         if ((data as { type?: string }).type === 'pong' && this.pingSentAt !== null) {
           const rawRtt = Date.now() - this.pingSentAt;
           this.pingSentAt = null;
-          this.updateRttMetrics(rawRtt);
+          // A pong made it through — any large upload has drained, normal
+          // watchdog policing resumes. Skip the RTT sample for this round:
+          // it measured the upload backlog, not the network.
+          if (this.largeTransferUntil > 0) {
+            this.largeTransferUntil = 0;
+          } else {
+            this.updateRttMetrics(rawRtt);
+          }
         }
         // Persistent handler runs first (survives screen unmount)
         this.persistentHandler?.(data);
@@ -180,7 +195,11 @@ export class WebSocketService {
 
   send(msg: object): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(msg));
+      const data = JSON.stringify(msg);
+      if (data.length > LARGE_SEND_THRESHOLD) {
+        this.largeTransferUntil = Date.now() + LARGE_SEND_GRACE_MS;
+      }
+      this.ws.send(data);
     }
   }
 
@@ -262,15 +281,12 @@ export class WebSocketService {
       this.restartPingWithInterval(targetInterval);
     }
 
-    // Stale connection: if smoothed RTT stays above threshold for 5 consecutive pings, reconnect
-    if (this.consecutivePoorCount >= 5 && this._smoothedRtt > RTT_STALE_THRESHOLD) {
-      console.warn(`[WS] Sustained poor RTT (${Math.round(this._smoothedRtt)}ms) — reconnecting`);
-      this.consecutivePoorCount = 0;
-      this._smoothedRtt = undefined;
-      this._jitter = 0;
-      this.reconnectAttempts = 0;
-      this.doConnect();
-    }
+    // NOTE: There used to be a forced reconnect here when smoothed RTT stayed
+    // above 800ms for 5 pings. Removed: high RTT is a property of the path
+    // (Tailscale DERP relay, cellular) that a reconnect cannot fix — but each
+    // teardown detached every session server-side and triggered a reattach
+    // storm, which is what actually froze terminals. Truly dead connections
+    // are caught by the 30s watchdog below.
   }
 
   private startPing(): void {
@@ -312,6 +328,13 @@ export class WebSocketService {
   private resetWatchdog(): void {
     this.stopWatchdog();
     this.watchdogTimer = setTimeout(() => {
+      // A large upload is (or just was) in flight — server replies stall
+      // behind it in the ordered stream, so silence is expected. Re-arm
+      // instead of killing our own transfer.
+      if (Date.now() < this.largeTransferUntil) {
+        this.resetWatchdog();
+        return;
+      }
       if (this._state === 'connected' || this._state === 'connecting') {
         // Dead connection detected — force reconnect
         this.reconnectAttempts = 0;
