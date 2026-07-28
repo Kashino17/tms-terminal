@@ -13,7 +13,11 @@ import { useSettingsStore } from '../../store/settingsStore';
 
 export type MicState = 'idle' | 'recording' | 'processing';
 
-const TRANSCRIPTION_TIMEOUT_MS = 25000;
+// Must outlast the UPLOAD, not the transcription: the server heartbeats
+// audio:progress every 10s once the message arrives (re-arming this watchdog),
+// but a multi-minute recording is several MB of base64 that can take well over
+// 25s to push through a slow Tailscale/DERP path before the first heartbeat.
+const TRANSCRIPTION_TIMEOUT_MS = 90000;
 
 const RECORDING_OPTIONS = {
   android: {

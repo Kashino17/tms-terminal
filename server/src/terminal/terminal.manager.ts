@@ -296,6 +296,7 @@ export class TerminalManager {
         `Session reattached via snapshot: ${sessionId.slice(0, 8)} ` +
         `(cols ${session.cols}→${clientCols ?? '?'}, missed=${buffered?.length ?? 0}B, overflow=${overflowed})`,
       );
+      this.healPtyDims(sessionId, session, clientCols, clientRows);
       return session;
     }
 
@@ -322,7 +323,32 @@ export class TerminalManager {
     this.reattachOverflow.delete(sessionId);
 
     logger.success(`Session reattached: ${sessionId}`);
+    this.healPtyDims(sessionId, session, clientCols, clientRows);
     return session;
+  }
+
+  /** DIAGNOSIS ONLY — never resizes. An earlier version healed the PTY to the
+   *  reattach dims; terminal-history evidence killed it: the client's attach
+   *  dims are unreliable (rows measured mid-animation — 9 rows with the
+   *  keyboard open —, widths bleeding across cards: four sessions all
+   *  reattached as 39x32). Every heal raised SIGWINCH, Claude Code repainted
+   *  its whole live region, and the repaint landed BELOW the old copy — the
+   *  duplicated/overlapping paragraphs users reported. The client re-asserts
+   *  its true xterm dims through the settle-protected resize path instead;
+   *  this log line stays so a real stale-width case remains visible. */
+  private healPtyDims(
+    sessionId: string,
+    session: TerminalSession,
+    clientCols?: number,
+    clientRows?: number,
+  ): void {
+    if (!clientCols || !clientRows) return;
+    if (session.cols !== clientCols) {
+      logger.info(
+        `Reattach ${sessionId.slice(0, 8)}: client cols differ ` +
+        `(pty ${session.cols}x${session.rows}, client ${clientCols}x${clientRows}) — not healing, awaiting client resize`,
+      );
+    }
   }
 
   /** Trim a buffer to a clean boundary at the start (skip any partial line and

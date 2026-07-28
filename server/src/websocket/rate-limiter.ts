@@ -7,6 +7,16 @@ import { logger } from '../utils/logger';
 //   actions — terminal:create/close, system:*      → creates processes, moderate risk
 //   ai      — manager:chat, manager:poll, audio:*  → triggers paid API calls
 //   config  — everything else                      → settings changes, watchers, etc.
+//
+// Design constraints (learned the hard way — see git history):
+//  * Buckets must absorb the app's legitimate reconnect behavior: after a
+//    background return the client fires reattachAll twice (2×N reattaches for
+//    N terminals) plus a resize per card, all within ~1.5s.
+//  * NEVER block the whole connection. A full block swallows ping/pong, the
+//    client then declares the link dead and reconnects, and the resulting
+//    reattach storm re-triggers the limiter — a self-sustaining outage.
+//  * Dropped messages must stay rare and visible (logged); silently dropping
+//    terminal:create/reattach leaves ghost cards with no PTY behind them.
 
 interface Bucket {
   tokens: number;
@@ -20,9 +30,9 @@ interface BucketConfig {
 
 const BUCKET_CONFIGS: Record<string, BucketConfig> = {
   typing:  { maxTokens: 200, refillRate: 100 },  // 100/sec sustained, 200 burst
-  actions: { maxTokens: 10,  refillRate: 1 },     // 1/sec sustained, 10 burst
-  ai:      { maxTokens: 5,   refillRate: 0.2 },   // 1 per 5s sustained, 5 burst
-  config:  { maxTokens: 15,  refillRate: 1 },     // 1/sec sustained, 15 burst
+  actions: { maxTokens: 60,  refillRate: 20 },    // absorbs reattach/resize storms
+  ai:      { maxTokens: 10,  refillRate: 0.5 },   // 1 per 2s sustained, 10 burst
+  config:  { maxTokens: 60,  refillRate: 10 },
 };
 
 const MESSAGE_CATEGORIES: Record<string, string> = {
@@ -50,21 +60,12 @@ const MESSAGE_CATEGORIES: Record<string, string> = {
 
 export class ConnectionRateLimiter {
   private buckets = new Map<string, Bucket>();
-  private violations = 0;
-  private blocked = false;
-  private blockedUntil = 0;
+  private lastDropLog = 0;
+  private droppedSinceLog = 0;
 
   /** Check if a message type is allowed. Returns true if allowed, false if rate limited. */
   consume(messageType: string): boolean {
     const now = Date.now();
-
-    // Check if connection is temporarily blocked (too many violations)
-    if (this.blocked) {
-      if (now < this.blockedUntil) return false;
-      this.blocked = false;
-      this.violations = 0;
-      logger.info('Rate limit: connection unblocked');
-    }
 
     const category = MESSAGE_CATEGORIES[messageType] ?? 'config';
     const cfg = BUCKET_CONFIGS[category];
@@ -85,27 +86,21 @@ export class ConnectionRateLimiter {
       return true;
     }
 
-    // Rate limited
-    this.violations++;
-    if (this.violations >= 50) {
-      // 50 violations → block connection for 30 seconds
-      this.blocked = true;
-      this.blockedUntil = now + 30_000;
-      logger.warn(`Rate limit: connection blocked for 30s (${this.violations} violations, category=${category})`);
-    } else if (this.violations % 10 === 0) {
-      logger.warn(`Rate limit: ${this.violations} violations (latest: ${messageType})`);
+    // Rate limited — drop just this message, never the connection. Log at most
+    // every 5s so a flood can't drown the server log.
+    this.droppedSinceLog++;
+    if (now - this.lastDropLog > 5_000) {
+      logger.warn(`Rate limit: dropped ${this.droppedSinceLog} message(s) (latest: ${messageType}, category=${category})`);
+      this.lastDropLog = now;
+      this.droppedSinceLog = 0;
     }
-
     return false;
   }
 
+  /** Whole-connection blocking was removed: it swallowed ping/pong, the client
+   *  declared the link dead, and the reconnect+reattach storm re-triggered the
+   *  limiter in a loop. Kept for call-site compatibility. */
   isBlocked(): boolean {
-    if (!this.blocked) return false;
-    if (Date.now() >= this.blockedUntil) {
-      this.blocked = false;
-      this.violations = 0;
-      return false;
-    }
-    return true;
+    return false;
   }
 }
