@@ -3,6 +3,10 @@ import { MANAGER_TOOLS } from './tools/definitions';
 import { buildSystemPrompt, DEFAULT_PERSONALITY, type PersonalityConfig } from './tools/system-prompt';
 import { handleAgendaTool, handleEntriesTool, buildOverview, handleNotifyUser } from './tools/stufe1.handlers';
 import { Outbox } from './outbox/outbox';
+import type { OutboxMessage } from './outbox/outbox.types';
+import { AgendaScheduler } from './agenda/agenda.scheduler';
+import { loadAgenda, saveAgenda } from './agenda/agenda.store';
+import { takeCorruptionReports } from './store';
 import { getModelsInfo, loadLocalModel, type LmModelInfo } from './lmstudio.manager';
 import { saveManagerConfig } from './manager.config';
 import { globalManager } from '../terminal/terminal.manager';
@@ -245,6 +249,22 @@ export class ManagerService {
   private registry: AiProviderRegistry;
   /** Proactive messages to the user, with the dosage rules that keep the agent welcome. */
   private outbox = new Outbox(() => Date.now());
+  private proactiveCallback: ((msg: OutboxMessage, unread: number) => void) | null = null;
+
+  /** Fires due reminders once a minute. Never touches a model. */
+  private agendaScheduler = new AgendaScheduler(
+    () => Date.now(),
+    () => loadAgenda(),
+    (items) => saveAgenda(items),
+    (due, late) => {
+      const prefix = late ? '⏰ (verspätet) ' : '⏰ ';
+      const body = due.item.note !== undefined && due.item.note.trim() !== ''
+        ? `${due.item.title} — ${due.item.note}`
+        : due.item.title;
+      const msg = this.outbox.push({ kind: 'reminder', text: `${prefix}${body}` });
+      if (msg !== null) this.emitProactive(msg);
+    },
+  );
   private outputBuffers = new Map<string, { data: string; lastUpdated: number }>();
   private lastSummaryAt = new Map<string, number>();
   private sessionLabels = new Map<string, string>();
@@ -363,6 +383,11 @@ export class ManagerService {
         if (cleaned > 0) logger.info(`Manager: cleaned up ${cleaned} old presentation(s)`);
       }
     } catch {}
+
+    // Reminders are model-free on purpose: they must fire even when no provider
+    // is reachable. This is the payoff of keeping collecting and judging apart.
+    this.agendaScheduler.start();
+    this.reportStoreCorruption();
   }
 
   stop(): void {
@@ -372,8 +397,46 @@ export class ManagerService {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    this.agendaScheduler.stop();
     this.cronManager.stopAll();
     logger.info('Manager: stopped');
+  }
+
+  setProactiveCallback(cb: (msg: OutboxMessage, unread: number) => void): void {
+    this.proactiveCallback = cb;
+  }
+
+  /** Deliver a proactive message: to the app, and — if allowed — as a push. */
+  private emitProactive(msg: OutboxMessage): void {
+    const unread = this.outbox.unreadCount();
+    this.proactiveCallback?.(msg, unread);
+
+    if (!this.outbox.shouldPush(msg)) {
+      logger.info(`[outbox] quiet hours — message ${msg.id} delivered without push`);
+      return;
+    }
+    const title = msg.kind === 'reminder' ? 'Erinnerung' : 'Manager';
+    for (const token of this.fcmTokens) {
+      void fcmService.send(token, title, msg.text.slice(0, 200), { kind: msg.kind, id: msg.id });
+    }
+    this.outbox.markPushed(msg.id);
+  }
+
+  markOutboxRead(): number {
+    this.outbox.markAllRead();
+    return this.outbox.unreadCount();
+  }
+
+  getUnreadCount(): number {
+    return this.outbox.unreadCount();
+  }
+
+  /** Turn any store corruption into a message the user actually sees. */
+  private reportStoreCorruption(): void {
+    for (const report of takeCorruptionReports()) {
+      const msg = this.outbox.push({ kind: 'event', text: `⚠️ ${report}` });
+      if (msg !== null) this.emitProactive(msg);
+    }
   }
 
   isEnabled(): boolean {

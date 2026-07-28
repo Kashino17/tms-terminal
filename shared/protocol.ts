@@ -98,6 +98,20 @@ export interface ManagerMemoryWriteMessage {
   type: 'manager:memory_write';
   payload: { section: string; data: unknown };
 }
+export interface ManagerAgendaMessage {
+  type: 'manager:agenda';
+  payload: { action: 'list' | 'add' | 'update' | 'delete'; args?: Record<string, string> };
+}
+export interface ManagerEntriesMessage {
+  type: 'manager:entries';
+  payload: { action: 'list' | 'add' | 'complete' | 'reopen' | 'update' | 'delete'; args?: Record<string, string> };
+}
+export interface ManagerOverviewMessage {
+  type: 'manager:overview';
+}
+export interface ManagerOutboxReadMessage {
+  type: 'manager:outbox_read';
+}
 
 // ── File Upload (Client → Server) ────────────────────────────────
 export interface FileUploadMessage {
@@ -149,6 +163,10 @@ export type ClientMessage =
   | ManagerSetApiKeyMessage
   | ManagerMemoryReadMessage
   | ManagerMemoryWriteMessage
+  | ManagerAgendaMessage
+  | ManagerEntriesMessage
+  | ManagerOverviewMessage
+  | ManagerOutboxReadMessage
   | FileUploadMessage
   | AppStateMessage
   | ActiveTabMessage
@@ -331,6 +349,35 @@ export interface ManagerMemoryDataMessage {
   type: 'manager:memory_data';
   payload: { memory: unknown };
 }
+export interface ManagerAgendaDataMessage {
+  type: 'manager:agenda_data';
+  payload: {
+    items: Array<{
+      id: string; title: string; note?: string; at: string; allDay: boolean;
+      repeat: string; reminderOffsets: number[]; occurrenceAt: number;
+    }>;
+  };
+}
+export interface ManagerEntriesDataMessage {
+  type: 'manager:entries_data';
+  payload: {
+    entries: Array<{
+      id: string; text: string; checkable: boolean; done: boolean;
+      due?: string; project?: string; updatedAt: number;
+    }>;
+  };
+}
+export interface ManagerProactiveMessage {
+  type: 'manager:proactive';
+  payload: {
+    id: string; kind: string; text: string; createdAt: number;
+    project?: string; sessionId?: string; unread: number;
+  };
+}
+export interface ManagerUnreadMessage {
+  type: 'manager:unread';
+  payload: { unread: number };
+}
 
 // ── Manager streaming (Server → Client) ──────────────────────────
 export interface PhaseInfo {
@@ -395,6 +442,10 @@ export type ServerMessage =
   | ManagerErrorMessage
   | ManagerStatusMessage
   | ManagerMemoryDataMessage
+  | ManagerAgendaDataMessage
+  | ManagerEntriesDataMessage
+  | ManagerProactiveMessage
+  | ManagerUnreadMessage
   | ManagerThinkingMessage
   | ManagerStreamChunkMessage
   | ManagerStreamEndMessage

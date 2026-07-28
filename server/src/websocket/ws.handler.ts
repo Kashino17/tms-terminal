@@ -18,6 +18,9 @@ import { rewrite as rewritePrompt } from '../audio/prompt-rewriter-sidecar';
 import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
+import { handleAgendaTool, handleEntriesTool, buildOverview } from '../manager/tools/stufe1.handlers';
+import { listAgenda } from '../manager/agenda/agenda.store';
+import { listEntries } from '../manager/entries/entries.store';
 import { ConnectionRateLimiter } from './rate-limiter';
 import { browserBridge } from '../browserbridge/browserbridge.manager';
 
@@ -163,6 +166,11 @@ function setupManagerCallbacks(ws: WebSocket): void {
     closeTerminalForManager,
     (tasks) => sendManager({ type: 'manager:tasks', payload: { tasks } }),
   );
+
+  // Proactive messages: reminders, check-ins, suggestions the agent raises itself.
+  managerService.setProactiveCallback((msg, unread) => {
+    sendManager({ type: 'manager:proactive', payload: { ...msg, unread } });
+  });
 }
 
 // These need to be module-level so setupManagerCallbacks can reference them
@@ -472,8 +480,13 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
     // ── Rate limiting ────────────────────────────────────────────────
     if (!rateLimiter.consume(msgType)) {
-      if (rateLimiter.isBlocked()) {
-        send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Rate limit exceeded — connection temporarily blocked' } });
+      // Drops are rare with the generous buckets — but a silently dropped
+      // create/reattach would leave a ghost card and a dropped transcribe a
+      // stuck spinner, so those get an explicit error back.
+      if (msgType === 'terminal:create' || msgType === 'terminal:reattach') {
+        send(ws, { type: 'terminal:error', sessionId: (msg as any).sessionId ?? 'none', payload: { message: 'Zu viele Anfragen — bitte kurz warten' } });
+      } else if (msgType === 'audio:transcribe') {
+        send(ws, { type: 'audio:error', sessionId: (msg as any).sessionId ?? 'none', payload: { message: 'Zu viele Anfragen — bitte kurz warten' } } as any);
       }
       return;
     }
@@ -797,6 +810,46 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         mem.updateMemorySection(section, data);
         send(ws, { type: 'manager:memory_data', payload: { memory: mem.loadMemory() } } as any);
       }
+      return;
+    }
+
+    if (msgType === 'manager:overview') {
+      const terminals = managerService.getSessionList().map(s => ({ label: s.label, status: '—' }));
+      send(ws, {
+        type: 'manager:response',
+        payload: { text: buildOverview({ nowMs: Date.now(), terminals }) },
+      } as any);
+      return;
+    }
+
+    if (msgType === 'manager:agenda') {
+      const payload = (msg as any).payload ?? {};
+      if (payload.action !== 'list') {
+        handleAgendaTool({ action: payload.action, ...(payload.args ?? {}) }, Date.now());
+      }
+      const now = Date.now();
+      const items = listAgenda(now, now + 365 * 24 * 60 * 60 * 1000).map(e => ({
+        id: e.item.id, title: e.item.title, note: e.item.note, at: e.item.at,
+        allDay: e.item.allDay, repeat: e.item.repeat,
+        reminderOffsets: e.item.reminders.map(r => r.offsetMinutes),
+        occurrenceAt: e.occurrenceAt,
+      }));
+      send(ws, { type: 'manager:agenda_data', payload: { items } } as any);
+      return;
+    }
+
+    if (msgType === 'manager:entries') {
+      const payload = (msg as any).payload ?? {};
+      if (payload.action !== 'list') {
+        handleEntriesTool({ action: payload.action, ...(payload.args ?? {}) });
+      }
+      send(ws, { type: 'manager:entries_data', payload: { entries: listEntries() } } as any);
+      return;
+    }
+
+    if (msgType === 'manager:outbox_read') {
+      const unread = managerService.markOutboxRead();
+      send(ws, { type: 'manager:unread', payload: { unread } } as any);
       return;
     }
 
