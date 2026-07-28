@@ -22,6 +22,31 @@ function isTrue(v: string | undefined): boolean {
   return v === 'true' || v === '1' || v === 'ja';
 }
 
+function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the tz argument coming from the model.
+ * "floating" / "mitreisend" forces a travelling appointment; a named zone anchors
+ * it; anything else is left to the store's default (one-off = anchored here,
+ * repeating = floating).
+ */
+function resolveTzArg(raw: string | undefined): { tz?: string | null; error?: string } {
+  if (raw === undefined || raw.trim() === '') return {};
+  const v = raw.trim();
+  if (v === 'floating' || v === 'mitreisend') return { tz: null };
+  if (!isValidTimeZone(v)) {
+    return { error: `Fehler: "${v}" ist keine gültige Zeitzone. Nutze einen IANA-Namen wie "Europe/Berlin" oder "floating".` };
+  }
+  return { tz: v };
+}
+
 function fmtDate(ms: number): string {
   const d = new Date(ms);
   const p = (n: number) => String(n).padStart(2, '0');
@@ -77,14 +102,21 @@ export function handleAgendaTool(
     if (!(repeat in REPEAT_LABEL)) {
       return `Fehler: "${args.repeat}" ist keine gültige Wiederholung. Erlaubt: ${Object.keys(REPEAT_LABEL).join(', ')}.`;
     }
+    const tzArg = resolveTzArg(args.tz);
+    if (tzArg.error !== undefined) return tzArg.error;
     const offsets = parseOffsets(args.reminder_offsets);
     const item = addAgendaItem({
       title, at, note: args.note, allDay: isTrue(args.all_day),
-      repeat, reminderOffsets: offsets, source: 'user',
+      repeat, reminderOffsets: offsets, tz: tzArg.tz, source: 'user',
     }, dir);
     const rep = repeat === 'none' ? '' : `, ${REPEAT_LABEL[repeat]}`;
-    const occurrenceMs = wallTimeToEpoch(parseWallTime(at)!); // already validated above
-    return `Termin angelegt: "${title}" am ${fmtDateTime(occurrenceMs, item.allDay)}${rep}`
+    // Show the time as the appointment itself means it, not as the machine
+    // happens to be set right now — the user travels between zones.
+    const occurrenceMs = wallTimeToEpoch(parseWallTime(at)!, item.tz);
+    const zoneNote = item.tz !== undefined
+      ? ` (feste Zeit in ${item.tz})`
+      : ' (reist mit dir mit)';
+    return `Termin angelegt: "${title}" am ${fmtDateTime(occurrenceMs, item.allDay)}${rep}${zoneNote}`
       + ` — ${offsets.length} Erinnerung(en). [ID: ${item.id}]`;
   }
 
@@ -100,6 +132,11 @@ export function handleAgendaTool(
     }
     if (args.repeat !== undefined) patch.repeat = args.repeat as RepeatRule;
     if (args.all_day !== undefined) patch.allDay = isTrue(args.all_day);
+    if (args.tz !== undefined) {
+      const tzArg = resolveTzArg(args.tz);
+      if (tzArg.error !== undefined) return tzArg.error;
+      patch.tz = tzArg.tz ?? undefined;
+    }
     const updated = updateAgendaItem(id, patch, dir);
     return updated === null
       ? `Fehler: Termin ${id} nicht gefunden.`

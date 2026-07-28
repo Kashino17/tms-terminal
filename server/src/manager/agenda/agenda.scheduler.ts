@@ -55,7 +55,7 @@ export class AgendaScheduler {
     const due = dueReminders(items, now, this.lastTickAt);
 
     for (const d of due) {
-      d.reminder.firedFor = d.occurrenceAt;
+      d.reminder.firedFor = d.occurrenceKey;
       const late = now - d.dueAt > LATE_THRESHOLD_MS;
       try {
         this.onFire(d, late);
@@ -77,7 +77,7 @@ export class AgendaScheduler {
   private retireOlderThan(before: number): void {
     const items = this.load();
     const stale = dueReminders(items, before, before - RETIRE_FLOOR_MS);
-    for (const d of stale) d.reminder.firedFor = d.occurrenceAt;
+    for (const d of stale) d.reminder.firedFor = d.occurrenceKey;
     if (stale.length > 0) {
       logger.info(`[agenda] retired ${stale.length} reminder(s) older than the catch-up window`);
       this.save(items);

@@ -107,7 +107,9 @@ interface AgendaItem {
   at: string;                       // "2026-08-04T14:00" — lokale Wanduhrzeit, OHNE Zeitzone
   allDay: boolean;
   repeat: 'none' | 'yearly' | 'monthly' | 'weekly' | 'daily';
-  reminders: Array<{ id: string; offsetMinutes: number; firedFor?: number }>;
+  /** IANA-Zone, an die der Termin gebunden ist. Fehlt = reist mit dem Nutzer mit. */
+  tz?: string;
+  reminders: Array<{ id: string; offsetMinutes: number; firedFor?: string }>;
   source: 'user' | 'agent';
   createdAt: number;
 }
@@ -117,13 +119,50 @@ interface AgendaItem {
 Geburtstage sind Wanduhr-Ereignisse. „14 Uhr" muss über die Zeitumstellung hinweg 14 Uhr
 bleiben; ein Ganztages-Eintrag um Mitternacht darf nicht auf den Vortag rutschen.
 
+### Reisen zwischen Zeitzonen (Nachtrag 2026-07-28)
+
+Der Nutzer reist viel; die Maschinen-Zeitzone ändert sich also im laufenden Betrieb
+(beobachtet: `Asia/Bangkok`). Dadurch zerfallen Termine in zwei Arten, die sich
+gegensätzlich verhalten müssen:
+
+- **Mitreisend (floating)** — `tz` fehlt. „Jeden Morgen um 8" meint 8 Uhr *deiner*
+  Zeit, wo immer du bist. Gilt für alle wiederholenden Termine und Geburtstage.
+- **Ortsgebunden (anchored)** — `tz` enthält einen IANA-Namen. Der Zahnarzt, den du in
+  Berlin ausmachst, bleibt Berliner Zeit, auch wenn du in Bangkok sitzt.
+
+**Standard ohne Nachfrage:** einmalige Termine werden an die Zeitzone gebunden, in der
+sie angelegt wurden; wiederholende reisen mit. Das trifft das Gemeinte fast immer. Über
+das `tz`-Argument (`"Europe/Berlin"` oder `"floating"`) lässt es sich überschreiben.
+
+**Daraus folgt zwingend, dass `firedFor` eine Wanduhr-Kennung sein muss** (siehe unten),
+und dass `wallTimeToEpoch` eine optionale Zone annimmt. Die Auflösung einer Wanduhrzeit
+in einer fremden Zone geschieht über `Intl.DateTimeFormat` mit zwei Durchgängen (der
+zweite fängt DST-Grenzen ab) — ohne zusätzliche Abhängigkeit.
+
+**Ruhezeit und Tages-Check-ins bleiben mitreisend.** Der Morgen-Check-in soll in *deinem*
+Morgen ankommen, nicht im Morgen eines anderen Ortes.
+
+Eine ungültige Zone lässt `Intl` werfen. `dueReminders` fängt das **pro Termin** ab: ein
+kaputter Eintrag darf nicht den ganzen Wecker anhalten. Das Werkzeug lehnt ungültige
+Zonen zusätzlich schon beim Anlegen ab.
+
 `firedFor` sitzt **pro Erinnerung**, nicht pro Termin — sonst würde die
 Eine-Stunde-vorher-Erinnerung unterdrückt, weil die Zwei-Tage-Erinnerung schon raus ist.
 
-Der Wert ist der **Zeitpunkt des Vorkommens**, für das zuletzt gefeuert wurde, nicht der
-Feuerzeitpunkt. Bei einem einmaligen Termin ist das gleichwertig; bei einem jährlichen
-Geburtstag ist es der entscheidende Unterschied: ein bloßes „schon gefeuert"-Flag würde
-den Geburtstag nach dem ersten Jahr für immer verstummen lassen.
+Der Wert ist die **Wanduhr-Kennung des Vorkommens**, für das zuletzt gefeuert wurde
+(z.B. `"2026-08-04T08:00"`) — nicht der Feuerzeitpunkt und ausdrücklich **kein**
+Zeitstempel.
+
+Zwei Gründe, beide zwingend:
+
+1. Ein bloßes „schon gefeuert"-Flag würde einen jährlichen Geburtstag nach dem ersten
+   Jahr für immer verstummen lassen. Die Kennung muss das *Vorkommen* benennen.
+2. Ein Zeitstempel als Kennung ist bei einem reisenden Nutzer falsch. Dasselbe
+   „08:00 am 4. August" ist in Bangkok `01:00Z` und in Berlin `06:00Z`. Feuert die
+   Erinnerung in Bangkok und wechselt der Rechner danach die Zone, stimmt die Kennung
+   nicht mehr überein und **dieselbe Erinnerung feuert am selben Tag erneut**. Genau
+   dieser Fehler steckte in der ersten Fassung und wurde am 2026-07-28 durch einen Test
+   nachgewiesen und behoben.
 
 Beispiele:
 - Zahnarzt: `at: "2026-08-04T14:00"`, `repeat: 'none'`,

@@ -400,7 +400,7 @@ export const MANAGER_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'agenda',
-      description: 'Termine und Erinnerungen verwalten. WICHTIG: "at" muss immer das Format YYYY-MM-DDTHH:MM haben (lokale Zeit) — rechne relative Angaben wie "in einer Woche" selbst aus, das heutige Datum steht in get_overview. Für Geburtstage: all_day=true und repeat=yearly.',
+      description: 'Termine und Erinnerungen verwalten. WICHTIG: "at" muss immer das Format YYYY-MM-DDTHH:MM haben — rechne relative Angaben wie "in einer Woche" selbst aus, das heutige Datum steht in get_overview. Für Geburtstage: all_day=true und repeat=yearly. ZEITZONEN: Der Nutzer reist viel. Einmalige Termine werden automatisch an die aktuelle Zeitzone gebunden, wiederholende reisen mit. Setze "tz" nur, wenn der Nutzer etwas anderes will — einen IANA-Namen wie "Europe/Berlin" für einen Termin an einem anderen Ort, oder "floating" damit er mitreist.',
       parameters: {
         type: 'object',
         properties: {
@@ -412,6 +412,7 @@ export const MANAGER_TOOLS: ToolDefinition[] = [
           repeat: { type: 'string', description: 'none, daily, weekly, monthly oder yearly' },
           reminder_offsets: { type: 'string', description: 'Minuten VOR dem Termin, komma-getrennt. "2880,1440,60" = 2 Tage, 1 Tag und 1 Stunde vorher. "0" = zum Termin.' },
           note: { type: 'string', description: 'Freitext — was der Nutzer wörtlich gesagt hat' },
+          tz: { type: 'string', description: 'Nur wenn nötig: IANA-Zeitzone wie "Europe/Berlin" für einen ortsgebundenen Termin, oder "floating" damit er mitreist. Weglassen für den Standard.' },
           days: { type: 'string', description: 'Für list: wie viele Tage voraus. Standard 30.' },
         },
         required: ['action'],

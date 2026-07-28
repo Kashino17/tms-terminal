@@ -13,7 +13,24 @@ export interface NewAgendaInput {
   note?: string;
   /** Minutes before the appointment. [] means no reminder at all. */
   reminderOffsets?: number[];
+  /**
+   * IANA zone to anchor this appointment to. Pass `null` to force it to float
+   * (travel with the user) even though it is a one-off. Omit for the default.
+   */
+  tz?: string | null;
   source?: 'user' | 'agent';
+}
+
+/**
+ * One-off appointments are anchored to the zone they were created in; repeating
+ * ones float. A dentist appointment booked in Berlin means Berlin time even if
+ * you fly away before it; a daily 08:00 routine means 08:00 wherever you wake up.
+ */
+function defaultTz(repeat: RepeatRule, explicit: string | null | undefined): string | undefined {
+  if (explicit === null) return undefined;      // caller forced floating
+  if (explicit !== undefined) return explicit;  // caller named a zone
+  if (repeat !== 'none') return undefined;      // repeating floats
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
 export function loadAgenda(dir: string = MANAGER_DIR): AgendaItem[] {
@@ -26,13 +43,15 @@ export function saveAgenda(items: AgendaItem[], dir: string = MANAGER_DIR): void
 }
 
 export function addAgendaItem(input: NewAgendaInput, dir: string = MANAGER_DIR): AgendaItem {
+  const repeat = input.repeat ?? 'none';
   const item: AgendaItem = {
     id: randomUUID(),
     title: input.title,
     note: input.note,
     at: input.at,
     allDay: input.allDay ?? false,
-    repeat: input.repeat ?? 'none',
+    repeat,
+    tz: defaultTz(repeat, input.tz),
     reminders: (input.reminderOffsets ?? [0]).map(offsetMinutes => ({
       id: randomUUID(),
       offsetMinutes,

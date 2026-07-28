@@ -3,7 +3,7 @@ process.env.TZ = 'Europe/Berlin';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AgendaItem } from './agenda.types';
-import { parseWallTime, nextOccurrence, dueReminders } from './agenda.time';
+import { parseWallTime, nextOccurrence, nextOccurrenceDetail, dueReminders } from './agenda.time';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -95,10 +95,9 @@ test('dueReminders finds a two-day-ahead reminder while the appointment is still
 });
 
 test('an already-fired reminder for the same occurrence is not returned again', () => {
-  const occ = at(2026, 8, 4, 14, 0);
   const it = item({
     at: '2026-08-04T14:00',
-    reminders: [{ id: 'r1h', offsetMinutes: 60, firedFor: occ }],
+    reminders: [{ id: 'r1h', offsetMinutes: 60, firedFor: '2026-08-04T14:00' }],
   });
   const now = at(2026, 8, 4, 13, 0);
   assert.equal(dueReminders([it], now, now - 5 * MIN).length, 0);
@@ -107,7 +106,7 @@ test('an already-fired reminder for the same occurrence is not returned again', 
 test('a yearly reminder fires again next year despite firedFor from last year', () => {
   const it = item({
     at: '2020-07-30T09:00', repeat: 'yearly',
-    reminders: [{ id: 'r0', offsetMinutes: 0, firedFor: at(2025, 7, 30, 9, 0) }],
+    reminders: [{ id: 'r0', offsetMinutes: 0, firedFor: '2025-07-30T09:00' }],
   });
   const now = at(2026, 7, 30, 9, 0);
   const due = dueReminders([it], now, now - 5 * MIN);
@@ -140,4 +139,80 @@ test('an unparseable item is skipped instead of throwing', () => {
   const bad = item({ at: 'kaputt', reminders: [{ id: 'r', offsetMinutes: 0 }] });
   const now = at(2026, 8, 4, 14, 0);
   assert.deepEqual(dueReminders([bad], now, now - DAY), []);
+});
+
+// ── Reisen zwischen Zeitzonen ────────────────────────────────────────────────
+// Der Nutzer reist viel; die Maschinen-Zeitzone ändert sich also im Betrieb.
+
+test('a floating occurrence keeps its identity when the machine changes timezone', () => {
+  const it = item({ at: '2026-08-04T08:00', repeat: 'daily' });
+  const from = Date.parse('2026-08-04T00:00:00Z');
+
+  process.env.TZ = 'Asia/Bangkok';
+  const bkk = nextOccurrenceDetail(it, from)!;
+  process.env.TZ = 'Europe/Berlin';
+  const ber = nextOccurrenceDetail(it, from)!;
+  process.env.TZ = 'Europe/Berlin'; // leave the suite in a known zone
+
+  assert.notEqual(bkk.at, ber.at, 'the instant does shift — 08:00 local means different moments');
+  assert.equal(bkk.key, ber.key, 'but the identity must NOT shift, or it fires twice');
+  assert.equal(bkk.key, '2026-08-04T08:00');
+});
+
+test('a floating reminder already fired is not repeated after flying west', () => {
+  // Fired at 08:00 Bangkok, then the laptop moves to Berlin. Without a stable
+  // key the same morning fires a second time five hours later.
+  const it = item({
+    at: '2026-08-04T08:00', repeat: 'daily',
+    reminders: [{ id: 'r0', offsetMinutes: 0, firedFor: '2026-08-04T08:00' }],
+  });
+  process.env.TZ = 'Europe/Berlin';
+  const now = new Date(2026, 7, 4, 8, 0, 0, 0).getTime();
+  assert.deepEqual(dueReminders([it], now, now - 6 * HOUR), []);
+});
+
+test('an anchored appointment keeps its instant no matter where the laptop is', () => {
+  // Dentist booked in Berlin for 14:00. Fly to Bangkok — it must still be
+  // 12:00 UTC, i.e. 19:00 Bangkok, not 14:00 Bangkok.
+  const it = item({ at: '2026-08-04T14:00', tz: 'Europe/Berlin' });
+  const from = Date.parse('2026-08-01T00:00:00Z');
+
+  process.env.TZ = 'Asia/Bangkok';
+  const seenFromBangkok = nextOccurrenceDetail(it, from)!;
+  process.env.TZ = 'Europe/Berlin';
+  const seenFromBerlin = nextOccurrenceDetail(it, from)!;
+
+  assert.equal(seenFromBangkok.at, seenFromBerlin.at, 'anchored = same instant everywhere');
+  assert.equal(new Date(seenFromBangkok.at).toISOString(), '2026-08-04T12:00:00.000Z',
+    '14:00 Berlin in August is 12:00 UTC');
+});
+
+test('an anchored appointment respects DST in ITS zone, not the machine zone', () => {
+  // 14:00 Berlin in January is 13:00 UTC (CET), in August 12:00 UTC (CEST).
+  const winter = item({ at: '2026-01-15T14:00', tz: 'Europe/Berlin' });
+  process.env.TZ = 'Asia/Bangkok';
+  const occ = nextOccurrenceDetail(winter, Date.parse('2026-01-01T00:00:00Z'))!;
+  process.env.TZ = 'Europe/Berlin';
+  assert.equal(new Date(occ.at).toISOString(), '2026-01-15T13:00:00.000Z');
+});
+
+test('an unknown timezone does not crash the whole alarm clock', () => {
+  const it = item({ at: '2026-08-04T14:00', tz: 'Mars/Olympus_Mons' });
+  assert.throws(() => nextOccurrenceDetail(it, 0), /time zone|timeZone|Invalid/i,
+    'Intl rejects it loudly — the scheduler must catch this, see agenda.scheduler');
+});
+
+test('one appointment with a bogus timezone does not silence the others', () => {
+  const broken = item({
+    id: 'broken', at: '2026-08-04T14:00', tz: 'Mars/Olympus_Mons',
+    reminders: [{ id: 'rb', offsetMinutes: 0 }],
+  });
+  const fine = item({
+    id: 'fine', at: '2026-08-04T14:00',
+    reminders: [{ id: 'rf', offsetMinutes: 0 }],
+  });
+  const now = at(2026, 8, 4, 14, 0);
+  const due = dueReminders([broken, fine], now, now - 5 * MIN);
+  assert.equal(due.length, 1, 'the healthy appointment still fires');
+  assert.equal(due[0].reminder.id, 'rf');
 });
