@@ -135,6 +135,12 @@
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; }
+  /* Android-WebView: Font-Boosting/Text-Inflation AUS. Das Autosizing bläst
+     lange Textblöcke (Claude-Prosa in den Karten) heimlich um ~8% auf — die
+     Spalten-Vermessung der Bridge misst aber die ungeboostete Probe. xterm
+     bekommt dann mehr Spalten, als die Karte wirklich fasst: Zeilen brechen
+     mitten im Wort um und verrutschen. Desktop-Browser ignorieren die Regel. */
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body {
     margin: 0; overflow: hidden; background: var(--bg-grad); color: var(--text);
     font: 400 14.5px/1.45 var(--font-ui); -webkit-font-smoothing: antialiased;

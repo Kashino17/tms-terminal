@@ -992,6 +992,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         originWhitelist={['*']}
         javaScriptEnabled
         domStorageEnabled
+        // Android skaliert WebView-Text sonst mit der System-Schriftgröße —
+        // die Spalten-Vermessung und die echte Textbreite laufen dann
+        // auseinander (Terminal-Schrift regelt der In-App-Slider).
+        textZoom={100}
         onMessage={onMessage}
         keyboardDisplayRequiresUserAction={false}
         hideKeyboardAccessoryView
