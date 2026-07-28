@@ -107,7 +107,7 @@ interface AgendaItem {
   at: string;                       // "2026-08-04T14:00" — lokale Wanduhrzeit, OHNE Zeitzone
   allDay: boolean;
   repeat: 'none' | 'yearly' | 'monthly' | 'weekly' | 'daily';
-  reminders: Array<{ id: string; offsetMinutes: number; firedAt?: number }>;
+  reminders: Array<{ id: string; offsetMinutes: number; firedFor?: number }>;
   source: 'user' | 'agent';
   createdAt: number;
 }
@@ -117,8 +117,13 @@ interface AgendaItem {
 Geburtstage sind Wanduhr-Ereignisse. „14 Uhr" muss über die Zeitumstellung hinweg 14 Uhr
 bleiben; ein Ganztages-Eintrag um Mitternacht darf nicht auf den Vortag rutschen.
 
-`firedAt` sitzt **pro Erinnerung**, nicht pro Termin — sonst würde die
+`firedFor` sitzt **pro Erinnerung**, nicht pro Termin — sonst würde die
 Eine-Stunde-vorher-Erinnerung unterdrückt, weil die Zwei-Tage-Erinnerung schon raus ist.
+
+Der Wert ist der **Zeitpunkt des Vorkommens**, für das zuletzt gefeuert wurde, nicht der
+Feuerzeitpunkt. Bei einem einmaligen Termin ist das gleichwertig; bei einem jährlichen
+Geburtstag ist es der entscheidende Unterschied: ein bloßes „schon gefeuert"-Flag würde
+den Geburtstag nach dem ersten Jahr für immer verstummen lassen.
 
 Beispiele:
 - Zahnarzt: `at: "2026-08-04T14:00"`, `repeat: 'none'`,
@@ -335,8 +340,14 @@ was `liquidDeckHtml.ts` erzeugt. Die generierte Datei wird niemals direkt bearbe
 
 ## Tests
 
-Vitest ist eingerichtet (`prompt.detector.test.ts`, `approval.util.test.ts`,
-`ai-provider.test.ts`, `lmstudio.manager.test.ts`).
+Der Server nutzt **Nodes eingebauten Test-Runner**, nicht Vitest:
+`node --require ts-node/register --test 'src/**/*.test.ts'`. Tests importieren aus
+`node:test` und `node:assert/strict`. Vorhandene Testdateien: `prompt.detector.test.ts`,
+`approval.util.test.ts`, `ai-provider.test.ts`, `lmstudio.manager.test.ts`.
+
+`prompt.detector.test.ts` injiziert bereits eine Uhr (`new PromptDetector(() => t)`) —
+dieses Muster wird für Wecker und Dosierung übernommen, damit Zeitverhalten ohne echtes
+Warten testbar ist.
 
 - **Zeitrechnung:** Termin um 14 Uhr bleibt über die Zeitumstellung 14 Uhr; jährlicher
   Termin am **29. Februar** in Nicht-Schaltjahren; Erinnerung um 02:30 in der Nacht der
