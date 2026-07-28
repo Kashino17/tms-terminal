@@ -144,3 +144,68 @@ test('notify_user tells the model plainly when the dosage refused the message', 
   assert.match(second, /nicht gesendet/i);
   assert.equal(outbox.unreadCount(), 1);
 });
+
+// ── Projektfakten aus dem Sammler ────────────────────────────────────────────
+
+import { buildProjectDetail } from './stufe1.handlers';
+import type { ProjectFacts } from '../context/collector';
+
+function facts(over: Partial<ProjectFacts> = {}): ProjectFacts {
+  return {
+    key: '-Users-x-Desktop-Foo', path: '/Users/x/Desktop/Foo', name: 'Foo',
+    lastActivityAt: at(2026, 7, 28, 9, 0), gitBranch: 'master',
+    lastCommitAt: at(2026, 7, 27, 18, 0), lastCommitSubject: 'fix: Absturz behoben',
+    recentSessions: [{
+      sessionId: 's1', title: 'Serverfehler beheben',
+      startedAt: at(2026, 7, 28, 8, 0), endedAt: at(2026, 7, 28, 9, 0), promptCount: 12,
+    }],
+    claudeMdSummary: '# Foo\nLäuft auf Port 3000.',
+    collectedAt: at(2026, 7, 28, 9, 1),
+    ...over,
+  };
+}
+
+test('the overview lists recently active projects with their last topic', () => {
+  const dir = tmpDir();
+  const out = buildOverview({
+    nowMs: at(2026, 7, 28, 10, 0), terminals: [], projects: [facts()],
+  }, dir);
+  assert.match(out, /Foo/);
+  assert.match(out, /Serverfehler beheben/);
+  assert.match(out, /master/);
+});
+
+test('the overview still works without any project facts', () => {
+  const dir = tmpDir();
+  const out = buildOverview({ nowMs: at(2026, 7, 28, 10, 0), terminals: [] }, dir);
+  assert.match(out, /Keine Terminals/);
+});
+
+test('the project detail names branch, last commit, topics and CLAUDE.md', () => {
+  const dir = tmpDir();
+  const out = buildProjectDetail('foo', [facts()], dir);
+  assert.match(out, /\/Users\/x\/Desktop\/Foo/);
+  assert.match(out, /master/);
+  assert.match(out, /Absturz behoben/);
+  assert.match(out, /Serverfehler beheben/);
+  assert.match(out, /Port 3000/);
+});
+
+test('an unknown project says so plainly and lists what exists', () => {
+  const dir = tmpDir();
+  const out = buildProjectDetail('gibtsnicht', [facts()], dir);
+  assert.match(out, /Kein Projekt/);
+  assert.match(out, /Foo/, 'so the model can pick a real one');
+});
+
+test('the project detail includes the open to-dos of that project', () => {
+  const dir = tmpDir();
+  handleEntriesTool({ action: 'add', text: 'Foo aufräumen', checkable: 'true', project: '-Users-x-Desktop-Foo' }, dir);
+  const out = buildProjectDetail('Foo', [facts()], dir);
+  assert.match(out, /Foo aufräumen/);
+});
+
+test('searching by path fragment works too', () => {
+  const dir = tmpDir();
+  assert.match(buildProjectDetail('Desktop/Foo', [facts()], dir), /\/Users\/x\/Desktop\/Foo/);
+});

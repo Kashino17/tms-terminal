@@ -1,13 +1,17 @@
 import { AiProviderRegistry, ChatMessage, ProviderConfig, ToolDefinition, StreamResult, RawToolCall, ToolCallingProvider, defaultContextFor } from './ai-provider';
 import { MANAGER_TOOLS } from './tools/definitions';
 import { buildSystemPrompt, DEFAULT_PERSONALITY, type PersonalityConfig } from './tools/system-prompt';
-import { handleAgendaTool, handleEntriesTool, buildOverview, handleNotifyUser } from './tools/stufe1.handlers';
+import { handleAgendaTool, handleEntriesTool, buildOverview, buildProjectDetail, handleNotifyUser } from './tools/stufe1.handlers';
 import { Outbox } from './outbox/outbox';
 import type { OutboxMessage } from './outbox/outbox.types';
 import { AgendaScheduler } from './agenda/agenda.scheduler';
 import { loadAgenda, saveAgenda } from './agenda/agenda.store';
 import { takeCorruptionReports } from './store';
 import { OscTitleTracker } from './context/osc';
+import { StuckDetector, type StuckSignal } from './context/stuck';
+import { CheckInScheduler, buildStuckPrompt, staleProjects, SILENCE_MARKER } from './context/triggers';
+import { refreshProjectFacts, loadProjectFacts } from './context/collector';
+import { listEntries } from './entries/entries.store';
 import { getModelsInfo, loadLocalModel, type LmModelInfo } from './lmstudio.manager';
 import { saveManagerConfig } from './manager.config';
 import { globalManager } from '../terminal/terminal.manager';
@@ -253,6 +257,10 @@ export class ManagerService {
   private proactiveCallback: ((msg: OutboxMessage, unread: number) => void) | null = null;
   /** Live topic per terminal, read from the OSC title Claude Code emits. */
   private oscTitles = new OscTitleTracker();
+  private stuckDetector = new StuckDetector(() => Date.now());
+  private collectorTimer: NodeJS.Timeout | null = null;
+  private checkInTimer: NodeJS.Timeout | null = null;
+  private checkIns = new CheckInScheduler(() => Date.now(), (kind) => { void this.runCheckIn(kind); });
 
   /** Fires due reminders once a minute. Never touches a model. */
   private agendaScheduler = new AgendaScheduler(
@@ -391,6 +399,14 @@ export class ManagerService {
     // is reachable. This is the payoff of keeping collecting and judging apart.
     this.agendaScheduler.start();
     this.reportStoreCorruption();
+
+    // Collecting is deterministic and cheap (~2 ms once warm, because unchanged
+    // projects are reused); judging happens only when a trigger fires.
+    refreshProjectFacts();
+    this.collectorTimer = setInterval(() => { refreshProjectFacts(); }, 2 * 60_000);
+    this.collectorTimer.unref();
+    this.checkInTimer = setInterval(() => this.checkIns.tick(), 60_000);
+    this.checkInTimer.unref();
   }
 
   stop(): void {
@@ -401,6 +417,8 @@ export class ManagerService {
       this.heartbeatTimer = null;
     }
     this.agendaScheduler.stop();
+    if (this.collectorTimer) { clearInterval(this.collectorTimer); this.collectorTimer = null; }
+    if (this.checkInTimer) { clearInterval(this.checkInTimer); this.checkInTimer = null; }
     this.cronManager.stopAll();
     logger.info('Manager: stopped');
   }
@@ -434,6 +452,92 @@ export class ManagerService {
     return this.outbox.unreadCount();
   }
 
+  /**
+   * A single completion that never streams into the chat UI and never throws.
+   * Returns null when no provider is reachable — the caller then simply stays
+   * quiet, which is why reminders keep working when the model does not.
+   */
+  private async askModelQuietly(prompt: string, systemPrompt: string): Promise<string | null> {
+    try {
+      const provider = this.registry.getActive();
+      const reply = await provider.chat([{ role: 'user', content: prompt }], systemPrompt);
+      return typeof reply === 'string' && reply.trim() !== '' ? reply : null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[proactive] model unreachable, staying quiet: ${msg}`);
+      return null;
+    }
+  }
+
+  /** True when the model explicitly said it has nothing worth sending. */
+  private isSilence(answer: string | null): boolean {
+    return answer === null || answer.trim().toUpperCase().startsWith(SILENCE_MARKER);
+  }
+
+  /**
+   * The expensive path. Everything cheap has already said "worth a look" —
+   * and the dosage is asked FIRST, so a message that would be discarded never
+   * costs a model call.
+   */
+  private async handleStuck(signal: StuckSignal): Promise<void> {
+    const topicKey = `stuck:${signal.signature}`;
+    if (!this.outbox.canAccept({ kind: 'stuck', topicKey, sessionId: signal.sessionId })) {
+      logger.info(`[stuck] dosage refused ${topicKey} — no model call`);
+      return;
+    }
+
+    const label = this.sessionLabels.get(signal.sessionId) ?? signal.sessionId.slice(0, 8);
+    const tail = this.outputBuffers.get(signal.sessionId)?.data ?? '';
+    const ctx = this.buildTerminalContexts().find(c => c.sessionId === signal.sessionId);
+    const facts = loadProjectFacts().find(p => ctx?.cwd !== undefined && ctx.cwd.startsWith(p.path));
+
+    const answer = await this.askModelQuietly(
+      buildStuckPrompt({
+        sample: signal.sample, terminalTail: tail, sessionLabel: label,
+        projectPath: ctx?.cwd, claudeMdSummary: facts?.claudeMdSummary,
+      }),
+      buildSystemPrompt(this.personality),
+    );
+
+    if (this.isSilence(answer)) {
+      logger.info(`[stuck] model had nothing useful for ${topicKey} — staying quiet`);
+      return;
+    }
+
+    const msg = this.outbox.push({
+      kind: 'stuck', text: answer!.trim(), topicKey, sessionId: signal.sessionId,
+      project: facts?.key,
+    });
+    if (msg !== null) this.emitProactive(msg);
+  }
+
+  /** Morning: what is coming up. Evening: what happened and what still hangs. */
+  private async runCheckIn(kind: 'morning' | 'evening'): Promise<void> {
+    const terminals = this.buildTerminalContexts().map(c => ({
+      label: c.label, status: c.status, cwd: c.cwd,
+    }));
+    const projects = loadProjectFacts();
+    const overview = buildOverview({ nowMs: Date.now(), terminals, projects });
+
+    const stale = staleProjects(projects, listEntries(), Date.now());
+    const staleBlock = stale.length === 0 ? ''
+      : `\n\nLiegt seit über 5 Tagen brach, hat aber offene To-dos: ${stale.map(p => p.name).join(', ')}.`;
+
+    const ask = kind === 'morning'
+      ? 'Fasse in höchstens fünf Sätzen zusammen, was heute ansteht. Nenne konkret Termine und offene To-dos.'
+      : 'Fasse in höchstens fünf Sätzen zusammen, was heute passiert ist und was noch offen hängt.';
+
+    const answer = await this.askModelQuietly(
+      `${overview}${staleBlock}\n\n${ask}\n\n` +
+      `Wenn es nichts Erwähnenswertes gibt, antworte ausschließlich mit ${SILENCE_MARKER}.`,
+      buildSystemPrompt(this.personality),
+    );
+    if (this.isSilence(answer)) return;
+
+    const msg = this.outbox.push({ kind: 'checkin', text: answer!.trim() });
+    if (msg !== null) this.emitProactive(msg);
+  }
+
   /** Turn any store corruption into a message the user actually sees. */
   private reportStoreCorruption(): void {
     for (const report of takeCorruptionReports()) {
@@ -462,6 +566,10 @@ export class ManagerService {
 
     const clean = data.replace(ANSI_STRIP, '');
     if (!clean.trim()) return;
+
+    // Cheap and deterministic — only if this fires does a model get woken.
+    const stuck = this.stuckDetector.feed(sessionId, clean);
+    if (stuck !== null) void this.handleStuck(stuck);
 
     const existing = this.outputBuffers.get(sessionId);
     const existingData = existing?.data ?? '';
@@ -572,6 +680,7 @@ export class ManagerService {
   /** Remove buffers when a session is closed. */
   clearSession(sessionId: string): void {
     this.oscTitles.clear(sessionId);
+    this.stuckDetector.clear(sessionId);
     this.outputBuffers.delete(sessionId);
     this.lastSummaryAt.delete(sessionId);
     this.sessionLabels.delete(sessionId);
@@ -1744,20 +1853,11 @@ BEISPIEL:
           status: c.status,
           cwd: c.cwd,
         }));
-        return { text: buildOverview({ nowMs: Date.now(), terminals }) };
+        return { text: buildOverview({ nowMs: Date.now(), terminals, projects: loadProjectFacts() }) };
       }
 
-      case 'get_project': {
-        // Phase A: no collector yet — answer from what the terminals reveal.
-        const needle = action.detail.toLowerCase();
-        const match = this.buildTerminalContexts().find(c =>
-          (c.cwd ?? '').toLowerCase().includes(needle) ||
-          (c.project ?? '').toLowerCase().includes(needle));
-        if (match === undefined) {
-          return { text: `Kein Projekt gefunden, das zu "${action.detail}" passt.` };
-        }
-        return { text: `${match.label} — ${match.cwd ?? 'kein Pfad'} — Status: ${match.status}` };
-      }
+      case 'get_project':
+        return { text: buildProjectDetail(action.detail, loadProjectFacts()) };
 
       case 'agenda': {
         const args = JSON.parse(action.detail || '{}') as Record<string, string>;

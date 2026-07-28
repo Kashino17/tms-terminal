@@ -134,3 +134,28 @@ test('state survives a fresh Outbox on the same directory', () => {
   assert.equal(reopened.unreadCount(), 1);
   assert.equal(reopened.push({ kind: 'stuck', text: 'x', topicKey: 't:1' }), null);
 });
+
+test('canAccept agrees with push', () => {
+  const h = makeOutbox(at(2026, 8, 4, 14, 0));
+  assert.equal(h.outbox.canAccept({ kind: 'stuck', topicKey: 'k', sessionId: 's1' }), true);
+  h.outbox.push({ kind: 'stuck', text: 'A', topicKey: 'k', sessionId: 's1' });
+  assert.equal(h.outbox.canAccept({ kind: 'stuck', topicKey: 'k', sessionId: 's1' }), false);
+});
+
+test('canAccept does not itself create a message', () => {
+  const h = makeOutbox(at(2026, 8, 4, 14, 0));
+  h.outbox.canAccept({ kind: 'stuck', topicKey: 'k' });
+  assert.equal(h.outbox.unreadCount(), 0);
+});
+
+test('canAccept sees a suppressed topic', () => {
+  const h = makeOutbox(at(2026, 8, 4, 14, 0));
+  h.outbox.suppressTopic('tot');
+  assert.equal(h.outbox.canAccept({ kind: 'suggestion', topicKey: 'tot' }), false);
+});
+
+test('canAccept lets reminders through regardless of the terminal cooldown', () => {
+  const h = makeOutbox(at(2026, 8, 4, 14, 0));
+  h.outbox.push({ kind: 'suggestion', text: 'Idee', sessionId: 's1' });
+  assert.equal(h.outbox.canAccept({ kind: 'reminder', sessionId: 's1' }), true);
+});

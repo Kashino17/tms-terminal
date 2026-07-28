@@ -74,6 +74,30 @@ export class Outbox {
     return msg;
   }
 
+  /**
+   * Would push() accept this? Lets a caller skip expensive work whose result
+   * would be discarded — the stuck path asks this BEFORE waking a model.
+   * Deliberately free of side effects.
+   */
+  canAccept(input: { kind: OutboxKind; topicKey?: string; sessionId?: string }): boolean {
+    const file = this.load();
+    const now = this.now();
+
+    if (input.topicKey !== undefined) {
+      if (file.suppressedTopics.includes(input.topicKey)) return false;
+      if (file.messages.some(m => m.topicKey === input.topicKey)) return false;
+    }
+    if (AGENT_INITIATED.includes(input.kind) && input.sessionId !== undefined) {
+      const recent = file.messages.some(m =>
+        m.sessionId === input.sessionId &&
+        AGENT_INITIATED.includes(m.kind) &&
+        now - m.createdAt < PER_SESSION_COOLDOWN_MS,
+      );
+      if (recent) return false;
+    }
+    return true;
+  }
+
   /** Newest first. */
   list(limit = 50): OutboxMessage[] {
     return [...this.load().messages].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);

@@ -9,6 +9,7 @@ import {
 import { MANAGER_DIR } from '../store';
 import type { Outbox } from '../outbox/outbox';
 import type { OutboxKind } from '../outbox/outbox.types';
+import type { ProjectFacts } from '../context/collector';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const AT_FORMAT_HINT = 'Format: YYYY-MM-DDTHH:MM (lokale Zeit), z.B. "2026-08-04T14:00".';
@@ -217,6 +218,16 @@ export function handleEntriesTool(
 export interface OverviewInput {
   nowMs: number;
   terminals: Array<{ label: string; status: string; cwd?: string }>;
+  /** From the collector. Absent in Phase A / in tests that do not care. */
+  projects?: ProjectFacts[];
+}
+
+function fmtAge(nowMs: number, thenMs: number): string {
+  const mins = Math.round((nowMs - thenMs) / 60_000);
+  if (mins < 60) return `vor ${mins} Min`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `vor ${hours} Std`;
+  return `vor ${Math.round(hours / 24)} Tagen`;
 }
 
 /**
@@ -235,6 +246,16 @@ export function buildOverview(input: OverviewInput, dir: string = MANAGER_DIR): 
   } else {
     for (const t of input.terminals) {
       parts.push(`• ${t.label} — ${t.status}${t.cwd !== undefined ? ` — ${t.cwd}` : ''}`);
+    }
+  }
+
+  const projects = input.projects ?? [];
+  if (projects.length > 0) {
+    parts.push('\n### Projekte (zuletzt aktiv)');
+    for (const p of projects.slice(0, 8)) {
+      const topic = p.recentSessions[0]?.title ?? '—';
+      const branch = p.gitBranch !== undefined ? ` · ${p.gitBranch}` : '';
+      parts.push(`• ${p.name}${branch} — ${fmtAge(input.nowMs, p.lastActivityAt)} — „${topic}"`);
     }
   }
 
@@ -257,6 +278,51 @@ export function buildOverview(input: OverviewInput, dir: string = MANAGER_DIR): 
     for (const { item, occurrenceAt } of upcoming) {
       parts.push(`• ${fmtDateTime(occurrenceAt, item.allDay)} — ${item.title}`);
     }
+  }
+
+  return parts.join('\n');
+}
+
+/** One project in detail — the answer to "was macht Projekt X gerade?". */
+export function buildProjectDetail(
+  name: string,
+  projects: ProjectFacts[],
+  dir: string = MANAGER_DIR,
+): string {
+  const needle = name.trim().toLowerCase();
+  const hit = projects.find(p =>
+    p.name.toLowerCase().includes(needle) ||
+    p.path.toLowerCase().includes(needle) ||
+    p.key.toLowerCase().includes(needle));
+
+  if (hit === undefined) {
+    const known = projects.slice(0, 10).map(p => p.name).join(', ');
+    return `Kein Projekt gefunden, das zu "${name}" passt.`
+      + (known !== '' ? ` Bekannt sind: ${known}.` : '');
+  }
+
+  const parts: string[] = [];
+  parts.push(`## ${hit.name}`);
+  parts.push(`Pfad: ${hit.path}`);
+  if (hit.gitBranch !== undefined) parts.push(`Branch: ${hit.gitBranch}`);
+  if (hit.lastCommitSubject !== undefined) {
+    const when = hit.lastCommitAt !== undefined ? ` (${fmtDate(hit.lastCommitAt)})` : '';
+    parts.push(`Letzter Commit${when}: ${hit.lastCommitSubject}`);
+  }
+
+  if (hit.recentSessions.length > 0) {
+    parts.push('\n### Zuletzt bearbeitet');
+    for (const s of hit.recentSessions) {
+      parts.push(`• „${s.title}" — ${fmtDate(s.endedAt)}, ${s.promptCount} Nachrichten`);
+    }
+  }
+
+  const open = listEntries({ project: hit.key, onlyOpen: true }, dir);
+  parts.push('\n### Offene To-dos');
+  parts.push(open.length === 0 ? 'Keine.' : open.map(e => `• ${e.text}`).join('\n'));
+
+  if (hit.claudeMdSummary !== undefined) {
+    parts.push(`\n### Aus der CLAUDE.md\n${hit.claudeMdSummary}`);
   }
 
   return parts.join('\n');
