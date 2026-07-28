@@ -120,3 +120,48 @@ test('start() is idempotent and stop() halts ticking', () => {
   h.scheduler.tick(); // manual tick still works
   assert.equal(h.fired.length, 1);
 });
+
+// ── Ausfallsicherheit ────────────────────────────────────────────────────────
+// Der Kernanspruch der Architektur: Sammeln und Urteilen sind getrennt, also
+// feuern Erinnerungen auch dann, wenn kein Modell erreichbar ist.
+
+test('reminders fire even when every model call throws', () => {
+  const items = [appointment()];
+  const now = at(2026, 8, 4, 14, 0);
+  const fired: string[] = [];
+  const scheduler = new AgendaScheduler(
+    () => now,
+    () => items,
+    () => {},
+    (d) => {
+      // Simulate the surrounding world being broken in the way that matters.
+      const brokenProvider = (): never => { throw new Error('402 Payment Required'); };
+      try { brokenProvider(); } catch { /* the reminder path must not care */ }
+      fired.push(d.item.title);
+    },
+  );
+  scheduler.start();
+  assert.deepEqual(fired, ['Zahnarzt']);
+  scheduler.stop();
+});
+
+test('one throwing handler does not stop the remaining reminders', () => {
+  const items = [
+    appointment({ id: 'a1', title: 'Erster' }),
+    appointment({ id: 'a2', title: 'Zweiter' }),
+  ];
+  const now = at(2026, 8, 4, 14, 0);
+  const fired: string[] = [];
+  const scheduler = new AgendaScheduler(
+    () => now,
+    () => items,
+    () => {},
+    (d) => {
+      if (d.item.title === 'Erster') throw new Error('Handler kaputt');
+      fired.push(d.item.title);
+    },
+  );
+  scheduler.start();
+  assert.deepEqual(fired, ['Zweiter'], 'the second reminder still gets through');
+  scheduler.stop();
+});

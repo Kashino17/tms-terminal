@@ -9,6 +9,7 @@ import { loadAgenda, saveAgenda } from './agenda/agenda.store';
 import { takeCorruptionReports } from './store';
 import { OscTitleTracker } from './context/osc';
 import { StuckDetector, type StuckSignal } from './context/stuck';
+import { TerminalEventDetector } from './context/terminal-events';
 import { CheckInScheduler, buildStuckPrompt, staleProjects, SILENCE_MARKER } from './context/triggers';
 import { refreshProjectFacts, loadProjectFacts } from './context/collector';
 import { listEntries } from './entries/entries.store';
@@ -258,6 +259,8 @@ export class ManagerService {
   /** Live topic per terminal, read from the OSC title Claude Code emits. */
   private oscTitles = new OscTitleTracker();
   private stuckDetector = new StuckDetector(() => Date.now());
+  private terminalEvents = new TerminalEventDetector(() => Date.now());
+  private terminalEventTimer: NodeJS.Timeout | null = null;
   private collectorTimer: NodeJS.Timeout | null = null;
   private checkInTimer: NodeJS.Timeout | null = null;
   private checkIns = new CheckInScheduler(() => Date.now(), (kind) => { void this.runCheckIn(kind); });
@@ -407,6 +410,8 @@ export class ManagerService {
     this.collectorTimer.unref();
     this.checkInTimer = setInterval(() => this.checkIns.tick(), 60_000);
     this.checkInTimer.unref();
+    this.terminalEventTimer = setInterval(() => this.pollTerminalEvents(), 30_000);
+    this.terminalEventTimer.unref();
   }
 
   stop(): void {
@@ -419,6 +424,7 @@ export class ManagerService {
     this.agendaScheduler.stop();
     if (this.collectorTimer) { clearInterval(this.collectorTimer); this.collectorTimer = null; }
     if (this.checkInTimer) { clearInterval(this.checkInTimer); this.checkInTimer = null; }
+    if (this.terminalEventTimer) { clearInterval(this.terminalEventTimer); this.terminalEventTimer = null; }
     this.cronManager.stopAll();
     logger.info('Manager: stopped');
   }
@@ -511,6 +517,43 @@ export class ManagerService {
     if (msg !== null) this.emitProactive(msg);
   }
 
+  /**
+   * "Terminal fertig" and "wartet auf dich".
+   *
+   * Both skip terminals that belong to a delegated task — those already send
+   * their own notifications, and reporting twice is exactly the noise the
+   * dosage rules exist to prevent.
+   */
+  private pollTerminalEvents(): void {
+    const busyWithTask = (sessionId: string): boolean =>
+      this.delegatedTasks.some(t =>
+        t.sessionId === sessionId && (t.status === 'running' || t.status === 'waiting'));
+
+    for (const sessionId of this.terminalEvents.pollFinished()) {
+      if (busyWithTask(sessionId)) continue;
+      const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
+      const topic = this.oscTitles.getTitle(sessionId);
+      const text = topic !== undefined ? `✅ ${label} ist fertig — „${topic}"` : `✅ ${label} ist fertig.`;
+      const msg = this.outbox.push({ kind: 'event', text, sessionId });
+      if (msg !== null) this.emitProactive(msg);
+    }
+
+    for (const [sessionId, buf] of this.outputBuffers) {
+      if (busyWithTask(sessionId)) continue;
+      const question = this.detectOpenQuestion(buf.data.replace(ANSI_STRIP, '').slice(-1000));
+      if (question === null) continue;
+      const label = this.sessionLabels.get(sessionId) ?? sessionId.slice(0, 8);
+      const msg = this.outbox.push({
+        kind: 'event',
+        text: `❓ ${label} wartet auf dich: ${question.slice(0, 160)}`,
+        // Keyed by the question itself, so the same prompt is only raised once.
+        topicKey: `question:${sessionId}:${question.slice(0, 40)}`,
+        sessionId,
+      });
+      if (msg !== null) this.emitProactive(msg);
+    }
+  }
+
   /** Morning: what is coming up. Evening: what happened and what still hangs. */
   private async runCheckIn(kind: 'morning' | 'evening'): Promise<void> {
     const terminals = this.buildTerminalContexts().map(c => ({
@@ -570,6 +613,9 @@ export class ManagerService {
     // Cheap and deterministic — only if this fires does a model get woken.
     const stuck = this.stuckDetector.feed(sessionId, clean);
     if (stuck !== null) void this.handleStuck(stuck);
+
+    const ctx = this.buildTerminalContexts().find(c => c.sessionId === sessionId);
+    this.terminalEvents.noteOutput(sessionId, ctx?.status === 'ai_running' || ctx?.status === 'building');
 
     const existing = this.outputBuffers.get(sessionId);
     const existingData = existing?.data ?? '';
@@ -681,6 +727,7 @@ export class ManagerService {
   clearSession(sessionId: string): void {
     this.oscTitles.clear(sessionId);
     this.stuckDetector.clear(sessionId);
+    this.terminalEvents.clear(sessionId);
     this.outputBuffers.delete(sessionId);
     this.lastSummaryAt.delete(sessionId);
     this.sessionLabels.delete(sessionId);
