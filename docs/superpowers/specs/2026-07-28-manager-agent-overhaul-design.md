@@ -403,7 +403,25 @@ Warten testbar ist.
 Nicht testbar und deshalb nicht getestet: ob die Vorschläge des Modells gut sind. Genau
 darum ist der Deckel streng — die Kosten eines schlechten Vorschlags müssen klein bleiben.
 
-## Vor der Umsetzung zu verifizieren
+## Verifiziert (2026-07-28, nach der Umsetzung)
+
+1. **OSC-Titel im TMS-PTY — bestätigt.** `server/scripts/probe-osc.ts` schnitt den rohen
+   PTY-Strom mit: `ESC]0;✳ Claude Code BEL` kommt an, ebenso ein Kontroll-Escape aus der
+   Shell (node-pty reicht OSC also durch). Zusätzlich taucht `ESC]7;file://…` auf (das
+   Arbeitsverzeichnis) — vom Titel-Regex bewusst ausgeschlossen.
+2. **Island-Layout bei 380 dp — bestätigt.** Mit Badge wird die Insel sogar *schmaler*
+   (301 statt 309 px), weil die Latenz-Anzeige weicht. Kein Überlauf, keine Überlappung.
+   Die Reiterleiste scrollt bei 380 dp um 10 px in sich — vorbestehendes, beabsichtigtes
+   Verhalten.
+3. **Git-Dirty-Status — entfällt.** `ProjectFacts` enthält das Feld nicht. Branch und
+   letzter Commit reichen für den Überblick, und `git status` bleibt damit vollständig
+   aus dem Zwei-Minuten-Takt heraus.
+
+Zwei Dinge kamen erst beim Bauen heraus und stehen oben schon eingearbeitet: der
+`firedFor`-Fehler beim Zeitzonenwechsel, und dass der Sammler **inkrementell** arbeiten
+muss (unveränderte Projekte werden wiederverwendet — 2 ms statt 2662 ms im Dauerbetrieb).
+
+## Ursprünglich vor der Umsetzung zu verifizieren
 
 1. **OSC-Titel im TMS-PTY.** Dass Claude Code seinen Titel per OSC-Sequenz auch in den
    TMS-PTY schreibt, ist plausibel, aber unbewiesen — die `.zshrc` des Nutzers setzt keine
