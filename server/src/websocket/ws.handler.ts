@@ -18,6 +18,7 @@ import { rewrite as rewritePrompt } from '../audio/prompt-rewriter-sidecar';
 import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
+import { captureSoon } from '../terminal/restore/snapshotter';
 import { handleAgendaTool, handleEntriesTool, buildOverview } from '../manager/tools/stufe1.handlers';
 import { listAgenda } from '../manager/agenda/agenda.store';
 import { listEntries } from '../manager/entries/entries.store';
@@ -1022,6 +1023,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
             sessionId: session.id,
             payload: { cols: session.cols, rows: session.rows },
           });
+          // Sofort aufnehmen statt bis zum naechsten Takt zu warten: ein
+          // Terminal, das kurz vor einem Absturz entsteht, waere sonst weg.
+          captureSoon();
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Failed to create terminal';
           logger.error(`Failed to create terminal for ${ip}: ${message}`);
@@ -1183,6 +1187,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Invalid sessionId' } });
           break;
         }
+
+        captureSoon(); // ein geschlossenes Terminal darf nicht wiederkommen
 
         ownedSessions.delete(msg.sessionId);
         sessionGens.delete(msg.sessionId);

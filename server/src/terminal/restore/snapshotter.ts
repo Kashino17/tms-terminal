@@ -93,3 +93,18 @@ export class Snapshotter {
     }
   }
 }
+
+// ── Zugriff von aussen ───────────────────────────────────────────────────────
+// ws.handler braucht nach dem Anlegen/Schliessen eines Terminals eine Aufnahme,
+// hat aber keinen Zugriff auf die Instanz aus index.ts.
+
+let active: Snapshotter | null = null;
+
+export function setActiveSnapshotter(s: Snapshotter | null): void {
+  active = s;
+}
+
+/** Fire-and-forget. Vor dem Start des Snapshotters ein No-op. */
+export function captureSoon(): void {
+  void active?.captureNow();
+}

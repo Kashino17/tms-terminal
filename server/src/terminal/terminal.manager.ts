@@ -464,6 +464,28 @@ export class TerminalManager {
     return [...this.sessions.values()];
   }
 
+  /**
+   * Push a line into the OUTPUT stream of a session, as if the pty had printed it.
+   *
+   * Used for the restore marker. Writing into the shell instead would EXECUTE the
+   * text and leave it in the shell history — this only shows it.
+   *
+   * Feeds the mirror first and then the client, in the same order as real pty
+   * data, so a later snapshot reattach stays byte-equivalent. While detached it
+   * goes into the reattach buffer, exactly like real output would.
+   */
+  injectOutput(sessionId: string, text: string): void {
+    if (!this.sessions.has(sessionId)) return;
+    // Dim, on its own line, so it cannot be mistaken for program output.
+    const line = `\r\n\x1b[2m${text}\x1b[0m\r\n`;
+    this.mirrors.get(sessionId)?.feed(line);
+    if (this.attachedIds.has(sessionId)) {
+      this.outputCallbacks.get(sessionId)?.(sessionId, line);
+    } else {
+      this.reattachBuffers.set(sessionId, (this.reattachBuffers.get(sessionId) ?? '') + line);
+    }
+  }
+
   getSessionCount(): number {
     return this.sessions.size;
   }

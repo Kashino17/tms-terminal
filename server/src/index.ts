@@ -17,6 +17,9 @@ import { getPlatform, getDefaultShell } from './utils/platform';
 import { fcmService } from './notifications/fcm.service';
 import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
+import { Snapshotter, setActiveSnapshotter } from './terminal/restore/snapshotter';
+import { restoreTerminals } from './terminal/restore/restore';
+import { consumeSnapshot } from './terminal/restore/snapshot.store';
 import { shutdown as shutdownWhisper, prewarm as prewarmWhisper } from './audio/whisper-sidecar';
 import { shutdown as shutdownRewriter, prewarm as prewarmRewriter } from './audio/prompt-rewriter-sidecar';
 import { managerService } from './websocket/ws.handler';
@@ -32,7 +35,7 @@ process.on('uncaughtException', (err) => {
   setTimeout(() => process.exit(1), 100);
 });
 
-function main(): void {
+async function main(): Promise<void> {
   ensureConfigDir();
 
   console.log('\n╔══════════════════════════════════════╗');
@@ -66,10 +69,68 @@ function main(): void {
   // The Manager runs autonomously (heartbeat, task tracking, AI calls).
   // When a client connects, callbacks get wired up for UI streaming.
   // Until then, messages are buffered and flushed on first connect.
+  // Terminals aus der letzten Aufnahme zurueckholen. Laeuft vor dem Manager,
+  // damit dessen erste Uebersicht die Terminals schon kennt.
+  const restoreResult = await restoreTerminals({
+    now: () => Date.now(),
+    takeSnapshot: () => consumeSnapshot(),
+    // Sendet KEIN Signal — prueft nur, ob der Prozess existiert.
+    isPidAlive: (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } },
+    createSession: (entry, onOutput) => {
+      try {
+        globalManager.createSession(
+          { id: entry.id, cwd: entry.cwd, cols: entry.cols, rows: entry.rows },
+          (_id, data) => onOutput(data),
+          () => { /* Schliessen laeuft ueber den normalen Weg, sobald ein Client dranhaengt */ },
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    writeToSession: (id, data) => { globalManager.write(id, data); },
+    markSession: (id, text) => { globalManager.injectOutput(id, text); },
+    maxSessions: 50,
+  });
+
   if (!managerService.isEnabled()) {
     managerService.start();
     logger.info('Manager: auto-started in headless mode (no client needed)');
   }
+  if (restoreResult.restored.length > 0) {
+    const parts = [`${restoreResult.restored.length} Terminal(s) nach dem Neustart wiederhergestellt.`];
+    if (restoreResult.resumed.length > 0) {
+      parts.push(`${restoreResult.resumed.length} Claude-Sitzung(en) fortgesetzt.`);
+    }
+    if (restoreResult.interrupted.length > 0) {
+      // Der Teil, der wirklich gesagt werden muss: diese Sitzungen arbeiten
+      // NICHT weiter, sie warten auf eine Eingabe.
+      parts.push(
+        `${restoreResult.interrupted.length} davon wurde(n) mitten in der Arbeit ` +
+        `unterbrochen und wartet/warten jetzt auf dich.`,
+      );
+    }
+    if (restoreResult.failed.length > 0) {
+      parts.push(`${restoreResult.failed.length} liess(en) sich nicht wiederherstellen.`);
+    }
+    managerService.pushSystemNotice(`\u267b\ufe0f ${parts.join(' ')}`, `restore:${Date.now()}`);
+  }
+
+  // Ab jetzt laufend mitschreiben — auch ein Absturz soll abgedeckt sein,
+  // und da laeuft kein Signal-Handler mehr.
+  const snapshotter = new Snapshotter({
+    now: () => Date.now(),
+    serverPid: process.pid,
+    source: {
+      listSessions: () => globalManager.listSessions().map(sess => ({
+        id: sess.id, pid: sess.pty.pid, cols: sess.cols, rows: sess.rows, cwd: sess.cwd,
+      })),
+      labelFor: (id) => managerService.getSessionList().find(x => x.sessionId === id)?.label,
+    },
+  });
+  snapshotter.start();
+  setActiveSnapshotter(snapshotter);
+
 
   // TODO: TLS certificates are generated (see config.certFile / config.keyFile) but not yet used.
   // For future HTTPS implementation, create an https.Server using these certs instead of http.
@@ -207,6 +268,10 @@ function main(): void {
     shutdownWhisper();
     shutdownRewriter();
 
+    // Letzte, exakte Aufnahme — danach sind die PTYs weg.
+    snapshotter.stop();
+    void snapshotter.captureNow();
+
     // Close all terminal sessions
     globalManager.closeAllSessions();
 
@@ -225,4 +290,4 @@ function main(): void {
   process.on('SIGTERM', shutdown);
 }
 
-main();
+void main();

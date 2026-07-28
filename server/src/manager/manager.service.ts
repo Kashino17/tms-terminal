@@ -449,6 +449,12 @@ export class ManagerService {
     this.outbox.markPushed(msg.id);
   }
 
+  /** A one-off notice from the system (not from the model), e.g. after a restart. */
+  pushSystemNotice(text: string, topicKey?: string): void {
+    const msg = this.outbox.push({ kind: 'event', text, topicKey });
+    if (msg !== null) this.emitProactive(msg);
+  }
+
   markOutboxRead(): number {
     this.outbox.markAllRead();
     return this.outbox.unreadCount();
