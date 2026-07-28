@@ -2673,7 +2673,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 - Modify: `/Users/ayysir/Desktop/TMS Terminal/mockups/season2/liquid-deck/index.html` (**Dev-Worktree** — siehe Global Constraints)
 - Modify: `~/Desktop/tms-terminal/mobile/src/season2/web/bridge.js`
 - Modify: `~/Desktop/tms-terminal/mobile/src/season2/SeasonTwoWebRoot.tsx` ← **die Übersetzungsschicht**
-- Generated: `~/Desktop/tms-terminal/mobile/src/season2/liquidDeckHtml.ts`
+- Generated: `~/Desktop/tms-terminal/mobile/src/season2/web/liquidDeckHtml.ts`
 
 ### Der tatsächliche Nachrichtenweg (am 2026-07-28 im Code verifiziert)
 
@@ -3009,7 +3009,7 @@ git commit -m "feat(season2): Manager-Reiter Chat/Agenda/Notizen
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 cd ~/Desktop/tms-terminal
-git add mobile/src/season2/liquidDeckHtml.ts mobile/src/season2/web/bridge.js
+git add mobile/src/season2/web/liquidDeckHtml.ts mobile/src/season2/web/bridge.js
 git commit -m "feat(season2): Agenda- und Notizen-Daten über die Bridge
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
@@ -3025,7 +3025,7 @@ Der sichtbare Teil des proaktiven Kanals — die Zahl, die dich im Terminal erre
 - Modify: `/Users/ayysir/Desktop/TMS Terminal/mockups/season2/liquid-deck/index.html`
 - Modify: `~/Desktop/tms-terminal/mobile/src/season2/web/bridge.js`
 - Modify: `~/Desktop/tms-terminal/mobile/src/season2/SeasonTwoWebRoot.tsx` ← **die Übersetzungsschicht**
-- Generated: `~/Desktop/tms-terminal/mobile/src/season2/liquidDeckHtml.ts`
+- Generated: `~/Desktop/tms-terminal/mobile/src/season2/web/liquidDeckHtml.ts`
 
 Derselbe vierschichtige Weg wie in Task 9 — dort ist er ausführlich beschrieben.
 
@@ -3191,7 +3191,7 @@ git commit -m "feat(season2): Island-Badge mit Avatar und Zahl für ungelesene M
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 cd ~/Desktop/tms-terminal
-git add mobile/src/season2/liquidDeckHtml.ts mobile/src/season2/web/bridge.js
+git add mobile/src/season2/web/liquidDeckHtml.ts mobile/src/season2/web/bridge.js
 git commit -m "feat(season2): proaktive Nachrichten und Ungelesen-Zähler über die Bridge
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"

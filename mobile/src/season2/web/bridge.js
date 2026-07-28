@@ -1003,6 +1003,23 @@
 
   // ── React Native → WebView ────────────────────────────────────────────────
   window.TMSBridge = {
+    /** Nach einem Reattach die WAHREN xterm-Maße über den normalen,
+     *  beruhigten Resize-Weg bestätigen. Stimmen sie mit der PTY überein,
+     *  ist das serverseitig ein No-op (kein SIGWINCH, kein Repaint); ging
+     *  unterwegs ein Resize verloren, korrigiert genau EIN Resize mit der
+     *  echten Breite. Die Maße aus dem Attach selbst sind dafür ungeeignet —
+     *  sie entstehen mitten in Animationen und trugen schon fremde
+     *  Kartenbreiten (vier Sessions, alle "39x32"). */
+    assertDims: function (sessionId) {
+      var cardId = cardOf(sessionId);
+      var t = cardId && terms[cardId];
+      if (!t || !t.term) return;
+      // Dedupe aufheben: wurde das letzte Resize GESENDET, aber nie
+      // zugestellt (Socket-Abriss), hielte lastDims die Bestätigung zurück.
+      delete lastDims[sessionId];
+      queueResize(cardId, t.term.cols, t.term.rows);
+    },
+
     /** Re-create cards for PTY sessions that already exist on the server. */
     restoreSessions: function (list) {
       restoring = true;
@@ -1577,9 +1594,10 @@
   var filesConfirmDel = null;
   var filesNewFolder = false;
 
-  // Kein ⋯ mehr an jeder Zeile: die Aktionen kommen — wie bei den Favoriten —
-  // per langem Drücken. Die Zeile gehört damit wieder dem Namen, und Tippen
-  // bleibt eindeutig „öffnen/einfügen".
+  // Kein ⋯ und kein langes Drücken mehr: ein Tipp auf eine DATEI öffnet ihr
+  // Aktionsmenü (Einfügen ist dort der erste Eintrag — das Sofort-Einfügen
+  // beim Tippen traf zu oft versehentlich). Ordner öffnen weiterhin direkt,
+  // sonst würde jede Navigationsebene einen Zwischen-Tipp kosten.
   function fileRowHtml(f) {
     var isDir = f.type === 'dir';
     var path = f.path || '';
@@ -1587,7 +1605,7 @@
       ' data-fxpath="' + escapeHtml(path) + '" data-fxdir="' + (isDir ? '1' : '0') + '" data-fxname="' + escapeHtml(f.name) + '">' +
       '<span class="tool-row__icon">' + (isDir ? '▸' : '·') + '</span>' +
       '<span class="tool-row__name">' + escapeHtml(f.name) + '</span>' +
-      '<span class="tool-row__meta">' + escapeHtml(isDir ? 'öffnen' : (f.size || '') + ' · einfügen') + '</span>' +
+      '<span class="tool-row__meta">' + escapeHtml(isDir ? 'öffnen' : (f.size || '')) + '</span>' +
       '</button>';
     return '<div class="fx-row">' + head + '</div>';
   }
@@ -1664,18 +1682,6 @@
     openActionSheet((isDir ? '▸ ' : '') + (name || path.split('/').pop() || path), items);
   }
 
-  // Langes Drücken auf eine Dateizeile öffnet ihr Menü — dasselbe Signal wie
-  // überall sonst in der App (contextmenu; die native Textauswahl ist app-weit
-  // aus, das Ereignis ist also frei).
-  var fxLpAt = 0;
-  document.addEventListener('contextmenu', function (e) {
-    var row = e.target.closest && e.target.closest('[data-fxpath]');
-    if (!row) return;
-    e.preventDefault();
-    fxLpAt = Date.now();
-    openFileMenu(row.dataset.fxpath, row.dataset.fxdir === '1', row.dataset.fxname);
-  });
-
   window.buildFilesSheet = function () {
     var all = window.TMS_DATA.files || [];
     var q = filesFilter.toLowerCase();
@@ -1702,6 +1708,13 @@
       : '';
 
     var html =
+      // Minimaler Abstand zwischen den Zeilen: jede wird eine flache Karte
+      // statt Teil einer mit Linien getrennten Liste — trennt die Einträge
+      // optisch, ohne die Liste in die Länge zu ziehen.
+      '<style>' +
+        '#toolSheetBody .fx-row + .fx-row { margin-top: 6px; }' +
+        '#toolSheetBody .fx-row .tool-row { border-top: none; background: rgba(var(--overlay-rgb), .04); border-radius: 12px; padding: 11px 12px; }' +
+      '</style>' +
       '<div class="fx-head">' +
         '<button class="btn-chip" data-cd="..">▴ Aufwärts</button>' +
         '<span class="fx-path mono-text">' + escapeHtml(window.__tmsCwd) + '</span>' +
@@ -1739,22 +1752,16 @@
 
         function rerender() { filesFilter = filesFilter; window.TMSBridge.setTool('files', window.TMS_DATA.files, window.__tmsCwd); }
 
-        // Nach einem langen Drücken darf der Tipp NICHT auch noch feuern —
-        // sonst öffnete sich mit dem Menü zugleich der Ordner.
-        function justLongPressed() { return Date.now() - fxLpAt < 800; }
-
         function wireRows() {
           body.querySelectorAll('[data-cd]').forEach(function (btn) {
             btn.addEventListener('click', function () {
-              if (justLongPressed()) return;
               filesMenuFor = null; filesConfirmDel = null; filesFilter = '';
               post('files:cd', { name: btn.dataset.cd });
             });
           });
           body.querySelectorAll('[data-path]').forEach(function (btn) {
             btn.addEventListener('click', function () {
-              if (justLongPressed()) return;
-              insertIntoTerminal(btn.dataset.path, 'Pfad eingefügt');
+              openFileMenu(btn.dataset.fxpath, false, btn.dataset.fxname);
             });
           });
           body.querySelectorAll('[data-fx]').forEach(function (btn) {
@@ -2429,6 +2436,21 @@
     if (typeof window.updatePendingBadge === 'function') window.updatePendingBadge();
     if (typeof window.setIslandActivity === 'function') window.setIslandActivity('live', 'Claude arbeitet');
   };
+
+  // ── Manager: Agenda & Einträge echt ───────────────────────────────────────
+  // Der Server ist die Wahrheit; die Demo-Daten aus data.js werden ersetzt,
+  // sobald die erste Antwort da ist.
+  window.TMSBridge.setAgenda = function (items) {
+    window.TMS_DATA.manager.agenda = items || [];
+    if (typeof window.renderManagerAgenda === 'function') window.renderManagerAgenda();
+  };
+  window.TMSBridge.setEntries = function (entries) {
+    window.TMS_DATA.manager.entries = entries || [];
+    if (typeof window.renderManagerEntries === 'function') window.renderManagerEntries();
+  };
+  window.managerAgendaList = function () { post('manager:agendaList', {}); };
+  window.managerEntriesList = function () { post('manager:entriesList', {}); };
+  window.managerEntryToggle = function (id, done) { post('manager:entryToggle', { id: id, done: done }); };
 
   // ── Manager: Memory & Artifacts echt ──────────────────────────────────────
   window.TMSBridge.setManagerMemory = function (items) {

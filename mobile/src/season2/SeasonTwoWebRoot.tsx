@@ -335,6 +335,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('setSessionCwd', m.sessionId, m.payload.cwd);
         return;
       }
+      if (m?.type === 'terminal:reattached' && m.sessionId) {
+        // Die Seite bestätigt ihre echten xterm-Maße (settle-geschützter
+        // Resize-Weg). Heilt eine unterwegs verlorene Breite, ohne den
+        // unzuverlässigen Attach-Maßen zu vertrauen — die haben als
+        // Server-Heal die Doppel-Absätze erzeugt (SIGWINCH-Repaints).
+        call('assertDims', m.sessionId);
+        return;
+      }
       if (m?.type === 'terminal:created' && m.sessionId) {
         const pending = pendingCards.current.shift();
         const cardId = pending?.cardId ?? null;
@@ -362,6 +370,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         delete sessionStatus.current[m.sessionId];
         clearTimeout(idleTimers.current[m.sessionId]);
         call('sessionClosed', m.sessionId); // die Seite räumt die Karte weg
+        return;
+      }
+      if (m?.type === 'manager:agenda_data') {
+        call('setAgenda', m.payload?.items ?? []);
+        return;
+      }
+      if (m?.type === 'manager:entries_data') {
+        call('setEntries', m.payload?.entries ?? []);
         return;
       }
       if (m?.type === 'manager:memory_data' && m.payload?.memory) {
@@ -770,6 +786,23 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
       }
 
+      case 'manager:agendaList':
+        wsService?.send({ type: 'manager:agenda', payload: { action: 'list' } });
+        break;
+
+      case 'manager:entriesList':
+        wsService?.send({ type: 'manager:entries', payload: { action: 'list' } });
+        break;
+
+      case 'manager:entryToggle':
+        // Die Seite hat schon optimistisch umgeschaltet; der Server antwortet
+        // mit der vollständigen Liste und korrigiert notfalls.
+        wsService?.send({
+          type: 'manager:entries',
+          payload: { action: payload.done ? 'complete' : 'reopen', args: { id: payload.id } },
+        });
+        break;
+
       case 'manager:mic':
         micCard.current = MANAGER_MIC;
         micDiscard.current = false;
@@ -984,6 +1017,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         originWhitelist={['*']}
         javaScriptEnabled
         domStorageEnabled
+        // Android skaliert WebView-Text sonst mit der System-Schriftgröße —
+        // die Spalten-Vermessung und die echte Textbreite laufen dann
+        // auseinander (Terminal-Schrift regelt der In-App-Slider).
+        textZoom={100}
         onMessage={onMessage}
         keyboardDisplayRequiresUserAction={false}
         hideKeyboardAccessoryView
