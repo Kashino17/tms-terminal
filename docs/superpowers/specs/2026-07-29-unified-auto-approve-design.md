@@ -116,8 +116,11 @@ type PromptClass =
 
 Signale, alle auf echten Bildschirmzeilen:
 
-1. **Optionsblock** — aufeinanderfolgende Zeilen der Form `N. Text` oder `N) Text` im unteren
-   Bildschirmdrittel. Eingerückte Folgezeilen gehören zur vorherigen Option.
+1. **Optionsblock** — aufeinanderfolgende Zeilen der Form `N. Text` oder `N) Text`, aufsteigend
+   ab 1. Eingerückte Folgezeilen gehören zur vorherigen Option. Gewertet wird immer der
+   **letzte** Block auf dem Bildschirm; eine nummerierte Aufzählung weiter oben im Fließtext
+   der KI ist damit ausgeschlossen. Nach dem Block dürfen nur noch Leerzeilen, Fußzeile oder
+   Status-Chrome (Task-Liste, Kontextanzeige) folgen — steht dort echte Prosa, wartet nichts.
 2. **Auswahlmarke** — `❯`, `>`, `●`, `◉` auf einer Optionszeile, **oder** der Cursor steht auf
    einer Optionszeile. Letzteres gibt es nur mit Emulator und ist das stärkste Signal.
 3. **Fußzeile** — „Esc to cancel", „esc to cancel" (Codex), „Use arrow keys", „Enter to confirm",
@@ -147,10 +150,14 @@ Die Liste ist aus den installierten Harnessen belegt:
 | Gemini CLI | `Yes, allow once` |
 | Kimi | wird beim Aufnehmen des Korpus ergänzt |
 
-Weil der Emulator echte Leerzeichen liefert, entfallen sämtliche `\s*`-Krücken, das
-Footer-Abschneiden (`stripStatusFooter`) und das 6-Zeilen-Fenster. Die Task-Liste, die Claude
-Code unter die Box rendert, ist auf dem echten Bildschirm einfach das, was sie ist: Zeilen
-unterhalb des Optionsblocks, die die Blocksuche nicht stören.
+Weil der Emulator echte Leerzeichen liefert, braucht der neue Weg weder die `\s*`-Krücken noch
+das Footer-Abschneiden (`stripStatusFooter`) noch das 6-Zeilen-Fenster. Die Task-Liste, die
+Claude Code unter die Box rendert, ist auf dem echten Bildschirm einfach das, was sie ist:
+Zeilen unterhalb des Optionsblocks, die die Blocksuche nicht stören.
+
+`stripStatusFooter`, `matchPrompt` und `chooseApprovalKey` bleiben trotzdem erhalten — sie
+tragen den Rückfallweg für den Fall, dass ein Spiegel fehlt (siehe Fehlerfälle), und die
+vorhandenen Tests dazu bleiben gültig. Neuer Code ruft sie nicht mehr auf.
 
 ### 4. Torwächter bleibt, Retry bleibt
 
@@ -163,7 +170,8 @@ Bildschirm-Fingerabdruck statt auf `promptDetector.tailHash`.
 
 Bei `kind === 'question'` schickt der Server eine FCM-Nachricht:
 
-* Titel: `❓ Rückfrage · <Terminal-Label>`
+* Titel: `❓ Rückfrage · <Rechnername> · <Terminal-Label>` — dieselbe Beschriftung, die der
+  Idle-Push in `ws.handler.ts` schon baut (`Shell N` aus der Reihenfolge der Sessions)
 * Text: der erkannte Fragekopf, gekürzt
 * Daten: `{ type: 'prompt', kind: 'question', sessionId }`
 
