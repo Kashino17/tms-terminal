@@ -1,0 +1,20 @@
+[
+  {
+    "file": "claude-permission-40.jsonl",
+    "cols": 40,
+    "expect": "permission",
+    "note": "Claude Code, Read ausserhalb des Arbeitsordners, Optionen Yes / Yes-allow / No"
+  },
+  {
+    "file": "codex-permission-40.jsonl",
+    "cols": 40,
+    "expect": "permission",
+    "note": "Codex, Netzwerkbefehl braucht Freigabe, Auswahlmarke ist ein einfaches Winkelzeichen"
+  },
+  {
+    "file": "codex-question-40.jsonl",
+    "cols": 40,
+    "expect": "question",
+    "note": "Codex /review-Menue: dieselbe Box, aber inhaltliche Antworten — darf NIE automatisch beantwortet werden"
+  }
+]
