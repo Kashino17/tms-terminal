@@ -22,7 +22,7 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useTerminalStore } from '../store/terminalStore';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
-import { consumePendingBrowserBridgeUrl } from '../services/notifications.service';
+import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '../services/notifications.service';
 import { checkForUpdate, downloadAndInstall, getCurrentVersion } from '../services/updater.service';
 import { getConnection } from '../services/websocket.service';
 import { useS2ConnStore, useS2Connection } from './screens/TerminalsScreen';
@@ -431,7 +431,11 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // lösen KEIN Auswahl-Sheet, keine Tab-Benachrichtigung und keinen
         // Warte-Status mehr aus. Solche Prompts beantwortet der Nutzer direkt
         // im Terminal. Nur reine Berechtigungs-Prompts erscheinen weiterhin.
-        if (info.kind === 'question') return;
+        // Der Server stuft ein (prompt.classifier.ts) — auf dem echten
+        // Bildschirm, nicht auf einem Textschnipsel. `describePrompt` bleibt
+        // nur noch für die Darstellung (Werkzeug, Ziel, Optionen) zuständig.
+        const kind = (m.payload as { kind?: string } | undefined)?.kind ?? info.kind;
+        if (kind === 'question') return;
 
         const autoOn = useAutoApproveStore.getState().enabled[sid] ?? true;
 
@@ -477,6 +481,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     };
     open();
     const sub = AppState.addEventListener('change', (s) => { if (s === 'active') open(); });
+    return () => sub.remove();
+  }, [ready, call]);
+
+  // Eine angetippte Umfrage-Meldung springt in ihr Terminal — beim Start und
+  // jedes Mal, wenn die App wieder in den Vordergrund kommt. Der Server pusht
+  // nur bei Fragen, die er bewusst nicht beantwortet; hier landet man also
+  // immer vor einer offenen Auswahl.
+  useEffect(() => {
+    if (!ready) return;
+    const jump = (): void => {
+      const sid = consumePendingPromptSessionId();
+      if (sid) call('focusSession', sid);
+    };
+    jump();
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') jump(); });
     return () => sub.remove();
   }, [ready, call]);
 

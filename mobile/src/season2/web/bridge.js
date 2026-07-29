@@ -1059,6 +1059,18 @@
       window.getSelection && window.getSelection().removeAllRanges();
     },
     /** A PTY session was created for a card we asked about. */
+    /** Ein Push auf eine Umfrage wurde angetippt — genau dieses Terminal zeigen.
+     *  Der Server pusst nur bei Umfragen, also bei Fragen, die er bewusst NICHT
+     *  beantwortet; hier landet man also immer vor einer offenen Auswahl. */
+    focusSession: function (sessionId) {
+      var cardId = cardOf(sessionId);
+      if (!cardId) return;
+      if (typeof window.setDockPage === 'function') window.setDockPage('term');
+      if (typeof window.focusTerminal === 'function') window.focusTerminal(cardId);
+      if (window.__tmsState) window.__tmsState.activeCardId = cardId;
+      if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
+      if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
+    },
     bindSession: function (cardId, sessionId) {
       bound[cardId] = sessionId;
       byCard[cardId] = sessionId;

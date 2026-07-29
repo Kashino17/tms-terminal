@@ -50,6 +50,18 @@ export function consumePendingCloudTarget(): { platform: 'render' | 'vercel'; pr
   return target;
 }
 
+// ── Angetippte Umfrage-Meldung ───────────────────────────────────────────────
+// Der Server pusht bei einer Umfrage mit { type: 'prompt', sessionId }.
+// SeasonTwoWebRoot holt den Wert ab und springt in genau dieses Terminal.
+let _pendingPromptSessionId: string | null = null;
+
+/** Liest und verbraucht die angetippte Umfrage-Session (null, wenn keine). */
+export function consumePendingPromptSessionId(): string | null {
+  const sid = _pendingPromptSessionId;
+  _pendingPromptSessionId = null;
+  return sid;
+}
+
 // ── Pending browser-bridge login URL ─────────────────────────────────────────
 // When a "🔐 Login öffnen" notification is tapped, the login URL is stashed here;
 // SeasonTwoWebRoot consumes it and opens the in-app browser.
@@ -78,6 +90,9 @@ export function registerNotificationResponseHandler(): (() => void) {
     }
     if (data?.kind === 'browserbridge' && typeof data.url === 'string') {
       _pendingBrowserBridgeUrl = data.url;
+    }
+    if (data?.type === 'prompt' && typeof data.sessionId === 'string') {
+      _pendingPromptSessionId = data.sessionId;
     }
   });
   return () => subscription.remove();
