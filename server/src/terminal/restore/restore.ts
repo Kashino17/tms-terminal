@@ -27,6 +27,8 @@ export interface RestoreDeps {
   writeToSession: (id: string, data: string) => void;
   /** Writes a line into the OUTPUT stream — not into the shell, so it stays out of the history. */
   markSession: (id: string, text: string) => void;
+  /** Setzt den gespeicherten Auto-Approve-Schalter wieder. */
+  applyAutoApprove?: (id: string, on: boolean) => void;
   maxSessions: number;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
 }
@@ -117,6 +119,8 @@ function restoreOne(
   }
 
   result.restored.push(entry.id);
+
+  if (entry.autoApprove !== undefined) deps.applyAutoApprove?.(entry.id, entry.autoApprove);
 
   if (entry.claude !== undefined) {
     result.resumed.push(entry.id);

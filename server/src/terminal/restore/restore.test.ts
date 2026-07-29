@@ -181,3 +181,36 @@ test('looksReady does not fire on ordinary output', () => {
     assert.equal(looksReady(s), false, `sollte NICHT bereit sein: ${JSON.stringify(s)}`);
   }
 });
+
+// ── Der Auto-Approve-Schalter muss den Neustart überleben ───────────────────
+// Wiederhergestellte Terminals kommen zurück, der Schalter bisher nicht: er war
+// danach still aus, bis die App sich meldet — genau die Lücke, in der es
+// aussieht, als drücke der Server wieder nicht.
+test('wiederhergestellte Sitzung bekommt ihren Auto-Approve-Schalter zurück', async () => {
+  const applied: Array<{ id: string; on: boolean }> = [];
+  const result = await restoreTerminals({
+    now: () => NOW,
+    takeSnapshot: () => ({
+      capturedAt: NOW - 60_000,
+      serverPid: 999,
+      entries: [
+        { id: 'a', cwd: '/tmp', cols: 80, rows: 24, autoApprove: true },
+        { id: 'b', cwd: '/tmp', cols: 80, rows: 24, autoApprove: false },
+        { id: 'c', cwd: '/tmp', cols: 80, rows: 24 },
+      ],
+    }),
+    isPidAlive: () => false,
+    createSession: () => true,
+    writeToSession: () => {},
+    markSession: () => {},
+    applyAutoApprove: (id, on) => applied.push({ id, on }),
+    maxSessions: 10,
+    setTimeoutFn: (fn) => { void fn; return 0; },
+  });
+
+  assert.equal(result.restored.length, 3);
+  assert.deepEqual(applied, [
+    { id: 'a', on: true },
+    { id: 'b', on: false },
+  ], 'nur gespeicherte Werte werden gesetzt — fehlt der Wert, bleibt es beim Standard');
+});

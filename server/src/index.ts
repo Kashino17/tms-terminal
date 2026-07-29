@@ -23,6 +23,7 @@ import { consumeSnapshot } from './terminal/restore/snapshot.store';
 import { shutdown as shutdownWhisper, prewarm as prewarmWhisper } from './audio/whisper-sidecar';
 import { shutdown as shutdownRewriter, prewarm as prewarmRewriter } from './audio/prompt-rewriter-sidecar';
 import { managerService } from './websocket/ws.handler';
+import { isAutoApprove, setAutoApprove } from './websocket/auto.approve.state';
 
 // ── Global error handlers ────────────────────────────────────────────
 process.on('unhandledRejection', (reason) => {
@@ -90,6 +91,7 @@ async function main(): Promise<void> {
     },
     writeToSession: (id, data) => { globalManager.write(id, data); },
     markSession: (id, text) => { globalManager.injectOutput(id, text); },
+    applyAutoApprove: (id, on) => setAutoApprove(id, on),
     maxSessions: 50,
   });
 
@@ -126,6 +128,7 @@ async function main(): Promise<void> {
         id: sess.id, pid: sess.pty.pid, cols: sess.cols, rows: sess.rows, cwd: sess.cwd,
       })),
       labelFor: (id) => managerService.getSessionList().find(x => x.sessionId === id)?.label,
+      autoApproveFor: (id) => isAutoApprove(id),
     },
   });
   snapshotter.start();

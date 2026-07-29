@@ -617,6 +617,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       const enabled = !!(msg as any).payload?.enabled;
       if (typeof sid === 'string') {
         setAutoApprove(sid, enabled);
+        // Sofort sichern statt bis zum 30-Sekunden-Takt zu warten: ein Neustart
+        // dazwischen brächte das Terminal mit stillem Auto-Approve zurück.
+        captureSoon();
         // Track AI sessions for autopilot — auto-approve is only used on AI terminals
         if (enabled) aiSessions.add(sid);
         else aiSessions.delete(sid);

@@ -10,6 +10,7 @@ const CAPTURE_INTERVAL_MS = 30_000;
 export interface SnapshotSource {
   listSessions(): Array<{ id: string; pid: number; cols: number; rows: number; cwd?: string }>;
   labelFor(id: string): string | undefined;
+  autoApproveFor(id: string): boolean;
 }
 
 export interface SnapshotterDeps {
@@ -75,6 +76,7 @@ export class Snapshotter {
           cwd: claude?.cwd !== undefined && claude.cwd !== '' ? claude.cwd : (s.cwd ?? ''),
           cols: s.cols,
           rows: s.rows,
+          autoApprove: this.deps.source.autoApproveFor(s.id),
           claude: claude === null ? undefined : { sessionId: claude.sessionId, status: claude.status },
         });
       }

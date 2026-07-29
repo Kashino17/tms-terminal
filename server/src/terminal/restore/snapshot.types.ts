@@ -20,6 +20,12 @@ export interface SnapshotEntry {
   cwd: string;
   cols: number;
   rows: number;
+  /**
+   * Auto-Approve-Schalter dieser Session. Ohne ihn ist Auto-Approve nach jedem
+   * Server-Neustart still aus, bis die App sich meldet — genau die Lücke, in
+   * der es so aussieht, als drücke der Server wieder nicht.
+   */
+  autoApprove?: boolean;
   claude?: ClaudeMark;
 }
 

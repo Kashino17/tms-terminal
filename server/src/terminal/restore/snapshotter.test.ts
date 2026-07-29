@@ -23,6 +23,9 @@ function harness(
     source: {
       listSessions: () => sessions.map(s => ({ id: s.id, pid: s.pid, cols: 80, rows: 24, cwd: s.cwd })),
       labelFor: (id) => `Label ${id}`,
+      // Nur 'a' hat Auto-Approve an — so zeigt der Test auch, dass der Schalter
+      // pro Session mitgeschrieben wird und nicht pauschal.
+      autoApproveFor: (id) => id === 'a',
     },
     resolveClaude: async (pid) => claude[pid] ?? null,
   });
@@ -37,6 +40,9 @@ test('captureNow writes every live session', async () => {
   assert.equal(snap.serverPid, 4242);
   assert.deepEqual(snap.entries.map(e => e.id), ['a', 'b']);
   assert.equal(snap.entries[0].label, 'Label a');
+  // Der Auto-Approve-Schalter wandert pro Session mit — ohne ihn wäre er nach
+  // einem Neustart still aus, obwohl das Terminal zurückkommt.
+  assert.deepEqual(snap.entries.map(e => e.autoApprove), [true, false]);
 });
 
 test('a session with claude carries the mark, one without does not', async () => {
@@ -68,7 +74,7 @@ test('no sessions writes an empty snapshot rather than leaving a stale one', asy
 
   const empty = new Snapshotter({
     now: () => 1_700_000_000_001, serverPid: 4242, dir: h.dir,
-    source: { listSessions: () => [], labelFor: () => undefined },
+    source: { listSessions: () => [], labelFor: () => undefined, autoApproveFor: () => false },
     resolveClaude: async () => null,
   });
   await empty.captureNow();
@@ -80,7 +86,7 @@ test('a throwing claude resolver costs only the mark, not the entry', async () =
   const dir = tmpDir();
   const s = new Snapshotter({
     now: () => 1, serverPid: 1, dir,
-    source: { listSessions: () => [{ id: 'a', pid: 10, cols: 80, rows: 24, cwd: '/tmp' }], labelFor: () => undefined },
+    source: { listSessions: () => [{ id: 'a', pid: 10, cols: 80, rows: 24, cwd: '/tmp' }], labelFor: () => undefined, autoApproveFor: () => false },
     resolveClaude: async () => { throw new Error('pgrep weg'); },
   });
   await s.captureNow();
@@ -92,7 +98,7 @@ test('a throwing claude resolver costs only the mark, not the entry', async () =
 test('captureNow never throws even if writing fails', async () => {
   const s = new Snapshotter({
     now: () => 1, serverPid: 1, dir: '/definitiv/nicht/beschreibbar',
-    source: { listSessions: () => [{ id: 'a', pid: 10, cols: 80, rows: 24 }], labelFor: () => undefined },
+    source: { listSessions: () => [{ id: 'a', pid: 10, cols: 80, rows: 24 }], labelFor: () => undefined, autoApproveFor: () => false },
     resolveClaude: async () => null,
   });
   await s.captureNow(); // darf nicht werfen
@@ -105,7 +111,7 @@ test('overlapping captures do not pile up', async () => {
   let maxParallel = 0;
   const s = new Snapshotter({
     now: () => 1, serverPid: 1, dir,
-    source: { listSessions: () => [{ id: 'a', pid: 10, cols: 80, rows: 24 }], labelFor: () => undefined },
+    source: { listSessions: () => [{ id: 'a', pid: 10, cols: 80, rows: 24 }], labelFor: () => undefined, autoApproveFor: () => false },
     resolveClaude: async () => {
       running++;
       maxParallel = Math.max(maxParallel, running);
