@@ -212,5 +212,9 @@ test('wiederhergestellte Sitzung bekommt ihren Auto-Approve-Schalter zurück', a
   assert.deepEqual(applied, [
     { id: 'a', on: true },
     { id: 'b', on: false },
-  ], 'nur gespeicherte Werte werden gesetzt — fehlt der Wert, bleibt es beim Standard');
+    // 'c' hat keinen gespeicherten Wert (Aufnahme eines älteren Servers) — dann
+    // gilt die Vorgabe der App, und die ist AN. Sonst käme das Terminal mit
+    // still abgeschaltetem Auto-Approve zurück, während die App es als an zeigt.
+    { id: 'c', on: true },
+  ]);
 });

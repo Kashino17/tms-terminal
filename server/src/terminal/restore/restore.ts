@@ -120,7 +120,13 @@ function restoreOne(
 
   result.restored.push(entry.id);
 
-  if (entry.autoApprove !== undefined) deps.applyAutoApprove?.(entry.id, entry.autoApprove);
+  // Ohne gespeicherten Wert (Aufnahme eines älteren Servers) gilt die Vorgabe
+  // der App, und die ist AN. Andersherum käme das Terminal mit still
+  // abgeschaltetem Auto-Approve zurück, während die App den Schalter als an
+  // anzeigt — genau die unsichtbare Abweichung, die wie „er drückt nicht mehr"
+  // aussieht. Sobald dieser Server einmal aufgezeichnet hat, steht in jedem
+  // Eintrag ein ausdrücklicher Wert und diese Vorgabe greift nie wieder.
+  deps.applyAutoApprove?.(entry.id, entry.autoApprove ?? true);
 
   if (entry.claude !== undefined) {
     result.resumed.push(entry.id);

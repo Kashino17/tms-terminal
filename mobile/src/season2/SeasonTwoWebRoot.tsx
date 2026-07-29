@@ -653,9 +653,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     live.forEach((t, i) => {
       const cardId = `t${i + 1}`;
       sheets.pushNotes(cardId);
-      call('setAutoApprove', cardId, useAutoApproveStore.getState().enabled[t.sessionId] ?? true);
+      const on = useAutoApproveStore.getState().enabled[t.sessionId] ?? true;
+      call('setAutoApprove', cardId, on);
+      // ... und dem SERVER sagen. `setAutoApprove` setzt nur den Schalter in der
+      // Seite. Nach einem Server-Neustart erfuhr er den Wert sonst nie (er wird
+      // ausschliesslich bei terminal:created und beim Umlegen geschickt): das
+      // Terminal kam zurueck, die App zeigte "an", der Server drueckte nichts.
+      wsService?.send({ type: 'client:set_auto_approve', sessionId: t.sessionId, payload: { enabled: on } } as never);
     });
-  }, [ready, server, state, call, sheets, scrollbackTick]);
+  }, [ready, server, state, call, sheets, scrollbackTick, wsService]);
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
   const { micState, toggle: toggleMic } = useDictation({
