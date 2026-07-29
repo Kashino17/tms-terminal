@@ -974,7 +974,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'terminal:rename': {
-        const tab = useTerminalStore.getState().getTabs(server.id).find((t) => t.id === payload.cardId);
+        // Über die sessionId suchen, nicht über die Karten-ID: die vergibt die
+        // Seite bei jedem Laden neu (t1, t2, …), während der Reiter im Store
+        // seine ID vom Anlegen behält. Nach einem Wiederherstellen zeigten
+        // beide auf verschiedene Terminals, und die Beschriftung landete auf
+        // dem falschen. Die Karten-ID bleibt nur als Rückfall für eine noch
+        // nicht gebundene, brandneue Karte.
+        const tabs = useTerminalStore.getState().getTabs(server.id);
+        const tab = payload.sessionId
+          ? tabs.find((t) => t.sessionId === payload.sessionId)
+          : tabs.find((t) => t.id === payload.cardId);
         if (tab && payload.field === 'name' && payload.value) {
           useTerminalStore.getState().updateTab(server.id, tab.id, { title: payload.value });
         }

@@ -2232,7 +2232,13 @@
     input.addEventListener('blur', function () {
       if (session[field] === last) return;
       last = session[field];
-      post('terminal:rename', { cardId: session.id, field: field, value: last });
+      // Die sessionId MUSS mit: die Karten-ID ist nur fuer dieses eine Laden der
+      // Seite gueltig (der Zaehler faengt bei jedem Start wieder bei t1 an),
+      // waehrend der Reiter im Store seine ID von damals behaelt. Nach einem
+      // Wiederherstellen zeigten beide auf verschiedene Terminals — die
+      // Beschriftung landete auf dem falschen. Alle anderen Nachrichten tragen
+      // die sessionId laengst mit (siehe autoapprove:set).
+      post('terminal:rename', { cardId: session.id, sessionId: byCard[session.id], field: field, value: last });
     });
   };
 
