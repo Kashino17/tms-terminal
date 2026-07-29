@@ -185,8 +185,15 @@ function hashTail(s: string): string {
 }
 
 /** Prompt callback. `context.window` is the cleaned text the match was found in,
- *  so the caller can decide which keystroke approves it (e.g. Enter vs 'y'). */
-export type PromptCallback = (snippet: string, context?: { window: string }) => void;
+ *  so the caller can decide which keystroke approves it (e.g. Enter vs 'y').
+ *  `context.reason` unterscheidet einen wartenden Prompt von der Meldung
+ *  „die KI ist fertig" — der Handler behandelt beide völlig verschieden:
+ *  Prompts gehören dem Bildschirm-Weg (prompt.watcher.ts), sobald ein Spiegel
+ *  existiert; „fertig" bleibt immer hier. */
+export type PromptCallback = (
+  snippet: string,
+  context?: { window: string; reason: 'prompt' | 'ai-finished' },
+) => void;
 
 export class PromptDetector {
   private buffers        = new Map<string, string>();
@@ -263,7 +270,7 @@ export class PromptDetector {
           const snippet = this._extractSnippet(fastWindow);
           this.lastFiredHash.set(sessionId, hashTail(fastWindow));
           this.lastFiredAt.set(sessionId, this.now());
-          this.callbacks.get(sessionId)?.(snippet, { window: fastWindow });
+          this.callbacks.get(sessionId)?.(snippet, { window: fastWindow, reason: 'prompt' });
         }
       }
     }
@@ -408,7 +415,10 @@ export class PromptDetector {
     this.lastFiredHash.set(sessionId, shellReturned ? tailHash : promptSig);
     this.lastFiredAt.set(sessionId, this.now());
 
-    this.callbacks.get(sessionId)?.(snippet, { window: tail });
+    this.callbacks.get(sessionId)?.(snippet, {
+      window: tail,
+      reason: shellReturned ? 'ai-finished' : 'prompt',
+    });
   }
 
   /** Extract a short, human-readable body from cleaned terminal text. */

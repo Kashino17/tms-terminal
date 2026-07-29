@@ -177,3 +177,21 @@ export function evaluateApprovalGate(inp: ApprovalGateInput): ApprovalGateResult
   return key === null ? { gate: 'notify-only' } : { gate: 'send', key };
 }
 
+/**
+ * Dasselbe Tor wie `evaluateApprovalGate`, aber mit bereits entschiedenem
+ * Schlüssel. Der Bildschirm-Klassifikator (prompt.classifier.ts) bestimmt die
+ * Taste; hier geht es nur noch um die Frage, ob JETZT gedrückt werden darf.
+ *
+ * `evaluateApprovalGate` bleibt für den Rückfallweg auf dem Byte-Strom.
+ */
+export function evaluateGate(inp: {
+  key: string | null;
+  pendingLen: number;
+  sinceInputMs: number;
+}): ApprovalGateResult {
+  if (inp.key === null) return { gate: 'notify-only' };
+  if (inp.pendingLen > 0 && inp.sinceInputMs < PENDING_STALE_MS) return { gate: 'blocked-pending' };
+  if (inp.sinceInputMs < TYPING_PAUSE_MS) return { gate: 'paused-typing' };
+  return { gate: 'send', key: inp.key };
+}
+

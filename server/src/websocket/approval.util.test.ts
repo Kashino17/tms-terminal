@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  computePendingLen, chooseApprovalKey, evaluateApprovalGate,
+  computePendingLen, chooseApprovalKey, evaluateApprovalGate, evaluateGate,
   TYPING_PAUSE_MS, PENDING_STALE_MS,
 } from './approval.util';
 
@@ -192,4 +192,31 @@ test('Prosa-Ja-Aufzählung über einer Auswahlbox erzwingt kein Enter', () => {
     '2.Dann der Rest\n\n' +
     'Whichcheck?\n❯1.Tests\n2.Lint\nEsctocancel';
   assert.equal(chooseApprovalKey(w), null);
+});
+
+// ── evaluateGate: dasselbe Tor, aber der Schlüssel steht schon fest ──────────
+// Der Bildschirm-Klassifikator (prompt.classifier.ts) entscheidet die Taste;
+// hier geht es nur noch darum, ob JETZT gedrückt werden darf.
+
+test('evaluateGate: fertiger Schlüssel wird durchgereicht', () => {
+  const r = evaluateGate({ key: '\r', pendingLen: 0, sinceInputMs: 99_999 });
+  assert.equal(r.gate, 'send');
+  assert.equal(r.gate === 'send' ? r.key : null, '\r');
+});
+
+test('evaluateGate: kein Schlüssel → nur melden', () => {
+  assert.equal(evaluateGate({ key: null, pendingLen: 0, sinceInputMs: 99_999 }).gate, 'notify-only');
+});
+
+test('evaluateGate: Tippen pausiert', () => {
+  assert.equal(evaluateGate({ key: '\r', pendingLen: 0, sinceInputMs: 500 }).gate, 'paused-typing');
+});
+
+test('evaluateGate: ungesendeter Text blockiert', () => {
+  assert.equal(evaluateGate({ key: '\r', pendingLen: 3, sinceInputMs: 5000 }).gate, 'blocked-pending');
+});
+
+test('evaluateGate: veralteter Zähler blockiert nicht mehr', () => {
+  const r = evaluateGate({ key: '\r', pendingLen: 3, sinceInputMs: PENDING_STALE_MS + 1 });
+  assert.equal(r.gate, 'send');
 });

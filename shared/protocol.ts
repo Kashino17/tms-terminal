@@ -222,7 +222,13 @@ export interface TerminalCwdMessage {
 export interface TerminalPromptDetectedMessage {
   type: 'terminal:prompt_detected';
   sessionId: string;
-  payload: { snippet: string; hasPendingInput?: boolean };
+  payload: {
+    snippet: string;
+    hasPendingInput?: boolean;
+    /** Einstufung des Servers (prompt.classifier.ts) — auf dem echten
+     *  Bildschirm ermittelt. Die App rät sie nicht mehr aus dem Textschnipsel. */
+    kind?: 'permission' | 'confirm' | 'question';
+  };
 }
 
 export interface PongMessage {

@@ -12,7 +12,10 @@ import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 import { autopilotService } from '../autopilot/autopilot.service';
-import { computePendingLen, evaluateApprovalGate } from './approval.util';
+import { computePendingLen, evaluateApprovalGate, evaluateGate } from './approval.util';
+import { screenPromptWatcher, setScreenSource } from '../notifications/prompt.watcher';
+import { promptFingerprint, type PromptClass } from '../notifications/prompt.classifier';
+import { isAutoApprove, setAutoApprove, clearAutoApprove } from './auto.approve.state';
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
 import { rewrite as rewritePrompt } from '../audio/prompt-rewriter-sidecar';
 import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
@@ -31,8 +34,13 @@ import { browserBridge } from '../browserbridge/browserbridge.manager';
 // signals so idle notifications work while the client is away.
 globalManager.detachFeedCallback = (sessionId, data) => {
   promptDetector.feed(sessionId, data);
+  screenPromptWatcher.poke(sessionId);
   idleDetector.activity(sessionId);
 };
+
+// Der Beobachter liest den Bildschirm über den Manager — spät gebunden, damit
+// das Beobachter-Modul nichts vom Terminal-Manager wissen muss.
+setScreenSource((sessionId) => globalManager.getScreen(sessionId));
 
 function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState === ws.OPEN) {
@@ -96,10 +104,36 @@ const VALID_WATCHER_TYPES = ['file', 'process', 'keyword'] as const;
 const MAX_PERSISTED_TOKENS = 10;
 const persistedTokens: Set<string> = new Set();
 
-// Server-side auto-approve state — persists across reconnects.
-// When enabled for a session, the server sends '\r' directly to the PTY on prompt detection,
-// even when the client is disconnected/backgrounded.
-const serverAutoApprove = new Map<string, boolean>();
+// Ein Push je wartender Frage. Der Fingerabdruck stammt aus dem Klassifikator
+// und bleibt stabil, solange dieselbe Frage auf dem Schirm steht — ohne ihn
+// würde jeder Neuzeichen-Frame eine weitere Benachrichtigung auslösen.
+const lastQuestionPush = new Map<string, string>();
+
+/**
+ * Meldet eine Umfrage ans Handy. NUR für Umfragen: Berechtigungen beantwortet
+ * der Server selbst, dafür will niemand geweckt werden.
+ * Die Daten tragen die sessionId, damit ein Tipp auf die Meldung genau dieses
+ * Terminal öffnet (siehe notifications.service.ts).
+ */
+function pushQuestion(sessionId: string, label: string, question: string, fp: string): void {
+  if (lastQuestionPush.get(sessionId) === fp) return;
+  lastQuestionPush.set(sessionId, fp);
+
+  if (persistedTokens.size === 0) {
+    logger.warn('Frage-Push uebersprungen — kein FCM-Token registriert');
+    return;
+  }
+  const hostname = os.hostname().replace(/\.local$/, '');
+  const title = `\u{2753} Rückfrage · ${hostname} · ${label}`;
+  const body = question.trim().slice(0, 120) || 'Das Terminal wartet auf deine Auswahl';
+
+  logger.info(`Frage-Push: "${title}" — "${body}"`);
+  for (const token of persistedTokens) {
+    void fcmService
+      .send(token, title, body, { sessionId, type: 'prompt', kind: 'question' })
+      .catch(() => { persistedTokens.delete(token); });
+  }
+}
 
 // Track last user input per session — auto-approve pauses while user is typing.
 // Updated on every terminal:input message from the client.
@@ -224,18 +258,29 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   // Flush any manager messages that were buffered while disconnected
   flushPendingManagerMessages(ws);
 
+  /** „Shell 3" — dieselbe Beschriftung wie beim Idle-Push. */
+  const terminalLabel = (sessionId: string): string => {
+    const num = [...ownedSessions].indexOf(sessionId) + 1;
+    return num > 0 ? `Shell ${num}` : 'Terminal';
+  };
+
   /** Register a session with the prompt detector for auto-approve (no FCM — idle detector handles that). */
   const watchSession = (sessionId: string, reattach = false): void => {
-    const onPrompt = (snippet: string, context?: { window: string }): void => {
+    const onPrompt = (snippet: string, context?: { window: string; reason: 'prompt' | 'ai-finished' }): void => {
+      // Gibt es einen Spiegel, gehört die Prompt-Behandlung dem Bildschirm-Weg
+      // (siehe screenPromptWatcher unten). Der Byte-Weg ist dann nur noch für
+      // „die KI ist fertig" zuständig — und bleibt Rückfall ohne Spiegel.
+      if (context?.reason === 'prompt' && globalManager.hasMirror(sessionId)) return;
+
       // Server-side auto-approve: if enabled, send the approving keystroke directly
       // to the PTY. This works even when the client is backgrounded/disconnected.
-      if (serverAutoApprove.get(sessionId)) {
+      if (isAutoApprove(sessionId)) {
         const firedHash = promptDetector.tailHash(sessionId);
         const win = context?.window ?? snippet;
 
         /** One gate evaluation; defers itself while the user is typing. */
         const tryApprove = (attempt: number): 'sent' | 'deferred' | 'notify-only' | 'stale' | 'off' => {
-          if (!serverAutoApprove.get(sessionId)) return 'off';
+          if (!isAutoApprove(sessionId)) return 'off';
           // Any output since the fire (user answered, box torn down, new
           // content) means this prompt is gone — stop, never double-press.
           if (promptDetector.tailHash(sessionId) !== firedHash) return 'stale';
@@ -292,6 +337,55 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     // watch() is only for a brand-new session.
     if (reattach) promptDetector.rewatch(sessionId, onPrompt);
     else promptDetector.watch(sessionId, onPrompt);
+
+    // ── Bildschirm-Weg: der eigentliche Auto-Approve ──
+    // Klassifiziert auf dem gerenderten Bildschirm statt auf dem Byte-Strom und
+    // wird so lange erneut bewertet, bis der Prompt gelöst ist (prompt.watcher).
+    screenPromptWatcher.watch(sessionId, (cls: PromptClass, attempt: number) => {
+      if (cls.key !== null) {
+        // Berechtigung oder Ja/Nein — beantwortbar.
+        if (isAutoApprove(sessionId)) {
+          const gate = evaluateGate({
+            key: cls.key,
+            pendingLen: pendingInputLen.get(sessionId) ?? 0,
+            sinceInputMs: Date.now() - (lastUserInputAt.get(sessionId) ?? 0),
+          });
+          if (gate.gate === 'send') {
+            logger.info(`Auto-approve: sende ${JSON.stringify(gate.key)} fuer ${sessionId.slice(0, 8)}${attempt ? ` (Versuch ${attempt})` : ''}`);
+            globalManager.write(sessionId, gate.key);
+            pendingInputLen.set(sessionId, 0);   // unser Tastendruck ist keine Nutzereingabe
+            screenPromptWatcher.resolved(sessionId);
+            return;
+          }
+          if (attempt === 0) {
+            logger.info(`Auto-approve: VERSCHOBEN fuer ${sessionId.slice(0, 8)} (${gate.gate}) — wird wiederholt`);
+          }
+          if (attempt >= 1) return;   // der Takt versucht es weiter, ohne die App zuzuspammen
+        }
+        if (attempt === 0) {
+          send(ws, {
+            type: 'terminal:prompt_detected',
+            sessionId,
+            payload: {
+              snippet: cls.question,
+              hasPendingInput: (pendingInputLen.get(sessionId) ?? 0) > 0,
+              kind: cls.kind === 'confirm' ? 'confirm' : 'permission',
+            },
+          });
+        }
+        return;
+      }
+
+      // Umfrage: nie beantworten. Melden und einmalig pushen.
+      if (attempt === 0) {
+        send(ws, {
+          type: 'terminal:prompt_detected',
+          sessionId,
+          payload: { snippet: cls.question, hasPendingInput: false, kind: 'question' },
+        });
+        pushQuestion(sessionId, terminalLabel(sessionId), cls.question, promptFingerprint(cls));
+      }
+    });
   };
 
   /** Register a session with the idle detector for FCM push notifications. */
@@ -327,6 +421,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         (sessionId, data) => {
           send(ws, { type: 'terminal:output', sessionId, payload: { data } });
           promptDetector.feed(sessionId, data);
+          screenPromptWatcher.poke(sessionId);
           idleDetector.activity(sessionId);
           scheduleCwdCheck(ws, sessionId);
           resetAutopilotTimer(sessionId);
@@ -335,6 +430,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         (sessionId, exitCode) => {
           ownedSessions.delete(sessionId);
           promptDetector.unwatch(sessionId);
+          screenPromptWatcher.unwatch(sessionId);
+          lastQuestionPush.delete(sessionId);
           idleDetector.unwatch(sessionId);
           clearCwdCheck(sessionId);
           aiSessions.delete(sessionId);
@@ -376,6 +473,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       globalManager.closeSession(sessionId);
       ownedSessions.delete(sessionId);
       promptDetector.unwatch(sessionId);
+      screenPromptWatcher.unwatch(sessionId);
+      lastQuestionPush.delete(sessionId);
       idleDetector.unwatch(sessionId);
       aiSessions.delete(sessionId);
       send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode: 0 } });
@@ -517,7 +616,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       const sid = (msg as any).sessionId;
       const enabled = !!(msg as any).payload?.enabled;
       if (typeof sid === 'string') {
-        serverAutoApprove.set(sid, enabled);
+        setAutoApprove(sid, enabled);
         // Track AI sessions for autopilot — auto-approve is only used on AI terminals
         if (enabled) aiSessions.add(sid);
         else aiSessions.delete(sid);
@@ -993,6 +1092,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
             (sessionId, data) => {
               send(ws, { type: 'terminal:output', sessionId, payload: { data } });
               promptDetector.feed(sessionId, data);
+              screenPromptWatcher.poke(sessionId);
               idleDetector.activity(sessionId);
               scheduleCwdCheck(ws, sessionId);
               resetAutopilotTimer(sessionId);
@@ -1001,6 +1101,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
             (sessionId, exitCode) => {
               ownedSessions.delete(sessionId);
               promptDetector.unwatch(sessionId);
+              screenPromptWatcher.unwatch(sessionId);
+              lastQuestionPush.delete(sessionId);
               idleDetector.unwatch(sessionId);
               clearCwdCheck(sessionId);
               aiSessions.delete(sessionId);
@@ -1192,7 +1294,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
         ownedSessions.delete(msg.sessionId);
         sessionGens.delete(msg.sessionId);
-        serverAutoApprove.delete(msg.sessionId);
+        clearAutoApprove(msg.sessionId);
+        lastQuestionPush.delete(msg.sessionId);
+        screenPromptWatcher.unwatch(msg.sessionId);
         lastUserInputAt.delete(msg.sessionId);
         pendingInputLen.delete(msg.sessionId);
         const retryT = approvalRetryTimers.get(msg.sessionId);
