@@ -8137,6 +8137,9 @@
   window.setDockPage = setDockPage;
   window.syncDockTerminal = syncDockTerminal;
   window.dockTargetId = dockTargetId;
+  // Damit die App aus einer angetippten Push-Meldung heraus genau das
+  // betroffene Terminal zeigen kann (TMSBridge.focusSession in bridge.js).
+  window.focusTerminal = focusTerminal;
 
   // Auf dem Terminals-Tab ist die Terminal-Leiste die Voreinstellung.
   SCREEN_HOOKS.terminals = () => { setDockPage('term'); renderTermSwitcher(); };
