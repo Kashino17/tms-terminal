@@ -16,6 +16,22 @@
 import { Terminal } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 
+/**
+ * Der WAHRE Bildschirm einer Session: was ein Mensch sähe, nicht was durch die
+ * Leitung kam. Die Prompt-Erkennung arbeitet ausschließlich hierauf — der
+ * ANSI-gestrippte Byte-Strom kennt keine Bildschirmzeilen (Cursor-Sprünge
+ * verschwinden beim Strippen, Zeilen werden falsch geschnitten, alte Frames
+ * bleiben stehen).
+ */
+export interface ScreenView {
+  /** Sichtbare Zeilen, oben nach unten. Nachlaufende Leerzeichen entfernt. */
+  rows: string[];
+  cursorX: number;
+  /** Index in `rows` — nicht im Scrollback. */
+  cursorY: number;
+  cols: number;
+}
+
 /** Historie im Spiegel. Muss >= dem sein, was der Client anzeigen kann
  *  (Season-2-DOM-Fenster: 800 Zeilen), klein genug für 50 Sessions im RAM. */
 const MIRROR_SCROLLBACK = 1500;
@@ -79,6 +95,20 @@ export class SessionMirror {
     if (modes.applicationKeypadMode) out += '\x1b=';
     if (!modes.wraparoundMode) out += '\x1b[?7l';
     return out;
+  }
+
+  /**
+   * Der sichtbare Bildschirm als Text. Synchron — wie `serializeNow()` direkt
+   * nach `flushed()` aufrufen, sonst fehlen noch nicht verarbeitete Bytes.
+   */
+  screen(): ScreenView {
+    const buf = this.term.buffer.active;
+    const rows: string[] = [];
+    for (let y = 0; y < this.term.rows; y++) {
+      const line = buf.getLine(buf.viewportY + y);
+      rows.push(line ? line.translateToString(true) : '');
+    }
+    return { rows, cursorX: buf.cursorX, cursorY: buf.cursorY, cols: this.term.cols };
   }
 
   dispose(): void {

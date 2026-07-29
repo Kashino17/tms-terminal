@@ -86,6 +86,38 @@ test('Snapshot stellt TUI-Eingabemodi wieder her (DECCKM, Bracketed Paste)', asy
   assert.ok(snap.includes('\x1b[?2004h'), 'Bracketed-Paste-Modus im Snapshot');
 });
 
+// ── screen(): der Spiegel als Quelle für die Prompt-Erkennung ───────────────
+// Der Auto-Approve las bisher den ANSI-gestrippten Byte-Strom. Der kennt keine
+// Bildschirmzeilen: Cursor-Sprünge verschwinden beim Strippen, Zeilen werden
+// falsch geschnitten und alte Frames bleiben stehen. Diese Tests halten fest,
+// was der Spiegel stattdessen liefert.
+
+test('screen() liefert die sichtbaren Zeilen und die Cursorposition', async () => {
+  const m = new SessionMirror(20, 5);
+  // Zeile 1 schreiben, dann Cursor hoch + rechts bewegen — genau das, was eine
+  // TUI beim Neuzeichnen tut und was im Byte-Strom unsichtbar wird.
+  m.feed('Hallo\r\nWelt\r\n');
+  m.feed('\x1b[2A\x1b[3C');
+  await m.flushed();
+
+  const s = m.screen();
+  assert.equal(s.cols, 20);
+  assert.equal(s.rows.length, 5);
+  assert.equal(s.rows[0], 'Hallo');
+  assert.equal(s.rows[1], 'Welt');
+  assert.equal(s.rows[2], '');
+  assert.equal(s.cursorY, 0, 'zwei Zeilen hoch von Zeile 2');
+  assert.equal(s.cursorX, 3);
+});
+
+test('screen() macht Cursor-Vorwärtssprünge als echte Leerzeichen sichtbar', async () => {
+  const m = new SessionMirror(20, 3);
+  // Harnesse malen Abstände als Cursorbewegung statt als Leerzeichen.
+  m.feed('1.\x1b[1CYes');
+  await m.flushed();
+  assert.equal(m.screen().rows[0], '1. Yes');
+});
+
 test('Snapshot enthält Scrollback-Historie, nicht nur das Vollbild', async () => {
   const mirror = new SessionMirror(46, 5);
   let stream = '';

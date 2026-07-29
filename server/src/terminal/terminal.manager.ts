@@ -3,7 +3,7 @@ import { createPty } from './terminal.factory';
 import { TerminalSession, CreateSessionOptions } from './terminal.types';
 import { readProcessCwd, readForegroundProcess } from './cwd.utils';
 import { planReattach, wantsSnapshot, CLEAR_SEQUENCE } from './reattach.policy';
-import { SessionMirror } from './emulator.mirror';
+import { SessionMirror, type ScreenView } from './emulator.mirror';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
@@ -59,6 +59,23 @@ export class TerminalManager {
   /** Get the current attach generation for a session (used by ws.handler to tag detach calls). */
   getAttachGen(sessionId: string): number {
     return this.attachGen.get(sessionId) ?? 0;
+  }
+
+  /**
+   * Der echte Bildschirm einer Session, nachdem der Spiegel alle bisherigen
+   * Bytes verarbeitet hat. `null`, wenn kein Spiegel existiert (dann läuft die
+   * Prompt-Erkennung auf dem alten Byte-Weg weiter).
+   */
+  async getScreen(sessionId: string): Promise<ScreenView | null> {
+    const mirror = this.mirrors.get(sessionId);
+    if (!mirror) return null;
+    await mirror.flushed();
+    return mirror.screen();
+  }
+
+  /** Hat diese Session einen Spiegel? Entscheidet, welcher Erkennungsweg gilt. */
+  hasMirror(sessionId: string): boolean {
+    return this.mirrors.has(sessionId);
   }
 
   /** Set the adaptive batch interval for a session based on measured RTT. */
