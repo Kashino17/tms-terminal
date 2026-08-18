@@ -1097,7 +1097,16 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
     // `remote:started` nor `remote:error`: the connection just goes quiet.
     try {
       const c = deps.makeCapture();
-      c.onError((code, message) => { fail(code, message); enqueue(() => stop('error', false)); });
+      // Guard by instance identity, not just queue order. Real backends report
+      // crashes asynchronously, so an error from a capture that has since been
+      // replaced can land behind a fresh `remote:start` in the queue and tear
+      // the new session down — silently, because `tell` is false. Reproduced
+      // before this guard existed: A.start → A.stop → B.start → B.stop.
+      c.onError((code, message) => {
+        if (capture !== null && capture !== c) return;   // stale: capture was replaced
+        fail(code, message);
+        enqueue(async () => { if (capture === c) await stop('error', false); });
+      });
       const info = await c.start(opts);
       capture = c;
       input = deps.makeInput();
@@ -4570,6 +4579,10 @@ In `start()` die Optionen merken und den Fehlerzweig umbauen:
     lastOpts = opts;
     const c = deps.makeCapture();
     c.onError((code, message) => {
+      // Der Identitaets-Waechter aus Aufgabe 5 gilt hier genauso — sonst laesst
+      // ein verspaeteter Fehler der alten Aufnahme den frischen Neustart wieder
+      // abraeumen, und die Wiederbelebung schiesst sich selbst ab.
+      if (capture !== null && capture !== c) return;
       // Ein abgestuerzter Helfer ist der Normalfall, nicht das Ende: erst
       // wiederbeleben, und nur wenn das dreimal misslingt, den Nutzer stoeren.
       if (code === 'helper_crashed' && lastOpts) {
