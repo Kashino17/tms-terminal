@@ -33,3 +33,28 @@ test('fitRect legt das Bild seitenrichtig in die Flaeche', () => {
   // Genau passendes Seitenverhaeltnis: kein Rand.
   assert.deepEqual(fitRect(1600, 800, 400, 200), { x: 0, y: 0, w: 400, h: 200 });
 });
+
+test('pointerGain bleibt bei langsamem Wischen bei 1:1', () => {
+  const { pointerGain } = loadBlock('remoteMath');
+  assert.equal(pointerGain(0), 1, 'Stillstand darf nicht verstaerken');
+  assert.equal(pointerGain(0.05), 1, 'langsam heisst pixelgenau');
+});
+
+test('pointerGain verstaerkt schnelles Wischen, aber gedeckelt', () => {
+  const { pointerGain } = loadBlock('remoteMath');
+  assert.equal(pointerGain(10), 4, 'die Verstaerkung ist bei 4 gedeckelt');
+  assert.ok(pointerGain(1) > 1 && pointerGain(1) < 4, 'dazwischen gleitend');
+  assert.ok(pointerGain(2) > pointerGain(1), 'schneller heisst immer weiter');
+});
+
+test('pointerGain behandelt beide Richtungen gleich', () => {
+  const { pointerGain } = loadBlock('remoteMath');
+  assert.equal(pointerGain(-2), pointerGain(2));
+});
+
+test('nextSticky laeuft aus/einmal/fest im Kreis', () => {
+  const { nextSticky } = loadBlock('remoteMath');
+  assert.equal(nextSticky('off'), 'once');
+  assert.equal(nextSticky('once'), 'locked');
+  assert.equal(nextSticky('locked'), 'off');
+});
