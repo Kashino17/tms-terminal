@@ -38,7 +38,13 @@ final class Capture: NSObject, SCStreamOutput {
   // buffer gets looked up again — measured in Task 1.
   private var lastPixelBuffer: CVPixelBuffer?
   private var lastFrameAt = Date.distantPast
-  private var heartbeat: Timer?
+  private var heartbeat: DispatchSourceTimer?
+
+  // Both the stream callback and the heartbeat run here, so they never touch
+  // lastPixelBuffer/lastFrameAt/wantKeyframe from two threads at once. Stored
+  // as a property (not created inline at addStreamOutput) so startHeartbeat
+  // can schedule its timer on the exact same queue.
+  private let captureQueue = DispatchQueue(label: "tms.capture")
 
   func start(maxWidth: Int, fps: Int, bitrateKbps: Int) async {
     // Keep the display awake for as long as the session runs. A sleeping
@@ -109,7 +115,7 @@ final class Capture: NSObject, SCStreamOutput {
     let filter = SCContentFilter(display: display, excludingWindows: [])
     let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
     do {
-      try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "tms.capture"))
+      try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: captureQueue)
       try await stream.startCapture()
     } catch {
       fail("permission_screen", "Aufnahme konnte nicht gestartet werden")
@@ -117,7 +123,7 @@ final class Capture: NSObject, SCStreamOutput {
     self.stream = stream
 
     emit("{\"ready\":{\"width\":\(width),\"height\":\(height),\"scale\":\(scale)}}")
-    startHeartbeat()
+    startHeartbeat(on: captureQueue)
     listenForCommands(session: s)
   }
 
@@ -171,8 +177,19 @@ final class Capture: NSObject, SCStreamOutput {
 
   /// Looks up the last frame again when the screen is still: a requested
   /// keyframe must not wait for the next mouse movement.
-  private func startHeartbeat() {
-    heartbeat = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+  ///
+  /// `Timer.scheduledTimer` was tried first and silently never fired: it
+  /// attaches to the *calling thread's* run loop, but `start()` runs inside an
+  /// async `Task` on a Swift Concurrency worker thread that runs no run loop
+  /// of its own. `RunLoop.main.run()` at the bottom of this file doesn't help
+  /// either, since the timer was never registered there. `DispatchSourceTimer`
+  /// has no such assumption — it fires on the queue it's given regardless of
+  /// run loops, which is also why `on: captureQueue` matters here (see the
+  /// `captureQueue` property comment above).
+  private func startHeartbeat(on queue: DispatchQueue) {
+    let t = DispatchSource.makeTimerSource(queue: queue)
+    t.schedule(deadline: .now() + 0.1, repeating: 0.1)
+    t.setEventHandler { [weak self] in
       guard let self, let px = self.lastPixelBuffer else { return }
       let still = Date().timeIntervalSince(self.lastFrameAt)
       if self.wantKeyframe && still > 0.1 {
@@ -184,6 +201,8 @@ final class Capture: NSObject, SCStreamOutput {
         self.lastFrameAt = Date()
       }
     }
+    t.resume()
+    heartbeat = t
   }
 
   /// VideoToolbox hands out length-prefixed NALs; the wire format is Annex-B.
