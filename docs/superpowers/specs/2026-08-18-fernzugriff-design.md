@@ -116,9 +116,18 @@ den Systemeinstellungen nach einem Haken, der längst gesetzt ist. Deshalb ein
 eigener Code. Zusätzlich hält der Helfer während der Sitzung eine Energie-Assertion,
 damit der Bildschirm gar nicht erst einschläft.
 
-`width`/`height` sind die **Pixelmaße des aufgenommenen Bildes**, `scale` der Faktor zur
-logischen Auflösung des Systems (auf Retina-Macs typisch 2). Die App braucht beides für die
-Beschleunigungskurve des Trackpads.
+`width`/`height` sind die **Pixelmaße des aufgenommenen Bildes**. `scale` ist
+**aufgenommene Pixel je logischem Punkt** — also `width / logischeBreite`, nicht der
+Retina-Faktor des Bildschirms.
+
+**Korrektur vom 2026-08-18, am Gerät gemessen:** Die erste Fassung definierte `scale` als
+„Faktor zur logischen Auflösung (auf Retina typisch 2)". Das ist falsch, sobald das Bild
+verkleinert übertragen wird — und das ist der Normalfall. Auf der Zielmaschine hat der
+Bildschirm 3456 × 2234 Pixel und 1728 × 1116 Punkte; die Standard-Stufe nimmt mit 1600 Pixeln
+Breite auf. Nur mit `scale = 1600/1728 = 0,926` landet ein Zeiger bei `nx = 1` auf dem echten
+rechten Rand. Mit dem Retina-Faktor 2 oder dem stets herauskommenden Wert 1,0 bliebe der
+Zeiger bei 1600 von 1728 Punkten stehen — die rechten 7 % des Bildschirms, samt Menüleisten-Uhr
+und Fenster-Schließknöpfen, wären unerreichbar.
 
 **Verhältnis von `remote:start` zu `remote:quality`:** die Werte in `remote:start` sind der
 Ausgangspunkt, `remote:quality` setzt sie zur Laufzeit neu. Die Stufen sind fest:

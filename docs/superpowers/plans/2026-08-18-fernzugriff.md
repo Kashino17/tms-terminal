@@ -567,7 +567,7 @@ git commit -m "feat(remote): Rueckstau-Regelung fuer den Bildstrom"
 
 ### Task 4: `geometry.ts` — Koordinaten umrechnen
 
-Der Punkt, an dem es sonst still schiefgeht: die Aufnahme läuft in **Pixeln**, `CGEvent` auf dem Mac erwartet **logische Punkte** (auf Retina-Geräten die Hälfte), und `SendInput` auf Windows will 0…65535 über den virtuellen Bildschirm. Deshalb steht `scale` im Protokoll.
+Der Punkt, an dem es sonst still schiefgeht: die Aufnahme läuft in **Pixeln** und wird dabei verkleinert, `CGEvent` auf dem Mac erwartet aber **logische Punkte**, und `SendInput` auf Windows will 0…65535 über den virtuellen Bildschirm. Deshalb steht `scale` im Protokoll — definiert als **aufgenommene Pixel je logischem Punkt** (`width / logischeBreite`), *nicht* als Retina-Faktor des Bildschirms. Siehe die Korrektur in Abschnitt 4 der Spezifikation.
 
 **Files:**
 - Create: `~/Desktop/tms-terminal/server/src/remote/geometry.ts`
@@ -1421,13 +1421,24 @@ final class Capture: NSObject, SCStreamOutput {
       fail("display_asleep", "Der Bildschirm ist eingeschlafen und wacht gerade auf")
     }
 
-    // ScreenCaptureKit liefert Pixel; die logische Aufloesung braucht die App
-    // fuer die Zeigerkoordinaten. Der Faktor ist ihr Verhaeltnis.
-    let mode = CGDisplayCopyDisplayMode(display.displayID)
-    let scale = mode.map { Double(display.width) / Double($0.width) } ?? 1.0
-
+    // `SCDisplay.width` is in POINTS (measured: 1728 on a 3456 px Retina panel).
+    // The captured image is downscaled to `maxWidth`, so the pointer mapping
+    // cannot be derived from the display alone.
+    //
+    // `scale` is therefore defined as CAPTURED PIXELS PER LOGICAL POINT, because
+    // geometry.ts divides by it to reach a CGEvent point:
+    //     x_points = nx * capturedWidth / scale
+    // Capturing 1600 px of a 1728 pt display gives scale = 0.926, and nx = 1
+    // lands on 1728 — the true right edge.
+    //
+    // Do NOT compute this from CGDisplayCopyDisplayMode().width: that value is
+    // in points as well, so the ratio collapses to 1.0 on every machine. With a
+    // 1600 px capture the pointer would then stop at 1600 of 1728 points and
+    // the rightmost 7 % of the screen — menu bar clock, window close buttons —
+    // would be unreachable.
     let width = min(maxWidth, display.width)
     let height = Int((Double(display.height) * Double(width) / Double(display.width)).rounded(.down)) & ~1
+    let scale = Double(width) / Double(display.width)
 
     let cfg = SCStreamConfiguration()
     cfg.width = width
