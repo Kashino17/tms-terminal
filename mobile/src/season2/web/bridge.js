@@ -2628,6 +2628,18 @@
           window.remoteState.h = msg.payload.height;
           window.remoteState.scale = msg.payload.scale;
           retry = 0;
+          // Sperrbildschirm/Hintergrund/Netzabbruch reissen die Verbindung
+          // ohne dass jemand die Tastatur verlaesst — der Weg zum Mac war beim
+          // Verbindungsabbruch (onclose) schon tot, darum konnte eine dort
+          // noch festgestellte Sondertaste damals nicht geloest werden. Hier,
+          // sobald running wieder true ist (also TMSRemote.input() wirklich
+          // sendet), holt das dieselbe Funktion nach. remoteSticky blieb seit
+          // dem Abbruch unveraendert (bewusst nicht am onclose zurueckgesetzt
+          // — dort waere jeder Sendeversuch ohnehin verpufft), darum weiss
+          // releaseAllSticky() hier noch, was tatsaechlich offen war; der
+          // eingebaute "off"-Check macht den Aufruf beim ganz normalen ersten
+          // Verbinden (nichts war je gedrueckt) zum No-op.
+          if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
           veil('');
           layoutStage();
           break;
@@ -2686,6 +2698,12 @@
         if (!ws) connect();
       },
       stop: function () {
+        // Muss VOR dem Schliessen laufen: releaseAllSticky() sendet ueber
+        // TMSRemote.input(), das nur sendet, solange ws noch offen und
+        // remoteState.running noch true ist. Nach dem close()/running=false
+        // weiter unten kommt ein Loslassen nicht mehr durch — eine
+        // festgestellte Sondertaste bliebe auf dem Mac haengen.
+        if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
         wantRunning = false;
         if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
