@@ -20,6 +20,7 @@
 - **Tests:** `cd ~/Desktop/tms-terminal/server && npm test` (führt `node --require ts-node/register --test 'src/**/*.test.ts'` aus).
 - **Zur Testausgabe:** Dieses Node schreibt die Zusammenfassung als `ℹ pass 5` / `ℹ fail 0`, **nicht** als `# pass 5`. Wo unten „Erwartet: `# pass N`" steht, ist die Zahl gemeint, nicht das Zeichen davor.
 - **Keine neuen npm-Abhängigkeiten.** Der Fernzugriff kommt mit Bordmitteln aus; auf Windows wird ffmpeg vorausgesetzt, auf macOS gar nichts.
+- **Pfade zu Helferdateien nie relativ zu `__dirname` bilden.** Der Server läuft in Produktion aus `server/dist/server/src/…`; `tsc` kopiert keine Nicht-TypeScript-Dateien dorthin, und `rootDir: ..` verschiebt die Ordnertiefe. Unter `ts-node` — also in **jedem** Test — stimmen relative Pfade zufällig, im ausgelieferten Zustand zeigen sie ins Leere. Alle Helferpfade laufen über `server/src/remote/paths.ts` (`serverRoot()` sucht die nächstgelegene `package.json` und trägt in beiden Ordnerlagen). **Wer eine neue Helferdatei einführt, prüft ihren Pfad gegen `dist`, nicht gegen die Quelle.**
 - **Kein `any`.** `npx tsc --noEmit` muss nach jeder Aufgabe fehlerfrei durchlaufen — aber nicht dadurch, dass ein Typfehler mit `any` zugedeckt wird. In Aufgabe 2 warf `Buffer.alloc()` unter `strict` einen `TS2322`; die richtige Antwort war eine ausdrückliche Annotation (`let carry: Buffer = …`), nicht `any`. Diese Regel gilt für jede Aufgabe.
 - **UI-Texte deutsch.** Kommentare in der Sprache der Datei, die bearbeitet wird (`server/src` englisch, `season2`/Mockup deutsch).
 - **Nie das Ja/Nein-Muster einer Berechtigungsabfrage wörtlich in Testnamen oder Fixtures schreiben.** Die Sitzung läuft im PTY des Servers; dessen Erkennung liest die eigene Ausgabe mit. Siehe `server/src/websocket/approval.util.test.ts` für das Ausweichmuster.
@@ -1655,10 +1656,10 @@ const KNOWN_CODES: RemoteErrorCode[] = [
   'helper_crashed', 'disabled', 'unsupported_platform', 'display_asleep',
 ];
 
-/** `server/bin/tms-remote-helper`, next to the compiled output. */
-export function helperBinaryPath(): string {
-  return path.resolve(__dirname, '../../../bin/tms-remote-helper');
-}
+// Re-exported from paths.ts so there is exactly one way to find a helper file.
+// A relative walk from __dirname works under ts-node and breaks in dist — see
+// the Global Constraints.
+export { helperBinaryPath } from '../paths';
 
 export function buildHelperArgs(opts: CaptureOptions): string[] {
   return [
@@ -2668,14 +2669,14 @@ export function toWinLine(ev: RemoteInputEvent): string | null {
   }
 }
 
-function helperScriptPath(): string {
-  return path.resolve(__dirname, '../helpers/win/input-helper.ps1');
-}
+// Never a relative walk from __dirname: it works under ts-node and points into
+// the void once the server runs from dist. See the Global Constraints.
+import { winInputScriptPath } from '../paths';
 
 export function createWin32Input(): InputInjector {
   let child: ChildProcess | null = spawn(
     'powershell.exe',
-    ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', helperScriptPath()],
+    ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', winInputScriptPath()],
     { stdio: ['pipe', 'ignore', 'pipe'] },
   );
   child.on('exit', () => { child = null; });
