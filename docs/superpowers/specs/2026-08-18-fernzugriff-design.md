@@ -105,8 +105,16 @@ type RemoteErrorCode =
   | 'capture_unavailable'    // Windows: ffmpeg fehlt / kein Encoder
   | 'helper_crashed'         // Helfer dreimal hintereinander gestorben
   | 'disabled'               // remote.enabled = false
-  | 'unsupported_platform';
+  | 'unsupported_platform'
+  | 'display_asleep';        // Bildschirm schlief — siehe unten
 ```
+
+**Nachtrag vom 2026-08-18, aus dem Wegwerf-Test belegt:** Schläft der Bildschirm,
+meldet ScreenCaptureKit *gar keinen* Bildschirm — ununterscheidbar von einer
+fehlenden Freigabe, wenn man beides gleich behandelt. Der Nutzer suchte dann in
+den Systemeinstellungen nach einem Haken, der längst gesetzt ist. Deshalb ein
+eigener Code. Zusätzlich hält der Helfer während der Sitzung eine Energie-Assertion,
+damit der Bildschirm gar nicht erst einschläft.
 
 `width`/`height` sind die **Pixelmaße des aufgenommenen Bildes**, `scale` der Faktor zur
 logischen Auflösung des Systems (auf Retina-Macs typisch 2). Die App braucht beides für die
@@ -339,6 +347,8 @@ gibt **keinen** zweiten Aufbau — nur andere Maße, über den vorhandenen `useR
 | Netz bricht weg | letztes Bild einfrieren, Overlay „Verbindung …“, neu aufbauen, **Vollbild anfordern** |
 | Auflösung ändert sich | Aufnahme neu starten, `remote:started` mit neuen Maßen |
 | App im Hintergrund | React Native meldet den Wechsel über `AppState` an die Seite, die `remote:stop` schickt — schont PC-Prozessor und Handy-Akku; beim Zurückkehren wird neu gestartet |
+| Bildschirm schläft | `display_asleep`; der Helfer hält währenddessen eine Energie-Assertion, damit er wach bleibt |
+| Bildschirm steht still | ScreenCaptureKit liefert änderungsgetrieben (~6 fps im Leerlauf, gemessen). Der Helfer schlägt das letzte Bild nach, wenn ein Vollbild angefordert wurde oder eine Sekunde nichts kam — sonst zeigt eine frisch geöffnete Sitzung nichts, bis sich etwas rührt |
 | Rückstau | siehe `bitrate.ts` |
 | Zweite Sitzung | die ältere wird beendet; nur eine Aufnahme je Server |
 

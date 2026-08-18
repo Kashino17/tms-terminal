@@ -742,7 +742,11 @@ export type RemoteErrorCode =
   | 'capture_unavailable'
   | 'helper_crashed'
   | 'disabled'
-  | 'unsupported_platform';
+  | 'unsupported_platform'
+  /** Der Bildschirm schlief — ScreenCaptureKit meldet dann gar keinen Bildschirm.
+   *  Eigener Code, weil das sonst wie ein Berechtigungsproblem aussieht und der
+   *  Nutzer in den Systemeinstellungen nach einem Haken sucht, der längst gesetzt ist. */
+  | 'display_asleep';
 
 export type RemoteQualityPreset = 'sparsam' | 'auto' | 'scharf';
 
@@ -1324,6 +1328,7 @@ import Foundation
 import ScreenCaptureKit
 import VideoToolbox
 import CoreMedia
+import IOKit.pwr_mgt
 
 func emit(_ json: String) {
   FileHandle.standardError.write((json + "\n").data(using: .utf8)!)
@@ -1340,8 +1345,29 @@ final class Capture: NSObject, SCStreamOutput {
   private var stream: SCStream?
   private let out = FileHandle.standardOutput
   private var wantKeyframe = false
+  var assertion: IOPMAssertionID = 0
+
+  // ScreenCaptureKit liefert aenderungsgetrieben: bei stillem Bildschirm kommen
+  // nur ~6 Bilder pro Sekunde, manchmal sekundenlang keins. Wer dann eine Sitzung
+  // oeffnet, sieht nichts, bis sich etwas ruehrt. Deshalb wird der zuletzt
+  // aufgenommene Puffer nachgeschlagen — gemessen in Aufgabe 1.
+  private var lastPixelBuffer: CVPixelBuffer?
+  private var lastFrameAt = Date.distantPast
+  private var heartbeat: Timer?
 
   func start(maxWidth: Int, fps: Int, bitrateKbps: Int) async {
+    // Den Bildschirm wachhalten, SOLANGE die Sitzung laeuft. Ein schlafendes
+    // Display meldet ScreenCaptureKit als "gar kein Bildschirm" — der Fernzugriff
+    // zeigte sonst genau dann nichts, wenn der Rechner unbeaufsichtigt steht.
+    // Die Assertion endet mit dem Prozess, also mit der Sitzung.
+    var sleepAssertion: IOPMAssertionID = 0
+    IOPMAssertionCreateWithName(
+      kIOPMAssertionTypeNoDisplaySleepAssertion as CFString,
+      IOPMAssertionLevel(kIOPMAssertionLevelOn),
+      "TMS Terminal Fernzugriff" as CFString,
+      &sleepAssertion)
+    self.assertion = sleepAssertion
+
     let content: SCShareableContent
     do {
       content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -1349,7 +1375,9 @@ final class Capture: NSObject, SCStreamOutput {
       fail("permission_screen", "Bildschirmaufnahme ist nicht freigegeben")
     }
     guard let display = content.displays.first else {
-      fail("permission_screen", "Kein Bildschirm gefunden")
+      // Nicht als Berechtigungsproblem melden: der Haken ist gesetzt, das
+      // Display schlief nur. (Im Wegwerf-Test von Aufgabe 1 genau so passiert.)
+      fail("display_asleep", "Der Bildschirm ist eingeschlafen und wacht gerade auf")
     }
 
     // ScreenCaptureKit liefert Pixel; die logische Aufloesung braucht die App
@@ -1396,6 +1424,7 @@ final class Capture: NSObject, SCStreamOutput {
     self.stream = stream
 
     emit("{\"ready\":{\"width\":\(width),\"height\":\(height),\"scale\":\(scale)}}")
+    startHeartbeat()
     listenForCommands(session: s)
   }
 
@@ -1420,21 +1449,47 @@ final class Capture: NSObject, SCStreamOutput {
 
   func stream(_ s: SCStream, didOutputSampleBuffer buf: CMSampleBuffer, of type: SCStreamOutputType) {
     guard type == .screen, CMSampleBufferIsValid(buf),
-          let px = CMSampleBufferGetImageBuffer(buf), let sess = session else { return }
+          let px = CMSampleBufferGetImageBuffer(buf) else { return }
+    lastPixelBuffer = px
+    lastFrameAt = Date()
+    encode(px, forceKey: consumeKeyframeWish())
+  }
 
-    var props: CFDictionary? = nil
-    if wantKeyframe {
-      wantKeyframe = false
-      props = [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
-    }
+  private func consumeKeyframeWish() -> Bool {
+    guard wantKeyframe else { return false }
+    wantKeyframe = false
+    return true
+  }
 
+  private func encode(_ px: CVPixelBuffer, forceKey: Bool) {
+    guard let sess = session else { return }
+    let props: CFDictionary? = forceKey
+      ? [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
+      : nil
     VTCompressionSessionEncodeFrame(
       sess, imageBuffer: px,
-      presentationTimeStamp: CMSampleBufferGetPresentationTimeStamp(buf),
+      presentationTimeStamp: CMTime(value: Int64(Date().timeIntervalSince1970 * 1000), timescale: 1000),
       duration: .invalid, frameProperties: props, infoFlagsOut: nil
     ) { [weak self] status, _, sample in
       guard let self, status == noErr, let sample else { return }
       self.writeAnnexB(sample)
+    }
+  }
+
+  /// Schlaegt das letzte Bild nach, wenn der Bildschirm still steht: ein
+  /// angefordertes Vollbild darf nicht auf die naechste Mausbewegung warten.
+  private func startHeartbeat() {
+    heartbeat = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+      guard let self, let px = self.lastPixelBuffer else { return }
+      let still = Date().timeIntervalSince(self.lastFrameAt)
+      if self.wantKeyframe && still > 0.1 {
+        self.wantKeyframe = false
+        self.encode(px, forceKey: true)
+        self.lastFrameAt = Date()
+      } else if still > 1.0 {
+        self.encode(px, forceKey: false)
+        self.lastFrameAt = Date()
+      }
     }
   }
 
@@ -1523,6 +1578,7 @@ cd "$(dirname "$0")"
 OUT="$(cd ../../../.. && pwd)/bin/tms-remote-helper"
 mkdir -p "$(dirname "$OUT")"
 swiftc -O -framework ScreenCaptureKit -framework VideoToolbox -framework CoreGraphics \
+       -framework IOKit \
        -o "$OUT" TmsRemoteHelper.swift
 echo "Helfer gebaut: $OUT"
 ```
@@ -1544,7 +1600,7 @@ import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types
 
 const KNOWN_CODES: RemoteErrorCode[] = [
   'permission_screen', 'permission_input', 'capture_unavailable',
-  'helper_crashed', 'disabled', 'unsupported_platform',
+  'helper_crashed', 'disabled', 'unsupported_platform', 'display_asleep',
 ];
 
 /** `server/bin/tms-remote-helper`, next to the compiled output. */
@@ -3796,6 +3852,8 @@ Ans Ende von `bridge.js` (vor einem etwaigen Abschluss-Aufruf):
       case 'permission_input':
         return 'Der Mac darf keine Eingaben annehmen.\n'
              + 'Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen';
+      case 'display_asleep':
+        return 'Der Bildschirm des Macs ist eingeschlafen. Gleich noch einmal versuchen.';
       case 'capture_unavailable':
         return 'Auf dem PC fehlt ffmpeg. Einmalig einrichten:  winget install ffmpeg';
       case 'disabled':
