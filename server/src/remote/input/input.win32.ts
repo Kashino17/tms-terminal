@@ -1,0 +1,74 @@
+import { spawn, ChildProcess } from 'node:child_process';
+import * as path from 'node:path';
+import type { RemoteInputEvent } from '../../../../shared/protocol';
+import type { InputInjector } from './input.types';
+import { toWinVirtualKey } from '../keymap';
+import { toWindowsAbsolute } from '../geometry';
+
+/**
+ * One remote input event → one helper line.
+ *
+ * Unlike macOS, SendInput carries no modifier flag field: Shift and friends are
+ * ordinary key events. The app already sends press and release for its sticky
+ * modifiers, so nothing extra is needed here.
+ */
+export function toWinLine(ev: RemoteInputEvent): string | null {
+  switch (ev?.t) {
+    case 'm': {
+      const p = toWindowsAbsolute(ev.x, ev.y);
+      return `abs ${p.x} ${p.y}`;
+    }
+    case 'd':
+      return `rel ${Math.round(ev.dx)} ${Math.round(ev.dy)}`;
+    case 'b':
+      return `btn ${ev.b} ${ev.d ? 1 : 0}`;
+    case 's':
+      return `scroll ${Math.round(ev.dx)} ${Math.round(ev.dy)}`;
+    case 'k': {
+      const vk = toWinVirtualKey(ev.c);
+      return vk === null ? null : `key ${vk} ${ev.d ? 1 : 0}`;
+    }
+    case 'x':
+      return `text ${ev.s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n')}`;
+    default:
+      return null;
+  }
+}
+
+function helperScriptPath(): string {
+  return path.resolve(__dirname, '../helpers/win/input-helper.ps1');
+}
+
+export function createWin32Input(): InputInjector {
+  let child: ChildProcess | null = spawn(
+    'powershell.exe',
+    ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', helperScriptPath()],
+    { stdio: ['pipe', 'ignore', 'pipe'] },
+  );
+  child.on('exit', () => { child = null; });
+
+  const write = (line: string | null) => {
+    if (line && child?.stdin?.writable) child.stdin.write(line + '\n');
+  };
+  const send = (ev: RemoteInputEvent) => write(toWinLine(ev));
+
+  return {
+    moveRelative: (dx, dy) => send({ t: 'd', dx, dy }),
+    moveAbsolute: (nx, ny) => send({ t: 'm', x: nx, y: ny }),
+    button: (which, down) => send({ t: 'b', b: which[0] as 'l' | 'r' | 'm', d: down }),
+    scroll: (dx, dy) => send({ t: 's', dx, dy }),
+    key: (code, down, mods) => send({ t: 'k', c: code, d: down, mods }),
+    text: (s) => send({ t: 'x', s }),
+
+    async stop() {
+      const proc = child;
+      child = null;
+      if (!proc) return;
+      proc.stdin?.write('quit\n');
+      await new Promise<void>((resolve) => {
+        const kill = setTimeout(() => { proc.kill(); resolve(); }, 300);
+        proc.on('exit', () => { clearTimeout(kill); resolve(); });
+      });
+    },
+  };
+}
