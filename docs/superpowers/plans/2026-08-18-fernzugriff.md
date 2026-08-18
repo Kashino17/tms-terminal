@@ -345,6 +345,11 @@ export function createAnnexBSplitter(idleMs = 6): AnnexBSplitter {
       const out: AccessUnit[] = [];
       let i = indexOfStart(carry, 0);
       if (i < 0) return out;
+      // Ein 4-Byte-Startcode (00 00 00 01) wird als 00 00 01 an Position i+1
+      // gefunden. Steht er am Anfang des Restpuffers, ginge sein fuehrendes
+      // Null-Byte sonst verloren — bei haeppchenweiser Zufuhr liegen die
+      // NAL-Grenzen anders als beim Einmal-Push, und die Nutzdaten weichen ab.
+      if (i > 0 && carry[i - 1] === 0) i--;
 
       let next = indexOfStart(carry, i + 3);
       while (next >= 0) {
