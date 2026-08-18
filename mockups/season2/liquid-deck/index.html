@@ -2866,7 +2866,22 @@
     // currentScreen ist an dieser Stelle noch der ALTE Bildschirm (wird erst
     // unten auf `name` gesetzt) — die Bedingung feuert also nur beim
     // tatsaechlichen Verlassen von "remote", nicht bei jeder Navigation.
-    if (name !== 'remote' && currentScreen === 'remote' && typeof releaseAllSticky === 'function') releaseAllSticky();
+    //
+    // C3: der Bildschirmwechsel muss auch das Vollbild zuruecksetzen — sonst
+    // bleiben die Dokument-Zuhoerer fuer Tastatur/Zeiger/Rad aktiv, waehrend
+    // der Nutzer laengst im Terminal oder im Manager steht, und fangen dort
+    // die eigene Tastatur der App ab. setRemoteFullscreen(false) loest dabei
+    // auch alles, was eine angeschlossene Hardware-Tastatur/-Maus noch haelt.
+    if (name !== 'remote' && currentScreen === 'remote') {
+      if (typeof releaseAllSticky === 'function') releaseAllSticky();
+      if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
+      // I6: auch ein noch laufendes Trackpad-Ziehen / ein gehaltener fester
+      // Klick-Knopf muss beim Verlassen des Bildschirms enden — sonst bleibt
+      // die Maustaste auf dem PC gedrueckt, obwohl die Buehne (und mit ihr
+      // jeder Weg, es ueber ein echtes pointerup noch zu bemerken) gerade
+      // komplett neu aufgebaut wird (siehe buildRemoteScreen-Einklinkung).
+      if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+    }
     // Terminals, Browser UND Manager haben ihre eigene Bar-Seite (Eingabezeile,
     // Adressleiste bzw. Chat-Eingabe) — überall sonst ist die Navigation die
     // Voreinstellung. Der jeweilige SCREEN_HOOK setzt danach die eigene Seite.
@@ -3260,6 +3275,7 @@
     var holdTimer = null;
     var holdPointerId = null; // welcher Finger den Halte-Timer gestartet hat
     var dragging = false;
+    var fixedBtnDown = {}; // 'l'|'r' -> true, waehrend der jeweils feste Knopf unten drueben gehalten wird
     var leadPointerId = null; // der zuerst aufgelegte Finger — fuehrt das Zwei-Finger-Scrollen
 
     // Zustand der gesamten Beruehrung (erster Finger runter bis letzter Finger
@@ -3281,6 +3297,28 @@
         if (R()) R().input({ t: 'b', b: 'l', d: false });
       }
     }
+
+    /**
+     * C3/I6: loest alles, was auf dem Trackpad gerade als gedrueckt gilt —
+     * ein laufendes Ziehen UND ein noch gehaltener fester Links-/Rechtsklick-
+     * Knopf. Von aussen erreichbar (TMSRemote.stop()/suspend(), Bildschirm-
+     * wechsel), weil pointerup/pointercancel/lostpointercapture nicht
+     * feuern, wenn die App in den Hintergrund geht oder die Verbindung
+     * abreisst, waehrend ein Finger noch physisch auf der Flaeche liegt —
+     * das Dokument-Auffangnetz oben hilft nur, wenn irgendein echtes
+     * Zeiger-Ereignis ankommt. Dieselbe Fehlerfamilie wie die haengende
+     * Maustaste, die in diesem Vorhaben schon mehrfach gefunden wurde.
+     */
+    function releasePadHold() {
+      endDrag();
+      Object.keys(fixedBtnDown).forEach(function (which) {
+        delete fixedBtnDown[which];
+        if (R()) R().input({ t: 'b', b: which, d: false });
+      });
+    }
+    // Zeigt immer auf die AKTUELLE Ausfuehrung von wireRemotePad() — jeder
+    // Aufruf (Seitenwechsel Tastatur->Trackpad) legt neuen Zustand an.
+    window.releaseRemotePadHold = releasePadHold;
 
     pad.addEventListener('pointerdown', function (e) {
       if (e.target.closest('[data-btn]')) return;
@@ -3415,6 +3453,7 @@
       function down(e) {
         if (activeId !== null) return; // schon gedrueckt
         activeId = e.pointerId;
+        fixedBtnDown[which] = true;
         if (R()) R().input({ t: 'b', b: which, d: true });
         try { btn.setPointerCapture(e.pointerId); } catch (err) { /* bestmoeglich */ }
       }
@@ -3422,6 +3461,7 @@
       function up(e) {
         if (e.pointerId !== activeId) return;
         activeId = null;
+        delete fixedBtnDown[which];
         if (R()) R().input({ t: 'b', b: which, d: false });
       }
 
@@ -3523,8 +3563,13 @@
        k('j','KeyJ'), k('k','KeyK'), k('l','KeyL'), k('ö','Semicolon'), k('ä','Quote')],
       [mod('⇧','ShiftLeft'), k('y','KeyY'), k('x','KeyX'), k('c','KeyC'), k('v','KeyV'),
        k('b','KeyB'), k('n','KeyN'), k('m','KeyM'), k('⌫','Backspace', 1.5)],
-      [k('123','__layer:num'), k('␣','Space', 4), k('◀','ArrowLeft'), k('▶','ArrowRight'),
-       k('⏎','Enter', 1.5)],
+      // I15: ▲/▼ fehlten auf jeder Ebene — beim Fernsteuern einer Shell
+      // (Verlauf mit den Pfeiltasten durchgehen) ein harter Ausfall. Eigene
+      // Reihe statt sie der letzten Reihe hinzuzufuegen, damit die nicht
+      // ueberfuellt: ◀/▶ ziehen mit um, damit alle vier Pfeiltasten als
+      // ein zusammenhaengender Block beieinander stehen.
+      [k('◀','ArrowLeft'), k('▲','ArrowUp'), k('▼','ArrowDown'), k('▶','ArrowRight')],
+      [k('123','__layer:num'), k('␣','Space', 4), k('⏎','Enter', 1.5)],
     ];
   }
 
