@@ -3590,6 +3590,29 @@
     return offset > slack ? slack : offset < -slack ? -slack : offset;
   }
 
+  /**
+   * Entscheidet waehrend eines langen Drucks (Zeiger versetzen), ob eine
+   * Fingerbewegung ihn abbrechen soll. Misst die Entfernung zum AUFSETZPUNKT,
+   * nicht die aufsummierte Pfadlaenge seit dem letzten Ereignis — ein Finger,
+   * der ruhig aufliegt, aber leicht zittert (auf Glas tut das jeder), sammelt
+   * sonst ueber die 400ms genug Mikroschritte, um die Schwelle grundlos zu
+   * reissen. Wer stattdessen hin und her wischt und zum Ausgangspunkt
+   * zurueckkehrt, bricht den langen Druck darum bewusst NICHT ab — das ist
+   * deutlich harmloser als ein Druck, der bei ruhiger Hand seltener durchhaelt
+   * als bei unruhiger.
+   *
+   * Genau auf der Schwelle bricht NICHT ab (erst echtes Ueberschreiten zaehlt)
+   * — konsistent mit dem `> 8`-Vergleich in wireStageGestures(), den diese
+   * Funktion ersetzt.
+   *
+   * @param startX/startY  Position beim Aufsetzen des Fingers
+   * @param curX/curY      aktuelle Position
+   * @param thresholdPx    Hoechstabstand, der noch als "ruhig" zaehlt
+   */
+  function holdShouldAbort(startX, startY, curX, curY, thresholdPx) {
+    return Math.hypot(curX - startX, curY - startY) > thresholdPx;
+  }
+
   // Der gesamte Mockup-Code steckt in einer Kapsel — ohne diese Zeilen sieht
   // bridge.js keine einzige dieser Funktionen, und der Fernzugriff bricht mit
   // "fitRect is not defined" ab, waehrend die Tests weiter gruen melden (sie
@@ -3603,6 +3626,7 @@
     window.remoteKeyRows = remoteKeyRows;
     window.clampZoom = clampZoom;
     window.clampPan = clampPan;
+    window.holdShouldAbort = holdShouldAbort;
   }
   // ── /TMS-TEST-EXPORT ──
 
