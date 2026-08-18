@@ -706,6 +706,11 @@
   .server-meta { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   .server-chip { font-size: 11px; font-weight: 600; padding: 4px 9px; border-radius: 999px; background: rgba(var(--overlay-rgb),.06); color: var(--text-dim); }
   .server-chip.ok { color: var(--ok); }
+  .server-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .server-action { padding: 7px 12px; border-radius: 9px; font-size: 11px; font-weight: 600;
+                   border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.07);
+                   color: inherit; }
+  .server-action[disabled] { opacity: .35; }
 
   /* ============================================================
      Terminal workspace — spatial swipeable stack
@@ -2982,8 +2987,23 @@
             <span class="server-chip">${escapeHtml(srv.os)}</span>
           </div>
         </div>
+        <div class="server-actions">
+          <button class="server-action" data-remote="${srv.id}" ${online ? '' : 'disabled'}>
+            Fernzugriff
+          </button>
+        </div>
       `;
-      card.addEventListener('click', () => {
+      card.addEventListener('click', (e) => {
+        const remoteBtn = e.target.closest('[data-remote]');
+        if (remoteBtn) {
+          e.stopPropagation();
+          if (!online) { toast(`${srv.name} ist offline`); return; }
+          // Die Seite oeffnet ihre eigene Verbindung — React Native liefert nur die Zugangsdaten.
+          if (window.__tmsOpenRemote) window.__tmsOpenRemote(srv.id);
+          show('remote');
+          if (window.TMSRemote) window.TMSRemote.start('auto');
+          return;
+        }
         if (srv.active) { goToTerminals(); return; }          // schon verbunden
         if (!online) { toast(`${srv.name} ist offline`); return; }
         // Anderer, laufender Server: die App schaltet die Verbindung um.
