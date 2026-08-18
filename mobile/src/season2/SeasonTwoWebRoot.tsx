@@ -499,6 +499,25 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     return () => sub.remove();
   }, [ready, call]);
 
+  // Fernzugriff: im Hintergrund ist die Aufnahme reine Verschwendung — sie kostet
+  // auf dem PC Rechenzeit und hier Akku. Das browserseitige visibilitychange ist
+  // im Android-WebView dafür unzuverlässig (feuert nicht sicher, wenn nur die
+  // Activity pausiert), darum hier über AppState statt auf der Seite selbst.
+  // window.TMSRemote sitzt bewusst NICHT unter window.TMSBridge (die Seite ruft
+  // es auch selbst auf, siehe index.html) — deshalb hier direkt statt über
+  // call() angesprochen. Ohne aktiven Fernzugriff ist start()/stop() ein No-op
+  // (TMSRemote.connect() bricht ohne gesetztes Ziel sofort ab).
+  useEffect(() => {
+    if (!ready) return;
+    const sub = AppState.addEventListener('change', (s) => {
+      const js = s === 'active'
+        ? 'window.TMSRemote && window.TMSRemote.start(); true;'
+        : 'window.TMSRemote && window.TMSRemote.stop(); true;';
+      webRef.current?.injectJavaScript(js);
+    });
+    return () => sub.remove();
+  }, [ready]);
+
   useEffect(() => () => {
     Object.values(idleTimers.current).forEach(clearTimeout);
   }, []);
@@ -675,13 +694,20 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // Manager-Diktat landet in der Eingabezeile zum Prüfen/Ändern, nicht
       // sofort gesendet — sonst könnte man ein Fehl-Transkript nicht mehr fangen.
       if (card === MANAGER_MIC) call('injectManagerInput', text);
-      else call('dictationResult', card ?? '', text);
+      // Fernzugriff-Diktat geht nicht über TMSBridge (window.TMSRemote sitzt
+      // bewusst daneben, siehe bridge.js) — direkt in die Seite injiziert.
+      else if (card === REMOTE_MIC) {
+        webRef.current?.injectJavaScript(
+          `window.TMSRemote && window.TMSRemote.input(${JSON.stringify({ t: 'x', s: text })}); true;`
+        );
+      } else call('dictationResult', card ?? '', text);
     },
     onError: (msg: string) => {
       const card = micCard.current;
       micCard.current = null;
       micDiscard.current = false;
       if (card === MANAGER_MIC) call('managerMicStopped');
+      else if (card === REMOTE_MIC) { /* Seite zeigt ohnehin nur den Mikro-Zustand, kein eigener Reset noetig */ }
       else call('dictationResult', card ?? '', '');
       call('toast', msg);
     },
@@ -785,7 +811,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'mic:start':
-        micCard.current = payload.cardId;
+        // Fernzugriff-Diktat (window.TMSRemote.dictate() in bridge.js) schickt
+        // { target: 'remote' } statt einer cardId — der erkannte Text geht dann
+        // an die Seite zurueck statt in ein Terminal.
+        micCard.current = payload?.target === 'remote' ? REMOTE_MIC : payload.cardId;
         micDiscard.current = false;
         toggleMic(); // start
         break;
@@ -1031,6 +1060,32 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
       }
 
+      // Fernzugriff-Knopf auf einer Geraetekarte angetippt: die Seite baut ihre
+      // eigene Bildverbindung zum Server auf (siehe window.TMSRemote in bridge.js)
+      // — wir reichen nur Host/Port/Token durch, Bilddaten sieht React Native nie.
+      case 'remote:open': {
+        const targetId = payload.id as string;
+        (async () => {
+          let host: string, port: number, name: string, tok: string | null;
+          if (targetId === server.id) {
+            ({ host, port, name } = server);
+            tok = token;
+          } else {
+            const servers = await storageService.getServers().catch(() => []);
+            const target = servers.find((x) => x.id === targetId);
+            if (!target) return;
+            ({ host, port, name } = target);
+            tok = target.token ?? (await getToken(target.id)) ?? null;
+          }
+          if (!tok) {
+            call('toast', `Für „${name}" fehlt die Anmeldung — bitte einmal in der klassischen Ansicht verbinden`);
+            return;
+          }
+          call('setRemoteTarget', { host, port, token: tok });
+        })();
+        break;
+      }
+
       // Die Seite hat nichts mehr zum Zurückgehen. Beenden wird trotzdem nicht
       // einfach durchgewinkt: erst der zweite Druck innerhalb von zwei Sekunden.
       case 'nav:exit':
@@ -1041,7 +1096,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
+  }, [wsService, server, token, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
@@ -1129,6 +1184,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
 /** Sentinel cardId: the mic that belongs to the Manager chat, not a terminal. */
 const MANAGER_MIC = '__manager__';
+
+/** Sentinel cardId: the mic that dictates into the Fernzugriff-Verbindung (der PC), nicht in ein Terminal. */
+const REMOTE_MIC = '__remote__';
 
 /**
  * The server reports a detected prompt as a raw text snippet; the permission

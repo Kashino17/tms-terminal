@@ -2287,6 +2287,11 @@
   // Native die Verbindung um (Terminals des alten Servers weg, die des neuen rein).
   window.__tmsSwitchServer = function (id) { post('server:switch', { id: id }); };
 
+  // Tippt der Nutzer den Fernzugriff-Knopf auf der Geraetekarte an: React
+  // Native holt die Zugangsdaten und reicht sie ueber setRemoteTarget zurueck
+  // (siehe weiter unten) — die Seite baut die Bildverbindung selbst auf.
+  window.__tmsOpenRemote = function (id) { post('remote:open', { id: id }); };
+
   // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
   window.TMSBridge.setServers = function (servers) {
     window.TMS_DATA.servers = servers;
@@ -2793,7 +2798,12 @@
 
     document.addEventListener('pointerdown', function (e) {
       if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
-      if (e.target.closest('#remoteExit')) return;   // Abzeichen bleibt der Rueckweg, nicht Teil der Fernsteuerung
+      if (e.target.closest && e.target.closest('#remoteExit')) return;   // Abzeichen bleibt der Rueckweg, nicht Teil der Fernsteuerung
+      // Wie bei pointermove ans Bildrechteck gebunden: ein Klick im schwarzen
+      // Rand neben dem Bild darf keinen Druck anfangen, sonst landet er an
+      // der zuletzt bekannten Zeigerstelle statt dort, wo der Nutzer hinsieht.
+      var box = stageBox();
+      if (!box || e.clientX < box.x || e.clientX > box.x + box.w || e.clientY < box.y || e.clientY > box.y + box.h) return;
       e.preventDefault();
       var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
       heldButtons[b] = true;
@@ -2802,6 +2812,13 @@
     document.addEventListener('pointerup', function (e) {
       if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
       var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
+      // Bewusst NICHT ans Bildrechteck gebunden: ein Druck, der innerhalb
+      // begonnen hat, muss sein Loslassen auch dann bekommen, wenn der
+      // Zeiger inzwischen ausserhalb ist — sonst bleibt die Maustaste
+      // haengen (in diesem Vorhaben schon dreimal gefunden). heldButtons
+      // haelt fest, was hier tatsaechlich als gedrueckt gilt; ein Loslassen
+      // ohne zugehoerigen Druck (nie im Bild begonnen) wird nicht gesendet.
+      if (!heldButtons[b]) return;
       delete heldButtons[b];
       window.TMSRemote.input({ t: 'b', b: b, d: false });
     });
