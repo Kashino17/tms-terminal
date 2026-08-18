@@ -53,6 +53,42 @@ cd mobile
 - Config stored at `~/.tms-terminal/config.json`
 - Firebase service account at `~/.tms-terminal/firebase-service-account.json`
 
+## Fernzugriff (Remote Desktop)
+Bildschirm des PCs live aufs Handy, mit Trackpad/Tastatur/Vollbild-Bedienung. Spezifikation:
+`docs/superpowers/specs/2026-08-18-fernzugriff-design.md`.
+
+- **Bausteine:** `server/src/remote/` (Sitzungslogik, Aufnahme/Eingabe je Plattform), macOS-Helfer
+  `server/src/remote/helpers/mac/TmsRemoteHelper.swift` (kompiliert nach `server/bin/tms-remote-helper`),
+  Windows-Skript `server/src/remote/helpers/win/input-helper.ps1`, Oberfläche im Mockup
+  `mockups/season2/liquid-deck/index.html` + `mobile/src/season2/web/bridge.js`.
+- **macOS-Helfer bauen** läuft automatisch beim Server-Setup (`server/src/setup.ts` →
+  `buildRemoteHelper()`, ruft `server/src/remote/helpers/mac/build.sh` mit `swiftc`). Schlägt
+  das fehl, läuft der Server normal weiter, nur Fernzugriff bleibt aus. Nachholen:
+  `bash server/src/remote/helpers/mac/build.sh`.
+- **Zwei Mac-Berechtigungen**, beide für die Binärdatei `server/bin/tms-remote-helper` — **nicht**
+  fürs Terminal, das den Server startet: Bildschirmaufnahme (sonst liefert ScreenCaptureKit
+  nichts) und Bedienungshilfen (sonst wirkungslose CGEvents).
+- **Windows setzt ffmpeg ≥ Version 6 voraus** (wegen `ddagrab`) — sonst nichts, die Eingabe läuft
+  über ein PowerShell-Bordmittel-Skript ohne Installation.
+- **Schalter:** `remoteEnabled` in `~/.tms-terminal/config.json`, Vorgabe an.
+
+### Fallstricke
+1. Helferpfade nie relativ zum eigenen Verzeichnis bilden — der Server läuft aus `dist`, wohin
+   `tsc` keine Nicht-TypeScript-Dateien kopiert. Alles läuft über `server/src/remote/paths.ts`.
+   Wer eine neue Helferdatei einführt, prüft ihren Pfad **gegen `dist`**, nicht gegen die Quelle.
+2. Der volle `npm test`-Lauf im Server ist **vorbestehend kaputt** (ein Terminal-Test hängt, ein
+   zweiter schlägt fehl — nichts mit Fernzugriff zu tun). Für Fernzugriff gezielt testen:
+   `node --require ts-node/register --test 'src/remote/**/*.test.ts'` (82 grün).
+
+### Mockup
+- Mockup bearbeiten (`mockups/season2/liquid-deck/index.html`) → `cd mobile && npm run
+  build:season2` → die erzeugte `mobile/src/season2/web/liquidDeckHtml.ts` mit einchecken. Nie
+  von Hand bearbeiten.
+- Der Mockup-Code steckt in einer Kapsel — was `bridge.js` braucht, muss ausdrücklich auf
+  `window` gelegt werden.
+- `cd mobile && npm run test:mockup` prüft die reinen Rechenfunktionen aus dem markierten
+  `TMS-TEST-EXPORT`-Block (27 grün).
+
 ## Key Technical Decisions
 - **No TLS on server** — relies on Tailscale VPN for encryption. Server uses `http.createServer()`.
 - **Protocol:** `http://` and `ws://` (not https/wss) because Tailscale handles encryption
