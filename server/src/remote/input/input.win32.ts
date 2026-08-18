@@ -42,6 +42,14 @@ export function createWin32Input(): InputInjector {
     { stdio: ['pipe', 'ignore', 'pipe'] },
   );
   child.on('exit', () => { child = null; });
+  // Task 18: same fix as input.darwin.ts. A restart (or the process dying out
+  // from under us for any other reason) can leave a write — most likely the
+  // `quit` below in `stop()` — racing the pipe's own teardown. Node throws
+  // synchronously for a stream 'error' event with no listener, which — same
+  // as the bare WebSocket in remote.socket.ts — lands in the process-wide
+  // uncaughtException handler and kills the whole server. Swallow it here;
+  // a write that fails because the process is already gone needs no handling.
+  child.stdin?.on('error', () => {});
 
   const write = (line: string | null) => {
     if (line && child?.stdin?.writable) child.stdin.write(line + '\n');
