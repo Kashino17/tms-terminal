@@ -1,16 +1,16 @@
 import * as readline from 'readline';
 import * as crypto from 'crypto';
 import { execFileSync } from 'node:child_process';
-import * as path from 'node:path';
 import { setPassword, isPasswordSet } from './auth/password.service';
 import { saveServerConfig, config } from './config';
 import { generateSelfSignedCert } from './tls/cert.generator';
 import { logger } from './utils/logger';
+import { macBuildScriptPath } from './remote/paths';
 
 /** Builds the macOS remote helper. Failing here costs remote access, nothing else. */
 function buildRemoteHelper(): void {
   if (process.platform !== 'darwin') return;
-  const script = path.resolve(__dirname, 'remote/helpers/mac/build.sh');
+  const script = macBuildScriptPath();
   try {
     execFileSync('bash', [script], { stdio: 'inherit' });
   } catch {

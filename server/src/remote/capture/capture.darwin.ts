@@ -1,17 +1,17 @@
 import { spawn, ChildProcess } from 'node:child_process';
-import * as path from 'node:path';
 import type { RemoteErrorCode } from '../../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types';
+import { helperBinaryPath } from '../paths';
 
 const KNOWN_CODES: RemoteErrorCode[] = [
   'permission_screen', 'permission_input', 'capture_unavailable',
   'helper_crashed', 'disabled', 'unsupported_platform', 'display_asleep',
 ];
 
-/** `server/bin/tms-remote-helper`, next to the compiled output. */
-export function helperBinaryPath(): string {
-  return path.resolve(__dirname, '../../../bin/tms-remote-helper');
-}
+// Re-exported so input.darwin.ts (and this file's tests) can keep importing
+// helperBinaryPath from here — the actual root-finding lives in paths.ts,
+// there's no second lookup implementation.
+export { helperBinaryPath };
 
 export function buildHelperArgs(opts: CaptureOptions): string[] {
   return [

@@ -1,9 +1,9 @@
 import { spawn, ChildProcess } from 'node:child_process';
-import * as path from 'node:path';
 import type { RemoteInputEvent } from '../../../../shared/protocol';
 import type { InputInjector } from './input.types';
 import { toWinVirtualKey } from '../keymap';
 import { toWindowsAbsolute } from '../geometry';
+import { winInputScriptPath } from '../paths';
 
 /**
  * One remote input event → one helper line.
@@ -35,14 +35,10 @@ export function toWinLine(ev: RemoteInputEvent): string | null {
   }
 }
 
-function helperScriptPath(): string {
-  return path.resolve(__dirname, '../helpers/win/input-helper.ps1');
-}
-
 export function createWin32Input(): InputInjector {
   let child: ChildProcess | null = spawn(
     'powershell.exe',
-    ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', helperScriptPath()],
+    ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', winInputScriptPath()],
     { stdio: ['pipe', 'ignore', 'pipe'] },
   );
   child.on('exit', () => { child = null; });
