@@ -1570,6 +1570,20 @@
   .remote-seg button.on { background: rgba(90,169,255,.22); opacity: 1;
                           box-shadow: inset 0 0 0 1px rgba(90,169,255,.45); }
   .remote-bar { flex: 1; min-height: 0; }
+
+  /* Vollbild fuer angeschlossene Tastatur/Maus: Kopf und Leiste weg, das Bild
+     nimmt die ganze Flaeche ein. Manuell umgeschaltet (Knopf/Abzeichen/
+     Umschalt+Esc) — keine Geraete-Erkennung, die danebenliegen koennte. */
+  [data-screen="remote"].fullscreen { padding: 0; gap: 0; }
+  [data-screen="remote"].fullscreen .remote-head,
+  [data-screen="remote"].fullscreen .remote-seg,
+  [data-screen="remote"].fullscreen .remote-bar { display: none; }
+  [data-screen="remote"].fullscreen .remote-stage { flex: 1; border-radius: 0; }
+  .remote-badge { position: absolute; right: 8px; top: 8px; display: none;
+                  padding: 4px 9px; border-radius: 20px; font-size: 10px;
+                  background: rgba(8,12,18,.72); border: 1px solid rgba(255,255,255,.14);
+                  color: rgba(255,255,255,.75); }
+  [data-screen="remote"].fullscreen .remote-badge { display: block; }
   .remote-pad { position: relative; height: 100%; border-radius: 14px;
                 background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.10);
                 display: flex; flex-direction: column; touch-action: none; }
@@ -2998,6 +3012,7 @@
       + '</div>'
       + '<div class="remote-stage" id="remoteStage"><canvas id="remoteCanvas"></canvas>'
       +   '<div class="remote-veil" id="remoteVeil"><span id="remoteVeilText">Verbinde …</span></div>'
+      +   '<button class="remote-badge" id="remoteExit">⌨ + 🖱 · ⤡</button>'
       + '</div>'
       + '<div class="remote-seg" id="remoteSeg">'
       +   '<button data-page="pad" class="on">Trackpad</button>'
@@ -3016,8 +3031,38 @@
       if (window.TMSRemote) window.TMSRemote.stop();
       show('servers');
     });
+    host.querySelector('#remoteFull').addEventListener('click', function () {
+      window.setRemoteFullscreen(!window.remoteState.fullscreen);
+    });
+    host.querySelector('#remoteExit').addEventListener('click', function () {
+      window.setRemoteFullscreen(false);
+    });
     setRemotePage('pad');
   }
+
+  /**
+   * Manueller Umschalter fuer angeschlossene Tastatur/Maus: keine Geraete-
+   * Erkennung, das war eine ausdrueckliche Entscheidung — eine faelschlich
+   * erkannte Bluetooth-Verbindung, die die Bedienung wegnimmt, waere schlimmer
+   * als ein Knopfdruck.
+   *
+   * Die beiden Loslasswege beruehren sich hier bewusst NICHT gegenseitig:
+   * releaseAllSticky() loest die haftenden BILDSCHIRM-Sondertasten (Aufgabe 13,
+   * nur ueber die Softtastatur erreichbar, die im Vollbild verschwindet — eine
+   * FESTGESTELLTE bliebe sonst unsichtbar am Mac haengen). releaseHardwareInput()
+   * (bridge.js) loest umgekehrt alles, was die ANGESCHLOSSENE Tastatur/Maus noch
+   * haelt. Je eine Richtung pro Umschaltung, damit sich beide Wege nie
+   * ueberschneiden.
+   */
+  window.setRemoteFullscreen = function (on) {
+    on = !!on;
+    if (on) releaseAllSticky();
+    else if (typeof window.releaseHardwareInput === 'function') window.releaseHardwareInput();
+    window.remoteState.fullscreen = on;
+    var host = document.querySelector('[data-screen="remote"]');
+    if (host) host.classList.toggle('fullscreen', on);
+    if (typeof layoutRemoteStage === 'function') layoutRemoteStage();
+  };
 
   function setRemotePage(page) {
     // Wechsel WEG von der Tastatur (z.B. auf "Trackpad"): eine haengengebliebene
@@ -3472,6 +3517,22 @@
   }
 
   /**
+   * Punkt auf dem Handybildschirm → Punkt im gespiegelten Bild (0..1).
+   *
+   * Im Vollbild-Modus wird die Maus ABSOLUT abgebildet: der PC-Zeiger steht
+   * dort, wo der Android-Zeiger ueber dem Bild steht. Der Browser-Weg fuer
+   * relative Bewegung (Pointer Lock) ist im Android-WebView unzuverlaessig, und
+   * mit sichtbarem Zeiger ist absolut ohnehin das Natuerlichere.
+   * Ausserhalb des Bildes (schwarzer Rand) gibt es nichts zu steuern → null.
+   */
+  function toStageNormalized(clientX, clientY, box) {
+    var nx = (clientX - box.x) / box.w;
+    var ny = (clientY - box.y) / box.h;
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null;
+    return { x: nx, y: ny };
+  }
+
+  /**
    * Entscheidet beim Loslassen des letzten Fingers, ob und welcher Klick daraus
    * wird. Zaehlt bewusst NICHT den aktuellen Fingerstand, sondern die hoechste
    * Fingerzahl, die waehrend der ganzen Geste je gleichzeitig auflag — sonst
@@ -3501,6 +3562,7 @@
     window.pointerGain = pointerGain;
     window.nextSticky = nextSticky;
     window.fitRect = fitRect;
+    window.toStageNormalized = toStageNormalized;
     window.classifyPadTap = classifyPadTap;
     window.remoteKeyRows = remoteKeyRows;
   }
