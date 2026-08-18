@@ -3574,6 +3574,22 @@
     return null;                                      // drei+ Finger: keine zugesagte Geste
   }
 
+  /** Aufziehen bis 3× — darueber zeigt der Strom keine echten Bildpunkte mehr. */
+  function clampZoom(z) {
+    if (!isFinite(z)) return 1;
+    return z < 1 ? 1 : z > 3 ? 3 : z;
+  }
+
+  /**
+   * Haelt das vergroesserte Bild im Rahmen: bei Zoom z ist es z-mal so breit wie
+   * die Flaeche, also gibt es je Seite (z-1)/2 der Flaechenbreite an Spielraum.
+   */
+  function clampPan(offset, zoom, size) {
+    var slack = ((zoom - 1) * size) / 2;
+    if (slack <= 0) return 0;
+    return offset > slack ? slack : offset < -slack ? -slack : offset;
+  }
+
   // Der gesamte Mockup-Code steckt in einer Kapsel — ohne diese Zeilen sieht
   // bridge.js keine einzige dieser Funktionen, und der Fernzugriff bricht mit
   // "fitRect is not defined" ab, waehrend die Tests weiter gruen melden (sie
@@ -3585,6 +3601,8 @@
     window.toStageNormalized = toStageNormalized;
     window.classifyPadTap = classifyPadTap;
     window.remoteKeyRows = remoteKeyRows;
+    window.clampZoom = clampZoom;
+    window.clampPan = clampPan;
   }
   // ── /TMS-TEST-EXPORT ──
 
