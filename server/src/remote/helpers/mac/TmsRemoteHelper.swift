@@ -263,10 +263,6 @@ private func flags(_ bits: Int) -> CGEventFlags {
   return f
 }
 
-private func currentPoint() -> CGPoint {
-  CGEvent(source: nil)?.location ?? .zero
-}
-
 private func warp(to p: CGPoint) {
   CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
     .post(tap: .cghidEventTap)
@@ -296,6 +292,18 @@ func runInputLoop() {
   emit("{\"ready\":{\"input\":true}}")
 
   let screen = CGDisplayBounds(CGMainDisplayID())
+  // Track the pointer position ourselves instead of reading it back from the
+  // system after every warp. CGEvent(source: nil)?.location only reflects a
+  // just-posted move once the WindowServer has actually processed it, which
+  // lags a rapid burst of events by real wall-clock time. Re-querying it as
+  // the base for the *next* relative move therefore reads a stale position,
+  // so most of a fast swipe's distance silently disappears — measured
+  // directly: 10 relative moves of (12,6) posted back-to-back moved the
+  // pointer (24,12) instead of (120,60) when read back each time; tracking
+  // the position locally instead delivered the full (120,60) every time.
+  // (A local mouse nudging the cursor mid-session could desync this from
+  // reality, but that is a far smaller risk than silently losing input.)
+  var current = CGEvent(source: nil)?.location ?? screen.origin
 
   while let line = readLine(strippingNewline: true) {
     let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
@@ -305,12 +313,13 @@ func runInputLoop() {
 
     switch cmd {
     case "rel":
-      let p = currentPoint()
-      warp(to: CGPoint(x: min(max(p.x + (nums.first ?? 0), screen.minX), screen.maxX - 1),
-                       y: min(max(p.y + (nums.count > 1 ? nums[1] : 0), screen.minY), screen.maxY - 1)))
+      current = CGPoint(x: min(max(current.x + (nums.first ?? 0), screen.minX), screen.maxX - 1),
+                        y: min(max(current.y + (nums.count > 1 ? nums[1] : 0), screen.minY), screen.maxY - 1))
+      warp(to: current)
     case "abs":
-      warp(to: CGPoint(x: screen.minX + (nums.first ?? 0) * screen.width,
-                       y: screen.minY + (nums.count > 1 ? nums[1] : 0) * screen.height))
+      current = CGPoint(x: screen.minX + (nums.first ?? 0) * screen.width,
+                        y: screen.minY + (nums.count > 1 ? nums[1] : 0) * screen.height)
+      warp(to: current)
     case "btn":
       let which = rest.first ?? "l"
       let down = rest.hasSuffix("1")
@@ -320,7 +329,7 @@ func runInputLoop() {
         : which == "m" ? (down ? .otherMouseDown : .otherMouseUp)
         : (down ? .leftMouseDown : .leftMouseUp)
       CGEvent(mouseEventSource: nil, mouseType: type,
-              mouseCursorPosition: currentPoint(), mouseButton: button)?
+              mouseCursorPosition: current, mouseButton: button)?
         .post(tap: .cghidEventTap)
     case "scroll":
       CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,

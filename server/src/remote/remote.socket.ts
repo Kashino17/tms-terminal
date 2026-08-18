@@ -125,7 +125,8 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
       });
       const info = await c.start(opts);
       capture = c;
-      input = deps.makeInput();
+      const injector = deps.makeInput();
+      input = injector;
 
       splitter = createAnnexBSplitter();
       governor = createBitrateGovernor(opts.bitrateKbps);
@@ -166,6 +167,19 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
         framesSent = 0; bytesSent = 0; dropped = 0;
       }, 1000);
       statusTimer.unref();
+
+      // Wait for the input backend to actually confirm it is reading before
+      // telling the client the session is live. Without this, the app's
+      // first burst of pointer/keyboard events can arrive while the platform
+      // helper is still starting up (process launch, permission check,
+      // before its own read loop runs) and vanish silently — measured on
+      // macOS as roughly the first 100ms of motion getting lost. `ready` is
+      // optional: not every backend has this startup race (see
+      // input.win32.ts). This await must stay inside the surrounding try —
+      // a rejected `ready` has to reach the client as `remote:error`, not
+      // hang the connection silently (already a Critical once in this file,
+      // for a synchronously-throwing capture factory).
+      await injector.ready;
 
       reply({
         type: 'remote:started',

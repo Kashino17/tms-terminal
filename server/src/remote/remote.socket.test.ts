@@ -33,10 +33,13 @@ function fakeCapture() {
   return c as typeof c & ScreenCapture;
 }
 
-function fakeInput() {
+/** `ready` mirrors InputInjector's optional startup-readiness promise — left
+ *  undefined by default, matching backends without a startup race. */
+function fakeInput(ready?: Promise<void>) {
   const calls: string[] = [];
   const i: any = {
     calls,
+    ready,
     moveRelative: (dx: number, dy: number) => calls.push(`rel ${dx} ${dy}`),
     moveAbsolute: (x: number, y: number) => calls.push(`abs ${x} ${y}`),
     button: (w: string, d: boolean) => calls.push(`btn ${w} ${d}`),
@@ -80,6 +83,52 @@ test('remote:start meldet die Bildschirmmasse zurueck', async () => {
   assert.deepEqual(started[0].payload,
     { width: 3024, height: 1964, scale: 2, fps: 30, codec: 'avc1' });
   assert.deepEqual(capture.started, { maxWidth: 1600, fps: 30, bitrateKbps: 1500 });
+});
+
+test('remote:started wartet, bis der Eingabe-Helfer seine Bereitschaft meldet', async () => {
+  const ws = new FakeWs();
+  const capture = fakeCapture();
+  let resolveReady: () => void = () => {};
+  const readyPromise = new Promise<void>((r) => { resolveReady = r; });
+  const input = fakeInput(readyPromise);
+  handleRemoteConnection(ws as any, {
+    makeCapture: () => capture,
+    makeInput: () => input,
+    isEnabled: () => true,
+  });
+
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(ws.typed('remote:started').length, 0,
+    'noch keine stumme Zusicherung, solange der Helfer nicht bereit ist');
+
+  resolveReady();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(ws.typed('remote:started').length, 1, 'jetzt, wo der Helfer bereit ist');
+});
+
+test('scheitert die Eingabe-Bereitschaft, bekommt der Client remote:error statt eine haengende Verbindung', async () => {
+  const ws = new FakeWs();
+  const capture = fakeCapture();
+  // Ein bereits abgelehntes Versprechen ist hier absichtlich: es soll erst spaeter
+  // (beim await in start()) behandelt werden — der Vorab-catch unterdrueckt nur
+  // die "unhandledRejection"-Meldung von Node, das Ablehnungsergebnis bleibt gleich.
+  const readyRejected = Promise.reject(new Error('Bedienungshilfen sind nicht freigegeben'));
+  readyRejected.catch(() => {});
+  const input = fakeInput(readyRejected);
+  handleRemoteConnection(ws as any, {
+    makeCapture: () => capture,
+    makeInput: () => input,
+    isEnabled: () => true,
+  });
+
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(ws.typed('remote:started').length, 0, 'keine stumme Verbindung');
+  const err = ws.typed('remote:error')[0];
+  assert.equal(err.payload.code, 'capture_unavailable');
+  assert.match(err.payload.message, /Bedienungshilfen/);
 });
 
 test('ist der Fernzugriff abgeschaltet, kommt ein Fehler statt einer Aufnahme', async () => {

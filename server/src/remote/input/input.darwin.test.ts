@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toHelperLine } from './input.darwin';
+import { toHelperLine, parseInputReadyLine } from './input.darwin';
 
 const mods = { s: false, c: false, a: false, m: false };
 
@@ -53,4 +53,27 @@ test('Rueckschraegstrich-lastiger Text bekommt ein eindeutiges Drahtformat', () 
   assert.equal(toHelperLine({ t: 'x', s: '\\\\Server\\Freigabe' }), 'text \\\\\\\\Server\\\\Freigabe');
   assert.equal(toHelperLine({ t: 'x', s: 'endet auf Backslash\\' }), 'text endet auf Backslash\\\\',
     'ein Text, der auf einen einzelnen Rueckschraegstrich endet, bleibt eindeutig');
+});
+
+// Die --input-Bereitschaftszeile hat eine andere Form als die Aufnahme-Bereitschaft
+// (`{"ready":{"input":true}}` statt `{"ready":{"width":...}}`), darum die eigene,
+// schmalere Zerlegung statt capture.darwin.ts's parseHelperLine wiederzuverwenden.
+test('parseInputReadyLine erkennt Bereitschaft und Fehler', () => {
+  assert.deepEqual(parseInputReadyLine('{"ready":{"input":true}}'), { kind: 'ready' });
+  assert.deepEqual(
+    parseInputReadyLine('{"error":{"code":"permission_input","message":"Bedienungshilfen sind nicht freigegeben"}}'),
+    { kind: 'error', message: 'Bedienungshilfen sind nicht freigegeben' },
+  );
+  assert.deepEqual(
+    parseInputReadyLine('{"error":{"code":"permission_input"}}'),
+    { kind: 'error', message: 'permission_input' },
+    'ohne eigene Nachricht faellt es auf den Fehlercode zurueck');
+});
+
+test('parseInputReadyLine verschluckt sich nicht an Zwischenausgaben', () => {
+  assert.equal(parseInputReadyLine('kein json'), null);
+  assert.equal(parseInputReadyLine(''), null);
+  assert.equal(parseInputReadyLine('{"ready":{"width":100}}'), null,
+    'die Aufnahme-Bereitschaft ist nicht die Eingabe-Bereitschaft');
+  assert.equal(parseInputReadyLine('{}'), null);
 });
