@@ -12,7 +12,7 @@ export interface ServerConfig {
   port: number;
   certFingerprint?: string;
   jwtExpiry?: string;
-  /** Fernzugriff (Bildschirm spiegeln und steuern). Vorgabe: an. */
+  /** Remote access (mirror and control the screen). Default: on. */
   remoteEnabled?: boolean;
 }
 

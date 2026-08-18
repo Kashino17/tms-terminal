@@ -26,6 +26,7 @@ export interface RemoteWs {
   bufferedAmount: number;
   on(event: 'message', cb: (raw: Buffer, isBinary: boolean) => void): void;
   on(event: 'close', cb: () => void): void;
+  on(event: 'error', cb: (err: Error) => void): void;
 }
 
 export interface RemoteDeps {
@@ -58,11 +59,18 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
       fail('disabled', 'Fernzugriff ist auf diesem Server abgeschaltet.');
       return;
     }
+    // A stray second `remote:start` replaces the running session — stop the
+    // previous capture first so it never keeps running orphaned.
     await stop('neustart', false);
 
-    const c = deps.makeCapture();
-    c.onError((code, message) => { fail(code, message); void stop('fehler', false); });
+    // Everything that can throw — including building the capture and wiring its
+    // error callback — stays inside the try. The placeholder factory (and any
+    // real platform backend that fails to initialize) throws synchronously here;
+    // without the try around it the client got neither `remote:started` nor
+    // `remote:error` and the connection just hung silently.
     try {
+      const c = deps.makeCapture();
+      c.onError((code, message) => { fail(code, message); enqueue(() => stop('fehler', false)); });
       const info = await c.start(opts);
       capture = c;
       input = deps.makeInput();
@@ -76,18 +84,26 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
     }
   }
 
+  // `remote:start` / `remote:stop` mutate session state — serialize them so two
+  // frames landing in the same TCP read (or a `stop` immediately followed by a
+  // `start` on a quality-tier switch) never run concurrently and race on
+  // `capture`/`input`. `fn` doubles as both the fulfilled and rejected handler so
+  // the chain keeps moving even if a previous task somehow rejected.
+  let queue: Promise<void> = Promise.resolve();
+  const enqueue = (fn: () => Promise<void>) => { queue = queue.then(fn, fn); };
+
   ws.on('message', (raw, isBinary) => {
-    if (isBinary) return;                       // die App sendet nur Text hoch
+    if (isBinary) return;                       // the app only ever sends text frames
     let msg: RemoteClientMessage;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (!msg || typeof (msg as { type?: unknown }).type !== 'string') return;
 
     switch (msg.type) {
       case 'remote:start':
-        void start(msg.payload);
+        enqueue(() => start(msg.payload));
         break;
       case 'remote:stop':
-        void stop('vom Nutzer beendet');
+        enqueue(() => stop('vom Nutzer beendet'));
         break;
       case 'remote:quality': {
         const preset = QUALITY_PRESETS[msg.payload?.preset];
@@ -98,9 +114,19 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
         capture?.requestKeyframe();
         break;
       default:
-        break;                                   // unbekannte Typen still verwerfen
+        break;                                   // silently discard unknown message types
     }
   });
 
-  ws.on('close', () => { void stop('Verbindung getrennt', false); });
+  ws.on('close', () => { enqueue(() => stop('Verbindung getrennt', false)); });
+
+  // A dropped/reset connection fires 'error' on this EventEmitter. Node throws
+  // synchronously for an 'error' event with no listener, which lands in the
+  // process-wide uncaughtException handler and kills the whole server (see
+  // server/src/index.ts) — taking every other terminal session down with it.
+  // Treat it exactly like a close: log it, tear the session down, never crash.
+  ws.on('error', (err) => {
+    logger.error(`Remote: socket error — ${err.message}`);
+    enqueue(() => stop('Socket-Fehler', false));
+  });
 }

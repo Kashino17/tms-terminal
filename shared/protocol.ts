@@ -458,9 +458,9 @@ export type ServerMessage =
   | BrowserBridgeOpenMessage
   | BrowserBridgeCallbackResultMessage;
 
-// ── Fernzugriff (eigene WebSocket-Verbindung auf /remote) ────────────
-// Bewusst nicht Teil von ClientMessage/ServerMessage: Bild und Eingaben laufen
-// über eine zweite Verbindung, die die Seite im WebView selbst öffnet.
+// ── Remote access (its own WebSocket connection on /remote) ──────────
+// Deliberately not part of ClientMessage/ServerMessage: video and input travel
+// over a second connection that the page opens itself inside the WebView.
 
 export type RemoteErrorCode =
   | 'permission_screen'
@@ -469,9 +469,9 @@ export type RemoteErrorCode =
   | 'helper_crashed'
   | 'disabled'
   | 'unsupported_platform'
-  /** Der Bildschirm schlief — ScreenCaptureKit meldet dann gar keinen Bildschirm.
-   *  Eigener Code, weil das sonst wie ein Berechtigungsproblem aussieht und der
-   *  Nutzer in den Systemeinstellungen nach einem Haken sucht, der längst gesetzt ist. */
+  /** The display went to sleep — ScreenCaptureKit then reports no display at
+   *  all. Its own code because that otherwise looks like a permission problem,
+   *  sending the user hunting in System Settings for a checkbox that's already set. */
   | 'display_asleep';
 
 export type RemoteQualityPreset = 'sparsam' | 'auto' | 'scharf';
@@ -510,7 +510,7 @@ export interface RemoteStatusMessage {
 export type RemoteServerMessage =
   | RemoteStartedMessage | RemoteStoppedMessage | RemoteErrorMessage | RemoteStatusMessage;
 
-/** Eingabe-Ereignisse: kurze Schluessel, weil bis zu 60 pro Sekunde anfallen. */
+/** Input events: short keys, since up to 60 of these can arrive per second. */
 export type RemoteInputEvent =
   | { t: 'd'; dx: number; dy: number }
   | { t: 'm'; x: number; y: number }

@@ -152,3 +152,53 @@ test('kaputte Nachrichten legen die Verbindung nicht lahm', async () => {
 
   assert.equal(ws.typed('remote:started').length, 1, 'danach geht es normal weiter');
 });
+
+test('ein Socket-Fehler bringt den Prozess nicht zum Absturz und raeumt die Sitzung ab', async () => {
+  const { ws, capture, input } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+
+  // EventEmitter throws synchronously for an 'error' event with no listener —
+  // if handleRemoteConnection did not register one, this line itself would throw.
+  ws.emit('error', new Error('ECONNRESET'));
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(capture.stopped, true, 'kein verwaister Aufnahmeprozess nach Socket-Fehler');
+  assert.ok(input.calls.includes('stop'));
+});
+
+test('wirft die Aufnahme-Fabrik synchron, bekommt der Client capture_unavailable statt Schweigen', async () => {
+  const ws = new FakeWs();
+  handleRemoteConnection(ws as any, {
+    makeCapture: () => { throw new Error('kein Bildschirmzugriff'); },
+    makeInput: fakeInput,
+    isEnabled: () => true,
+  });
+
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(ws.typed('remote:started').length, 0, 'keine stumme Verbindung');
+  const err = ws.typed('remote:error')[0];
+  assert.equal(err.payload.code, 'capture_unavailable');
+});
+
+test('zwei remote:start unmittelbar nacheinander hinterlassen keine unbeendete Aufnahme', async () => {
+  const ws = new FakeWs();
+  const captures: ReturnType<typeof fakeCapture>[] = [];
+  const makeCapture = () => {
+    const c = fakeCapture();
+    captures.push(c);
+    return c;
+  };
+  handleRemoteConnection(ws as any, { makeCapture, makeInput: fakeInput, isEnabled: () => true });
+
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.scharf });
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(captures.length, 2, 'zwei Aufnahme-Instanzen wurden angelegt');
+  assert.equal(captures[0].stopped, true, 'die erste Aufnahme wurde beendet, nicht verwaist');
+  assert.equal(captures[1].stopped, false, 'die zweite (aktuelle) Aufnahme laeuft noch');
+  assert.equal(ws.typed('remote:started').length, 2, 'genau eine laufende Sitzung am Ende — beide Starts wurden bestaetigt');
+});
