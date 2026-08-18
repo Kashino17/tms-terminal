@@ -3,6 +3,7 @@ import type {
   RemoteInputEvent,
 } from '../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions } from './capture/capture.types';
+import { RemoteCaptureError } from './capture/capture.types';
 import type { InputInjector } from './input/input.types';
 import { createAnnexBSplitter, type AccessUnit } from './annexb';
 import { createBitrateGovernor } from './bitrate';
@@ -26,11 +27,15 @@ export function isRemotePath(url: string | undefined): boolean {
 export interface RemoteWs {
   send(data: string | Buffer, opts?: { compress?: boolean }): void;
   close(): void;
+  /** Used to measure round-trip time for the header's "fps · ms" readout —
+   *  the data payload is echoed back verbatim in the matching 'pong'. */
+  ping(data?: Buffer): void;
   readyState: number;
   bufferedAmount: number;
   on(event: 'message', cb: (raw: Buffer, isBinary: boolean) => void): void;
   on(event: 'close', cb: () => void): void;
   on(event: 'error', cb: (err: Error) => void): void;
+  on(event: 'pong', cb: (data: Buffer) => void): void;
 }
 
 export interface RemoteDeps {
@@ -64,7 +69,18 @@ function applyInput(input: InputInjector, ev: RemoteInputEvent): void {
   }
 }
 
-export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
+/**
+ * Round-trip time from a ping's embedded send timestamp to now. Pulled out
+ * as a pure function so the arithmetic is unit-testable without faking
+ * WebSocket ping/pong timing or real 1-second intervals.
+ */
+export function computeRttMs(pingPayload: Buffer, now: number): number | null {
+  const sentAt = Number(pingPayload.toString());
+  if (!Number.isFinite(sentAt)) return null;
+  return Math.max(0, now - sentAt);
+}
+
+export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unknown'): void {
   let capture: ScreenCapture | null = null;
   let input: InputInjector | null = null;
   let splitter: ReturnType<typeof createAnnexBSplitter> | null = null;
@@ -75,6 +91,8 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
   let framesSent = 0;
   let bytesSent = 0;
   let dropped = 0;
+  let rttMs = 0;
+  let pingTimer: NodeJS.Timeout | null = null;
   // Helper-restart bookkeeping (Task 18): a crashed helper and a display whose
   // resolution changed underneath the running capture both die the same way —
   // `onError('helper_crashed', ...)` — and get the same answer, a fresh
@@ -90,11 +108,33 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
     type: 'remote:error', payload: { code, message },
   });
 
+  // The control connection can measure its own latency — no need to leave
+  // the header's "· ms" reading permanently at 0. Echoing a send timestamp
+  // in the ping payload (rather than relying on ordering) means a stray pong
+  // from the server-wide 15s heartbeat in ws.server.ts can't be mistaken for
+  // one of these.
+  ws.on('pong', (data: Buffer) => {
+    const r = computeRttMs(data, Date.now());
+    if (r !== null) rttMs = r;
+  });
+
+  // Reject up front instead of accepting the connection and only finding out
+  // once the client bothers to send `remote:start` — the socket would
+  // otherwise sit open, authenticated, doing nothing useful while `disabled`
+  // stays unsaid.
+  if (!deps.isEnabled()) {
+    fail('disabled', 'Fernzugriff ist auf diesem Server abgeschaltet.');
+    ws.close();
+    return;
+  }
+
   async function stop(reason: string, tell = true) {
     const c = capture, i = input;
     capture = null; input = null;
     if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
     if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+    rttMs = 0;
     // A pending restart belongs to the capture being torn down here — without
     // this, a user-issued stop (or a fresh explicit start) that lands while a
     // crash-recovery backoff is still ticking would leave that timer alive,
@@ -164,6 +204,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
               if (capture !== c) return;
               await stop('neustart', false);
               restartTimer = setTimeout(() => { enqueue(() => start(opts2, true)); }, delay);
+              restartTimer.unref();
             });
             return;
           }
@@ -213,13 +254,24 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
           payload: {
             fps: framesSent,
             kbps: Math.round((bytesSent * 8) / 1000),
-            rttMs: 0,
+            rttMs,
             dropped,
           },
         });
         framesSent = 0; bytesSent = 0; dropped = 0;
       }, 1000);
       statusTimer.unref();
+
+      // Ping right away (not just on the first 1s tick) so the header's
+      // latency reading isn't stuck at 0 for the first second of a session,
+      // then once a second after — same cadence as remote:status. The send
+      // timestamp travels in the payload itself (see computeRttMs) so a
+      // stray pong from the server-wide heartbeat can't be misread as one
+      // of these.
+      const sendPing = () => { if (ws.readyState === 1) ws.ping(Buffer.from(String(Date.now()))); };
+      sendPing();
+      pingTimer = setInterval(sendPing, 1000);
+      pingTimer.unref();
 
       // Wait for the input backend to actually confirm it is reading before
       // telling the client the session is live. Without this, the app's
@@ -238,9 +290,18 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
         type: 'remote:started',
         payload: { ...info, fps: opts.fps, codec: 'avc1' },
       });
-      logger.info(`Remote: Sitzung gestartet (${info.width}x${info.height} @${opts.fps})`);
+      // Section 9 of the spec requires logging time + source IP for every
+      // session start — `logger.info` timestamps its own lines, `ip` comes
+      // from the HTTP upgrade in ws.server.ts.
+      logger.info(`Remote: Sitzung gestartet von ${ip} (${info.width}x${info.height} @${opts.fps})`);
     } catch (e) {
-      fail('capture_unavailable', e instanceof Error ? e.message : String(e));
+      // A RemoteCaptureError carries the code the helper actually reported
+      // (permission_screen, permission_input, display_asleep, ...) through
+      // to the client. Anything else — a timeout, an unexpected exit — has
+      // no known code and falls back to the generic capture_unavailable,
+      // same as before.
+      const code = e instanceof RemoteCaptureError ? e.code : 'capture_unavailable';
+      fail(code, e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -275,11 +336,6 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
       case 'remote:stop':
         enqueue(() => stop('vom Nutzer beendet'));
         break;
-      case 'remote:quality': {
-        const preset = QUALITY_PRESETS[clientMsg.payload?.preset];
-        if (preset && capture) capture.setBitrate(preset.bitrateKbps);
-        break;
-      }
       case 'remote:keyframe':
         capture?.requestKeyframe();
         break;

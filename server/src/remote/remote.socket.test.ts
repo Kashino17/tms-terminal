@@ -1,16 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { isRemotePath, handleRemoteConnection, QUALITY_PRESETS, packAccessUnit } from './remote.socket';
+import {
+  isRemotePath, handleRemoteConnection, QUALITY_PRESETS, packAccessUnit, computeRttMs,
+} from './remote.socket';
+import { logger } from '../utils/logger';
+import { RemoteCaptureError } from './capture/capture.types';
 import type { ScreenCapture, CaptureOptions } from './capture/capture.types';
 import type { InputInjector } from './input/input.types';
 
 /** Minimaler Ersatz fuer den WebSocket: merkt sich, was gesendet wurde. */
 class FakeWs extends EventEmitter {
   sent: any[] = [];
+  pings: Buffer[] = [];
   bufferedAmount = 0;
   readyState = 1;
   send(data: any) { this.sent.push(typeof data === 'string' ? JSON.parse(data) : data); }
+  ping(data?: Buffer) { this.pings.push(data ?? Buffer.alloc(0)); }
   close() { this.readyState = 3; this.emit('close'); }
   typed(type: string) { return this.sent.filter((m) => m && m.type === type); }
 }
@@ -141,15 +147,6 @@ test('ist der Fernzugriff abgeschaltet, kommt ein Fehler statt einer Aufnahme', 
   assert.equal(capture.started, null, 'die Aufnahme darf gar nicht erst anlaufen');
 });
 
-test('remote:quality setzt die Stufe und die Bitrate', async () => {
-  const { ws, capture } = wire();
-  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
-  await new Promise((r) => setImmediate(r));
-  send(ws, { type: 'remote:quality', payload: { preset: 'scharf' } });
-
-  assert.deepEqual(capture.bitrates.at(-1), QUALITY_PRESETS.scharf.bitrateKbps);
-});
-
 test('remote:keyframe fordert ein Vollbild an', async () => {
   const { ws, capture } = wire();
   send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
@@ -214,6 +211,43 @@ test('ein Socket-Fehler bringt den Prozess nicht zum Absturz und raeumt die Sitz
 
   assert.equal(capture.stopped, true, 'kein verwaister Aufnahmeprozess nach Socket-Fehler');
   assert.ok(input.calls.includes('stop'));
+});
+
+test('C1: ein RemoteCaptureError aus der Aufnahme traegt seinen Code bis zum Client durch, statt zu capture_unavailable zu verflachen', async () => {
+  const ws = new FakeWs();
+  handleRemoteConnection(ws as any, {
+    makeCapture: () => ({
+      async start() { throw new RemoteCaptureError('permission_screen', 'Bildschirmaufnahme ist nicht freigegeben'); },
+      onData() {}, onError() {}, requestKeyframe() {}, setBitrate() {}, async stop() {},
+    }) as unknown as ScreenCapture,
+    makeInput: fakeInput,
+    isEnabled: () => true,
+  });
+
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+
+  const err = ws.typed('remote:error')[0];
+  assert.equal(err.payload.code, 'permission_screen',
+    'ohne den mitgetragenen Code haette der Client hier faelschlich "Auf dem PC fehlt ffmpeg" gesehen');
+  assert.match(err.payload.message, /Bildschirmaufnahme/);
+});
+
+test('C1: ein Fehler OHNE bekannten Code landet weiterhin sinnvoll als capture_unavailable', async () => {
+  const ws = new FakeWs();
+  handleRemoteConnection(ws as any, {
+    makeCapture: () => ({
+      async start() { throw new Error('Helfer antwortet nicht (Zeitlimit ueberschritten)'); },
+      onData() {}, onError() {}, requestKeyframe() {}, setBitrate() {}, async stop() {},
+    }) as unknown as ScreenCapture,
+    makeInput: fakeInput,
+    isEnabled: () => true,
+  });
+
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(ws.typed('remote:error')[0].payload.code, 'capture_unavailable');
 });
 
 test('wirft die Aufnahme-Fabrik synchron, bekommt der Client capture_unavailable statt Schweigen', async () => {
@@ -352,4 +386,65 @@ test('Eingaben ohne laufende Sitzung werden verworfen', () => {
   const { ws, input } = wire();
   send(ws, { t: 'd', dx: 10, dy: 10 });
   assert.deepEqual(input.calls, [], 'ohne Aufnahme gibt es nichts zu steuern');
+});
+
+test('ist der Fernzugriff serverseitig abgeschaltet, weist die Verbindung sofort ab', () => {
+  const { ws, capture } = wire({ enabled: false });
+  assert.equal(ws.typed('remote:error')[0]?.payload.code, 'disabled',
+    'kein Warten auf ein remote:start noetig');
+  assert.equal(ws.readyState, 3, 'die Verbindung wird geschlossen, nicht nur beantwortet');
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  assert.equal(capture.started, null, 'auch ein nachtraeglicher remote:start aendert daran nichts');
+});
+
+test('computeRttMs liest den Sende-Zeitstempel aus der Ping-Nutzlast', () => {
+  assert.equal(computeRttMs(Buffer.from('1000'), 1045), 45);
+  assert.equal(computeRttMs(Buffer.from('kein-zeitstempel'), 1045), null,
+    'Unfug wird nicht als Umlaufzeit gemeldet');
+  assert.equal(computeRttMs(Buffer.from('2000'), 1990), 0,
+    'negative Werte (Uhrensprung) werden auf 0 gekappt, nicht negativ gemeldet');
+});
+
+test('remote:status meldet eine echte Umlaufzeit statt einer festen Null', async (t) => {
+  // 'Date' mitgefaked, sonst laeuft die echte Wanduhr waehrend tick() nicht
+  // mit — computeRttMs wuerde dann trotz tick() praktisch 0ms sehen.
+  // 'setImmediate' bleibt real: der Mikrotask-Flush unten haengt daran.
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'] });
+
+  const { ws } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(ws.pings.length, 1, 'ein Ping direkt beim Start, nicht erst nach einer Sekunde');
+  const sentAt = Number(ws.pings[0].toString());
+  assert.ok(Number.isFinite(sentAt), 'der Sende-Zeitstempel steckt in der Ping-Nutzlast');
+
+  t.mock.timers.tick(37);                             // "Netzlaufzeit" bis die Antwort eintrifft
+  ws.emit('pong', Buffer.from(String(sentAt)));
+
+  ws.sent.length = 0;
+  t.mock.timers.tick(1000);                            // der naechste remote:status-Takt
+
+  const status = ws.typed('remote:status')[0];
+  assert.ok(status, 'remote:status ist angekommen');
+  assert.equal(status.payload.rttMs, 37, 'die gemessene Umlaufzeit steckt jetzt im Status, nicht 0');
+});
+
+test('remote:started wird mit der Quell-IP protokolliert', async (t) => {
+  const calls: string[] = [];
+  t.mock.method(logger, 'info', (msg: string) => { calls.push(msg); });
+
+  const ws = new FakeWs();
+  const capture = fakeCapture();
+  handleRemoteConnection(ws as any, {
+    makeCapture: () => capture,
+    makeInput: fakeInput,
+    isEnabled: () => true,
+  }, '203.0.113.7');
+
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+
+  assert.ok(calls.some((m) => m.includes('203.0.113.7')),
+    'Abschnitt 9 der Spezifikation verlangt Zeit und Quell-IP im Protokoll');
 });

@@ -41,11 +41,14 @@ export function createWebSocketServer(server: http.Server): WebSocketServer {
       wss.emit('connection', ws, req); // required for noServer mode — registers pong handler
       const ip = req.socket.remoteAddress || 'unknown';
       if (isRemotePath(req.url)) {
+        // Section 9 of the remote-access spec requires logging time + source
+        // IP for every session start — `ip` was already computed two lines
+        // up for the terminal path below, just never threaded through here.
         handleRemoteConnection(ws, {
           makeCapture: createScreenCapture,
           makeInput: createInputInjector,
           isEnabled: isRemoteEnabled,
-        });
+        }, ip);
         return;
       }
       handleConnection(ws, ip);

@@ -481,14 +481,17 @@ export interface RemoteStartMessage {
   payload: { maxWidth: number; fps: number; bitrateKbps: number };
 }
 export interface RemoteStopMessage { type: 'remote:stop' }
-export interface RemoteQualityMessage {
-  type: 'remote:quality';
-  payload: { preset: RemoteQualityPreset };
-}
 export interface RemoteKeyframeMessage { type: 'remote:keyframe' }
 
+// There is deliberately no `remote:quality` client message: the app switches
+// quality tiers by sending remote:stop followed by remote:start with the new
+// tier's options (ffmpeg on Windows can't change bitrate mid-stream, so a
+// restart is required either way — see bridge.js's TMSRemote.setQuality).
+// A dedicated message type and server-side handler for this existed early on
+// but that code path was never reachable from the app; removed rather than
+// left as dead code nobody could exercise.
 export type RemoteClientMessage =
-  | RemoteStartMessage | RemoteStopMessage | RemoteQualityMessage | RemoteKeyframeMessage;
+  | RemoteStartMessage | RemoteStopMessage | RemoteKeyframeMessage;
 
 export interface RemoteStartedMessage {
   type: 'remote:started';
@@ -515,6 +518,14 @@ export type RemoteInputEvent =
   | { t: 'd'; dx: number; dy: number }
   | { t: 'm'; x: number; y: number }
   | { t: 'b'; b: 'l' | 'r' | 'm'; d: boolean }
+  // Scroll unit (I9): pixels of the raw touch-gesture delta, unscaled — the
+  // same numbers the pointer-drag `d` event uses. macOS feeds this straight
+  // into CGEvent's scroll wheel in `.pixel` units (a 1:1 match). Windows has
+  // no literal pixel unit for wheel input, but its own Precision Touchpad
+  // driver already sends small, sub-WHEEL_DELTA(120) mouseData values for
+  // smooth scrolling — input-helper.ps1 passes this value straight through
+  // as mouseData, the same idiom, rather than multiplying by 120 (which
+  // treated every wire pixel as a full notch and scrolled ~120x too far).
   | { t: 's'; dx: number; dy: number }
   | { t: 'k'; c: string; d: boolean; mods: { s: boolean; c: boolean; a: boolean; m: boolean } }
   | { t: 'x'; s: string };
