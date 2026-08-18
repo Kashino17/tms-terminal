@@ -755,6 +755,17 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       return;
     }
 
+    // Der Fernzugriff-Knopf kann auf einer Karte stehen, die pushServers() über
+    // ihre eigene Gesundheitsabfrage bereits als "online" markiert hat, obwohl
+    // hier unten noch keine Verbindung steht (z. B. direkt nach Kaltstart,
+    // server === null). Ohne diesen Hinweis drückt man ihn und es passiert
+    // sichtbar nichts. Nur dieser eine Fall — die allgemeine Wächterzeile
+    // darunter bleibt für alle anderen Nachrichten unverändert.
+    if (type === 'remote:open' && (!wsService || !server)) {
+      call('toast', 'Erst mit dem Server verbinden, dann Fernzugriff öffnen');
+      return;
+    }
+
     if (!wsService || !server) return;
     if (sheets.handle(type, payload)) return;
     if (fileExplorer.handle(type, payload)) return;
@@ -811,6 +822,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'mic:start':
+        // Es gibt nur EINEN Aufnehmer — toggleMic() ist ein echter Umschalter,
+        // kein "start". Laeuft schon eine Aufnahme (recording ODER processing,
+        // also auch waehrend des Hochladens), wuerde toggleMic() sie stoppen,
+        // aber micCard.current stuende hier drunter schon auf dem NEUEN Ziel —
+        // der transkribierte Text landete beim falschen Empfaenger (im
+        // schlimmsten Fall als Tastatureingabe auf dem PC). Darum abweisen
+        // statt umschalten; kurze Rückmeldung, damit der stumme Knopf nicht
+        // wie ein Fehler wirkt.
+        if (micState !== 'idle') { call('toast', 'Es läuft schon eine Aufnahme'); break; }
         // Fernzugriff-Diktat (window.TMSRemote.dictate() in bridge.js) schickt
         // { target: 'remote' } statt einer cardId — der erkannte Text geht dann
         // an die Seite zurueck statt in ein Terminal.
@@ -870,6 +890,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'manager:mic':
+        // Derselbe Wächter wie bei 'mic:start' — derselbe gemeinsame Aufnehmer.
+        if (micState !== 'idle') { call('toast', 'Es läuft schon eine Aufnahme'); break; }
         micCard.current = MANAGER_MIC;
         micDiscard.current = false;
         toggleMic();
@@ -1096,7 +1118,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, token, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
+  }, [wsService, server, token, micState, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
