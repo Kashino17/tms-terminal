@@ -1,4 +1,4 @@
-import { spawn, ChildProcess, execFileSync } from 'node:child_process';
+import { spawn, ChildProcess, execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import type { RemoteErrorCode } from '../../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types';
@@ -72,13 +72,20 @@ const START_TIMEOUT_MS = 10_000;
  * access, and a failed build still leaves a clear, actionable message (the
  * exact command from setup.ts) instead of a raw spawn error.
  */
-function ensureHelperBuilt(): void {
-  if (fs.existsSync(helperBinaryPath())) return;
-  try {
-    execFileSync('bash', [macBuildScriptPath()], { stdio: 'ignore' });
-  } catch {
-    // Handled by the existence re-check in start() below — this is best-effort.
-  }
+/**
+ * N4 (Nachprüfung): async, not execFileSync — a synchronous build blocked
+ * the ENTIRE Node event loop for however long `swiftc -O` takes (real
+ * seconds), stalling every terminal session and the connection heartbeat
+ * along with it, for the one-time cost of building a helper an existing
+ * install never got. `execFile`'s callback never rejects the returned
+ * promise: a failed build is handled by the existence re-check in start()
+ * below, not by this function throwing.
+ */
+function ensureHelperBuilt(): Promise<void> {
+  if (fs.existsSync(helperBinaryPath())) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    execFile('bash', [macBuildScriptPath()], () => resolve());
+  });
 }
 
 export function createDarwinCapture(): ScreenCapture {
@@ -90,15 +97,14 @@ export function createDarwinCapture(): ScreenCapture {
   let stopping = false;
 
   return {
-    start(opts) {
+    async start(opts) {
+      await ensureHelperBuilt();
+      if (!fs.existsSync(helperBinaryPath())) {
+        throw new RemoteCaptureError('capture_unavailable',
+          'Fernzugriffs-Helfer fehlt und konnte nicht automatisch gebaut werden. '
+          + `Einmalig einrichten mit:  bash ${macBuildScriptPath()}`);
+      }
       return new Promise<CaptureInfo>((resolve, reject) => {
-        ensureHelperBuilt();
-        if (!fs.existsSync(helperBinaryPath())) {
-          reject(new RemoteCaptureError('capture_unavailable',
-            'Fernzugriffs-Helfer fehlt und konnte nicht automatisch gebaut werden. '
-            + `Einmalig einrichten mit:  bash ${macBuildScriptPath()}`));
-          return;
-        }
         const proc = spawn(helperBinaryPath(), buildHelperArgs(opts), { stdio: ['pipe', 'pipe', 'pipe'] });
         child = proc;
         // Task 18: `stop()` (and requestKeyframe/setBitrate, which can be

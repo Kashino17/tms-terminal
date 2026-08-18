@@ -397,12 +397,27 @@ test('ist der Fernzugriff serverseitig abgeschaltet, weist die Verbindung sofort
   assert.equal(capture.started, null, 'auch ein nachtraeglicher remote:start aendert daran nichts');
 });
 
+test('N2: eine abgeschaltete Verbindung hat trotzdem einen Fehler-Zuhoerer — sonst wirft ein Socket-Fehler den ganzen Server um', () => {
+  const { ws } = wire({ enabled: false });
+  // EventEmitter wirft synchron fuer ein 'error'-Ereignis ohne Zuhoerer —
+  // wenn handleRemoteConnection auf dem fruehen Abweisungs-Pfad keinen
+  // registriert haette, waere genau diese Zeile der Beweis (sie wuerfe).
+  assert.doesNotThrow(() => ws.emit('error', new Error('ECONNRESET')));
+});
+
 test('computeRttMs liest den Sende-Zeitstempel aus der Ping-Nutzlast', () => {
   assert.equal(computeRttMs(Buffer.from('1000'), 1045), 45);
   assert.equal(computeRttMs(Buffer.from('kein-zeitstempel'), 1045), null,
     'Unfug wird nicht als Umlaufzeit gemeldet');
   assert.equal(computeRttMs(Buffer.from('2000'), 1990), 0,
     'negative Werte (Uhrensprung) werden auf 0 gekappt, nicht negativ gemeldet');
+});
+
+test('N3: eine leere Ping-Nutzlast (z.B. vom serverweiten Heartbeat ohne Payload) ist keine Umlaufzeit', () => {
+  // Number('') ist 0, und Number.isFinite(0) ist true — ohne die eigene
+  // Laengenpruefung rutschte das durch und meldete rttMs als ungefaehr
+  // Date.now() selbst (der leere Pong des 15s-Heartbeats in ws.server.ts).
+  assert.equal(computeRttMs(Buffer.alloc(0), Date.now()), null);
 });
 
 test('remote:status meldet eine echte Umlaufzeit statt einer festen Null', async (t) => {

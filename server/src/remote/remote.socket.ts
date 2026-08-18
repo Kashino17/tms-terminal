@@ -75,6 +75,13 @@ function applyInput(input: InputInjector, ev: RemoteInputEvent): void {
  * WebSocket ping/pong timing or real 1-second intervals.
  */
 export function computeRttMs(pingPayload: Buffer, now: number): number | null {
+  // N3 (Nachprüfung): an empty payload must not fall through to Number() —
+  // Number('') is 0, which Number.isFinite() happily accepts as "the epoch
+  // start". The server-wide 15s heartbeat in ws.server.ts calls ws.ping()
+  // with no payload at all, so its pong slipped past the old guard and set
+  // rttMs to roughly Date.now() itself — visible as the header reading
+  // something like "30 fps · 1786…ms" once every 15 seconds.
+  if (pingPayload.length === 0) return null;
   const sentAt = Number(pingPayload.toString());
   if (!Number.isFinite(sentAt)) return null;
   return Math.max(0, now - sentAt);
@@ -117,16 +124,6 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
     const r = computeRttMs(data, Date.now());
     if (r !== null) rttMs = r;
   });
-
-  // Reject up front instead of accepting the connection and only finding out
-  // once the client bothers to send `remote:start` — the socket would
-  // otherwise sit open, authenticated, doing nothing useful while `disabled`
-  // stays unsaid.
-  if (!deps.isEnabled()) {
-    fail('disabled', 'Fernzugriff ist auf diesem Server abgeschaltet.');
-    ws.close();
-    return;
-  }
 
   async function stop(reason: string, tell = true) {
     const c = capture, i = input;
@@ -278,12 +275,14 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
       // first burst of pointer/keyboard events can arrive while the platform
       // helper is still starting up (process launch, permission check,
       // before its own read loop runs) and vanish silently — measured on
-      // macOS as roughly the first 100ms of motion getting lost. `ready` is
-      // optional: not every backend has this startup race (see
-      // input.win32.ts). This await must stay inside the surrounding try —
-      // a rejected `ready` has to reach the client as `remote:error`, not
-      // hang the connection silently (already a Critical once in this file,
-      // for a synchronously-throwing capture factory).
+      // macOS as roughly the first 100ms of motion getting lost. Both
+      // platform backends actually have this startup race (see the doc on
+      // InputInjector.ready in input.types.ts) and both provide it; `ready`
+      // is typed optional only for a hypothetical future backend without
+      // one. This await must stay inside the surrounding try — a rejected
+      // `ready` has to reach the client as `remote:error`, not hang the
+      // connection silently (already a Critical once in this file, for a
+      // synchronously-throwing capture factory).
       await injector.ready;
 
       reply({
@@ -355,4 +354,16 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
     logger.error(`Remote: socket error — ${err.message}`);
     enqueue(() => stop('Socket-Fehler', false));
   });
+
+  // N2 (Nachprüfung): reject up front instead of accepting the connection
+  // and only finding out once the client bothers to send `remote:start` —
+  // but only AFTER every listener above is registered, 'error' included.
+  // This used to run — and `return` — right after the 'pong' listener,
+  // before 'message'/'close'/'error' were ever attached; a disabled
+  // connection had no error listener at all for its entire lifetime, which
+  // is exactly the crash this file otherwise guards against everywhere else.
+  if (!deps.isEnabled()) {
+    fail('disabled', 'Fernzugriff ist auf diesem Server abgeschaltet.');
+    ws.close();
+  }
 }

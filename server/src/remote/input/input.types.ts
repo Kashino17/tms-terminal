@@ -5,12 +5,17 @@ export interface InputInjector {
   /**
    * Resolves once the backend's helper process has actually confirmed it is
    * reading input, or rejects if it never gets there (permission denied,
-   * crashed, timed out). Optional: not every backend has a startup race to
-   * guard against — see input.win32.ts. `remote.socket.ts` awaits this
-   * (inside its existing try/catch, so a rejection reaches the client as
-   * `remote:error` instead of hanging the connection) before replying
-   * `remote:started`, so the app's first burst of input can never arrive
-   * while the helper is still starting up and silently vanish.
+   * crashed, timed out). Both platform backends have this startup race
+   * (macOS: framework loading + the Accessibility check; Windows: Add-Type
+   * compiling the embedded C# on first run — I11 in the Schlussprüfung
+   * found the interface here still claimed otherwise) and both wait on it
+   * via the shared input/ready.ts. Typed optional only because a future
+   * backend without such a race is allowed to skip it entirely.
+   * `remote.socket.ts` awaits this (inside its existing try/catch, so a
+   * rejection reaches the client as `remote:error` instead of hanging the
+   * connection) before replying `remote:started`, so the app's first burst
+   * of input can never arrive while the helper is still starting up and
+   * silently vanish.
    */
   ready?: Promise<void>;
   moveRelative(dx: number, dy: number): void;
