@@ -16,7 +16,7 @@ function loadBlock(name) {
   const re = new RegExp(`// ── TMS-TEST-EXPORT: ${name} ──([\\s\\S]*?)// ── /TMS-TEST-EXPORT ──`);
   const m = re.exec(html);
   assert.ok(m, `Block "${name}" fehlt im Mockup — Markierungen nicht entfernen`);
-  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows, clampZoom, clampPan };`)();
+  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows, clampZoom, clampPan, holdShouldAbort };`)();
 }
 
 test('der markierte Block laesst sich laden', () => {
@@ -208,4 +208,25 @@ test('clampPan haelt das vergroesserte Bild im Rahmen', () => {
   assert.equal(clampPan(0, 2, 400), 0);
   assert.equal(clampPan(500, 2, 400), 200, 'nach rechts abgefangen');
   assert.equal(clampPan(-500, 2, 400), -200, 'nach links abgefangen');
+});
+
+test('holdShouldAbort: Zittern um den Startpunkt bricht den langen Druck NICHT ab', () => {
+  const { holdShouldAbort } = loadBlock('remoteMath');
+  // Viele kleine Zick-Zack-Schritte um den Aufsetzpunkt — die aufsummierte
+  // Pfadlaenge waere laengst ueber der Schwelle (8px), die Entfernung zum
+  // Startpunkt bleibt aber klein. Genau die Kollision, die diese Funktion
+  // gegenueber der alten Einzelschritt-/Summen-Pruefung vermeidet.
+  assert.equal(holdShouldAbort(100, 100, 103, 101, 8), false);
+  assert.equal(holdShouldAbort(100, 100, 97, 104, 8), false);
+});
+
+test('holdShouldAbort: echte Bewegung ueber die Schwelle bricht ab', () => {
+  const { holdShouldAbort } = loadBlock('remoteMath');
+  assert.equal(holdShouldAbort(100, 100, 130, 100, 8), true);
+});
+
+test('holdShouldAbort: genau auf der Schwelle bricht NICHT ab (nur echtes Ueberschreiten zaehlt)', () => {
+  const { holdShouldAbort } = loadBlock('remoteMath');
+  assert.equal(holdShouldAbort(100, 100, 108, 100, 8), false, 'Abstand genau 8 -> noch kein Abbruch');
+  assert.equal(holdShouldAbort(100, 100, 108.01, 100, 8), true, 'knapp darueber bricht ab');
 });

@@ -2584,7 +2584,11 @@
 
       stage.addEventListener('pointerdown', function (e) {
         if (window.remoteState.fullscreen) return;      // dort gehoert alles der Maus
-        points.set(e.pointerId, { x: e.clientX, y: e.clientY, moved: 0 });
+        // startX/startY sind der Aufsetzpunkt und bleiben fuer die gesamte Geste
+        // unveraendert (siehe holdShouldAbort im Mockup) — x/y sind die jeweils
+        // LETZTE Position und wandern bei jedem pointermove mit (fuer die
+        // Verschiebe-/Pinch-Deltas weiter unten).
+        points.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
         if (points.size === 2) {
           var p = Array.from(points.values());
           pinch = { d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), zoom: view.zoom };
@@ -2611,14 +2615,19 @@
         var prev = points.get(e.pointerId);
         var dx = e.clientX - prev.x;
         var dy = e.clientY - prev.y;
-        // Zurueckgelegter Weg SEIT DEM AUFSETZEN dieses Fingers, nicht nur
-        // seit dem letzten Ereignis — sonst ueberlebt der Halte-Zeitgeber ein
-        // langsames Verschieben (viele kleine Schritte, von denen keiner
-        // einzeln ueber die Schwelle kommt) und der Zeiger springt mitten im
-        // Verschieben des vergroesserten Bildes an eine andere Stelle.
-        var moved = (prev.moved || 0) + Math.abs(dx) + Math.abs(dy);
-        points.set(e.pointerId, { x: e.clientX, y: e.clientY, moved: moved });
-        if (moved > 8 && holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        points.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: prev.startX, startY: prev.startY });
+        // Entfernung zum AUFSETZPUNKT dieses Fingers (holdShouldAbort im
+        // Mockup), NICHT die aufsummierte Pfadlaenge seit dem Aufsetzen — die
+        // Summe misst zurueckgelegte Strecke, nicht Abweichung vom Start: ein
+        // Finger, der ruhig aufliegt, aber leicht zittert, sammelt darueber
+        // in 400ms genug Mikroschritte, um die Schwelle grundlos zu reissen,
+        // und der lange Druck stuerbe bei ruhiger Hand seltener durch als bei
+        // unruhiger. Ueber die Entfernung zum Start bricht nur eine ECHTE
+        // Bewegung ab; Zittern oder Hin-und-Herwischen zurueck zum Ausgangs-
+        // punkt bricht bewusst nicht ab (harmloser als der umgekehrte Fehler).
+        if (holdTimer && window.holdShouldAbort(prev.startX, prev.startY, e.clientX, e.clientY, 8)) {
+          clearTimeout(holdTimer); holdTimer = null;
+        }
 
         if (pinch && points.size === 2) {
           var pp = Array.from(points.values());
@@ -2672,6 +2681,24 @@
       // ausgeht — darum hier zurueckgesetzt, sobald die Buehne (neu) vermessen
       // wird, waehrend Vollbild an ist.
       if (window.remoteState.fullscreen) { view.zoom = 1; view.x = 0; view.y = 0; }
+      else {
+        // Zoom/Versatz ueberleben bewusst einen Bildschirmwechsel (Verlassen
+        // und Zurueckkommen an den Fernzugriff baut die Buehne komplett neu,
+        // siehe buildRemoteScreen-Einklinkung oben) — anders als beim
+        // Vollbild-Eintritt gibt es hier keinen Korrektheitsgrund, den Zoom
+        // wegzuwerfen (clampZoom haengt nicht von der Buehnengroesse ab,
+        // bleibt also so oder so gueltig), und ein weggeworfener Zoom waere
+        // fuer die Nutzerin nur eine unbegruendete Ueberraschung. Der Versatz
+        // dagegen HAENGT von der Buehnengroesse ab (clampPan bekommt sie als
+        // Parameter) — wurde die Buehne inzwischen anders vermessen (Drehung,
+        // anderer Container), kann ein alter Versatz ausserhalb des gueltigen
+        // Bereichs liegen und das Bild schief sitzen lassen. Darum hier mit
+        // der vorhandenen Klemmfunktion gegen die frisch vermessene Buehne
+        // nachgezogen (w/box.h statt einem erneuten getBoundingClientRect,
+        // sie sind gerade eben aus derselben Messung hervorgegangen).
+        view.x = window.clampPan(view.x, view.zoom, w);
+        view.y = window.clampPan(view.y, view.zoom, box.h);
+      }
       applyView();
     }
 
