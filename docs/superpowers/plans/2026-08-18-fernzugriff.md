@@ -1673,6 +1673,27 @@ export type HelperLine =
   | { kind: 'ready'; info: CaptureInfo }
   | { kind: 'error'; code: RemoteErrorCode; message: string };
 
+/**
+ * Buffers partial lines across reads.
+ *
+ * A pipe hands out whatever bytes have arrived, not whole lines. Splitting each
+ * chunk on its own drops any line cut in two: both halves fail to parse in
+ * silence, and a `{"ready":…}` lost that way leaves start() waiting forever.
+ */
+export function createLineReader(): { push(chunk: string): string[] } {
+  let rest = '';
+  return {
+    push(chunk) {
+      const parts = (rest + chunk).split('\n');
+      rest = parts.pop() ?? '';        // the tail is incomplete until a \n arrives
+      return parts;
+    },
+  };
+}
+
+/** A helper that never answers must not freeze the session either. */
+const START_TIMEOUT_MS = 10_000;
+
 /** The helper writes one JSON object per stderr line; everything else is noise. */
 export function parseHelperLine(line: string): HelperLine | null {
   const trimmed = line.trim();
@@ -1713,16 +1734,27 @@ export function createDarwinCapture(): ScreenCapture {
         let settled = false;
         let stderrTail = '';
 
+        const lines = createLineReader();
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          proc.kill('SIGKILL');
+          reject(new Error('Der Aufnahme-Helfer hat sich nicht gemeldet.'));
+        }, START_TIMEOUT_MS);
+        timer.unref();
+        const finish = () => { clearTimeout(timer); };
+
         proc.stdout.on('data', (b: Buffer) => onData(b));
 
         proc.stderr.on('data', (b: Buffer) => {
-          stderrTail = (stderrTail + b.toString()).slice(-4096);
-          for (const line of b.toString().split('\n')) {
+          const text = b.toString();
+          stderrTail = (stderrTail + text).slice(-4096);
+          for (const line of lines.push(text)) {
             const evt = parseHelperLine(line);
             if (!evt) continue;
-            if (evt.kind === 'ready' && !settled) { settled = true; resolve(evt.info); }
+            if (evt.kind === 'ready' && !settled) { settled = true; finish(); resolve(evt.info); }
             else if (evt.kind === 'error') {
-              if (!settled) { settled = true; reject(new Error(evt.message)); }
+              if (!settled) { settled = true; finish(); reject(new Error(evt.message)); }
               else onError(evt.code, evt.message);
             }
           }
@@ -1733,6 +1765,7 @@ export function createDarwinCapture(): ScreenCapture {
           if (stopping) return;                      // planmaessig beendet
           if (!settled) {
             settled = true;
+            finish();
             reject(new Error(`Helfer beendet (${code}): ${stderrTail.slice(-200)}`));
           } else {
             onError('helper_crashed', `Helfer beendet (${code})`);
@@ -1740,7 +1773,7 @@ export function createDarwinCapture(): ScreenCapture {
         });
 
         proc.on('error', (e) => {
-          if (!settled) { settled = true; reject(e); }
+          if (!settled) { settled = true; finish(); reject(e); }
         });
       });
     },
