@@ -91,3 +91,17 @@ test('classifyPadTap: drei oder mehr Finger -> keine zugesagte Geste, kein Klick
   const { classifyPadTap } = loadBlock('remoteMath');
   assert.equal(classifyPadTap(3, false, 50, 0, 250, 10), null);
 });
+
+test('classifyPadTap: Dauer-Schwelle genau auf tapMs (250) greift schon, nicht erst danach', () => {
+  const { classifyPadTap } = loadBlock('remoteMath');
+  assert.equal(classifyPadTap(1, false, 249, 0, 250, 10), 'left', 'knapp unter der Schwelle ist noch ein Tippen');
+  assert.equal(classifyPadTap(1, false, 250, 0, 250, 10), null, 'genau auf der Schwelle zaehlt schon nicht mehr');
+  assert.equal(classifyPadTap(1, false, 251, 0, 250, 10), null, 'knapp ueber der Schwelle erst recht nicht');
+});
+
+test('classifyPadTap: Weg-Schwelle genau auf tapSlopPx (10) zaehlt noch als Tippen', () => {
+  const { classifyPadTap } = loadBlock('remoteMath');
+  assert.equal(classifyPadTap(1, false, 0, 9, 250, 10), 'left', 'knapp unter der Schwelle ist noch ein Tippen');
+  assert.equal(classifyPadTap(1, false, 0, 10, 250, 10), 'left', 'genau auf der Schwelle zaehlt noch als Tippen');
+  assert.equal(classifyPadTap(1, false, 0, 11, 250, 10), null, 'knapp ueber der Schwelle nicht mehr');
+});
