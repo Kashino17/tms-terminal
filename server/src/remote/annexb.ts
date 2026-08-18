@@ -30,7 +30,7 @@ function indexOfStart(buf: Buffer, from: number): number {
 }
 
 export function createAnnexBSplitter(idleMs = 6): AnnexBSplitter {
-  let carry: any = Buffer.alloc(0);
+  let carry: Buffer = Buffer.alloc(0);
   let pending: Buffer[] = [];
   let keyframe = false;
   let lastByteAt = 0;
@@ -44,7 +44,7 @@ export function createAnnexBSplitter(idleMs = 6): AnnexBSplitter {
   }
 
   /** Adds one complete NAL (start code included) and reports a finished unit. */
-  function consume(nalUnit: any): AccessUnit | null {
+  function consume(nalUnit: Buffer): AccessUnit | null {
     const start = nalUnit[2] === 1 ? 3 : 4; // 00 00 01 vs 00 00 00 01
     const type = nalUnit[start] & 0x1f;
 
