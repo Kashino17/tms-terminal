@@ -58,12 +58,26 @@ export function parseHelperLine(line: string): HelperLine | null {
   return null;
 }
 
+/** A `data` event can split a line anywhere, including mid-JSON — buffer the
+ *  tail and only hand back lines once a `\n` has actually arrived. Standalone
+ *  so a test can feed it chunks directly without spawning a process. */
+export function splitLines(buffered: string, chunk: string): { lines: string[]; rest: string } {
+  const combined = buffered + chunk;
+  const parts = combined.split('\n');
+  const rest = parts.pop() ?? '';
+  return { lines: parts, rest };
+}
+
+/** The helper must speak up within this long, or `start()` rejects instead of
+ *  hanging forever — a helper that says nothing must not freeze the session. */
+const START_TIMEOUT_MS = 10_000;
+
 export function createDarwinCapture(): ScreenCapture {
   let child: ChildProcess | null = null;
   let onData: (b: Buffer) => void = () => {};
   let onError: (c: RemoteErrorCode, m: string) => void = () => {};
-  // Ohne dieses Merkmal meldet das planmaessige Beenden sich als Absturz — und
-  // die Neustart-Logik aus Aufgabe 18 startet die gerade beendete Sitzung wieder.
+  // Without this flag, a planned shutdown reports itself as a crash — and the
+  // restart logic from Task 18 would start the just-stopped session again.
   let stopping = false;
 
   return {
@@ -73,17 +87,33 @@ export function createDarwinCapture(): ScreenCapture {
         child = proc;
         let settled = false;
         let stderrTail = '';
+        let stderrRest = '';
+
+        const settle = () => {
+          settled = true;
+          clearTimeout(startTimeout);
+        };
+
+        const startTimeout = setTimeout(() => {
+          if (settled) return;
+          settle();
+          proc.kill('SIGKILL');
+          reject(new Error('Helfer antwortet nicht (Zeitlimit ueberschritten)'));
+        }, START_TIMEOUT_MS);
 
         proc.stdout.on('data', (b: Buffer) => onData(b));
 
         proc.stderr.on('data', (b: Buffer) => {
-          stderrTail = (stderrTail + b.toString()).slice(-4096);
-          for (const line of b.toString().split('\n')) {
+          const text = b.toString();
+          stderrTail = (stderrTail + text).slice(-4096);
+          const { lines, rest } = splitLines(stderrRest, text);
+          stderrRest = rest;
+          for (const line of lines) {
             const evt = parseHelperLine(line);
             if (!evt) continue;
-            if (evt.kind === 'ready' && !settled) { settled = true; resolve(evt.info); }
+            if (evt.kind === 'ready' && !settled) { settle(); resolve(evt.info); }
             else if (evt.kind === 'error') {
-              if (!settled) { settled = true; reject(new Error(evt.message)); }
+              if (!settled) { settle(); reject(new Error(evt.message)); }
               else onError(evt.code, evt.message);
             }
           }
@@ -91,9 +121,9 @@ export function createDarwinCapture(): ScreenCapture {
 
         proc.on('exit', (code) => {
           child = null;
-          if (stopping) return;                      // planmaessig beendet
+          if (stopping) return;                      // planned shutdown
           if (!settled) {
-            settled = true;
+            settle();
             reject(new Error(`Helfer beendet (${code}): ${stderrTail.slice(-200)}`));
           } else {
             onError('helper_crashed', `Helfer beendet (${code})`);
@@ -101,7 +131,7 @@ export function createDarwinCapture(): ScreenCapture {
         });
 
         proc.on('error', (e) => {
-          if (!settled) { settled = true; reject(e); }
+          if (!settled) { settle(); reject(e); }
         });
       });
     },

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import { buildHelperArgs, parseHelperLine, helperBinaryPath } from './capture.darwin';
+import { buildHelperArgs, parseHelperLine, helperBinaryPath, splitLines } from './capture.darwin';
 
 test('buildHelperArgs uebersetzt die Stufe in Helfer-Argumente', () => {
   assert.deepEqual(
@@ -18,7 +18,9 @@ test('parseHelperLine liest die Bildschirmmasse', () => {
 test('parseHelperLine erkennt die fehlende Bildschirmaufnahme-Freigabe', () => {
   const got = parseHelperLine('{"error":{"code":"permission_screen","message":"nicht erlaubt"}}');
   assert.equal(got?.kind, 'error');
-  assert.equal((got as any).code, 'permission_screen');
+  if (got?.kind === 'error') {
+    assert.equal(got.code, 'permission_screen');
+  }
 });
 
 test('parseHelperLine verschluckt sich nicht an Zwischenausgaben', () => {
@@ -30,7 +32,25 @@ test('parseHelperLine verschluckt sich nicht an Zwischenausgaben', () => {
 test('unbekannte Fehlercodes werden nicht durchgereicht', () => {
   const got = parseHelperLine('{"error":{"code":"quatsch","message":"x"}}');
   assert.equal(got?.kind, 'error');
-  assert.equal((got as any).code, 'capture_unavailable', 'faellt auf einen bekannten Code zurueck');
+  if (got?.kind === 'error') {
+    assert.equal(got.code, 'capture_unavailable', 'faellt auf einen bekannten Code zurueck');
+  }
+});
+
+test('splitLines behaelt eine mitten im JSON zerschnittene Zeile bis zum naechsten Lesevorgang', () => {
+  const line = '{"ready":{"width":3024,"height":1964,"scale":2}}';
+  const cut = Math.floor(line.length / 2);
+
+  const first = splitLines('', line.slice(0, cut));
+  assert.deepEqual(first.lines, [], 'noch keine vollstaendige Zeile');
+  assert.equal(first.rest, line.slice(0, cut));
+
+  const second = splitLines(first.rest, line.slice(cut) + '\n');
+  assert.equal(second.lines.length, 1);
+  assert.deepEqual(parseHelperLine(second.lines[0]), {
+    kind: 'ready',
+    info: { width: 3024, height: 1964, scale: 2 },
+  });
 });
 
 test('der uebersetzte Helfer liegt dort, wo der Server ihn sucht', { skip: process.platform !== 'darwin' }, () => {

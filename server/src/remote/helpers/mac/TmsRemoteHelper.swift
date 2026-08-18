@@ -24,7 +24,7 @@ func fail(_ code: String, _ message: String) -> Never {
   exit(1)
 }
 
-// ── Aufnahme ────────────────────────────────────────────────────────────
+// ── Capture ─────────────────────────────────────────────────────────────
 final class Capture: NSObject, SCStreamOutput {
   private var session: VTCompressionSession?
   private var stream: SCStream?
@@ -32,23 +32,23 @@ final class Capture: NSObject, SCStreamOutput {
   private var wantKeyframe = false
   var assertion: IOPMAssertionID = 0
 
-  // ScreenCaptureKit liefert aenderungsgetrieben: bei stillem Bildschirm kommen
-  // nur ~6 Bilder pro Sekunde, manchmal sekundenlang keins. Wer dann eine Sitzung
-  // oeffnet, sieht nichts, bis sich etwas ruehrt. Deshalb wird der zuletzt
-  // aufgenommene Puffer nachgeschlagen — gemessen in Aufgabe 1.
+  // ScreenCaptureKit delivers change-driven: on a still screen only ~6 frames
+  // per second arrive, sometimes none for seconds at a time. Someone opening a
+  // session then sees nothing until something moves. So the last captured
+  // buffer gets looked up again — measured in Task 1.
   private var lastPixelBuffer: CVPixelBuffer?
   private var lastFrameAt = Date.distantPast
   private var heartbeat: Timer?
 
   func start(maxWidth: Int, fps: Int, bitrateKbps: Int) async {
-    // Den Bildschirm wachhalten, SOLANGE die Sitzung laeuft. Ein schlafendes
-    // Display meldet ScreenCaptureKit als "gar kein Bildschirm" — der Fernzugriff
-    // zeigte sonst genau dann nichts, wenn der Rechner unbeaufsichtigt steht.
-    // Die Assertion endet mit dem Prozess, also mit der Sitzung.
+    // Keep the display awake for as long as the session runs. A sleeping
+    // display makes ScreenCaptureKit report "no display at all" — remote
+    // access would otherwise show nothing exactly when the machine sits
+    // unattended. The assertion ends with the process, i.e. with the session.
     var sleepAssertion: IOPMAssertionID = 0
-    // Die Konstante heisst in Swift `kIOPMAssertionTypeNoDisplaySleep` — die
-    // laengere C-Schreibweise mit "…Assertion" am Ende gibt es hier nicht und
-    // bricht die Uebersetzung. Vorab gegen swiftc 6.3.1 geprueft.
+    // The constant is spelled `kIOPMAssertionTypeNoDisplaySleep` in Swift — the
+    // longer C spelling ending in "…Assertion" doesn't exist here and breaks
+    // the build. Checked against swiftc 6.3.1 beforehand.
     IOPMAssertionCreateWithName(
       kIOPMAssertionTypeNoDisplaySleep as CFString,
       IOPMAssertionLevel(kIOPMAssertionLevelOn),
@@ -63,18 +63,23 @@ final class Capture: NSObject, SCStreamOutput {
       fail("permission_screen", "Bildschirmaufnahme ist nicht freigegeben")
     }
     guard let display = content.displays.first else {
-      // Nicht als Berechtigungsproblem melden: der Haken ist gesetzt, das
-      // Display schlief nur. (Im Wegwerf-Test von Aufgabe 1 genau so passiert.)
-      fail("display_asleep", "Der Bildschirm ist eingeschlafen und wacht gerade auf")
+      // Don't report this as a permission problem: the checkbox is already
+      // granted — the display is either asleep or none is attached at all.
+      // (Reproduced exactly this way for the asleep case in Task 1's
+      // throwaway test.)
+      fail("display_asleep", "Kein Bildschirm verfuegbar (eingeschlafen oder nicht angeschlossen)")
     }
 
-    // ScreenCaptureKit liefert Pixel; die logische Aufloesung braucht die App
-    // fuer die Zeigerkoordinaten. Der Faktor ist ihr Verhaeltnis.
-    let mode = CGDisplayCopyDisplayMode(display.displayID)
-    let scale = mode.map { Double(display.width) / Double($0.width) } ?? 1.0
-
+    // ScreenCaptureKit's `display.width`/`.height` are logical points, but the
+    // captured buffer is `width` pixels wide (capped to maxWidth) — so `scale`
+    // is pixels-per-point, not the ratio of two point measurements. Using
+    // CGDisplayCopyDisplayMode here (both operands in points) always yields
+    // 1.0 and silently breaks pointer mapping in geometry.ts. Verified via
+    // real capture: --max-width 1280 on a 1728pt-wide display measures
+    // scale ~0.7407; --max-width above the display's pixel width measures 1.0.
     let width = min(maxWidth, display.width)
     let height = Int((Double(display.height) * Double(width) / Double(display.width)).rounded(.down)) & ~1
+    let scale = Double(width) / Double(display.width)
 
     let cfg = SCStreamConfiguration()
     cfg.width = width
@@ -164,8 +169,8 @@ final class Capture: NSObject, SCStreamOutput {
     }
   }
 
-  /// Schlaegt das letzte Bild nach, wenn der Bildschirm still steht: ein
-  /// angefordertes Vollbild darf nicht auf die naechste Mausbewegung warten.
+  /// Looks up the last frame again when the screen is still: a requested
+  /// keyframe must not wait for the next mouse movement.
   private func startHeartbeat() {
     heartbeat = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
       guard let self, let px = self.lastPixelBuffer else { return }
@@ -225,7 +230,7 @@ final class Capture: NSObject, SCStreamOutput {
   }
 }
 
-// ── Einstieg ────────────────────────────────────────────────────────────
+// ── Entry point ─────────────────────────────────────────────────────────
 let args = CommandLine.arguments
 func intArg(_ name: String, _ fallback: Int) -> Int {
   guard let i = args.firstIndex(of: name), i + 1 < args.count else { return fallback }
@@ -241,7 +246,7 @@ if args.contains("--capture") {
   }
   RunLoop.main.run()
 } else if args.contains("--input") {
-  runInputLoop()          // Aufgabe 7
+  runInputLoop()          // Task 7
 } else {
   fail("capture_unavailable", "Betriebsart fehlt: --capture oder --input")
 }
