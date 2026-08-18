@@ -27,12 +27,16 @@ public class TmsInput {
   const uint MOVE = 0x0001, ABSOLUTE = 0x8000, WHEEL = 0x0800, HWHEEL = 0x1000;
   const uint LDOWN = 0x0002, LUP = 0x0004, RDOWN = 0x0008, RUP = 0x0010, MDOWN = 0x0020, MUP = 0x0040;
   const uint KEYUP = 0x0002, UNICODE = 0x0004;
+  // Without this flag, ABSOLUTE coordinates map to the primary monitor only —
+  // on a multi-monitor box that is not necessarily the one ddagrab (output_idx=0)
+  // is capturing, so the pointer would land on the wrong screen.
+  const uint VIRTUALDESK = 0x4000;
 
   static void Send(INPUT i) { SendInput(1, new INPUT[] { i }, Marshal.SizeOf(typeof(INPUT))); }
 
   public static void MoveAbsolute(int x, int y) {
     INPUT i = new INPUT(); i.type = MOUSE;
-    i.mi.dx = x; i.mi.dy = y; i.mi.dwFlags = MOVE | ABSOLUTE; Send(i);
+    i.mi.dx = x; i.mi.dy = y; i.mi.dwFlags = MOVE | ABSOLUTE | VIRTUALDESK; Send(i);
   }
   public static void MoveRelative(int dx, int dy) {
     INPUT i = new INPUT(); i.type = MOUSE;

@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import type { RemoteErrorCode } from '../../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types';
 import { helperBinaryPath } from '../paths';
+import { splitLines } from '../lines';
 
 const KNOWN_CODES: RemoteErrorCode[] = [
   'permission_screen', 'permission_input', 'capture_unavailable',
@@ -12,6 +13,9 @@ const KNOWN_CODES: RemoteErrorCode[] = [
 // helperBinaryPath from here — the actual root-finding lives in paths.ts,
 // there's no second lookup implementation.
 export { helperBinaryPath };
+// Re-exported for the same reason: this file's test imports splitLines from
+// here, and the actual line-buffering lives in lines.ts, shared with Windows.
+export { splitLines };
 
 export function buildHelperArgs(opts: CaptureOptions): string[] {
   return [
@@ -56,16 +60,6 @@ export function parseHelperLine(line: string): HelperLine | null {
     return { kind: 'error', code, message: String(obj.error.message ?? '') };
   }
   return null;
-}
-
-/** A `data` event can split a line anywhere, including mid-JSON — buffer the
- *  tail and only hand back lines once a `\n` has actually arrived. Standalone
- *  so a test can feed it chunks directly without spawning a process. */
-export function splitLines(buffered: string, chunk: string): { lines: string[]; rest: string } {
-  const combined = buffered + chunk;
-  const parts = combined.split('\n');
-  const rest = parts.pop() ?? '';
-  return { lines: parts, rest };
 }
 
 /** The helper must speak up within this long, or `start()` rejects instead of

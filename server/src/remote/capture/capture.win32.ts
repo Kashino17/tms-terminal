@@ -1,6 +1,7 @@
 import { spawn, ChildProcess, execFileSync } from 'node:child_process';
 import type { RemoteErrorCode } from '../../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types';
+import { splitLines } from '../lines';
 
 /** GPU encoders first — ddagrab already hands us frames on the graphics card. */
 export const ENCODER_PREFERENCE = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'libx264'] as const;
@@ -9,17 +10,32 @@ export function pickEncoder(available: string[]): string | null {
   return ENCODER_PREFERENCE.find((e) => available.includes(e)) ?? null;
 }
 
-export function buildFfmpegArgs(opts: CaptureOptions, encoder: string): string[] {
-  const quality = encoder === 'libx264'
-    ? ['-preset', 'veryfast', '-tune', 'zerolatency']
-    : ['-preset', 'p1', '-tune', 'll'];
+/**
+ * Low-latency quality flags, one set per encoder wrapper — NOT interchangeable.
+ * `-preset p1 -tune ll` are NVENC-only values; QSV and AMF don't recognise
+ * `p1` as a preset or `-tune` at all and ffmpeg aborts at startup if handed
+ * them. Each ffmpeg encoder wrapper exposes its own option surface.
+ */
+function qualityArgs(encoder: string): string[] {
+  switch (encoder) {
+    case 'h264_nvenc':
+      return ['-preset', 'p1', '-tune', 'll'];
+    case 'h264_qsv':
+      return ['-preset', 'veryfast', '-async_depth', '1'];
+    case 'h264_amf':
+      return ['-usage', 'ultralowlatency', '-quality', 'speed'];
+    default: // libx264
+      return ['-preset', 'veryfast', '-tune', 'zerolatency'];
+  }
+}
 
+export function buildFfmpegArgs(opts: CaptureOptions, encoder: string): string[] {
   return [
     '-hide_banner', '-loglevel', 'info',
     '-f', 'lavfi', '-i', `ddagrab=output_idx=0:framerate=${opts.fps}`,
     '-vf', `hwdownload,format=bgra,scale=${opts.maxWidth}:-2,format=nv12`,
     '-c:v', encoder,
-    ...quality,
+    ...qualityArgs(encoder),
     '-b:v', `${opts.bitrateKbps}k`,
     '-g', String(opts.fps * 2),
     '-slices', '1',
@@ -43,6 +59,12 @@ function availableEncoders(): string[] {
   }
 }
 
+/** ffmpeg must report the desktop size within this long, or `start()` rejects
+ *  instead of hanging forever — mirrors the macOS helper's own timeout. A
+ *  torn size line that's simply never reassembled looks identical from the
+ *  caller's side to ffmpeg staying silent, so both need this backstop. */
+const START_TIMEOUT_MS = 10_000;
+
 export function createWin32Capture(): ScreenCapture {
   let child: ChildProcess | null = null;
   let onData: (b: Buffer) => void = () => {};
@@ -65,6 +87,19 @@ export function createWin32Capture(): ScreenCapture {
         child = proc;
         let settled = false;
         let tail = '';
+        let stderrRest = '';
+
+        const settle = () => {
+          settled = true;
+          clearTimeout(startTimeout);
+        };
+
+        const startTimeout = setTimeout(() => {
+          if (settled) return;
+          settle();
+          proc.kill('SIGKILL');
+          reject(new Error('ffmpeg antwortet nicht (Zeitlimit ueberschritten)'));
+        }, START_TIMEOUT_MS);
 
         proc.stdout.on('data', (b: Buffer) => onData(b));
 
@@ -72,10 +107,15 @@ export function createWin32Capture(): ScreenCapture {
           const text = b.toString();
           tail = (tail + text).slice(-4096);
           if (settled) return;
-          for (const line of text.split('\n')) {
+          // Buffered, not a bare split('\n'): a size line torn across two
+          // `data` events must still be reassembled, or this never resolves
+          // and start() hangs until the timeout above finally kills it.
+          const { lines, rest } = splitLines(stderrRest, text);
+          stderrRest = rest;
+          for (const line of lines) {
             const size = parseCaptureSize(line);
             if (!size) continue;
-            settled = true;
+            settle();
             // ddagrab captures physical pixels and Windows reports them as such,
             // so there is no Retina-style factor to undo here.
             resolve({ width: Math.min(opts.maxWidth, size.width), height: size.height, scale: 1 });
@@ -86,13 +126,13 @@ export function createWin32Capture(): ScreenCapture {
         proc.on('exit', (code) => {
           child = null;
           if (stopping) return;                      // planned shutdown
-          if (!settled) { settled = true; reject(new Error(`ffmpeg beendet (${code}): ${tail.slice(-200)}`)); }
+          if (!settled) { settle(); reject(new Error(`ffmpeg beendet (${code}): ${tail.slice(-200)}`)); }
           else onError('helper_crashed', `ffmpeg beendet (${code})`);
         });
 
         proc.on('error', () => {
           if (!settled) {
-            settled = true;
+            settle();
             reject(new Error('ffmpeg nicht gefunden. Einmalig einrichten mit:  winget install ffmpeg'));
           }
         });
