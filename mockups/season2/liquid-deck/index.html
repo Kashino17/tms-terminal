@@ -3131,6 +3131,11 @@
     if (changed) paintStickyButtons();
   }
 
+  // bridge.js muss diese Funktion auch dann erreichen, wenn die Sitzung ohne
+  // jede Bedienhandlung endet (Sperrbildschirm, Hintergrund, Netzabbruch) —
+  // ohne diese Zeile sieht bridge.js "releaseAllSticky is not defined".
+  window.releaseAllSticky = releaseAllSticky;
+
   function wireRemoteKeys() {
     var host = document.getElementById('remoteKeys');
     if (!host) return;
@@ -3438,9 +3443,9 @@
       return [
         [k('1','Digit1'), k('2','Digit2'), k('3','Digit3'), k('4','Digit4'), k('5','Digit5'),
          k('6','Digit6'), k('7','Digit7'), k('8','Digit8'), k('9','Digit9'), k('0','Digit0')],
-        [x('-'), x('_'), x('='), x('+'), x('/'), x('\\'), x('|'), x('~')],
-        [x('['), x(']'), x('{'), x('}'), x('('), x(')'), x('<'), x('>')],
-        [x(':'), x(';'), x('"'), x('\''), x(','), x('.'), x('!'), k('⌫','Backspace', 1.5)],
+        [x('-'), x('_'), x('='), x('+'), x('$'), x('/'), x('\\'), x('|'), x('~')],
+        [x('['), x(']'), x('{'), x('}'), x('('), x(')'), x('<'), x('>'), x('*')],
+        [x(':'), x(';'), x('"'), x('\''), x(','), x('.'), x('!'), x('?'), k('⌫','Backspace', 1.5)],
         [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
       ];
     }
