@@ -2162,6 +2162,26 @@ private func currentPoint() -> CGPoint {
   CGEvent(source: nil)?.location ?? .zero
 }
 
+/// Undoes the escaping from input.darwin.ts in a SINGLE pass.
+///
+/// Two successive `replacingOccurrences` calls cannot do this, in either order:
+/// whichever runs first corrupts the other's input. Escaping `C:\neuer` gives
+/// `C:\\neuer`; a search for the two characters `\n` then matches the second
+/// backslash plus the following `n`, and the path arrives as `C:\` + newline +
+/// `euer`. Diktat and paste both travel this way, so a Windows path or a regex
+/// would be mangled silently — and a stray newline can submit half a command.
+func unescapeText(_ s: String) -> String {
+  var out = ""
+  out.reserveCapacity(s.count)
+  var it = s.makeIterator()
+  while let ch = it.next() {
+    guard ch == "\\" else { out.append(ch); continue }
+    guard let next = it.next() else { out.append(ch); break }
+    out.append(next == "n" ? "\n" : next)
+  }
+  return out
+}
+
 private func warp(to p: CGPoint) {
   CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
     .post(tap: .cghidEventTap)
@@ -2214,8 +2234,7 @@ func runInputLoop() {
       ev?.flags = flags(Int(nums[2]))
       ev?.post(tap: .cghidEventTap)
     case "text":
-      let text = rest.replacingOccurrences(of: "\\n", with: "\n")
-                     .replacingOccurrences(of: "\\\\", with: "\\")
+      let text = unescapeText(rest)
       // Unicode direkt einspeisen: unabhaengig von der Tastaturbelegung des Macs.
       for chunk in text.unicodeScalars.map({ UniChar($0.value) }) {
         var c = chunk
