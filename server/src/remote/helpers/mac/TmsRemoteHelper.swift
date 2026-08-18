@@ -25,7 +25,7 @@ func fail(_ code: String, _ message: String) -> Never {
 }
 
 // ── Capture ─────────────────────────────────────────────────────────────
-final class Capture: NSObject, SCStreamOutput {
+final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   private var session: VTCompressionSession?
   private var stream: SCStream?
   private let out = FileHandle.standardOutput
@@ -47,6 +47,20 @@ final class Capture: NSObject, SCStreamOutput {
   private let captureQueue = DispatchQueue(label: "tms.capture")
 
   func start(maxWidth: Int, fps: Int, bitrateKbps: Int) async {
+    // I17: wake a sleeping display before anything else. The no-sleep
+    // assertion below only prevents FUTURE sleep — it cannot wake a display
+    // that is already asleep, which is exactly why the very first session
+    // after the Mac's screen went to sleep always failed with
+    // `display_asleep` even though the assertion was already in place by
+    // then. Declaring user activity is what a real key press or mouse move
+    // does; one-shot, no need to keep the assertion ID afterwards (unlike
+    // the no-sleep assertion below, which must live for the whole session).
+    var activityAssertion: IOPMAssertionID = 0
+    IOPMAssertionDeclareUserActivity(
+      "TMS Terminal Fernzugriff" as CFString,
+      kIOPMUserActiveLocal,
+      &activityAssertion)
+
     // Keep the display awake for as long as the session runs. A sleeping
     // display makes ScreenCaptureKit report "no display at all" — remote
     // access would otherwise show nothing exactly when the machine sits
@@ -62,11 +76,21 @@ final class Capture: NSObject, SCStreamOutput {
       &sleepAssertion)
     self.assertion = sleepAssertion
 
-    let content: SCShareableContent
+    var content: SCShareableContent
     do {
       content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
     } catch {
       fail("permission_screen", "Bildschirmaufnahme ist nicht freigegeben")
+    }
+    if content.displays.isEmpty {
+      // The wake call above needs a brief moment to actually take effect —
+      // one short retry before concluding the display is genuinely asleep
+      // or disconnected. Only costs time on the failure path; an
+      // already-awake Mac never takes this branch.
+      try? await Task.sleep(nanoseconds: 400_000_000)
+      if let retried = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) {
+        content = retried
+      }
     }
     guard let display = content.displays.first else {
       // Don't report this as a permission problem: the checkbox is already
@@ -113,7 +137,8 @@ final class Capture: NSObject, SCStreamOutput {
     VTCompressionSessionPrepareToEncodeFrames(s)
 
     let filter = SCContentFilter(display: display, excludingWindows: [])
-    let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
+    // `delegate: self`, not nil — see `stream(_:didStopWithError:)` below.
+    let stream = SCStream(filter: filter, configuration: cfg, delegate: self)
     do {
       try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: captureQueue)
       try await stream.startCapture()
@@ -152,6 +177,23 @@ final class Capture: NSObject, SCStreamOutput {
     lastPixelBuffer = px
     lastFrameAt = Date()
     encode(px, forceKey: consumeKeyframeWish())
+  }
+
+  /// The stream itself reporting it died — a resolution change, the display
+  /// going away, or any other capture-pipeline failure ScreenCaptureKit can
+  /// name. Without this delegate method wired up (it wasn't: `delegate: nil`
+  /// at creation, above), such a stop was invisible to this process: the
+  /// heartbeat kept re-encoding whatever frame it had last seen, forever — a
+  /// frozen picture with no error, and the trigger the design doc's
+  /// "resolution changes" case needed but never had. Exiting here feeds the
+  /// exact same path a killed helper already takes: once a session is
+  /// running, `capture.darwin.ts`'s `proc.on('exit', ...)` reports
+  /// `helper_crashed`, and the existing backoff-restart in remote.socket.ts
+  /// (Task 18) rebuilds the session from scratch — and because `start()`
+  /// above re-reads the display's current size from scratch too, a genuine
+  /// resolution change recovers along with it, not just a hard crash.
+  func stream(_ stream: SCStream, didStopWithError error: Error) {
+    exit(1)
   }
 
   private func consumeKeyframeWish() -> Bool {
