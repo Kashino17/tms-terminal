@@ -1368,8 +1368,11 @@ final class Capture: NSObject, SCStreamOutput {
     // zeigte sonst genau dann nichts, wenn der Rechner unbeaufsichtigt steht.
     // Die Assertion endet mit dem Prozess, also mit der Sitzung.
     var sleepAssertion: IOPMAssertionID = 0
+    // Die Konstante heisst in Swift `kIOPMAssertionTypeNoDisplaySleep` — die
+    // laengere C-Schreibweise mit "…Assertion" am Ende gibt es hier nicht und
+    // bricht die Uebersetzung. Vorab gegen swiftc 6.3.1 geprueft.
     IOPMAssertionCreateWithName(
-      kIOPMAssertionTypeNoDisplaySleepAssertion as CFString,
+      kIOPMAssertionTypeNoDisplaySleep as CFString,
       IOPMAssertionLevel(kIOPMAssertionLevelOn),
       "TMS Terminal Fernzugriff" as CFString,
       &sleepAssertion)
@@ -4613,11 +4616,14 @@ git commit -m "feat(remote): Helfer-Neustart mit Wartezeiten und Aufloesungswech
 - [ ] **Step 1: Alles prüfen**
 
 ```bash
-cd ~/Desktop/tms-terminal/server && npx tsc --noEmit && npm test
+cd ~/Desktop/tms-terminal/server && npx tsc --noEmit
+cd ~/Desktop/tms-terminal/server && node --require ts-node/register --test 'src/remote/**/*.test.ts'
 cd ~/Desktop/tms-terminal/mobile && npx tsc --noEmit && npm run test:mockup
 ```
 
-Erwartet: beide Läufe grün. **Kein „ist fertig" ohne diese Ausgabe.**
+Erwartet: alle drei Läufe grün. **Kein „ist fertig" ohne diese Ausgabe.**
+
+**Warum nicht `npm test`:** Der volle Lauf ist in diesem Arbeitsbaum **vorbestehend kaputt** — `terminal.manager.test.ts` hängt (in Aufgabe 5 nach ~19 Minuten ohne Fortschritt abgebrochen), und `terminal.manager.restore.test.ts` schlägt fehl. Beides hat mit dem Fernzugriff nichts zu tun: der Zweig fügt ausschließlich hinzu (722 Zeilen, 0 gelöscht) und fasst `server/src/terminal/` nie an. Nachgewiesen mit `git log feat/manager-chat-redesign..feat/fernzugriff -- server/src/terminal/` (leer). Ein Prüftor an `npm test` zu hängen hieße, es nie zu erreichen — deshalb der zielgenaue Lauf über `src/remote/`. Der kaputte Terminal-Test bleibt ein eigenes, dem Nutzer gemeldetes Thema.
 
 - [ ] **Step 2: Den Server neu übersetzen**
 
