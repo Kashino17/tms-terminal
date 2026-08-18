@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickEncoder, buildFfmpegArgs, parseCaptureSize, ENCODER_PREFERENCE } from './capture.win32';
+import {
+  pickEncoder, buildFfmpegArgs, parseCaptureSize, computeOutputSize, ENCODER_PREFERENCE,
+} from './capture.win32';
 import { splitLines } from '../lines';
 
 test('die Grafikkarte wird der Rechenleistung vorgezogen', () => {
@@ -20,7 +22,8 @@ test('buildFfmpegArgs nimmt den Desktop und liefert rohes H.264', () => {
   const joined = args.join(' ');
 
   assert.ok(joined.includes('ddagrab=output_idx=0:framerate=30'), 'Desktop-Duplication mit Bildrate');
-  assert.ok(joined.includes('scale=1600:-2'), 'Breite begrenzt, Hoehe gerade');
+  assert.ok(joined.includes("scale=w='min(iw,1600)':h=-2"),
+    'nur verkleinern (min gegen die Eingabebreite), nie vergroessern — Hoehe bleibt gerade');
   assert.ok(joined.includes('-c:v h264_nvenc'));
   assert.ok(joined.includes('-b:v 1500k'));
   assert.ok(joined.includes('-g 60'), 'alle zwei Sekunden ein Vollbild');
@@ -76,4 +79,41 @@ test('eine mitten durchgerissene Groessenzeile kommt trotzdem an — sonst haeng
   const second = splitLines(first.rest, line.slice(cut) + '\n');
   assert.equal(second.lines.length, 1);
   assert.deepEqual(parseCaptureSize(second.lines[0]), { width: 2560, height: 1440 });
+});
+
+// C4: die gemeldeten Masse muessen zum tatsaechlich ausgegebenen Bild passen —
+// vorher wurde die VOLLE Desktop-Hoehe gemeldet, waehrend die Breite auf die
+// Stufe gekappt wurde (verzerrtes Bild, falsches Rechteck, danebenzielende
+// Klicks). Diese Tests pruefen die GEMELDETEN Masse, nicht nur die Argumente.
+test('computeOutputSize verkleinert die Hoehe passend zur gekappten Breite', () => {
+  assert.deepEqual(
+    computeOutputSize({ maxWidth: 1600, fps: 30, bitrateKbps: 1500 }, { width: 2560, height: 1440 }),
+    { width: 1600, height: 900 },
+    '1600/2560 * 1440 = 900, bereits gerade',
+  );
+});
+
+test('computeOutputSize rundet eine ungerade Zielhoehe auf die naechste gerade ab', () => {
+  // 1600/1919 * 1080 = 900.469... -> abgerundet 900, dann auf gerade gerundet.
+  const out = computeOutputSize({ maxWidth: 1600, fps: 30, bitrateKbps: 1500 }, { width: 1919, height: 1080 });
+  assert.equal(out.width, 1600);
+  assert.equal(out.height % 2, 0, 'die Hoehe muss gerade bleiben, wie -2 im Filter es verlangt');
+  assert.equal(out.height, 900);
+});
+
+test('computeOutputSize vergroessert nie — ein kleinerer Desktop als die Stufe bleibt unveraendert', () => {
+  // Die "scharf"-Stufe verlangt 1920px Breite; ein 1280px-Desktop darf nicht
+  // hochskaliert werden — genau der Fehler, den der alte Filter (ohne
+  // min()) gemacht haette, waehrend die Breitenrechnung das Gegenteil annahm.
+  assert.deepEqual(
+    computeOutputSize({ maxWidth: 1920, fps: 30, bitrateKbps: 3000 }, { width: 1280, height: 800 }),
+    { width: 1280, height: 800 },
+  );
+});
+
+test('computeOutputSize laesst ein bereits kleineres Bild bei exakter Breite unveraendert', () => {
+  assert.deepEqual(
+    computeOutputSize({ maxWidth: 1600, fps: 30, bitrateKbps: 1500 }, { width: 1600, height: 1000 }),
+    { width: 1600, height: 1000 },
+  );
 });

@@ -33,7 +33,15 @@ export function buildFfmpegArgs(opts: CaptureOptions, encoder: string): string[]
   return [
     '-hide_banner', '-loglevel', 'info',
     '-f', 'lavfi', '-i', `ddagrab=output_idx=0:framerate=${opts.fps}`,
-    '-vf', `hwdownload,format=bgra,scale=${opts.maxWidth}:-2,format=nv12`,
+    // `min(iw,${maxWidth})` — not a bare `${maxWidth}` — so the filter only
+    // ever shrinks. A bare target width scales up whenever the desktop is
+    // narrower than the requested tier (e.g. a 1600px desktop on the
+    // `scharf` tier's 1920px target), stretching and blurring the picture
+    // while the reported size below still assumed downscale-only and
+    // reported the *smaller* of the two — a mismatched, distorted image and
+    // a pointer rectangle that no longer matches what's on screen. Quoted so
+    // the comma inside min(...) isn't read as the next filter in the chain.
+    '-vf', `hwdownload,format=bgra,scale=w='min(iw,${opts.maxWidth})':h=-2,format=nv12`,
     '-c:v', encoder,
     ...qualityArgs(encoder),
     '-b:v', `${opts.bitrateKbps}k`,
@@ -44,10 +52,35 @@ export function buildFfmpegArgs(opts: CaptureOptions, encoder: string): string[]
   ];
 }
 
-/** ffmpeg reports the real desktop size on stderr; we need it for the pointer maths. */
+/** ffmpeg reports the real (pre-filter) desktop size on stderr. */
 export function parseCaptureSize(stderrLine: string): { width: number; height: number } | null {
   const m = /,\s(\d{3,5})x(\d{3,5})[,\s]/.exec(stderrLine);
   return m ? { width: Number(m[1]), height: Number(m[2]) } : null;
+}
+
+/**
+ * What the `-vf scale=...` filter above will actually hand the encoder,
+ * given the real (pre-filter) desktop size ffmpeg reports at startup.
+ * Mirrors that filter's own math exactly — including its never-upscale
+ * guard and its `-2` (scale proportionally, round down to an even number) —
+ * so the size reported to the client (and used for pointer mapping in
+ * geometry.ts) matches what was actually encoded, not the raw desktop size.
+ * `parseCaptureSize` used to be reported to the client as-is; that was the
+ * bug (C4): the *full* desktop height went out even when the width got
+ * capped, and the width calculation itself assumed downscale-only while the
+ * old filter could still upscale — a distorted, mismatched image.
+ */
+export function computeOutputSize(
+  opts: CaptureOptions,
+  desktop: { width: number; height: number },
+): { width: number; height: number } {
+  if (desktop.width <= opts.maxWidth) {
+    // The filter's min(iw, maxWidth) leaves the frame alone — never upscale.
+    return { width: desktop.width, height: desktop.height };
+  }
+  const width = opts.maxWidth;
+  const height = Math.floor((desktop.height * width) / desktop.width / 2) * 2;
+  return { width, height };
 }
 
 function availableEncoders(): string[] {
@@ -117,8 +150,11 @@ export function createWin32Capture(): ScreenCapture {
             if (!size) continue;
             settle();
             // ddagrab captures physical pixels and Windows reports them as such,
-            // so there is no Retina-style factor to undo here.
-            resolve({ width: Math.min(opts.maxWidth, size.width), height: size.height, scale: 1 });
+            // so there is no Retina-style factor to undo here — but the size
+            // itself must reflect what the -vf filter actually outputs, not
+            // the raw pre-filter desktop size (see computeOutputSize above).
+            const out = computeOutputSize(opts, size);
+            resolve({ width: out.width, height: out.height, scale: 1 });
             return;
           }
         });
