@@ -1372,6 +1372,17 @@
   // dann der Bildschirm selbst. Erst wenn nichts mehr übrig ist, darf React
   // Native ans Beenden denken (und fragt dann noch einmal nach).
   window.TMSBridge.handleBack = function () {
+    // 0. Fernzugriff im Vollbild: die Zurück-Geste wirkt wie das Abzeichen
+    //    (#remoteExit) — verlässt das Vollbild, nicht den Fernzugriffs-
+    //    Bildschirm selbst. Ohne das leiten die Dokument-Zuhörer für
+    //    Tastatur/Zeiger/Rad (siehe bridge.js) weiter an den PC, während der
+    //    Nutzer mit der Geste erkennbar zurückwollte — genau der Fall, für
+    //    den der Vollbild-Modus überhaupt existiert (Hardware am Fold), darf
+    //    also nicht ausgerechnet dort die Zurück-Geste verschlucken.
+    if (window.remoteState && window.remoteState.fullscreen) {
+      window.setRemoteFullscreen(false);
+      return;
+    }
     // 1. Ein offenes Sheet (Tab-Liste, Werkzeuge, Menü, Spotlight …). Bewusst
     //    .is-open und nicht :not([hidden]) — ein gerade zufallendes Sheet würde
     //    sonst den Zurück-Druck schlucken, ohne noch etwas zu tun.
@@ -2312,8 +2323,21 @@
     }
   };
   // React Native reicht nur die Zugangsdaten durch — Bilddaten sieht es nie.
+  //
+  // C2: `show('remote')` und `TMSRemote.start()` laufen synchron direkt beim
+  // Antippen des Fernzugriffs-Knopfs (siehe den Mockup-Aufruf), aber die
+  // Zugangsdaten kommen erst ueber den Umweg durch React Native zurueck —
+  // bei einem fremden Server zusaetzlich nach einem asynchronen
+  // Speicher-Zugriff dort. connect() bricht darum beim ersten Druck immer
+  // mit "Kein Server verbunden." ab, `ws` bleibt null, und ohne ein `onclose`
+  // gibt es keinen Ausloeser fuer einen neuen Versuch — erst ein zweiter
+  // Tastendruck (der TMSRemote.start() erneut aufruft) verbindet. Der Haken
+  // unten holt das nach, sobald die Zugangsdaten tatsaechlich da sind.
   var remoteTarget = null;
-  window.TMSBridge.setRemoteTarget = function (t) { remoteTarget = t; };
+  window.TMSBridge.setRemoteTarget = function (t) {
+    remoteTarget = t;
+    if (typeof window.__tmsRemoteTargetReady === 'function') window.__tmsRemoteTargetReady();
+  };
 
   document.addEventListener('pointerdown', function (e) {
     if (e.target.closest && e.target.closest('.term-card')) {
@@ -2808,7 +2832,11 @@
           layoutStage();
           break;
         case 'remote:status':
-          stat(msg.payload.fps + ' fps · ' + msg.payload.kbps + ' kbit/s');
+          // I16: Spezifikation Abschnitt 7 verlangt "fps · ms" (Verzoegerung)
+          // in der Kopfzeile, nicht die Bitrate — und der Server misst
+          // rttMs jetzt wirklich (Ping/Pong auf der Steuerverbindung),
+          // statt ihn fest auf 0 zu senden.
+          stat(msg.payload.fps + ' fps · ' + msg.payload.rttMs + ' ms');
           break;
         case 'remote:stopped':
           window.remoteState.running = false;
@@ -2852,6 +2880,18 @@
       ws.onerror = function () { try { ws.close(); } catch (e) {} };
     }
 
+    // C2: eine Sitzung wird gewuenscht (wantRunning), aber es steht noch
+    // keine Verbindung — nachziehen, sobald das moeglich ist. Das `!ws`
+    // deckt beides ab: kein doppelter Verbindungsaufbau, wenn die
+    // Zugangsdaten erneut gesetzt werden (z.B. Server-Wechsel), waehrend
+    // schon eine Verbindung steht oder gerade aufgebaut wird.
+    function maybeConnect() {
+      if (wantRunning && !ws) connect();
+    }
+    // Von setRemoteTarget (oben in dieser Datei) aufgerufen, sobald React
+    // Native die Zugangsdaten liefert — das ist der eigentliche Fix fuer C2.
+    window.__tmsRemoteTargetReady = maybeConnect;
+
     window.TMSRemote = {
       start: function (which) {
         preset = which || preset;
@@ -2865,7 +2905,7 @@
         // wireStageGestures() ist ueber stage.dataset.wired selbst dagegen
         // abgesichert, mehrfach am selben Element zu haengen.
         wireStageGestures();
-        if (!ws) connect();
+        maybeConnect();
       },
       stop: function () {
         // Muss VOR dem Schliessen laufen: releaseAllSticky() sendet ueber
@@ -2874,6 +2914,19 @@
         // weiter unten kommt ein Loslassen nicht mehr durch — eine
         // festgestellte Sondertaste bliebe auf dem Mac haengen.
         if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+        // C3/I6: Vollbild gehoert zu einer Sitzung, keine Sitzung heisst kein
+        // Vollbild — sonst bleiben die Dokument-Zuhoerer (Tastatur/Zeiger/Rad,
+        // siehe weiter unten) aktiv, waehrend laengst getrennt ist, und fangen
+        // die eigene Tastatur der App ab. setRemoteFullscreen(false) loest
+        // dabei auch alles, was eine angeschlossene Hardware-Tastatur/-Maus
+        // noch haelt (releaseHardwareInput) — derselbe Grund wie bei
+        // releaseAllSticky() oben, nur fuer den Hardware-Weg.
+        if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
+        // I6: und ein noch laufendes Trackpad-Ziehen bzw. ein gehaltener
+        // fester Links-/Rechtsklick-Knopf — der dritte Weg, auf dem eine
+        // Maustaste haengen bleiben kann, den weder releaseAllSticky()
+        // (Bildschirmtastatur) noch setRemoteFullscreen() (Hardware) abdeckt.
+        if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
         wantRunning = false;
         if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
@@ -2881,6 +2934,30 @@
         if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
         window.remoteState.running = false;
       },
+      /**
+       * I7: der Hintergrundwechsel (SeasonTwoWebRoot.tsx, ueber AppState)
+       * ruft diese beiden statt start()/stop() direkt. Der Unterschied zu
+       * stop(): wantRunning bleibt unangetastet — es ist der Merker dafuer,
+       * ob der NUTZER eine Sitzung will, nicht ob sie gerade laeuft. Wuerde
+       * suspend() wantRunning auf false setzen, koennte resume() beim
+       * Zurueckkehren nicht mehr unterscheiden "war vorher an" von "wurde
+       * per 'Trennen' beendet" — und wuerde jede Rueckkehr in den
+       * Vordergrund eine neue Aufnahme samt Energie-Assertion auf dem PC
+       * starten, obwohl der Nutzer laengst woanders ist.
+       */
+      suspend: function () {
+        if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+        if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
+        if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
+        if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+        window.remoteState.running = false;
+      },
+      /** Setzt nur fort, was vorher lief (wantRunning) — nach einem
+       *  expliziten "Trennen" bleibt das ein No-op, siehe suspend() oben. */
+      resume: function () { maybeConnect(); },
       /** Stufenwechsel = neu starten: ffmpeg auf Windows kann die Bitrate nicht im Lauf aendern. */
       setQuality: function (which) {
         preset = which;
@@ -3019,7 +3096,7 @@
         return 'Der Mac darf keine Eingaben annehmen.\n'
              + 'Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen';
       case 'display_asleep':
-        return 'Der Bildschirm des Macs ist eingeschlafen. Gleich noch einmal versuchen.';
+        return 'Der Bildschirm des Macs ist eingeschlafen oder es ist keiner angeschlossen. Gleich noch einmal versuchen.';
       case 'capture_unavailable':
         return 'Auf dem PC fehlt ffmpeg. Einmalig einrichten:  winget install ffmpeg';
       case 'disabled':

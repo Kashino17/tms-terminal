@@ -505,14 +505,23 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // Activity pausiert), darum hier über AppState statt auf der Seite selbst.
   // window.TMSRemote sitzt bewusst NICHT unter window.TMSBridge (die Seite ruft
   // es auch selbst auf, siehe index.html) — deshalb hier direkt statt über
-  // call() angesprochen. Ohne aktiven Fernzugriff ist start()/stop() ein No-op
-  // (TMSRemote.connect() bricht ohne gesetztes Ziel sofort ab).
+  // call() angesprochen.
+  //
+  // I7: hier NICHT start()/stop() rufen. Nach einem expliziten "Trennen" auf
+  // der Seite bleiben remoteTarget (die Zugangsdaten) gesetzt — die Kommentar-
+  // Annahme "start()/stop() sind ohne Ziel ein No-op" stimmt dann nicht mehr,
+  // start() baut eine echte neue Verbindung auf. Kommt die App danach aus dem
+  // Hintergrund zurück, würde ein unbedingtes start() also eine NEUE Aufnahme
+  // samt Energie-Assertion auf dem PC anwerfen, obwohl der Nutzer die Sitzung
+  // langst beendet hat und nirgends in der Nähe des Fernzugriffs-Bildschirms
+  // ist. suspend()/resume() (bridge.js) machen dieselbe Pause/Fortsetzung,
+  // aber resume() setzt nur fort, was VORHER tatsächlich lief (wantRunning).
   useEffect(() => {
     if (!ready) return;
     const sub = AppState.addEventListener('change', (s) => {
       const js = s === 'active'
-        ? 'window.TMSRemote && window.TMSRemote.start(); true;'
-        : 'window.TMSRemote && window.TMSRemote.stop(); true;';
+        ? 'window.TMSRemote && window.TMSRemote.resume(); true;'
+        : 'window.TMSRemote && window.TMSRemote.suspend(); true;';
       webRef.current?.injectJavaScript(js);
     });
     return () => sub.remove();
@@ -821,23 +830,37 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
 
-      case 'mic:start':
-        // Es gibt nur EINEN Aufnehmer — toggleMic() ist ein echter Umschalter,
-        // kein "start". Laeuft schon eine Aufnahme (recording ODER processing,
-        // also auch waehrend des Hochladens), wuerde toggleMic() sie stoppen,
-        // aber micCard.current stuende hier drunter schon auf dem NEUEN Ziel —
-        // der transkribierte Text landete beim falschen Empfaenger (im
-        // schlimmsten Fall als Tastatureingabe auf dem PC). Darum abweisen
-        // statt umschalten; kurze Rückmeldung, damit der stumme Knopf nicht
-        // wie ein Fehler wirkt.
-        if (micState !== 'idle') { call('toast', 'Es läuft schon eine Aufnahme'); break; }
+      case 'mic:start': {
         // Fernzugriff-Diktat (window.TMSRemote.dictate() in bridge.js) schickt
         // { target: 'remote' } statt einer cardId — der erkannte Text geht dann
         // an die Seite zurueck statt in ein Terminal.
-        micCard.current = payload?.target === 'remote' ? REMOTE_MIC : payload.cardId;
+        const wantsTarget = payload?.target === 'remote' ? REMOTE_MIC : payload.cardId;
+        // Es gibt nur EINEN Aufnehmer — toggleMic() ist ein echter Umschalter,
+        // kein "start". Laeuft schon eine Aufnahme (recording ODER processing,
+        // also auch waehrend des Hochladens) fuer ein ANDERES Ziel, wuerde
+        // toggleMic() sie stoppen, aber micCard.current stuende hier drunter
+        // schon auf dem NEUEN Ziel — der transkribierte Text landete beim
+        // falschen Empfaenger (im schlimmsten Fall als Tastatureingabe auf
+        // dem PC). Darum abweisen statt umschalten.
+        //
+        // I14: die Fernzugriffs-Tastatur hat nur einen Mikrofon-Knopf, der
+        // IMMER mic:start schickt (kein eigenes mic:stop) — ohne diese
+        // Unterscheidung machte der obige Wächter jeden zweiten Druck zu
+        // einer bloßen "läuft schon"-Meldung, mit keinem Weg, die eigene
+        // Aufnahme wieder zu beenden. Ein zweiter Druck auf denselben Knopf
+        // ist also "stop", nicht "start" — nur ein wirklich anderes Ziel
+        // (z.B. ein Terminal-Mikro waehrend des Fernzugriffs-Diktats) wird
+        // weiterhin abgewiesen.
+        if (micState !== 'idle') {
+          if (micCard.current === wantsTarget) { toggleMic(); break; } // stop -> upload -> Whisper
+          call('toast', 'Es läuft schon eine Aufnahme');
+          break;
+        }
+        micCard.current = wantsTarget;
         micDiscard.current = false;
         toggleMic(); // start
         break;
+      }
 
       case 'mic:stop':
         // The bar shows "Transkribiere…" until onText lands.
