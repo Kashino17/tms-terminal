@@ -1552,6 +1552,41 @@
   .fs-txt .ln { opacity: .35; user-select: none; display: inline-block; min-width: 34px; text-align: right; margin-right: 10px; }
   .fs-infocard { text-align: center; padding: 24px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
 
+  /* ---------- Fernzugriff-Bildschirm ---------- */
+  section[data-screen="remote"]:not([hidden]) { display: flex; flex-direction: column; gap: 8px; height: 100%; padding: 8px; }
+  .remote-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; }
+  .remote-dot { width: 7px; height: 7px; border-radius: 50%; background: #34c759; flex: none; }
+  .remote-dot[data-state="off"] { background: #8a8a8e; }
+  .remote-name { font-weight: 600; font-size: 13px; }
+  .remote-stat { margin-left: auto; font-size: 10px; opacity: .6; font-variant-numeric: tabular-nums; }
+  .remote-stage { position: relative; background: #05080d; border-radius: 14px; overflow: hidden; flex: none; }
+  .remote-stage canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .remote-veil { position: absolute; inset: 0; display: grid; place-items: center;
+                 background: rgba(5,8,13,.72); font-size: 12px; opacity: 0; transition: opacity .2s; }
+  .remote-veil[data-show="1"] { opacity: 1; }
+  .remote-seg { display: flex; gap: 4px; padding: 3px; border-radius: 12px; background: rgba(255,255,255,.07); }
+  .remote-seg button { flex: 1; padding: 7px 0; border: 0; border-radius: 9px; background: transparent;
+                       color: inherit; opacity: .55; font-size: 12px; font-weight: 600; }
+  .remote-seg button.on { background: rgba(90,169,255,.22); opacity: 1;
+                          box-shadow: inset 0 0 0 1px rgba(90,169,255,.45); }
+  .remote-bar { flex: 1; min-height: 0; }
+  .remote-pad { position: relative; height: 100%; border-radius: 14px;
+                background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.10);
+                display: flex; flex-direction: column; touch-action: none; }
+  .remote-pad-hint { position: absolute; inset: 0; display: grid; place-items: center;
+                     text-align: center; font-size: 10px; opacity: .28; line-height: 1.7; pointer-events: none; }
+  .remote-pad-btns { margin-top: auto; display: flex; gap: 6px; padding: 7px; }
+  .remote-pad-btns button { flex: 1; padding: 11px 0; border-radius: 10px; font-size: 10px;
+                            border: 1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.05);
+                            color: inherit; opacity: .75; }
+
+  /* Aufgeklappt ist die Breite da: groessere Tasten, mehr Luft. */
+  @media (min-width: 700px) {
+    section[data-screen="remote"] { padding: 14px; gap: 12px; }
+    .remote-name { font-size: 15px; }
+    .remote-pad-btns button { padding: 15px 0; font-size: 12px; }
+  }
+
   /* ---------- Lock screen ---------- */
   section[data-screen="lock"]:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; }
   body.is-locked #dock, body.is-locked #statusHeader, body.is-locked #islandScrim, body.is-locked #pullHint, body.is-locked #keyEcho { display: none !important; }
@@ -1785,6 +1820,7 @@
   <section data-screen="cloud" hidden></section>
   <section data-screen="browser" hidden></section>
   <section data-screen="files" hidden></section>
+  <section data-screen="remote" hidden></section>
   <section data-screen="settings" hidden></section>
   <section data-screen="prayer" hidden></section>
   <section data-screen="lock">
@@ -2927,10 +2963,120 @@
   }
 
   // ============================================================
+  // Fernzugriff — Bild oben, darunter eine umschaltbare Leiste
+  // ============================================================
+  window.remoteState = { running: false, w: 0, h: 0, scale: 1, page: 'pad', fullscreen: false };
+
+  function buildRemoteScreen() {
+    var host = document.querySelector('[data-screen="remote"]');
+    host.innerHTML = ''
+      + '<div class="remote-head glass">'
+      +   '<span class="remote-dot" id="remoteDot"></span>'
+      +   '<span class="remote-name" id="remoteName">Fernzugriff</span>'
+      +   '<span class="remote-stat" id="remoteStat">verbinde …</span>'
+      +   '<button class="icon-btn glass" id="remoteFull" aria-label="Vollbild">⤢</button>'
+      +   '<button class="icon-btn glass" id="remoteQuit" aria-label="Trennen">✕</button>'
+      + '</div>'
+      + '<div class="remote-stage" id="remoteStage"><canvas id="remoteCanvas"></canvas>'
+      +   '<div class="remote-veil" id="remoteVeil"><span id="remoteVeilText">Verbinde …</span></div>'
+      + '</div>'
+      + '<div class="remote-seg" id="remoteSeg">'
+      +   '<button data-page="pad" class="on">Trackpad</button>'
+      +   '<button data-page="keys">Tastatur</button>'
+      + '</div>'
+      + '<div class="remote-bar" id="remoteBar"></div>';
+
+    host.querySelector('#remoteSeg').addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-page]');
+      if (btn) setRemotePage(btn.dataset.page);
+    });
+    host.querySelector('#remoteQuit').addEventListener('click', function () {
+      if (window.TMSRemote) window.TMSRemote.stop();
+      show('servers');
+    });
+    setRemotePage('pad');
+  }
+
+  function setRemotePage(page) {
+    window.remoteState.page = page;
+    document.querySelectorAll('#remoteSeg [data-page]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.page === page);
+    });
+    var bar = document.getElementById('remoteBar');
+    bar.innerHTML = page === 'pad' ? remotePadMarkup() : remoteKeysMarkup();
+    if (page === 'pad') wireRemotePad(); else wireRemoteKeys();
+  }
+
+  // Bis Aufgabe 12/13 stehen hier nur die Flaechen — Gesten und Tasten folgen dort.
+  function remotePadMarkup() {
+    return '<div class="remote-pad" id="remotePad">'
+      + '<span class="remote-pad-hint">Wischen bewegt den Zeiger<br>Tippen klickt · zwei Finger scrollen</span>'
+      + '<div class="remote-pad-btns"><button data-btn="l">Linksklick</button>'
+      + '<button data-btn="r">Rechtsklick</button></div></div>';
+  }
+  function remoteKeysMarkup() { return '<div class="remote-keys" id="remoteKeys"></div>'; }
+  function wireRemotePad() {}
+  function wireRemoteKeys() {}
+
+  SCREEN_HOOKS.remote = function () { buildRemoteScreen(); };
+
+  // bridge.js baut den Bildschirm auf, sieht aber nicht in diese Kapsel hinein.
+  window.buildRemoteScreen = buildRemoteScreen;
+
+  // ============================================================
   // Terminal workspace — spatial swipeable stack
   // ============================================================
   const STATUS_LABELS = { running: 'Läuft', waiting: 'Wartet', done: 'Fertig', idle: 'Bereit' };
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // ── TMS-TEST-EXPORT: remoteMath ──
+  // Reine Rechnerei fuer den Fernzugriff. Wird von mobile/scripts/remote-logic.test.mjs
+  // aus dieser Datei herausgeschnitten und geprueft — die Markierungen bitte lassen.
+
+  /**
+   * Beschleunigungskurve fuer das Trackpad.
+   *
+   * Der Finger hat auf der Leiste ~300 Punkte Weg, der Mac-Bildschirm 1512 Pixel
+   * Breite. Fest uebersetzt hiesse das entweder "ein Wisch reicht nicht ueber den
+   * Bildschirm" oder "ein Pixel genau treffen ist unmoeglich". Die Kurve macht die
+   * Uebersetzung von der Wischgeschwindigkeit abhaengig — genau wie macOS und
+   * Windows es fuer echte Maeuse tun.
+   */
+  function pointerGain(speedPxPerMs) {
+    var s = Math.abs(speedPxPerMs);
+    if (!isFinite(s) || s <= 0) return 1;
+    if (s < 0.15) return 1;                       // langsam: pixelgenau
+    if (s > 3) return 4;                          // schnell: quer ueber den Schirm
+    return 1 + ((s - 0.15) / (3 - 0.15)) * 3;     // dazwischen linear
+  }
+
+  /**
+   * Haftende Sondertasten: einmal tippen haelt bis zum naechsten Anschlag,
+   * zweimal stellt fest, dreimal loest wieder.
+   * Ohne das waere Befehlstaste+Tab einhaendig nicht tippbar.
+   */
+  function nextSticky(state) {
+    return state === 'off' ? 'once' : state === 'once' ? 'locked' : 'off';
+  }
+
+  /** Legt ein w×h grosses Bild seitenrichtig in eine Flaeche und zentriert es. */
+  function fitRect(imgW, imgH, boxW, boxH) {
+    var scale = Math.min(boxW / imgW, boxH / imgH);
+    var w = Math.round(imgW * scale);
+    var h = Math.round(imgH * scale);
+    return { x: Math.round((boxW - w) / 2), y: Math.round((boxH - h) / 2), w: w, h: h };
+  }
+
+  // Der gesamte Mockup-Code steckt in einer Kapsel — ohne diese Zeilen sieht
+  // bridge.js keine einzige dieser Funktionen, und der Fernzugriff bricht mit
+  // "fitRect is not defined" ab, waehrend die Tests weiter gruen melden (sie
+  // werten den Block einzeln aus). Die Abfrage haelt den Block in Node lauffaehig.
+  if (typeof window !== 'undefined') {
+    window.pointerGain = pointerGain;
+    window.nextSticky = nextSticky;
+    window.fitRect = fitRect;
+  }
+  // ── /TMS-TEST-EXPORT ──
 
   function buildTerminalScreen() {
     // The old title + action row now lives in the Dynamic Island (see
