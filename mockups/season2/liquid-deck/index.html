@@ -3015,9 +3015,13 @@
       + '<button data-btn="r">Rechtsklick</button></div></div>';
   }
   function remoteKeysMarkup() { return '<div class="remote-keys" id="remoteKeys"></div>'; }
+  var remotePadDocCleanup = null; // meldet die Dokument-Auffangnetz-Zuhoerer der VORHERIGEN
+                                  // wireRemotePad()-Ausfuehrung ab, damit sie sich beim
+                                  // Umschalten Trackpad/Tastatur nicht anhaeufen
   function wireRemotePad() {
     var pad = document.getElementById('remotePad');
     if (!pad) return;
+    if (remotePadDocCleanup) { remotePadDocCleanup(); remotePadDocCleanup = null; }
     var R = function () { return window.TMSRemote; }; // Aufgabe 14 setzt window.TMSRemote — bis dahin bleibt der Mockup fuer sich lauffaehig.
 
     var TAP_SLOP = 10;        // Punkte, die ein "Tippen" wackeln darf
@@ -3125,6 +3129,15 @@
       pts.delete(e.pointerId);
       if (holdPointerId === e.pointerId) clearHold();
 
+      if (leadPointerId === e.pointerId) {
+        // Der Fuehrungsfinger ist weg: liegt noch wer auf, uebernimmt der
+        // naechste die Fuehrung. Sonst zeigt leadPointerId auf einen laengst
+        // verschwundenen Finger, und ein spaeter dazukommender dritter Finger
+        // triggert nie wieder ein Scroll-Event — die Flaeche wirkt stumm.
+        var next = pts.keys().next();
+        leadPointerId = next.done ? null : next.value;
+      }
+
       if (pts.size > 0) return; // andere Finger liegen noch auf — die arbeiten weiter
 
       // Reine Entscheidung (Fingerzahl + Dauer + Weg -> Gestenart) steckt in
@@ -3141,7 +3154,6 @@
       }
       maxFingers = 0;
       gestureMoved = 0;
-      leadPointerId = null;
     }
 
     // pointerup ist ein echtes Loslassen (darf klicken); pointercancel ist ein
@@ -3149,6 +3161,24 @@
     // sauber aufraeumen (Ziehen beenden, Zeitgeber raeumen).
     pad.addEventListener('pointerup', function (e) { endTouch(e, true); });
     pad.addEventListener('pointercancel', function (e) { endTouch(e, false); });
+
+    // Auffangnetz auf Dokumentebene: scheitert pad.setPointerCapture() UND
+    // verlaesst der Finger die Flaeche vor dem Loslassen, bekommt "pad" nie
+    // ein abschliessendes Ereignis — der Zeiger bliebe fuer immer in "pts"
+    // stehen (naechste Geste gilt faelschlich als "zwei Finger") und ein
+    // laufendes Ziehen haette kein Loslassen. pointerup/pointercancel bubbeln
+    // aber immer bis zum document, auch wenn das Einfangen scheiterte.
+    // endTouch() prueft an seinem Kopf, ob der Zeiger noch in "pts" steht —
+    // hat "pad" ihn schon regulaer abgeschlossen, ist dieser Aufruf ein No-op,
+    // also nie ein doppeltes Abschliessen desselben Zeigers.
+    function onDocPointerUp(e) { endTouch(e, true); }
+    function onDocPointerCancel(e) { endTouch(e, false); }
+    document.addEventListener('pointerup', onDocPointerUp);
+    document.addEventListener('pointercancel', onDocPointerCancel);
+    remotePadDocCleanup = function () {
+      document.removeEventListener('pointerup', onDocPointerUp);
+      document.removeEventListener('pointercancel', onDocPointerCancel);
+    };
 
     // Die beiden festen Knoepfe: Ziehen und Rechtsklick ohne Fingerakrobatik.
     // Zeiger einfangen (abgesichert) und pointercancel/lostpointercapture
