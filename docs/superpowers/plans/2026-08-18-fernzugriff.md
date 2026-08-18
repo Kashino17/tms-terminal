@@ -2016,9 +2016,13 @@ import { toHelperLine } from './input.darwin';
 const mods = { s: false, c: false, a: false, m: false };
 
 test('relative Bewegung wird in logische Punkte umgerechnet', () => {
+  // `scale` ist aufgenommene Pixel je logischem Punkt. Die App liefert das Delta
+  // in Bildpixeln; geteilt durch scale ergibt es Punkte, die CGEvent versteht.
   assert.equal(toHelperLine({ t: 'd', dx: 20, dy: -10 }, 2), 'rel 10 -5',
-    'auf Retina sind Bildpixel doppelt so fein wie Zeigerpunkte');
+    'bei 2 Pixeln je Punkt legt der Zeiger halb so viele Punkte zurueck');
   assert.equal(toHelperLine({ t: 'd', dx: 20, dy: -10 }, 1), 'rel 20 -10');
+  assert.equal(toHelperLine({ t: 'd', dx: 16, dy: 0 }, 0.9259259259259259), 'rel 17 0',
+    'Standardstufe 1600/1728: das Bild ist gestaucht, der Zeiger laeuft weiter');
 });
 
 test('absolute Bewegung bleibt normiert', () => {
