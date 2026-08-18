@@ -1580,11 +1580,23 @@
                             border: 1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.05);
                             color: inherit; opacity: .75; }
 
+  .remote-keys { display: flex; flex-direction: column; gap: 4px; height: 100%; }
+  .rk-row { display: flex; gap: 4px; flex: 1; }
+  .rk { flex: 1; min-width: 0; border-radius: 7px; border: 1px solid rgba(255,255,255,.06);
+        background: rgba(255,255,255,.09); color: inherit; font-size: 14px; padding: 0; }
+  .rk:active { background: rgba(255,255,255,.20); }
+  .rk.mod { background: rgba(255,255,255,.05); font-size: 11px; opacity: .8; }
+  .rk.on { background: rgba(90,169,255,.28); opacity: 1;
+           box-shadow: inset 0 0 0 1px rgba(90,169,255,.5); }
+  .rk.locked { box-shadow: inset 0 0 0 2px rgba(90,169,255,.85); }
+
   /* Aufgeklappt ist die Breite da: groessere Tasten, mehr Luft. */
   @media (min-width: 700px) {
     section[data-screen="remote"] { padding: 14px; gap: 12px; }
     .remote-name { font-size: 15px; }
     .remote-pad-btns button { padding: 15px 0; font-size: 12px; }
+    .rk { font-size: 17px; }
+    .rk.mod { font-size: 13px; }
   }
 
   /* ---------- Lock screen ---------- */
@@ -3014,7 +3026,93 @@
       + '<div class="remote-pad-btns"><button data-btn="l">Linksklick</button>'
       + '<button data-btn="r">Rechtsklick</button></div></div>';
   }
-  function remoteKeysMarkup() { return '<div class="remote-keys" id="remoteKeys"></div>'; }
+  var remoteLayer = 'base';
+  var remoteSticky = { MetaLeft: 'off', AltLeft: 'off', ControlLeft: 'off', ShiftLeft: 'off' };
+
+  function remoteKeysMarkup() {
+    var rows = remoteKeyRows(remoteLayer).map(function (row) {
+      var keys = row.map(function (key) {
+        var cls = 'rk' + (key.m ? ' mod' : '') + (remoteSticky[key.c] && remoteSticky[key.c] !== 'off'
+          ? ' on' + (remoteSticky[key.c] === 'locked' ? ' locked' : '') : '');
+        var style = key.w ? ' style="flex:' + key.w + '"' : '';
+        return '<button class="' + cls + '" data-code="' + key.c + '"' + style + '>'
+             + escapeHtml(key.l) + '</button>';
+      }).join('');
+      return '<div class="rk-row">' + keys + '</div>';
+    }).join('');
+    return '<div class="remote-keys" id="remoteKeys">' + rows + '</div>';
+  }
+
+  function currentMods() {
+    return {
+      s: remoteSticky.ShiftLeft !== 'off',
+      c: remoteSticky.ControlLeft !== 'off',
+      a: remoteSticky.AltLeft !== 'off',
+      m: remoteSticky.MetaLeft !== 'off',
+    };
+  }
+
+  /**
+   * Faerbt nur die haftenden Sondertasten um, ohne die Tastatur neu aufzubauen.
+   * setRemotePage('keys') wuerde bei JEDEM Anschlag das gesamte Markup neu
+   * erzeugen — auf dem Handy bei jedem Tippen spuerbar, und das Element unter
+   * dem Finger verschwaende dabei, womit die :active-Rueckmeldung ausbleibt.
+   * Ein voller Neuaufbau bleibt nur dem Ebenenwechsel vorbehalten (dort AENDERT
+   * sich das Markup ja tatsaechlich).
+   */
+  function paintStickyButtons() {
+    var host = document.getElementById('remoteKeys');
+    if (!host) return;
+    Object.keys(remoteSticky).forEach(function (code) {
+      var btn = host.querySelector('[data-code="' + code + '"]');
+      if (!btn) return; // Sondertaste liegt auf dieser Ebene gar nicht (num/fn)
+      var state = remoteSticky[code];
+      btn.classList.toggle('on', state !== 'off');
+      btn.classList.toggle('locked', state === 'locked');
+    });
+  }
+
+  /** Nach einem Anschlag fallen die einmal-Sondertasten zurueck, feste bleiben. */
+  function releaseOnceModifiers() {
+    var changed = false;
+    Object.keys(remoteSticky).forEach(function (code) {
+      if (remoteSticky[code] === 'once') {
+        remoteSticky[code] = 'off';
+        if (window.TMSRemote) window.TMSRemote.input({ t: 'k', c: code, d: false, mods: currentMods() });
+        changed = true;
+      }
+    });
+    if (changed) paintStickyButtons();
+  }
+
+  function wireRemoteKeys() {
+    var host = document.getElementById('remoteKeys');
+    if (!host) return;
+
+    host.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-code]');
+      if (!btn) return;
+      var code = btn.dataset.code;
+      var R = window.TMSRemote;
+
+      if (code.indexOf('__layer:') === 0) { remoteLayer = code.slice(8); setRemotePage('keys'); return; }
+      if (code === '__mic') { if (R) R.dictate(); return; }
+
+      if (code in remoteSticky) {
+        var before = remoteSticky[code];
+        remoteSticky[code] = nextSticky(before);
+        if (R) R.input({ t: 'k', c: code, d: remoteSticky[code] !== 'off', mods: currentMods() });
+        paintStickyButtons();
+        return;
+      }
+
+      if (R) {
+        R.input({ t: 'k', c: code, d: true, mods: currentMods() });
+        R.input({ t: 'k', c: code, d: false, mods: currentMods() });
+      }
+      releaseOnceModifiers();
+    });
+  }
   var remotePadDocCleanup = null; // meldet die Dokument-Auffangnetz-Zuhoerer der VORHERIGEN
                                   // wireRemotePad()-Ausfuehrung ab, damit sie sich beim
                                   // Umschalten Trackpad/Tastatur nicht anhaeufen
@@ -3207,7 +3305,6 @@
       btn.addEventListener('lostpointercapture', up);
     });
   }
-  function wireRemoteKeys() {}
 
   SCREEN_HOOKS.remote = function () { buildRemoteScreen(); };
 
@@ -3250,6 +3347,48 @@
     return state === 'off' ? 'once' : state === 'once' ? 'locked' : 'off';
   }
 
+  /**
+   * Die Tastenbelegung. `c` ist der KeyboardEvent.code — also die POSITION der
+   * Taste; welches Zeichen dabei herauskommt, entscheidet der Zielrechner mit
+   * seiner eigenen Belegung. Wuerden wir Zeichen schicken, tippte eine deutsche
+   * Handytastatur auf einem englisch eingestellten Mac Y statt Z.
+   */
+  function remoteKeyRows(layer) {
+    var mod = function (l, c) { return { l: l, c: c, sticky: true, m: true }; };
+    var k = function (l, c, w) { return w ? { l: l, c: c, w: w } : { l: l, c: c }; };
+
+    if (layer === 'fn') {
+      return [
+        [k('F1','F1'), k('F2','F2'), k('F3','F3'), k('F4','F4'), k('F5','F5'), k('F6','F6')],
+        [k('F7','F7'), k('F8','F8'), k('F9','F9'), k('F10','F10'), k('F11','F11'), k('F12','F12')],
+        [k('Pos1','Home'), k('Ende','End'), k('Bild ↑','PageUp'), k('Bild ↓','PageDown'), k('Entf','Delete')],
+        [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
+      ];
+    }
+    if (layer === 'num') {
+      return [
+        [k('1','Digit1'), k('2','Digit2'), k('3','Digit3'), k('4','Digit4'), k('5','Digit5'),
+         k('6','Digit6'), k('7','Digit7'), k('8','Digit8'), k('9','Digit9'), k('0','Digit0')],
+        [k('-','Minus'), k('=','Equal'), k('[','BracketLeft'), k(']','BracketRight'),
+         k('\\','Backslash'), k(';','Semicolon'), k('\'','Quote'), k('`','Backquote')],
+        [k(',','Comma'), k('.','Period'), k('/','Slash'), k('⌫','Backspace', 1.5)],
+        [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
+      ];
+    }
+    return [
+      [k('esc','Escape'), k('F…','__layer:fn'), mod('⌘','MetaLeft'), mod('⌥','AltLeft'),
+       mod('ctrl','ControlLeft'), k('↹','Tab'), k('🎙','__mic')],
+      [k('q','KeyQ'), k('w','KeyW'), k('e','KeyE'), k('r','KeyR'), k('t','KeyT'), k('z','KeyZ'),
+       k('u','KeyU'), k('i','KeyI'), k('o','KeyO'), k('p','KeyP'), k('ü','BracketLeft')],
+      [k('a','KeyA'), k('s','KeyS'), k('d','KeyD'), k('f','KeyF'), k('g','KeyG'), k('h','KeyH'),
+       k('j','KeyJ'), k('k','KeyK'), k('l','KeyL'), k('ö','Semicolon'), k('ä','Quote')],
+      [mod('⇧','ShiftLeft'), k('y','KeyY'), k('x','KeyX'), k('c','KeyC'), k('v','KeyV'),
+       k('b','KeyB'), k('n','KeyN'), k('m','KeyM'), k('⌫','Backspace', 1.5)],
+      [k('123','__layer:num'), k('␣','Space', 4), k('◀','ArrowLeft'), k('▶','ArrowRight'),
+       k('⏎','Enter', 1.5)],
+    ];
+  }
+
   /** Legt ein w×h grosses Bild seitenrichtig in eine Flaeche und zentriert es. */
   function fitRect(imgW, imgH, boxW, boxH) {
     var scale = Math.min(boxW / imgW, boxH / imgH);
@@ -3289,6 +3428,7 @@
     window.nextSticky = nextSticky;
     window.fitRect = fitRect;
     window.classifyPadTap = classifyPadTap;
+    window.remoteKeyRows = remoteKeyRows;
   }
   // ── /TMS-TEST-EXPORT ──
 
