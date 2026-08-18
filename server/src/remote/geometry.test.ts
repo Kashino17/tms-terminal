@@ -31,3 +31,18 @@ test('toWindowsAbsolute spannt auf 0..65535 auf', () => {
   assert.deepEqual(toWindowsAbsolute(1, 1), { x: 65535, y: 65535 });
   assert.deepEqual(toWindowsAbsolute(0.5, 0.5), { x: 32768, y: 32768 });
 });
+
+test('toLogicalPoint faellt bei unbrauchbarem Skalierungsfaktor auf 1 zurueck', () => {
+  const basis = { width: 1920, height: 1080 };
+  assert.deepEqual(toLogicalPoint(0.5, 0.5, { ...basis, scale: 0 }), { x: 960, y: 540 },
+                    'scale 0 verhaelt sich wie scale 1');
+  assert.deepEqual(toLogicalPoint(0.5, 0.5, { ...basis, scale: -2 }), { x: 960, y: 540 },
+                    'negatives scale verhaelt sich wie scale 1');
+  assert.deepEqual(toLogicalPoint(0.5, 0.5, { ...basis, scale: Number.NaN }), { x: 960, y: 540 },
+                    'NaN scale verhaelt sich wie scale 1');
+});
+
+test('clamp01 faengt unendliche Werte ab', () => {
+  assert.equal(clamp01(Number.POSITIVE_INFINITY), 0);
+  assert.equal(clamp01(Number.NEGATIVE_INFINITY), 0);
+});

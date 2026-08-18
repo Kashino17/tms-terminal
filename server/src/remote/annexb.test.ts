@@ -69,3 +69,13 @@ test('3-Byte- und 4-Byte-Startcodes werden beide erkannt', () => {
   assert.equal(units.length, 1);
   assert.equal(units[0].keyframe, true);
 });
+
+test('Access-Unit-Nutzdaten sind byte-genau SPS+PPS+IDR inklusive der 4-Byte-Startcodes', () => {
+  const s = createAnnexBSplitter(6);
+  assert.deepEqual(s.push(Buffer.concat([SPS(), PPS(), IDR()]), 0), []);
+  const units = s.tick(6);
+  assert.equal(units.length, 1, 'nach der Leerlaufzeit wird die Access Unit abgeschlossen');
+  assert.equal(units[0].keyframe, true);
+  assert.deepEqual(units[0].data, Buffer.concat([SPS(), PPS(), IDR()]),
+                    'die Nutzdaten muessen byte-genau dem Ganz-Weg entsprechen, inklusive fuehrendem Null-Byte der ersten NAL');
+});

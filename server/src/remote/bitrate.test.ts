@@ -52,3 +52,34 @@ test('ein neuer Sollwert hebt die Obergrenze wieder an', () => {
   g.decide(zwischenbild, 50 * KB, 100);                          // ruhige Phase beginnt
   assert.equal(g.decide(zwischenbild, 50 * KB, 3200).bitrateKbps, 500);
 });
+
+test('Sendepuffer exakt 512 KB laesst ein Zwischenbild noch durch', () => {
+  const g = createBitrateGovernor(1500);
+  assert.equal(g.decide(zwischenbild, 512 * KB, 0).send, true,
+               'die Schwelle ist "ueber 512 KB", nicht "ab 512 KB"');
+});
+
+test('Sendepuffer exakt 1 MB halbiert die Bitrate noch nicht', () => {
+  const g = createBitrateGovernor(1500);
+  assert.equal(g.decide(vollbild, 1024 * KB, 0).bitrateKbps, null,
+               'die Schwelle ist "ueber 1 MB", nicht "ab 1 MB"');
+});
+
+test('Sendepuffer exakt 128 KB gilt nicht als ruhig', () => {
+  const g = createBitrateGovernor(1000);
+  assert.equal(g.decide(vollbild, 1100 * KB, 0).bitrateKbps, 500, 'erst halbieren');
+  assert.equal(g.decide(zwischenbild, 128 * KB, 1000).bitrateKbps, null,
+               'genau 128 KB ist nicht "unter" der Ruhe-Schwelle');
+  assert.equal(g.decide(zwischenbild, 50 * KB, 4000).bitrateKbps, null,
+               'die Ruhephase beginnt erst jetzt, 3 s sind ab hier noch nicht um');
+  assert.equal(g.decide(zwischenbild, 50 * KB, 7000).bitrateKbps, 625,
+               'waere die Ruhephase schon bei 128 KB gestartet, waere hier laengst erhoeht worden');
+});
+
+test('Ruhephase exakt 3000 ms lang unter 128 KB hebt die Bitrate an', () => {
+  const g = createBitrateGovernor(1000);
+  assert.equal(g.decide(vollbild, 1100 * KB, 0).bitrateKbps, 500, 'erst halbieren');
+  assert.equal(g.decide(zwischenbild, 50 * KB, 1000).bitrateKbps, null, 'die Ruhephase beginnt hier');
+  assert.equal(g.decide(zwischenbild, 50 * KB, 4000).bitrateKbps, 625,
+               'nach genau 3000 ms wird bereits angehoben');
+});
