@@ -3007,7 +3007,7 @@
     if (page === 'pad') wireRemotePad(); else wireRemoteKeys();
   }
 
-  // Bis Aufgabe 12/13 stehen hier nur die Flaechen — Gesten und Tasten folgen dort.
+  // Trackpad hat seine Gesten (Aufgabe 12); die Tastenreihe folgt in Aufgabe 13.
   function remotePadMarkup() {
     return '<div class="remote-pad" id="remotePad">'
       + '<span class="remote-pad-hint">Wischen bewegt den Zeiger<br>Tippen klickt · zwei Finger scrollen</span>'
@@ -3015,7 +3015,78 @@
       + '<button data-btn="r">Rechtsklick</button></div></div>';
   }
   function remoteKeysMarkup() { return '<div class="remote-keys" id="remoteKeys"></div>'; }
-  function wireRemotePad() {}
+  function wireRemotePad() {
+    var pad = document.getElementById('remotePad');
+    if (!pad) return;
+    var R = function () { return window.TMSRemote; }; // Aufgabe 14 setzt window.TMSRemote — bis dahin bleibt der Mockup fuer sich lauffaehig.
+
+    var last = null;          // letzte Fingerposition
+    var lastAt = 0;
+    var moved = 0;             // zurueckgelegter Weg — trennt Tippen von Wischen
+    var downAt = 0;
+    var twoFinger = false;
+    var dragging = false;
+    var holdTimer = null;
+
+    var TAP_SLOP = 10;        // Punkte, die ein "Tippen" wackeln darf
+    var TAP_MS = 250;
+    var HOLD_MS = 350;        // Halten leitet das Ziehen ein
+
+    pad.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('[data-btn]')) return;
+      pad.setPointerCapture(e.pointerId);
+      last = { x: e.clientX, y: e.clientY };
+      lastAt = e.timeStamp;
+      moved = 0;
+      downAt = e.timeStamp;
+      twoFinger = e.isPrimary === false;
+      holdTimer = setTimeout(function () {
+        dragging = true;
+        if (R()) R().input({ t: 'b', b: 'l', d: true });
+      }, HOLD_MS);
+    });
+
+    pad.addEventListener('pointermove', function (e) {
+      if (!last) return;
+      var dx = e.clientX - last.x;
+      var dy = e.clientY - last.y;
+      var dt = Math.max(1, e.timeStamp - lastAt);
+      last = { x: e.clientX, y: e.clientY };
+      lastAt = e.timeStamp;
+      moved += Math.abs(dx) + Math.abs(dy);
+      if (moved > TAP_SLOP && holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+
+      var speed = Math.sqrt(dx * dx + dy * dy) / dt;
+      var gain = pointerGain(speed);
+      if (!R()) return;
+      if (twoFinger) R().input({ t: 's', dx: Math.round(dx), dy: Math.round(dy) });
+      else R().input({ t: 'd', dx: Math.round(dx * gain), dy: Math.round(dy * gain) });
+    });
+
+    function release(e) {
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      var quick = e.timeStamp - downAt < TAP_MS && moved <= TAP_SLOP;
+      if (R()) {
+        if (dragging) R().input({ t: 'b', b: 'l', d: false });
+        else if (quick) {
+          var b = twoFinger ? 'r' : 'l';   // zwei Finger tippen = Rechtsklick
+          R().input({ t: 'b', b: b, d: true });
+          R().input({ t: 'b', b: b, d: false });
+        }
+      }
+      last = null; dragging = false; twoFinger = false;
+    }
+
+    pad.addEventListener('pointerup', release);
+    pad.addEventListener('pointercancel', release);
+
+    // Die beiden festen Knoepfe: Ziehen und Rechtsklick ohne Fingerakrobatik.
+    pad.querySelectorAll('[data-btn]').forEach(function (btn) {
+      var which = btn.dataset.btn;
+      btn.addEventListener('pointerdown', function () { if (R()) R().input({ t: 'b', b: which, d: true }); });
+      btn.addEventListener('pointerup',   function () { if (R()) R().input({ t: 'b', b: which, d: false }); });
+    });
+  }
   function wireRemoteKeys() {}
 
   SCREEN_HOOKS.remote = function () { buildRemoteScreen(); };
