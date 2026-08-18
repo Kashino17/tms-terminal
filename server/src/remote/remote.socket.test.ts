@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { isRemotePath, handleRemoteConnection, QUALITY_PRESETS } from './remote.socket';
+import { isRemotePath, handleRemoteConnection, QUALITY_PRESETS, packAccessUnit } from './remote.socket';
 import type { ScreenCapture, CaptureOptions } from './capture/capture.types';
 import type { InputInjector } from './input/input.types';
 
@@ -237,4 +237,70 @@ test('ein verspaeteter Fehler der ersetzten Aufnahme raeumt nicht die neue Sitzu
     'genau ein remote:started fuer B',
   );
   assert.equal(ws.typed('remote:stopped').length, 0, 'kein stilles Abraeumen von B danach');
+});
+
+test('packAccessUnit setzt Kennzeichen und Zeitstempel in den Kopf', () => {
+  const nutzdaten = Buffer.from([9, 9, 9]);
+  const voll = packAccessUnit({ data: nutzdaten, keyframe: true }, 1000);
+  assert.equal(voll[0], 0x81, 'Typ 1 mit gesetztem Vollbild-Bit');
+  assert.equal(voll.readUInt32BE(1), 1000);
+  assert.deepEqual(voll.subarray(5), nutzdaten);
+
+  const zwischen = packAccessUnit({ data: nutzdaten, keyframe: false }, 66);
+  assert.equal(zwischen[0], 0x01, 'ohne Vollbild-Bit');
+  assert.equal(zwischen.readUInt32BE(1), 66);
+});
+
+test('Bilddaten gehen unkomprimiert als Binaerframe raus', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  ws.sent.length = 0;
+
+  // Ein Vollbild, gefolgt vom Anfang des naechsten Bildes (das erst den Abschluss ausloest).
+  const nal = (t: number) => Buffer.concat([Buffer.from([0, 0, 0, 1, 0x60 | t]), Buffer.alloc(4, 0xaa)]);
+  capture.dataCb(Buffer.concat([nal(7), nal(8), nal(5)]));
+  capture.dataCb(nal(1));
+
+  const binaer = ws.sent.filter((m) => Buffer.isBuffer(m));
+  assert.equal(binaer.length, 1, 'genau eine fertige Access Unit');
+  assert.equal(binaer[0][0], 0x81, 'als Vollbild gekennzeichnet');
+});
+
+test('bei vollem Sendepuffer fallen Zwischenbilder weg, Vollbilder nicht', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  ws.sent.length = 0;
+  ws.bufferedAmount = 900 * 1024;                       // ueber der Verwurfsschwelle
+
+  const nal = (t: number) => Buffer.concat([Buffer.from([0, 0, 0, 1, 0x60 | t]), Buffer.alloc(4, 0xaa)]);
+  capture.dataCb(Buffer.concat([nal(1), nal(1)]));       // zwei Zwischenbilder
+  assert.equal(ws.sent.filter((m) => Buffer.isBuffer(m)).length, 0, 'Zwischenbilder verworfen');
+
+  capture.dataCb(Buffer.concat([nal(7), nal(8), nal(5), nal(1)]));
+  assert.ok(ws.sent.filter((m) => Buffer.isBuffer(m)).length >= 1, 'das Vollbild kommt durch');
+});
+
+test('Eingabe-Ereignisse landen beim Injektor', async () => {
+  const { ws, input } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+
+  send(ws, { t: 'd', dx: 10, dy: -4 });
+  send(ws, { t: 'b', b: 'r', d: true });
+  send(ws, { t: 's', dx: 0, dy: -3 });
+  send(ws, { t: 'k', c: 'KeyA', d: true, mods: { s: false, c: false, a: false, m: true } });
+  send(ws, { t: 'x', s: 'Hallo' });
+  send(ws, { t: 'm', x: 0.5, y: 0.25 });
+
+  assert.deepEqual(input.calls, [
+    'rel 10 -4', 'btn right true', 'scroll 0 -3', 'key KeyA true', 'text Hallo', 'abs 0.5 0.25',
+  ]);
+});
+
+test('Eingaben ohne laufende Sitzung werden verworfen', () => {
+  const { ws, input } = wire();
+  send(ws, { t: 'd', dx: 10, dy: 10 });
+  assert.deepEqual(input.calls, [], 'ohne Aufnahme gibt es nichts zu steuern');
 });

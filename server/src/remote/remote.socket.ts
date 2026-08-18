@@ -1,8 +1,11 @@
 import type {
   RemoteClientMessage, RemoteServerMessage, RemoteErrorCode, RemoteQualityPreset,
+  RemoteInputEvent,
 } from '../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions } from './capture/capture.types';
 import type { InputInjector } from './input/input.types';
+import { createAnnexBSplitter, type AccessUnit } from './annexb';
+import { createBitrateGovernor } from './bitrate';
 import { logger } from '../utils/logger';
 
 /** Fixed rungs from the design doc. `auto` is the default. */
@@ -35,9 +38,42 @@ export interface RemoteDeps {
   isEnabled: () => boolean;
 }
 
+/**
+ * Wire format for one frame:
+ *   byte 0    0x01 = video access unit, bit 0x80 = keyframe
+ *   byte 1-4  milliseconds since session start (uint32 BE)
+ *   byte 5..  H.264 Annex-B payload
+ */
+export function packAccessUnit(au: AccessUnit, tsMs: number): Buffer {
+  const head = Buffer.alloc(5);
+  head[0] = 0x01 | (au.keyframe ? 0x80 : 0);
+  head.writeUInt32BE(Math.max(0, Math.floor(tsMs)) >>> 0, 1);
+  return Buffer.concat([head, au.data]);
+}
+
+function applyInput(input: InputInjector, ev: RemoteInputEvent): void {
+  switch (ev.t) {
+    case 'd': input.moveRelative(ev.dx, ev.dy); break;
+    case 'm': input.moveAbsolute(ev.x, ev.y); break;
+    case 'b': input.button(ev.b === 'r' ? 'right' : ev.b === 'm' ? 'middle' : 'left', ev.d); break;
+    case 's': input.scroll(ev.dx, ev.dy); break;
+    case 'k': input.key(ev.c, ev.d, ev.mods); break;
+    case 'x': input.text(ev.s); break;
+    default: break;
+  }
+}
+
 export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
   let capture: ScreenCapture | null = null;
   let input: InputInjector | null = null;
+  let splitter: ReturnType<typeof createAnnexBSplitter> | null = null;
+  let governor: ReturnType<typeof createBitrateGovernor> | null = null;
+  let startedAt = 0;
+  let idleTimer: NodeJS.Timeout | null = null;
+  let statusTimer: NodeJS.Timeout | null = null;
+  let framesSent = 0;
+  let bytesSent = 0;
+  let dropped = 0;
 
   const reply = (msg: RemoteServerMessage) => {
     if (ws.readyState === 1) ws.send(JSON.stringify(msg));
@@ -49,6 +85,10 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
   async function stop(reason: string, tell = true) {
     const c = capture, i = input;
     capture = null; input = null;
+    if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
+    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    splitter = null;
+    governor = null;
     if (c) await c.stop().catch(() => {});
     if (i) await i.stop().catch(() => {});
     if (tell && (c || i)) reply({ type: 'remote:stopped', payload: { reason } });
@@ -86,6 +126,47 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
       const info = await c.start(opts);
       capture = c;
       input = deps.makeInput();
+
+      splitter = createAnnexBSplitter();
+      governor = createBitrateGovernor(opts.bitrateKbps);
+      startedAt = Date.now();
+      framesSent = 0; bytesSent = 0; dropped = 0;
+
+      const emit = (units: AccessUnit[]) => {
+        for (const au of units) {
+          if (!governor || ws.readyState !== 1) return;
+          const decision = governor.decide(au, ws.bufferedAmount, Date.now());
+          if (decision.bitrateKbps !== null) capture?.setBitrate(decision.bitrateKbps);
+          if (!decision.send) { dropped++; continue; }
+          const frame = packAccessUnit(au, Date.now() - startedAt);
+          // Already compressed — a second pass would only cost CPU time.
+          ws.send(frame, { compress: false });
+          framesSent++;
+          bytesSent += frame.length;
+        }
+      };
+
+      c.onData((chunk) => { if (splitter) emit(splitter.push(chunk, Date.now())); });
+
+      // A frame only ends at the next start code; without this idle flush every
+      // frame hangs until the one after it (33 ms of extra latency at 30 fps).
+      idleTimer = setInterval(() => { if (splitter) emit(splitter.tick(Date.now())); }, 4);
+      idleTimer.unref();
+
+      statusTimer = setInterval(() => {
+        reply({
+          type: 'remote:status',
+          payload: {
+            fps: framesSent,
+            kbps: Math.round((bytesSent * 8) / 1000),
+            rttMs: 0,
+            dropped,
+          },
+        });
+        framesSent = 0; bytesSent = 0; dropped = 0;
+      }, 1000);
+      statusTimer.unref();
+
       reply({
         type: 'remote:started',
         payload: { ...info, fps: opts.fps, codec: 'avc1' },
@@ -106,19 +187,29 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
 
   ws.on('message', (raw, isBinary) => {
     if (isBinary) return;                       // the app only ever sends text frames
-    let msg: RemoteClientMessage;
+    let msg: unknown;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
-    if (!msg || typeof (msg as { type?: unknown }).type !== 'string') return;
 
-    switch (msg.type) {
+    // Input events carry `t`, not `type` — short keys because pointer movement
+    // alone can produce up to 60 messages per second. This must be checked
+    // before the `type` guard below, or every input event gets discarded.
+    if (msg && typeof (msg as { t?: unknown }).t === 'string') {
+      if (input) applyInput(input, msg as RemoteInputEvent);
+      return;
+    }
+
+    if (!msg || typeof (msg as { type?: unknown }).type !== 'string') return;
+    const clientMsg = msg as RemoteClientMessage;
+
+    switch (clientMsg.type) {
       case 'remote:start':
-        enqueue(() => start(msg.payload));
+        enqueue(() => start(clientMsg.payload));
         break;
       case 'remote:stop':
         enqueue(() => stop('vom Nutzer beendet'));
         break;
       case 'remote:quality': {
-        const preset = QUALITY_PRESETS[msg.payload?.preset];
+        const preset = QUALITY_PRESETS[clientMsg.payload?.preset];
         if (preset && capture) capture.setBitrate(preset.bitrateKbps);
         break;
       }
