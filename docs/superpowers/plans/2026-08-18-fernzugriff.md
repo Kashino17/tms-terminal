@@ -3035,8 +3035,20 @@ Im `<script>`-Teil des Mockups, in der Nähe der übrigen Hilfsfunktionen (etwa 
     var h = Math.round(imgH * scale);
     return { x: Math.round((boxW - w) / 2), y: Math.round((boxH - h) / 2), w: w, h: h };
   }
+
+  // Der gesamte Mockup-Code steckt in einer Kapsel — ohne diese Zeilen sieht
+  // bridge.js keine einzige dieser Funktionen, und der Fernzugriff bricht mit
+  // "fitRect is not defined" ab, waehrend die Tests weiter gruen melden (sie
+  // werten den Block einzeln aus). Die Abfrage haelt den Block in Node lauffaehig.
+  if (typeof window !== 'undefined') {
+    window.pointerGain = pointerGain;
+    window.nextSticky = nextSticky;
+    window.fitRect = fitRect;
+  }
   // ── /TMS-TEST-EXPORT ──
 ```
+
+**Diese Ausfuhr-Zeilen sind Pflicht.** Jede spätere Aufgabe, die den Block erweitert, trägt ihre neue Funktion dort mit ein.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -3112,6 +3124,9 @@ Und den Aufbau als Funktion, in der Nähe von `renderServers()`:
   function remoteKeysMarkup() { return '<div class="remote-keys" id="remoteKeys"></div>'; }
   function wireRemotePad() {}
   function wireRemoteKeys() {}
+
+  // bridge.js baut den Bildschirm auf, sieht aber nicht in diese Kapsel hinein.
+  window.buildRemoteScreen = buildRemoteScreen;
 ```
 
 `buildRemoteScreen()` beim Wechsel auf den Bildschirm aufrufen — in `handleDockTap`/`show()` dort, wo die anderen Bildschirme ihren Aufbau bekommen.
@@ -3630,7 +3645,9 @@ Ans Ende von `bridge.js` (vor einem etwaigen Abschluss-Aufruf):
       var stage = document.getElementById('remoteStage');
       if (!stage || !window.remoteState.w) return;
       var w = stage.clientWidth || stage.getBoundingClientRect().width;
-      var box = fitRect(window.remoteState.w, window.remoteState.h, w, w * 2);
+      // window.-Vorsatz ist Pflicht: der Mockup-Code liegt in einer Kapsel, in
+      // die bridge.js nicht hineinsieht (siehe Ausfuhr-Zeilen in Aufgabe 11).
+      var box = window.fitRect(window.remoteState.w, window.remoteState.h, w, w * 2);
       stage.style.height = box.h + 'px';
       if (canvas) { canvas.width = window.remoteState.w; canvas.height = window.remoteState.h; }
     }
@@ -3736,8 +3753,8 @@ Ans Ende von `bridge.js` (vor einem etwaigen Abschluss-Aufruf):
       start: function (which) {
         preset = which || preset;
         wantRunning = true;
-        if (typeof buildRemoteScreen === 'function' && !document.getElementById('remoteStage')) {
-          buildRemoteScreen();
+        if (typeof window.buildRemoteScreen === 'function' && !document.getElementById('remoteStage')) {
+          window.buildRemoteScreen();
         }
         if (!ws) connect();
       },
@@ -3898,6 +3915,12 @@ Erwartet: FAIL — `toStageNormalized is not defined`.
   }
 ```
 
+Und in die Ausfuhr-Zeilen am Ende des Blocks aufnehmen — `bridge.js` ruft die Funktion auf:
+
+```js
+    window.toStageNormalized = toStageNormalized;
+```
+
 - [ ] **Step 4: Run test to verify it passes**
 
 ```bash
@@ -3964,7 +3987,7 @@ Innerhalb des Fernzugriffs-Blocks aus Aufgabe 14 ergänzen:
       var stage = document.getElementById('remoteStage');
       if (!stage || !window.remoteState.w) return null;
       var r = stage.getBoundingClientRect();
-      var box = fitRect(window.remoteState.w, window.remoteState.h, r.width, r.height);
+      var box = window.fitRect(window.remoteState.w, window.remoteState.h, r.width, r.height);
       return { x: r.left + box.x, y: r.top + box.y, w: box.w, h: box.h };
     }
 
@@ -3973,7 +3996,7 @@ Innerhalb des Fernzugriffs-Blocks aus Aufgabe 14 ergänzen:
       if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
       var box = stageBox();
       if (!box) return;
-      var p = toStageNormalized(e.clientX, e.clientY, box);
+      var p = window.toStageNormalized(e.clientX, e.clientY, box);
       if (p) window.TMSRemote.input({ t: 'm', x: p.x, y: p.y });
     });
 
@@ -4228,6 +4251,13 @@ Erwartet: FAIL — `clampZoom is not defined`.
   }
 ```
 
+Beide in die Ausfuhr-Zeilen am Ende des Blocks aufnehmen — `bridge.js` ruft sie auf:
+
+```js
+    window.clampZoom = clampZoom;
+    window.clampPan = clampPan;
+```
+
 - [ ] **Step 4: Run test to verify it passes**
 
 ```bash
@@ -4276,7 +4306,7 @@ Im Fernzugriffs-Block von `bridge.js`:
           holdTimer = null;
           var box = stageBox();
           if (!box) return;
-          var n = toStageNormalized(start.x, start.y, box);
+          var n = window.toStageNormalized(start.x, start.y, box);
           if (n) {
             window.TMSRemote.input({ t: 'm', x: n.x, y: n.y });
             if (navigator.vibrate) navigator.vibrate(12);
@@ -4295,11 +4325,11 @@ Im Fernzugriffs-Block von `bridge.js`:
         if (pinch && points.size === 2) {
           var p = Array.from(points.values());
           var d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
-          view.zoom = clampZoom(pinch.zoom * (d / pinch.d));
+          view.zoom = window.clampZoom(pinch.zoom * (d / pinch.d));
         } else if (points.size === 1 && view.zoom > 1) {
           var r = stage.getBoundingClientRect();
-          view.x = clampPan(view.x + (e.clientX - prev.x), view.zoom, r.width);
-          view.y = clampPan(view.y + (e.clientY - prev.y), view.zoom, r.height);
+          view.x = window.clampPan(view.x + (e.clientX - prev.x), view.zoom, r.width);
+          view.y = window.clampPan(view.y + (e.clientY - prev.y), view.zoom, r.height);
         }
         applyView();
       });
