@@ -253,6 +253,21 @@ private func warp(to p: CGPoint) {
     .post(tap: .cghidEventTap)
 }
 
+/// Undoes the escaping from input.darwin.ts in a single pass.
+/// Two successive replacements cannot do this: whichever runs first corrupts
+/// the input of the second (`C:\neuer` → `C:\` + newline + `euer`).
+func unescapeText(_ s: String) -> String {
+  var out = ""
+  out.reserveCapacity(s.count)
+  var it = s.makeIterator()
+  while let ch = it.next() {
+    guard ch == "\\" else { out.append(ch); continue }
+    guard let next = it.next() else { out.append(ch); break }
+    out.append(next == "n" ? "\n" : next)
+  }
+  return out
+}
+
 func runInputLoop() {
   // Without the Accessibility grant every event below is silently swallowed —
   // report that instead of pretending to work.
@@ -300,8 +315,7 @@ func runInputLoop() {
       ev?.flags = flags(Int(nums[2]))
       ev?.post(tap: .cghidEventTap)
     case "text":
-      let text = rest.replacingOccurrences(of: "\\n", with: "\n")
-                     .replacingOccurrences(of: "\\\\", with: "\\")
+      let text = unescapeText(rest)
       // Feed Unicode directly: independent of the Mac's keyboard layout.
       for chunk in text.unicodeScalars.map({ UniChar($0.value) }) {
         var c = chunk

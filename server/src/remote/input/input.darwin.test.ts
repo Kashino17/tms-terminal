@@ -42,3 +42,17 @@ test('Text wird als eine Zeile mit maskierten Zeilenumbruechen gesendet', () => 
   assert.equal(toHelperLine({ t: 'x', s: 'a\nb' }, 1), 'text a\\nb',
     'ein echter Umbruch wuerde die Zeilenstruktur des Protokolls sprengen');
 });
+
+// Pins the exact wire format for backslash-heavy text (Windows-Pfade, UNC-Freigaben,
+// Escape-Folgen). Der Swift-Helfer entmaskiert das in genau einem Durchgang (statt
+// zwei nacheinander laufenden String-Ersetzungen, die sich gegenseitig verfaelschen
+// wuerden — siehe TmsRemoteHelper.swift `unescapeText`); dieser Test haelt fest, was
+// er als Eingabe bekommt, damit das Format nicht unbemerkt driftet.
+test('Rueckschraegstrich-lastiger Text bekommt ein eindeutiges Drahtformat', () => {
+  assert.equal(toHelperLine({ t: 'x', s: 'C:\\Users\\ayysir' }, 1), 'text C:\\\\Users\\\\ayysir');
+  assert.equal(toHelperLine({ t: 'x', s: 'C:\\neuer Ordner' }, 1), 'text C:\\\\neuer Ordner',
+    'die Falle: ein einzelner Rueckschraegstrich vor "n" darf nicht wie \\n aussehen');
+  assert.equal(toHelperLine({ t: 'x', s: '\\\\Server\\Freigabe' }, 1), 'text \\\\\\\\Server\\\\Freigabe');
+  assert.equal(toHelperLine({ t: 'x', s: 'endet auf Backslash\\' }, 1), 'text endet auf Backslash\\\\',
+    'ein Text, der auf einen einzelnen Rueckschraegstrich endet, bleibt eindeutig');
+});
