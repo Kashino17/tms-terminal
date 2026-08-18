@@ -7,6 +7,7 @@
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public class TmsInput {
   [StructLayout(LayoutKind.Sequential)]
@@ -49,11 +50,23 @@ public class TmsInput {
     else i.mi.dwFlags = down ? LDOWN : LUP;
     Send(i);
   }
+  // I9: the wire protocol's {t:'s'} dx/dy are pixels — that is what the
+  // macOS backend feeds straight into CGEvent's .pixel-unit scroll wheel
+  // event, and the bridge's gesture math is calibrated against that. WHEEL
+  // (and HWHEEL) instead expect multiples of WHEEL_DELTA (120 = one notch),
+  // and the previous `dy * 120` treated every wire pixel as a full notch —
+  // the same swipe scrolled roughly 120x further on Windows than on macOS.
+  // Windows' own Precision Touchpad driver sends exactly this kind of small,
+  // sub-120 mouseData for smooth scrolling (accumulated by the recipient
+  // into full lines), so passing the pixel delta straight through is not
+  // just "no multiplier" but the same idiom Windows itself already uses for
+  // fine-grained wheel input. Shared wire unit is documented on
+  // RemoteInputEvent in shared/protocol.ts.
   public static void Scroll(int dx, int dy) {
     if (dy != 0) { INPUT i = new INPUT(); i.type = MOUSE;
-      i.mi.mouseData = unchecked((uint)(dy * 120)); i.mi.dwFlags = WHEEL; Send(i); }
+      i.mi.mouseData = unchecked((uint)dy); i.mi.dwFlags = WHEEL; Send(i); }
     if (dx != 0) { INPUT i = new INPUT(); i.type = MOUSE;
-      i.mi.mouseData = unchecked((uint)(dx * 120)); i.mi.dwFlags = HWHEEL; Send(i); }
+      i.mi.mouseData = unchecked((uint)dx); i.mi.dwFlags = HWHEEL; Send(i); }
   }
   public static void Key(ushort vk, bool down) {
     INPUT i = new INPUT(); i.type = KEYBOARD;
@@ -66,8 +79,43 @@ public class TmsInput {
       INPUT u = new INPUT(); u.type = KEYBOARD; u.ki.wScan = c; u.ki.dwFlags = UNICODE | KEYUP; Send(u);
     }
   }
+
+  // I10: single-pass scan, matching the macOS helper's unescapeText exactly
+  // (TmsRemoteHelper.swift) — and NOT the two sequential Replace() calls
+  // this file used to have. Two sequential replacements cannot correctly
+  // invert input.win32.ts's escaping (\ -> \\, then \n -> literal "\n") in
+  // EITHER order: replacing "\\n" -> newline first turns a literal
+  // "C:\neuer Ordner" (escaped as "C:\\neuer Ordner" on the wire) into
+  // "C:\" + newline + "euer Ordner", because the still-doubled backslash's
+  // second character is 'n'; de-doubling backslashes first before that
+  // makes the very same "\\n" match the "\n" pattern next regardless of
+  // order. Only walking the string once, consuming a backslash together
+  // with exactly the character that follows it, is unambiguous. This is a
+  // straight port of the Swift fix — Task 7's fix round found the identical
+  // bug on macOS first.
+  public static string Unescape(string s) {
+    StringBuilder sb = new StringBuilder(s.Length);
+    for (int i = 0; i < s.Length; i++) {
+      char c = s[i];
+      if (c == '\\' && i + 1 < s.Length) {
+        i++;
+        sb.Append(s[i] == 'n' ? '\n' : s[i]);
+      } else {
+        sb.Append(c);
+      }
+    }
+    return sb.ToString();
+  }
 }
 "@
+
+# I11: the interface description promised Windows has no startup race, but
+# Add-Type above compiles the embedded C# on first run, which takes real
+# time — the same kind of gap the macOS Swift helper already reports
+# readiness for. Without this line, input.win32.ts had nothing to wait on,
+# and the first burst of input after a session starts could arrive before
+# this script's read loop (below) is even running.
+[Console]::Error.WriteLine('{"ready":{"input":true}}')
 
 while ($true) {
   $line = [Console]::In.ReadLine()
@@ -83,7 +131,7 @@ while ($true) {
     'btn'    { [TmsInput]::Button($n[0], $n[1] -eq '1') }
     'scroll' { [TmsInput]::Scroll([int]$n[0], [int]$n[1]) }
     'key'    { [TmsInput]::Key([uint16]$n[0], $n[1] -eq '1') }
-    'text'   { [TmsInput]::Text($rest.Replace('\n', "`n").Replace('\\', '\')) }
+    'text'   { [TmsInput]::Text([TmsInput]::Unescape($rest)) }
     'quit'   { exit 0 }
   }
 }
