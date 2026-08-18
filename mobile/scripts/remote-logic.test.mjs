@@ -16,7 +16,7 @@ function loadBlock(name) {
   const re = new RegExp(`// ── TMS-TEST-EXPORT: ${name} ──([\\s\\S]*?)// ── /TMS-TEST-EXPORT ──`);
   const m = re.exec(html);
   assert.ok(m, `Block "${name}" fehlt im Mockup — Markierungen nicht entfernen`);
-  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, classifyPadTap, remoteKeyRows };`)();
+  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows };`)();
 }
 
 test('der markierte Block laesst sich laden', () => {
@@ -145,6 +145,22 @@ test('jede Taste hat eine Beschriftung und entweder einen Positionscode oder ein
       assert.ok(!(hasCode && hasText), `${key.l} hat sowohl Code als auch Textweg — genau einer ist erlaubt`);
     }
   }
+});
+
+test('toStageNormalized rechnet Bildschirmpunkte in Bildkoordinaten', () => {
+  const { toStageNormalized } = loadBlock('remoteMath');
+  const box = { x: 20, y: 10, w: 200, h: 100 };   // Bild sitzt mit Rand in der Buehne
+
+  assert.deepEqual(toStageNormalized(20, 10, box), { x: 0, y: 0 }, 'linke obere Ecke');
+  assert.deepEqual(toStageNormalized(220, 110, box), { x: 1, y: 1 }, 'rechte untere Ecke');
+  assert.deepEqual(toStageNormalized(120, 60, box), { x: 0.5, y: 0.5 }, 'Mitte');
+});
+
+test('toStageNormalized meldet Punkte neben dem Bild als ungueltig', () => {
+  const { toStageNormalized } = loadBlock('remoteMath');
+  const box = { x: 20, y: 10, w: 200, h: 100 };
+  assert.equal(toStageNormalized(5, 60, box), null, 'im schwarzen Rand links');
+  assert.equal(toStageNormalized(120, 200, box), null, 'unterhalb des Bildes');
 });
 
 test('die Zeichenebene sendet Satzzeichen ueber den Textweg, nie ueber einen US-Positionscode', () => {

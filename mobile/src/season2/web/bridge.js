@@ -2640,6 +2640,11 @@
           // eingebaute "off"-Check macht den Aufruf beim ganz normalen ersten
           // Verbinden (nichts war je gedrueckt) zum No-op.
           if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+          // Dieselbe Ueberlegung gilt fuer die harte Tastatur/Maus im Vollbild:
+          // riss die Verbindung genau waehrend ein Hardware-Anschlag/-Klick
+          // unten war, kam dessen Loslassen nie an. releaseHardwareInput()
+          // weiss noch, was zuletzt gehalten wurde, und holt es hier nach.
+          if (typeof window.releaseHardwareInput === 'function') window.releaseHardwareInput();
           veil('');
           layoutStage();
           break;
@@ -2730,6 +2735,101 @@
     // nicht in diese Kapsel hinein — deshalb ausdruecklich nach aussen geben.
     window.layoutRemoteStage = layoutStage;
     window.addEventListener('resize', layoutStage);
+
+    // ── Vollbild: angeschlossene Tastatur und Maus ──────────────────────────
+    // Manuell umgeschaltet (siehe window.setRemoteFullscreen im Mockup) — hier
+    // wird nur noch weitergeleitet, solange window.remoteState.fullscreen an ist.
+
+    /** Rechteck des Bildes innerhalb der Buehne, in Bildschirmkoordinaten. */
+    function stageBox() {
+      var stage = document.getElementById('remoteStage');
+      if (!stage || !window.remoteState.w) return null;
+      var r = stage.getBoundingClientRect();
+      var box = window.fitRect(window.remoteState.w, window.remoteState.h, r.width, r.height);
+      return { x: r.left + box.x, y: r.top + box.y, w: box.w, h: box.h };
+    }
+
+    // Gehaltene Hardware-Tasten/-Maustasten: wer hier steht, hat noch KEIN
+    // Loslassen bekommen. Das ist der Fehlertyp, der in diesem Vorhaben schon
+    // mehrfach auftrat (Trackpad-Rechtsklick, Bildschirm-Sondertasten) — bei
+    // echter Hardware kommen keydown/keyup und Maustasten-Events von ausserhalb
+    // unserer Kontrolle, darum wird hier gegengebucht statt blind weitergereicht.
+    var heldKeys = {};      // KeyboardEvent.code -> true
+    var heldButtons = {};   // 'l' | 'm' | 'r' -> true
+
+    /**
+     * Loest aktiv alles, was die angeschlossene Tastatur/Maus noch haelt.
+     * Muss an DREI Stellen laufen, nicht nur einer:
+     *  - Vollbild verlassen (window.setRemoteFullscreen(false) im Mockup)
+     *  - Fensterfokus weg (blur) — z.B. Sperrbildschirm, App-Wechsel, waehrend
+     *    eine Taste/Maustaste unten war; ohne das bleibt sie auf dem Mac haengen
+     *  - frischer Verbindungsaufbau (remote:started) — falls die Verbindung
+     *    genau waehrend eines Tastendrucks abriss, kam das Loslassen nie an
+     *    (derselbe Grund, aus dem releaseAllSticky() dort schon aufgerufen wird)
+     */
+    function releaseHardwareInput() {
+      Object.keys(heldKeys).forEach(function (code) {
+        window.TMSRemote.input({ t: 'k', c: code, d: false, mods: { s: false, c: false, a: false, m: false } });
+      });
+      heldKeys = {};
+      Object.keys(heldButtons).forEach(function (b) {
+        window.TMSRemote.input({ t: 'b', b: b, d: false });
+      });
+      heldButtons = {};
+    }
+    window.releaseHardwareInput = releaseHardwareInput;
+    window.addEventListener('blur', releaseHardwareInput);
+
+    // Angeschlossene Maus: absolute Abbildung ueber dem Bild — der PC-Zeiger
+    // steht dort, wo der Android-Zeiger ueber dem Bild steht (siehe
+    // toStageNormalized() im Mockup fuer die Begruendung).
+    document.addEventListener('pointermove', function (e) {
+      if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
+      var box = stageBox();
+      if (!box) return;
+      var p = window.toStageNormalized(e.clientX, e.clientY, box);
+      if (p) window.TMSRemote.input({ t: 'm', x: p.x, y: p.y });
+    });
+
+    document.addEventListener('pointerdown', function (e) {
+      if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
+      if (e.target.closest('#remoteExit')) return;   // Abzeichen bleibt der Rueckweg, nicht Teil der Fernsteuerung
+      e.preventDefault();
+      var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
+      heldButtons[b] = true;
+      window.TMSRemote.input({ t: 'b', b: b, d: true });
+    });
+    document.addEventListener('pointerup', function (e) {
+      if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
+      var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
+      delete heldButtons[b];
+      window.TMSRemote.input({ t: 'b', b: b, d: false });
+    });
+    document.addEventListener('contextmenu', function (e) {
+      if (window.remoteState.fullscreen) e.preventDefault();
+    });
+    document.addEventListener('wheel', function (e) {
+      if (!window.remoteState.fullscreen) return;
+      e.preventDefault();
+      window.TMSRemote.input({ t: 's', dx: Math.round(-e.deltaX / 20), dy: Math.round(-e.deltaY / 20) });
+    }, { passive: false });
+
+    // Angeschlossene Tastatur: Tasten abfangen, bevor der Browser sie deutet.
+    function forwardKey(e, down) {
+      if (!window.remoteState.fullscreen) return;
+      if (e.key === 'Escape' && e.shiftKey) {      // Notausstieg, falls das Abzeichen verdeckt ist
+        if (down) window.setRemoteFullscreen(false);
+        return;
+      }
+      e.preventDefault();
+      if (down) heldKeys[e.code] = true; else delete heldKeys[e.code];
+      window.TMSRemote.input({
+        t: 'k', c: e.code, d: down,
+        mods: { s: e.shiftKey, c: e.ctrlKey, a: e.altKey, m: e.metaKey },
+      });
+    }
+    document.addEventListener('keydown', function (e) { forwardKey(e, true); }, true);
+    document.addEventListener('keyup', function (e) { forwardKey(e, false); }, true);
   })();
 
   /** Fehlercodes des Servers in Saetze, die weiterhelfen. */
