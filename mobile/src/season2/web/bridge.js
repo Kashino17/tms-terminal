@@ -2306,6 +2306,9 @@
       window.toggleCardAutoApprove(cardId);
     }
   };
+  // React Native reicht nur die Zugangsdaten durch — Bilddaten sieht es nie.
+  var remoteTarget = null;
+  window.TMSBridge.setRemoteTarget = function (t) { remoteTarget = t; };
 
   document.addEventListener('pointerdown', function (e) {
     if (e.target.closest && e.target.closest('.term-card')) {
@@ -2497,6 +2500,241 @@
       });
     });
   };
+
+  // ══ Fernzugriff ═══════════════════════════════════════════════════════
+  // Eigene WebSocket-Verbindung, direkt aus der Seite heraus. Der Umweg ueber
+  // React Native scheidet aus: dessen Bruecke kann nur Text, Video muesste also
+  // base64-kodiert werden — ein Drittel mehr Daten, 30-mal pro Sekunde.
+  (function () {
+    var ws = null;
+    var decoder = null;
+    var canvas = null;
+    var ctx = null;
+    var retry = 0;
+    var retryTimer = null;
+    var wantRunning = false;
+    var preset = 'auto';
+    // Ueberlebt den Neuaufbau der Buehne (siehe buildRemoteScreen-Einklinkung
+    // weiter unten) — sonst zeigt die frische Leiste kurz "Verbinde …", obwohl
+    // die Verbindung laengst steht oder gerade an einem echten Fehler haengt.
+    var lastVeil = '';
+    var lastStat = '';
+
+    var PRESETS = {
+      sparsam: { maxWidth: 1280, fps: 24, bitrateKbps: 800 },
+      auto:    { maxWidth: 1600, fps: 30, bitrateKbps: 1500 },
+      scharf:  { maxWidth: 1920, fps: 30, bitrateKbps: 3000 },
+    };
+
+    function veil(text) {
+      lastVeil = text || '';
+      var v = document.getElementById('remoteVeil');
+      var t = document.getElementById('remoteVeilText');
+      if (!v || !t) return;
+      if (text) { t.textContent = text; v.dataset.show = '1'; }
+      else { v.dataset.show = '0'; }
+    }
+
+    function stat(text) {
+      lastStat = text || '';
+      var el = document.getElementById('remoteStat');
+      if (el) el.textContent = text;
+    }
+
+    /** Die Buehne bekommt genau die Hoehe, die das Bild seitenrichtig braucht. */
+    function layoutStage() {
+      var stage = document.getElementById('remoteStage');
+      if (!stage || !window.remoteState.w) return;
+      var w = stage.clientWidth || stage.getBoundingClientRect().width;
+      // window.-Vorsatz ist Pflicht: der Mockup-Code liegt in einer Kapsel, in
+      // die bridge.js nicht hineinsieht (siehe Ausfuhr-Zeilen in Aufgabe 11).
+      var box = window.fitRect(window.remoteState.w, window.remoteState.h, w, w * 2);
+      stage.style.height = box.h + 'px';
+      if (canvas) { canvas.width = window.remoteState.w; canvas.height = window.remoteState.h; }
+    }
+
+    // ── Lebenszyklus der Buehne ─────────────────────────────────────────────
+    // SCREEN_HOOKS.remote ruft buildRemoteScreen() bei JEDEM Wechsel auf den
+    // Fernzugriffs-Bildschirm auf — nicht nur beim ersten Mal — und wirft dabei
+    // Canvas, Overlay und Leiste komplett weg und baut sie neu (die Leiste
+    // faellt dabei auch auf "Trackpad" zurueck). Das ist im Mockup so angelegt
+    // und bleibt unangetastet. WebSocket und Dekoder wissen davon nichts und
+    // laufen einfach weiter — nur unsere `canvas`/`ctx`-Referenzen wuerden sonst
+    // auf ein verwaistes, unsichtbares Element zeigen: das Bild faellt beim
+    // naechsten Bildschirmwechsel scheinbar aus, obwohl weiter Daten ankommen
+    // und man es im Code nirgends sieht. Deshalb klinken wir uns hier ein:
+    // nach jedem Neuaufbau (egal ob durch Navigation der App oder durch unser
+    // eigenes start()) holen wir Canvas/Context frisch und spielen den letzten
+    // Verbindungsstatus zurueck. Der Dekoder selbst wird dabei nicht angefasst
+    // — er wird einfach weiterbedient, sein Zustand (SPS/PPS, letztes
+    // Vollbild) bleibt gueltig, nur das Ziel seiner naechsten drawImage()-
+    // Aufrufe aendert sich.
+    var realBuildRemoteScreen = window.buildRemoteScreen;
+    window.buildRemoteScreen = function () {
+      if (typeof realBuildRemoteScreen === 'function') realBuildRemoteScreen();
+      canvas = document.getElementById('remoteCanvas');
+      ctx = canvas ? canvas.getContext('2d') : null;
+      layoutStage();
+      if (lastVeil) veil(lastVeil);
+      if (lastStat) stat(lastStat);
+    };
+
+    function ensureDecoder() {
+      if (decoder && decoder.state !== 'closed') return true;
+      if (typeof VideoDecoder === 'undefined') {
+        veil('Dieses Geraet kann den Bildstrom nicht anzeigen.');
+        return false;
+      }
+      decoder = new VideoDecoder({
+        output: function (frame) {
+          if (ctx) ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+          frame.close();
+        },
+        error: function () {
+          // Ein Dekoderfehler heilt nur mit einem frischen Vollbild.
+          try { decoder.close(); } catch (e) {}
+          decoder = null;
+          if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:keyframe' }));
+        },
+      });
+      // Ohne `description` erwartet WebCodecs Annex-B — genau das, was der Server sendet.
+      decoder.configure({ codec: 'avc1.42E01E', optimizeForLatency: true });
+      return true;
+    }
+
+    function onBinary(buf) {
+      var view = new Uint8Array(buf);
+      if (view.length < 6 || (view[0] & 0x7f) !== 0x01) return;
+      var keyframe = (view[0] & 0x80) !== 0;
+      var ts = (view[1] << 24 | view[2] << 16 | view[3] << 8 | view[4]) >>> 0;
+      if (!ensureDecoder()) return;
+      // Vor dem ersten Vollbild ist jedes Zwischenbild sinnlos — der Dekoder
+      // haette keinen Ausgangspunkt und zeichnete graue Kloetze.
+      if (decoder.state !== 'configured') return;
+      if (!keyframe && !decoder.__gotKey) return;
+      if (keyframe) decoder.__gotKey = true;
+      decoder.decode(new EncodedVideoChunk({
+        type: keyframe ? 'key' : 'delta',
+        timestamp: ts * 1000,
+        data: view.subarray(5),
+      }));
+    }
+
+    function onControl(msg) {
+      switch (msg.type) {
+        case 'remote:started':
+          window.remoteState.running = true;
+          window.remoteState.w = msg.payload.width;
+          window.remoteState.h = msg.payload.height;
+          window.remoteState.scale = msg.payload.scale;
+          retry = 0;
+          veil('');
+          layoutStage();
+          break;
+        case 'remote:status':
+          stat(msg.payload.fps + ' fps · ' + msg.payload.kbps + ' kbit/s');
+          break;
+        case 'remote:stopped':
+          window.remoteState.running = false;
+          veil('Beendet');
+          break;
+        case 'remote:error':
+          window.remoteState.running = false;
+          veil(remoteErrorText(msg.payload));
+          break;
+      }
+    }
+
+    function connect() {
+      if (!remoteTarget) { veil('Kein Server verbunden.'); return; }
+      canvas = document.getElementById('remoteCanvas');
+      ctx = canvas ? canvas.getContext('2d') : null;
+
+      var url = 'ws://' + remoteTarget.host + ':' + remoteTarget.port
+              + '/remote?token=' + encodeURIComponent(remoteTarget.token);
+      ws = new WebSocket(url);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = function () {
+        ws.send(JSON.stringify({ type: 'remote:start', payload: PRESETS[preset] }));
+        veil('Verbinde …');
+      };
+      ws.onmessage = function (e) {
+        if (typeof e.data === 'string') { try { onControl(JSON.parse(e.data)); } catch (err) {} }
+        else onBinary(e.data);
+      };
+      ws.onclose = function () {
+        ws = null;
+        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+        window.remoteState.running = false;
+        if (!wantRunning) return;
+        // Nie aufgeben: die Verbindung faellt unterwegs staendig kurz weg.
+        retry = Math.min(retry + 1, 6);
+        veil('Verbindung verloren — neuer Versuch …');
+        retryTimer = setTimeout(connect, Math.min(500 * retry, 4000));
+      };
+      ws.onerror = function () { try { ws.close(); } catch (e) {} };
+    }
+
+    window.TMSRemote = {
+      start: function (which) {
+        preset = which || preset;
+        wantRunning = true;
+        if (typeof window.buildRemoteScreen === 'function' && !document.getElementById('remoteStage')) {
+          window.buildRemoteScreen();
+        }
+        if (!ws) connect();
+      },
+      stop: function () {
+        wantRunning = false;
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
+        if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+        window.remoteState.running = false;
+      },
+      /** Stufenwechsel = neu starten: ffmpeg auf Windows kann die Bitrate nicht im Lauf aendern. */
+      setQuality: function (which) {
+        preset = which;
+        if (!wantRunning) return;
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'remote:stop' }));
+          ws.send(JSON.stringify({ type: 'remote:start', payload: PRESETS[preset] }));
+        }
+      },
+      input: function (ev) {
+        if (ws && ws.readyState === 1 && window.remoteState.running) ws.send(JSON.stringify(ev));
+      },
+      dictate: function () { post('mic:start', { target: 'remote' }); },
+    };
+
+    // Der Mockup ruft das beim Vollbildwechsel und nach Gesten auf, kommt aber
+    // nicht in diese Kapsel hinein — deshalb ausdruecklich nach aussen geben.
+    window.layoutRemoteStage = layoutStage;
+    window.addEventListener('resize', layoutStage);
+  })();
+
+  /** Fehlercodes des Servers in Saetze, die weiterhelfen. */
+  function remoteErrorText(p) {
+    switch (p && p.code) {
+      case 'permission_screen':
+        return 'Der Mac darf seinen Bildschirm nicht teilen.\n'
+             + 'Systemeinstellungen → Datenschutz & Sicherheit → Bildschirmaufnahme';
+      case 'permission_input':
+        return 'Der Mac darf keine Eingaben annehmen.\n'
+             + 'Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen';
+      case 'display_asleep':
+        return 'Der Bildschirm des Macs ist eingeschlafen. Gleich noch einmal versuchen.';
+      case 'capture_unavailable':
+        return 'Auf dem PC fehlt ffmpeg. Einmalig einrichten:  winget install ffmpeg';
+      case 'disabled':
+        return 'Der Fernzugriff ist auf diesem Server abgeschaltet.';
+      case 'helper_crashed':
+        return 'Die Bildschirmaufnahme ist abgestuerzt. Erneut versuchen.';
+      default:
+        return (p && p.message) || 'Der Fernzugriff ist fehlgeschlagen.';
+    }
+  }
 
   post('bridge:ready', {});
 })();
