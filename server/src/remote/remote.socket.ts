@@ -70,7 +70,19 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
     // `remote:error` and the connection just hung silently.
     try {
       const c = deps.makeCapture();
-      c.onError((code, message) => { fail(code, message); enqueue(() => stop('fehler', false)); });
+      // Errors can arrive well after this capture has been replaced by a newer
+      // session — real platform backends report crashes and dropped helper
+      // processes asynchronously, often several ticks later. Both checks below
+      // compare by identity, not by order: the first drops an error from an
+      // already-replaced capture outright (`capture === null` is let through —
+      // nothing has been assigned yet while `start()` is still running); the
+      // second re-checks identity at the moment the queued task actually runs,
+      // since a newer session's start can complete in the meantime.
+      c.onError((code, message) => {
+        if (capture !== null && capture !== c) return;
+        fail(code, message);
+        enqueue(async () => { if (capture === c) await stop('fehler', false); });
+      });
       const info = await c.start(opts);
       capture = c;
       input = deps.makeInput();

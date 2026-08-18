@@ -202,3 +202,39 @@ test('zwei remote:start unmittelbar nacheinander hinterlassen keine unbeendete A
   assert.equal(captures[1].stopped, false, 'die zweite (aktuelle) Aufnahme laeuft noch');
   assert.equal(ws.typed('remote:started').length, 2, 'genau eine laufende Sitzung am Ende — beide Starts wurden bestaetigt');
 });
+
+test('ein verspaeteter Fehler der ersetzten Aufnahme raeumt nicht die neue Sitzung ab', async () => {
+  const ws = new FakeWs();
+  const captures: ReturnType<typeof fakeCapture>[] = [];
+  const makeCapture = () => {
+    const c = fakeCapture();
+    captures.push(c);
+    return c;
+  };
+  handleRemoteConnection(ws as any, { makeCapture, makeInput: fakeInput, isEnabled: () => true });
+
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(captures.length, 1, 'Sitzung A ist gestartet');
+  const [captureA] = captures;
+
+  // remote:start fuer B einreihen und unmittelbar danach — noch bevor B
+  // verarbeitet wurde — den (verspaeteten) Fehler von A auslösen.
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.sparsam });
+  captureA.errCb('helper_crashed', 'Aufnahmeprozess abgestuerzt');
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(captures.length, 2, 'Sitzung B wurde angelegt');
+  const [, captureB] = captures;
+
+  assert.equal(captureA.stopped, true, 'die alte Sitzung A ist beendet');
+  assert.equal(captureB.stopped, false, 'die neue Sitzung B laeuft unangetastet weiter');
+
+  const started = ws.typed('remote:started');
+  assert.equal(
+    started.filter((m) => m.payload.fps === QUALITY_PRESETS.sparsam.fps).length,
+    1,
+    'genau ein remote:started fuer B',
+  );
+  assert.equal(ws.typed('remote:stopped').length, 0, 'kein stilles Abraeumen von B danach');
+});
