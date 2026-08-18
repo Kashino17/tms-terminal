@@ -1,9 +1,26 @@
 import * as readline from 'readline';
 import * as crypto from 'crypto';
+import { execFileSync } from 'node:child_process';
+import * as path from 'node:path';
 import { setPassword, isPasswordSet } from './auth/password.service';
 import { saveServerConfig, config } from './config';
 import { generateSelfSignedCert } from './tls/cert.generator';
 import { logger } from './utils/logger';
+
+/** Builds the macOS remote helper. Failing here costs remote access, nothing else. */
+function buildRemoteHelper(): void {
+  if (process.platform !== 'darwin') return;
+  const script = path.resolve(__dirname, 'remote/helpers/mac/build.sh');
+  try {
+    execFileSync('bash', [script], { stdio: 'inherit' });
+  } catch {
+    console.warn(
+      'Fernzugriffs-Helfer konnte nicht gebaut werden. Der Server laeuft normal weiter;\n' +
+      'fuer den Fernzugriff spaeter nachholen mit:\n' +
+      `  bash ${script}`,
+    );
+  }
+}
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -64,6 +81,8 @@ async function main(): Promise<void> {
   logger.info(`\n  Certificate fingerprint (SHA-256):`);
   logger.info(`  ${certInfo.fingerprint}\n`);
   logger.info('  Save this fingerprint to verify the connection in the app.\n');
+
+  buildRemoteHelper();
 
   logger.info('Setup complete! Start the server with: npm run dev\n');
   rl.close();
