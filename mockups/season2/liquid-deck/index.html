@@ -3032,13 +3032,15 @@
     var holdTimer = null;
     var holdPointerId = null; // welcher Finger den Halte-Timer gestartet hat
     var dragging = false;
+    var leadPointerId = null; // der zuerst aufgelegte Finger — fuehrt das Zwei-Finger-Scrollen
 
     // Zustand der gesamten Beruehrung (erster Finger runter bis letzter Finger
     // hoch), bewusst nicht je Finger — fuer den Tippen-vs-Wischen-Test beim
     // Loslassen.
     var gestureDownAt = 0;
     var gestureMoved = 0;
-    var hadTwoFingers = false;
+    var maxFingers = 0; // hoechste gleichzeitige Fingerzahl waehrend der Geste, nicht der aktuelle Stand —
+                         // sonst verschluckt das Abheben des zweiten Fingers vor dem ersten den Rechtsklick
 
     function clearHold() {
       if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
@@ -3061,14 +3063,15 @@
       if (wasEmpty) {
         gestureDownAt = e.timeStamp;
         gestureMoved = 0;
-        hadTwoFingers = false;
+        maxFingers = 0;
+        leadPointerId = e.pointerId;
       }
+      maxFingers = Math.max(maxFingers, pts.size);
 
       if (pts.size === 2) {
         // Zweiter Finger: das ist jetzt eine Zwei-Finger-Geste — laufenden
         // Halte-Zeitgeber vom ersten Finger raeumen, sonst feuert er mitten
         // in die Geste noch ein Linksklick-Druecken.
-        hadTwoFingers = true;
         clearHold();
       } else if (pts.size === 1) {
         // Halte-Zeitgeber nur starten, wenn wirklich genau ein Finger aufliegt.
@@ -3103,7 +3106,13 @@
 
       if (!R()) return;
       if (pts.size === 2) {
-        R().input({ t: 's', dx: Math.round(dx), dy: Math.round(dy) });
+        // Nur der Fuehrungsfinger (der zuerst aufgelegte) meldet den Scroll-Weg —
+        // sonst meldet jeder Finger seinen eigenen Weg und der Mac scrollt doppelt
+        // so weit wie die Geste. Der zweite Finger zaehlt trotzdem weiter fuer die
+        // Zwei-Finger-Erkennung (pts.size) und die Tippen-Klassifizierung (maxFingers).
+        if (e.pointerId === leadPointerId) {
+          R().input({ t: 's', dx: Math.round(dx), dy: Math.round(dy) });
+        }
       } else {
         var speed = Math.sqrt(dx * dx + dy * dy) / dt;
         var gain = pointerGain(speed);
@@ -3118,18 +3127,21 @@
 
       if (pts.size > 0) return; // andere Finger liegen noch auf — die arbeiten weiter
 
-      // Nur ein echtes Ein-Finger-Tippen klickt: kurz, kaum Weg, und es war nie
-      // ein zweiter Finger im Spiel. Ein Zwei-Finger-Auftakt loest nie mehr aus
-      // Versehen einen Klick aus.
-      var quick = allowClick && !dragging && !hadTwoFingers &&
-        (e.timeStamp - gestureDownAt) < TAP_MS && gestureMoved <= TAP_SLOP;
+      // Reine Entscheidung (Fingerzahl + Dauer + Weg -> Gestenart) steckt in
+      // classifyPadTap() im TMS-TEST-EXPORT-Block, damit sie ausserhalb des
+      // Browsers testbar ist.
+      var kind = allowClick
+        ? classifyPadTap(maxFingers, dragging, e.timeStamp - gestureDownAt, gestureMoved, TAP_MS, TAP_SLOP)
+        : null;
       endDrag(); // egal welcher Finger zuerst ging: ein laufendes Ziehen sauber beenden
-      if (quick && R()) {
-        R().input({ t: 'b', b: 'l', d: true });
-        R().input({ t: 'b', b: 'l', d: false });
+      if (kind && R()) {
+        var b = kind === 'right' ? 'r' : 'l';
+        R().input({ t: 'b', b: b, d: true });
+        R().input({ t: 'b', b: b, d: false });
       }
-      hadTwoFingers = false;
+      maxFingers = 0;
       gestureMoved = 0;
+      leadPointerId = null;
     }
 
     // pointerup ist ein echtes Loslassen (darf klicken); pointercancel ist ein
@@ -3216,6 +3228,28 @@
     return { x: Math.round((boxW - w) / 2), y: Math.round((boxH - h) / 2), w: w, h: h };
   }
 
+  /**
+   * Entscheidet beim Loslassen des letzten Fingers, ob und welcher Klick daraus
+   * wird. Zaehlt bewusst NICHT den aktuellen Fingerstand, sondern die hoechste
+   * Fingerzahl, die waehrend der ganzen Geste je gleichzeitig auflag — sonst
+   * verschluckt das Abheben des zweiten Fingers vor dem ersten den Rechtsklick.
+   *
+   * @param maxFingers  hoechste gleichzeitige Fingerzahl waehrend der Geste
+   * @param wasDragging war die Geste schon ein Halte-Ziehen (Timer gefeuert)?
+   * @param elapsedMs   Zeit vom ersten Antippen bis zum letzten Loslassen
+   * @param movedPx     groesster zurueckgelegter Weg eines einzelnen Fingers
+   * @param tapMs       Hoechstdauer, die noch als "Tippen" zaehlt
+   * @param tapSlopPx   Hoechstweg, den ein "Tippen" wackeln darf
+   * @returns 'left' | 'right' | null
+   */
+  function classifyPadTap(maxFingers, wasDragging, elapsedMs, movedPx, tapMs, tapSlopPx) {
+    if (wasDragging) return null;                    // lange gehalten -> kein Klick
+    if (elapsedMs >= tapMs || movedPx > tapSlopPx) return null; // Weg/Zeit gerissen -> kein Klick
+    if (maxFingers <= 1) return 'left';
+    if (maxFingers === 2) return 'right';
+    return null;                                      // drei+ Finger: keine zugesagte Geste
+  }
+
   // Der gesamte Mockup-Code steckt in einer Kapsel — ohne diese Zeilen sieht
   // bridge.js keine einzige dieser Funktionen, und der Fernzugriff bricht mit
   // "fitRect is not defined" ab, waehrend die Tests weiter gruen melden (sie
@@ -3224,6 +3258,7 @@
     window.pointerGain = pointerGain;
     window.nextSticky = nextSticky;
     window.fitRect = fitRect;
+    window.classifyPadTap = classifyPadTap;
   }
   // ── /TMS-TEST-EXPORT ──
 
