@@ -230,6 +230,96 @@ final class Capture: NSObject, SCStreamOutput {
   }
 }
 
+// ── Input ───────────────────────────────────────────────────────────────
+import CoreGraphics
+
+private let SHIFT = 1, CONTROL = 2, OPTION = 4, COMMAND = 8
+
+private func flags(_ bits: Int) -> CGEventFlags {
+  var f = CGEventFlags()
+  if bits & SHIFT   != 0 { f.insert(.maskShift) }
+  if bits & CONTROL != 0 { f.insert(.maskControl) }
+  if bits & OPTION  != 0 { f.insert(.maskAlternate) }
+  if bits & COMMAND != 0 { f.insert(.maskCommand) }
+  return f
+}
+
+private func currentPoint() -> CGPoint {
+  CGEvent(source: nil)?.location ?? .zero
+}
+
+private func warp(to p: CGPoint) {
+  CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
+    .post(tap: .cghidEventTap)
+}
+
+func runInputLoop() {
+  // Without the Accessibility grant every event below is silently swallowed —
+  // report that instead of pretending to work.
+  if !AXIsProcessTrusted() {
+    fail("permission_input", "Bedienungshilfen sind nicht freigegeben")
+  }
+  emit("{\"ready\":{\"input\":true}}")
+
+  let screen = CGDisplayBounds(CGMainDisplayID())
+
+  while let line = readLine(strippingNewline: true) {
+    let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
+    guard let cmd = parts.first else { continue }
+    let rest = parts.count > 1 ? parts[1] : ""
+    let nums = rest.split(separator: " ").map { Double($0) ?? 0 }
+
+    switch cmd {
+    case "rel":
+      let p = currentPoint()
+      warp(to: CGPoint(x: min(max(p.x + (nums.first ?? 0), screen.minX), screen.maxX - 1),
+                       y: min(max(p.y + (nums.count > 1 ? nums[1] : 0), screen.minY), screen.maxY - 1)))
+    case "abs":
+      warp(to: CGPoint(x: screen.minX + (nums.first ?? 0) * screen.width,
+                       y: screen.minY + (nums.count > 1 ? nums[1] : 0) * screen.height))
+    case "btn":
+      let which = rest.first ?? "l"
+      let down = rest.hasSuffix("1")
+      let button: CGMouseButton = which == "r" ? .right : which == "m" ? .center : .left
+      let type: CGEventType = which == "r"
+        ? (down ? .rightMouseDown : .rightMouseUp)
+        : which == "m" ? (down ? .otherMouseDown : .otherMouseUp)
+        : (down ? .leftMouseDown : .leftMouseUp)
+      CGEvent(mouseEventSource: nil, mouseType: type,
+              mouseCursorPosition: currentPoint(), mouseButton: button)?
+        .post(tap: .cghidEventTap)
+    case "scroll":
+      CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+              wheel1: Int32(nums.count > 1 ? nums[1] : 0),
+              wheel2: Int32(nums.first ?? 0), wheel3: 0)?
+        .post(tap: .cghidEventTap)
+    case "key":
+      guard nums.count >= 3 else { break }
+      let ev = CGEvent(keyboardEventSource: nil,
+                       virtualKey: CGKeyCode(nums[0]), keyDown: nums[1] == 1)
+      ev?.flags = flags(Int(nums[2]))
+      ev?.post(tap: .cghidEventTap)
+    case "text":
+      let text = rest.replacingOccurrences(of: "\\n", with: "\n")
+                     .replacingOccurrences(of: "\\\\", with: "\\")
+      // Feed Unicode directly: independent of the Mac's keyboard layout.
+      for chunk in text.unicodeScalars.map({ UniChar($0.value) }) {
+        var c = chunk
+        let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
+        down?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
+        down?.post(tap: .cghidEventTap)
+        let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
+        up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
+        up?.post(tap: .cghidEventTap)
+      }
+    case "quit":
+      exit(0)
+    default:
+      break
+    }
+  }
+}
+
 // ── Entry point ─────────────────────────────────────────────────────────
 let args = CommandLine.arguments
 func intArg(_ name: String, _ fallback: Int) -> Int {
@@ -246,10 +336,7 @@ if args.contains("--capture") {
   }
   RunLoop.main.run()
 } else if args.contains("--input") {
-  runInputLoop()          // Task 7
+  runInputLoop()
 } else {
   fail("capture_unavailable", "Betriebsart fehlt: --capture oder --input")
 }
-
-// Placeholder until Task 7 replaces this with the real input loop.
-func runInputLoop() { fail("capture_unavailable", "Eingabe folgt in Aufgabe 7") }
