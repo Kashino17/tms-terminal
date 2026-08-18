@@ -2546,6 +2546,116 @@
       if (el) el.textContent = text;
     }
 
+    // ── Bildgesten: Zoom, Verschieben, langer Druck ─────────────────────────
+    // `view` haelt Zoom/Versatz des Canvas innerhalb der Buehne. Bleibt hier
+    // (nicht in layoutStage()) deklariert, weil applyView() es unabhaengig
+    // vom Layout jederzeit neu aufs Canvas anwenden koennen muss (nach jeder
+    // Geste, nicht nur nach jedem Resize).
+    var view = { zoom: 1, x: 0, y: 0 };
+    var pinch = null;
+    var holdTimer = null;
+
+    function applyView() {
+      if (!canvas) return;
+      canvas.style.transformOrigin = 'center center';
+      canvas.style.transform = 'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.zoom + ')';
+    }
+
+    /**
+     * Gesten auf dem Bild selbst: Aufziehen zoomt (bis 3×, siehe clampZoom im
+     * Mockup), ein Finger bei Zoom>1 verschiebt (clampPan haelt es im
+     * Rahmen), Doppeltipp springt zwischen 1× und 2×, und ein langer Druck
+     * versetzt den Zeiger dorthin — die einzige Moeglichkeit, ihn schnell ueber
+     * eine weite Strecke zu setzen, denn das Trackpad braucht dafuer mehrere
+     * Wischer.
+     *
+     * Zustand JE Zeiger (Map von pointerId), nicht global — sonst verrechnet
+     * sich ein Zwei-Finger-Zoom bei ueber Kreuz bewegten Fingern, und das
+     * Abheben eines beliebigen Fingers wuerde die Geste des anderen killen.
+     */
+    function wireStageGestures() {
+      var stage = document.getElementById('remoteStage');
+      if (!stage || stage.dataset.wired === '1') return;
+      stage.dataset.wired = '1';
+      stage.style.touchAction = 'none';
+
+      var points = new Map();
+      var lastTap = 0;
+
+      stage.addEventListener('pointerdown', function (e) {
+        if (window.remoteState.fullscreen) return;      // dort gehoert alles der Maus
+        points.set(e.pointerId, { x: e.clientX, y: e.clientY, moved: 0 });
+        if (points.size === 2) {
+          var p = Array.from(points.values());
+          pinch = { d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), zoom: view.zoom };
+          if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+          return;
+        }
+        // Langer Druck aufs Bild: Zeiger dorthin — sendet eine Zeigerbewegung,
+        // keinen Klick, es gibt also nichts, was haengen bleiben koennte.
+        var start = { x: e.clientX, y: e.clientY };
+        holdTimer = setTimeout(function () {
+          holdTimer = null;
+          var box = stageBox();
+          if (!box) return;
+          var n = window.toStageNormalized(start.x, start.y, box);
+          if (n) {
+            window.TMSRemote.input({ t: 'm', x: n.x, y: n.y });
+            if (navigator.vibrate) navigator.vibrate(12);
+          }
+        }, 400);
+      });
+
+      stage.addEventListener('pointermove', function (e) {
+        if (!points.has(e.pointerId)) return;
+        var prev = points.get(e.pointerId);
+        var dx = e.clientX - prev.x;
+        var dy = e.clientY - prev.y;
+        // Zurueckgelegter Weg SEIT DEM AUFSETZEN dieses Fingers, nicht nur
+        // seit dem letzten Ereignis — sonst ueberlebt der Halte-Zeitgeber ein
+        // langsames Verschieben (viele kleine Schritte, von denen keiner
+        // einzeln ueber die Schwelle kommt) und der Zeiger springt mitten im
+        // Verschieben des vergroesserten Bildes an eine andere Stelle.
+        var moved = (prev.moved || 0) + Math.abs(dx) + Math.abs(dy);
+        points.set(e.pointerId, { x: e.clientX, y: e.clientY, moved: moved });
+        if (moved > 8 && holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+
+        if (pinch && points.size === 2) {
+          var pp = Array.from(points.values());
+          var d = Math.hypot(pp[0].x - pp[1].x, pp[0].y - pp[1].y);
+          view.zoom = window.clampZoom(pinch.zoom * (d / pinch.d));
+        } else if (points.size === 1 && view.zoom > 1) {
+          var r = stage.getBoundingClientRect();
+          view.x = window.clampPan(view.x + dx, view.zoom, r.width);
+          view.y = window.clampPan(view.y + dy, view.zoom, r.height);
+        }
+        applyView();
+      });
+
+      function up(e) {
+        points.delete(e.pointerId);
+        if (points.size < 2) pinch = null;
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        // Vollbild gehoert der angeschlossenen Maus: ein echter Doppelklick
+        // damit bubbelt bis hierher genauso wie ein Doppeltipp (pointerdown
+        // wurde oben zwar schon uebersprungen, aber "up" laeuft trotzdem) —
+        // ohne diese Bedingung wuerde er faelschlich den Bild-Zoom umschalten.
+        if (window.remoteState.fullscreen) return;
+
+        var now = Date.now();
+        if (now - lastTap < 300) {                      // Doppeltipp
+          view.zoom = view.zoom > 1 ? 1 : 2;
+          view.x = 0; view.y = 0;
+          applyView();
+          lastTap = 0;
+        } else {
+          lastTap = now;
+        }
+      }
+      stage.addEventListener('pointerup', up);
+      stage.addEventListener('pointercancel', up);
+    }
+
     /** Die Buehne bekommt genau die Hoehe, die das Bild seitenrichtig braucht. */
     function layoutStage() {
       var stage = document.getElementById('remoteStage');
@@ -2556,6 +2666,13 @@
       var box = window.fitRect(window.remoteState.w, window.remoteState.h, w, w * 2);
       stage.style.height = box.h + 'px';
       if (canvas) { canvas.width = window.remoteState.w; canvas.height = window.remoteState.h; }
+      // Vollbild gehoert der angeschlossenen Hardware: ein von Fingern liegen
+      // gebliebener Zoom/Versatz wuerde die absolute Mausabbildung weiter
+      // unten (stageBox()) verfaelschen, die von einem unverzerrten Bild
+      // ausgeht — darum hier zurueckgesetzt, sobald die Buehne (neu) vermessen
+      // wird, waehrend Vollbild an ist.
+      if (window.remoteState.fullscreen) { view.zoom = 1; view.x = 0; view.y = 0; }
+      applyView();
     }
 
     // ── Lebenszyklus der Buehne ─────────────────────────────────────────────
@@ -2705,6 +2822,12 @@
         if (typeof window.buildRemoteScreen === 'function' && !document.getElementById('remoteStage')) {
           window.buildRemoteScreen();
         }
+        // Ausserhalb des if: die Buehne steht in der Praxis meist schon (der
+        // Aufrufer zeigt den Bildschirm typischerweise vor start()), darum
+        // wuerde eine Verschachtelung im if oben die Gesten nie verdrahten.
+        // wireStageGestures() ist ueber stage.dataset.wired selbst dagegen
+        // abgesichert, mehrfach am selben Element zu haengen.
+        wireStageGestures();
         if (!ws) connect();
       },
       stop: function () {

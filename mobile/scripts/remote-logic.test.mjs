@@ -16,7 +16,7 @@ function loadBlock(name) {
   const re = new RegExp(`// ── TMS-TEST-EXPORT: ${name} ──([\\s\\S]*?)// ── /TMS-TEST-EXPORT ──`);
   const m = re.exec(html);
   assert.ok(m, `Block "${name}" fehlt im Mockup — Markierungen nicht entfernen`);
-  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows };`)();
+  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows, clampZoom, clampPan };`)();
 }
 
 test('der markierte Block laesst sich laden', () => {
@@ -188,4 +188,24 @@ test('die Zeichenebene sendet Satzzeichen ueber den Textweg, nie ueber einen US-
       assert.ok(key.s, `"${key.l}" hat weder Ziffern-Positionscode noch Textweg`);
     }
   }
+});
+
+test('clampZoom bleibt zwischen 1 und 3', () => {
+  const { clampZoom } = loadBlock('remoteMath');
+  assert.equal(clampZoom(0.4), 1, 'kleiner als das Bild ergibt keinen Sinn');
+  assert.equal(clampZoom(2), 2);
+  assert.equal(clampZoom(9), 3, 'darueber wird es nur noch matschig');
+});
+
+test('clampPan laesst bei 1x gar kein Verschieben zu', () => {
+  const { clampPan } = loadBlock('remoteMath');
+  assert.equal(clampPan(120, 1, 400), 0, 'unvergroessert gibt es nichts zu verschieben');
+});
+
+test('clampPan haelt das vergroesserte Bild im Rahmen', () => {
+  const { clampPan } = loadBlock('remoteMath');
+  // Bei 2x ist das Bild 800 breit, der Rahmen 400 — je 200 Spielraum pro Seite.
+  assert.equal(clampPan(0, 2, 400), 0);
+  assert.equal(clampPan(500, 2, 400), 200, 'nach rechts abgefangen');
+  assert.equal(clampPan(-500, 2, 400), -200, 'nach links abgefangen');
 });
