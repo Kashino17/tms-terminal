@@ -739,9 +739,9 @@ Ab hier gibt es einen Endpunkt, mit dem man reden kann — noch ohne Bild, aber 
 Ans Ende von `shared/protocol.ts` (ausdrücklich **nicht** in `ClientMessage`/`ServerMessage` aufnehmen — das ist eine eigene Verbindung):
 
 ```ts
-// ── Fernzugriff (eigene WebSocket-Verbindung auf /remote) ────────────
-// Bewusst nicht Teil von ClientMessage/ServerMessage: Bild und Eingaben laufen
-// über eine zweite Verbindung, die die Seite im WebView selbst öffnet.
+// ── Remote desktop (its own WebSocket connection on /remote) ─────────
+// Deliberately not part of ClientMessage/ServerMessage: video and input travel
+// over a second connection the WebView page opens for itself.
 
 export type RemoteErrorCode =
   | 'permission_screen'
@@ -750,9 +750,9 @@ export type RemoteErrorCode =
   | 'helper_crashed'
   | 'disabled'
   | 'unsupported_platform'
-  /** Der Bildschirm schlief — ScreenCaptureKit meldet dann gar keinen Bildschirm.
-   *  Eigener Code, weil das sonst wie ein Berechtigungsproblem aussieht und der
-   *  Nutzer in den Systemeinstellungen nach einem Haken sucht, der längst gesetzt ist. */
+  /** The display was asleep — ScreenCaptureKit then reports no display at all.
+   *  Its own code, because otherwise this looks exactly like a missing permission
+   *  and sends the user hunting for a checkbox that has long been ticked. */
   | 'display_asleep';
 
 export type RemoteQualityPreset = 'sparsam' | 'auto' | 'scharf';
@@ -791,7 +791,7 @@ export interface RemoteStatusMessage {
 export type RemoteServerMessage =
   | RemoteStartedMessage | RemoteStoppedMessage | RemoteErrorMessage | RemoteStatusMessage;
 
-/** Eingabe-Ereignisse: kurze Schluessel, weil bis zu 60 pro Sekunde anfallen. */
+/** Input events: short keys, because up to 60 of these travel per second. */
 export type RemoteInputEvent =
   | { t: 'd'; dx: number; dy: number }
   | { t: 'm'; x: number; y: number }
@@ -1049,6 +1049,7 @@ export interface RemoteWs {
   bufferedAmount: number;
   on(event: 'message', cb: (raw: Buffer, isBinary: boolean) => void): void;
   on(event: 'close', cb: () => void): void;
+  on(event: 'error', cb: (err: Error) => void): void;
 }
 
 export interface RemoteDeps {
@@ -1060,6 +1061,14 @@ export interface RemoteDeps {
 export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
   let capture: ScreenCapture | null = null;
   let input: InputInjector | null = null;
+
+  // Session-changing messages run one at a time, in order. Two `remote:start`
+  // frames can arrive in a single TCP read; started concurrently, the first
+  // capture is overwritten and never stopped — an orphaned recording that keeps
+  // reading the screen. The queue also preserves the stop→start order the app
+  // uses when switching quality.
+  let queue: Promise<void> = Promise.resolve();
+  const enqueue = (fn: () => Promise<void>) => { queue = queue.then(fn, fn); };
 
   const reply = (msg: RemoteServerMessage) => {
     if (ws.readyState === 1) ws.send(JSON.stringify(msg));
@@ -1083,9 +1092,12 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
     }
     await stop('neustart', false);
 
-    const c = deps.makeCapture();
-    c.onError((code, message) => { fail(code, message); void stop('fehler', false); });
+    // Everything that can throw belongs inside the try — including the factory
+    // itself. Outside it, a throwing factory leaves the client with neither
+    // `remote:started` nor `remote:error`: the connection just goes quiet.
     try {
+      const c = deps.makeCapture();
+      c.onError((code, message) => { fail(code, message); enqueue(() => stop('error', false)); });
       const info = await c.start(opts);
       capture = c;
       input = deps.makeInput();
@@ -1107,10 +1119,10 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
 
     switch (msg.type) {
       case 'remote:start':
-        void start(msg.payload);
+        enqueue(() => start(msg.payload));
         break;
       case 'remote:stop':
-        void stop('vom Nutzer beendet');
+        enqueue(() => stop('stopped by user'));
         break;
       case 'remote:quality': {
         const preset = QUALITY_PRESETS[msg.payload?.preset];
@@ -1125,7 +1137,17 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
     }
   });
 
-  ws.on('close', () => { void stop('Verbindung getrennt', false); });
+  ws.on('close', () => { enqueue(() => stop('connection closed', false)); });
+
+  // An EventEmitter whose 'error' fires with no listener throws synchronously.
+  // That reaches the global uncaughtException handler in index.ts, which calls
+  // process.exit(1) — one dropped mobile connection on /remote would take the
+  // whole server down and every terminal session with it. Same pattern as
+  // ws.handler.ts.
+  ws.on('error', (err) => {
+    logger.warn(`Remote: socket error — ${err.message}`);
+    enqueue(() => stop('socket error', false));
+  });
 }
 ```
 
