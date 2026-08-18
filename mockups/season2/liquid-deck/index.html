@@ -3107,6 +3107,14 @@
     // hier bewusst nichts, sonst waere Sondertaste+Ebenenwechsel+Buchstabe nicht
     // tippbar.
     if (window.remoteState.page === 'keys' && page !== 'keys') releaseAllSticky();
+    // Nachpruefung-Kleinigkeit: symmetrisch zum Sticky-Loesen oben — beim
+    // Wechsel WEG vom Trackpad muss ein noch laufendes Ziehen bzw. ein
+    // gehaltener fester Knopf explizit geloest werden, nicht nur implizit
+    // dadurch, dass bar.innerHTML weiter unten das Element entfernt (das
+    // toteilt zwar per Spezifikation die Zeigereinfangung, ist aber Verlass
+    // auf Browserverhalten statt eine eigene, geprüfte Garantie).
+    if (window.remoteState.page === 'pad' && page !== 'pad'
+        && typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
     window.remoteState.page = page;
     document.querySelectorAll('#remoteSeg [data-page]').forEach(function (b) {
       b.classList.toggle('on', b.dataset.page === page);
