@@ -2542,6 +2542,16 @@
     var retry = 0;
     var retryTimer = null;
     var wantRunning = false;
+    // N1 (Nachpruefung): waehrend einer Hintergrund-Unterbrechung (suspend())
+    // muss der normale Wiederverbindungs-Weg in onclose() stillliegen — sonst
+    // sieht der ohnehin noch anhaengende onclose nach dem Schliessen
+    // `wantRunning === true` (das bleibt bei suspend() bewusst unangetastet,
+    // siehe TMSRemote.suspend() weiter unten) und plant selbst einen
+    // Wiederverbindungs-Zeitgeber. Kommt die App dann zurueck, ruft resume()
+    // sofort connect() UND der nachlaufende Zeitgeber ruft kurz danach ein
+    // zweites — zwei offene Verbindungen, zwei Sitzungen auf dem PC, von
+    // denen stop() nur noch die aktuelle erreicht.
+    var suspended = false;
     var preset = 'auto';
     // Ueberlebt den Neuaufbau der Buehne (siehe buildRemoteScreen-Einklinkung
     // weiter unten) — sonst zeigt die frische Leiste kurz "Verbinde …", obwohl
@@ -2871,7 +2881,11 @@
         ws = null;
         if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
         window.remoteState.running = false;
-        if (!wantRunning) return;
+        // N1: waehrend suspend() darf hier NIE ein Wiederverbindungs-Zeitgeber
+        // entstehen — wantRunning bleibt bei suspend() absichtlich `true`
+        // (siehe suspended-Deklaration oben), also reicht dessen Pruefung
+        // allein nicht mehr.
+        if (!wantRunning || suspended) return;
         // Nie aufgeben: die Verbindung faellt unterwegs staendig kurz weg.
         retry = Math.min(retry + 1, 6);
         veil('Verbindung verloren — neuer Versuch …');
@@ -2885,8 +2899,15 @@
     // deckt beides ab: kein doppelter Verbindungsaufbau, wenn die
     // Zugangsdaten erneut gesetzt werden (z.B. Server-Wechsel), waehrend
     // schon eine Verbindung steht oder gerade aufgebaut wird.
+    //
+    // Nachpruefung zu C2: ein noch anhaengender Wiederverbindungs-Zeitgeber
+    // (aus einem echten Netzabbruch, nicht aus suspend()) wird hier VOR dem
+    // eigenen connect() geraeumt — sonst feuert er kurz danach ein zweites
+    // Mal, waehrend die frische Verbindung schon steht.
     function maybeConnect() {
-      if (wantRunning && !ws) connect();
+      if (!wantRunning || ws) return;
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      connect();
     }
     // Von setRemoteTarget (oben in dieser Datei) aufgerufen, sobald React
     // Native die Zugangsdaten liefert — das ist der eigentliche Fix fuer C2.
@@ -2896,6 +2917,7 @@
       start: function (which) {
         preset = which || preset;
         wantRunning = true;
+        suspended = false; // ein expliziter Start raeumt einen etwaigen Rest auf
         if (typeof window.buildRemoteScreen === 'function' && !document.getElementById('remoteStage')) {
           window.buildRemoteScreen();
         }
@@ -2927,7 +2949,11 @@
         // Maustaste haengen bleiben kann, den weder releaseAllSticky()
         // (Bildschirmtastatur) noch setRemoteFullscreen() (Hardware) abdeckt.
         if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+        // Muss VOR ws.close() gesetzt sein (siehe onclose oben): sonst sieht
+        // der noch anhaengende onclose-Handler kurz "wantRunning === true"
+        // und plant faelschlich einen Wiederverbindungs-Zeitgeber.
         wantRunning = false;
+        suspended = false;
         if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
         if (ws) { try { ws.close(); } catch (e) {} ws = null; }
@@ -2949,6 +2975,15 @@
         if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
         if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
         if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+        // N1 (Nachpruefung): MUSS vor ws.close() gesetzt sein — wantRunning
+        // bleibt hier absichtlich `true` (siehe Kommentar oben), also ist
+        // `suspended` der einzige Weg, den noch anhaengenden onclose-Handler
+        // davon abzuhalten, selbst einen Wiederverbindungs-Zeitgeber zu
+        // planen. Ohne das baute sich die Sitzung im Hintergrund von selbst
+        // wieder auf (neue Aufnahme + Energie-Assertion auf dem Mac), und
+        // ein spaeteres resume() haette zusammen mit diesem Zeitgeber zwei
+        // parallele Verbindungen aufgemacht.
+        suspended = true;
         if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
         if (ws) { try { ws.close(); } catch (e) {} ws = null; }
@@ -2957,7 +2992,7 @@
       },
       /** Setzt nur fort, was vorher lief (wantRunning) — nach einem
        *  expliziten "Trennen" bleibt das ein No-op, siehe suspend() oben. */
-      resume: function () { maybeConnect(); },
+      resume: function () { suspended = false; maybeConnect(); },
       /** Stufenwechsel = neu starten: ffmpeg auf Windows kann die Bitrate nicht im Lauf aendern. */
       setQuality: function (which) {
         preset = which;
