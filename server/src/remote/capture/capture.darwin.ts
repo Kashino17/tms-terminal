@@ -79,6 +79,15 @@ export function createDarwinCapture(): ScreenCapture {
       return new Promise<CaptureInfo>((resolve, reject) => {
         const proc = spawn(helperBinaryPath(), buildHelperArgs(opts), { stdio: ['pipe', 'pipe', 'pipe'] });
         child = proc;
+        // Task 18: `stop()` (and requestKeyframe/setBitrate, which can be
+        // invoked right up to the moment a crash is detected) write to this
+        // pipe without checking liveness first. Once the helper is gone —
+        // exactly the case a restart is reacting to — that write can throw
+        // an EPIPE with no listener on the stream, which Node treats as an
+        // uncaught exception and takes the whole server down with it. Same
+        // fix as `ws.on('error')` above: never let this particular pipe be
+        // able to crash the process.
+        proc.stdin?.on('error', () => {});
         let settled = false;
         let stderrTail = '';
         let stderrRest = '';

@@ -6,6 +6,7 @@ import type { ScreenCapture, CaptureOptions } from './capture/capture.types';
 import type { InputInjector } from './input/input.types';
 import { createAnnexBSplitter, type AccessUnit } from './annexb';
 import { createBitrateGovernor } from './bitrate';
+import { nextRestartDelay } from './restart';
 import { logger } from '../utils/logger';
 
 /** Fixed rungs from the design doc. `auto` is the default. */
@@ -74,6 +75,13 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
   let framesSent = 0;
   let bytesSent = 0;
   let dropped = 0;
+  // Helper-restart bookkeeping (Task 18): a crashed helper and a display whose
+  // resolution changed underneath the running capture both die the same way —
+  // `onError('helper_crashed', ...)` — and get the same answer, a fresh
+  // capture built from the same options that were last requested.
+  let restartAttempt = 0;
+  let restartTimer: NodeJS.Timeout | null = null;
+  let lastOpts: CaptureOptions | null = null;
 
   const reply = (msg: RemoteServerMessage) => {
     if (ws.readyState === 1) ws.send(JSON.stringify(msg));
@@ -87,6 +95,11 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
     capture = null; input = null;
     if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
     if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    // A pending restart belongs to the capture being torn down here — without
+    // this, a user-issued stop (or a fresh explicit start) that lands while a
+    // crash-recovery backoff is still ticking would leave that timer alive,
+    // and it would later revive a session nobody asked for.
+    if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
     splitter = null;
     governor = null;
     if (c) await c.stop().catch(() => {});
@@ -94,7 +107,17 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
     if (tell && (c || i)) reply({ type: 'remote:stopped', payload: { reason } });
   }
 
-  async function start(opts: CaptureOptions) {
+  // `isRestart` is set only by the crash-recovery retry below, never by a
+  // client-issued `remote:start`. It decides whether a successful start resets
+  // the crash-backoff counter (see `restartAttempt` just below): if every
+  // successful start reset it, a helper stuck in a crash loop could never
+  // reach the give-up threshold, because each restart's own success would
+  // erase the count moments before the next crash could ever be observed —
+  // becoming ready is always required before a capture can crash again, so
+  // the reset would immediately precede and cancel out the very thing it's
+  // meant to be counted against. Only a deliberate, externally-requested
+  // start (a genuinely fresh session) gets a clean slate.
+  async function start(opts: CaptureOptions, isRestart = false) {
     if (!deps.isEnabled()) {
       fail('disabled', 'Fernzugriff ist auf diesem Server abgeschaltet.');
       return;
@@ -109,6 +132,10 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
     // without the try around it the client got neither `remote:started` nor
     // `remote:error` and the connection just hung silently.
     try {
+      // Remembered so a crash-recovery restart (below) and a stray delayed
+      // 'helper_crashed' can both rebuild the capture from the options that
+      // were actually last requested, not some earlier quality tier.
+      lastOpts = opts;
       const c = deps.makeCapture();
       // Errors can arrive well after this capture has been replaced by a newer
       // session — real platform backends report crashes and dropped helper
@@ -120,6 +147,28 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
       // since a newer session's start can complete in the meantime.
       c.onError((code, message) => {
         if (capture !== null && capture !== c) return;
+
+        // A crashed helper is the normal case, not the end of the world — the
+        // same path also covers a display whose resolution changed underneath
+        // the running capture, which dies the exact same way. Try to bring it
+        // back with growing backoff before bothering the user; only once that
+        // has failed enough times in a row does this fall through to `fail`.
+        if (code === 'helper_crashed' && lastOpts) {
+          const delay = nextRestartDelay(restartAttempt++);
+          if (delay !== null) {
+            const opts2 = lastOpts;
+            enqueue(async () => {
+              // Re-checked at execution time, same as the give-up path below —
+              // the queue may run this well after `c` was replaced by a newer
+              // session (an explicit remote:start, or a previous restart).
+              if (capture !== c) return;
+              await stop('neustart', false);
+              restartTimer = setTimeout(() => { enqueue(() => start(opts2, true)); }, delay);
+            });
+            return;
+          }
+        }
+
         fail(code, message);
         enqueue(async () => { if (capture === c) await stop('fehler', false); });
       });
@@ -131,6 +180,10 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps): void {
       splitter = createAnnexBSplitter();
       governor = createBitrateGovernor(opts.bitrateKbps);
       startedAt = Date.now();
+      // Only a fresh, externally-requested session clears the crash-backoff
+      // count — see the comment on `isRestart` above for why a restart's own
+      // success must not clear it.
+      if (!isRestart) restartAttempt = 0;
       framesSent = 0; bytesSent = 0; dropped = 0;
 
       const emit = (units: AccessUnit[]) => {

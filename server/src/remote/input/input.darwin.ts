@@ -131,6 +131,15 @@ export function createDarwinInput(): InputInjector {
   const proc: ChildProcess = spawn(helperBinaryPath(), ['--input'], { stdio: ['pipe', 'ignore', 'pipe'] });
   let child: ChildProcess | null = proc;
   proc.on('exit', () => { child = null; });
+  // Task 18: a restart (or a real `pkill -f tms-remote-helper`, which matches
+  // both the capture and input helper by name) can tear this process's pipe
+  // down out from under a still-pending write — most commonly the `quit`
+  // below, sent while `stop()` is racing the helper's own exit. Node throws
+  // synchronously for a stream 'error' event with no listener, which — same
+  // as the bare WebSocket in remote.socket.ts — lands in the process-wide
+  // uncaughtException handler and kills the whole server. Swallow it here;
+  // a write that fails because the process is already gone needs no handling.
+  proc.stdin?.on('error', () => {});
 
   const write = (line: string | null) => {
     if (line && child?.stdin?.writable) child.stdin.write(line + '\n');

@@ -2745,6 +2745,16 @@
     function onControl(msg) {
       switch (msg.type) {
         case 'remote:started':
+          // Neue Masse heissen neuer Bildaufbau — der alte Dekoder rechnet noch
+          // mit der alten Groesse und wuerde verzerrte Bilder liefern. Trifft
+          // sowohl den Helfer-Neustart nach einem Absturz als auch einen
+          // echten Aufloesungswechsel (Monitor an-/abgesteckt, Umstellung) —
+          // beide schicken ein frisches remote:started mit neuen Massen.
+          if (decoder && (window.remoteState.w !== msg.payload.width
+                       || window.remoteState.h !== msg.payload.height)) {
+            try { decoder.close(); } catch (e) {}
+            decoder = null;
+          }
           window.remoteState.running = true;
           window.remoteState.w = msg.payload.width;
           window.remoteState.h = msg.payload.height;
