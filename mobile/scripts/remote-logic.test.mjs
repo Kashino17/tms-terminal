@@ -16,7 +16,7 @@ function loadBlock(name) {
   const re = new RegExp(`// ── TMS-TEST-EXPORT: ${name} ──([\\s\\S]*?)// ── /TMS-TEST-EXPORT ──`);
   const m = re.exec(html);
   assert.ok(m, `Block "${name}" fehlt im Mockup — Markierungen nicht entfernen`);
-  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect };`)();
+  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, classifyPadTap };`)();
 }
 
 test('der markierte Block laesst sich laden', () => {
@@ -24,6 +24,7 @@ test('der markierte Block laesst sich laden', () => {
   assert.equal(typeof api.pointerGain, 'function');
   assert.equal(typeof api.nextSticky, 'function');
   assert.equal(typeof api.fitRect, 'function');
+  assert.equal(typeof api.classifyPadTap, 'function');
 });
 
 test('fitRect legt das Bild seitenrichtig in die Flaeche', () => {
@@ -57,4 +58,36 @@ test('nextSticky laeuft aus/einmal/fest im Kreis', () => {
   assert.equal(nextSticky('off'), 'once');
   assert.equal(nextSticky('once'), 'locked');
   assert.equal(nextSticky('locked'), 'off');
+});
+
+test('classifyPadTap: ein Finger, kurz, kaum Weg -> Linksklick', () => {
+  const { classifyPadTap } = loadBlock('remoteMath');
+  assert.equal(classifyPadTap(1, false, 100, 3, 250, 10), 'left');
+  assert.equal(classifyPadTap(0, false, 50, 0, 250, 10), 'left', 'kein Finger gezaehlt zaehlt wie einer');
+});
+
+test('classifyPadTap: zwei Finger gleichzeitig, kurz, kaum Weg -> Rechtsklick', () => {
+  const { classifyPadTap } = loadBlock('remoteMath');
+  assert.equal(classifyPadTap(2, false, 100, 3, 250, 10), 'right');
+});
+
+test('classifyPadTap: Weg ueber dem Schwellwert -> kein Klick (das war Wischen/Scrollen)', () => {
+  const { classifyPadTap } = loadBlock('remoteMath');
+  assert.equal(classifyPadTap(1, false, 100, 11, 250, 10), null);
+  assert.equal(classifyPadTap(2, false, 100, 50, 250, 10), null);
+});
+
+test('classifyPadTap: zu lange gehalten -> kein Klick', () => {
+  const { classifyPadTap } = loadBlock('remoteMath');
+  assert.equal(classifyPadTap(1, false, 300, 0, 250, 10), null);
+});
+
+test('classifyPadTap: waehrend eines Halte-Ziehens -> kein Klick', () => {
+  const { classifyPadTap } = loadBlock('remoteMath');
+  assert.equal(classifyPadTap(1, true, 50, 0, 250, 10), null);
+});
+
+test('classifyPadTap: drei oder mehr Finger -> keine zugesagte Geste, kein Klick', () => {
+  const { classifyPadTap } = loadBlock('remoteMath');
+  assert.equal(classifyPadTap(3, false, 50, 0, 250, 10), null);
 });
