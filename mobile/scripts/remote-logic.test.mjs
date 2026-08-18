@@ -16,7 +16,7 @@ function loadBlock(name) {
   const re = new RegExp(`// ── TMS-TEST-EXPORT: ${name} ──([\\s\\S]*?)// ── /TMS-TEST-EXPORT ──`);
   const m = re.exec(html);
   assert.ok(m, `Block "${name}" fehlt im Mockup — Markierungen nicht entfernen`);
-  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, classifyPadTap };`)();
+  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, classifyPadTap, remoteKeyRows };`)();
 }
 
 test('der markierte Block laesst sich laden', () => {
@@ -104,4 +104,42 @@ test('classifyPadTap: Weg-Schwelle genau auf tapSlopPx (10) zaehlt noch als Tipp
   assert.equal(classifyPadTap(1, false, 0, 9, 250, 10), 'left', 'knapp unter der Schwelle ist noch ein Tippen');
   assert.equal(classifyPadTap(1, false, 0, 10, 250, 10), 'left', 'genau auf der Schwelle zaehlt noch als Tippen');
   assert.equal(classifyPadTap(1, false, 0, 11, 250, 10), null, 'knapp ueber der Schwelle nicht mehr');
+});
+
+test('die Grundebene ist eine deutsche Tastatur', () => {
+  const { remoteKeyRows } = loadBlock('remoteMath');
+  const codes = remoteKeyRows('base').flat().map((k) => k.c);
+
+  assert.ok(codes.includes('KeyZ'), 'Z liegt auf der deutschen Tastatur oben');
+  assert.ok(codes.includes('Semicolon'), 'Umlaut-Position oe');
+  assert.ok(codes.includes('Enter'));
+  assert.ok(codes.includes('Backspace'));
+  assert.ok(codes.includes('Space'));
+});
+
+test('jede Sondertaste ist als haftend gekennzeichnet', () => {
+  const { remoteKeyRows } = loadBlock('remoteMath');
+  const alle = remoteKeyRows('base').flat();
+  const cmd = alle.find((k) => k.c === 'MetaLeft');
+  const a = alle.find((k) => k.c === 'KeyA');
+
+  assert.equal(cmd.sticky, true, 'ohne haftende Befehlstaste ist Befehl+Tab nicht tippbar');
+  assert.ok(!a.sticky, 'Buchstaben haften nicht');
+});
+
+test('die Funktionsebene bringt F1 bis F12', () => {
+  const { remoteKeyRows } = loadBlock('remoteMath');
+  const codes = remoteKeyRows('fn').flat().map((k) => k.c);
+  assert.ok(codes.includes('F1'));
+  assert.ok(codes.includes('F12'));
+});
+
+test('jede Taste hat eine Beschriftung und einen Code', () => {
+  const { remoteKeyRows } = loadBlock('remoteMath');
+  for (const layer of ['base', 'num', 'fn']) {
+    for (const key of remoteKeyRows(layer).flat()) {
+      assert.ok(key.l && key.l.length > 0, `Beschriftung fehlt bei ${JSON.stringify(key)}`);
+      assert.ok(key.c && key.c.length > 0, `Code fehlt bei ${key.l}`);
+    }
+  }
 });
