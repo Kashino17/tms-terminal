@@ -62,12 +62,18 @@ test('parseInputReadyLine erkennt Bereitschaft und Fehler', () => {
   assert.deepEqual(parseInputReadyLine('{"ready":{"input":true}}'), { kind: 'ready' });
   assert.deepEqual(
     parseInputReadyLine('{"error":{"code":"permission_input","message":"Bedienungshilfen sind nicht freigegeben"}}'),
-    { kind: 'error', message: 'Bedienungshilfen sind nicht freigegeben' },
+    { kind: 'error', code: 'permission_input', message: 'Bedienungshilfen sind nicht freigegeben' },
   );
   assert.deepEqual(
     parseInputReadyLine('{"error":{"code":"permission_input"}}'),
-    { kind: 'error', message: 'permission_input' },
+    { kind: 'error', code: 'permission_input', message: 'permission_input' },
     'ohne eigene Nachricht faellt es auf den Fehlercode zurueck');
+  // C1: ein unbekannter Code darf nicht unveraendert an den Client durchgereicht
+  // werden — faellt wie in capture.darwin.ts's parseHelperLine auf capture_unavailable zurueck.
+  assert.deepEqual(
+    parseInputReadyLine('{"error":{"code":"quatsch","message":"x"}}'),
+    { kind: 'error', code: 'capture_unavailable', message: 'x' },
+  );
 });
 
 test('parseInputReadyLine verschluckt sich nicht an Zwischenausgaben', () => {

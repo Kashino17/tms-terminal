@@ -1,13 +1,10 @@
-import { spawn, ChildProcess } from 'node:child_process';
+import { spawn, ChildProcess, execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
 import type { RemoteErrorCode } from '../../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types';
-import { helperBinaryPath } from '../paths';
+import { RemoteCaptureError, KNOWN_REMOTE_ERROR_CODES } from './capture.types';
+import { helperBinaryPath, macBuildScriptPath } from '../paths';
 import { splitLines } from '../lines';
-
-const KNOWN_CODES: RemoteErrorCode[] = [
-  'permission_screen', 'permission_input', 'capture_unavailable',
-  'helper_crashed', 'disabled', 'unsupported_platform', 'display_asleep',
-];
 
 // Re-exported so input.darwin.ts (and this file's tests) can keep importing
 // helperBinaryPath from here — the actual root-finding lives in paths.ts,
@@ -54,7 +51,7 @@ export function parseHelperLine(line: string): HelperLine | null {
     };
   }
   if (obj.error && typeof obj.error.code === 'string') {
-    const code = KNOWN_CODES.includes(obj.error.code as RemoteErrorCode)
+    const code = KNOWN_REMOTE_ERROR_CODES.includes(obj.error.code as RemoteErrorCode)
       ? (obj.error.code as RemoteErrorCode)
       : 'capture_unavailable';
     return { kind: 'error', code, message: String(obj.error.message ?? '') };
@@ -65,6 +62,24 @@ export function parseHelperLine(line: string): HelperLine | null {
 /** The helper must speak up within this long, or `start()` rejects instead of
  *  hanging forever — a helper that says nothing must not freeze the session. */
 const START_TIMEOUT_MS = 10_000;
+
+/**
+ * Existing installs that never re-ran the interactive setup wizard (the only
+ * place that used to build the helper) never got a binary — every session
+ * hit a bare ENOENT from `spawn()` with no indication what to do. Build it
+ * once, lazily, right before the first session that actually needs it —
+ * this way server startup stays fast for anyone who never opens remote
+ * access, and a failed build still leaves a clear, actionable message (the
+ * exact command from setup.ts) instead of a raw spawn error.
+ */
+function ensureHelperBuilt(): void {
+  if (fs.existsSync(helperBinaryPath())) return;
+  try {
+    execFileSync('bash', [macBuildScriptPath()], { stdio: 'ignore' });
+  } catch {
+    // Handled by the existence re-check in start() below — this is best-effort.
+  }
+}
 
 export function createDarwinCapture(): ScreenCapture {
   let child: ChildProcess | null = null;
@@ -77,6 +92,13 @@ export function createDarwinCapture(): ScreenCapture {
   return {
     start(opts) {
       return new Promise<CaptureInfo>((resolve, reject) => {
+        ensureHelperBuilt();
+        if (!fs.existsSync(helperBinaryPath())) {
+          reject(new RemoteCaptureError('capture_unavailable',
+            'Fernzugriffs-Helfer fehlt und konnte nicht automatisch gebaut werden. '
+            + `Einmalig einrichten mit:  bash ${macBuildScriptPath()}`));
+          return;
+        }
         const proc = spawn(helperBinaryPath(), buildHelperArgs(opts), { stdio: ['pipe', 'pipe', 'pipe'] });
         child = proc;
         // Task 18: `stop()` (and requestKeyframe/setBitrate, which can be
@@ -116,7 +138,13 @@ export function createDarwinCapture(): ScreenCapture {
             if (!evt) continue;
             if (evt.kind === 'ready' && !settled) { settle(); resolve(evt.info); }
             else if (evt.kind === 'error') {
-              if (!settled) { settle(); reject(new Error(evt.message)); }
+              // RemoteCaptureError, not a plain Error: without the code
+              // attached here, remote.socket.ts's catch has nothing but a
+              // message to go on and used to report every startup failure —
+              // including permission_screen/permission_input/display_asleep
+              // — as the generic capture_unavailable, burying the guided
+              // permission screens those specific codes exist for.
+              if (!settled) { settle(); reject(new RemoteCaptureError(evt.code, evt.message)); }
               else onError(evt.code, evt.message);
             }
           }

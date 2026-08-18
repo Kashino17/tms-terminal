@@ -4,7 +4,14 @@ import type { InputInjector, Mods } from './input.types';
 import { helperBinaryPath } from '../capture/capture.darwin';
 import { toMacKeyCode } from '../keymap';
 import { clamp01 } from '../geometry';
-import { splitLines } from '../lines';
+import { waitForReady, parseInputReadyLine, type InputReadyLine } from './ready';
+import { createHeldState } from './held';
+
+// Re-exported so this file's own test (and anything else that used to reach
+// them here) keeps working — the actual implementations moved to ready.ts,
+// shared with the Windows backend (I11: it has the exact same Add-Type
+// startup race the Swift helper does).
+export { parseInputReadyLine, type InputReadyLine };
 
 /** Modifier bit field shared with the Swift side. */
 const SHIFT = 1, CONTROL = 2, OPTION = 4, COMMAND = 8;
@@ -44,89 +51,6 @@ export function toHelperLine(ev: RemoteInputEvent): string | null {
   }
 }
 
-export type InputReadyLine =
-  | { kind: 'ready' }
-  | { kind: 'error'; message: string };
-
-/** Shape of the --input helper's stderr line, loosely — re-checked before use. */
-interface InputReadyPayload {
-  ready?: { input?: boolean };
-  error?: { code?: string; message?: string };
-}
-
-/**
- * The --input helper writes one JSON object per stderr line, same as capture
- * mode — but its `ready` payload is `{"input":true}`, not the capture mode's
- * `{width,height,scale}`, so capture.darwin.ts's parseHelperLine (which
- * requires `ready.width` to be a number) never matches it. Hence this
- * narrower cousin instead of a second call site for that one.
- */
-export function parseInputReadyLine(line: string): InputReadyLine | null {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith('{')) return null;
-  let obj: InputReadyPayload;
-  try { obj = JSON.parse(trimmed) as InputReadyPayload; } catch { return null; }
-  if (obj.ready?.input === true) return { kind: 'ready' };
-  if (obj.error && typeof obj.error.code === 'string') {
-    return { kind: 'error', message: String(obj.error.message ?? obj.error.code) };
-  }
-  return null;
-}
-
-/** Same budget as capture.darwin.ts's START_TIMEOUT_MS, for the same reason:
- *  a helper that never speaks up must not hang the session forever. */
-const READY_TIMEOUT_MS = 10_000;
-
-/**
- * Resolves once the helper's `{"ready":{"input":true}}` line arrives on
- * stderr, rejects on a reported error, an early exit, or the timeout above.
- *
- * Without this, the caller could start relaying input before the helper's
- * read loop is actually running: the process has been spawned but is still
- * loading (framework dyld loading, the Accessibility permission check) —
- * measured on a real device as the first ~100ms of pointer motion silently
- * vanishing.
- */
-function waitForReady(proc: ChildProcess): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    let settled = false;
-    let buffered = '';
-
-    const settle = () => { settled = true; clearTimeout(timeout); };
-
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settle();
-      reject(new Error('Eingabe-Helfer antwortet nicht (Zeitlimit ueberschritten)'));
-    }, READY_TIMEOUT_MS);
-
-    proc.stderr?.on('data', (b: Buffer) => {
-      if (settled) return;
-      const { lines, rest } = splitLines(buffered, b.toString());
-      buffered = rest;
-      for (const line of lines) {
-        const parsed = parseInputReadyLine(line);
-        if (!parsed) continue;
-        settle();
-        if (parsed.kind === 'ready') resolve(); else reject(new Error(parsed.message));
-        return;
-      }
-    });
-
-    proc.on('exit', (code) => {
-      if (settled) return;
-      settle();
-      reject(new Error(`Eingabe-Helfer beendet (${code})`));
-    });
-
-    proc.on('error', (e) => {
-      if (settled) return;
-      settle();
-      reject(e);
-    });
-  });
-}
-
 export function createDarwinInput(): InputInjector {
   const proc: ChildProcess = spawn(helperBinaryPath(), ['--input'], { stdio: ['pipe', 'ignore', 'pipe'] });
   let child: ChildProcess | null = proc;
@@ -150,19 +74,40 @@ export function createDarwinInput(): InputInjector {
   // three review rounds (toHelperLine was tested, this second path wasn't).
   const send = (ev: RemoteInputEvent) => write(toHelperLine(ev));
 
+  // I5: track exactly what the helper was actually told to hold down, so
+  // stop() can let go of it before killing the process — see held.ts for why
+  // this has to live on the server (the client can't be trusted to still be
+  // around to ask for a release).
+  const held = createHeldState();
+
   return {
     ready: waitForReady(proc),
     moveRelative: (dx, dy) => send({ t: 'd', dx, dy }),
     moveAbsolute: (nx, ny) => send({ t: 'm', x: nx, y: ny }),
-    button: (which, down) => send({ t: 'b', b: which[0] as 'l' | 'r' | 'm', d: down }),
+    button: (which, down) => {
+      held.trackButton(which, down);
+      send({ t: 'b', b: which[0] as 'l' | 'r' | 'm', d: down });
+    },
     scroll: (dx, dy) => send({ t: 's', dx, dy }),
-    key: (code, down, mods) => send({ t: 'k', c: code, d: down, mods }),
+    key: (code, down, mods) => {
+      held.trackKey(code, down, mods);
+      send({ t: 'k', c: code, d: down, mods });
+    },
     text: (s) => send({ t: 'x', s }),
 
     async stop() {
       const p = child;
+      if (!p) { child = null; return; }
+      // Release everything still held before the `quit` below — a helper
+      // that gets killed with Cmd or a mouse button down leaves that press
+      // stuck on the Mac, and unlike a client-side release, this one can't
+      // be skipped just because nobody reconnects afterwards. Uses `send()`
+      // (still valid: `child` isn't cleared until right after this), not a
+      // second formatting path.
+      const stuck = held.held();
+      stuck.buttons.forEach((b) => send({ t: 'b', b: b[0] as 'l' | 'r' | 'm', d: false }));
+      stuck.keys.forEach(({ code, mods }) => send({ t: 'k', c: code, d: false, mods }));
       child = null;
-      if (!p) return;
       p.stdin?.write('quit\n');
       await new Promise<void>((resolve) => {
         const kill = setTimeout(() => { p.kill('SIGKILL'); resolve(); }, 300);
