@@ -1674,23 +1674,30 @@ export type HelperLine =
   | { kind: 'ready'; info: CaptureInfo }
   | { kind: 'error'; code: RemoteErrorCode; message: string };
 
-/**
- * Buffers partial lines across reads.
- *
- * A pipe hands out whatever bytes have arrived, not whole lines. Splitting each
- * chunk on its own drops any line cut in two: both halves fail to parse in
- * silence, and a `{"ready":…}` lost that way leaves start() waiting forever.
- */
-export function createLineReader(): { push(chunk: string): string[] } {
-  let rest = '';
-  return {
-    push(chunk) {
-      const parts = (rest + chunk).split('\n');
-      rest = parts.pop() ?? '';        // the tail is incomplete until a \n arrives
-      return parts;
-    },
-  };
-}
+// Der Zeilenleser lebt in `server/src/remote/lines.ts` und wird von **beiden**
+// Aufnahme-Backends benutzt. Ursprünglich stand er nur hier — die Windows-Fassung
+// bekam daraufhin eine eigene, ungepufferte Zerlegung und damit denselben Fehler
+// noch einmal. Eine Kopie, zwei Wahrheiten: deshalb ein gemeinsames Modul.
+//
+// lines.ts:
+// /**
+//  * Buffers partial lines across reads.
+//  *
+//  * A pipe hands out whatever bytes have arrived, not whole lines. Splitting each
+//  * chunk on its own drops any line cut in two: both halves fail to parse in
+//  * silence, and a `{"ready":…}` lost that way leaves start() waiting forever.
+//  */
+// export function splitLines(): { push(chunk: string): string[] } {
+//   let rest = '';
+//   return {
+//     push(chunk) {
+//       const parts = (rest + chunk).split('\n');
+//       rest = parts.pop() ?? '';      // the tail is incomplete until a \n arrives
+//       return parts;
+//     },
+//   };
+// }
+import { splitLines } from '../lines';
 
 /** A helper that never answers must not freeze the session either. */
 const START_TIMEOUT_MS = 10_000;
@@ -1735,7 +1742,7 @@ export function createDarwinCapture(): ScreenCapture {
         let settled = false;
         let stderrTail = '';
 
-        const lines = createLineReader();
+        const lines = splitLines();
         const timer = setTimeout(() => {
           if (settled) return;
           settled = true;
@@ -2399,10 +2406,25 @@ export function pickEncoder(available: string[]): string | null {
   return ENCODER_PREFERENCE.find((e) => available.includes(e)) ?? null;
 }
 
+/**
+ * Encoder-specific quality flags.
+ *
+ * `-preset p1 -tune ll` are NVENC-only: QSV rejects `p1` as a preset and neither
+ * QSV nor AMF knows `-tune` at all, so ffmpeg aborts at startup. Handing every
+ * encoder the same flags breaks exactly the machines without an Nvidia card —
+ * the common case — while the two tested branches keep passing.
+ */
+export function qualityArgs(encoder: string): string[] {
+  switch (encoder) {
+    case 'h264_nvenc': return ['-preset', 'p1', '-tune', 'll'];
+    case 'h264_qsv':   return ['-preset', 'veryfast', '-async_depth', '1'];
+    case 'h264_amf':   return ['-usage', 'ultralowlatency', '-quality', 'speed'];
+    default:           return ['-preset', 'veryfast', '-tune', 'zerolatency'];
+  }
+}
+
 export function buildFfmpegArgs(opts: CaptureOptions, encoder: string): string[] {
-  const quality = encoder === 'libx264'
-    ? ['-preset', 'veryfast', '-tune', 'zerolatency']
-    : ['-preset', 'p1', '-tune', 'll'];
+  const quality = qualityArgs(encoder);
 
   return [
     '-hide_banner', '-loglevel', 'info',
