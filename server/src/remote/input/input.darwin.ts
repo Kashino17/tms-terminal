@@ -15,14 +15,17 @@ function modBits(m: Mods): number {
 /**
  * One remote input event → one helper command line, or null if it makes no sense.
  *
- * `scale` matters for relative motion only: the app computes deltas in captured
- * pixels, while CGEvent moves the pointer in logical points.
+ * Relative motion is passed through unscaled and on purpose: dx/dy come from
+ * the app's own gesture handling, not from the captured image's pixel grid,
+ * so the capture quality preset must not affect it. Dividing by `scale` here
+ * (an earlier version of this function did) would make the same swipe move
+ * the pointer a different distance depending on which preset happens to be
+ * selected — a bug nobody would think to blame on capture quality.
  */
-export function toHelperLine(ev: RemoteInputEvent, scale: number): string | null {
-  const s = scale > 0 ? scale : 1;
+export function toHelperLine(ev: RemoteInputEvent): string | null {
   switch (ev?.t) {
     case 'd':
-      return `rel ${Math.round(ev.dx / s)} ${Math.round(ev.dy / s)}`;
+      return `rel ${Math.round(ev.dx)} ${Math.round(ev.dy)}`;
     case 'm':
       return `abs ${clamp01(ev.x)} ${clamp01(ev.y)}`;
     case 'b':
@@ -47,15 +50,19 @@ export function createDarwinInput(): InputInjector {
   const write = (line: string | null) => {
     if (line && child?.stdin?.writable) child.stdin.write(line + '\n');
   };
+  // Every event goes through toHelperLine — the single, tested source of the
+  // wire format. Do not format command lines here again: a second formatting
+  // path is exactly how the relative-motion scale bug went unnoticed through
+  // three review rounds (toHelperLine was tested, this second path wasn't).
+  const send = (ev: RemoteInputEvent) => write(toHelperLine(ev));
 
   return {
-    moveRelative: (dx, dy) => write(`rel ${Math.round(dx)} ${Math.round(dy)}`),
-    moveAbsolute: (nx, ny) => write(`abs ${clamp01(nx)} ${clamp01(ny)}`),
-    button: (which, down) => write(`btn ${which[0]} ${down ? 1 : 0}`),
-    scroll: (dx, dy) => write(`scroll ${Math.round(dx)} ${Math.round(dy)}`),
-    key: (code, down, mods) => write(
-      toMacKeyCode(code) === null ? null : `key ${toMacKeyCode(code)} ${down ? 1 : 0} ${modBits(mods)}`),
-    text: (s) => write(`text ${s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n')}`),
+    moveRelative: (dx, dy) => send({ t: 'd', dx, dy }),
+    moveAbsolute: (nx, ny) => send({ t: 'm', x: nx, y: ny }),
+    button: (which, down) => send({ t: 'b', b: which[0] as 'l' | 'r' | 'm', d: down }),
+    scroll: (dx, dy) => send({ t: 's', dx, dy }),
+    key: (code, down, mods) => send({ t: 'k', c: code, d: down, mods }),
+    text: (s) => send({ t: 'x', s }),
 
     async stop() {
       const proc = child;
