@@ -3020,71 +3020,149 @@
     if (!pad) return;
     var R = function () { return window.TMSRemote; }; // Aufgabe 14 setzt window.TMSRemote — bis dahin bleibt der Mockup fuer sich lauffaehig.
 
-    var last = null;          // letzte Fingerposition
-    var lastAt = 0;
-    var moved = 0;             // zurueckgelegter Weg — trennt Tippen von Wischen
-    var downAt = 0;
-    var twoFinger = false;
-    var dragging = false;
-    var holdTimer = null;
-
     var TAP_SLOP = 10;        // Punkte, die ein "Tippen" wackeln darf
     var TAP_MS = 250;
     var HOLD_MS = 350;        // Halten leitet das Ziehen ein
 
+    // Zustand je Finger (pointerId -> {x, y, t, moved}) — bei zwei gleichzeitigen
+    // Fingern darf ein pointermove des einen Fingers nie die Position des anderen
+    // ueberschreiben (Ursache der Zufallssprung-Regression).
+    var pts = new Map();
+
+    var holdTimer = null;
+    var holdPointerId = null; // welcher Finger den Halte-Timer gestartet hat
+    var dragging = false;
+
+    // Zustand der gesamten Beruehrung (erster Finger runter bis letzter Finger
+    // hoch), bewusst nicht je Finger — fuer den Tippen-vs-Wischen-Test beim
+    // Loslassen.
+    var gestureDownAt = 0;
+    var gestureMoved = 0;
+    var hadTwoFingers = false;
+
+    function clearHold() {
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      holdPointerId = null;
+    }
+
+    function endDrag() {
+      if (dragging) {
+        dragging = false;
+        if (R()) R().input({ t: 'b', b: 'l', d: false });
+      }
+    }
+
     pad.addEventListener('pointerdown', function (e) {
       if (e.target.closest('[data-btn]')) return;
-      pad.setPointerCapture(e.pointerId);
-      last = { x: e.clientX, y: e.clientY };
-      lastAt = e.timeStamp;
-      moved = 0;
-      downAt = e.timeStamp;
-      twoFinger = e.isPrimary === false;
-      holdTimer = setTimeout(function () {
-        dragging = true;
-        if (R()) R().input({ t: 'b', b: 'l', d: true });
-      }, HOLD_MS);
+
+      var wasEmpty = pts.size === 0;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp, moved: 0 });
+
+      if (wasEmpty) {
+        gestureDownAt = e.timeStamp;
+        gestureMoved = 0;
+        hadTwoFingers = false;
+      }
+
+      if (pts.size === 2) {
+        // Zweiter Finger: das ist jetzt eine Zwei-Finger-Geste — laufenden
+        // Halte-Zeitgeber vom ersten Finger raeumen, sonst feuert er mitten
+        // in die Geste noch ein Linksklick-Druecken.
+        hadTwoFingers = true;
+        clearHold();
+      } else if (pts.size === 1) {
+        // Halte-Zeitgeber nur starten, wenn wirklich genau ein Finger aufliegt.
+        holdPointerId = e.pointerId;
+        holdTimer = setTimeout(function () {
+          holdTimer = null;
+          if (pts.size === 1 && pts.has(holdPointerId)) {
+            dragging = true;
+            if (R()) R().input({ t: 'b', b: 'l', d: true });
+          }
+          holdPointerId = null;
+        }, HOLD_MS);
+      }
+
+      // Ganz am Ende und abgesichert: wirft das Einfangen (z.B. NotFoundError),
+      // sollen Startposition, Zeitstempel und Halte-Zeitgeber trotzdem gesetzt
+      // sein — sonst bleibt die Flaeche stumm, ohne dass man auf dem Handy sieht,
+      // warum.
+      try { pad.setPointerCapture(e.pointerId); } catch (err) { /* bestmoeglich, kein Abbruch */ }
     });
 
     pad.addEventListener('pointermove', function (e) {
-      if (!last) return;
-      var dx = e.clientX - last.x;
-      var dy = e.clientY - last.y;
-      var dt = Math.max(1, e.timeStamp - lastAt);
-      last = { x: e.clientX, y: e.clientY };
-      lastAt = e.timeStamp;
-      moved += Math.abs(dx) + Math.abs(dy);
-      if (moved > TAP_SLOP && holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      var p = pts.get(e.pointerId);
+      if (!p) return;
+      var dx = e.clientX - p.x;
+      var dy = e.clientY - p.y;
+      var dt = Math.max(1, e.timeStamp - p.t);
+      p.x = e.clientX; p.y = e.clientY; p.t = e.timeStamp;
+      p.moved += Math.abs(dx) + Math.abs(dy);
+      gestureMoved = Math.max(gestureMoved, p.moved);
+      if (gestureMoved > TAP_SLOP) clearHold();
 
-      var speed = Math.sqrt(dx * dx + dy * dy) / dt;
-      var gain = pointerGain(speed);
       if (!R()) return;
-      if (twoFinger) R().input({ t: 's', dx: Math.round(dx), dy: Math.round(dy) });
-      else R().input({ t: 'd', dx: Math.round(dx * gain), dy: Math.round(dy * gain) });
+      if (pts.size === 2) {
+        R().input({ t: 's', dx: Math.round(dx), dy: Math.round(dy) });
+      } else {
+        var speed = Math.sqrt(dx * dx + dy * dy) / dt;
+        var gain = pointerGain(speed);
+        R().input({ t: 'd', dx: Math.round(dx * gain), dy: Math.round(dy * gain) });
+      }
     });
 
-    function release(e) {
-      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-      var quick = e.timeStamp - downAt < TAP_MS && moved <= TAP_SLOP;
-      if (R()) {
-        if (dragging) R().input({ t: 'b', b: 'l', d: false });
-        else if (quick) {
-          var b = twoFinger ? 'r' : 'l';   // zwei Finger tippen = Rechtsklick
-          R().input({ t: 'b', b: b, d: true });
-          R().input({ t: 'b', b: b, d: false });
-        }
+    function endTouch(e, allowClick) {
+      if (!pts.has(e.pointerId)) return;
+      pts.delete(e.pointerId);
+      if (holdPointerId === e.pointerId) clearHold();
+
+      if (pts.size > 0) return; // andere Finger liegen noch auf — die arbeiten weiter
+
+      // Nur ein echtes Ein-Finger-Tippen klickt: kurz, kaum Weg, und es war nie
+      // ein zweiter Finger im Spiel. Ein Zwei-Finger-Auftakt loest nie mehr aus
+      // Versehen einen Klick aus.
+      var quick = allowClick && !dragging && !hadTwoFingers &&
+        (e.timeStamp - gestureDownAt) < TAP_MS && gestureMoved <= TAP_SLOP;
+      endDrag(); // egal welcher Finger zuerst ging: ein laufendes Ziehen sauber beenden
+      if (quick && R()) {
+        R().input({ t: 'b', b: 'l', d: true });
+        R().input({ t: 'b', b: 'l', d: false });
       }
-      last = null; dragging = false; twoFinger = false;
+      hadTwoFingers = false;
+      gestureMoved = 0;
     }
 
-    pad.addEventListener('pointerup', release);
-    pad.addEventListener('pointercancel', release);
+    // pointerup ist ein echtes Loslassen (darf klicken); pointercancel ist ein
+    // vom Browser/OS abgebrochener Zeiger — dabei nie klicken, aber trotzdem
+    // sauber aufraeumen (Ziehen beenden, Zeitgeber raeumen).
+    pad.addEventListener('pointerup', function (e) { endTouch(e, true); });
+    pad.addEventListener('pointercancel', function (e) { endTouch(e, false); });
 
     // Die beiden festen Knoepfe: Ziehen und Rechtsklick ohne Fingerakrobatik.
+    // Zeiger einfangen (abgesichert) und pointercancel/lostpointercapture
+    // mitbehandeln — sonst bleibt die virtuelle Maustaste haengen, wenn der
+    // Finger vom Knopf rutscht, bevor er loslaesst.
     pad.querySelectorAll('[data-btn]').forEach(function (btn) {
       var which = btn.dataset.btn;
-      btn.addEventListener('pointerdown', function () { if (R()) R().input({ t: 'b', b: which, d: true }); });
-      btn.addEventListener('pointerup',   function () { if (R()) R().input({ t: 'b', b: which, d: false }); });
+      var activeId = null; // verhindert doppeltes d:false (pointerup + lostpointercapture)
+
+      function down(e) {
+        if (activeId !== null) return; // schon gedrueckt
+        activeId = e.pointerId;
+        if (R()) R().input({ t: 'b', b: which, d: true });
+        try { btn.setPointerCapture(e.pointerId); } catch (err) { /* bestmoeglich */ }
+      }
+
+      function up(e) {
+        if (e.pointerId !== activeId) return;
+        activeId = null;
+        if (R()) R().input({ t: 'b', b: which, d: false });
+      }
+
+      btn.addEventListener('pointerdown', down);
+      btn.addEventListener('pointerup', up);
+      btn.addEventListener('pointercancel', up);
+      btn.addEventListener('lostpointercapture', up);
     });
   }
   function wireRemoteKeys() {}
