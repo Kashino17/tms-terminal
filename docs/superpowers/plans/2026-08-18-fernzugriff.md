@@ -18,7 +18,9 @@
 - **Mockup:** `~/Desktop/TMS Terminal/mockups/season2/liquid-deck/index.html`, Zweig `master`. Der Bauschritt liest den Mockup **fest von diesem Pfad**.
 - **Nach jeder Mockup-Änderung:** `cd ~/Desktop/tms-terminal/mobile && npm run build:season2` — erzeugt `src/season2/web/liquidDeckHtml.ts`. Diese Datei **muss mit eingecheckt werden**. `liquidDeckHtml.ts` wird nie von Hand bearbeitet.
 - **Tests:** `cd ~/Desktop/tms-terminal/server && npm test` (führt `node --require ts-node/register --test 'src/**/*.test.ts'` aus).
+- **Zur Testausgabe:** Dieses Node schreibt die Zusammenfassung als `ℹ pass 5` / `ℹ fail 0`, **nicht** als `# pass 5`. Wo unten „Erwartet: `# pass N`" steht, ist die Zahl gemeint, nicht das Zeichen davor.
 - **Keine neuen npm-Abhängigkeiten.** Der Fernzugriff kommt mit Bordmitteln aus; auf Windows wird ffmpeg vorausgesetzt, auf macOS gar nichts.
+- **Kein `any`.** `npx tsc --noEmit` muss nach jeder Aufgabe fehlerfrei durchlaufen — aber nicht dadurch, dass ein Typfehler mit `any` zugedeckt wird. In Aufgabe 2 warf `Buffer.alloc()` unter `strict` einen `TS2322`; die richtige Antwort war eine ausdrückliche Annotation (`let carry: Buffer = …`), nicht `any`. Diese Regel gilt für jede Aufgabe.
 - **UI-Texte deutsch.** Kommentare in der Sprache der Datei, die bearbeitet wird (`server/src` englisch, `season2`/Mockup deutsch).
 - **Nie das Ja/Nein-Muster einer Berechtigungsabfrage wörtlich in Testnamen oder Fixtures schreiben.** Die Sitzung läuft im PTY des Servers; dessen Erkennung liest die eigene Ausgabe mit. Siehe `server/src/websocket/approval.util.test.ts` für das Ausweichmuster.
 - **Der Server-Neustart erfolgt durch den Nutzer**, nie durch den Umsetzenden — ein Neustart beendet die laufende Sitzung auf dem PC.
