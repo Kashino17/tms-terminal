@@ -134,12 +134,42 @@ test('die Funktionsebene bringt F1 bis F12', () => {
   assert.ok(codes.includes('F12'));
 });
 
-test('jede Taste hat eine Beschriftung und einen Code', () => {
+test('jede Taste hat eine Beschriftung und entweder einen Positionscode oder einen Textweg', () => {
   const { remoteKeyRows } = loadBlock('remoteMath');
   for (const layer of ['base', 'num', 'fn']) {
     for (const key of remoteKeyRows(layer).flat()) {
       assert.ok(key.l && key.l.length > 0, `Beschriftung fehlt bei ${JSON.stringify(key)}`);
-      assert.ok(key.c && key.c.length > 0, `Code fehlt bei ${key.l}`);
+      const hasCode = key.c && key.c.length > 0;
+      const hasText = key.s && key.s.length > 0;
+      assert.ok(hasCode || hasText, `weder Code noch Textweg bei ${key.l}`);
+      assert.ok(!(hasCode && hasText), `${key.l} hat sowohl Code als auch Textweg — genau einer ist erlaubt`);
+    }
+  }
+});
+
+test('die Zeichenebene sendet Satzzeichen ueber den Textweg, nie ueber einen US-Positionscode', () => {
+  const { remoteKeyRows } = loadBlock('remoteMath');
+
+  // Positionscodes, die in der Grundebene schon fuer einen Umlaut belegt sind
+  // (BracketLeft->ü, Semicolon->ö, Quote->ä). Ein Zeichen-Layout, das versehentlich
+  // wieder auf so einen Code zurueckfaellt, wuerde auf einer deutschen
+  // Mac-Belegung ein Zeichen tippen statt des draufstehenden Satzzeichens.
+  const baseCodes = new Set(remoteKeyRows('base').flat().map((k) => k.c).filter(Boolean));
+  const DIGIT_CODES = new Set(['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
+    'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0']);
+  const STRUCTURAL_CODES = new Set(['Space', 'Enter', 'Backspace']);
+
+  for (const key of remoteKeyRows('num').flat()) {
+    if (key.c) {
+      const isDigit = DIGIT_CODES.has(key.c);
+      const isStructural = STRUCTURAL_CODES.has(key.c) || key.c.indexOf('__layer:') === 0;
+      assert.ok(isDigit || isStructural,
+        `"${key.l}" (${key.c}) ist ein Zeichen ueber Positionscode — auf einer deutschen ` +
+        'Belegung tippt diese Position etwas anderes als draufsteht; muss ueber den Textweg (s) gehen');
+      assert.ok(!baseCodes.has(key.c) || isStructural,
+        `Positionscode ${key.c} bei "${key.l}" ist in der Grundebene schon fuer einen Umlaut belegt`);
+    } else {
+      assert.ok(key.s, `"${key.l}" hat weder Ziffern-Positionscode noch Textweg`);
     }
   }
 });
