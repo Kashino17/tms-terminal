@@ -457,3 +457,64 @@ export type ServerMessage =
   | ManagerStreamEndMessage
   | BrowserBridgeOpenMessage
   | BrowserBridgeCallbackResultMessage;
+
+// ── Fernzugriff (eigene WebSocket-Verbindung auf /remote) ────────────
+// Bewusst nicht Teil von ClientMessage/ServerMessage: Bild und Eingaben laufen
+// über eine zweite Verbindung, die die Seite im WebView selbst öffnet.
+
+export type RemoteErrorCode =
+  | 'permission_screen'
+  | 'permission_input'
+  | 'capture_unavailable'
+  | 'helper_crashed'
+  | 'disabled'
+  | 'unsupported_platform'
+  /** Der Bildschirm schlief — ScreenCaptureKit meldet dann gar keinen Bildschirm.
+   *  Eigener Code, weil das sonst wie ein Berechtigungsproblem aussieht und der
+   *  Nutzer in den Systemeinstellungen nach einem Haken sucht, der längst gesetzt ist. */
+  | 'display_asleep';
+
+export type RemoteQualityPreset = 'sparsam' | 'auto' | 'scharf';
+
+export interface RemoteStartMessage {
+  type: 'remote:start';
+  payload: { maxWidth: number; fps: number; bitrateKbps: number };
+}
+export interface RemoteStopMessage { type: 'remote:stop' }
+export interface RemoteQualityMessage {
+  type: 'remote:quality';
+  payload: { preset: RemoteQualityPreset };
+}
+export interface RemoteKeyframeMessage { type: 'remote:keyframe' }
+
+export type RemoteClientMessage =
+  | RemoteStartMessage | RemoteStopMessage | RemoteQualityMessage | RemoteKeyframeMessage;
+
+export interface RemoteStartedMessage {
+  type: 'remote:started';
+  payload: { width: number; height: number; scale: number; fps: number; codec: 'avc1' };
+}
+export interface RemoteStoppedMessage {
+  type: 'remote:stopped';
+  payload: { reason: string };
+}
+export interface RemoteErrorMessage {
+  type: 'remote:error';
+  payload: { code: RemoteErrorCode; message: string };
+}
+export interface RemoteStatusMessage {
+  type: 'remote:status';
+  payload: { fps: number; kbps: number; rttMs: number; dropped: number };
+}
+
+export type RemoteServerMessage =
+  | RemoteStartedMessage | RemoteStoppedMessage | RemoteErrorMessage | RemoteStatusMessage;
+
+/** Eingabe-Ereignisse: kurze Schluessel, weil bis zu 60 pro Sekunde anfallen. */
+export type RemoteInputEvent =
+  | { t: 'd'; dx: number; dy: number }
+  | { t: 'm'; x: number; y: number }
+  | { t: 'b'; b: 'l' | 'r' | 'm'; d: boolean }
+  | { t: 's'; dx: number; dy: number }
+  | { t: 'k'; c: string; d: boolean; mods: { s: boolean; c: boolean; a: boolean; m: boolean } }
+  | { t: 'x'; s: string };

@@ -3,6 +3,10 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { handleConnection } from './ws.handler';
 import { authenticateWebSocket } from '../auth/auth.middleware';
 import { logger } from '../utils/logger';
+import { isRemotePath, handleRemoteConnection } from '../remote/remote.socket';
+import { isRemoteEnabled } from '../config';
+import { createScreenCapture } from '../remote/capture';
+import { createInputInjector } from '../remote/input';
 
 const HEARTBEAT_INTERVAL_MS = 15_000; // 15 seconds — faster dead-connection detection on mobile
 const MAX_MISSED_PONGS = 3; // terminate after 3 missed pongs (45s window — tolerates packet loss on mobile)
@@ -36,6 +40,14 @@ export function createWebSocketServer(server: http.Server): WebSocketServer {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req); // required for noServer mode — registers pong handler
       const ip = req.socket.remoteAddress || 'unknown';
+      if (isRemotePath(req.url)) {
+        handleRemoteConnection(ws, {
+          makeCapture: createScreenCapture,
+          makeInput: createInputInjector,
+          isEnabled: isRemoteEnabled,
+        });
+        return;
+      }
       handleConnection(ws, ip);
     });
   });

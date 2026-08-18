@@ -12,6 +12,8 @@ export interface ServerConfig {
   port: number;
   certFingerprint?: string;
   jwtExpiry?: string;
+  /** Fernzugriff (Bildschirm spiegeln und steuern). Vorgabe: an. */
+  remoteEnabled?: boolean;
 }
 
 export const config = {
@@ -53,4 +55,9 @@ export function saveServerConfig(cfg: Partial<ServerConfig>): void {
   const existing = loadServerConfig();
   const merged = { ...existing, ...cfg };
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(merged, null, 2), { mode: 0o600 });
+}
+
+/** Remote control is the most powerful thing this server does — one switch to kill it. */
+export function isRemoteEnabled(): boolean {
+  return loadServerConfig().remoteEnabled !== false;
 }

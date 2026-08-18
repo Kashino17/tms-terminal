@@ -1,0 +1,154 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { isRemotePath, handleRemoteConnection, QUALITY_PRESETS } from './remote.socket';
+import type { ScreenCapture, CaptureOptions } from './capture/capture.types';
+import type { InputInjector } from './input/input.types';
+
+/** Minimaler Ersatz fuer den WebSocket: merkt sich, was gesendet wurde. */
+class FakeWs extends EventEmitter {
+  sent: any[] = [];
+  bufferedAmount = 0;
+  readyState = 1;
+  send(data: any) { this.sent.push(typeof data === 'string' ? JSON.parse(data) : data); }
+  close() { this.readyState = 3; this.emit('close'); }
+  typed(type: string) { return this.sent.filter((m) => m && m.type === type); }
+}
+
+function fakeCapture() {
+  const c = {
+    started: null as CaptureOptions | null,
+    stopped: false,
+    keyframes: 0,
+    bitrates: [] as number[],
+    dataCb: (_: Buffer) => {},
+    errCb: (_c: string, _m: string) => {},
+    async start(o: CaptureOptions) { c.started = o; return { width: 3024, height: 1964, scale: 2 }; },
+    onData(cb: (b: Buffer) => void) { c.dataCb = cb; },
+    onError(cb: (code: any, m: string) => void) { c.errCb = cb; },
+    requestKeyframe() { c.keyframes++; },
+    setBitrate(k: number) { c.bitrates.push(k); },
+    async stop() { c.stopped = true; },
+  };
+  return c as typeof c & ScreenCapture;
+}
+
+function fakeInput() {
+  const calls: string[] = [];
+  const i: any = {
+    calls,
+    moveRelative: (dx: number, dy: number) => calls.push(`rel ${dx} ${dy}`),
+    moveAbsolute: (x: number, y: number) => calls.push(`abs ${x} ${y}`),
+    button: (w: string, d: boolean) => calls.push(`btn ${w} ${d}`),
+    scroll: (dx: number, dy: number) => calls.push(`scroll ${dx} ${dy}`),
+    key: (c: string, d: boolean) => calls.push(`key ${c} ${d}`),
+    text: (s: string) => calls.push(`text ${s}`),
+    stop: async () => { calls.push('stop'); },
+  };
+  return i as typeof i & InputInjector;
+}
+
+function wire(overrides: Partial<{ enabled: boolean }> = {}) {
+  const ws = new FakeWs();
+  const capture = fakeCapture();
+  const input = fakeInput();
+  handleRemoteConnection(ws as any, {
+    makeCapture: () => capture,
+    makeInput: () => input,
+    isEnabled: () => overrides.enabled ?? true,
+  });
+  return { ws, capture, input };
+}
+
+const send = (ws: FakeWs, msg: unknown) => ws.emit('message', Buffer.from(JSON.stringify(msg)), false);
+
+test('isRemotePath erkennt nur den Fernzugriffs-Pfad', () => {
+  assert.equal(isRemotePath('/remote?token=abc'), true);
+  assert.equal(isRemotePath('/remote'), true);
+  assert.equal(isRemotePath('/?token=abc'), false);
+  assert.equal(isRemotePath('/remotely'), false);
+  assert.equal(isRemotePath(undefined), false);
+});
+
+test('remote:start meldet die Bildschirmmasse zurueck', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: { maxWidth: 1600, fps: 30, bitrateKbps: 1500 } });
+  await new Promise((r) => setImmediate(r));
+
+  const started = ws.typed('remote:started');
+  assert.equal(started.length, 1);
+  assert.deepEqual(started[0].payload,
+    { width: 3024, height: 1964, scale: 2, fps: 30, codec: 'avc1' });
+  assert.deepEqual(capture.started, { maxWidth: 1600, fps: 30, bitrateKbps: 1500 });
+});
+
+test('ist der Fernzugriff abgeschaltet, kommt ein Fehler statt einer Aufnahme', async () => {
+  const { ws, capture } = wire({ enabled: false });
+  send(ws, { type: 'remote:start', payload: { maxWidth: 1600, fps: 30, bitrateKbps: 1500 } });
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(ws.typed('remote:started').length, 0);
+  assert.equal(ws.typed('remote:error')[0].payload.code, 'disabled');
+  assert.equal(capture.started, null, 'die Aufnahme darf gar nicht erst anlaufen');
+});
+
+test('remote:quality setzt die Stufe und die Bitrate', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  send(ws, { type: 'remote:quality', payload: { preset: 'scharf' } });
+
+  assert.deepEqual(capture.bitrates.at(-1), QUALITY_PRESETS.scharf.bitrateKbps);
+});
+
+test('remote:keyframe fordert ein Vollbild an', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  send(ws, { type: 'remote:keyframe' });
+
+  assert.equal(capture.keyframes, 1);
+});
+
+test('remote:stop haelt Aufnahme und Eingabe an', async () => {
+  const { ws, capture, input } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  send(ws, { type: 'remote:stop' });
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(capture.stopped, true);
+  assert.ok(input.calls.includes('stop'));
+  assert.equal(ws.typed('remote:stopped').length, 1);
+});
+
+test('faellt die Verbindung weg, bleibt kein Helfer zurueck', async () => {
+  const { ws, capture, input } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  ws.close();
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(capture.stopped, true, 'kein verwaister Aufnahmeprozess');
+  assert.ok(input.calls.includes('stop'));
+});
+
+test('ein Aufnahmefehler wird als remote:error weitergereicht', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  capture.errCb('permission_screen', 'Bildschirmaufnahme nicht freigegeben');
+
+  const err = ws.typed('remote:error')[0];
+  assert.equal(err.payload.code, 'permission_screen');
+});
+
+test('kaputte Nachrichten legen die Verbindung nicht lahm', async () => {
+  const { ws } = wire();
+  ws.emit('message', Buffer.from('kein json'), false);
+  ws.emit('message', Buffer.from('{"type":"gibtsnicht"}'), false);
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(ws.typed('remote:started').length, 1, 'danach geht es normal weiter');
+});
