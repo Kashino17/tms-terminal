@@ -2841,6 +2841,13 @@
     if (name !== 'prayer') stopPrayerTick();
     if (name !== 'terminals') { cancelDictation(); closeAllListRails(); closeKeysPanel(); }
     if (name !== 'browser') stopBrowserProgressTimers();
+    // Fernzugriff verlassen (Dock-Wechsel, Zurueck-Geste, ...) waehrend eine
+    // haftende Sondertaste noch aktiv ist: genau wie beim Trennen darf die
+    // Befehls-/Wahl-/Strg-/Umschalttaste nicht auf dem Mac haengen bleiben.
+    // currentScreen ist an dieser Stelle noch der ALTE Bildschirm (wird erst
+    // unten auf `name` gesetzt) — die Bedingung feuert also nur beim
+    // tatsaechlichen Verlassen von "remote", nicht bei jeder Navigation.
+    if (name !== 'remote' && currentScreen === 'remote' && typeof releaseAllSticky === 'function') releaseAllSticky();
     // Terminals, Browser UND Manager haben ihre eigene Bar-Seite (Eingabezeile,
     // Adressleiste bzw. Chat-Eingabe) — überall sonst ist die Navigation die
     // Voreinstellung. Der jeweilige SCREEN_HOOK setzt danach die eigene Seite.
@@ -3003,6 +3010,9 @@
       if (btn) setRemotePage(btn.dataset.page);
     });
     host.querySelector('#remoteQuit').addEventListener('click', function () {
+      // Sondertasten VOR dem Trennen loesen, nicht danach — nach stop() kommen
+      // gesendete input()-Aufrufe womoeglich gar nicht mehr an.
+      releaseAllSticky();
       if (window.TMSRemote) window.TMSRemote.stop();
       show('servers');
     });
@@ -3010,6 +3020,13 @@
   }
 
   function setRemotePage(page) {
+    // Wechsel WEG von der Tastatur (z.B. auf "Trackpad"): eine haengengebliebene
+    // haftende Sondertaste (⌘/⌥/Strg/⇧) darf hier nicht stehen bleiben — sonst
+    // reagiert der Mac auf jeden folgenden Trackpad-Klick/-Anschlag falsch.
+    // Beim Ebenenwechsel INNERHALB der Tastatur (page bleibt 'keys') passiert
+    // hier bewusst nichts, sonst waere Sondertaste+Ebenenwechsel+Buchstabe nicht
+    // tippbar.
+    if (window.remoteState.page === 'keys' && page !== 'keys') releaseAllSticky();
     window.remoteState.page = page;
     document.querySelectorAll('#remoteSeg [data-page]').forEach(function (b) {
       b.classList.toggle('on', b.dataset.page === page);
@@ -3032,10 +3049,15 @@
   function remoteKeysMarkup() {
     var rows = remoteKeyRows(remoteLayer).map(function (row) {
       var keys = row.map(function (key) {
-        var cls = 'rk' + (key.m ? ' mod' : '') + (remoteSticky[key.c] && remoteSticky[key.c] !== 'off'
+        var cls = 'rk' + (key.m ? ' mod' : '') + (key.c && remoteSticky[key.c] && remoteSticky[key.c] !== 'off'
           ? ' on' + (remoteSticky[key.c] === 'locked' ? ' locked' : '') : '');
         var style = key.w ? ' style="flex:' + key.w + '"' : '';
-        return '<button class="' + cls + '" data-code="' + key.c + '"' + style + '>'
+        // Zeichenebene: Tasten ohne Positionscode (`c`) tragen ihr Zeichen im
+        // Textweg (`s`) statt im data-code — siehe die Erklaerung ueber
+        // remoteKeyRows(). escapeHtml() ist hier PFLICHT, nicht nur Stil: ohne
+        // sie bricht z.B. das Anfuehrungszeichen-Zeichen das Attribut auf.
+        var attr = key.c ? ' data-code="' + key.c + '"' : ' data-text="' + escapeHtml(key.s) + '"';
+        return '<button class="' + cls + '"' + attr + style + '>'
              + escapeHtml(key.l) + '</button>';
       }).join('');
       return '<div class="rk-row">' + keys + '</div>';
@@ -3085,15 +3107,49 @@
     if (changed) paintStickyButtons();
   }
 
+  /**
+   * Loest ALLE noch aktiven haftenden Sondertasten aktiv (je ein Loslassen) und
+   * setzt sie zurueck — anders als releaseOnceModifiers() auch die
+   * FESTGESTELLTEN. Ohne das bliebe z.B. eine festgestellte Befehlstaste auf
+   * dem Mac gedrueckt, sobald man die Tastatur-Seite verlaesst: jeder weitere
+   * Klick/Tastendruck dort wird zum Kuerzel, bis man es AM GERAET selbst wieder
+   * loest — derselbe Fehlertyp, der in Aufgabe 12 die Maustaste haengen liess,
+   * nur unangenehmer (ein haengendes ⌘ macht den Rechner faktisch unbenutzbar).
+   * Muss bei JEDEM Ausstieg aus der Tastatur laufen — Wechsel auf Trackpad,
+   * Verlassen des Fernzugriffs-Bildschirms, vor dem Trennen — darum eine
+   * einzige Funktion fuer alle drei Stellen statt dreimal denselben Code.
+   */
+  function releaseAllSticky() {
+    var changed = false;
+    Object.keys(remoteSticky).forEach(function (code) {
+      if (remoteSticky[code] !== 'off') {
+        remoteSticky[code] = 'off';
+        if (window.TMSRemote) window.TMSRemote.input({ t: 'k', c: code, d: false, mods: currentMods() });
+        changed = true;
+      }
+    });
+    if (changed) paintStickyButtons();
+  }
+
   function wireRemoteKeys() {
     var host = document.getElementById('remoteKeys');
     if (!host) return;
 
     host.addEventListener('click', function (e) {
-      var btn = e.target.closest('[data-code]');
+      var btn = e.target.closest('[data-code], [data-text]');
       if (!btn) return;
-      var code = btn.dataset.code;
       var R = window.TMSRemote;
+
+      // Zeichenebene: der Textweg umgeht die Tastaturbelegung komplett, darum
+      // gibt es hier keine Positionscode-Sonderfaelle (Layer/Mikro/Sondertaste)
+      // zu pruefen — nur senden und wie jeden anderen Anschlag behandeln.
+      if (btn.dataset.text !== undefined) {
+        if (R) R.input({ t: 'x', s: btn.dataset.text });
+        releaseOnceModifiers();
+        return;
+      }
+
+      var code = btn.dataset.code;
 
       if (code.indexOf('__layer:') === 0) { remoteLayer = code.slice(8); setRemotePage('keys'); return; }
       if (code === '__mic') { if (R) R.dictate(); return; }
@@ -3352,10 +3408,23 @@
    * Taste; welches Zeichen dabei herauskommt, entscheidet der Zielrechner mit
    * seiner eigenen Belegung. Wuerden wir Zeichen schicken, tippte eine deutsche
    * Handytastatur auf einem englisch eingestellten Mac Y statt Z.
+   *
+   * AUSNAHME davon ist die Zeichenebene ('num'): dort SIND die Tasten Zeichen
+   * (Satzzeichen), keine Buchstaben. Fuer die gibt es keine layoutneutrale
+   * Position — z.B. sitzt "[" auf dem US-Code `BracketLeft`, aber genau diese
+   * Position tippt auf einer deutschen Mac-Belegung "ü" (siehe die Grundebene
+   * oben, wo `BracketLeft` schon korrekt als ü beschriftet ist). Ein
+   * Positionscode waere hier also fuer JEDE Zielbelegung falsch bis auf eine.
+   * Darum gehen alle Zeichen ausser den Ziffern ueber den Textweg (`s`, siehe
+   * `x()`): der Mac-Helfer setzt den String direkt als Unicode-Text, unabhaengig
+   * von der eingestellten Tastaturbelegung. Ziffern bleiben Positionscodes,
+   * weil `Digit0`..`Digit9` auf so gut wie jeder Belegung unverschoben Ziffern
+   * liefern.
    */
   function remoteKeyRows(layer) {
     var mod = function (l, c) { return { l: l, c: c, sticky: true, m: true }; };
     var k = function (l, c, w) { return w ? { l: l, c: c, w: w } : { l: l, c: c }; };
+    var x = function (ch, w) { return w ? { l: ch, s: ch, w: w } : { l: ch, s: ch }; };
 
     if (layer === 'fn') {
       return [
@@ -3369,9 +3438,9 @@
       return [
         [k('1','Digit1'), k('2','Digit2'), k('3','Digit3'), k('4','Digit4'), k('5','Digit5'),
          k('6','Digit6'), k('7','Digit7'), k('8','Digit8'), k('9','Digit9'), k('0','Digit0')],
-        [k('-','Minus'), k('=','Equal'), k('[','BracketLeft'), k(']','BracketRight'),
-         k('\\','Backslash'), k(';','Semicolon'), k('\'','Quote'), k('`','Backquote')],
-        [k(',','Comma'), k('.','Period'), k('/','Slash'), k('⌫','Backspace', 1.5)],
+        [x('-'), x('_'), x('='), x('+'), x('/'), x('\\'), x('|'), x('~')],
+        [x('['), x(']'), x('{'), x('}'), x('('), x(')'), x('<'), x('>')],
+        [x(':'), x(';'), x('"'), x('\''), x(','), x('.'), x('!'), k('⌫','Backspace', 1.5)],
         [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
       ];
     }
