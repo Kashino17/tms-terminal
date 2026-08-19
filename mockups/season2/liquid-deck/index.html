@@ -135,6 +135,12 @@
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; }
+  /* Android-WebView: Font-Boosting/Text-Inflation AUS. Das Autosizing bläst
+     lange Textblöcke (Claude-Prosa in den Karten) heimlich um ~8% auf — die
+     Spalten-Vermessung der Bridge misst aber die ungeboostete Probe. xterm
+     bekommt dann mehr Spalten, als die Karte wirklich fasst: Zeilen brechen
+     mitten im Wort um und verrutschen. Desktop-Browser ignorieren die Regel. */
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body {
     margin: 0; overflow: hidden; background: var(--bg-grad); color: var(--text);
     font: 400 14.5px/1.45 var(--font-ui); -webkit-font-smoothing: antialiased;
@@ -303,6 +309,22 @@
   #statusHeader.is-manager-mode .island-browser-badge { display: none; }
   .island-mgr__ava { flex: none; display: inline-flex; }
   .island-mgr__ava .mgr-ava { width: 22px; height: 22px; font-size: 9px; }
+
+  /* Ungelesen-Badge — sichtbar in JEDEM Insel-Modus, denn der Sinn ist gerade,
+     dass er dich erreicht, während du im Terminal arbeitest. */
+  .island-mgr-badge { display: none; align-items: center; gap: 5px; flex: none;
+    height: 26px; padding: 0 8px 0 3px; border-radius: 13px;
+    background: rgba(var(--accent-rgb),.18); border: 1px solid rgba(var(--accent-rgb),.42);
+    color: var(--accent); cursor: pointer; }
+  .island-mgr-badge:not([hidden]) { display: flex; }
+  .island-mgr-badge:active { transform: scale(.92); }
+  .island-mgr-badge__ava .mgr-ava { width: 20px; height: 20px; font-size: 8px; }
+  .island-mgr-badge__count { font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  /* Bei ungelesenen Nachrichten weicht die Latenz-Anzeige — auf dem Außendisplay
+     (~380 dp) ist kein Platz für beides, und die Zahl ist dann wichtiger. */
+  #statusHeader.has-unread .status-hd__metric--latency { display: none; }
+  /* Im Manager selbst ist der Badge überflüssig — da steht die Nachricht ja. */
+  #statusHeader.is-manager-mode .island-mgr-badge { display: none; }
   .island-mgr__name { font-weight: 700; font-size: 13.5px; letter-spacing: -.01em;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .island-mgr__presence { flex: none; display: inline-flex; align-items: center; gap: 4px;
@@ -684,6 +706,11 @@
   .server-meta { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   .server-chip { font-size: 11px; font-weight: 600; padding: 4px 9px; border-radius: 999px; background: rgba(var(--overlay-rgb),.06); color: var(--text-dim); }
   .server-chip.ok { color: var(--ok); }
+  .server-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .server-action { padding: 7px 12px; border-radius: 9px; font-size: 11px; font-weight: 600;
+                   border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.07);
+                   color: inherit; }
+  .server-action[disabled] { opacity: .35; }
 
   /* ============================================================
      Terminal workspace — spatial swipeable stack
@@ -1108,6 +1135,33 @@
   .chat-scroll:not([hidden]) { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 2px 12px; display: flex; flex-direction: column; gap: 10px; }
   #managerArtifacts:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 0 12px; overflow: hidden; }
   #managerMemory:not([hidden]) { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 2px 12px; display: flex; flex-direction: column; gap: 4px; }
+  /* Agenda + Notizen — gleiche Grundform wie Memory, aber mit eigenen Zeilen. */
+  #managerAgenda:not([hidden]), #managerEntries:not([hidden]) {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 4px 2px 12px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .ag-row, .en-row {
+    display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
+    border-radius: 14px; background: rgba(var(--overlay-rgb), .06);
+    border: 1px solid rgba(var(--overlay-rgb), .08);
+  }
+  .ag-row__when {
+    flex: none; min-width: 80px; font-variant-numeric: tabular-nums;
+    font-size: 12px; font-weight: 700; color: var(--accent); line-height: 1.35;
+  }
+  .ag-row__body, .en-row__body { flex: 1; min-width: 0; }
+  .ag-row__title, .en-row__text { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+  .ag-row__meta, .en-row__meta { margin-top: 3px; font-size: 11px; color: var(--text-dim); }
+  .en-row__box {
+    flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 7px;
+    border: 1.5px solid rgba(var(--overlay-rgb), .28); background: transparent;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; line-height: 1; color: var(--accent); cursor: pointer; padding: 0;
+  }
+  .en-row__box[aria-pressed="true"] { background: rgba(var(--accent-rgb), .18); border-color: rgba(var(--accent-rgb), .5); }
+  .en-row.is-note .en-row__box { visibility: hidden; }
+  .en-row.is-done .en-row__text { text-decoration: line-through; color: var(--text-dim); }
+  .mgr-empty { padding: 22px 12px; text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
 
   /* ── Manager-Topbar: schlanke Leiste (Tabs · Modell · Menü). Die Identität
      (Bild · Name · Online) trägt jetzt die Dynamic Island. ───────────────── */
@@ -1503,6 +1557,67 @@
   .fs-txt .ln { opacity: .35; user-select: none; display: inline-block; min-width: 34px; text-align: right; margin-right: 10px; }
   .fs-infocard { text-align: center; padding: 24px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
 
+  /* ---------- Fernzugriff-Bildschirm ---------- */
+  section[data-screen="remote"]:not([hidden]) { display: flex; flex-direction: column; gap: 8px; height: 100%; padding: 8px; }
+  .remote-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; }
+  .remote-dot { width: 7px; height: 7px; border-radius: 50%; background: #34c759; flex: none; }
+  .remote-dot[data-state="off"] { background: #8a8a8e; }
+  .remote-name { font-weight: 600; font-size: 13px; }
+  .remote-stat { margin-left: auto; font-size: 10px; opacity: .6; font-variant-numeric: tabular-nums; }
+  .remote-stage { position: relative; background: #05080d; border-radius: 14px; overflow: hidden; flex: none; }
+  .remote-stage canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .remote-veil { position: absolute; inset: 0; display: grid; place-items: center;
+                 background: rgba(5,8,13,.72); font-size: 12px; opacity: 0; transition: opacity .2s; }
+  .remote-veil[data-show="1"] { opacity: 1; }
+  .remote-seg { display: flex; gap: 4px; padding: 3px; border-radius: 12px; background: rgba(255,255,255,.07); }
+  .remote-seg button { flex: 1; padding: 7px 0; border: 0; border-radius: 9px; background: transparent;
+                       color: inherit; opacity: .55; font-size: 12px; font-weight: 600; }
+  .remote-seg button.on { background: rgba(90,169,255,.22); opacity: 1;
+                          box-shadow: inset 0 0 0 1px rgba(90,169,255,.45); }
+  .remote-bar { flex: 1; min-height: 0; }
+
+  /* Vollbild fuer angeschlossene Tastatur/Maus: Kopf und Leiste weg, das Bild
+     nimmt die ganze Flaeche ein. Manuell umgeschaltet (Knopf/Abzeichen/
+     Umschalt+Esc) — keine Geraete-Erkennung, die danebenliegen koennte. */
+  [data-screen="remote"].fullscreen { padding: 0; gap: 0; }
+  [data-screen="remote"].fullscreen .remote-head,
+  [data-screen="remote"].fullscreen .remote-seg,
+  [data-screen="remote"].fullscreen .remote-bar { display: none; }
+  [data-screen="remote"].fullscreen .remote-stage { flex: 1; border-radius: 0; }
+  .remote-badge { position: absolute; right: 8px; top: 8px; display: none;
+                  padding: 4px 9px; border-radius: 20px; font-size: 10px;
+                  background: rgba(8,12,18,.72); border: 1px solid rgba(255,255,255,.14);
+                  color: rgba(255,255,255,.75); }
+  [data-screen="remote"].fullscreen .remote-badge { display: block; }
+  .remote-pad { position: relative; height: 100%; border-radius: 14px;
+                background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.10);
+                display: flex; flex-direction: column; touch-action: none; }
+  .remote-pad-hint { position: absolute; inset: 0; display: grid; place-items: center;
+                     text-align: center; font-size: 10px; opacity: .28; line-height: 1.7; pointer-events: none; }
+  .remote-pad-btns { margin-top: auto; display: flex; gap: 6px; padding: 7px; }
+  .remote-pad-btns button { flex: 1; padding: 11px 0; border-radius: 10px; font-size: 10px;
+                            border: 1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.05);
+                            color: inherit; opacity: .75; }
+
+  .remote-keys { display: flex; flex-direction: column; gap: 4px; height: 100%; }
+  .rk-row { display: flex; gap: 4px; flex: 1; }
+  .rk { flex: 1; min-width: 0; border-radius: 7px; border: 1px solid rgba(255,255,255,.06);
+        background: rgba(255,255,255,.09); color: inherit; font-size: 14px; padding: 0; }
+  .rk:active { background: rgba(255,255,255,.20); }
+  .rk.mod { background: rgba(255,255,255,.05); font-size: 11px; opacity: .8; }
+  .rk.on { background: rgba(90,169,255,.28); opacity: 1;
+           box-shadow: inset 0 0 0 1px rgba(90,169,255,.5); }
+  .rk.locked { box-shadow: inset 0 0 0 2px rgba(90,169,255,.85); }
+
+  /* Aufgeklappt ist die Breite da: groessere Tasten, mehr Luft. */
+  @media (min-width: 700px) {
+    section[data-screen="remote"] { padding: 14px; gap: 12px; }
+    .remote-name { font-size: 15px; }
+    .remote-pad-btns button { padding: 15px 0; font-size: 12px; }
+    .rk { font-size: 17px; }
+    .rk.mod { font-size: 13px; }
+  }
+
   /* ---------- Lock screen ---------- */
   section[data-screen="lock"]:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; }
   body.is-locked #dock, body.is-locked #statusHeader, body.is-locked #islandScrim, body.is-locked #pullHint, body.is-locked #keyEcho { display: none !important; }
@@ -1682,6 +1797,11 @@
       <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h.01M8 20v-5M13 20v-9M18 20V6"/></svg>
       <span id="statusLatencyLabel">— ms</span>
     </span>
+    <button class="island-mgr-badge" id="islandMgrBadge" type="button" hidden
+            aria-label="Ungelesene Manager-Nachrichten">
+      <span class="island-mgr-badge__ava" id="islandMgrBadgeAva"></span>
+      <span class="island-mgr-badge__count" id="islandMgrBadgeCount">0</span>
+    </button>
     <span class="status-hd__activity">
       <span class="status-dot" id="statusDot"></span>
       <span class="status-hd__label" id="statusActivityLabel">Bereit</span>
@@ -1731,6 +1851,7 @@
   <section data-screen="cloud" hidden></section>
   <section data-screen="browser" hidden></section>
   <section data-screen="files" hidden></section>
+  <section data-screen="remote" hidden></section>
   <section data-screen="settings" hidden></section>
   <section data-screen="prayer" hidden></section>
   <section data-screen="lock">
@@ -2739,6 +2860,28 @@
     if (name !== 'prayer') stopPrayerTick();
     if (name !== 'terminals') { cancelDictation(); closeAllListRails(); closeKeysPanel(); }
     if (name !== 'browser') stopBrowserProgressTimers();
+    // Fernzugriff verlassen (Dock-Wechsel, Zurueck-Geste, ...) waehrend eine
+    // haftende Sondertaste noch aktiv ist: genau wie beim Trennen darf die
+    // Befehls-/Wahl-/Strg-/Umschalttaste nicht auf dem Mac haengen bleiben.
+    // currentScreen ist an dieser Stelle noch der ALTE Bildschirm (wird erst
+    // unten auf `name` gesetzt) — die Bedingung feuert also nur beim
+    // tatsaechlichen Verlassen von "remote", nicht bei jeder Navigation.
+    //
+    // C3: der Bildschirmwechsel muss auch das Vollbild zuruecksetzen — sonst
+    // bleiben die Dokument-Zuhoerer fuer Tastatur/Zeiger/Rad aktiv, waehrend
+    // der Nutzer laengst im Terminal oder im Manager steht, und fangen dort
+    // die eigene Tastatur der App ab. setRemoteFullscreen(false) loest dabei
+    // auch alles, was eine angeschlossene Hardware-Tastatur/-Maus noch haelt.
+    if (name !== 'remote' && currentScreen === 'remote') {
+      if (typeof releaseAllSticky === 'function') releaseAllSticky();
+      if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
+      // I6: auch ein noch laufendes Trackpad-Ziehen / ein gehaltener fester
+      // Klick-Knopf muss beim Verlassen des Bildschirms enden — sonst bleibt
+      // die Maustaste auf dem PC gedrueckt, obwohl die Buehne (und mit ihr
+      // jeder Weg, es ueber ein echtes pointerup noch zu bemerken) gerade
+      // komplett neu aufgebaut wird (siehe buildRemoteScreen-Einklinkung).
+      if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+    }
     // Terminals, Browser UND Manager haben ihre eigene Bar-Seite (Eingabezeile,
     // Adressleiste bzw. Chat-Eingabe) — überall sonst ist die Navigation die
     // Voreinstellung. Der jeweilige SCREEN_HOOK setzt danach die eigene Seite.
@@ -2859,8 +3002,23 @@
             <span class="server-chip">${escapeHtml(srv.os)}</span>
           </div>
         </div>
+        <div class="server-actions">
+          <button class="server-action" data-remote="${srv.id}" ${online ? '' : 'disabled'}>
+            Fernzugriff
+          </button>
+        </div>
       `;
-      card.addEventListener('click', () => {
+      card.addEventListener('click', (e) => {
+        const remoteBtn = e.target.closest('[data-remote]');
+        if (remoteBtn) {
+          e.stopPropagation();
+          if (!online) { toast(`${srv.name} ist offline`); return; }
+          // Die Seite oeffnet ihre eigene Verbindung — React Native liefert nur die Zugangsdaten.
+          if (window.__tmsOpenRemote) window.__tmsOpenRemote(srv.id);
+          show('remote');
+          if (window.TMSRemote) window.TMSRemote.start('auto');
+          return;
+        }
         if (srv.active) { goToTerminals(); return; }          // schon verbunden
         if (!online) { toast(`${srv.name} ist offline`); return; }
         // Anderer, laufender Server: die App schaltet die Verbindung um.
@@ -2873,10 +3031,657 @@
   }
 
   // ============================================================
+  // Fernzugriff — Bild oben, darunter eine umschaltbare Leiste
+  // ============================================================
+  window.remoteState = { running: false, w: 0, h: 0, scale: 1, page: 'pad', fullscreen: false };
+
+  function buildRemoteScreen() {
+    var host = document.querySelector('[data-screen="remote"]');
+    host.innerHTML = ''
+      + '<div class="remote-head glass">'
+      +   '<span class="remote-dot" id="remoteDot"></span>'
+      +   '<span class="remote-name" id="remoteName">Fernzugriff</span>'
+      +   '<span class="remote-stat" id="remoteStat">verbinde …</span>'
+      +   '<button class="icon-btn glass" id="remoteFull" aria-label="Vollbild">⤢</button>'
+      +   '<button class="icon-btn glass" id="remoteQuit" aria-label="Trennen">✕</button>'
+      + '</div>'
+      + '<div class="remote-stage" id="remoteStage"><canvas id="remoteCanvas"></canvas>'
+      +   '<div class="remote-veil" id="remoteVeil"><span id="remoteVeilText">Verbinde …</span></div>'
+      +   '<button class="remote-badge" id="remoteExit">⌨ + 🖱 · ⤡</button>'
+      + '</div>'
+      + '<div class="remote-seg" id="remoteSeg">'
+      +   '<button data-page="pad" class="on">Trackpad</button>'
+      +   '<button data-page="keys">Tastatur</button>'
+      + '</div>'
+      + '<div class="remote-bar" id="remoteBar"></div>';
+
+    host.querySelector('#remoteSeg').addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-page]');
+      if (btn) setRemotePage(btn.dataset.page);
+    });
+    host.querySelector('#remoteQuit').addEventListener('click', function () {
+      // Sondertasten VOR dem Trennen loesen, nicht danach — nach stop() kommen
+      // gesendete input()-Aufrufe womoeglich gar nicht mehr an.
+      releaseAllSticky();
+      if (window.TMSRemote) window.TMSRemote.stop();
+      show('servers');
+    });
+    host.querySelector('#remoteFull').addEventListener('click', function () {
+      window.setRemoteFullscreen(!window.remoteState.fullscreen);
+    });
+    host.querySelector('#remoteExit').addEventListener('click', function () {
+      window.setRemoteFullscreen(false);
+    });
+    setRemotePage('pad');
+  }
+
+  /**
+   * Manueller Umschalter fuer angeschlossene Tastatur/Maus: keine Geraete-
+   * Erkennung, das war eine ausdrueckliche Entscheidung — eine faelschlich
+   * erkannte Bluetooth-Verbindung, die die Bedienung wegnimmt, waere schlimmer
+   * als ein Knopfdruck.
+   *
+   * Die beiden Loslasswege beruehren sich hier bewusst NICHT gegenseitig:
+   * releaseAllSticky() loest die haftenden BILDSCHIRM-Sondertasten (Aufgabe 13,
+   * nur ueber die Softtastatur erreichbar, die im Vollbild verschwindet — eine
+   * FESTGESTELLTE bliebe sonst unsichtbar am Mac haengen). releaseHardwareInput()
+   * (bridge.js) loest umgekehrt alles, was die ANGESCHLOSSENE Tastatur/Maus noch
+   * haelt. Je eine Richtung pro Umschaltung, damit sich beide Wege nie
+   * ueberschneiden.
+   */
+  window.setRemoteFullscreen = function (on) {
+    on = !!on;
+    if (on) releaseAllSticky();
+    else if (typeof window.releaseHardwareInput === 'function') window.releaseHardwareInput();
+    window.remoteState.fullscreen = on;
+    var host = document.querySelector('[data-screen="remote"]');
+    if (host) host.classList.toggle('fullscreen', on);
+    if (typeof layoutRemoteStage === 'function') layoutRemoteStage();
+  };
+
+  function setRemotePage(page) {
+    // Wechsel WEG von der Tastatur (z.B. auf "Trackpad"): eine haengengebliebene
+    // haftende Sondertaste (⌘/⌥/Strg/⇧) darf hier nicht stehen bleiben — sonst
+    // reagiert der Mac auf jeden folgenden Trackpad-Klick/-Anschlag falsch.
+    // Beim Ebenenwechsel INNERHALB der Tastatur (page bleibt 'keys') passiert
+    // hier bewusst nichts, sonst waere Sondertaste+Ebenenwechsel+Buchstabe nicht
+    // tippbar.
+    if (window.remoteState.page === 'keys' && page !== 'keys') releaseAllSticky();
+    // Nachpruefung-Kleinigkeit: symmetrisch zum Sticky-Loesen oben — beim
+    // Wechsel WEG vom Trackpad muss ein noch laufendes Ziehen bzw. ein
+    // gehaltener fester Knopf explizit geloest werden, nicht nur implizit
+    // dadurch, dass bar.innerHTML weiter unten das Element entfernt (das
+    // toteilt zwar per Spezifikation die Zeigereinfangung, ist aber Verlass
+    // auf Browserverhalten statt eine eigene, geprüfte Garantie).
+    if (window.remoteState.page === 'pad' && page !== 'pad'
+        && typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+    window.remoteState.page = page;
+    document.querySelectorAll('#remoteSeg [data-page]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.page === page);
+    });
+    var bar = document.getElementById('remoteBar');
+    bar.innerHTML = page === 'pad' ? remotePadMarkup() : remoteKeysMarkup();
+    if (page === 'pad') wireRemotePad(); else wireRemoteKeys();
+  }
+
+  // Trackpad hat seine Gesten (Aufgabe 12); die Tastenreihe folgt in Aufgabe 13.
+  function remotePadMarkup() {
+    return '<div class="remote-pad" id="remotePad">'
+      + '<span class="remote-pad-hint">Wischen bewegt den Zeiger<br>Tippen klickt · zwei Finger scrollen</span>'
+      + '<div class="remote-pad-btns"><button data-btn="l">Linksklick</button>'
+      + '<button data-btn="r">Rechtsklick</button></div></div>';
+  }
+  var remoteLayer = 'base';
+  var remoteSticky = { MetaLeft: 'off', AltLeft: 'off', ControlLeft: 'off', ShiftLeft: 'off' };
+
+  function remoteKeysMarkup() {
+    var rows = remoteKeyRows(remoteLayer).map(function (row) {
+      var keys = row.map(function (key) {
+        var cls = 'rk' + (key.m ? ' mod' : '') + (key.c && remoteSticky[key.c] && remoteSticky[key.c] !== 'off'
+          ? ' on' + (remoteSticky[key.c] === 'locked' ? ' locked' : '') : '');
+        var style = key.w ? ' style="flex:' + key.w + '"' : '';
+        // Zeichenebene: Tasten ohne Positionscode (`c`) tragen ihr Zeichen im
+        // Textweg (`s`) statt im data-code — siehe die Erklaerung ueber
+        // remoteKeyRows(). escapeHtml() ist hier PFLICHT, nicht nur Stil: ohne
+        // sie bricht z.B. das Anfuehrungszeichen-Zeichen das Attribut auf.
+        var attr = key.c ? ' data-code="' + key.c + '"' : ' data-text="' + escapeHtml(key.s) + '"';
+        return '<button class="' + cls + '"' + attr + style + '>'
+             + escapeHtml(key.l) + '</button>';
+      }).join('');
+      return '<div class="rk-row">' + keys + '</div>';
+    }).join('');
+    return '<div class="remote-keys" id="remoteKeys">' + rows + '</div>';
+  }
+
+  function currentMods() {
+    return {
+      s: remoteSticky.ShiftLeft !== 'off',
+      c: remoteSticky.ControlLeft !== 'off',
+      a: remoteSticky.AltLeft !== 'off',
+      m: remoteSticky.MetaLeft !== 'off',
+    };
+  }
+
+  /**
+   * Faerbt nur die haftenden Sondertasten um, ohne die Tastatur neu aufzubauen.
+   * setRemotePage('keys') wuerde bei JEDEM Anschlag das gesamte Markup neu
+   * erzeugen — auf dem Handy bei jedem Tippen spuerbar, und das Element unter
+   * dem Finger verschwaende dabei, womit die :active-Rueckmeldung ausbleibt.
+   * Ein voller Neuaufbau bleibt nur dem Ebenenwechsel vorbehalten (dort AENDERT
+   * sich das Markup ja tatsaechlich).
+   */
+  function paintStickyButtons() {
+    var host = document.getElementById('remoteKeys');
+    if (!host) return;
+    Object.keys(remoteSticky).forEach(function (code) {
+      var btn = host.querySelector('[data-code="' + code + '"]');
+      if (!btn) return; // Sondertaste liegt auf dieser Ebene gar nicht (num/fn)
+      var state = remoteSticky[code];
+      btn.classList.toggle('on', state !== 'off');
+      btn.classList.toggle('locked', state === 'locked');
+    });
+  }
+
+  /** Nach einem Anschlag fallen die einmal-Sondertasten zurueck, feste bleiben. */
+  function releaseOnceModifiers() {
+    var changed = false;
+    Object.keys(remoteSticky).forEach(function (code) {
+      if (remoteSticky[code] === 'once') {
+        remoteSticky[code] = 'off';
+        if (window.TMSRemote) window.TMSRemote.input({ t: 'k', c: code, d: false, mods: currentMods() });
+        changed = true;
+      }
+    });
+    if (changed) paintStickyButtons();
+  }
+
+  /**
+   * Loest ALLE noch aktiven haftenden Sondertasten aktiv (je ein Loslassen) und
+   * setzt sie zurueck — anders als releaseOnceModifiers() auch die
+   * FESTGESTELLTEN. Ohne das bliebe z.B. eine festgestellte Befehlstaste auf
+   * dem Mac gedrueckt, sobald man die Tastatur-Seite verlaesst: jeder weitere
+   * Klick/Tastendruck dort wird zum Kuerzel, bis man es AM GERAET selbst wieder
+   * loest — derselbe Fehlertyp, der in Aufgabe 12 die Maustaste haengen liess,
+   * nur unangenehmer (ein haengendes ⌘ macht den Rechner faktisch unbenutzbar).
+   * Muss bei JEDEM Ausstieg aus der Tastatur laufen — Wechsel auf Trackpad,
+   * Verlassen des Fernzugriffs-Bildschirms, vor dem Trennen — darum eine
+   * einzige Funktion fuer alle drei Stellen statt dreimal denselben Code.
+   */
+  function releaseAllSticky() {
+    var changed = false;
+    Object.keys(remoteSticky).forEach(function (code) {
+      if (remoteSticky[code] !== 'off') {
+        remoteSticky[code] = 'off';
+        if (window.TMSRemote) window.TMSRemote.input({ t: 'k', c: code, d: false, mods: currentMods() });
+        changed = true;
+      }
+    });
+    if (changed) paintStickyButtons();
+  }
+
+  // bridge.js muss diese Funktion auch dann erreichen, wenn die Sitzung ohne
+  // jede Bedienhandlung endet (Sperrbildschirm, Hintergrund, Netzabbruch) —
+  // ohne diese Zeile sieht bridge.js "releaseAllSticky is not defined".
+  window.releaseAllSticky = releaseAllSticky;
+
+  function wireRemoteKeys() {
+    var host = document.getElementById('remoteKeys');
+    if (!host) return;
+
+    host.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-code], [data-text]');
+      if (!btn) return;
+      var R = window.TMSRemote;
+
+      // Zeichenebene: der Textweg umgeht die Tastaturbelegung komplett, darum
+      // gibt es hier keine Positionscode-Sonderfaelle (Layer/Mikro/Sondertaste)
+      // zu pruefen — nur senden und wie jeden anderen Anschlag behandeln.
+      if (btn.dataset.text !== undefined) {
+        if (R) R.input({ t: 'x', s: btn.dataset.text });
+        releaseOnceModifiers();
+        return;
+      }
+
+      var code = btn.dataset.code;
+
+      if (code.indexOf('__layer:') === 0) { remoteLayer = code.slice(8); setRemotePage('keys'); return; }
+      if (code === '__mic') { if (R) R.dictate(); return; }
+
+      if (code in remoteSticky) {
+        var before = remoteSticky[code];
+        remoteSticky[code] = nextSticky(before);
+        if (R) R.input({ t: 'k', c: code, d: remoteSticky[code] !== 'off', mods: currentMods() });
+        paintStickyButtons();
+        return;
+      }
+
+      if (R) {
+        R.input({ t: 'k', c: code, d: true, mods: currentMods() });
+        R.input({ t: 'k', c: code, d: false, mods: currentMods() });
+      }
+      releaseOnceModifiers();
+    });
+  }
+  var remotePadDocCleanup = null; // meldet die Dokument-Auffangnetz-Zuhoerer der VORHERIGEN
+                                  // wireRemotePad()-Ausfuehrung ab, damit sie sich beim
+                                  // Umschalten Trackpad/Tastatur nicht anhaeufen
+  function wireRemotePad() {
+    var pad = document.getElementById('remotePad');
+    if (!pad) return;
+    if (remotePadDocCleanup) { remotePadDocCleanup(); remotePadDocCleanup = null; }
+    var R = function () { return window.TMSRemote; }; // Aufgabe 14 setzt window.TMSRemote — bis dahin bleibt der Mockup fuer sich lauffaehig.
+
+    var TAP_SLOP = 10;        // Punkte, die ein "Tippen" wackeln darf
+    var TAP_MS = 250;
+    var HOLD_MS = 350;        // Halten leitet das Ziehen ein
+
+    // Zustand je Finger (pointerId -> {x, y, t, moved}) — bei zwei gleichzeitigen
+    // Fingern darf ein pointermove des einen Fingers nie die Position des anderen
+    // ueberschreiben (Ursache der Zufallssprung-Regression).
+    var pts = new Map();
+
+    var holdTimer = null;
+    var holdPointerId = null; // welcher Finger den Halte-Timer gestartet hat
+    var dragging = false;
+    var fixedBtnDown = {}; // 'l'|'r' -> true, waehrend der jeweils feste Knopf unten drueben gehalten wird
+    var leadPointerId = null; // der zuerst aufgelegte Finger — fuehrt das Zwei-Finger-Scrollen
+
+    // Zustand der gesamten Beruehrung (erster Finger runter bis letzter Finger
+    // hoch), bewusst nicht je Finger — fuer den Tippen-vs-Wischen-Test beim
+    // Loslassen.
+    var gestureDownAt = 0;
+    var gestureMoved = 0;
+    var maxFingers = 0; // hoechste gleichzeitige Fingerzahl waehrend der Geste, nicht der aktuelle Stand —
+                         // sonst verschluckt das Abheben des zweiten Fingers vor dem ersten den Rechtsklick
+
+    function clearHold() {
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      holdPointerId = null;
+    }
+
+    function endDrag() {
+      if (dragging) {
+        dragging = false;
+        if (R()) R().input({ t: 'b', b: 'l', d: false });
+      }
+    }
+
+    /**
+     * C3/I6: loest alles, was auf dem Trackpad gerade als gedrueckt gilt —
+     * ein laufendes Ziehen UND ein noch gehaltener fester Links-/Rechtsklick-
+     * Knopf. Von aussen erreichbar (TMSRemote.stop()/suspend(), Bildschirm-
+     * wechsel), weil pointerup/pointercancel/lostpointercapture nicht
+     * feuern, wenn die App in den Hintergrund geht oder die Verbindung
+     * abreisst, waehrend ein Finger noch physisch auf der Flaeche liegt —
+     * das Dokument-Auffangnetz oben hilft nur, wenn irgendein echtes
+     * Zeiger-Ereignis ankommt. Dieselbe Fehlerfamilie wie die haengende
+     * Maustaste, die in diesem Vorhaben schon mehrfach gefunden wurde.
+     */
+    function releasePadHold() {
+      endDrag();
+      Object.keys(fixedBtnDown).forEach(function (which) {
+        delete fixedBtnDown[which];
+        if (R()) R().input({ t: 'b', b: which, d: false });
+      });
+    }
+    // Zeigt immer auf die AKTUELLE Ausfuehrung von wireRemotePad() — jeder
+    // Aufruf (Seitenwechsel Tastatur->Trackpad) legt neuen Zustand an.
+    window.releaseRemotePadHold = releasePadHold;
+
+    pad.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('[data-btn]')) return;
+
+      var wasEmpty = pts.size === 0;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp, moved: 0 });
+
+      if (wasEmpty) {
+        gestureDownAt = e.timeStamp;
+        gestureMoved = 0;
+        maxFingers = 0;
+        leadPointerId = e.pointerId;
+      }
+      maxFingers = Math.max(maxFingers, pts.size);
+
+      if (pts.size === 2) {
+        // Zweiter Finger: das ist jetzt eine Zwei-Finger-Geste — laufenden
+        // Halte-Zeitgeber vom ersten Finger raeumen, sonst feuert er mitten
+        // in die Geste noch ein Linksklick-Druecken.
+        clearHold();
+      } else if (pts.size === 1) {
+        // Halte-Zeitgeber nur starten, wenn wirklich genau ein Finger aufliegt.
+        holdPointerId = e.pointerId;
+        holdTimer = setTimeout(function () {
+          holdTimer = null;
+          if (pts.size === 1 && pts.has(holdPointerId)) {
+            dragging = true;
+            if (R()) R().input({ t: 'b', b: 'l', d: true });
+          }
+          holdPointerId = null;
+        }, HOLD_MS);
+      }
+
+      // Ganz am Ende und abgesichert: wirft das Einfangen (z.B. NotFoundError),
+      // sollen Startposition, Zeitstempel und Halte-Zeitgeber trotzdem gesetzt
+      // sein — sonst bleibt die Flaeche stumm, ohne dass man auf dem Handy sieht,
+      // warum.
+      try { pad.setPointerCapture(e.pointerId); } catch (err) { /* bestmoeglich, kein Abbruch */ }
+    });
+
+    pad.addEventListener('pointermove', function (e) {
+      var p = pts.get(e.pointerId);
+      if (!p) return;
+      var dx = e.clientX - p.x;
+      var dy = e.clientY - p.y;
+      var dt = Math.max(1, e.timeStamp - p.t);
+      p.x = e.clientX; p.y = e.clientY; p.t = e.timeStamp;
+      p.moved += Math.abs(dx) + Math.abs(dy);
+      gestureMoved = Math.max(gestureMoved, p.moved);
+      if (gestureMoved > TAP_SLOP) clearHold();
+
+      if (!R()) return;
+      if (pts.size === 2) {
+        // Nur der Fuehrungsfinger (der zuerst aufgelegte) meldet den Scroll-Weg —
+        // sonst meldet jeder Finger seinen eigenen Weg und der Mac scrollt doppelt
+        // so weit wie die Geste. Der zweite Finger zaehlt trotzdem weiter fuer die
+        // Zwei-Finger-Erkennung (pts.size) und die Tippen-Klassifizierung (maxFingers).
+        if (e.pointerId === leadPointerId) {
+          R().input({ t: 's', dx: Math.round(dx), dy: Math.round(dy) });
+        }
+      } else {
+        var speed = Math.sqrt(dx * dx + dy * dy) / dt;
+        var gain = pointerGain(speed);
+        R().input({ t: 'd', dx: Math.round(dx * gain), dy: Math.round(dy * gain) });
+      }
+    });
+
+    function endTouch(e, allowClick) {
+      if (!pts.has(e.pointerId)) return;
+      pts.delete(e.pointerId);
+      if (holdPointerId === e.pointerId) clearHold();
+
+      if (leadPointerId === e.pointerId) {
+        // Der Fuehrungsfinger ist weg: liegt noch wer auf, uebernimmt der
+        // naechste die Fuehrung. Sonst zeigt leadPointerId auf einen laengst
+        // verschwundenen Finger, und ein spaeter dazukommender dritter Finger
+        // triggert nie wieder ein Scroll-Event — die Flaeche wirkt stumm.
+        var next = pts.keys().next();
+        leadPointerId = next.done ? null : next.value;
+      }
+
+      if (pts.size > 0) return; // andere Finger liegen noch auf — die arbeiten weiter
+
+      // Reine Entscheidung (Fingerzahl + Dauer + Weg -> Gestenart) steckt in
+      // classifyPadTap() im TMS-TEST-EXPORT-Block, damit sie ausserhalb des
+      // Browsers testbar ist.
+      var kind = allowClick
+        ? classifyPadTap(maxFingers, dragging, e.timeStamp - gestureDownAt, gestureMoved, TAP_MS, TAP_SLOP)
+        : null;
+      endDrag(); // egal welcher Finger zuerst ging: ein laufendes Ziehen sauber beenden
+      if (kind && R()) {
+        var b = kind === 'right' ? 'r' : 'l';
+        R().input({ t: 'b', b: b, d: true });
+        R().input({ t: 'b', b: b, d: false });
+      }
+      maxFingers = 0;
+      gestureMoved = 0;
+    }
+
+    // pointerup ist ein echtes Loslassen (darf klicken); pointercancel ist ein
+    // vom Browser/OS abgebrochener Zeiger — dabei nie klicken, aber trotzdem
+    // sauber aufraeumen (Ziehen beenden, Zeitgeber raeumen).
+    pad.addEventListener('pointerup', function (e) { endTouch(e, true); });
+    pad.addEventListener('pointercancel', function (e) { endTouch(e, false); });
+
+    // Auffangnetz auf Dokumentebene: scheitert pad.setPointerCapture() UND
+    // verlaesst der Finger die Flaeche vor dem Loslassen, bekommt "pad" nie
+    // ein abschliessendes Ereignis — der Zeiger bliebe fuer immer in "pts"
+    // stehen (naechste Geste gilt faelschlich als "zwei Finger") und ein
+    // laufendes Ziehen haette kein Loslassen. pointerup/pointercancel bubbeln
+    // aber immer bis zum document, auch wenn das Einfangen scheiterte.
+    // endTouch() prueft an seinem Kopf, ob der Zeiger noch in "pts" steht —
+    // hat "pad" ihn schon regulaer abgeschlossen, ist dieser Aufruf ein No-op,
+    // also nie ein doppeltes Abschliessen desselben Zeigers.
+    function onDocPointerUp(e) { endTouch(e, true); }
+    function onDocPointerCancel(e) { endTouch(e, false); }
+    document.addEventListener('pointerup', onDocPointerUp);
+    document.addEventListener('pointercancel', onDocPointerCancel);
+    remotePadDocCleanup = function () {
+      document.removeEventListener('pointerup', onDocPointerUp);
+      document.removeEventListener('pointercancel', onDocPointerCancel);
+    };
+
+    // Die beiden festen Knoepfe: Ziehen und Rechtsklick ohne Fingerakrobatik.
+    // Zeiger einfangen (abgesichert) und pointercancel/lostpointercapture
+    // mitbehandeln — sonst bleibt die virtuelle Maustaste haengen, wenn der
+    // Finger vom Knopf rutscht, bevor er loslaesst.
+    pad.querySelectorAll('[data-btn]').forEach(function (btn) {
+      var which = btn.dataset.btn;
+      var activeId = null; // verhindert doppeltes d:false (pointerup + lostpointercapture)
+
+      function down(e) {
+        if (activeId !== null) return; // schon gedrueckt
+        activeId = e.pointerId;
+        fixedBtnDown[which] = true;
+        if (R()) R().input({ t: 'b', b: which, d: true });
+        try { btn.setPointerCapture(e.pointerId); } catch (err) { /* bestmoeglich */ }
+      }
+
+      function up(e) {
+        if (e.pointerId !== activeId) return;
+        activeId = null;
+        delete fixedBtnDown[which];
+        if (R()) R().input({ t: 'b', b: which, d: false });
+      }
+
+      btn.addEventListener('pointerdown', down);
+      btn.addEventListener('pointerup', up);
+      btn.addEventListener('pointercancel', up);
+      btn.addEventListener('lostpointercapture', up);
+    });
+  }
+
+  SCREEN_HOOKS.remote = function () { buildRemoteScreen(); };
+
+  // bridge.js baut den Bildschirm auf, sieht aber nicht in diese Kapsel hinein.
+  window.buildRemoteScreen = buildRemoteScreen;
+
+  // ============================================================
   // Terminal workspace — spatial swipeable stack
   // ============================================================
   const STATUS_LABELS = { running: 'Läuft', waiting: 'Wartet', done: 'Fertig', idle: 'Bereit' };
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // ── TMS-TEST-EXPORT: remoteMath ──
+  // Reine Rechnerei fuer den Fernzugriff. Wird von mobile/scripts/remote-logic.test.mjs
+  // aus dieser Datei herausgeschnitten und geprueft — die Markierungen bitte lassen.
+
+  /**
+   * Beschleunigungskurve fuer das Trackpad.
+   *
+   * Der Finger hat auf der Leiste ~300 Punkte Weg, der Mac-Bildschirm 1512 Pixel
+   * Breite. Fest uebersetzt hiesse das entweder "ein Wisch reicht nicht ueber den
+   * Bildschirm" oder "ein Pixel genau treffen ist unmoeglich". Die Kurve macht die
+   * Uebersetzung von der Wischgeschwindigkeit abhaengig — genau wie macOS und
+   * Windows es fuer echte Maeuse tun.
+   */
+  function pointerGain(speedPxPerMs) {
+    var s = Math.abs(speedPxPerMs);
+    if (!isFinite(s) || s <= 0) return 1;
+    if (s < 0.15) return 1;                       // langsam: pixelgenau
+    if (s > 3) return 4;                          // schnell: quer ueber den Schirm
+    return 1 + ((s - 0.15) / (3 - 0.15)) * 3;     // dazwischen linear
+  }
+
+  /**
+   * Haftende Sondertasten: einmal tippen haelt bis zum naechsten Anschlag,
+   * zweimal stellt fest, dreimal loest wieder.
+   * Ohne das waere Befehlstaste+Tab einhaendig nicht tippbar.
+   */
+  function nextSticky(state) {
+    return state === 'off' ? 'once' : state === 'once' ? 'locked' : 'off';
+  }
+
+  /**
+   * Die Tastenbelegung. `c` ist der KeyboardEvent.code — also die POSITION der
+   * Taste; welches Zeichen dabei herauskommt, entscheidet der Zielrechner mit
+   * seiner eigenen Belegung. Wuerden wir Zeichen schicken, tippte eine deutsche
+   * Handytastatur auf einem englisch eingestellten Mac Y statt Z.
+   *
+   * AUSNAHME davon ist die Zeichenebene ('num'): dort SIND die Tasten Zeichen
+   * (Satzzeichen), keine Buchstaben. Fuer die gibt es keine layoutneutrale
+   * Position — z.B. sitzt "[" auf dem US-Code `BracketLeft`, aber genau diese
+   * Position tippt auf einer deutschen Mac-Belegung "ü" (siehe die Grundebene
+   * oben, wo `BracketLeft` schon korrekt als ü beschriftet ist). Ein
+   * Positionscode waere hier also fuer JEDE Zielbelegung falsch bis auf eine.
+   * Darum gehen alle Zeichen ausser den Ziffern ueber den Textweg (`s`, siehe
+   * `x()`): der Mac-Helfer setzt den String direkt als Unicode-Text, unabhaengig
+   * von der eingestellten Tastaturbelegung. Ziffern bleiben Positionscodes,
+   * weil `Digit0`..`Digit9` auf so gut wie jeder Belegung unverschoben Ziffern
+   * liefern.
+   */
+  function remoteKeyRows(layer) {
+    var mod = function (l, c) { return { l: l, c: c, sticky: true, m: true }; };
+    var k = function (l, c, w) { return w ? { l: l, c: c, w: w } : { l: l, c: c }; };
+    var x = function (ch, w) { return w ? { l: ch, s: ch, w: w } : { l: ch, s: ch }; };
+
+    if (layer === 'fn') {
+      return [
+        [k('F1','F1'), k('F2','F2'), k('F3','F3'), k('F4','F4'), k('F5','F5'), k('F6','F6')],
+        [k('F7','F7'), k('F8','F8'), k('F9','F9'), k('F10','F10'), k('F11','F11'), k('F12','F12')],
+        [k('Pos1','Home'), k('Ende','End'), k('Bild ↑','PageUp'), k('Bild ↓','PageDown'), k('Entf','Delete')],
+        [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
+      ];
+    }
+    if (layer === 'num') {
+      return [
+        [k('1','Digit1'), k('2','Digit2'), k('3','Digit3'), k('4','Digit4'), k('5','Digit5'),
+         k('6','Digit6'), k('7','Digit7'), k('8','Digit8'), k('9','Digit9'), k('0','Digit0')],
+        [x('-'), x('_'), x('='), x('+'), x('$'), x('/'), x('\\'), x('|'), x('~')],
+        [x('['), x(']'), x('{'), x('}'), x('('), x(')'), x('<'), x('>'), x('*')],
+        [x(':'), x(';'), x('"'), x('\''), x(','), x('.'), x('!'), x('?'), k('⌫','Backspace', 1.5)],
+        [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
+      ];
+    }
+    return [
+      [k('esc','Escape'), k('F…','__layer:fn'), mod('⌘','MetaLeft'), mod('⌥','AltLeft'),
+       mod('ctrl','ControlLeft'), k('↹','Tab'), k('🎙','__mic')],
+      [k('q','KeyQ'), k('w','KeyW'), k('e','KeyE'), k('r','KeyR'), k('t','KeyT'), k('z','KeyZ'),
+       k('u','KeyU'), k('i','KeyI'), k('o','KeyO'), k('p','KeyP'), k('ü','BracketLeft')],
+      [k('a','KeyA'), k('s','KeyS'), k('d','KeyD'), k('f','KeyF'), k('g','KeyG'), k('h','KeyH'),
+       k('j','KeyJ'), k('k','KeyK'), k('l','KeyL'), k('ö','Semicolon'), k('ä','Quote')],
+      [mod('⇧','ShiftLeft'), k('y','KeyY'), k('x','KeyX'), k('c','KeyC'), k('v','KeyV'),
+       k('b','KeyB'), k('n','KeyN'), k('m','KeyM'), k('⌫','Backspace', 1.5)],
+      // I15: ▲/▼ fehlten auf jeder Ebene — beim Fernsteuern einer Shell
+      // (Verlauf mit den Pfeiltasten durchgehen) ein harter Ausfall. Eigene
+      // Reihe statt sie der letzten Reihe hinzuzufuegen, damit die nicht
+      // ueberfuellt: ◀/▶ ziehen mit um, damit alle vier Pfeiltasten als
+      // ein zusammenhaengender Block beieinander stehen.
+      [k('◀','ArrowLeft'), k('▲','ArrowUp'), k('▼','ArrowDown'), k('▶','ArrowRight')],
+      [k('123','__layer:num'), k('␣','Space', 4), k('⏎','Enter', 1.5)],
+    ];
+  }
+
+  /** Legt ein w×h grosses Bild seitenrichtig in eine Flaeche und zentriert es. */
+  function fitRect(imgW, imgH, boxW, boxH) {
+    var scale = Math.min(boxW / imgW, boxH / imgH);
+    var w = Math.round(imgW * scale);
+    var h = Math.round(imgH * scale);
+    return { x: Math.round((boxW - w) / 2), y: Math.round((boxH - h) / 2), w: w, h: h };
+  }
+
+  /**
+   * Punkt auf dem Handybildschirm → Punkt im gespiegelten Bild (0..1).
+   *
+   * Im Vollbild-Modus wird die Maus ABSOLUT abgebildet: der PC-Zeiger steht
+   * dort, wo der Android-Zeiger ueber dem Bild steht. Der Browser-Weg fuer
+   * relative Bewegung (Pointer Lock) ist im Android-WebView unzuverlaessig, und
+   * mit sichtbarem Zeiger ist absolut ohnehin das Natuerlichere.
+   * Ausserhalb des Bildes (schwarzer Rand) gibt es nichts zu steuern → null.
+   */
+  function toStageNormalized(clientX, clientY, box) {
+    var nx = (clientX - box.x) / box.w;
+    var ny = (clientY - box.y) / box.h;
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null;
+    return { x: nx, y: ny };
+  }
+
+  /**
+   * Entscheidet beim Loslassen des letzten Fingers, ob und welcher Klick daraus
+   * wird. Zaehlt bewusst NICHT den aktuellen Fingerstand, sondern die hoechste
+   * Fingerzahl, die waehrend der ganzen Geste je gleichzeitig auflag — sonst
+   * verschluckt das Abheben des zweiten Fingers vor dem ersten den Rechtsklick.
+   *
+   * @param maxFingers  hoechste gleichzeitige Fingerzahl waehrend der Geste
+   * @param wasDragging war die Geste schon ein Halte-Ziehen (Timer gefeuert)?
+   * @param elapsedMs   Zeit vom ersten Antippen bis zum letzten Loslassen
+   * @param movedPx     groesster zurueckgelegter Weg eines einzelnen Fingers
+   * @param tapMs       Hoechstdauer, die noch als "Tippen" zaehlt
+   * @param tapSlopPx   Hoechstweg, den ein "Tippen" wackeln darf
+   * @returns 'left' | 'right' | null
+   */
+  function classifyPadTap(maxFingers, wasDragging, elapsedMs, movedPx, tapMs, tapSlopPx) {
+    if (wasDragging) return null;                    // lange gehalten -> kein Klick
+    if (elapsedMs >= tapMs || movedPx > tapSlopPx) return null; // Weg/Zeit gerissen -> kein Klick
+    if (maxFingers <= 1) return 'left';
+    if (maxFingers === 2) return 'right';
+    return null;                                      // drei+ Finger: keine zugesagte Geste
+  }
+
+  /** Aufziehen bis 3× — darueber zeigt der Strom keine echten Bildpunkte mehr. */
+  function clampZoom(z) {
+    if (!isFinite(z)) return 1;
+    return z < 1 ? 1 : z > 3 ? 3 : z;
+  }
+
+  /**
+   * Haelt das vergroesserte Bild im Rahmen: bei Zoom z ist es z-mal so breit wie
+   * die Flaeche, also gibt es je Seite (z-1)/2 der Flaechenbreite an Spielraum.
+   */
+  function clampPan(offset, zoom, size) {
+    var slack = ((zoom - 1) * size) / 2;
+    if (slack <= 0) return 0;
+    return offset > slack ? slack : offset < -slack ? -slack : offset;
+  }
+
+  /**
+   * Entscheidet waehrend eines langen Drucks (Zeiger versetzen), ob eine
+   * Fingerbewegung ihn abbrechen soll. Misst die Entfernung zum AUFSETZPUNKT,
+   * nicht die aufsummierte Pfadlaenge seit dem letzten Ereignis — ein Finger,
+   * der ruhig aufliegt, aber leicht zittert (auf Glas tut das jeder), sammelt
+   * sonst ueber die 400ms genug Mikroschritte, um die Schwelle grundlos zu
+   * reissen. Wer stattdessen hin und her wischt und zum Ausgangspunkt
+   * zurueckkehrt, bricht den langen Druck darum bewusst NICHT ab — das ist
+   * deutlich harmloser als ein Druck, der bei ruhiger Hand seltener durchhaelt
+   * als bei unruhiger.
+   *
+   * Genau auf der Schwelle bricht NICHT ab (erst echtes Ueberschreiten zaehlt)
+   * — konsistent mit dem `> 8`-Vergleich in wireStageGestures(), den diese
+   * Funktion ersetzt.
+   *
+   * @param startX/startY  Position beim Aufsetzen des Fingers
+   * @param curX/curY      aktuelle Position
+   * @param thresholdPx    Hoechstabstand, der noch als "ruhig" zaehlt
+   */
+  function holdShouldAbort(startX, startY, curX, curY, thresholdPx) {
+    return Math.hypot(curX - startX, curY - startY) > thresholdPx;
+  }
+
+  // Der gesamte Mockup-Code steckt in einer Kapsel — ohne diese Zeilen sieht
+  // bridge.js keine einzige dieser Funktionen, und der Fernzugriff bricht mit
+  // "fitRect is not defined" ab, waehrend die Tests weiter gruen melden (sie
+  // werten den Block einzeln aus). Die Abfrage haelt den Block in Node lauffaehig.
+  if (typeof window !== 'undefined') {
+    window.pointerGain = pointerGain;
+    window.nextSticky = nextSticky;
+    window.fitRect = fitRect;
+    window.toStageNormalized = toStageNormalized;
+    window.classifyPadTap = classifyPadTap;
+    window.remoteKeyRows = remoteKeyRows;
+    window.clampZoom = clampZoom;
+    window.clampPan = clampPan;
+    window.holdShouldAbort = holdShouldAbort;
+  }
+  // ── /TMS-TEST-EXPORT ──
 
   function buildTerminalScreen() {
     // The old title + action row now lives in the Dynamic Island (see
@@ -5569,8 +6374,8 @@
       <div class="mgr-topbar">
         <div class="subtabs" id="managerTabs">
           <button data-tab="chat" class="active">Chat</button>
-          <button data-tab="artifacts">Artifacts</button>
-          <button data-tab="memory">Memory</button>
+          <button data-tab="agenda">Agenda</button>
+          <button data-tab="entries">Notizen</button>
         </div>
         <button class="mgr-model" id="mgrModelChip" type="button" aria-label="KI-Modell wählen">
           ${icon('bolt', 12)}<span id="mgrModelName">${escapeHtml(activeManagerModelName())}</span>
@@ -5584,6 +6389,8 @@
           <div class="chat-scroll" id="managerChat"></div>
           <div id="managerArtifacts" hidden></div>
           <div id="managerMemory" hidden></div>
+          <div id="managerAgenda" hidden></div>
+          <div id="managerEntries" hidden></div>
           <div class="chat-attach-row" id="managerAttachRow" hidden></div>
         </div>
       </div>
@@ -5705,6 +6512,73 @@
       <div class="memory-row"><span>${escapeHtml(m.text)}</span><span class="memory-row__time">${escapeHtml(m.time)}</span></div>`).join('');
   }
 
+  // Termin-Zeitpunkt kompakt: "04.08. 14:00", bei Ganztages-Terminen nur der Tag.
+  function fmtAgendaWhen(occurrenceAt, allDay) {
+    const d = new Date(occurrenceAt);
+    const p = n => String(n).padStart(2, '0');
+    const day = `${p(d.getDate())}.${p(d.getMonth() + 1)}.`;
+    return allDay ? day : `${day}<br>${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  const REPEAT_DE = { none: '', daily: 'täglich', weekly: 'wöchentlich', monthly: 'monatlich', yearly: 'jährlich' };
+
+  function renderManagerAgenda() {
+    const host = document.getElementById('managerAgenda');
+    if (!host) return;
+    const items = (TMS_DATA.manager && TMS_DATA.manager.agenda) || [];
+    if (!items.length) {
+      host.innerHTML = '<div class="mgr-empty">Keine Termine.<br>Sag dem Manager einfach, woran er dich erinnern soll.</div>';
+      return;
+    }
+    host.innerHTML = items.map(a => {
+      const count = (a.reminderOffsets || []).length;
+      // Ortsgebundene Termine ausweisen — der Nutzer reist, das ist relevant.
+      const meta = [
+        REPEAT_DE[a.repeat] || '',
+        count ? `${count} Erinnerung${count === 1 ? '' : 'en'}` : 'keine Erinnerung',
+        a.tz ? `feste Zeit in ${a.tz}` : '',
+      ].filter(Boolean).join(' · ');
+      return `
+      <div class="ag-row">
+        <div class="ag-row__when">${fmtAgendaWhen(a.occurrenceAt, a.allDay)}</div>
+        <div class="ag-row__body">
+          <div class="ag-row__title">${escapeHtml(a.title)}</div>
+          <div class="ag-row__meta">${escapeHtml(meta)}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function renderManagerEntries() {
+    const host = document.getElementById('managerEntries');
+    if (!host) return;
+    const entries = (TMS_DATA.manager && TMS_DATA.manager.entries) || [];
+    if (!entries.length) {
+      host.innerHTML = '<div class="mgr-empty">Keine Notizen.<br>Alles, was du dem Manager sagst, kann hier landen.</div>';
+      return;
+    }
+    // Offene To-dos zuerst, dann Notizen, erledigte zuletzt.
+    const rank = e => (e.checkable && !e.done) ? 0 : (!e.checkable ? 1 : 2);
+    host.innerHTML = [...entries].sort((a, b) => rank(a) - rank(b)).map(e => {
+      const cls = ['en-row', e.checkable ? '' : 'is-note', e.done ? 'is-done' : ''].filter(Boolean).join(' ');
+      const meta = [e.project, e.due].filter(Boolean).join(' · ');
+      return `
+      <div class="${cls}" data-entry-id="${escapeHtml(e.id)}">
+        <button class="en-row__box" type="button" aria-pressed="${e.done ? 'true' : 'false'}"
+                aria-label="${e.done ? 'Wieder öffnen' : 'Als erledigt markieren'}">${e.done ? '✓' : ''}</button>
+        <div class="en-row__body">
+          <div class="en-row__text">${escapeHtml(e.text)}</div>
+          ${meta ? `<div class="en-row__meta">${escapeHtml(meta)}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Die Bridge ruft diese Funktionen per window.* auf (sie teilt keinen Closure
+  // mit dieser Seite) — genau wie bei renderManagerMemory.
+  window.renderManagerAgenda = renderManagerAgenda;
+  window.renderManagerEntries = renderManagerEntries;
+
   function wireManagerTabs() {
     document.getElementById('managerTabs').addEventListener('click', e => {
       const btn = e.target.closest('button[data-tab]');
@@ -5715,12 +6589,39 @@
       document.getElementById('managerChat').hidden = tab !== 'chat';
       document.getElementById('managerArtifacts').hidden = tab !== 'artifacts';
       document.getElementById('managerMemory').hidden = tab !== 'memory';
+      document.getElementById('managerAgenda').hidden = tab !== 'agenda';
+      document.getElementById('managerEntries').hidden = tab !== 'entries';
+
+      // Beim Betreten frische Daten holen — im Browser ohne Bridge bleibt die Demo stehen.
+      if (tab === 'agenda') {
+        if (typeof window.managerAgendaList === 'function') window.managerAgendaList();
+        renderManagerAgenda();
+      }
+      if (tab === 'entries') {
+        if (typeof window.managerEntriesList === 'function') window.managerEntriesList();
+        renderManagerEntries();
+      }
+
       // Die Eingabezeile lebt jetzt im Dock — sie ergibt nur im Chat Sinn.
-      // Auf Artifacts/Memory zeigt das Dock wieder die Navigation.
+      // Auf allen anderen Reitern zeigt das Dock wieder die Navigation.
       if (typeof setDockPage === 'function') setDockPage(tab === 'chat' ? 'mgr' : 'nav');
       // Anhang-Miniaturen gehören nur zum Chat.
       const attach = document.getElementById('managerAttachRow');
       if (attach) { if (tab === 'chat') renderManagerAttachments(); else attach.hidden = true; }
+    });
+
+    // Abhaken direkt in der Liste — optimistisch, der Server bestätigt danach.
+    const entriesHost = document.getElementById('managerEntries');
+    if (entriesHost) entriesHost.addEventListener('click', e => {
+      const box = e.target.closest('.en-row__box');
+      if (!box) return;
+      const row = box.closest('[data-entry-id]');
+      if (!row) return;
+      const id = row.dataset.entryId;
+      const nowDone = box.getAttribute('aria-pressed') !== 'true';
+      const entry = ((TMS_DATA.manager && TMS_DATA.manager.entries) || []).find(x => x.id === id);
+      if (entry) { entry.done = nowDone; renderManagerEntries(); }
+      if (typeof window.managerEntryToggle === 'function') window.managerEntryToggle(id, nowDone);
     });
   }
 
@@ -5889,11 +6790,29 @@
   };
 
   function openManagerMenu() {
+    // Artifacts und Memory sind aus den Sub-Tabs gewichen (dort stehen jetzt
+    // Agenda und Notizen) — erreichbar bleiben sie über dieses Menü.
     const body = `
+      <button class="btn-chip" data-mgr="artifacts">Artifacts</button>
+      <button class="btn-chip" data-mgr="memory">Memory</button>
       <button class="btn-chip" data-mgr="model">KI-Modell wählen · ${escapeHtml(activeManagerModelName())}</button>
       <button class="btn-chip btn-chip--danger" data-mgr="clear">Chat-Verlauf löschen</button>`;
     managerSheet(TMS_DATA.manager.persona?.name || 'Manager', body, (btn, el) => {
-      if (btn.dataset.mgr === 'model') { el.remove(); openManagerModelSheet(); }
+      if (btn.dataset.mgr === 'artifacts' || btn.dataset.mgr === 'memory') {
+        const tab = btn.dataset.mgr;
+        el.remove();
+        state.managerTab = tab;
+        document.querySelectorAll('#managerTabs button').forEach(b => b.classList.remove('active'));
+        document.getElementById('managerChat').hidden = true;
+        document.getElementById('managerAgenda').hidden = true;
+        document.getElementById('managerEntries').hidden = true;
+        document.getElementById('managerArtifacts').hidden = tab !== 'artifacts';
+        document.getElementById('managerMemory').hidden = tab !== 'memory';
+        if (typeof setDockPage === 'function') setDockPage('nav');
+        const attach = document.getElementById('managerAttachRow');
+        if (attach) attach.hidden = true;
+      }
+      else if (btn.dataset.mgr === 'model') { el.remove(); openManagerModelSheet(); }
       else if (btn.dataset.mgr === 'clear') {
         // Zweistufig: erst „Wirklich?", dann löschen — kein versehentlicher Verlust.
         if (btn.dataset.armed !== '1') { btn.dataset.armed = '1'; btn.textContent = 'Wirklich löschen?'; return; }
@@ -5946,6 +6865,8 @@
     wireManagerInput();
     renderManagerArtifacts();
     renderManagerMemory();
+    renderManagerAgenda();
+    renderManagerEntries();
     renderManagerChat();
     // Nach dem Wiederaufbau steht wieder der Chat-Tab vorn — die Bridge ruft das,
     // wenn sich Name oder Profilbild des Managers ändern.
@@ -5959,6 +6880,7 @@
     // Die Insel-Identität hängt an derselben Persona wie der Shell — nach jedem
     // Rebuild (neuer Name/neues Bild) mitziehen.
     if (typeof syncIslandManager === 'function') syncIslandManager();
+    if (typeof syncIslandBadge === 'function') syncIslandBadge();
   }
   window.rerenderManager = initManagerScreen;
 
@@ -5973,6 +6895,57 @@
     if (nameEl) nameEl.textContent = p.name || 'Manager';
   }
   window.syncIslandManager = syncIslandManager;
+
+  // ── Ungelesene Manager-Nachrichten ────────────────────────────────────────
+  let managerUnread = 0;
+
+  function syncIslandBadge() {
+    const badge = document.getElementById('islandMgrBadge');
+    const header = document.getElementById('statusHeader');
+    if (!badge || !header) return;
+    const show = managerUnread > 0;
+    badge.hidden = !show;
+    header.classList.toggle('has-unread', show);
+    if (!show) return;
+    document.getElementById('islandMgrBadgeCount').textContent = managerUnread > 99 ? '99+' : String(managerUnread);
+    const ava = document.getElementById('islandMgrBadgeAva');
+    if (ava) ava.innerHTML = managerAvatarHtml(20);
+  }
+
+  function applyManagerUnread(n) {
+    managerUnread = Number(n) || 0;
+    syncIslandBadge();
+  }
+
+  // Proaktive Nachrichten sind normale Chat-Nachrichten — so bleibt das
+  // Gespräch durchgehend und du kannst direkt darauf antworten.
+  function applyManagerProactive(msg) {
+    if (!msg || typeof msg.text !== 'string') return;
+    const d = new Date(msg.createdAt || Date.now());
+    const p = n => String(n).padStart(2, '0');
+    TMS_DATA.manager.messages.push({
+      type: 'text', from: 'manager', time: `${p(d.getHours())}:${p(d.getMinutes())}`,
+      text: msg.text, _id: 'out' + (msg.id || TMS_DATA.manager.messages.length),
+    });
+    if (typeof renderManagerChat === 'function') renderManagerChat();
+    managerUnread = Number(msg.unread) || (managerUnread + 1);
+    syncIslandBadge();
+  }
+
+  window.applyManagerUnread = applyManagerUnread;
+  window.applyManagerProactive = applyManagerProactive;
+  window.syncIslandBadge = syncIslandBadge;
+
+  {
+    const badge = document.getElementById('islandMgrBadge');
+    if (badge) badge.addEventListener('click', ev => {
+      ev.stopPropagation(); // darf die Insel nicht aufklappen
+      show('manager');
+      if (typeof window.managerOutboxRead === 'function') window.managerOutboxRead();
+      managerUnread = 0;
+      syncIslandBadge();
+    });
+  }
 
   // Beim Betreten des Managers: Dock → Chat-Eingabe (nur auf dem Chat-Tab),
   // Insel-Identität auffrischen, Chat rendern.
@@ -7915,6 +8888,9 @@
   window.setDockPage = setDockPage;
   window.syncDockTerminal = syncDockTerminal;
   window.dockTargetId = dockTargetId;
+  // Damit die App aus einer angetippten Push-Meldung heraus genau das
+  // betroffene Terminal zeigen kann (TMSBridge.focusSession in bridge.js).
+  window.focusTerminal = focusTerminal;
 
   // Auf dem Terminals-Tab ist die Terminal-Leiste die Voreinstellung.
   SCREEN_HOOKS.terminals = () => { setDockPage('term'); renderTermSwitcher(); };
