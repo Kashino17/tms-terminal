@@ -2231,6 +2231,9 @@
 
   const state = {
     dockPage: 'nav',
+    // Laeuft ein Diktat, gehoert die Leiste der Aufnahme: kein Wisch, kein
+    // Antippen, kein Bildschirmwechsel darf sie wegschalten (siehe setDockPage).
+    dockRecording: false,
     theme: loadTheme(),
     order: TMS_DATA.sessions.map(s => s.id),   // logical stack position -> session id (mutable via rail swap)
     activeIndex: 0,
@@ -4352,8 +4355,9 @@
   }
   // Called whenever the Terminals screen is left (see show()) so an
   // in-flight recording/transcribing flow never resolves onto a screen
-  // the user has already navigated away from.
-  function cancelDictation() {
+  // the user has already navigated away from. reason === 'user' marks the
+  // ✕ button; bridge.js only stops a REAL recording for that reason.
+  function cancelDictation(reason) {
     if (!state.dictation.active) return;
     dictationTimers.forEach(t => clearTimeout(t));
     dictationTimers = [];
@@ -8517,6 +8521,11 @@
 
   function setDockPage(page) {
     if (!dockPages[page]) return;
+    // Waehrend der Aufnahme bleibt die Aufnahmeleiste stehen. Frueher schaltete
+    // ein versehentlicher Wisch nach oben, ein Tipp aufs Terminal oder ein
+    // Bildschirmwechsel sie weg — die Aufnahme lief dann unsichtbar weiter bzw.
+    // wurde abgebrochen. Beenden geht nur ueber ✓ oder ✕ (dockRecordingEnd).
+    if (state.dockRecording && page !== 'rec') return;
     state.dockPage = page;
     dockEl.dataset.page = page;
     Object.keys(dockPages).forEach(k => dockPages[k].classList.toggle('is-active', k === page));
@@ -8783,6 +8792,7 @@
   document.addEventListener('pointerdown', e => {
     dockSwiping = false;
     if (document.body.classList.contains('is-locked')) return;
+    if (state.dockRecording) return; // die Aufnahmeleiste laesst sich nicht wegwischen
     if (!inBottomEdge(e.clientY)) return;
     // Wer gerade wirklich IM Eingabefeld tippt, wird in Ruhe gelassen — dort
     // gehört das Wischen dem Cursor-Schrubber.
@@ -8838,6 +8848,7 @@
     // Wohin geht das Transkript am Ende? 'mgr' = Manager-Eingabezeile, sonst Terminal.
     recTarget = target === 'mgr' ? 'mgr' : 'term';
     setDockPage('rec');
+    state.dockRecording = true;
     dockPages.rec.classList.remove('is-transcribing');
     document.getElementById('recConfirmBtn').disabled = false;
     recStart = Date.now();
@@ -8857,10 +8868,17 @@
   }
   function dockRecordingEnd(text, target) {
     clearInterval(recTick);
+    state.dockRecording = false;
     dockPages.rec.classList.remove('is-transcribing');
     // Ziel: Manager-Eingabezeile ('mgr') oder Terminal-Eingabe (default).
     const mgr = (target || recTarget) === 'mgr';
-    setDockPage(mgr ? 'mgr' : 'term');
+    // Die Aufnahme lief evtl. weiter, waehrend man woandershin gewechselt ist —
+    // dann die Leiste des AKTUELLEN Bildschirms zeigen, nicht die des Ziels.
+    const onTargetScreen = currentScreen === (mgr ? 'manager' : 'terminals');
+    setDockPage(onTargetScreen ? (mgr ? 'mgr' : 'term')
+      : currentScreen === 'browser' ? 'web'
+      : currentScreen === 'manager' && state.managerTab === 'chat' ? 'mgr'
+      : currentScreen === 'terminals' ? 'term' : 'nav');
     if (text) {
       const input = document.getElementById(mgr ? 'managerTextInput' : 'dockInput');
       // Erst fokussieren, dann schreiben: im Terminal schickt die Bridge die
@@ -8873,7 +8891,10 @@
     recTarget = 'term';
   }
   document.getElementById('recCancelBtn').addEventListener('click', () => {
-    cancelDictation();
+    // 'user' = der einzige ausdrueckliche Abbruch. Alle anderen cancelDictation()-
+    // Aufrufe (Bildschirmwechsel, Ansicht umschalten, neues Terminal) raeumen nur
+    // Demo-Zustand auf — die App-Bruecke laesst eine echte Aufnahme dabei laufen.
+    cancelDictation('user');
     dockRecordingEnd('');
   });
   document.getElementById('recConfirmBtn').addEventListener('click', () => {
