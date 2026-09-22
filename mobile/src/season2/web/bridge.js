@@ -985,7 +985,11 @@
     window.dockRecordingTranscribing();
     post('mic:stop', { cardId: micCard });
   };
-  window.cancelDictation = function () {
+  window.cancelDictation = function (reason) {
+    // Only the ✕ on the recording bar ('user') ends a real recording. The
+    // mockup also calls cancelDictation() on every screen change, view toggle
+    // and new terminal — each of those used to kill the dictation mid-sentence.
+    if (reason !== 'user') return;
     if (!micCard) return;
     post('mic:cancel', { cardId: micCard });
     micCard = null;

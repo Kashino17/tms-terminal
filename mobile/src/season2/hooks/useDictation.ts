@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Audio } from 'expo-av';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as FileSystem from 'expo-file-system';
 import type { WebSocketService } from '../../services/websocket.service';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -18,6 +19,8 @@ export type MicState = 'idle' | 'recording' | 'processing';
 // but a multi-minute recording is several MB of base64 that can take well over
 // 25s to push through a slow Tailscale/DERP path before the first heartbeat.
 const TRANSCRIPTION_TIMEOUT_MS = 90000;
+
+const KEEP_AWAKE_TAG = 'tms-dictation';
 
 const RECORDING_OPTIONS = {
   android: {
@@ -93,6 +96,17 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
       }
     });
   }, [wsService, sessionId, onText, onError, armWatchdog, clearWatchdog]);
+
+  // Keep the screen on while a dictation is recording or uploading. Without
+  // this the display dimmed and locked mid-sentence: Android pauses the
+  // activity on screen-off, which stops the recorder, and the socket carrying
+  // the upload dies with it. One tag, so start/stop can never leak a lock.
+  const micBusy = micState !== 'idle';
+  useEffect(() => {
+    if (!micBusy) return;
+    activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
+    return () => { deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => {}); };
+  }, [micBusy]);
 
   // Cleanup on unmount.
   useEffect(() => {
