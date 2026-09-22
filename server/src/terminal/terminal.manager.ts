@@ -74,6 +74,11 @@ export class TerminalManager {
   }
 
   /** Hat diese Session einen Spiegel? Entscheidet, welcher Erkennungsweg gilt. */
+  /** Will das Programm in dieser Session Eingefügtes in Bracketed-Paste-Markern? */
+  wantsBracketedPaste(sessionId: string): boolean {
+    return this.mirrors.get(sessionId)?.bracketedPasteMode ?? false;
+  }
+
   hasMirror(sessionId: string): boolean {
     return this.mirrors.has(sessionId);
   }

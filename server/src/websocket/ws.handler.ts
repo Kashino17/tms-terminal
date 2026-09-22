@@ -27,6 +27,7 @@ import { listAgenda } from '../manager/agenda/agenda.store';
 import { listEntries } from '../manager/entries/entries.store';
 import { ConnectionRateLimiter } from './rate-limiter';
 import { browserBridge } from '../browserbridge/browserbridge.manager';
+import { asPaste } from '../terminal/paste.policy';
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -1232,7 +1233,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         resetAutopilotTimer(msg.sessionId);
         managerService.trackUserInput(msg.sessionId);
 
-        if (!globalManager.write(msg.sessionId, data)) {
+        // Große Texte (Diktat, Zwischenablage) als EINEN Einfügeblock — sonst
+        // zerteilt macOS sie und Claude Code zeigt nur noch den Rest (paste.policy.ts).
+        if (!globalManager.write(msg.sessionId, asPaste(data, globalManager.wantsBracketedPaste(msg.sessionId)))) {
           send(ws, {
             type: 'terminal:error',
             sessionId: msg.sessionId,
