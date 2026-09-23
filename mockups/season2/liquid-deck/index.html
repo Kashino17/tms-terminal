@@ -1582,12 +1582,16 @@
                        color: inherit; opacity: .55; font-size: 12px; font-weight: 600; }
   .remote-seg button.on { background: rgba(90,169,255,.22); opacity: 1;
                           box-shadow: inset 0 0 0 1px rgba(90,169,255,.45); }
-  .remote-bar { flex: 1; min-height: 0; }
+  .remote-bar { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+  .remote-bar > .remote-pad { flex: 1; min-height: 0; height: auto; }
+  .remote-pad--mini { min-height: 0; }
+  .remote-pad--mini .remote-pad-hint { font-size: 9.5px; }
 
   /* Vollbild fuer angeschlossene Tastatur/Maus: Kopf und Leiste weg, das Bild
      nimmt die ganze Flaeche ein. Manuell umgeschaltet (Knopf/Abzeichen/
      Umschalt+Esc) — keine Geraete-Erkennung, die danebenliegen koennte. */
-  section[data-screen="remote"].fullscreen:not([hidden]) { padding: 0; gap: 0; }
+  section[data-screen="remote"].fullscreen:not([hidden]),
+  body.remote-focus section[data-screen="remote"].fullscreen:not([hidden]) { padding: 0; gap: 0; }
   /* Im Vollbild gehoert die GANZE Flaeche dem Mac: Insel und Leiste lagen sonst
      ueber dem Bild — ein Mausklick unten (auf das Mac-Dock) traf die App-Leiste. */
   body.remote-fs #dock, body.remote-fs #statusHeader { display: none !important; }
@@ -1610,8 +1614,10 @@
                             border: 1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.05);
                             color: inherit; opacity: .75; }
 
-  .remote-keys { display: flex; flex-direction: column; gap: 4px; height: 100%; }
-  .rk-row { display: flex; gap: 4px; flex: 1; }
+  /* Tasten in Handy-Hoehe (~50 px), nicht auf die Restflaeche gestreckt — zugeklappt
+     wurden sie sonst 115 px hoch. Die Flaeche darueber nimmt das Mini-Trackpad. */
+  .remote-keys { display: flex; flex-direction: column; gap: 4px; flex: none; }
+  .rk-row { display: flex; gap: 4px; flex: none; height: clamp(38px, 6.4vh, 54px); }
   .rk { flex: 1; min-width: 0; border-radius: 7px; border: 1px solid rgba(255,255,255,.06);
         background: rgba(255,255,255,.09); color: inherit; font-size: 14px; padding: 0; }
   .rk:active { background: rgba(255,255,255,.20); }
@@ -1619,6 +1625,32 @@
   .rk.on { background: rgba(90,169,255,.28); opacity: 1;
            box-shadow: inset 0 0 0 1px rgba(90,169,255,.5); }
   .rk.locked { box-shadow: inset 0 0 0 2px rgba(90,169,255,.85); }
+  /* ── Fernzugriff im Fokus: keine Insel, keine Leiste, keine Kopfzeile — die
+     Bedienung sitzt im verschiebbaren Kreis (#remoteOrb), dessen Menue die
+     fruehere Kopfzeile ist (Status, Vollbild, Trennen) plus die App-Bereiche. */
+  body.remote-focus #statusHeader, body.remote-focus #dock { display: none !important; }
+  body.remote-focus section[data-screen="remote"]:not([hidden]) {
+    padding: calc(var(--safe-top) + 8px) 8px calc(var(--safe-bottom) + 8px); gap: 8px; }
+  .remote-orb { position: fixed; z-index: 75; width: 42px; height: 42px; border-radius: 50%; padding: 0;
+    display: grid; place-items: center; color: var(--text); opacity: .72; touch-action: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,.45); }
+  .remote-orb:active { opacity: 1; }
+  .remote-orb__dot { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: #34c759; }
+  [data-screen="remote"].orb-open .remote-orb { opacity: 1; }
+  body.remote-focus .remote-head { display: none; position: fixed; z-index: 76; flex-wrap: wrap; row-gap: 10px;
+    padding: 10px 12px; box-shadow: 0 12px 34px rgba(0,0,0,.55); }
+  body.remote-focus [data-screen="remote"].orb-open .remote-head { display: flex; }
+  .remote-nav { flex-basis: 100%; display: flex; gap: 4px; }
+  .remote-go { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0;
+    border: 0; border-radius: 10px; background: rgba(255,255,255,.06); color: inherit; font-size: 10.5px; }
+  .remote-go svg { width: 19px; height: 19px; }
+  .remote-go:active { background: rgba(255,255,255,.16); }
+  [data-screen="remote"].fullscreen .remote-orb { display: none; }
+  /* Klick-Knoepfe: Links breit (druecken-halten-ziehen), Rechts schmal und nur
+     per sauberem Tipp — kein versehentlicher Rechtsklick mehr beim Wischen. */
+  .remote-pad-btns button[data-btn="l"] { flex: 2.4; }
+  .remote-pad-btns button[data-btn="r"] { flex: 1; font-size: 9.5px; opacity: .6; }
+
   /* Rueckmeldung: gedrueckte Klick-Knoepfe, Ring beim Tippen aufs Trackpad,
      leuchtender Rand beim Ziehen. */
   .remote-pad-btns button { transition: background .08s, transform .08s, border-color .08s; }
@@ -2974,6 +3006,9 @@
       statusHeaderEl.addEventListener('animationend', () => statusHeaderEl.classList.remove('is-popping'), { once: true });
     }
     currentScreen = name;
+    // Fernzugriff = volle Konzentration aufs Bild: Insel und Leiste weg, die
+    // Navigation sitzt im verschiebbaren Kreis (remote-orb).
+    document.body.classList.toggle('remote-focus', name === 'remote');
     if (SCREEN_HOOKS[name]) SCREEN_HOOKS[name]();
     // A pending permission/question prompt only shows its sheet on the Terminals
     // screen; syncPromptSheets re-homes/hides it as the user navigates.
@@ -3082,13 +3117,21 @@
 
   function buildRemoteScreen() {
     var host = document.querySelector('[data-screen="remote"]');
+    // Die fruehere Kopfzeile ist jetzt das Menue des Kreises (remote-orb) — samt
+    // den App-Bereichen, deren Leiste im Fernzugriff ausgeblendet ist.
+    var navHtml = Array.prototype.map.call(document.querySelectorAll('#dock .dock-btn[data-nav]'), function (b) {
+      return '<button class="remote-go" data-go="' + b.dataset.nav + '">' + b.innerHTML + '</button>';
+    }).join('');
     host.innerHTML = ''
+      + '<button class="remote-orb glass" id="remoteOrb" aria-label="Menü"><span class="remote-orb__dot"></span>'
+      +   '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>'
       + '<div class="remote-head glass">'
       +   '<span class="remote-dot" id="remoteDot"></span>'
       +   '<span class="remote-name" id="remoteName">Fernzugriff</span>'
       +   '<span class="remote-stat" id="remoteStat">verbinde …</span>'
       +   '<button class="icon-btn glass" id="remoteFull" aria-label="Vollbild">⤢</button>'
       +   '<button class="icon-btn glass" id="remoteQuit" aria-label="Trennen">✕</button>'
+      +   '<div class="remote-nav">' + navHtml + '</div>'
       + '</div>'
       + '<div class="remote-stage" id="remoteStage"><canvas id="remoteCanvas"></canvas>'
       +   '<div class="remote-veil" id="remoteVeil"><span id="remoteVeilText">Verbinde …</span></div>'
@@ -3113,13 +3156,91 @@
       show('servers');
     });
     host.querySelector('#remoteFull').addEventListener('click', function () {
+      setOrbMenu(false);
       window.setRemoteFullscreen(!window.remoteState.fullscreen);
     });
+    host.querySelectorAll('.remote-go').forEach(function (b) {
+      b.addEventListener('click', function () { setOrbMenu(false); handleDockTap(b.dataset.go); });
+    });
+    wireRemoteOrb(host);
     host.querySelector('#remoteExit').addEventListener('click', function () {
       window.setRemoteFullscreen(false);
     });
     setRemotePage('pad');
   }
+
+  // ── Der Kreis: verschiebbar, oeffnet das Menue (Status, Vollbild, Trennen, Bereiche) ──
+  var ORB_KEY = 'tms-remote-orb';
+  function orbPlace(orb) {
+    var pos = null;
+    try { pos = JSON.parse(localStorage.getItem(ORB_KEY) || 'null'); } catch (e) {}
+    var size = 42, m = 10;
+    var y = pos && isFinite(pos.y) ? pos.y : 0.02;          // Anteil der Hoehe
+    var side = pos && pos.side === 'left' ? 'left' : 'right';
+    var top = Math.max(m, Math.min(window.innerHeight - size - m, y * window.innerHeight));
+    orb.style.top = top + 'px';
+    orb.style.left = side === 'left' ? m + 'px' : (window.innerWidth - size - m) + 'px';
+    orb.dataset.side = side;
+  }
+  function setOrbMenu(open) {
+    var host = document.querySelector('[data-screen="remote"]');
+    if (!host) return;
+    host.classList.toggle('orb-open', !!open);
+    if (!open) return;
+    var orb = document.getElementById('remoteOrb'), head = host.querySelector('.remote-head');
+    var r = orb.getBoundingClientRect();
+    var w = Math.min(420, window.innerWidth - 20);
+    head.style.width = w + 'px';
+    head.style.left = Math.max(10, Math.min(window.innerWidth - w - 10, orb.dataset.side === 'left' ? r.left : r.right - w)) + 'px';
+    var below = r.top < window.innerHeight / 2;
+    head.style.top = below ? (r.bottom + 8) + 'px' : 'auto';
+    head.style.bottom = below ? 'auto' : (window.innerHeight - r.top + 8) + 'px';
+  }
+  function wireRemoteOrb(host) {
+    var orb = host.querySelector('#remoteOrb');
+    orbPlace(orb);
+    var start = null, moved = false;
+    orb.addEventListener('pointerdown', function (e) {
+      start = { x: e.clientX, y: e.clientY, ox: orb.offsetLeft, oy: orb.offsetTop };
+      moved = false;
+      try { orb.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    orb.addEventListener('pointermove', function (e) {
+      if (!start) return;
+      var dx = e.clientX - start.x, dy = e.clientY - start.y;
+      if (!moved && Math.hypot(dx, dy) < 8) return;
+      moved = true;
+      setOrbMenu(false);
+      orb.style.left = Math.max(4, Math.min(window.innerWidth - 46, start.ox + dx)) + 'px';
+      orb.style.top = Math.max(4, Math.min(window.innerHeight - 46, start.oy + dy)) + 'px';
+    });
+    function up() {
+      if (!start) return;
+      start = null;
+      if (!moved) { setOrbMenu(!host.classList.contains('orb-open')); return; }
+      // An den naechsten Seitenrand schnappen, Hoehe merken.
+      var side = orb.offsetLeft + 21 < window.innerWidth / 2 ? 'left' : 'right';
+      try { localStorage.setItem(ORB_KEY, JSON.stringify({ side: side, y: orb.offsetTop / window.innerHeight })); } catch (e) {}
+      orbPlace(orb);
+    }
+    orb.addEventListener('pointerup', up);
+    orb.addEventListener('pointercancel', up);
+  }
+  // Irgendwo anders hintippen schliesst das Menue.
+  document.addEventListener('pointerdown', function (e) {
+    var host = document.querySelector('[data-screen="remote"].orb-open');
+    if (!host) return;
+    if (e.target.closest('.remote-head') || e.target.closest('#remoteOrb')) return;
+    setOrbMenu(false);
+  }, true);
+  window.addEventListener('resize', function () {
+    var orb = document.getElementById('remoteOrb');
+    if (orb) orbPlace(orb);
+    setOrbMenu(false);
+    // Auf- und Zuklappen: die Tastatur hat je Breite ein eigenes Layout.
+    if (currentScreen === 'remote' && window.remoteState && window.remoteState.page === 'keys'
+        && (window.innerWidth >= 700) !== remoteKeysWide) setRemotePage('keys');
+  });
 
   /**
    * Manueller Umschalter fuer angeschlossene Tastatur/Maus: keine Geraete-
@@ -3161,15 +3282,19 @@
     // dadurch, dass bar.innerHTML weiter unten das Element entfernt (das
     // toteilt zwar per Spezifikation die Zeigereinfangung, ist aber Verlass
     // auf Browserverhalten statt eine eigene, geprüfte Garantie).
-    if (window.remoteState.page === 'pad' && page !== 'pad'
+    if (window.remoteState.page !== page
         && typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
     window.remoteState.page = page;
     document.querySelectorAll('#remoteSeg [data-page]').forEach(function (b) {
       b.classList.toggle('on', b.dataset.page === page);
     });
     var bar = document.getElementById('remoteBar');
-    bar.innerHTML = page === 'pad' ? remotePadMarkup() : remoteKeysMarkup();
-    if (page === 'pad') wireRemotePad(); else wireRemoteKeys();
+    // Tastatur-Seite: oben ein kleines Trackpad (Zeiger bewegen, ohne umzuschalten),
+    // darunter die Tastatur in Handy-Tastenhoehe.
+    bar.innerHTML = page === 'pad' ? remotePadMarkup()
+      : '<div class="remote-pad remote-pad--mini" id="remotePad"><span class="remote-pad-hint">Trackpad</span></div>' + remoteKeysMarkup();
+    wireRemotePad();
+    if (page !== 'pad') wireRemoteKeys();
     wireRemoteIme();
     if (page !== 'keys') toggleRemoteIme(false);
     // Tastatur und Trackpad brauchen unterschiedlich viel Hoehe — das Bild
@@ -3187,8 +3312,10 @@
   var remoteLayer = 'base';
   var remoteSticky = { MetaLeft: 'off', AltLeft: 'off', ControlLeft: 'off', ShiftLeft: 'off' };
 
+  var remoteKeysWide = false;
   function remoteKeysMarkup() {
-    var rows = remoteKeyRows(remoteLayer).map(function (row) {
+    remoteKeysWide = window.innerWidth >= 700;
+    var rows = remoteKeyRows(remoteLayer, remoteKeysWide).map(function (row) {
       var keys = row.map(function (key) {
         var cls = 'rk' + (key.m ? ' mod' : '') + (key.c && remoteSticky[key.c] && remoteSticky[key.c] !== 'off'
           ? ' on' + (remoteSticky[key.c] === 'locked' ? ' locked' : '') : '');
@@ -3707,6 +3834,31 @@
       var which = btn.dataset.btn;
       var activeId = null; // verhindert doppeltes d:false (pointerup + lostpointercapture)
 
+      // Rechtsklick nur als sauberer TIPP (kurz, ohne Bewegung): vorher loeste
+      // schon das Aufsetzen aus — wer eine Wischbewegung dort begann, klickte
+      // ungewollt rechts. Der Linksklick bleibt druecken-halten-ziehen.
+      if (which === 'r') {
+        var tapStart = null;
+        btn.addEventListener('pointerdown', function (e) {
+          tapStart = { x: e.clientX, y: e.clientY, t: Date.now(), id: e.pointerId };
+          btn.classList.add('is-down');
+        });
+        var tapEnd = function (e, ok) {
+          if (!tapStart || e.pointerId !== tapStart.id) return;
+          var clean = ok && Date.now() - tapStart.t < 450 && Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y) < 12;
+          tapStart = null;
+          btn.classList.remove('is-down');
+          if (!clean || !R()) return;
+          R().input({ t: 'b', b: 'r', d: true });
+          R().input({ t: 'b', b: 'r', d: false });
+          if (navigator.vibrate) navigator.vibrate([6, 40, 6]);
+        };
+        btn.addEventListener('pointerup', function (e) { tapEnd(e, true); });
+        btn.addEventListener('pointercancel', function (e) { tapEnd(e, false); });
+        btn.addEventListener('pointerleave', function (e) { tapEnd(e, false); });
+        return;
+      }
+
       function down(e) {
         if (activeId !== null) return; // schon gedrueckt
         activeId = e.pointerId;
@@ -3791,8 +3943,8 @@
    * weil `Digit0`..`Digit9` auf so gut wie jeder Belegung unverschoben Ziffern
    * liefern.
    */
-  function remoteKeyRows(layer) {
-    var mod = function (l, c) { return { l: l, c: c, sticky: true, m: true }; };
+  function remoteKeyRows(layer, wide) {
+    var mod = function (l, c, w) { var o = { l: l, c: c, sticky: true, m: true }; if (w) o.w = w; return o; };
     var k = function (l, c, w) { return w ? { l: l, c: c, w: w } : { l: l, c: c }; };
     var x = function (ch, w) { return w ? { l: ch, s: ch, w: w } : { l: ch, s: ch }; };
     // Kuerzel: Sondertasten (m=⌘ s=⇧ a=⌥ c=ctrl) + Taste in EINEM Anschlag,
@@ -3833,25 +3985,28 @@
         [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
       ];
     }
-    return [
-      [k('esc','Escape'), k('⌘…','__layer:sc'), k('F…','__layer:fn'), mod('⌘','MetaLeft'), mod('⌥','AltLeft'),
-       mod('ctrl','ControlLeft'), k('↹','Tab'), k('⌨','__ime'), k('🎙','__mic')],
+    // Grundebene wie eine Mac-Tastatur: Sondertasten neben der Leertaste, die
+    // Pfeile oben in der Werkzeugreihe statt in einer eigenen Reihe (mehr Hoehe
+    // fuer die Buchstaben). Aufgeklappt (wide) zusaetzlich eine Ziffernreihe.
+    var rows = [
+      [k('esc','Escape'), k('⌘…','__layer:sc'), k('F…','__layer:fn'), k('↹','Tab'),
+       k('◀','ArrowLeft'), k('▲','ArrowUp'), k('▼','ArrowDown'), k('▶','ArrowRight')],
       // z und y: Positionscodes der DEUTSCHEN Mac-Belegung (wie ü/ö/ä). Das
       // deutsche z sitzt auf der US-Y-Position — mit KeyZ tippte der Mac "y".
       [k('q','KeyQ'), k('w','KeyW'), k('e','KeyE'), k('r','KeyR'), k('t','KeyT'), k('z','KeyY'),
        k('u','KeyU'), k('i','KeyI'), k('o','KeyO'), k('p','KeyP'), k('ü','BracketLeft')],
       [k('a','KeyA'), k('s','KeyS'), k('d','KeyD'), k('f','KeyF'), k('g','KeyG'), k('h','KeyH'),
        k('j','KeyJ'), k('k','KeyK'), k('l','KeyL'), k('ö','Semicolon'), k('ä','Quote')],
-      [mod('⇧','ShiftLeft'), k('y','KeyZ'), k('x','KeyX'), k('c','KeyC'), k('v','KeyV'),
-       k('b','KeyB'), k('n','KeyN'), k('m','KeyM'), k('⌫','Backspace', 1.5)],
-      // I15: ▲/▼ fehlten auf jeder Ebene — beim Fernsteuern einer Shell
-      // (Verlauf mit den Pfeiltasten durchgehen) ein harter Ausfall. Eigene
-      // Reihe statt sie der letzten Reihe hinzuzufuegen, damit die nicht
-      // ueberfuellt: ◀/▶ ziehen mit um, damit alle vier Pfeiltasten als
-      // ein zusammenhaengender Block beieinander stehen.
-      [k('◀','ArrowLeft'), k('▲','ArrowUp'), k('▼','ArrowDown'), k('▶','ArrowRight')],
-      [k('123','__layer:num'), k('␣','Space', 4), k('⏎','Enter', 1.5)],
+      [mod('⇧','ShiftLeft', 1.4), k('y','KeyZ'), k('x','KeyX'), k('c','KeyC'), k('v','KeyV'),
+       k('b','KeyB'), k('n','KeyN'), k('m','KeyM'), k('⌫','Backspace', 1.4)],
+      [k('123','__layer:num', 1.3), mod('ctrl','ControlLeft'), mod('⌥','AltLeft'), mod('⌘','MetaLeft'),
+       k('␣','Space', 3.2), k('⌨','__ime'), k('🎙','__mic'), k('⏎','Enter', 1.5)],
     ];
+    if (wide) {
+      rows.splice(1, 0, [k('1','Digit1'), k('2','Digit2'), k('3','Digit3'), k('4','Digit4'), k('5','Digit5'),
+        k('6','Digit6'), k('7','Digit7'), k('8','Digit8'), k('9','Digit9'), k('0','Digit0'), x('ß')]);
+    }
+    return rows;
   }
 
   /** Legt ein w×h grosses Bild seitenrichtig in eine Flaeche und zentriert es. */
