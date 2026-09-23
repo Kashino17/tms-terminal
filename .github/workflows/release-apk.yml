@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Terminal-Titel liegen jetzt auf dem Server. Wer ein Terminal umbenennt, sieht den Titel auf jedem verbundenen Geraet sofort, und er bleibt auch nach einer Neuinstallation der App oder einem Server-Neustart erhalten. Titel, die bisher nur auf diesem Handy gespeichert waren, laedt die App beim ersten Verbinden einmalig hoch. Der Manager nennt Terminals jetzt beim Namen, also zum Beispiel Surfschule ist fertig statt Shell 4. Voraussetzung: Server neu starten." \
+            --notes "Kopieren im Terminal ueberarbeitet. Markieren geht jetzt zeichengenau statt nur zeilenweise: lange druecken markiert das Wort unter dem Finger, die Griffe lassen sich Zeichen fuer Zeichen verschieben, ein Tipp im Markier-Modus nimmt wie bisher die ganze Zeile. Links, die Claude ueber mehrere Zeilen umbricht, werden jetzt als ein Link erkannt: ein Tipp darauf oder langes Druecken kopiert die vollstaendige Adresse ohne Zeilenumbrueche und ohne Leerzeichen. Normaler Text behaelt beim Kopieren seine Zeilen." \
             --latest
