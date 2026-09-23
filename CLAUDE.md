@@ -92,6 +92,18 @@ Bildschirm des PCs live aufs Handy, mit Trackpad/Tastatur/Vollbild-Bedienung. Sp
 - `cd mobile && npm run test:mockup` prüft die reinen Rechenfunktionen aus dem markierten
   `TMS-TEST-EXPORT`-Block (27 grün).
 
+## Gemeinsame Zwischenablage (Handy ⇄ Mac)
+Verlauf der letzten 40 Kopien beider Geräte, Server ist die Quelle (`server/src/clipboard/`,
+Datei `~/.tms-terminal/clipboard.json`, Schalter `clipboardSync` in der config, Vorgabe an).
+- **Mac:** `tms-remote-helper --clipboard` pollt `NSPasteboard.changeCount` (0,5 s), meldet
+  `{"clip":{"text":…}}`, nimmt `{"set":"…"}` auf stdin. Verborgene/flüchtige Einträge von
+  Passwort-Managern (`org.nspasteboard.ConcealedType` u. a.) und eigene Schreibvorgänge werden nie gemeldet.
+- **Handy:** Android lässt nur im Vordergrund lesen → gelesen wird beim Öffnen des Verlaufs
+  (`clipboard:open`); In-App-Kopien gehen über `clipboard:write` direkt hin; Mac-Kopien legt die
+  App sofort aufs Handy, solange sie vorne ist (`clipSynced` verhindert das Zurückspielen).
+- **Nachrichten:** `clipboard:list|push|use|delete|clear` → `clipboard:history|added|removed`.
+- Windows: noch kein Beobachter (nur Handy-Kopien im Verlauf).
+
 ## Terminal-Wächter (ptyd)
 Terminals laufen NICHT mehr als Kinder des Servers, sondern in einem abgekoppelten Halteprozess
 (`server/src/terminal/ptyd/daemon.ts`, Socket `~/.tms-terminal/ptyd.sock`, Log `~/.tms-terminal/ptyd.log`).

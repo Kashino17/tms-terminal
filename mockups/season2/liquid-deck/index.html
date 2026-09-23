@@ -1586,6 +1586,29 @@
   .remote-bar > .remote-pad { flex: 1; min-height: 0; height: auto; }
   .remote-pad--mini { min-height: 0; }
   .remote-pad--mini .remote-pad-hint { font-size: 9.5px; }
+  /* Gemeinsame Zwischenablage */
+  .clip-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .clip-head__hint { flex: 1; font-size: 12px; opacity: .6; line-height: 1.35; }
+  .clip-list { display: flex; flex-direction: column; gap: 8px; }
+  .clip-row { border-radius: 12px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.07); overflow: hidden; }
+  .clip-row__main { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left; padding: 10px 12px 6px;
+                    background: transparent; border: 0; color: inherit; font: inherit; }
+  .clip-row__main:active { background: rgba(255,255,255,.06); }
+  .clip-row__meta { display: flex; align-items: center; gap: 8px; font-size: 11px; opacity: .6; }
+  .clip-src { padding: 1px 7px; border-radius: 999px; font-weight: 600; opacity: 1; }
+  .clip-src--mac { background: rgba(90,169,255,.18); color: #9cc9ff; }
+  .clip-src--phone { background: rgba(80,200,140,.16); color: #8fe0b6; }
+  .clip-row__text { font-size: 13px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
+                    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .clip-row__acts { display: flex; justify-content: flex-end; align-items: center; gap: 6px; padding: 0 8px 8px; }
+  .clip-row__del { width: 32px; height: 30px; border-radius: 8px; border: 0; background: transparent; color: inherit; opacity: .5; }
+  /* Kuerzelleiste ueber der Handy-Tastatur: Reihe 1 fest, Reihe 2 scrollt quer. */
+  .remote-keys--bar .rk-row { height: clamp(38px, 5.4vh, 46px); }
+  .rk-row--scroll { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; touch-action: pan-x;
+                    -webkit-overflow-scrolling: touch; }
+  .rk-row--scroll::-webkit-scrollbar { display: none; }
+  .rk-row--scroll .rk { flex: none; min-width: 44px; padding: 0 9px; }
+  .rk-row--scroll .rk.combo { min-width: 60px; }
 
   /* Vollbild fuer angeschlossene Tastatur/Maus: Kopf und Leiste weg, das Bild
      nimmt die ganze Flaeche ein. Manuell umgeschaltet (Knopf/Abzeichen/
@@ -2426,6 +2449,7 @@
     db: '<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6M4 11.5v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
     processes: '<path d="M3 12h4l2 6 4-15 2.5 9H21"/>',
     snippet: '<path d="m8 6-6 6 6 6M16 6l6 6-6 6"/>',
+    clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
     eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
     ports: '<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M8 8V5a4 4 0 0 1 8 0v3M8 14h.01M12 14h.01M16 14h.01"/>',
     camera: '<path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h5L16 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><circle cx="12" cy="12.5" r="3.2"/>',
@@ -3134,6 +3158,7 @@
       +   '<span class="remote-dot" id="remoteDot"></span>'
       +   '<span class="remote-name" id="remoteName">Fernzugriff</span>'
       +   '<span class="remote-stat" id="remoteStat">verbinde …</span>'
+      +   '<button class="icon-btn glass" id="remoteClip" aria-label="Zwischenablage">📋</button>'
       +   '<button class="icon-btn glass" id="remoteFull" aria-label="Vollbild">⤢</button>'
       +   '<button class="icon-btn glass" id="remoteQuit" aria-label="Trennen">✕</button>'
       +   '<div class="remote-nav">' + navHtml + '</div>'
@@ -3151,7 +3176,23 @@
 
     host.querySelector('#remoteSeg').addEventListener('click', function (e) {
       var btn = e.target.closest('[data-page]');
-      if (btn) setRemotePage(btn.dataset.page);
+      if (!btn) return;
+      setRemotePage(btn.dataset.page);
+      // "Tastatur" heisst: die Handy-Tastatur geht auf. Nur hier, im Tipp selbst,
+      // laesst Android das Fokussieren die Tastatur oeffnen.
+      if (btn.dataset.page === 'keys') toggleRemoteIme(true);
+    });
+    host.querySelector('#remoteClip').addEventListener('click', function () {
+      setOrbMenu(false);
+      openClipboardSheet();
+    });
+    // Tasten der Leiste und das Mini-Trackpad duerfen der Handy-Tastatur den
+    // Fokus nicht nehmen — sonst klappt sie bei jedem Kuerzel oder jeder
+    // Zeigerbewegung zu. pointerdown-Default verhindern haelt den Fokus; der
+    // Klick feuert trotzdem, Querscrollen der Leiste bleibt (touch-action).
+    host.addEventListener('pointerdown', function (e) {
+      if (document.activeElement === document.getElementById('remoteIme')
+          && e.target.closest('#remoteBar')) e.preventDefault();
     });
     host.querySelector('#remoteQuit').addEventListener('click', function () {
       // Sondertasten VOR dem Trennen loesen, nicht danach — nach stop() kommen
@@ -3242,9 +3283,6 @@
     var orb = document.getElementById('remoteOrb');
     if (orb) orbPlace(orb);
     setOrbMenu(false);
-    // Auf- und Zuklappen: die Tastatur hat je Breite ein eigenes Layout.
-    if (currentScreen === 'remote' && window.remoteState && window.remoteState.page === 'keys'
-        && (window.innerWidth >= 700) !== remoteKeysWide) setRemotePage('keys');
   });
 
   /**
@@ -3314,31 +3352,25 @@
       + '<div class="remote-pad-btns"><button data-btn="l">Linksklick</button>'
       + '<button data-btn="r">Rechtsklick</button></div></div>';
   }
-  var remoteLayer = 'base';
   var remoteSticky = { MetaLeft: 'off', AltLeft: 'off', ControlLeft: 'off', ShiftLeft: 'off' };
 
-  var remoteKeysWide = false;
+  // Kuerzelleiste (remoteShortcutRows) — geschrieben wird mit der Handy-Tastatur.
   function remoteKeysMarkup() {
-    remoteKeysWide = window.innerWidth >= 700;
-    var rows = remoteKeyRows(remoteLayer, remoteKeysWide).map(function (row) {
-      var keys = row.map(function (key) {
+    var rows = remoteShortcutRows().map(function (row) {
+      var keys = row.keys.map(function (key) {
         var cls = 'rk' + (key.m ? ' mod' : '') + (key.c && remoteSticky[key.c] && remoteSticky[key.c] !== 'off'
           ? ' on' + (remoteSticky[key.c] === 'locked' ? ' locked' : '') : '');
-        var style = key.w ? ' style="flex:' + key.w + '"' : '';
-        // Zeichenebene: Tasten ohne Positionscode (`c`) tragen ihr Zeichen im
-        // Textweg (`s`) statt im data-code — siehe die Erklaerung ueber
-        // remoteKeyRows(). escapeHtml() ist hier PFLICHT, nicht nur Stil: ohne
-        // sie bricht z.B. das Anfuehrungszeichen-Zeichen das Attribut auf.
-        var attr = key.c ? ' data-code="' + key.c + '"' : ' data-text="' + escapeHtml(key.s) + '"';
+        var style = key.w && !row.scroll ? ' style="flex:' + key.w + '"' : '';
+        var attr = ' data-code="' + key.c + '"';
         if (key.combo) { attr += ' data-combo="' + key.combo + '"'; cls += ' combo'; }
         if (key.c === '__ime' && remoteImeOn) cls += ' on';
         return '<button class="' + cls + '"' + attr + style + '>'
              + escapeHtml(key.l) + (key.sub ? '<span class="rk-sub">' + escapeHtml(key.sub) + '</span>' : '')
              + '</button>';
       }).join('');
-      return '<div class="rk-row">' + keys + '</div>';
+      return '<div class="rk-row' + (row.scroll ? ' rk-row--scroll' : '') + '">' + keys + '</div>';
     }).join('');
-    return '<div class="remote-keys" id="remoteKeys">' + rows + '</div>';
+    return '<div class="remote-keys remote-keys--bar" id="remoteKeys">' + rows + '</div>';
   }
 
   function currentMods() {
@@ -3529,8 +3561,8 @@
 
       var code = btn.dataset.code;
 
-      if (code.indexOf('__layer:') === 0) { remoteLayer = code.slice(8); setRemotePage('keys'); return; }
       if (code === '__mic') { if (R) R.dictate(); return; }
+      if (code === '__clip') { openClipboardSheet(); return; }
       if (code === '__ime') { toggleRemoteIme(); return; }
 
       // Kuerzel: Sondertasten runter, Taste tippen, Sondertasten wieder hoch —
@@ -3606,6 +3638,18 @@
       var R = window.TMSRemote;
       var d = remoteImeDiff(imePrev, el.value);
       imePrev = el.value;
+      // Gehaltenes ⌘/ctrl/⌥ + ein getipptes Zeichen = Kuerzel (⌘C, ctrl+C …):
+      // als Tastendruck senden, nicht als Text (der kennt keine Sondertasten).
+      var m0 = currentMods();
+      var one = !imeComposing && d.back === 0 && d.parts.length === 1 && imeKeyFor(d.parts[0]);
+      if (R && one && (m0.c || m0.a || m0.m)) {
+        var mods = { s: m0.s || one.shift, c: m0.c, a: m0.a, m: m0.m };
+        R.input({ t: 'k', c: one.c, d: true, mods: mods });
+        R.input({ t: 'k', c: one.c, d: false, mods: mods });
+        releaseOnceModifiers();
+        imeReset(el);
+        return;
+      }
       if (R) {
         for (var i = 0; i < d.back; i++) {
           R.input({ t: 'k', c: 'Backspace', d: true, mods: currentMods() });
@@ -3984,87 +4028,56 @@
   }
 
   /**
-   * Die Tastenbelegung. `c` ist der KeyboardEvent.code — also die POSITION der
-   * Taste; welches Zeichen dabei herauskommt, entscheidet der Zielrechner mit
-   * seiner eigenen Belegung. Wuerden wir Zeichen schicken, tippte eine deutsche
-   * Handytastatur auf einem englisch eingestellten Mac Y statt Z.
+   * Die Kuerzelleiste ueber der Handy-Tastatur. Geschrieben wird mit der
+   * Tastatur des Handys (Wischtippen, Autokorrektur, alle Zeichen — Textweg);
+   * hier liegt nur, was die nicht hat: Sondertasten, Pfeile, F-Tasten, Kuerzel.
    *
-   * AUSNAHME davon ist die Zeichenebene ('num'): dort SIND die Tasten Zeichen
-   * (Satzzeichen), keine Buchstaben. Fuer die gibt es keine layoutneutrale
-   * Position — z.B. sitzt "[" auf dem US-Code `BracketLeft`, aber genau diese
-   * Position tippt auf einer deutschen Mac-Belegung "ü" (siehe die Grundebene
-   * oben, wo `BracketLeft` schon korrekt als ü beschriftet ist). Ein
-   * Positionscode waere hier also fuer JEDE Zielbelegung falsch bis auf eine.
-   * Darum gehen alle Zeichen ausser den Ziffern ueber den Textweg (`s`, siehe
-   * `x()`): der Mac-Helfer setzt den String direkt als Unicode-Text, unabhaengig
-   * von der eingestellten Tastaturbelegung. Ziffern bleiben Positionscodes,
-   * weil `Digit0`..`Digit9` auf so gut wie jeder Belegung unverschoben Ziffern
-   * liefern.
+   * `c` ist der KeyboardEvent.code — die POSITION der Taste, nicht das Zeichen:
+   * welches Zeichen herauskommt, entscheidet der Mac mit seiner Belegung.
+   * Darum liegt ⌘Z auf KeyY (deutsches Z = US-Y-Position).
+   *
+   * Reihe 1 steht fest (die haeufigsten Tasten), Reihe 2 scrollt quer.
    */
-  function remoteKeyRows(layer, wide) {
-    var mod = function (l, c, w) { var o = { l: l, c: c, sticky: true, m: true }; if (w) o.w = w; return o; };
+  function remoteShortcutRows() {
+    var mod = function (l, c) { return { l: l, c: c, sticky: true, m: true }; };
     var k = function (l, c, w) { return w ? { l: l, c: c, w: w } : { l: l, c: c }; };
-    var x = function (ch, w) { return w ? { l: ch, s: ch, w: w } : { l: ch, s: ch }; };
-    // Kuerzel: Sondertasten (m=⌘ s=⇧ a=⌥ c=ctrl) + Taste in EINEM Anschlag,
-    // `sub` erklaert es in einem Wort. Positionscodes wie ueberall hier — also
-    // fuer die deutsche Mac-Belegung: ⌘Z liegt auf der US-Y-Position (KeyY).
     var sc = function (l, c, combo, sub) { return { l: l, c: c, combo: combo, sub: sub }; };
-
-    if (layer === 'sc') {
-      return [
-        [sc('⌘C','KeyC','m','Kopieren'), sc('⌘V','KeyV','m','Einfügen'), sc('⌘X','KeyX','m','Ausschn.'),
-         sc('⌘Z','KeyY','m','Zurück'), sc('⇧⌘Z','KeyY','ms','Wieder'), sc('⌘A','KeyA','m','Alles')],
-        [sc('⌘⇥','Tab','m','App'), sc('⌘␣','Space','m','Spotlight'), sc('⌘W','KeyW','m','Fenster zu'),
-         sc('⌘Q','KeyQ','m','Beenden'), sc('⌘T','KeyT','m','Tab neu'), sc('⌘S','KeyS','m','Sichern')],
-        [sc('⌃C','KeyC','c','Abbruch'), sc('⌃D','KeyD','c','Ende'), sc('⌃L','KeyL','c','Leeren'),
-         sc('⌃R','KeyR','c','Suche'), sc('⌘F','KeyF','m','Finden'), sc('⌘R','KeyR','m','Neu laden')],
-        [sc('⌥◀','ArrowLeft','a','Wort'), sc('⌥▶','ArrowRight','a','Wort'), sc('⌘◀','ArrowLeft','m','Zeile'),
-         sc('⌘▶','ArrowRight','m','Zeile'), sc('⌃▲','ArrowUp','c','Mission'), sc('⌘⌫','Backspace','m','Zeile weg')],
-        [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
-      ];
-    }
-
-    if (layer === 'fn') {
-      return [
-        [k('F1','F1'), k('F2','F2'), k('F3','F3'), k('F4','F4'), k('F5','F5'), k('F6','F6')],
-        [k('F7','F7'), k('F8','F8'), k('F9','F9'), k('F10','F10'), k('F11','F11'), k('F12','F12')],
-        [k('Pos1','Home'), k('Ende','End'), k('Bild ↑','PageUp'), k('Bild ↓','PageDown'), k('Entf','Delete')],
-        [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
-      ];
-    }
-    if (layer === 'num') {
-      return [
-        [k('1','Digit1'), k('2','Digit2'), k('3','Digit3'), k('4','Digit4'), k('5','Digit5'),
-         k('6','Digit6'), k('7','Digit7'), k('8','Digit8'), k('9','Digit9'), k('0','Digit0')],
-        [x('-'), x('_'), x('='), x('+'), x('$'), x('/'), x('\\'), x('|'), x('~')],
-        [x('['), x(']'), x('{'), x('}'), x('('), x(')'), x('<'), x('>'), x('*')],
-        [x(':'), x(';'), x('"'), x('\''), x(','), x('.'), x('!'), x('?'), k('⌫','Backspace', 1.5)],
-        [x('@'), x('#'), x('%'), x('&'), x('^'), x('`'), x('ß'), x('€'), x('§'), x('°')],
-        [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
-      ];
-    }
-    // Grundebene wie eine Mac-Tastatur: Sondertasten neben der Leertaste, die
-    // Pfeile oben in der Werkzeugreihe statt in einer eigenen Reihe (mehr Hoehe
-    // fuer die Buchstaben). Aufgeklappt (wide) zusaetzlich eine Ziffernreihe.
-    var rows = [
-      [k('esc','Escape'), k('⌘…','__layer:sc'), k('F…','__layer:fn'), k('↹','Tab'),
-       k('◀','ArrowLeft'), k('▲','ArrowUp'), k('▼','ArrowDown'), k('▶','ArrowRight')],
-      // z und y: Positionscodes der DEUTSCHEN Mac-Belegung (wie ü/ö/ä). Das
-      // deutsche z sitzt auf der US-Y-Position — mit KeyZ tippte der Mac "y".
-      [k('q','KeyQ'), k('w','KeyW'), k('e','KeyE'), k('r','KeyR'), k('t','KeyT'), k('z','KeyY'),
-       k('u','KeyU'), k('i','KeyI'), k('o','KeyO'), k('p','KeyP'), k('ü','BracketLeft')],
-      [k('a','KeyA'), k('s','KeyS'), k('d','KeyD'), k('f','KeyF'), k('g','KeyG'), k('h','KeyH'),
-       k('j','KeyJ'), k('k','KeyK'), k('l','KeyL'), k('ö','Semicolon'), k('ä','Quote')],
-      [mod('⇧','ShiftLeft', 1.4), k('y','KeyZ'), k('x','KeyX'), k('c','KeyC'), k('v','KeyV'),
-       k('b','KeyB'), k('n','KeyN'), k('m','KeyM'), k('⌫','Backspace', 1.4)],
-      [k('123','__layer:num', 1.3), mod('ctrl','ControlLeft'), mod('⌥','AltLeft'), mod('⌘','MetaLeft'),
-       k('␣','Space', 3.2), k('⌨','__ime'), k('🎙','__mic'), k('⏎','Enter', 1.5)],
+    var fkeys = [];
+    for (var i = 1; i <= 12; i++) fkeys.push(k('F' + i, 'F' + i));
+    return [
+      { keys: [k('esc', 'Escape'), k('⇥', 'Tab'), mod('⇧', 'ShiftLeft'), mod('ctrl', 'ControlLeft'),
+        mod('⌥', 'AltLeft'), mod('⌘', 'MetaLeft'), k('◀', 'ArrowLeft'), k('▲', 'ArrowUp'),
+        k('▼', 'ArrowDown'), k('▶', 'ArrowRight')] },
+      { scroll: true, keys: [
+        k('⌨', '__ime'), k('📋', '__clip'), k('🎙', '__mic'), k('⏎', 'Enter'), k('⌫', 'Backspace'),
+        sc('⌘C', 'KeyC', 'm', 'Kopieren'), sc('⌘V', 'KeyV', 'm', 'Einfügen'), sc('⌘X', 'KeyX', 'm', 'Ausschn.'),
+        sc('⌘Z', 'KeyY', 'm', 'Zurück'), sc('⇧⌘Z', 'KeyY', 'ms', 'Wieder'), sc('⌘A', 'KeyA', 'm', 'Alles'),
+        sc('⌘F', 'KeyF', 'm', 'Finden'), sc('⌘S', 'KeyS', 'm', 'Sichern'), sc('⌘T', 'KeyT', 'm', 'Tab neu'),
+        sc('⌘W', 'KeyW', 'm', 'Schließen'), sc('⌘Q', 'KeyQ', 'm', 'Beenden'), sc('⌘R', 'KeyR', 'm', 'Neu laden'),
+        sc('⌘⇥', 'Tab', 'm', 'App'), sc('⌘␣', 'Space', 'm', 'Spotlight'),
+        sc('⌃C', 'KeyC', 'c', 'Abbruch'), sc('⌃D', 'KeyD', 'c', 'Ende'), sc('⌃L', 'KeyL', 'c', 'Leeren'),
+        sc('⌃R', 'KeyR', 'c', 'Suche'),
+        sc('⌥◀', 'ArrowLeft', 'a', 'Wort'), sc('⌥▶', 'ArrowRight', 'a', 'Wort'),
+        sc('⌘◀', 'ArrowLeft', 'm', 'Zeile'), sc('⌘▶', 'ArrowRight', 'm', 'Zeile'), sc('⌘⌫', 'Backspace', 'm', 'Zeile weg'),
+      ].concat(fkeys, [k('Pos1', 'Home'), k('Ende', 'End'), k('Bild ↑', 'PageUp'), k('Bild ↓', 'PageDown'),
+        k('Entf', 'Delete')]) },
     ];
-    if (wide) {
-      rows.splice(1, 0, [k('1','Digit1'), k('2','Digit2'), k('3','Digit3'), k('4','Digit4'), k('5','Digit5'),
-        k('6','Digit6'), k('7','Digit7'), k('8','Digit8'), k('9','Digit9'), k('0','Digit0'), x('ß')]);
-    }
-    return rows;
+  }
+
+  /**
+   * Ein auf der Handy-Tastatur getipptes Zeichen als Tastendruck — nur fuer
+   * Kuerzel gebraucht: bei gehaltenem ⌘/ctrl/⌥ muss aus "c" ein ⌘C werden,
+   * der Textweg kennt keine Sondertasten. Deutsche Mac-Belegung: z liegt auf
+   * KeyY und y auf KeyZ. Grossbuchstaben bringen ⇧ mit. null = kein Kuerzel.
+   */
+  function imeKeyFor(ch) {
+    if (typeof ch !== 'string' || ch.length !== 1) return null;
+    if (ch === ' ') return { c: 'Space', shift: false };
+    if (/[0-9]/.test(ch)) return { c: 'Digit' + ch, shift: false };
+    if (!/[a-zA-Z]/.test(ch)) return null;
+    var lower = ch.toLowerCase();
+    var pos = lower === 'z' ? 'Y' : lower === 'y' ? 'Z' : lower.toUpperCase();
+    return { c: 'Key' + pos, shift: ch !== lower };
   }
 
   /** Legt ein w×h grosses Bild seitenrichtig in eine Flaeche und zentriert es. */
@@ -4216,7 +4229,8 @@
     window.fitRect = fitRect;
     window.toStageNormalized = toStageNormalized;
     window.classifyPadTap = classifyPadTap;
-    window.remoteKeyRows = remoteKeyRows;
+    window.remoteShortcutRows = remoteShortcutRows;
+    window.imeKeyFor = imeKeyFor;
     window.clampZoom = clampZoom;
     window.clampPan = clampPan;
     window.holdShouldAbort = holdShouldAbort;
@@ -4528,6 +4542,7 @@
             <button class="tt-key tt-key--icon" data-tt-tool="screenshots" aria-label="Screenshots" title="Screenshots">${icon('camera', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="files" aria-label="Dateien" title="Dateien">${icon('folder', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="notes" aria-label="Notizen" title="Notizen">${icon('note', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-tool="clipboard" aria-label="Zwischenablage" title="Zwischenablage">${icon('clipboard', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-key="werkzeuge" aria-label="Alle Werkzeuge" title="Alle Werkzeuge">${icon('tools', 17)}</button>
           </div>
         </div>`;
@@ -6324,6 +6339,7 @@
     { id: 'processes', code: 'PS', icon: 'processes', label: 'Prozesse' },
     { id: 'snippets', code: 'SN', icon: 'snippet', label: 'Snippets' },
     { id: 'notes', code: 'NT', icon: 'note', label: 'Notizen' },
+    { id: 'clipboard', code: 'CB', icon: 'clipboard', label: 'Zwischenablage' },
     { id: 'screenshots', code: 'SC', icon: 'camera', label: 'Screenshots' },
     { id: 'browser', code: 'BR', icon: 'browser', label: 'Browser' },
     { id: 'watchers', code: 'WA', icon: 'eye', label: 'Watchers' },
@@ -6357,6 +6373,7 @@
     const builders = {
       files: buildFilesSheet, sql: buildSqlSheet, ports: buildPortsSheet, processes: buildProcessesSheet,
       snippets: buildSnippetsSheet, notes: buildNotesSheet, screenshots: buildScreenshotsSheet,
+      clipboard: buildClipboardSheet,
       watchers: buildWatchersSheet,
     };
     if (!def || !builders[id]) return;
@@ -6980,6 +6997,111 @@
       </div>`).join('');
     return { html };
   }
+
+  // ── Gemeinsame Zwischenablage (Handy ⇄ Mac) ─────────────────────────────
+  // Die letzten 40 Kopien von beiden Geraeten. In der App fuellt bridge.js
+  // window.__clipItems aus dem Server-Verlauf und ersetzt die clip*-Aktionen;
+  // hier steht nur Darstellung plus eine Demo fuer den Mockup allein.
+  window.__clipItems = [
+    { id: 'd1', text: 'npm run build:season2', source: 'mac', at: Date.now() - 60e3 },
+    { id: 'd2', text: 'https://tms-solvado.com/admin/orders?status=open', source: 'phone', at: Date.now() - 3600e3 },
+    { id: 'd3', text: 'Hallo Kai,\ndanke für die schnelle Rückmeldung!', source: 'mac', at: Date.now() - 86400e3 },
+  ];
+  function clipAgo(at) {
+    const s = Math.max(0, Math.round((Date.now() - at) / 1000));
+    if (s < 60) return 'gerade eben';
+    if (s < 3600) return 'vor ' + Math.round(s / 60) + ' min';
+    if (s < 86400) return 'vor ' + Math.round(s / 3600) + ' h';
+    if (s < 172800) return 'gestern';
+    const d = new Date(at);
+    return d.getDate() + '.' + (d.getMonth() + 1) + '.';
+  }
+  /** "Einfügen" meint, wo man gerade ist: am Mac (Fernzugriff) oder im Terminal. */
+  function clipPasteTarget() {
+    if (currentScreen === 'remote') return { where: 'remote', label: 'Am Mac einfügen' };
+    const id = typeof dockTargetId === 'function' ? dockTargetId() : null;
+    return id ? { where: 'term', id, label: 'Ins Terminal' } : null;
+  }
+  function clipListHtml() {
+    const items = window.__clipItems || [];
+    if (!items.length) return '<div class="sheet-empty-hint">Noch nichts kopiert — kopiere etwas am Mac oder hier in der App.</div>';
+    const target = clipPasteTarget();
+    return items.map(it => `
+      <div class="clip-row" data-clip-id="${escapeHtml(it.id)}">
+        <button class="clip-row__main" data-clip-act="copy">
+          <span class="clip-row__meta"><span class="clip-src clip-src--${it.source === 'mac' ? 'mac' : 'phone'}">${it.source === 'mac' ? '💻 Mac' : '📱 Handy'}</span>${escapeHtml(clipAgo(it.at))}${it.text.length > 400 ? ' · ' + it.text.length + ' Zeichen' : ''}</span>
+          <span class="clip-row__text">${escapeHtml(it.text.slice(0, 400))}</span>
+        </button>
+        <div class="clip-row__acts">
+          ${target ? `<button class="btn-chip" data-clip-act="paste">${target.label}</button>` : ''}
+          <button class="clip-row__del" data-clip-act="delete" aria-label="Löschen">✕</button>
+        </div>
+      </div>`).join('');
+  }
+  function buildClipboardSheet() {
+    const html = `
+      <div class="clip-head">
+        <span class="clip-head__hint">Handy ⇄ Mac · die letzten 40 · Antippen kopiert auf beide</span>
+        <button class="btn-chip" data-clip-act="clear">Leeren</button>
+      </div>
+      <div class="clip-list" id="clipList">${clipListHtml()}</div>`;
+    const wire = () => {
+      const body = document.getElementById('toolSheetBody');
+      // onclick statt addEventListener: #toolSheetBody bleibt ueber alle
+      // Sheets bestehen — Zuhoerer wuerden sich sonst bei jedem Oeffnen stapeln.
+      body.onclick = e => {
+        const btn = e.target.closest('[data-clip-act]');
+        if (!btn) return;
+        const act = btn.dataset.clipAct;
+        if (act === 'clear') { if ((window.__clipItems || []).length) window.clipClear(); return; }
+        const row = btn.closest('[data-clip-id]');
+        const item = row && (window.__clipItems || []).find(x => x.id === row.dataset.clipId);
+        if (!item) return;
+        if (act === 'copy') { window.clipUse(item); toast('Auf Handy und Mac kopiert'); }
+        else if (act === 'delete') window.clipDelete(item.id);
+        else if (act === 'paste') window.clipPaste(item);
+      };
+      window.clipOnOpen();
+    };
+    return { html, wire };
+  }
+  function openClipboardSheet() { openToolSheet('clipboard'); }
+  window.openClipboardSheet = openClipboardSheet;
+  /** Neu zeichnen, falls der Verlauf gerade offen ist (bridge.js ruft das bei jeder Aenderung). */
+  window.clipRender = function () {
+    const el = document.getElementById('clipList');
+    if (el) el.innerHTML = clipListHtml();
+  };
+  // Aktionen — bridge.js ersetzt sie durch echte (Server + Handy-Zwischenablage).
+  window.clipOnOpen = function () {};
+  window.clipUse = function () {};
+  window.clipDelete = function (id) {
+    window.__clipItems = window.__clipItems.filter(x => x.id !== id); window.clipRender();
+  };
+  window.clipClear = function () { window.__clipItems = []; window.clipRender(); };
+  window.clipPaste = function (item) {
+    const target = clipPasteTarget();
+    if (!target) return;
+    closeSheet(document.getElementById('toolSheetWrap'));
+    if (target.where === 'remote') {
+      // Erst auf den Mac legen, dann ⌘V — das Setzen laeuft ueber die
+      // Hauptverbindung, der Tastendruck ueber die Fernzugriff-Verbindung.
+      window.clipUse(item);
+      setTimeout(() => {
+        const R = window.TMSRemote;
+        if (!R) return;
+        const mods = { s: false, c: false, a: false, m: true };
+        R.input({ t: 'k', c: 'MetaLeft', d: true, mods });
+        R.input({ t: 'k', c: 'KeyV', d: true, mods });
+        R.input({ t: 'k', c: 'KeyV', d: false, mods });
+        R.input({ t: 'k', c: 'MetaLeft', d: false, mods });
+      }, 450);
+      toast('Am Mac eingefügt');
+    } else {
+      if (typeof window.__tmsInput === 'function') window.__tmsInput(target.id, item.text);
+      toast('Ins Terminal eingefügt');
+    }
+  };
 
   function buildScreenshotsSheet() {
     const html = `
