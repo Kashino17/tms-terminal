@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { createPty } from './terminal.factory';
-import { TerminalSession, CreateSessionOptions } from './terminal.types';
+import { TerminalSession, CreateSessionOptions, PtyLike } from './terminal.types';
 import { readProcessCwd, readForegroundProcess } from './cwd.utils';
 import { planReattach, wantsSnapshot, CLEAR_SEQUENCE } from './reattach.policy';
 import { SessionMirror, type ScreenView } from './emulator.mirror';
@@ -10,7 +10,6 @@ import { config } from '../config';
 type OutputCallback = (sessionId: string, data: string) => void;
 type CloseCallback = (sessionId: string, exitCode: number) => void;
 
-const IDLE_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
 const REATTACH_BUFFER_MAX = 300_000; // 300 KB — captured while client is away
 const OUTPUT_BUFFER_FLUSH_SIZE = 8192; // 8 KB — flush immediately when buffer exceeds this
 const MAX_SESSIONS = 50;
@@ -32,7 +31,6 @@ export class TerminalManager {
   /** Detach-Puffer ist übergelaufen — sein Anfang wurde abgeschnitten. */
   private reattachOverflow = new Set<string>();
   private outputTimers = new Map<string, NodeJS.Timeout>();
-  private idleTimers = new Map<string, NodeJS.Timeout>();
   private batchIntervals = new Map<string, number>();  // per-session adaptive batch interval (ms)
   private lastInputAt = new Map<string, number>();     // last real user keystroke — gates the echo fast-path
   private attachGen = new Map<string, number>();       // monotonic generation counter — prevents stale detach
@@ -102,13 +100,40 @@ export class TerminalManager {
     // Eine vorgegebene ID kommt nur von der Wiederherstellung nach einem
     // Neustart — die App findet ihre Reiter über genau diese ID wieder.
     const id = options.id ?? uuidv4();
-    const pty = createPty(options.cols, options.rows, { TMS_SESSION_ID: id }, options.cwd);
+    const pty = createPty(options.cols, options.rows, { TMS_SESSION_ID: id }, options.cwd, id);
+    const session = this.wireSession(id, pty, options.cols, options.rows, onOutput, onClose);
+    logger.success(`Session created: ${id}`);
+    return session;
+  }
 
+  /**
+   * Take over a terminal that kept running in the terminal keeper daemon
+   * while this server was gone (restart, update, crash). Same wiring as a
+   * fresh session — the shell and whatever runs in it (Claude) never noticed.
+   * Starts detached: output buffers until a client reattaches, exactly like
+   * after a disconnect.
+   */
+  adoptSession(id: string, pty: PtyLike, cols: number, rows: number): TerminalSession {
+    const session = this.wireSession(id, pty, cols, rows, () => {}, () => {});
+    this.detachSession(id);
+    logger.success(`Session adopted: ${id} (pid ${pty.pid})`);
+    return session;
+  }
+
+  private wireSession(
+    id: string,
+    pty: PtyLike,
+    cols: number,
+    rows: number,
+    onOutput: OutputCallback,
+    onClose: CloseCallback,
+  ): TerminalSession {
+    const options = { cols, rows };
     const session: TerminalSession = {
       id,
       pty,
-      cols: options.cols,
-      rows: options.rows,
+      cols,
+      rows,
       createdAt: new Date(),
     };
 
@@ -192,7 +217,6 @@ export class TerminalManager {
     // Die Startgröße IST schon angewandt — sonst hebt der erste identische
     // Resize des Clients ein unnötiges SIGWINCH (und damit einen Voll-Repaint).
     this.appliedDims.set(id, { cols: options.cols, rows: options.rows });
-    logger.success(`Session created: ${id}`);
     return session;
   }
 
@@ -237,15 +261,11 @@ export class TerminalManager {
       // Keep prompt detector alive for server-side auto-approve + FCM notifications
       this.detachFeedCallback?.(sessionId, data);
     });
-
-    // Start idle timer — kill if nobody reconnects within 4 hours
-    const existing = this.idleTimers.get(sessionId);
-    if (existing) clearTimeout(existing);
-    const timer = setTimeout(() => {
-      logger.info(`Session ${sessionId} idle timeout — closing`);
-      this.closeSession(sessionId);
-    }, IDLE_TIMEOUT_MS);
-    this.idleTimers.set(sessionId, timer);
+    // No idle timeout any more. A detached terminal used to be killed after
+    // four hours without a reconnect — overnight, with the phone asleep, that
+    // took every terminal and the Claude session inside it down at once
+    // (update.log: 20 such kills, five in the same second on 2026-08-01).
+    // A terminal now ends only when the user closes it.
   }
 
   /** Get a summary of missed output for a detached session. */
@@ -276,10 +296,6 @@ export class TerminalManager {
   ): TerminalSession | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
-
-    // Cancel idle timer
-    const idleTimer = this.idleTimers.get(sessionId);
-    if (idleTimer) { clearTimeout(idleTimer); this.idleTimers.delete(sessionId); }
 
     // Advance the attach generation — any pending detach with the old gen becomes a no-op
     const nextGen = (this.attachGen.get(sessionId) ?? 0) + 1;
@@ -465,6 +481,15 @@ export class TerminalManager {
     }
   }
 
+  /**
+   * Server shutdown while the terminal keeper holds the terminals: forget them
+   * here WITHOUT killing anything — the next server adopts them. (Without the
+   * keeper, shutdown still has to closeAllSessions(): the PTYs are our children.)
+   */
+  releaseAllSessions(): void {
+    for (const id of [...this.sessions.keys()]) this._cleanup(id);
+  }
+
   detachAllSessions(): void {
     for (const [id] of this.sessions) {
       this.detachSession(id);
@@ -525,8 +550,6 @@ export class TerminalManager {
     this.attachedIds.delete(sessionId);
     const t = this.outputTimers.get(sessionId);
     if (t) { clearTimeout(t); this.outputTimers.delete(sessionId); }
-    const i = this.idleTimers.get(sessionId);
-    if (i) { clearTimeout(i); this.idleTimers.delete(sessionId); }
     const r = this.resizeTimers.get(sessionId);
     if (r) { clearTimeout(r); this.resizeTimers.delete(sessionId); }
     this.appliedDims.delete(sessionId);
