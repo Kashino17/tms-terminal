@@ -16,7 +16,7 @@ function loadBlock(name) {
   const re = new RegExp(`// ── TMS-TEST-EXPORT: ${name} ──([\\s\\S]*?)// ── /TMS-TEST-EXPORT ──`);
   const m = re.exec(html);
   assert.ok(m, `Block "${name}" fehlt im Mockup — Markierungen nicht entfernen`);
-  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows, clampZoom, clampPan, holdShouldAbort, remoteImeDiff };`)();
+  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows, clampZoom, clampPan, holdShouldAbort, remoteImeDiff, remoteAltsFor };`)();
 }
 
 test('der markierte Block laesst sich laden', () => {
@@ -271,4 +271,14 @@ test('Handy-Tastatur: Tippen, Autokorrektur, Rueckschritt, Enter', () => {
   assert.deepEqual(remoteImeDiff(Z, ''), { back: 1, parts: [''] }, 'Rueckschritt bei leerem Feld loescht den Platzhalter');
   assert.deepEqual(remoteImeDiff(Z + 'ls', Z + 'ls\n'), { back: 0, parts: ['', ''] }, 'Enter');
   assert.deepEqual(remoteImeDiff(Z, Z + 'Hallo Welt'), { back: 0, parts: ['Hallo Welt'] }, 'Wischtippen: ganzes Wort');
+});
+
+test('langes Halten: Varianten wie auf der Handy-Tastatur', () => {
+  const { remoteAltsFor } = loadBlock('remoteMath');
+  assert.ok(remoteAltsFor('s').includes('ß'), 's → ß');
+  assert.equal(remoteAltsFor('a')[0], 'ä', 'Umlaut zuerst');
+  assert.equal(remoteAltsFor('a', true)[0], 'Ä', 'mit ⇧ gross');
+  assert.equal(remoteAltsFor('s', true)[0], 'ẞ', 'ß gross ist ẞ, nicht SS');
+  assert.ok(remoteAltsFor('"').includes('„'), 'deutsche Anfuehrungszeichen');
+  assert.deepEqual(remoteAltsFor('x'), [], 'ohne Varianten: nichts');
 });
