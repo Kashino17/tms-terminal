@@ -12,6 +12,10 @@ export interface ServerConfig {
   port: number;
   certFingerprint?: string;
   jwtExpiry?: string;
+  /** Remote access (mirror and control the screen). Default: on. */
+  remoteEnabled?: boolean;
+  /** Shared clipboard between phone and Mac (history of the last 40 copies). Default: on. */
+  clipboardSync?: boolean;
 }
 
 export const config = {
@@ -53,4 +57,9 @@ export function saveServerConfig(cfg: Partial<ServerConfig>): void {
   const existing = loadServerConfig();
   const merged = { ...existing, ...cfg };
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(merged, null, 2), { mode: 0o600 });
+}
+
+/** Remote control is the most powerful thing this server does — one switch to kill it. */
+export function isRemoteEnabled(): boolean {
+  return loadServerConfig().remoteEnabled !== false;
 }

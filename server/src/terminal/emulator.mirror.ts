@@ -65,6 +65,8 @@ export class SessionMirror {
   }
 
   get cols(): number { return this.term.cols; }
+  /** Hat das Programm Bracketed Paste eingeschaltet (DECSET 2004)? Siehe paste.policy.ts. */
+  get bracketedPasteMode(): boolean { return this.term.modes.bracketedPasteMode; }
   get rows(): number { return this.term.rows; }
 
   /**

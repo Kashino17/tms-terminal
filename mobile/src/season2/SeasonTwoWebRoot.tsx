@@ -20,6 +20,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useSettingsStore } from '../store/settingsStore';
 import { useTerminalStore } from '../store/terminalStore';
+import { isUserTitle } from '../store/tabIdentity';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
 import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '../services/notifications.service';
@@ -122,11 +123,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
   /** FIFO der terminal:create-Anfragen — der Server antwortet in Reihenfolge.
    *  Ein Einzelwert ordnete bei mehreren gleichzeitigen Creates falsch zu. */
-  const pendingCards = useRef<Array<{ cardId: string; name?: string }>>([]);
+  const pendingCards = useRef<Array<{ cardId: string; name?: string; custom?: boolean }>>([]);
   /** cardId whose mic is currently recording. */
   const micCard = useRef<string | null>(null);
   /** Set when the user cancels: the recording still stops, its text is dropped. */
   const micDiscard = useRef(false);
+  // Gemeinsame Zwischenablage: der zuletzt abgeglichene Text. Was die App selbst
+  // aufs Handy gelegt hat (vom Mac kommend), darf beim nächsten Lesen nicht als
+  // „am Handy kopiert“ zurück in den Verlauf.
+  const clipSynced = useRef('');
   const restored = useRef(false);
   /** Per-session "is it still producing output" timers — the server has no
    *  status event, so the state has to be derived from the stream itself. */
@@ -323,7 +328,29 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     // sonst unterdrückt es die erste Meldung nach einem Reload.
     sessionStatus.current = {};
 
+    /** Titel vom Server in den Speicher UND auf die Karte. */
+    const applyServerTitle = (sessionId: string, title: string) => {
+      const st = useTerminalStore.getState();
+      const tab = st.getTabs(server.id).find((t) => t.sessionId === sessionId);
+      if (tab && (tab.title !== title || !tab.customTitle)) st.updateTab(server.id, tab.id, { title, customTitle: true });
+      call('setCardTitle', sessionId, title);
+    };
+
     const unsub = wsService.addMessageListener((m: any) => {
+      // ── Gemeinsame Zwischenablage (server/src/clipboard) ──
+      if (m?.type === 'clipboard:history') { call('clipboardSet', m.payload?.items ?? []); return; }
+      if (m?.type === 'clipboard:removed') { call('clipboardRemoved', m.payload?.ids ?? []); return; }
+      if (m?.type === 'clipboard:added' && m.payload?.item) {
+        const item = m.payload.item;
+        call('clipboardAdded', item, m.payload.removed ?? []);
+        // Am Mac kopiert → liegt sofort auch auf dem Handy (nur solange die App
+        // vorne ist; im Hintergrund lässt Android das ohnehin nicht zu).
+        if (item.source === 'mac' && AppState.currentState === 'active' && typeof item.text === 'string') {
+          clipSynced.current = item.text;
+          Clipboard.setStringAsync(item.text).catch(() => {});
+        }
+        return;
+      }
       if (m?.type === 'terminal:output' && m.sessionId && m.payload?.data) {
         recordViewBuffer(m.sessionId, m.payload.data);
         appendScrollback(m.sessionId, m.payload.data);
@@ -343,16 +370,52 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('assertDims', m.sessionId);
         return;
       }
+      // ── Titel: der Server ist die Quelle der Wahrheit (titles.store.ts) ──
+      if (m?.type === 'terminal:titles') {
+        const serverTitles: Record<string, string> = m.payload?.titles ?? {};
+        for (const [sid, title] of Object.entries(serverTitles)) applyServerTitle(sid, title);
+        // Einmaliges Hochladen: Titel, die bisher nur auf diesem Handy lagen
+        // (vor dem Server-Speicher vergeben), gehen so nicht verloren.
+        for (const tab of useTerminalStore.getState().getTabs(server.id)) {
+          if (tab.sessionId && !(tab.sessionId in serverTitles) && isUserTitle(tab)) {
+            wsService.send({ type: 'terminal:rename', sessionId: tab.sessionId, payload: { title: tab.title } } as never);
+          }
+        }
+        return;
+      }
+      if (m?.type === 'terminal:title' && m.sessionId) {
+        if (typeof m.payload?.title === 'string' && m.payload.title) applyServerTitle(m.sessionId, m.payload.title);
+        return;
+      }
       if (m?.type === 'terminal:created' && m.sessionId) {
+        // Vom Manager angelegt: das ist KEINE Antwort auf eine unserer Karten.
+        // Vorher verbrauchte es die naechste wartende Karte — legte man gerade
+        // selbst ein Terminal an, landeten Sitzung und Titel ueber Kreuz.
+        if (m.payload?.fromManager) {
+          const label = typeof m.payload?.label === 'string' && m.payload.label ? m.payload.label : 'Terminal';
+          useTerminalStore.getState().addTab(server.id, {
+            id: m.sessionId, sessionId: m.sessionId, title: label, serverId: server.id, active: false,
+          });
+          call('restoreSessions', [{ sessionId: m.sessionId, name: label }]);
+          return;
+        }
         const pending = pendingCards.current.shift();
         const cardId = pending?.cardId ?? null;
+        // Reiter-ID = Sitzungs-ID, NIE die Karten-ID der Seite: die zaehlt nach
+        // jedem App-Start wieder ab t1 und kollidierte mit gespeicherten Reitern
+        // (vertauschte, doppelte, verlorene Titel — siehe store/tabIdentity.ts).
         useTerminalStore.getState().addTab(server.id, {
-          id: cardId ?? m.sessionId,
+          id: m.sessionId,
           sessionId: m.sessionId,
-          title: pending?.name ?? cardId ?? 'Terminal',
+          title: pending?.name ?? 'Terminal',
+          customTitle: pending?.custom || undefined,
           serverId: server.id,
           active: true,
         });
+        // Vor dem Anlegen schon umbenannt: jetzt, wo die Sitzung existiert, zum Server.
+        if (pending?.custom && pending.name) {
+          wsService.send({ type: 'terminal:rename', sessionId: m.sessionId, payload: { title: pending.name } } as never);
+        }
         if (cardId) {
           call('bindSession', cardId, m.sessionId);
           sheets.pushNotes(cardId);
@@ -468,6 +531,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
     });
+    // Die Titelliste schickt der Server schon beim Verbinden — womöglich bevor
+    // dieser Empfänger stand (Kaltstart: Seite lädt langsamer als der Socket).
+    wsService.send({ type: 'terminal:titles_get' } as never);
+    wsService.send({ type: 'clipboard:list' } as never);
     return unsub;
   }, [wsService, server, ready, call, markBusy, setSessionStatus]);
 
@@ -498,6 +565,34 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     const sub = AppState.addEventListener('change', (s) => { if (s === 'active') jump(); });
     return () => sub.remove();
   }, [ready, call]);
+
+  // Fernzugriff: im Hintergrund ist die Aufnahme reine Verschwendung — sie kostet
+  // auf dem PC Rechenzeit und hier Akku. Das browserseitige visibilitychange ist
+  // im Android-WebView dafür unzuverlässig (feuert nicht sicher, wenn nur die
+  // Activity pausiert), darum hier über AppState statt auf der Seite selbst.
+  // window.TMSRemote sitzt bewusst NICHT unter window.TMSBridge (die Seite ruft
+  // es auch selbst auf, siehe index.html) — deshalb hier direkt statt über
+  // call() angesprochen.
+  //
+  // I7: hier NICHT start()/stop() rufen. Nach einem expliziten "Trennen" auf
+  // der Seite bleiben remoteTarget (die Zugangsdaten) gesetzt — die Kommentar-
+  // Annahme "start()/stop() sind ohne Ziel ein No-op" stimmt dann nicht mehr,
+  // start() baut eine echte neue Verbindung auf. Kommt die App danach aus dem
+  // Hintergrund zurück, würde ein unbedingtes start() also eine NEUE Aufnahme
+  // samt Energie-Assertion auf dem PC anwerfen, obwohl der Nutzer die Sitzung
+  // langst beendet hat und nirgends in der Nähe des Fernzugriffs-Bildschirms
+  // ist. suspend()/resume() (bridge.js) machen dieselbe Pause/Fortsetzung,
+  // aber resume() setzt nur fort, was VORHER tatsächlich lief (wantRunning).
+  useEffect(() => {
+    if (!ready) return;
+    const sub = AppState.addEventListener('change', (s) => {
+      const js = s === 'active'
+        ? 'window.TMSRemote && window.TMSRemote.resume(); true;'
+        : 'window.TMSRemote && window.TMSRemote.suspend(); true;';
+      webRef.current?.injectJavaScript(js);
+    });
+    return () => sub.remove();
+  }, [ready]);
 
   useEffect(() => () => {
     Object.values(idleTimers.current).forEach(clearTimeout);
@@ -675,13 +770,20 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // Manager-Diktat landet in der Eingabezeile zum Prüfen/Ändern, nicht
       // sofort gesendet — sonst könnte man ein Fehl-Transkript nicht mehr fangen.
       if (card === MANAGER_MIC) call('injectManagerInput', text);
-      else call('dictationResult', card ?? '', text);
+      // Fernzugriff-Diktat geht nicht über TMSBridge (window.TMSRemote sitzt
+      // bewusst daneben, siehe bridge.js) — direkt in die Seite injiziert.
+      else if (card === REMOTE_MIC) {
+        webRef.current?.injectJavaScript(
+          `window.TMSRemote && window.TMSRemote.input(${JSON.stringify({ t: 'x', s: text })}); true;`
+        );
+      } else call('dictationResult', card ?? '', text);
     },
     onError: (msg: string) => {
       const card = micCard.current;
       micCard.current = null;
       micDiscard.current = false;
       if (card === MANAGER_MIC) call('managerMicStopped');
+      else if (card === REMOTE_MIC) { /* Seite zeigt ohnehin nur den Mikro-Zustand, kein eigener Reset noetig */ }
       else call('dictationResult', card ?? '', '');
       call('toast', msg);
     },
@@ -726,6 +828,17 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           ],
         });
       })();
+      return;
+    }
+
+    // Der Fernzugriff-Knopf kann auf einer Karte stehen, die pushServers() über
+    // ihre eigene Gesundheitsabfrage bereits als "online" markiert hat, obwohl
+    // hier unten noch keine Verbindung steht (z. B. direkt nach Kaltstart,
+    // server === null). Ohne diesen Hinweis drückt man ihn und es passiert
+    // sichtbar nichts. Nur dieser eine Fall — die allgemeine Wächterzeile
+    // darunter bleibt für alle anderen Nachrichten unverändert.
+    if (type === 'remote:open' && (!wsService || !server)) {
+      call('toast', 'Erst mit dem Server verbinden, dann Fernzugriff öffnen');
       return;
     }
 
@@ -784,11 +897,37 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
 
-      case 'mic:start':
-        micCard.current = payload.cardId;
+      case 'mic:start': {
+        // Fernzugriff-Diktat (window.TMSRemote.dictate() in bridge.js) schickt
+        // { target: 'remote' } statt einer cardId — der erkannte Text geht dann
+        // an die Seite zurueck statt in ein Terminal.
+        const wantsTarget = payload?.target === 'remote' ? REMOTE_MIC : payload.cardId;
+        // Es gibt nur EINEN Aufnehmer — toggleMic() ist ein echter Umschalter,
+        // kein "start". Laeuft schon eine Aufnahme (recording ODER processing,
+        // also auch waehrend des Hochladens) fuer ein ANDERES Ziel, wuerde
+        // toggleMic() sie stoppen, aber micCard.current stuende hier drunter
+        // schon auf dem NEUEN Ziel — der transkribierte Text landete beim
+        // falschen Empfaenger (im schlimmsten Fall als Tastatureingabe auf
+        // dem PC). Darum abweisen statt umschalten.
+        //
+        // I14: die Fernzugriffs-Tastatur hat nur einen Mikrofon-Knopf, der
+        // IMMER mic:start schickt (kein eigenes mic:stop) — ohne diese
+        // Unterscheidung machte der obige Wächter jeden zweiten Druck zu
+        // einer bloßen "läuft schon"-Meldung, mit keinem Weg, die eigene
+        // Aufnahme wieder zu beenden. Ein zweiter Druck auf denselben Knopf
+        // ist also "stop", nicht "start" — nur ein wirklich anderes Ziel
+        // (z.B. ein Terminal-Mikro waehrend des Fernzugriffs-Diktats) wird
+        // weiterhin abgewiesen.
+        if (micState !== 'idle') {
+          if (micCard.current === wantsTarget) { toggleMic(); break; } // stop -> upload -> Whisper
+          call('toast', 'Es läuft schon eine Aufnahme');
+          break;
+        }
+        micCard.current = wantsTarget;
         micDiscard.current = false;
         toggleMic(); // start
         break;
+      }
 
       case 'mic:stop':
         // The bar shows "Transkribiere…" until onText lands.
@@ -801,7 +940,37 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'clipboard:write':
+        // In der App kopiert: aufs Handy UND in den gemeinsamen Verlauf (→ Mac).
+        clipSynced.current = payload.text ?? '';
         Clipboard.setStringAsync(payload.text ?? '').then(() => call('toast', 'Kopiert'));
+        if (payload.text) wsService.send({ type: 'clipboard:push', payload: { text: payload.text } } as never);
+        break;
+
+      case 'clipboard:open':
+        // Android lässt Apps die Zwischenablage nur im Vordergrund lesen — also
+        // hier, beim Öffnen des Verlaufs: was zuletzt in einer anderen App am
+        // Handy kopiert wurde, kommt jetzt dazu (und auf den Mac).
+        Clipboard.getStringAsync().then((t) => {
+          if (t && t.trim() && t !== clipSynced.current) {
+            clipSynced.current = t;
+            wsService.send({ type: 'clipboard:push', payload: { text: t } } as never);
+          }
+        }).catch(() => {}).finally(() => wsService.send({ type: 'clipboard:list' } as never));
+        break;
+
+      case 'clipboard:use':
+        // Ein Eintrag gewählt: auf beide Geräte legen (Server setzt den Mac).
+        clipSynced.current = payload.text ?? '';
+        Clipboard.setStringAsync(payload.text ?? '').catch(() => {});
+        if (payload.id) wsService.send({ type: 'clipboard:use', payload: { id: payload.id } } as never);
+        break;
+
+      case 'clipboard:delete':
+        if (payload.id) wsService.send({ type: 'clipboard:delete', payload: { id: payload.id } } as never);
+        break;
+
+      case 'clipboard:clear':
+        wsService.send({ type: 'clipboard:clear' } as never);
         break;
 
       case 'manager:send': {
@@ -841,6 +1010,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'manager:mic':
+        // Derselbe Wächter wie bei 'mic:start' — derselbe gemeinsame Aufnehmer.
+        if (micState !== 'idle') { call('toast', 'Es läuft schon eine Aufnahme'); break; }
         micCard.current = MANAGER_MIC;
         micDiscard.current = false;
         toggleMic();
@@ -980,12 +1151,24 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // beide auf verschiedene Terminals, und die Beschriftung landete auf
         // dem falschen. Die Karten-ID bleibt nur als Rückfall für eine noch
         // nicht gebundene, brandneue Karte.
+        if (payload.field !== 'name' || !payload.value) break;
         const tabs = useTerminalStore.getState().getTabs(server.id);
-        const tab = payload.sessionId
-          ? tabs.find((t) => t.sessionId === payload.sessionId)
-          : tabs.find((t) => t.id === payload.cardId);
-        if (tab && payload.field === 'name' && payload.value) {
-          useTerminalStore.getState().updateTab(server.id, tab.id, { title: payload.value });
+        const tab = payload.sessionId ? tabs.find((t) => t.sessionId === payload.sessionId) : undefined;
+        if (tab) {
+          // Nur eine ECHTE Aenderung zaehlt. Die Seite meldet beim Wiederherstellen
+          // jede Karte mit ihrem gespeicherten Namen als "umbenannt" — das darf
+          // einen neueren Titel auf dem Server (z. B. vom anderen Geraet) nicht
+          // mit dem alten lokalen ueberschreiben.
+          if (tab.title === payload.value) break;
+          useTerminalStore.getState().updateTab(server.id, tab.id, { title: payload.value, customTitle: true });
+          // Dauerhaft auf dem Server — ueberlebt Neuinstallation, gilt auf jedem Geraet.
+          wsService.send({ type: 'terminal:rename', sessionId: payload.sessionId, payload: { title: payload.value } } as never);
+        } else {
+          // Karte noch ohne Sitzung (gerade angelegt): der Name gehoert an die
+          // WARTENDE Karte, nicht an einen gespeicherten Reiter, der zufaellig
+          // dieselbe Karten-Nummer von einem frueheren App-Start traegt.
+          const waiting = pendingCards.current.find((p) => p.cardId === payload.cardId);
+          if (waiting) { waiting.name = payload.value; waiting.custom = true; }
         }
         break;
       }
@@ -1031,6 +1214,32 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
       }
 
+      // Fernzugriff-Knopf auf einer Geraetekarte angetippt: die Seite baut ihre
+      // eigene Bildverbindung zum Server auf (siehe window.TMSRemote in bridge.js)
+      // — wir reichen nur Host/Port/Token durch, Bilddaten sieht React Native nie.
+      case 'remote:open': {
+        const targetId = payload.id as string;
+        (async () => {
+          let host: string, port: number, name: string, tok: string | null;
+          if (targetId === server.id) {
+            ({ host, port, name } = server);
+            tok = token;
+          } else {
+            const servers = await storageService.getServers().catch(() => []);
+            const target = servers.find((x) => x.id === targetId);
+            if (!target) return;
+            ({ host, port, name } = target);
+            tok = target.token ?? (await getToken(target.id)) ?? null;
+          }
+          if (!tok) {
+            call('toast', `Für „${name}" fehlt die Anmeldung — bitte einmal in der klassischen Ansicht verbinden`);
+            return;
+          }
+          call('setRemoteTarget', { host, port, token: tok });
+        })();
+        break;
+      }
+
       // Die Seite hat nichts mehr zum Zurückgehen. Beenden wird trotzdem nicht
       // einfach durchgewinkt: erst der zweite Druck innerhalb von zwei Sekunden.
       case 'nav:exit':
@@ -1041,7 +1250,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
+  }, [wsService, server, token, micState, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
@@ -1059,7 +1268,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <WebView
         ref={webRef}
-        source={{ html: LIQUID_DECK_HTML, baseUrl: 'http://tms.local' }}
+        // https, nicht http: WebCodecs (VideoDecoder) gibt es nur in einem
+        // "sicheren Kontext". Unter http://tms.local fehlte er — der Fernzugriff
+        // bekam Bilder, konnte sie aber nicht dekodieren ("Dieses Geraet kann den
+        // Bildstrom nicht anzeigen"). Nachgewiesen im selben Chrome: http://tms.local
+        // → VideoDecoder undefined, https://tms.local → vorhanden.
+        source={{ html: LIQUID_DECK_HTML, baseUrl: 'https://tms.local' }}
+        // Der Server spricht bewusst ws:// und http:// (Tailscale verschluesselt).
+        // Von einer https-Seite aus ist das "gemischter Inhalt" und ohne diese
+        // Freigabe blockiert — der Fernzugriff baute seine Verbindung nicht auf.
+        mixedContentMode="always"
         originWhitelist={['*']}
         javaScriptEnabled
         domStorageEnabled
@@ -1129,6 +1347,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
 /** Sentinel cardId: the mic that belongs to the Manager chat, not a terminal. */
 const MANAGER_MIC = '__manager__';
+
+/** Sentinel cardId: the mic that dictates into the Fernzugriff-Verbindung (der PC), nicht in ein Terminal. */
+const REMOTE_MIC = '__remote__';
 
 /**
  * The server reports a detected prompt as a raw text snippet; the permission

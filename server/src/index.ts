@@ -20,6 +20,10 @@ import { globalManager } from './terminal/terminal.manager';
 import { Snapshotter, setActiveSnapshotter } from './terminal/restore/snapshotter';
 import { restoreTerminals } from './terminal/restore/restore';
 import { consumeSnapshot } from './terminal/restore/snapshot.store';
+import { PtyDaemonClient } from './terminal/ptyd/client';
+import { usePtyKeeper } from './terminal/terminal.factory';
+import { titleStore } from './terminal/titles';
+import { clipboardHub } from './clipboard';
 import { shutdown as shutdownWhisper, prewarm as prewarmWhisper } from './audio/whisper-sidecar';
 import { shutdown as shutdownRewriter, prewarm as prewarmRewriter } from './audio/prompt-rewriter-sidecar';
 import { managerService } from './websocket/ws.handler';
@@ -70,11 +74,56 @@ async function main(): Promise<void> {
   // The Manager runs autonomously (heartbeat, task tracking, AI calls).
   // When a client connects, callbacks get wired up for UI streaming.
   // Until then, messages are buffered and flushed on first connect.
-  // Terminals aus der letzten Aufnahme zurueckholen. Laeuft vor dem Manager,
-  // damit dessen erste Uebersicht die Terminals schon kennt.
+  // Terminal-Waechter (ptyd): haelt die Terminals ausserhalb dieses Prozesses,
+  // damit ein Neustart, ein Update oder ein Absturz des Servers sie NICHT mehr
+  // beendet. Was dort weiterlief, wird hier einfach uebernommen — kein
+  // Wiederherstellen, kein `claude --resume`: Claude hat nichts gemerkt.
+  // Windows bleibt beim direkten Weg.
+  let keeper: PtyDaemonClient | null = null;
+  const adoptedIds = new Set<string>();
+  if (getPlatform() !== 'win32') {
+    // Unix-Socket-Pfade sind auf macOS auf 104 Zeichen begrenzt (sonst EINVAL
+    // beim listen). Bei einem ungewoehnlich langen Home-Pfad nach /tmp
+    // ausweichen — der Socket selbst ist ohnehin nur fuer uns lesbar (0600).
+    const preferred = path.join(config.configDir, 'ptyd.sock');
+    const socketPath = preferred.length <= 100
+      ? preferred
+      : path.join('/tmp', `tms-ptyd-${process.getuid?.() ?? 'u'}.sock`);
+    keeper = await PtyDaemonClient.start(
+      socketPath,
+      require.resolve('./terminal/ptyd/daemon'),
+      path.join(config.configDir, 'ptyd.log'),
+    );
+    if (keeper) {
+      usePtyKeeper(keeper);
+      for (const t of keeper.adopted) {
+        try {
+          globalManager.adoptSession(t.id, t.pty, t.cols, t.rows);
+          adoptedIds.add(t.id);
+        } catch (e) {
+          logger.warn(`Terminal-Waechter: ${t.id} nicht uebernommen — ${(e as Error).message}`);
+        }
+      }
+      logger.info(`Terminal-Waechter (pid ${keeper.daemonPid}): ${adoptedIds.size} laufende(s) Terminal(s) uebernommen`);
+    } else {
+      logger.warn('Terminal-Waechter nicht erreichbar — Terminals haengen direkt am Server und sterben mit einem Neustart');
+    }
+  }
+
+  // Terminals aus der letzten Aufnahme zurueckholen — nur noch die, die NICHT
+  // im Waechter weiterliefen (z. B. nach einem Neustart des Macs). Laeuft vor
+  // dem Manager, damit dessen erste Uebersicht die Terminals schon kennt.
   const restoreResult = await restoreTerminals({
     now: () => Date.now(),
-    takeSnapshot: () => consumeSnapshot(),
+    takeSnapshot: () => {
+      const snap = consumeSnapshot();
+      if (!snap) return snap;
+      // Uebernommene Terminals behalten ihren Auto-Approve-Schalter.
+      for (const e of snap.entries) {
+        if (adoptedIds.has(e.id)) setAutoApprove(e.id, e.autoApprove ?? true);
+      }
+      return { ...snap, entries: snap.entries.filter((e) => !adoptedIds.has(e.id)) };
+    },
     // Sendet KEIN Signal — prueft nur, ob der Prozess existiert.
     isPidAlive: (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } },
     createSession: (entry, onOutput) => {
@@ -94,6 +143,13 @@ async function main(): Promise<void> {
     applyAutoApprove: (id, on) => setAutoApprove(id, on),
     maxSessions: 50,
   });
+
+  // Titel von Terminals, die es nach Waechter-Uebernahme und Wiederherstellung
+  // nicht mehr gibt, sind Ballast. Die uebrigen geben dem Manager gleich die
+  // richtigen Namen (statt "Shell 4" in seinen Meldungen).
+  titleStore.prune(new Set(globalManager.listSessions().map((x) => x.id)));
+  clipboardHub.start(); // gemeinsame Zwischenablage: Kopien am Mac landen im Verlauf
+  for (const [id, title] of Object.entries(titleStore.all())) managerService.setSessionLabel(id, title);
 
   if (!managerService.isEnabled()) {
     managerService.start();
@@ -267,16 +323,26 @@ async function main(): Promise<void> {
     const forceExit = setTimeout(() => { logger.warn('Forced exit after timeout'); process.exit(1); }, 5000);
     forceExit.unref();
     logger.info('Shutting down...');
+    void titleStore.flush();
+    clipboardHub.stop();
     watcherService.shutdown();
     shutdownWhisper();
     shutdownRewriter();
 
-    // Letzte, exakte Aufnahme — danach sind die PTYs weg.
+    // Letzte, exakte Aufnahme — fuer den Fall, dass auch der Waechter nicht
+    // ueberlebt (Neustart des Macs).
     snapshotter.stop();
     void snapshotter.captureNow();
 
-    // Close all terminal sessions
-    globalManager.closeAllSessions();
+    // Mit Waechter: loslassen, NICHT beenden — die Terminals laufen weiter und
+    // der naechste Server uebernimmt sie. Ohne Waechter sind die PTYs unsere
+    // Kinder und muessen sauber beendet werden.
+    if (keeper) {
+      globalManager.releaseAllSessions();
+      keeper.release();
+    } else {
+      globalManager.closeAllSessions();
+    }
 
     // Close all WebSocket connections
     for (const client of wss.clients) {

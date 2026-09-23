@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "build:season2": "node scripts/build-season2-html.js"
+    "build:season2": "node scripts/build-season2-html.js",
+    "test:mockup": "node --test scripts/*.test.mjs"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "1.21.0",
@@ -27,6 +28,7 @@
     "expo-haptics": "~12.8.1",
     "expo-image-picker": "~14.7.1",
     "expo-intent-launcher": "~10.11.0",
+    "expo-keep-awake": "~12.8.2",
     "expo-local-authentication": "~13.8.0",
     "expo-location": "~16.5.5",
     "expo-notifications": "~0.27.8",

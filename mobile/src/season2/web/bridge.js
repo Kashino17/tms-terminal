@@ -258,7 +258,6 @@
   var WIN_SLACK = 200;  // so weit darf das DOM-Fenster überwachsen, bevor beschnitten wird
   // URLs zuerst; Pfade nur, wenn davor kein / : ~ oder Wortzeichen steht — sonst
   // wird die zweite Hälfte einer umgebrochenen URL als eigener "Pfad" erkannt.
-  var URL_RE = /(https?:\/\/[^\s"'<>()]+)|((?<![\w:\/~])(?:~|\.{0,2})\/[\w.\-]+(?:\/[\w.\-]+)+)/g;
 
   function xterm256(c) {
     if (c < 16) return PALETTE[c];
@@ -459,32 +458,12 @@
       };
     }
 
-    // Logische Zeilen (über Umbrüche hinweg) für die Link-Erkennung — reine
-    // String-Arbeit auf den gecachten Texten, kein Zellen-Lesen.
-    var links = {}; // rowIndex -> [{from, to, url}]
-    var g = 0;
-    while (g < total) {
-      var group = [g], text = rows[g].text;
-      var k2 = g + 1;
-      var cols = t.term.cols;
-      while (k2 < total && (rows[k2].wrapped || rows[k2 - 1].text.length >= cols)) {
-        group.push(k2); text += rows[k2].text; k2++;
-      }
-      var m;
-      URL_RE.lastIndex = 0;
-      while ((m = URL_RE.exec(text))) {
-        var url = m[0].replace(/[.,;:)\]]+$/, '');
-        var from = m.index, to = from + url.length;
-        var off = 0;
-        for (var gi = 0; gi < group.length; gi++) {
-          var ri = group[gi], len = rows[ri].text.length;
-          var a = Math.max(from, off) - off, bEnd = Math.min(to, off + len) - off;
-          if (bEnd > a) (links[ri] = links[ri] || []).push({ from: a, to: bEnd, url: url });
-          off += len;
-        }
-      }
-      g = k2;
-    }
+    // Logische Zeilen für die Link-Erkennung: Terminal-Umbrüche UND die harten
+    // Umbrüche, die Claude Code selbst macht (Zeile bis zum Rand, Fortsetzung
+    // eingerückt) — Regel und Tests: stitchRows im Mockup (termText-Block).
+    // Jeder Teil eines umgebrochenen Links trägt so die GANZE URL; ein Tipp
+    // darauf kopiert sie vollständig, ohne Umbrüche und Einrückung.
+    var links = typeof window.stitchLinks === 'function' ? window.stitchLinks(rows, t.term.cols) : {};
 
     // Inneres HTML nur für Zeilen (neu) bauen, deren Inhalt oder Link-Lage sich
     // geändert hat. Gecachte Historie mit unveränderter Link-Signatur ist fertig.
@@ -558,9 +537,11 @@
     if (cs) {
       pre.classList.toggle('selection-mode', !!cs.selectionMode);
       cs.lines = rows.map(function (x) { return x.text; }); // Kopieren/Selektion lesen daraus
+      cs.rowsWrapped = rows.map(function (x) { return x.wrapped; });
+      cs.cols = t.term.cols;
       cs._renderedLen = cs.lines.length;
       if (cs.selection && cs.selection.end >= total) cs.selection = null;
-      if (cs.selection) {
+      if (cs.selection && cs.selection.sc === undefined) {
         pre.querySelectorAll('.term-line').forEach(function (l, i) {
           l.classList.toggle('is-selected', i >= cs.selection.start && i <= cs.selection.end);
         });
@@ -800,14 +781,23 @@
 
     function apply(ev) {
       var base = pre.getBoundingClientRect();
-      var total = pre.querySelectorAll('.term-line').length;
-      var idx = Math.floor((ev.clientY - base.top - padTop + pre.scrollTop) / lineH);
+      var lines = pre.querySelectorAll('.term-line');
+      var total = lines.length;
+      // Der Griff haengt UNTER der Zeile (Stiel nach oben) — gemeint ist die Zeile
+      // ueber dem Finger, nicht die, auf der er liegt.
+      var idx = Math.floor((ev.clientY - lineH * 0.9 - base.top - padTop + pre.scrollTop) / lineH);
       idx = Math.max(0, Math.min(total - 1, idx));
-      if (kind === 'start') cs.selection.start = Math.min(idx, cs.selection.end);
-      else cs.selection.end = Math.max(idx, cs.selection.start);
-      pre.querySelectorAll('.term-line').forEach(function (l, i) {
-        l.classList.toggle('is-selected', i >= cs.selection.start && i <= cs.selection.end);
-      });
+      var col = colAt(pre, lines[idx], ev.clientX, 'round');
+      var sel = cs.selection;
+      if (sel.sc === undefined) { sel.sc = 0; sel.ec = lineText(lines[sel.end]).length; }
+      // Anfang bleibt vor dem Ende und umgekehrt — kein Ueberkreuzen.
+      if (kind === 'start') {
+        if (idx > sel.end || (idx === sel.end && col > sel.ec)) { idx = sel.end; col = sel.ec; }
+        sel.start = idx; sel.sc = col;
+      } else {
+        if (idx < sel.start || (idx === sel.start && col < sel.sc)) { idx = sel.start; col = sel.sc; }
+        sel.end = idx; sel.ec = col;
+      }
       window.positionHandlesAndBubble(cardId);
       // Am Rand weiterziehen scrollt nach — sonst endete die Auswahl am Sichtfeld.
       if (ev.clientY < base.top + 28) pre.scrollTop -= lineH;
@@ -869,15 +859,168 @@
   // scrollTerminalToBottom und updateJumpOrb bleiben die des Mockups: die
   // .card-body ist wieder der echte Scroller.
 
-  /** Zeile in den Kopier-Modus nehmen. */
-  function startLineSelection(line) {
+  // ══ Zeichengenaue Auswahl ═════════════════════════════════════════════════
+  // Vorher kannte die Auswahl nur ganze Zeilen ("von Zeile X bis Y"). Jetzt:
+  // Zeile + Zeichen fuer Anfang und Ende. Langer Druck markiert das Wort unter
+  // dem Finger — auf einem Link den GANZEN Link ueber alle Umbrueche —, die
+  // Griffe verschieben zeichenweise, ein Tipp im Markier-Modus nimmt die Zeile.
+  // Gemalt wird ueber die Custom-Highlight-API: die Zeilen bleiben unberuehrt,
+  // das Neuzeichnen bei laufender Ausgabe stellt die Markierung nur neu her.
+  // Textregeln (Umbrueche, Links, Fuellzeichen): termText-Block im Mockup.
+  var HAS_HL = typeof CSS !== 'undefined' && !!CSS.highlights && typeof Highlight === 'function';
+  var selRanges = {};                       // cardId -> Range
+
+  function selPre(cardId) { return document.querySelector('.card-body[data-card-id="' + cardId + '"]'); }
+  function lineTextEl(line) { return line && line.querySelector('.term-line__text'); }
+  function lineText(line) { var el = lineTextEl(line); return el ? el.textContent : ''; }
+  function selRows(cardId, pre) {
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    var els = pre.querySelectorAll('.term-line');
+    var out = new Array(els.length);
+    for (var i = 0; i < els.length; i++) {
+      out[i] = { text: lineText(els[i]), wrapped: !!(cs && cs.rowsWrapped && cs.rowsWrapped[i]) };
+    }
+    return out;
+  }
+  function selCols(cardId) {
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    return cs && cs.cols ? cs.cols : Infinity; // Cloud-Logs: keine harten Umbrueche verbinden
+  }
+  /** Zeichenbreite (Monospace) aus einer Zeile mit Text messen. */
+  function charWidth(pre) {
+    var els = pre.querySelectorAll('.term-line__text');
+    for (var i = els.length - 1; i >= 0; i--) {
+      var n = els[i].textContent.length;
+      if (n > 4) return els[i].getBoundingClientRect().width / n;
+    }
+    return 8;
+  }
+  /** Fingerposition x → Zeichenspalte in dieser Zeile (round: zwischen zwei Zeichen, floor: das Zeichen). */
+  function colAt(pre, line, x, mode) {
+    var el = lineTextEl(line);
+    if (!el) return 0;
+    var len = el.textContent.length;
+    var left = el.getBoundingClientRect().left;
+    var v = (x - left) / charWidth(pre);
+    var c = mode === 'floor' ? Math.floor(v) : Math.round(v);
+    return Math.max(0, Math.min(len, c));
+  }
+  /** Textknoten + Versatz fuer Zeichen c einer Zeile. */
+  function domPoint(line, c) {
+    var el = lineTextEl(line);
+    if (!el) return { node: line, off: 0 };
+    var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), n, left = c, last = null;
+    while ((n = w.nextNode())) {
+      if (left <= n.length) return { node: n, off: left };
+      left -= n.length; last = n;
+    }
+    return last ? { node: last, off: last.length } : { node: el, off: 0 };
+  }
+  function caretX(pre, line, pt) {
+    var r = document.createRange();
+    try { r.setStart(pt.node, pt.off); r.collapse(true); } catch (e) { return 0; }
+    var rect = r.getBoundingClientRect();
+    var base = pre.getBoundingClientRect();
+    var x = rect.width || rect.left ? rect.left : (lineTextEl(line) || line).getBoundingClientRect().left;
+    return x - base.left - pre.clientLeft + pre.scrollLeft;
+  }
+  function paintHighlight() {
+    if (!HAS_HL) return;
+    var list = Object.keys(selRanges).map(function (k) { return selRanges[k]; }).filter(Boolean);
+    if (list.length) CSS.highlights.set('term-sel', new Highlight(list[0]));
+    for (var i = 1; i < list.length; i++) CSS.highlights.get('term-sel').add(list[i]);
+    if (!list.length) CSS.highlights.delete('term-sel');
+  }
+
+  window.positionHandlesAndBubble = function (cardId) {
+    var pre = selPre(cardId);
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    if (!pre || !cs) return;
+    var hs = pre.querySelector('.sel-handle--start');
+    var he = pre.querySelector('.sel-handle--end');
+    var bubble = pre.querySelector('.copy-bubble');
+    var sel = cs.selection;
+    var lines = pre.querySelectorAll('.term-line');
+    if (!sel || sel.sc === undefined || !lines[sel.start] || !lines[sel.end]) {
+      [hs, he, bubble].forEach(function (el) { if (el) el.remove(); });
+      delete selRanges[cardId]; paintHighlight();
+      return;
+    }
+    var sl = lines[sel.start], el = lines[sel.end];
+    var a = domPoint(sl, sel.sc), b = domPoint(el, sel.ec);
+    if (HAS_HL) {
+      var range = document.createRange();
+      try { range.setStart(a.node, a.off); range.setEnd(b.node, b.off); selRanges[cardId] = range; } catch (e) { delete selRanges[cardId]; }
+      paintHighlight();
+    } else {
+      for (var i = 0; i < lines.length; i++) lines[i].classList.toggle('is-selected', i >= sel.start && i <= sel.end);
+    }
+    if (!hs) { hs = window.makeHandle('start', cardId); pre.appendChild(hs); }
+    if (!he) { he = window.makeHandle('end', cardId); pre.appendChild(he); }
+    if (!bubble) { bubble = window.makeBubble(cardId); pre.appendChild(bubble); }
+    var x1 = caretX(pre, sl, a), x2 = caretX(pre, el, b);
+    hs.style.top = (sl.offsetTop + sl.offsetHeight) + 'px'; hs.style.left = x1 + 'px';
+    he.style.top = (el.offsetTop + el.offsetHeight) + 'px'; he.style.left = x2 + 'px';
+    bubble.style.top = Math.max(0, sl.offsetTop - 38) + 'px';
+    bubble.style.left = Math.max(0, Math.min(Math.min(x1, x2), pre.clientWidth - 100)) + 'px';
+  };
+
+  window.clearSelection = function (cardId) {
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    if (cs) cs.selection = null;
+    var pre = selPre(cardId);
+    if (pre) pre.querySelectorAll('.term-line.is-selected').forEach(function (l) { l.classList.remove('is-selected'); });
+    window.positionHandlesAndBubble(cardId);
+  };
+
+  /** Tipp im Markier-Modus: die ganze Zeile (ohne Fuellzeichen); nochmal = aufheben. */
+  window.handleLineTap = function (pre, line) {
+    var id = pre.dataset.cardId;
+    var cs = window.__tmsCardState && window.__tmsCardState[id];
+    if (!cs) return;
+    var i = Number(line.dataset.i);
+    var len = lineText(line).replace(/\s+$/, '').length;
+    var s0 = cs.selection;
+    if (s0 && s0.start === i && s0.end === i && s0.sc === 0 && s0.ec === len) { window.clearSelection(id); return; }
+    cs.selection = { start: i, end: i, sc: 0, ec: len };
+    window.positionHandlesAndBubble(id);
+  };
+
+  window.makeBubble = function (cardId) {
+    var el = document.createElement('button');
+    el.className = 'copy-bubble';
+    el.textContent = 'Kopieren';
+    el.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+      var pre = selPre(cardId);
+      if (!cs || !cs.selection || !pre) return;
+      var sel = cs.selection;
+      var text = window.copyRange(selRows(cardId, pre), selCols(cardId), sel.start, sel.sc, sel.end, sel.ec);
+      if (!text) { window.toast && window.toast('Nichts markiert'); return; }
+      window.copyText(text);
+      if (window.toast) window.toast('Kopiert ✓');
+      window.clearSelection(cardId);
+    });
+    return el;
+  };
+
+  /** Langer Druck: in den Markier-Modus, Wort bzw. ganzer Link unter dem Finger. */
+  function startLineSelection(line, x) {
     var pre = line.closest('.card-body[data-card-id]');
     if (!pre) return;
     var id = pre.getAttribute('data-card-id');
     if (!pre.classList.contains('selection-mode') && typeof window.toggleCardSelectionMode === 'function') {
       window.toggleCardSelectionMode(id, null);
     }
-    if (typeof window.handleLineTap === 'function') window.handleLineTap(pre, line);
+    var cs = window.__tmsCardState && window.__tmsCardState[id];
+    if (!cs) return;
+    var i = Number(line.dataset.i);
+    var col = x === undefined ? 0 : colAt(pre, line, x, 'floor');
+    var r = window.rangeAt(selRows(id, pre), selCols(id), i, col);
+    // Auf Leerraum gedrueckt: dann eben die Zeile (wie bisher).
+    if (r.sr === r.er && r.sc === r.ec) { window.handleLineTap(pre, line); }
+    else { cs.selection = { start: r.sr, end: r.er, sc: r.sc, ec: r.ec }; window.positionHandlesAndBubble(id); }
     if (navigator.vibrate) navigator.vibrate(10);
   }
 
@@ -889,7 +1032,7 @@
     var line = e.target.closest && e.target.closest('.card-body[data-card-id] .term-line');
     if (!line) return;
     e.preventDefault();
-    startLineSelection(line);
+    startLineSelection(line, e.clientX);
   });
 
   // Langes Drücken auf eine Terminalzeile startet das Markieren — die einzige
@@ -903,9 +1046,10 @@
     selMoved = false;
     selStart = { x: e.clientX, y: e.clientY };
     clearTimeout(selHold);
+    var holdX = e.clientX;
     selHold = setTimeout(function () {
       if (selMoved) return;
-      startLineSelection(line);
+      startLineSelection(line, holdX);
     }, 550);
   }, true);
   document.addEventListener('pointermove', function (e) {
@@ -985,7 +1129,11 @@
     window.dockRecordingTranscribing();
     post('mic:stop', { cardId: micCard });
   };
-  window.cancelDictation = function () {
+  window.cancelDictation = function (reason) {
+    // Only the ✕ on the recording bar ('user') ends a real recording. The
+    // mockup also calls cancelDictation() on every screen change, view toggle
+    // and new terminal — each of those used to kill the dictation mid-sentence.
+    if (reason !== 'user') return;
     if (!micCard) return;
     post('mic:cancel', { cardId: micCard });
     micCard = null;
@@ -1078,6 +1226,24 @@
       flush(cardId);
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
       attachSized(cardId, sessionId);
+    },
+    /**
+     * Titel vom Server (Quelle der Wahrheit, siehe server/src/terminal/titles.store.ts)
+     * auf die Karte bringen — auch wenn er auf einem anderen Geraet gesetzt wurde.
+     * Ein gerade bearbeitetes Namensfeld wird nicht ueberschrieben.
+     */
+    setCardTitle: function (sessionId, title) {
+      var cardId = cardOf(sessionId);
+      if (!cardId || !title) return;
+      var sess = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
+      if (!sess || sess.name === title) return;
+      sess.name = title;
+      document.querySelectorAll('[data-id="' + cardId + '"] .card-name').forEach(function (el) {
+        if (el.dataset.editing !== '1') el.value = title;
+      });
+      if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
+      if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
+      if (window.__tmsState && window.__tmsState.overviewOpen && typeof window.renderOverview === 'function') window.renderOverview();
     },
     /** PTY output. */
     output: function (sessionId, chunk) {
@@ -1372,6 +1538,17 @@
   // dann der Bildschirm selbst. Erst wenn nichts mehr übrig ist, darf React
   // Native ans Beenden denken (und fragt dann noch einmal nach).
   window.TMSBridge.handleBack = function () {
+    // 0. Fernzugriff im Vollbild: die Zurück-Geste wirkt wie das Abzeichen
+    //    (#remoteExit) — verlässt das Vollbild, nicht den Fernzugriffs-
+    //    Bildschirm selbst. Ohne das leiten die Dokument-Zuhörer für
+    //    Tastatur/Zeiger/Rad (siehe bridge.js) weiter an den PC, während der
+    //    Nutzer mit der Geste erkennbar zurückwollte — genau der Fall, für
+    //    den der Vollbild-Modus überhaupt existiert (Hardware am Fold), darf
+    //    also nicht ausgerechnet dort die Zurück-Geste verschlucken.
+    if (window.remoteState && window.remoteState.fullscreen) {
+      window.setRemoteFullscreen(false);
+      return;
+    }
     // 1. Ein offenes Sheet (Tab-Liste, Werkzeuge, Menü, Spotlight …). Bewusst
     //    .is-open und nicht :not([hidden]) — ein gerade zufallendes Sheet würde
     //    sonst den Zurück-Druck schlucken, ohne noch etwas zu tun.
@@ -1514,6 +1691,36 @@
     if (typeof window.syncBrowserChrome === 'function') window.syncBrowserChrome();
   };
   window.TMSBridge.browserSync = syncNativeBrowser;
+
+  // ══ Gemeinsame Zwischenablage (Handy ⇄ Mac) ══════════════════════════════
+  // Der Verlauf gehoert dem Server (server/src/clipboard): Kopien am Mac meldet
+  // der Mac-Helfer, Kopien in der App gehen ueber clipboard:write hin. Die App
+  // (SeasonTwoWebRoot) legt Gewaehltes auf die Handy-Zwischenablage und liest
+  // beim Oeffnen, was zuletzt in anderen Handy-Apps kopiert wurde.
+  window.__clipItems = []; // keine Demo-Eintraege in der echten App
+  window.clipOnOpen = function () { post('clipboard:open', {}); };
+  window.clipUse = function (item) { post('clipboard:use', { id: item.id, text: item.text }); };
+  window.clipDelete = function (id) { post('clipboard:delete', { id: id }); };
+  window.clipClear = function () { post('clipboard:clear', {}); };
+  function clipChanged() { if (typeof window.clipRender === 'function') window.clipRender(); }
+  window.TMSBridge.clipboardSet = function (items) {
+    window.__clipItems = Array.isArray(items) ? items : [];
+    clipChanged();
+  };
+  window.TMSBridge.clipboardAdded = function (item, removed) {
+    if (!item || typeof item.text !== 'string') return;
+    var drop = {};
+    (removed || []).forEach(function (id) { drop[id] = true; });
+    drop[item.id] = true;
+    window.__clipItems = [item].concat(window.__clipItems.filter(function (x) { return !drop[x.id]; })).slice(0, 40);
+    clipChanged();
+  };
+  window.TMSBridge.clipboardRemoved = function (ids) {
+    var drop = {};
+    (ids || []).forEach(function (id) { drop[id] = true; });
+    window.__clipItems = window.__clipItems.filter(function (x) { return !drop[x.id]; });
+    clipChanged();
+  };
 
   // ══ Werkzeug-Sheets ═══════════════════════════════════════════════════════
   // Each sheet renders straight out of TMS_DATA[key], so the whole job is to
@@ -2287,6 +2494,11 @@
   // Native die Verbindung um (Terminals des alten Servers weg, die des neuen rein).
   window.__tmsSwitchServer = function (id) { post('server:switch', { id: id }); };
 
+  // Tippt der Nutzer den Fernzugriff-Knopf auf der Geraetekarte an: React
+  // Native holt die Zugangsdaten und reicht sie ueber setRemoteTarget zurueck
+  // (siehe weiter unten) — die Seite baut die Bildverbindung selbst auf.
+  window.__tmsOpenRemote = function (id) { post('remote:open', { id: id }); };
+
   // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
   window.TMSBridge.setServers = function (servers) {
     window.TMS_DATA.servers = servers;
@@ -2305,6 +2517,22 @@
     if (isOn !== !!on && typeof window.toggleCardAutoApprove === 'function') {
       window.toggleCardAutoApprove(cardId);
     }
+  };
+  // React Native reicht nur die Zugangsdaten durch — Bilddaten sieht es nie.
+  //
+  // C2: `show('remote')` und `TMSRemote.start()` laufen synchron direkt beim
+  // Antippen des Fernzugriffs-Knopfs (siehe den Mockup-Aufruf), aber die
+  // Zugangsdaten kommen erst ueber den Umweg durch React Native zurueck —
+  // bei einem fremden Server zusaetzlich nach einem asynchronen
+  // Speicher-Zugriff dort. connect() bricht darum beim ersten Druck immer
+  // mit "Kein Server verbunden." ab, `ws` bleibt null, und ohne ein `onclose`
+  // gibt es keinen Ausloeser fuer einen neuen Versuch — erst ein zweiter
+  // Tastendruck (der TMSRemote.start() erneut aufruft) verbindet. Der Haken
+  // unten holt das nach, sobald die Zugangsdaten tatsaechlich da sind.
+  var remoteTarget = null;
+  window.TMSBridge.setRemoteTarget = function (t) {
+    remoteTarget = t;
+    if (typeof window.__tmsRemoteTargetReady === 'function') window.__tmsRemoteTargetReady();
   };
 
   document.addEventListener('pointerdown', function (e) {
@@ -2497,6 +2725,810 @@
       });
     });
   };
+
+  // ══ Fernzugriff ═══════════════════════════════════════════════════════
+  // Eigene WebSocket-Verbindung, direkt aus der Seite heraus. Der Umweg ueber
+  // React Native scheidet aus: dessen Bruecke kann nur Text, Video muesste also
+  // base64-kodiert werden — ein Drittel mehr Daten, 30-mal pro Sekunde.
+  (function () {
+    var ws = null;
+    var decoder = null;
+    var canvas = null;
+    var ctx = null;
+    var retry = 0;
+    var retryTimer = null;
+    var wantRunning = false;
+    // N1 (Nachpruefung): waehrend einer Hintergrund-Unterbrechung (suspend())
+    // muss der normale Wiederverbindungs-Weg in onclose() stillliegen — sonst
+    // sieht der ohnehin noch anhaengende onclose nach dem Schliessen
+    // `wantRunning === true` (das bleibt bei suspend() bewusst unangetastet,
+    // siehe TMSRemote.suspend() weiter unten) und plant selbst einen
+    // Wiederverbindungs-Zeitgeber. Kommt die App dann zurueck, ruft resume()
+    // sofort connect() UND der nachlaufende Zeitgeber ruft kurz danach ein
+    // zweites — zwei offene Verbindungen, zwei Sitzungen auf dem PC, von
+    // denen stop() nur noch die aktuelle erreicht.
+    var suspended = false;
+    var preset = 'auto';
+    // Ueberlebt den Neuaufbau der Buehne (siehe buildRemoteScreen-Einklinkung
+    // weiter unten) — sonst zeigt die frische Leiste kurz "Verbinde …", obwohl
+    // die Verbindung laengst steht oder gerade an einem echten Fehler haengt.
+    var lastVeil = '';
+    var lastStat = '';
+
+    var PRESETS = {
+      sparsam: { maxWidth: 1280, fps: 24, bitrateKbps: 800 },
+      auto:    { maxWidth: 1600, fps: 30, bitrateKbps: 1500 },
+      scharf:  { maxWidth: 1920, fps: 30, bitrateKbps: 3000 },
+    };
+
+    /** Die App zeichnet den Zeiger selbst (siehe "Lokaler Zeiger" unten) —
+     *  der Server laesst ihn dafuer aus dem Video weg, wo er das kann. */
+    function startPayload() {
+      var p = { localCursor: true };
+      for (var k in PRESETS[preset]) p[k] = PRESETS[preset][k];
+      return p;
+    }
+
+    function veil(text) {
+      lastVeil = text || '';
+      var v = document.getElementById('remoteVeil');
+      var t = document.getElementById('remoteVeilText');
+      if (!v || !t) return;
+      if (text) { t.textContent = text; v.dataset.show = '1'; }
+      else { v.dataset.show = '0'; }
+    }
+
+    function stat(text) {
+      lastStat = text || '';
+      var el = document.getElementById('remoteStat');
+      if (el) el.textContent = text;
+    }
+
+    // ── Bildgesten: Zoom, Verschieben, langer Druck ─────────────────────────
+    // `view` haelt Zoom/Versatz des Canvas innerhalb der Buehne. Bleibt hier
+    // (nicht in layoutStage()) deklariert, weil applyView() es unabhaengig
+    // vom Layout jederzeit neu aufs Canvas anwenden koennen muss (nach jeder
+    // Geste, nicht nur nach jedem Resize).
+    var view = { zoom: 1, x: 0, y: 0 };
+    var pinch = null;
+    var holdTimer = null;
+
+    function applyView() {
+      if (!canvas) return;
+      canvas.style.transformOrigin = 'center center';
+      canvas.style.transform = 'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.zoom + ')';
+      renderCursor();
+    }
+
+    // ── Lokaler Zeiger ──────────────────────────────────────────────────────
+    // Der Zeiger im Video lief jeder Bewegung um einen vollen Netz-Umlauf
+    // hinterher (ueber das Tailscale-Relais 100-500 ms). Jetzt laesst der Mac
+    // ihn aus dem Video weg (localCursor), und die App zeichnet ihn selbst:
+    // Trackpad-Bewegungen verschieben ihn SOFORT um genau das Stueck, das sie
+    // auch auf dem Mac bewegen (dx/dy sind Mac-Punkte, siehe input.darwin.ts).
+    // Die echte Position kommt als remote:cursor und korrigiert nur, solange
+    // gerade niemand bewegt — sonst risse die verspaetete Meldung den Zeiger
+    // mitten in der Bewegung zurueck.
+    // srv = letzte echte Position vom Mac. Der Mac meldet nur, wenn sich der
+    // Zeiger BEWEGT — waehrend eigener Bewegung verworfene Meldungen kamen also
+    // nie wieder, und eine einmal entstandene Abweichung (Eingaben, die beim
+    // Neuverbinden unterwegs verloren gingen; die echte Maus am Mac) blieb fuer
+    // immer: Zeiger sichtbar an einer Stelle, Klick landet an einer anderen.
+    // Darum wird die zuletzt gemeldete Position nach jeder Bewegung, sobald
+    // Ruhe ist, nachgezogen (settleCursor).
+    var cursor = { x: 0.5, y: 0.5, known: false, lastLocalAt: 0, srv: null, settleTimer: null };
+    var linkRttMs = 0;
+    // display:block ist Pflicht: ein Inline-SVG sitzt auf der Grundlinie einer
+    // Textzeile und rutschte so ~7 px UNTER den eigentlichen Punkt (gemessen) —
+    // der Pfeil zeigte tiefer, als der Mac klickte.
+    var CURSOR_SVG = '<svg viewBox="0 0 12 18" width="100%" height="100%" style="display:block" aria-hidden="true">'
+      + '<path d="M0.5 0.5 L0.5 14.5 L4 11.2 L6.4 16.8 L8.6 15.9 L6.3 10.5 L11 10.5 Z" '
+      + 'fill="#fff" stroke="#000" stroke-width="1" stroke-linejoin="round"/></svg>';
+
+    function cursorLayer() {
+      var stage = document.getElementById('remoteStage');
+      if (!stage) return null;
+      var layer = document.getElementById('remoteCursorLayer');
+      if (!layer) {
+        // Liegt exakt auf dem Canvas (gleiche Box, gleiche Transformation),
+        // folgt also jedem Zoom und Verschieben von selbst.
+        layer = document.createElement('div');
+        layer.id = 'remoteCursorLayer';
+        layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;transform-origin:center center;z-index:1';
+        layer.innerHTML = '<div id="remoteCursor" style="position:absolute;left:0;top:0;line-height:0;transform-origin:0 0;display:none;filter:drop-shadow(0 1px 1px rgba(0,0,0,.45))">' + CURSOR_SVG + '</div>';
+        // Den Canvas DIESER Buehne nehmen — `canvas` kann nach einem Neuaufbau
+        // kurz noch auf das alte Element zeigen, und insertBefore mit einem
+        // fremden Bezugsknoten wirft.
+        var cv = stage.querySelector('canvas');
+        stage.insertBefore(layer, cv ? cv.nextSibling : null);
+      }
+      return layer;
+    }
+
+    function renderCursor() {
+      var layer = cursorLayer();
+      if (!layer) return;
+      var el = document.getElementById('remoteCursor');
+      var st = window.remoteState;
+      var show = !!(st.localCursor && st.running && cursor.known && st.w);
+      el.style.display = show ? 'block' : 'none';
+      if (!show) return;
+      layer.style.transform = canvas ? canvas.style.transform : '';
+      var stage = document.getElementById('remoteStage');
+      // Bildlage exakt wie object-fit:contain sie legt — fitRect rundet auf
+      // ganze Pixel, das waeren bis zu 0,5 px Versatz.
+      var sc = Math.min(stage.clientWidth / st.w, stage.clientHeight / st.h);
+      var box = { w: st.w * sc, h: st.h * sc };
+      box.x = (stage.clientWidth - box.w) / 2;
+      box.y = (stage.clientHeight - box.h) / 2;
+      // Echte Groesse: der Mac-Pfeil ist ~20 Punkte hoch. Frueher mindestens
+      // 16 px — auf dem Fold 2-4x groesser als das Original, und ein grosser
+      // Pfeil taeuscht vor, man zeige auf etwas, das die Spitze gar nicht trifft.
+      var ptToPx = box.w / (st.w / (st.scale || 1));
+      var h = Math.max(9, 20 * ptToPx);
+      el.style.width = (h * 12 / 18) + 'px';
+      el.style.height = h + 'px';
+      el.style.transform = 'translate(' + (box.x + cursor.x * box.w) + 'px,' + (box.y + cursor.y * box.h) + 'px) scale(' + (1 / view.zoom) + ')';
+    }
+
+    /** Vorhersage: was die App gerade schickt, sieht sie sofort. */
+    function predictCursor(ev) {
+      var st = window.remoteState;
+      if (!st.localCursor || !st.w) return;
+      if (ev.t === 'd') {
+        var ptsW = st.w / (st.scale || 1), ptsH = st.h / (st.scale || 1);
+        cursor.x = Math.min(1, Math.max(0, cursor.x + ev.dx / ptsW));
+        cursor.y = Math.min(1, Math.max(0, cursor.y + ev.dy / ptsH));
+      } else if (ev.t === 'm') {
+        cursor.x = ev.x; cursor.y = ev.y;
+      } else return;
+      cursor.known = true;
+      cursor.lastLocalAt = Date.now();
+      renderCursor();
+      armSettle();
+    }
+
+    function quietMs() { return Math.max(300, linkRttMs * 2 + 100); }
+
+    /** Nach der letzten eigenen Bewegung (plus Hin- und Rueckweg) die echte Position uebernehmen. */
+    function armSettle() {
+      if (cursor.settleTimer) clearTimeout(cursor.settleTimer);
+      cursor.settleTimer = setTimeout(settleCursor, quietMs() + 20);
+    }
+
+    function settleCursor() {
+      cursor.settleTimer = null;
+      var wait = quietMs() - (Date.now() - cursor.lastLocalAt);
+      if (wait > 0) { cursor.settleTimer = setTimeout(settleCursor, wait + 20); return; }
+      if (!cursor.srv) return;
+      cursor.x = cursor.srv.x; cursor.y = cursor.srv.y; cursor.known = true;
+      renderCursor();
+    }
+
+    /** Echte Position vom Mac — gilt sofort, solange die eigene Bewegung ruht, sonst beim Nachziehen. */
+    function serverCursor(p) {
+      if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+      cursor.srv = { x: p.x, y: p.y };
+      var quiet = Date.now() - cursor.lastLocalAt > quietMs();
+      if (cursor.known && !quiet) { if (!cursor.settleTimer) armSettle(); return; }
+      cursor.x = p.x; cursor.y = p.y; cursor.known = true;
+      renderCursor();
+    }
+
+    /**
+     * Gesten auf dem Bild selbst: Aufziehen zoomt (bis 3×, siehe clampZoom im
+     * Mockup), ein Finger bei Zoom>1 verschiebt (clampPan haelt es im
+     * Rahmen), Doppeltipp springt zwischen 1× und 2×, und ein langer Druck
+     * versetzt den Zeiger dorthin — die einzige Moeglichkeit, ihn schnell ueber
+     * eine weite Strecke zu setzen, denn das Trackpad braucht dafuer mehrere
+     * Wischer.
+     *
+     * Zustand JE Zeiger (Map von pointerId), nicht global — sonst verrechnet
+     * sich ein Zwei-Finger-Zoom bei ueber Kreuz bewegten Fingern, und das
+     * Abheben eines beliebigen Fingers wuerde die Geste des anderen killen.
+     */
+    function wireStageGestures() {
+      var stage = document.getElementById('remoteStage');
+      if (!stage || stage.dataset.wired === '1') return;
+      stage.dataset.wired = '1';
+      stage.style.touchAction = 'none';
+
+      var points = new Map();
+      var lastTap = 0;
+
+      stage.addEventListener('pointerdown', function (e) {
+        if (window.remoteState.fullscreen) return;      // dort gehoert alles der Maus
+        // startX/startY sind der Aufsetzpunkt und bleiben fuer die gesamte Geste
+        // unveraendert (siehe holdShouldAbort im Mockup) — x/y sind die jeweils
+        // LETZTE Position und wandern bei jedem pointermove mit (fuer die
+        // Verschiebe-/Pinch-Deltas weiter unten).
+        points.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
+        if (points.size === 2) {
+          var p = Array.from(points.values());
+          pinch = { d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), zoom: view.zoom };
+          if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+          return;
+        }
+        // Langer Druck aufs Bild: Zeiger dorthin — sendet eine Zeigerbewegung,
+        // keinen Klick, es gibt also nichts, was haengen bleiben koennte.
+        var start = { x: e.clientX, y: e.clientY };
+        holdTimer = setTimeout(function () {
+          holdTimer = null;
+          var box = stageBox();
+          if (!box) return;
+          var n = window.toStageNormalized(start.x, start.y, box);
+          if (n) {
+            window.TMSRemote.input({ t: 'm', x: n.x, y: n.y });
+            if (navigator.vibrate) navigator.vibrate(12);
+          }
+        }, 400);
+      });
+
+      stage.addEventListener('pointermove', function (e) {
+        if (!points.has(e.pointerId)) return;
+        var prev = points.get(e.pointerId);
+        var dx = e.clientX - prev.x;
+        var dy = e.clientY - prev.y;
+        points.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: prev.startX, startY: prev.startY });
+        // Entfernung zum AUFSETZPUNKT dieses Fingers (holdShouldAbort im
+        // Mockup), NICHT die aufsummierte Pfadlaenge seit dem Aufsetzen — die
+        // Summe misst zurueckgelegte Strecke, nicht Abweichung vom Start: ein
+        // Finger, der ruhig aufliegt, aber leicht zittert, sammelt darueber
+        // in 400ms genug Mikroschritte, um die Schwelle grundlos zu reissen,
+        // und der lange Druck stuerbe bei ruhiger Hand seltener durch als bei
+        // unruhiger. Ueber die Entfernung zum Start bricht nur eine ECHTE
+        // Bewegung ab; Zittern oder Hin-und-Herwischen zurueck zum Ausgangs-
+        // punkt bricht bewusst nicht ab (harmloser als der umgekehrte Fehler).
+        if (holdTimer && window.holdShouldAbort(prev.startX, prev.startY, e.clientX, e.clientY, 8)) {
+          clearTimeout(holdTimer); holdTimer = null;
+        }
+
+        if (pinch && points.size === 2) {
+          var pp = Array.from(points.values());
+          var d = Math.hypot(pp[0].x - pp[1].x, pp[0].y - pp[1].y);
+          view.zoom = window.clampZoom(pinch.zoom * (d / pinch.d));
+        } else if (points.size === 1 && view.zoom > 1) {
+          var r = stage.getBoundingClientRect();
+          view.x = window.clampPan(view.x + dx, view.zoom, r.width);
+          view.y = window.clampPan(view.y + dy, view.zoom, r.height);
+        }
+        applyView();
+      });
+
+      function up(e) {
+        points.delete(e.pointerId);
+        if (points.size < 2) pinch = null;
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        // Vollbild gehoert der angeschlossenen Maus: ein echter Doppelklick
+        // damit bubbelt bis hierher genauso wie ein Doppeltipp (pointerdown
+        // wurde oben zwar schon uebersprungen, aber "up" laeuft trotzdem) —
+        // ohne diese Bedingung wuerde er faelschlich den Bild-Zoom umschalten.
+        if (window.remoteState.fullscreen) return;
+
+        var now = Date.now();
+        if (now - lastTap < 300) {                      // Doppeltipp
+          view.zoom = view.zoom > 1 ? 1 : 2;
+          view.x = 0; view.y = 0;
+          applyView();
+          lastTap = 0;
+        } else {
+          lastTap = now;
+        }
+      }
+      stage.addEventListener('pointerup', up);
+      stage.addEventListener('pointercancel', up);
+    }
+
+    /** Die Buehne bekommt genau die Hoehe, die das Bild seitenrichtig braucht. */
+    function layoutStage() {
+      var stage = document.getElementById('remoteStage');
+      if (!stage || !window.remoteState.w) return;
+      var w = stage.clientWidth || stage.getBoundingClientRect().width;
+      // Hoehe begrenzen: die Bedienleiste darunter (Tastatur/Trackpad) braucht
+      // ihren Platz. Nach der Breite allein bemessen war das Bild auf dem
+      // aufgeklappten Fold ~550 px hoch — die Tastatur rutschte aus dem
+      // Bildschirm unter die Navigationsleiste. Im Vollbild gilt das nicht.
+      var maxH = w * 2;
+      var host = stage.closest('[data-screen="remote"]');
+      if (host && !window.remoteState.fullscreen) {
+        var cs = getComputedStyle(host);
+        var used = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        var gap = parseFloat(cs.rowGap || cs.gap) || 0;
+        var n = 0;
+        Array.prototype.forEach.call(host.children, function (el) {
+          if (el === stage || el.id === 'remoteBar' || el.id === 'remoteIme') return;
+          var cs2 = getComputedStyle(el);
+          // Ausgeblendetes und Schwebendes (Kreis, sein Menue) nimmt keinen Platz weg.
+          if (cs2.display === 'none' || cs2.position === 'fixed' || cs2.position === 'absolute') return;
+          used += el.getBoundingClientRect().height; n++;
+        });
+        used += gap * (n + 1);
+        var avail = host.clientHeight - used;
+        // Tastatur: ihre echte Hoehe (Reihen in Handy-Tastenhoehe) + ein Streifen
+        // Mini-Trackpad; Trackpad-Seite: mindestens 170 px Wischflaeche.
+        var keysEl = document.getElementById('remoteKeys');
+        var minBar = window.remoteState.page === 'keys'
+          ? (keysEl ? keysEl.scrollHeight : 260) + 90
+          : 170;
+        if (avail - minBar > 80) maxH = Math.min(maxH, avail - minBar);
+      }
+      // window.-Vorsatz ist Pflicht: der Mockup-Code liegt in einer Kapsel, in
+      // die bridge.js nicht hineinsieht (siehe Ausfuhr-Zeilen in Aufgabe 11).
+      var fit = window.fitRect(window.remoteState.w, window.remoteState.h, w, maxH);
+      var box = { x: 0, y: 0, w: w, h: Math.min(maxH, fit.h) };
+      stage.style.height = box.h + 'px';
+      if (canvas) { canvas.width = window.remoteState.w; canvas.height = window.remoteState.h; }
+      // Vollbild gehoert der angeschlossenen Hardware: ein von Fingern liegen
+      // gebliebener Zoom/Versatz wuerde die absolute Mausabbildung weiter
+      // unten (stageBox()) verfaelschen, die von einem unverzerrten Bild
+      // ausgeht — darum hier zurueckgesetzt, sobald die Buehne (neu) vermessen
+      // wird, waehrend Vollbild an ist.
+      if (window.remoteState.fullscreen) { view.zoom = 1; view.x = 0; view.y = 0; }
+      else {
+        // Zoom/Versatz ueberleben bewusst einen Bildschirmwechsel (Verlassen
+        // und Zurueckkommen an den Fernzugriff baut die Buehne komplett neu,
+        // siehe buildRemoteScreen-Einklinkung oben) — anders als beim
+        // Vollbild-Eintritt gibt es hier keinen Korrektheitsgrund, den Zoom
+        // wegzuwerfen (clampZoom haengt nicht von der Buehnengroesse ab,
+        // bleibt also so oder so gueltig), und ein weggeworfener Zoom waere
+        // fuer die Nutzerin nur eine unbegruendete Ueberraschung. Der Versatz
+        // dagegen HAENGT von der Buehnengroesse ab (clampPan bekommt sie als
+        // Parameter) — wurde die Buehne inzwischen anders vermessen (Drehung,
+        // anderer Container), kann ein alter Versatz ausserhalb des gueltigen
+        // Bereichs liegen und das Bild schief sitzen lassen. Darum hier mit
+        // der vorhandenen Klemmfunktion gegen die frisch vermessene Buehne
+        // nachgezogen (w/box.h statt einem erneuten getBoundingClientRect,
+        // sie sind gerade eben aus derselben Messung hervorgegangen).
+        view.x = window.clampPan(view.x, view.zoom, w);
+        view.y = window.clampPan(view.y, view.zoom, box.h);
+      }
+      applyView();
+    }
+
+    // ── Lebenszyklus der Buehne ─────────────────────────────────────────────
+    // SCREEN_HOOKS.remote ruft buildRemoteScreen() bei JEDEM Wechsel auf den
+    // Fernzugriffs-Bildschirm auf — nicht nur beim ersten Mal — und wirft dabei
+    // Canvas, Overlay und Leiste komplett weg und baut sie neu (die Leiste
+    // faellt dabei auch auf "Trackpad" zurueck). Das ist im Mockup so angelegt
+    // und bleibt unangetastet. WebSocket und Dekoder wissen davon nichts und
+    // laufen einfach weiter — nur unsere `canvas`/`ctx`-Referenzen wuerden sonst
+    // auf ein verwaistes, unsichtbares Element zeigen: das Bild faellt beim
+    // naechsten Bildschirmwechsel scheinbar aus, obwohl weiter Daten ankommen
+    // und man es im Code nirgends sieht. Deshalb klinken wir uns hier ein:
+    // nach jedem Neuaufbau (egal ob durch Navigation der App oder durch unser
+    // eigenes start()) holen wir Canvas/Context frisch und spielen den letzten
+    // Verbindungsstatus zurueck. Der Dekoder selbst wird dabei nicht angefasst
+    // — er wird einfach weiterbedient, sein Zustand (SPS/PPS, letztes
+    // Vollbild) bleibt gueltig, nur das Ziel seiner naechsten drawImage()-
+    // Aufrufe aendert sich.
+    var realBuildRemoteScreen = window.buildRemoteScreen;
+    window.buildRemoteScreen = function () {
+      if (typeof realBuildRemoteScreen === 'function') realBuildRemoteScreen();
+      canvas = document.getElementById('remoteCanvas');
+      ctx = canvas ? canvas.getContext('2d') : null;
+      layoutStage();
+      if (lastVeil) veil(lastVeil);
+      if (lastStat) stat(lastStat);
+    };
+
+    function ensureDecoder() {
+      if (decoder && decoder.state !== 'closed') return true;
+      if (typeof VideoDecoder === 'undefined') {
+        // Haeufigster Grund: die Seite laeuft nicht im sicheren Kontext (dann gibt
+        // es WebCodecs gar nicht) — das sagen, statt das Geraet zu beschuldigen.
+        veil(window.isSecureContext
+          ? 'Dieses Geraet kann den Bildstrom nicht anzeigen (kein WebCodecs).'
+          : 'Bildstrom gesperrt: die App-Oberflaeche laeuft nicht im sicheren Modus — bitte App aktualisieren.');
+        return false;
+      }
+      decoder = new VideoDecoder({
+        output: function (frame) {
+          if (ctx) ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+          frame.close();
+        },
+        error: function () {
+          // Ein Dekoderfehler heilt nur mit einem frischen Vollbild.
+          try { decoder.close(); } catch (e) {}
+          decoder = null;
+          if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:keyframe' }));
+        },
+      });
+      // Ohne `description` erwartet WebCodecs Annex-B — genau das, was der Server sendet.
+      decoder.configure({ codec: 'avc1.42E01E', optimizeForLatency: true });
+      return true;
+    }
+
+    function onBinary(buf) {
+      var view = new Uint8Array(buf);
+      if (view.length < 6 || (view[0] & 0x7f) !== 0x01) return;
+      var keyframe = (view[0] & 0x80) !== 0;
+      var ts = (view[1] << 24 | view[2] << 16 | view[3] << 8 | view[4]) >>> 0;
+      // Quittung sofort beim Empfang: daraus misst der Server, wie viel sich
+      // auf der Leitung staut, und verwirft lieber Bilder, als sekundenlang
+      // hinterherzulaufen (server/src/remote/flow.ts).
+      if (ws && ws.readyState === 1) ws.send('{"type":"remote:ack","payload":{"ts":' + ts + '}}');
+      if (!ensureDecoder()) return;
+      // Vor dem ersten Vollbild ist jedes Zwischenbild sinnlos — der Dekoder
+      // haette keinen Ausgangspunkt und zeichnete graue Kloetze.
+      if (decoder.state !== 'configured') return;
+      // Kommt der Dekoder nicht hinterher, lieber aufs naechste Vollbild
+      // springen als mit wachsendem Rueckstand weiterzuzeichnen. Ein
+      // verworfenes Zwischenbild entwertet alle folgenden — also bis zum
+      // Vollbild nichts mehr dekodieren und eines anfordern.
+      if (!keyframe && decoder.decodeQueueSize > 2) decoder.__gotKey = false;
+      if (!keyframe && !decoder.__gotKey) {
+        // Hoechstens alle 500 ms nachfragen — geht eine Anforderung verloren
+        // oder kommt das Vollbild spaet, fragt das naechste Zwischenbild erneut.
+        var now = Date.now();
+        if (ws && ws.readyState === 1 && now - (decoder.__keyAskedAt || 0) > 500) {
+          decoder.__keyAskedAt = now;
+          ws.send(JSON.stringify({ type: 'remote:keyframe' }));
+        }
+        return;
+      }
+      if (keyframe) decoder.__gotKey = true;
+      decoder.decode(new EncodedVideoChunk({
+        type: keyframe ? 'key' : 'delta',
+        timestamp: ts * 1000,
+        data: view.subarray(5),
+      }));
+    }
+
+    function onControl(msg) {
+      switch (msg.type) {
+        case 'remote:started':
+          // Neue Masse heissen neuer Bildaufbau — der alte Dekoder rechnet noch
+          // mit der alten Groesse und wuerde verzerrte Bilder liefern. Trifft
+          // sowohl den Helfer-Neustart nach einem Absturz als auch einen
+          // echten Aufloesungswechsel (Monitor an-/abgesteckt, Umstellung) —
+          // beide schicken ein frisches remote:started mit neuen Massen.
+          if (decoder && (window.remoteState.w !== msg.payload.width
+                       || window.remoteState.h !== msg.payload.height)) {
+            try { decoder.close(); } catch (e) {}
+            decoder = null;
+          }
+          window.remoteState.running = true;
+          window.remoteState.localCursor = !!msg.payload.localCursor;
+          window.remoteState.w = msg.payload.width;
+          window.remoteState.h = msg.payload.height;
+          window.remoteState.scale = msg.payload.scale;
+          retry = 0;
+          // Sperrbildschirm/Hintergrund/Netzabbruch reissen die Verbindung
+          // ohne dass jemand die Tastatur verlaesst — der Weg zum Mac war beim
+          // Verbindungsabbruch (onclose) schon tot, darum konnte eine dort
+          // noch festgestellte Sondertaste damals nicht geloest werden. Hier,
+          // sobald running wieder true ist (also TMSRemote.input() wirklich
+          // sendet), holt das dieselbe Funktion nach. remoteSticky blieb seit
+          // dem Abbruch unveraendert (bewusst nicht am onclose zurueckgesetzt
+          // — dort waere jeder Sendeversuch ohnehin verpufft), darum weiss
+          // releaseAllSticky() hier noch, was tatsaechlich offen war; der
+          // eingebaute "off"-Check macht den Aufruf beim ganz normalen ersten
+          // Verbinden (nichts war je gedrueckt) zum No-op.
+          if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+          // Dieselbe Ueberlegung gilt fuer die harte Tastatur/Maus im Vollbild:
+          // riss die Verbindung genau waehrend ein Hardware-Anschlag/-Klick
+          // unten war, kam dessen Loslassen nie an. releaseHardwareInput()
+          // weiss noch, was zuletzt gehalten wurde, und holt es hier nach.
+          if (typeof window.releaseHardwareInput === 'function') window.releaseHardwareInput();
+          veil('');
+          layoutStage();
+          break;
+        case 'remote:status':
+          // I16: Spezifikation Abschnitt 7 verlangt "fps · ms" (Verzoegerung)
+          // in der Kopfzeile, nicht die Bitrate — und der Server misst
+          // rttMs jetzt wirklich (Ping/Pong auf der Steuerverbindung),
+          // statt ihn fest auf 0 zu senden.
+          stat(msg.payload.fps + ' fps · ' + msg.payload.rttMs + ' ms');
+          linkRttMs = msg.payload.rttMs || 0;
+          break;
+        case 'remote:cursor':
+          serverCursor(msg.payload);
+          break;
+        case 'remote:stopped':
+          window.remoteState.running = false;
+          renderCursor();
+          veil('Beendet');
+          break;
+        case 'remote:error':
+          window.remoteState.running = false;
+          veil(remoteErrorText(msg.payload));
+          break;
+      }
+    }
+
+    function connect() {
+      if (!remoteTarget) { veil('Kein Server verbunden.'); return; }
+      canvas = document.getElementById('remoteCanvas');
+      ctx = canvas ? canvas.getContext('2d') : null;
+
+      var url = 'ws://' + remoteTarget.host + ':' + remoteTarget.port
+              + '/remote?token=' + encodeURIComponent(remoteTarget.token);
+      ws = new WebSocket(url);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = function () {
+        // Neue Verbindung, Zeigerposition unbekannt. NICHT erst bei
+        // remote:started zuruecksetzen: die erste Positionsmeldung des Macs
+        // kommt VOR remote:started an und waere sonst gleich wieder vergessen.
+        cursor.known = false;
+        cursor.srv = null;
+        if (cursor.settleTimer) { clearTimeout(cursor.settleTimer); cursor.settleTimer = null; }
+        ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
+        veil('Verbinde …');
+      };
+      ws.onmessage = function (e) {
+        if (typeof e.data === 'string') { try { onControl(JSON.parse(e.data)); } catch (err) {} }
+        else onBinary(e.data);
+      };
+      ws.onclose = function () {
+        ws = null;
+        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+        window.remoteState.running = false;
+        renderCursor();
+        // N1: waehrend suspend() darf hier NIE ein Wiederverbindungs-Zeitgeber
+        // entstehen — wantRunning bleibt bei suspend() absichtlich `true`
+        // (siehe suspended-Deklaration oben), also reicht dessen Pruefung
+        // allein nicht mehr.
+        if (!wantRunning || suspended) return;
+        // Nie aufgeben: die Verbindung faellt unterwegs staendig kurz weg.
+        retry = Math.min(retry + 1, 6);
+        veil('Verbindung verloren — neuer Versuch …');
+        retryTimer = setTimeout(connect, Math.min(500 * retry, 4000));
+      };
+      ws.onerror = function () { try { ws.close(); } catch (e) {} };
+    }
+
+    // C2: eine Sitzung wird gewuenscht (wantRunning), aber es steht noch
+    // keine Verbindung — nachziehen, sobald das moeglich ist. Das `!ws`
+    // deckt beides ab: kein doppelter Verbindungsaufbau, wenn die
+    // Zugangsdaten erneut gesetzt werden (z.B. Server-Wechsel), waehrend
+    // schon eine Verbindung steht oder gerade aufgebaut wird.
+    //
+    // Nachpruefung zu C2: ein noch anhaengender Wiederverbindungs-Zeitgeber
+    // (aus einem echten Netzabbruch, nicht aus suspend()) wird hier VOR dem
+    // eigenen connect() geraeumt — sonst feuert er kurz danach ein zweites
+    // Mal, waehrend die frische Verbindung schon steht.
+    function maybeConnect() {
+      if (!wantRunning || ws) return;
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      connect();
+    }
+    // Von setRemoteTarget (oben in dieser Datei) aufgerufen, sobald React
+    // Native die Zugangsdaten liefert — das ist der eigentliche Fix fuer C2.
+    window.__tmsRemoteTargetReady = maybeConnect;
+
+    window.TMSRemote = {
+      start: function (which) {
+        preset = which || preset;
+        wantRunning = true;
+        suspended = false; // ein expliziter Start raeumt einen etwaigen Rest auf
+        if (typeof window.buildRemoteScreen === 'function' && !document.getElementById('remoteStage')) {
+          window.buildRemoteScreen();
+        }
+        // Ausserhalb des if: die Buehne steht in der Praxis meist schon (der
+        // Aufrufer zeigt den Bildschirm typischerweise vor start()), darum
+        // wuerde eine Verschachtelung im if oben die Gesten nie verdrahten.
+        // wireStageGestures() ist ueber stage.dataset.wired selbst dagegen
+        // abgesichert, mehrfach am selben Element zu haengen.
+        wireStageGestures();
+        maybeConnect();
+      },
+      stop: function () {
+        // Muss VOR dem Schliessen laufen: releaseAllSticky() sendet ueber
+        // TMSRemote.input(), das nur sendet, solange ws noch offen und
+        // remoteState.running noch true ist. Nach dem close()/running=false
+        // weiter unten kommt ein Loslassen nicht mehr durch — eine
+        // festgestellte Sondertaste bliebe auf dem Mac haengen.
+        if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+        // C3/I6: Vollbild gehoert zu einer Sitzung, keine Sitzung heisst kein
+        // Vollbild — sonst bleiben die Dokument-Zuhoerer (Tastatur/Zeiger/Rad,
+        // siehe weiter unten) aktiv, waehrend laengst getrennt ist, und fangen
+        // die eigene Tastatur der App ab. setRemoteFullscreen(false) loest
+        // dabei auch alles, was eine angeschlossene Hardware-Tastatur/-Maus
+        // noch haelt (releaseHardwareInput) — derselbe Grund wie bei
+        // releaseAllSticky() oben, nur fuer den Hardware-Weg.
+        if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
+        // I6: und ein noch laufendes Trackpad-Ziehen bzw. ein gehaltener
+        // fester Links-/Rechtsklick-Knopf — der dritte Weg, auf dem eine
+        // Maustaste haengen bleiben kann, den weder releaseAllSticky()
+        // (Bildschirmtastatur) noch setRemoteFullscreen() (Hardware) abdeckt.
+        if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+        // Muss VOR ws.close() gesetzt sein (siehe onclose oben): sonst sieht
+        // der noch anhaengende onclose-Handler kurz "wantRunning === true"
+        // und plant faelschlich einen Wiederverbindungs-Zeitgeber.
+        wantRunning = false;
+        suspended = false;
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
+        if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+        window.remoteState.running = false;
+      },
+      /**
+       * I7: der Hintergrundwechsel (SeasonTwoWebRoot.tsx, ueber AppState)
+       * ruft diese beiden statt start()/stop() direkt. Der Unterschied zu
+       * stop(): wantRunning bleibt unangetastet — es ist der Merker dafuer,
+       * ob der NUTZER eine Sitzung will, nicht ob sie gerade laeuft. Wuerde
+       * suspend() wantRunning auf false setzen, koennte resume() beim
+       * Zurueckkehren nicht mehr unterscheiden "war vorher an" von "wurde
+       * per 'Trennen' beendet" — und wuerde jede Rueckkehr in den
+       * Vordergrund eine neue Aufnahme samt Energie-Assertion auf dem PC
+       * starten, obwohl der Nutzer laengst woanders ist.
+       */
+      suspend: function () {
+        if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+        if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
+        if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+        // N1 (Nachpruefung): MUSS vor ws.close() gesetzt sein — wantRunning
+        // bleibt hier absichtlich `true` (siehe Kommentar oben), also ist
+        // `suspended` der einzige Weg, den noch anhaengenden onclose-Handler
+        // davon abzuhalten, selbst einen Wiederverbindungs-Zeitgeber zu
+        // planen. Ohne das baute sich die Sitzung im Hintergrund von selbst
+        // wieder auf (neue Aufnahme + Energie-Assertion auf dem Mac), und
+        // ein spaeteres resume() haette zusammen mit diesem Zeitgeber zwei
+        // parallele Verbindungen aufgemacht.
+        suspended = true;
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
+        if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+        window.remoteState.running = false;
+      },
+      /** Setzt nur fort, was vorher lief (wantRunning) — nach einem
+       *  expliziten "Trennen" bleibt das ein No-op, siehe suspend() oben. */
+      resume: function () { suspended = false; maybeConnect(); },
+      /** Stufenwechsel = neu starten: ffmpeg auf Windows kann die Bitrate nicht im Lauf aendern. */
+      setQuality: function (which) {
+        preset = which;
+        if (!wantRunning) return;
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'remote:stop' }));
+          ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
+        }
+      },
+      input: function (ev) {
+        if (ws && ws.readyState === 1 && window.remoteState.running) {
+          ws.send(JSON.stringify(ev));
+          predictCursor(ev);
+        }
+      },
+      dictate: function () { post('mic:start', { target: 'remote' }); },
+    };
+
+    // Der Mockup ruft das beim Vollbildwechsel und nach Gesten auf, kommt aber
+    // nicht in diese Kapsel hinein — deshalb ausdruecklich nach aussen geben.
+    window.layoutRemoteStage = layoutStage;
+    window.addEventListener('resize', layoutStage);
+
+    // ── Vollbild: angeschlossene Tastatur und Maus ──────────────────────────
+    // Manuell umgeschaltet (siehe window.setRemoteFullscreen im Mockup) — hier
+    // wird nur noch weitergeleitet, solange window.remoteState.fullscreen an ist.
+
+    /** Rechteck des Bildes innerhalb der Buehne, in Bildschirmkoordinaten. */
+    function stageBox() {
+      var stage = document.getElementById('remoteStage');
+      if (!stage || !window.remoteState.w) return null;
+      var r = stage.getBoundingClientRect();
+      var box = window.fitRect(window.remoteState.w, window.remoteState.h, r.width, r.height);
+      return { x: r.left + box.x, y: r.top + box.y, w: box.w, h: box.h };
+    }
+
+    // Gehaltene Hardware-Tasten/-Maustasten: wer hier steht, hat noch KEIN
+    // Loslassen bekommen. Das ist der Fehlertyp, der in diesem Vorhaben schon
+    // mehrfach auftrat (Trackpad-Rechtsklick, Bildschirm-Sondertasten) — bei
+    // echter Hardware kommen keydown/keyup und Maustasten-Events von ausserhalb
+    // unserer Kontrolle, darum wird hier gegengebucht statt blind weitergereicht.
+    var heldKeys = {};      // KeyboardEvent.code -> true
+    var heldButtons = {};   // 'l' | 'm' | 'r' -> true
+
+    /**
+     * Loest aktiv alles, was die angeschlossene Tastatur/Maus noch haelt.
+     * Muss an DREI Stellen laufen, nicht nur einer:
+     *  - Vollbild verlassen (window.setRemoteFullscreen(false) im Mockup)
+     *  - Fensterfokus weg (blur) — z.B. Sperrbildschirm, App-Wechsel, waehrend
+     *    eine Taste/Maustaste unten war; ohne das bleibt sie auf dem Mac haengen
+     *  - frischer Verbindungsaufbau (remote:started) — falls die Verbindung
+     *    genau waehrend eines Tastendrucks abriss, kam das Loslassen nie an
+     *    (derselbe Grund, aus dem releaseAllSticky() dort schon aufgerufen wird)
+     */
+    function releaseHardwareInput() {
+      Object.keys(heldKeys).forEach(function (code) {
+        window.TMSRemote.input({ t: 'k', c: code, d: false, mods: { s: false, c: false, a: false, m: false } });
+      });
+      heldKeys = {};
+      Object.keys(heldButtons).forEach(function (b) {
+        window.TMSRemote.input({ t: 'b', b: b, d: false });
+      });
+      heldButtons = {};
+    }
+    window.releaseHardwareInput = releaseHardwareInput;
+    window.addEventListener('blur', releaseHardwareInput);
+
+    // Angeschlossene Maus: absolute Abbildung ueber dem Bild — der PC-Zeiger
+    // steht dort, wo der Android-Zeiger ueber dem Bild steht (siehe
+    // toStageNormalized() im Mockup fuer die Begruendung).
+    document.addEventListener('pointermove', function (e) {
+      if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
+      var box = stageBox();
+      if (!box) return;
+      var p = window.toStageNormalized(e.clientX, e.clientY, box);
+      if (p) window.TMSRemote.input({ t: 'm', x: p.x, y: p.y });
+    });
+
+    document.addEventListener('pointerdown', function (e) {
+      if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
+      if (e.target.closest && e.target.closest('#remoteExit')) return;   // Abzeichen bleibt der Rueckweg, nicht Teil der Fernsteuerung
+      // Wie bei pointermove ans Bildrechteck gebunden: ein Klick im schwarzen
+      // Rand neben dem Bild darf keinen Druck anfangen, sonst landet er an
+      // der zuletzt bekannten Zeigerstelle statt dort, wo der Nutzer hinsieht.
+      var box = stageBox();
+      if (!box || e.clientX < box.x || e.clientX > box.x + box.w || e.clientY < box.y || e.clientY > box.y + box.h) return;
+      e.preventDefault();
+      var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
+      heldButtons[b] = true;
+      window.TMSRemote.input({ t: 'b', b: b, d: true });
+    });
+    document.addEventListener('pointerup', function (e) {
+      if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
+      var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
+      // Bewusst NICHT ans Bildrechteck gebunden: ein Druck, der innerhalb
+      // begonnen hat, muss sein Loslassen auch dann bekommen, wenn der
+      // Zeiger inzwischen ausserhalb ist — sonst bleibt die Maustaste
+      // haengen (in diesem Vorhaben schon dreimal gefunden). heldButtons
+      // haelt fest, was hier tatsaechlich als gedrueckt gilt; ein Loslassen
+      // ohne zugehoerigen Druck (nie im Bild begonnen) wird nicht gesendet.
+      if (!heldButtons[b]) return;
+      delete heldButtons[b];
+      window.TMSRemote.input({ t: 'b', b: b, d: false });
+    });
+    document.addEventListener('contextmenu', function (e) {
+      if (window.remoteState.fullscreen) e.preventDefault();
+    });
+    document.addEventListener('wheel', function (e) {
+      if (!window.remoteState.fullscreen) return;
+      e.preventDefault();
+      window.TMSRemote.input({ t: 's', dx: Math.round(-e.deltaX / 20), dy: Math.round(-e.deltaY / 20) });
+    }, { passive: false });
+
+    // Angeschlossene Tastatur: Tasten abfangen, bevor der Browser sie deutet.
+    function forwardKey(e, down) {
+      if (!window.remoteState.fullscreen) return;
+      if (e.key === 'Escape' && e.shiftKey) {      // Notausstieg, falls das Abzeichen verdeckt ist
+        if (down) window.setRemoteFullscreen(false);
+        return;
+      }
+      e.preventDefault();
+      if (down) heldKeys[e.code] = true; else delete heldKeys[e.code];
+      window.TMSRemote.input({
+        t: 'k', c: e.code, d: down,
+        mods: { s: e.shiftKey, c: e.ctrlKey, a: e.altKey, m: e.metaKey },
+      });
+    }
+    document.addEventListener('keydown', function (e) { forwardKey(e, true); }, true);
+    document.addEventListener('keyup', function (e) { forwardKey(e, false); }, true);
+  })();
+
+  /** Fehlercodes des Servers in Saetze, die weiterhelfen. */
+  function remoteErrorText(p) {
+    switch (p && p.code) {
+      case 'permission_screen':
+        return 'Der Mac darf seinen Bildschirm nicht teilen.\n'
+             + 'Systemeinstellungen → Datenschutz & Sicherheit → Bildschirmaufnahme';
+      case 'permission_input':
+        return 'Der Mac darf keine Eingaben annehmen.\n'
+             + 'Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen';
+      case 'display_asleep':
+        return 'Der Bildschirm des Macs ist eingeschlafen oder es ist keiner angeschlossen. Gleich noch einmal versuchen.';
+      case 'capture_unavailable':
+        return 'Auf dem PC fehlt ffmpeg. Einmalig einrichten:  winget install ffmpeg';
+      case 'disabled':
+        return 'Der Fernzugriff ist auf diesem Server abgeschaltet.';
+      case 'helper_crashed':
+        return 'Die Bildschirmaufnahme ist abgestuerzt. Erneut versuchen.';
+      default:
+        return (p && p.message) || 'Der Fernzugriff ist fehlgeschlagen.';
+    }
+  }
 
   post('bridge:ready', {});
 })();
