@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fernzugriff zeigt jetzt das Bild. Die Verbindung stand zwar, aber die App durfte den Bildstrom nicht entschluesseln und zeigte nur: Dieses Geraet kann den Bildstrom nicht anzeigen. Grund war die interne Adresse der App-Oberflaeche, unter der Android den Video-Dekoder nicht freigibt. Nach dem Update einmal Farbschema und Terminal-Ansicht pruefen, die fallen auf die Vorgabe zurueck." \
+            --notes "Fernzugriff fuehlt sich jetzt an wie eine echte Tastatur und Maus. Beim Tippen erscheint die Taste vergroessert ueber dem Finger. Langes Halten oeffnet Varianten wie auf dem Handy, zum Beispiel s fuer ß, a fuer ä à á, e fuer é è oder Anfuehrungszeichen fuer „ “. Links- und Rechtsklick-Knoepfe leuchten beim Druecken, ein Tipp aufs Trackpad zeigt einen Ring mit Klick oder Rechtsklick, und beim Halten zum Ziehen leuchtet der Rand. Dazu enthaelt diese Version den Bild-Fix fuer den Fernzugriff." \
             --latest
