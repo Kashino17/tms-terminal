@@ -1664,6 +1664,11 @@
   .pad-ripple--right { border-color: rgba(255,170,90,.9); background: rgba(255,170,90,.14); }
   .pad-ripple i { position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px); font-style: normal;
     font-size: 11px; font-weight: 600; white-space: nowrap; color: rgba(255,255,255,.85); }
+  .pad-gesture { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); pointer-events: none;
+    padding: 9px 16px; border-radius: 999px; background: rgba(90,169,255,.9); color: #fff; font-weight: 700;
+    font-size: 14px; white-space: nowrap; box-shadow: 0 6px 20px rgba(0,0,0,.4); animation: padGesture .75s ease-out forwards; }
+  @keyframes padGesture { 0% { opacity: 0; transform: translate(-50%, -40%) scale(.9); } 15% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    75% { opacity: 1; } 100% { opacity: 0; } }
   @keyframes padRipple { from { transform: scale(.5); opacity: 1; } to { transform: scale(1.35); opacity: 0; } }
   /* Tastatur wie auf dem Handy: gedrueckt, vergroesserte Vorschau, Varianten beim Halten. */
   .rk.is-pressed { background: rgba(255,255,255,.24); }
@@ -3666,6 +3671,30 @@
       }
     }
 
+    // ── Mehrfinger-Gesten (3+ Finger): Workspaces, Mission Control, Spotlight ──
+    // Ab drei Fingern bewegt nichts mehr den Zeiger oder scrollt; pro Beruehrung
+    // loest hoechstens EINE Geste aus (ein langer Wisch springt nicht dreimal).
+    var multi = null; // { sx, sy, spread0, fired }
+    var GESTURE_LABEL = {
+      'swipe-left': 'Workspace →', 'swipe-right': '← Workspace', 'swipe-up': 'Übersicht',
+      'swipe-down': 'App-Fenster', 'pinch-in': 'Suche', 'pinch-out': 'Schreibtisch',
+    };
+    function multiStats() {
+      var n = 0, cx = 0, cy = 0, sp = 0;
+      pts.forEach(function (p) { cx += p.x; cy += p.y; n++; });
+      cx /= n; cy /= n;
+      pts.forEach(function (p) { sp += Math.hypot(p.x - cx, p.y - cy); });
+      return { cx: cx, cy: cy, spread: sp / n };
+    }
+    function padGestureFx(name) {
+      var el = document.createElement('span');
+      el.className = 'pad-gesture';
+      el.textContent = GESTURE_LABEL[name] || name;
+      pad.appendChild(el);
+      setTimeout(function () { el.remove(); }, 750);
+      if (navigator.vibrate) navigator.vibrate(15);
+    }
+
     /** Sichtbare Rueckmeldung fuer einen Klick: Ring an der Stelle + kurzes Wort. */
     function padRipple(x, y, label) {
       var r = pad.getBoundingClientRect();
@@ -3715,6 +3744,16 @@
       }
       maxFingers = Math.max(maxFingers, pts.size);
 
+      if (pts.size >= 3) {
+        // Mehrfinger-Geste beginnt (oder ein weiterer Finger kam dazu): Halten
+        // abbrechen, Ausgangslage neu messen — solange noch nichts ausgeloest hat.
+        clearHold();
+        if (!multi || !multi.fired) {
+          var st0 = multiStats();
+          multi = { sx: st0.cx, sy: st0.cy, spread0: st0.spread, fired: false };
+        }
+      }
+
       if (pts.size === 2) {
         // Zweiter Finger: das ist jetzt eine Zwei-Finger-Geste — laufenden
         // Halte-Zeitgeber vom ersten Finger raeumen, sonst feuert er mitten
@@ -3756,6 +3795,20 @@
       // aufliegender Finger zittert in 350 ms leicht ueber 10 px Weg, und das
       // Ziehen kam dann nie zustande (dieselbe Lehre wie beim Bild, holdShouldAbort).
       if (holdShouldAbort(p.sx, p.sy, e.clientX, e.clientY, 14)) clearHold();
+
+      if (maxFingers >= 3) {
+        if (multi && !multi.fired && pts.size >= 3) {
+          var st = multiStats();
+          var gname = classifyMultiGesture(maxFingers, st.cx - multi.sx, st.cy - multi.sy,
+            multi.spread0 > 0 ? st.spread / multi.spread0 : 1, 60);
+          if (gname) {
+            multi.fired = true;
+            if (R()) R().input({ t: 'g', g: gname });
+            padGestureFx(gname);
+          }
+        }
+        return; // drei+ Finger: nie Zeiger bewegen oder scrollen
+      }
 
       if (!R()) return;
       if (pts.size === 2) {
@@ -3804,6 +3857,7 @@
       }
       maxFingers = 0;
       gestureMoved = 0;
+      multi = null;
     }
 
     // pointerup ist ein echtes Loslassen (darf klicken); pointercancel ist ein
@@ -4059,6 +4113,27 @@
     return null;                                      // drei+ Finger: keine zugesagte Geste
   }
 
+  /**
+   * Mehrfinger-Gesten wie auf dem Mac-Trackpad. Entscheidet aus Fingerzahl,
+   * Verschiebung des Schwerpunkts (dx/dy, Bildpunkte) und Spreizung
+   * (spreadRatio = mittlerer Abstand zum Schwerpunkt jetzt / beim Aufsetzen):
+   *   3+ Finger wischen  -> 'swipe-left|right|up|down'
+   *   4+ Finger zusammen -> 'pinch-in'   (Spotlight)
+   *   4+ Finger auseinander -> 'pinch-out' (Schreibtisch)
+   * Welche Tastenkuerzel das ausloest, entscheidet der Server je Betriebssystem
+   * (server/src/remote/gestures.ts). null = (noch) keine Geste.
+   */
+  function classifyMultiGesture(fingers, dx, dy, spreadRatio, minPx) {
+    if (fingers < 3) return null;
+    if (fingers >= 4 && spreadRatio < 0.7) return 'pinch-in';
+    if (fingers >= 4 && spreadRatio > 1.4) return 'pinch-out';
+    var ax = Math.abs(dx), ay = Math.abs(dy);
+    if (Math.max(ax, ay) < minPx) return null;
+    if (ax > ay * 1.3) return dx < 0 ? 'swipe-left' : 'swipe-right';
+    if (ay > ax * 1.3) return dy < 0 ? 'swipe-up' : 'swipe-down';
+    return null;                                      // schraeg: noch unentschieden
+  }
+
   /** Aufziehen bis 3× — darueber zeigt der Strom keine echten Bildpunkte mehr. */
   function clampZoom(z) {
     if (!isFinite(z)) return 1;
@@ -4147,6 +4222,7 @@
     window.holdShouldAbort = holdShouldAbort;
     window.remoteImeDiff = remoteImeDiff;
     window.remoteAltsFor = remoteAltsFor;
+    window.classifyMultiGesture = classifyMultiGesture;
   }
   // ── /TMS-TEST-EXPORT ──
 
