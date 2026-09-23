@@ -1692,6 +1692,36 @@
   };
   window.TMSBridge.browserSync = syncNativeBrowser;
 
+  // ══ Gemeinsame Zwischenablage (Handy ⇄ Mac) ══════════════════════════════
+  // Der Verlauf gehoert dem Server (server/src/clipboard): Kopien am Mac meldet
+  // der Mac-Helfer, Kopien in der App gehen ueber clipboard:write hin. Die App
+  // (SeasonTwoWebRoot) legt Gewaehltes auf die Handy-Zwischenablage und liest
+  // beim Oeffnen, was zuletzt in anderen Handy-Apps kopiert wurde.
+  window.__clipItems = []; // keine Demo-Eintraege in der echten App
+  window.clipOnOpen = function () { post('clipboard:open', {}); };
+  window.clipUse = function (item) { post('clipboard:use', { id: item.id, text: item.text }); };
+  window.clipDelete = function (id) { post('clipboard:delete', { id: id }); };
+  window.clipClear = function () { post('clipboard:clear', {}); };
+  function clipChanged() { if (typeof window.clipRender === 'function') window.clipRender(); }
+  window.TMSBridge.clipboardSet = function (items) {
+    window.__clipItems = Array.isArray(items) ? items : [];
+    clipChanged();
+  };
+  window.TMSBridge.clipboardAdded = function (item, removed) {
+    if (!item || typeof item.text !== 'string') return;
+    var drop = {};
+    (removed || []).forEach(function (id) { drop[id] = true; });
+    drop[item.id] = true;
+    window.__clipItems = [item].concat(window.__clipItems.filter(function (x) { return !drop[x.id]; })).slice(0, 40);
+    clipChanged();
+  };
+  window.TMSBridge.clipboardRemoved = function (ids) {
+    var drop = {};
+    (ids || []).forEach(function (id) { drop[id] = true; });
+    window.__clipItems = window.__clipItems.filter(function (x) { return !drop[x.id]; });
+    clipChanged();
+  };
+
   // ══ Werkzeug-Sheets ═══════════════════════════════════════════════════════
   // Each sheet renders straight out of TMS_DATA[key], so the whole job is to
   // put real data there and to make the taps do real work.

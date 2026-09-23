@@ -128,6 +128,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const micCard = useRef<string | null>(null);
   /** Set when the user cancels: the recording still stops, its text is dropped. */
   const micDiscard = useRef(false);
+  // Gemeinsame Zwischenablage: der zuletzt abgeglichene Text. Was die App selbst
+  // aufs Handy gelegt hat (vom Mac kommend), darf beim nächsten Lesen nicht als
+  // „am Handy kopiert“ zurück in den Verlauf.
+  const clipSynced = useRef('');
   const restored = useRef(false);
   /** Per-session "is it still producing output" timers — the server has no
    *  status event, so the state has to be derived from the stream itself. */
@@ -333,6 +337,20 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     };
 
     const unsub = wsService.addMessageListener((m: any) => {
+      // ── Gemeinsame Zwischenablage (server/src/clipboard) ──
+      if (m?.type === 'clipboard:history') { call('clipboardSet', m.payload?.items ?? []); return; }
+      if (m?.type === 'clipboard:removed') { call('clipboardRemoved', m.payload?.ids ?? []); return; }
+      if (m?.type === 'clipboard:added' && m.payload?.item) {
+        const item = m.payload.item;
+        call('clipboardAdded', item, m.payload.removed ?? []);
+        // Am Mac kopiert → liegt sofort auch auf dem Handy (nur solange die App
+        // vorne ist; im Hintergrund lässt Android das ohnehin nicht zu).
+        if (item.source === 'mac' && AppState.currentState === 'active' && typeof item.text === 'string') {
+          clipSynced.current = item.text;
+          Clipboard.setStringAsync(item.text).catch(() => {});
+        }
+        return;
+      }
       if (m?.type === 'terminal:output' && m.sessionId && m.payload?.data) {
         recordViewBuffer(m.sessionId, m.payload.data);
         appendScrollback(m.sessionId, m.payload.data);
@@ -516,6 +534,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     // Die Titelliste schickt der Server schon beim Verbinden — womöglich bevor
     // dieser Empfänger stand (Kaltstart: Seite lädt langsamer als der Socket).
     wsService.send({ type: 'terminal:titles_get' } as never);
+    wsService.send({ type: 'clipboard:list' } as never);
     return unsub;
   }, [wsService, server, ready, call, markBusy, setSessionStatus]);
 
@@ -921,7 +940,37 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'clipboard:write':
+        // In der App kopiert: aufs Handy UND in den gemeinsamen Verlauf (→ Mac).
+        clipSynced.current = payload.text ?? '';
         Clipboard.setStringAsync(payload.text ?? '').then(() => call('toast', 'Kopiert'));
+        if (payload.text) wsService.send({ type: 'clipboard:push', payload: { text: payload.text } } as never);
+        break;
+
+      case 'clipboard:open':
+        // Android lässt Apps die Zwischenablage nur im Vordergrund lesen — also
+        // hier, beim Öffnen des Verlaufs: was zuletzt in einer anderen App am
+        // Handy kopiert wurde, kommt jetzt dazu (und auf den Mac).
+        Clipboard.getStringAsync().then((t) => {
+          if (t && t.trim() && t !== clipSynced.current) {
+            clipSynced.current = t;
+            wsService.send({ type: 'clipboard:push', payload: { text: t } } as never);
+          }
+        }).catch(() => {}).finally(() => wsService.send({ type: 'clipboard:list' } as never));
+        break;
+
+      case 'clipboard:use':
+        // Ein Eintrag gewählt: auf beide Geräte legen (Server setzt den Mac).
+        clipSynced.current = payload.text ?? '';
+        Clipboard.setStringAsync(payload.text ?? '').catch(() => {});
+        if (payload.id) wsService.send({ type: 'clipboard:use', payload: { id: payload.id } } as never);
+        break;
+
+      case 'clipboard:delete':
+        if (payload.id) wsService.send({ type: 'clipboard:delete', payload: { id: payload.id } } as never);
+        break;
+
+      case 'clipboard:clear':
+        wsService.send({ type: 'clipboard:clear' } as never);
         break;
 
       case 'manager:send': {

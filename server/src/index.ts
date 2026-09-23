@@ -23,6 +23,7 @@ import { consumeSnapshot } from './terminal/restore/snapshot.store';
 import { PtyDaemonClient } from './terminal/ptyd/client';
 import { usePtyKeeper } from './terminal/terminal.factory';
 import { titleStore } from './terminal/titles';
+import { clipboardHub } from './clipboard';
 import { shutdown as shutdownWhisper, prewarm as prewarmWhisper } from './audio/whisper-sidecar';
 import { shutdown as shutdownRewriter, prewarm as prewarmRewriter } from './audio/prompt-rewriter-sidecar';
 import { managerService } from './websocket/ws.handler';
@@ -147,6 +148,7 @@ async function main(): Promise<void> {
   // nicht mehr gibt, sind Ballast. Die uebrigen geben dem Manager gleich die
   // richtigen Namen (statt "Shell 4" in seinen Meldungen).
   titleStore.prune(new Set(globalManager.listSessions().map((x) => x.id)));
+  clipboardHub.start(); // gemeinsame Zwischenablage: Kopien am Mac landen im Verlauf
   for (const [id, title] of Object.entries(titleStore.all())) managerService.setSessionLabel(id, title);
 
   if (!managerService.isEnabled()) {
@@ -322,6 +324,7 @@ async function main(): Promise<void> {
     forceExit.unref();
     logger.info('Shutting down...');
     void titleStore.flush();
+    clipboardHub.stop();
     watcherService.shutdown();
     shutdownWhisper();
     shutdownRewriter();

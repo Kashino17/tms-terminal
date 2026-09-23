@@ -30,6 +30,7 @@ import { browserBridge } from '../browserbridge/browserbridge.manager';
 import { asPaste } from '../terminal/paste.policy';
 import { titleStore } from '../terminal/titles';
 import { cleanTitle } from '../terminal/titles.store';
+import { clipboardHub } from '../clipboard';
 
 // ── Terminal-Titel: auf dem Server gespeichert, an ALLE Apps verteilt ─────────
 // Der Titel eines Terminals gehoert dem Server (titles.store.ts): so ueberlebt
@@ -40,6 +41,15 @@ function broadcastTitle(sessionId: string, title: string | null): void {
     if (sock.readyState === 1) sock.send(JSON.stringify({ type: 'terminal:title', sessionId, payload: { title } }));
   }
 }
+// ── Gemeinsame Zwischenablage: jede Aenderung geht an ALLE Apps ──────────────
+clipboardHub.onChange((ev) => {
+  const msg = ev.kind === 'added'
+    ? { type: 'clipboard:added', payload: { item: ev.change.item, removed: ev.change.removed } }
+    : { type: 'clipboard:removed', payload: { ids: ev.ids } };
+  const data = JSON.stringify(msg);
+  for (const sock of liveSockets) if (sock.readyState === 1) sock.send(data);
+});
+
 /** Ein Terminal ist endgueltig weg — sein Titel auch. */
 function forgetTitle(sessionId: string): void {
   if (titleStore.get(sessionId) === undefined) return;
@@ -901,6 +911,26 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       const { tabId, sessionId: tabSessionId } = (msg as any).payload ?? {};
       (managerService as any).activeTabId = tabId;
       (managerService as any).activeSessionId = tabSessionId;
+      return;
+    }
+
+    if (msgType === 'clipboard:list') {
+      send(ws, { type: 'clipboard:history', payload: { items: clipboardHub.list() } } as any);
+      return;
+    }
+    if (msgType === 'clipboard:push') {
+      const text = (msg as any).payload?.text;
+      if (typeof text === 'string') clipboardHub.addFromPhone(text);
+      return;
+    }
+    if (msgType === 'clipboard:use' || msgType === 'clipboard:delete') {
+      const id = (msg as any).payload?.id;
+      if (typeof id !== 'string') return;
+      if (msgType === 'clipboard:use') clipboardHub.use(id); else clipboardHub.remove(id);
+      return;
+    }
+    if (msgType === 'clipboard:clear') {
+      clipboardHub.clear();
       return;
     }
 

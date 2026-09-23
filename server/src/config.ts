@@ -14,6 +14,8 @@ export interface ServerConfig {
   jwtExpiry?: string;
   /** Remote access (mirror and control the screen). Default: on. */
   remoteEnabled?: boolean;
+  /** Shared clipboard between phone and Mac (history of the last 40 copies). Default: on. */
+  clipboardSync?: boolean;
 }
 
 export const config = {

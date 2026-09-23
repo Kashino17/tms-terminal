@@ -16,7 +16,7 @@ function loadBlock(name) {
   const re = new RegExp(`// ── TMS-TEST-EXPORT: ${name} ──([\\s\\S]*?)// ── /TMS-TEST-EXPORT ──`);
   const m = re.exec(html);
   assert.ok(m, `Block "${name}" fehlt im Mockup — Markierungen nicht entfernen`);
-  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows, clampZoom, clampPan, holdShouldAbort, remoteImeDiff, remoteAltsFor, classifyMultiGesture };`)();
+  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteShortcutRows, imeKeyFor, clampZoom, clampPan, holdShouldAbort, remoteImeDiff, remoteAltsFor, classifyMultiGesture };`)();
 }
 
 test('der markierte Block laesst sich laden', () => {
@@ -106,51 +106,6 @@ test('classifyPadTap: Weg-Schwelle genau auf tapSlopPx (10) zaehlt noch als Tipp
   assert.equal(classifyPadTap(1, false, 0, 11, 250, 10), null, 'knapp ueber der Schwelle nicht mehr');
 });
 
-test('die Grundebene ist eine deutsche Tastatur', () => {
-  const { remoteKeyRows } = loadBlock('remoteMath');
-  const codes = remoteKeyRows('base').flat().map((k) => k.c);
-
-  const byLabel = Object.fromEntries(remoteKeyRows('base').flat().map((k) => [k.l, k.c]));
-  // Positionscodes fuer die deutsche Mac-Belegung: das deutsche z sitzt auf der
-  // US-Y-Position. Frueher stand hier KeyZ — der Mac tippte "y" statt "z".
-  assert.equal(byLabel.z, 'KeyY', 'z muss die US-Y-Position schicken');
-  assert.equal(byLabel.y, 'KeyZ', 'y muss die US-Z-Position schicken');
-  assert.ok(codes.includes('Semicolon'), 'Umlaut-Position oe');
-  assert.ok(codes.includes('Enter'));
-  assert.ok(codes.includes('Backspace'));
-  assert.ok(codes.includes('Space'));
-});
-
-test('jede Sondertaste ist als haftend gekennzeichnet', () => {
-  const { remoteKeyRows } = loadBlock('remoteMath');
-  const alle = remoteKeyRows('base').flat();
-  const cmd = alle.find((k) => k.c === 'MetaLeft');
-  const a = alle.find((k) => k.c === 'KeyA');
-
-  assert.equal(cmd.sticky, true, 'ohne haftende Befehlstaste ist Befehl+Tab nicht tippbar');
-  assert.ok(!a.sticky, 'Buchstaben haften nicht');
-});
-
-test('die Funktionsebene bringt F1 bis F12', () => {
-  const { remoteKeyRows } = loadBlock('remoteMath');
-  const codes = remoteKeyRows('fn').flat().map((k) => k.c);
-  assert.ok(codes.includes('F1'));
-  assert.ok(codes.includes('F12'));
-});
-
-test('jede Taste hat eine Beschriftung und entweder einen Positionscode oder einen Textweg', () => {
-  const { remoteKeyRows } = loadBlock('remoteMath');
-  for (const layer of ['base', 'num', 'fn', 'sc']) {
-    for (const key of remoteKeyRows(layer).flat()) {
-      assert.ok(key.l && key.l.length > 0, `Beschriftung fehlt bei ${JSON.stringify(key)}`);
-      const hasCode = key.c && key.c.length > 0;
-      const hasText = key.s && key.s.length > 0;
-      assert.ok(hasCode || hasText, `weder Code noch Textweg bei ${key.l}`);
-      assert.ok(!(hasCode && hasText), `${key.l} hat sowohl Code als auch Textweg — genau einer ist erlaubt`);
-    }
-  }
-});
-
 test('toStageNormalized rechnet Bildschirmpunkte in Bildkoordinaten', () => {
   const { toStageNormalized } = loadBlock('remoteMath');
   const box = { x: 20, y: 10, w: 200, h: 100 };   // Bild sitzt mit Rand in der Buehne
@@ -165,33 +120,6 @@ test('toStageNormalized meldet Punkte neben dem Bild als ungueltig', () => {
   const box = { x: 20, y: 10, w: 200, h: 100 };
   assert.equal(toStageNormalized(5, 60, box), null, 'im schwarzen Rand links');
   assert.equal(toStageNormalized(120, 200, box), null, 'unterhalb des Bildes');
-});
-
-test('die Zeichenebene sendet Satzzeichen ueber den Textweg, nie ueber einen US-Positionscode', () => {
-  const { remoteKeyRows } = loadBlock('remoteMath');
-
-  // Positionscodes, die in der Grundebene schon fuer einen Umlaut belegt sind
-  // (BracketLeft->ü, Semicolon->ö, Quote->ä). Ein Zeichen-Layout, das versehentlich
-  // wieder auf so einen Code zurueckfaellt, wuerde auf einer deutschen
-  // Mac-Belegung ein Zeichen tippen statt des draufstehenden Satzzeichens.
-  const baseCodes = new Set(remoteKeyRows('base').flat().map((k) => k.c).filter(Boolean));
-  const DIGIT_CODES = new Set(['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
-    'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0']);
-  const STRUCTURAL_CODES = new Set(['Space', 'Enter', 'Backspace']);
-
-  for (const key of remoteKeyRows('num').flat()) {
-    if (key.c) {
-      const isDigit = DIGIT_CODES.has(key.c);
-      const isStructural = STRUCTURAL_CODES.has(key.c) || key.c.indexOf('__layer:') === 0;
-      assert.ok(isDigit || isStructural,
-        `"${key.l}" (${key.c}) ist ein Zeichen ueber Positionscode — auf einer deutschen ` +
-        'Belegung tippt diese Position etwas anderes als draufsteht; muss ueber den Textweg (s) gehen');
-      assert.ok(!baseCodes.has(key.c) || isStructural,
-        `Positionscode ${key.c} bei "${key.l}" ist in der Grundebene schon fuer einen Umlaut belegt`);
-    } else {
-      assert.ok(key.s, `"${key.l}" hat weder Ziffern-Positionscode noch Textweg`);
-    }
-  }
 });
 
 test('clampZoom bleibt zwischen 1 und 3', () => {
@@ -235,33 +163,6 @@ test('holdShouldAbort: genau auf der Schwelle bricht NICHT ab (nur echtes Uebers
   assert.equal(holdShouldAbort(100, 100, 108.01, 100, 8), true, 'knapp darueber bricht ab');
 });
 
-test('die Kuerzel-Ebene: jede Taste ist ein Kuerzel mit Sondertaste und Erklaerung', () => {
-  const { remoteKeyRows } = loadBlock('remoteMath');
-  const keys = remoteKeyRows('sc').flat().filter((k) => k.combo);
-  assert.ok(keys.length >= 20, 'genug Kuerzel');
-  for (const k of keys) {
-    assert.match(k.combo, /^[msac]+$/, `${k.l}: nur m/s/a/c erlaubt`);
-    assert.ok(k.sub, `${k.l}: kurze Erklaerung fehlt`);
-  }
-  const find = (l) => keys.find((k) => k.l === l);
-  assert.equal(find('⌘Z').c, 'KeyY', 'Rueckgaengig auf deutscher Belegung = US-Y-Position');
-  assert.equal(find('⌘C').combo, 'm');
-  assert.equal(find('⌃C').combo, 'c', 'Abbruch im Terminal ist ctrl, nicht ⌘');
-  assert.ok(remoteKeyRows('sc').flat().some((k) => k.c === 'Enter'), '⏎ auch hier erreichbar');
-});
-
-test('die Grundebene fuehrt zu Kuerzeln, F-Tasten und zur Handy-Tastatur', () => {
-  const { remoteKeyRows } = loadBlock('remoteMath');
-  const codes = remoteKeyRows('base').flat().map((k) => k.c);
-  for (const c of ['Escape', '__layer:sc', '__layer:fn', '__ime', 'Tab']) assert.ok(codes.includes(c), c);
-});
-
-test('die Zeichenebene hat @ # % & ^ ` ß € § °', () => {
-  const { remoteKeyRows } = loadBlock('remoteMath');
-  const texts = new Set(remoteKeyRows('num').flat().map((k) => k.s).filter(Boolean));
-  for (const ch of ['@', '#', '%', '&', '^', '`', 'ß', '€', '§', '°']) assert.ok(texts.has(ch), ch);
-});
-
 test('Handy-Tastatur: Tippen, Autokorrektur, Rueckschritt, Enter', () => {
   const { remoteImeDiff } = loadBlock('remoteMath');
   const Z = '\u200b';
@@ -283,18 +184,6 @@ test('langes Halten: Varianten wie auf der Handy-Tastatur', () => {
   assert.deepEqual(remoteAltsFor('x'), [], 'ohne Varianten: nichts');
 });
 
-test('Grundebene wie am Mac: Pfeile oben, ctrl/⌥/⌘ neben der Leertaste; aufgeklappt mit Ziffern', () => {
-  const { remoteKeyRows } = loadBlock('remoteMath');
-  const zu = remoteKeyRows('base', false), auf = remoteKeyRows('base', true);
-  const codes = (row) => row.map((k) => k.c || k.s);
-  assert.ok(['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight'].every((c) => codes(zu[0]).includes(c)), 'Pfeile in der Werkzeugreihe');
-  const last = codes(zu[zu.length - 1]);
-  assert.ok(['ControlLeft', 'AltLeft', 'MetaLeft', 'Space', 'Enter'].every((c) => last.includes(c)), 'Mac-Reihe unten');
-  assert.equal(auf.length, zu.length + 1, 'aufgeklappt eine Reihe mehr');
-  assert.ok(codes(auf[1]).includes('Digit1') && codes(auf[1]).includes('ß'), 'Ziffernreihe + ß');
-  assert.ok(!zu.some((row) => codes(row).includes('Digit1')), 'zugeklappt ohne Ziffernreihe (die sind auf 123)');
-});
-
 test('Mehrfinger-Gesten wie auf dem Mac-Trackpad', () => {
   const { classifyMultiGesture: g } = loadBlock('remoteMath');
   assert.equal(g(3, -120, 5, 1, 70), 'swipe-left', 'drei Finger nach links');
@@ -307,4 +196,44 @@ test('Mehrfinger-Gesten wie auf dem Mac-Trackpad', () => {
   assert.equal(g(3, 80, 75, 1, 70), null, 'schraeg: unentschieden');
   assert.equal(g(2, -150, 0, 1, 70), null, 'zwei Finger sind Scrollen, keine Geste');
   assert.equal(g(3, 0, 0, 0.5, 70), null, 'Zusammenziehen erst ab vier Fingern');
+});
+
+test('Kuerzelleiste: Reihe 1 fest mit esc, ⇥, Sondertasten (haftend) und Pfeilen', () => {
+  const { remoteShortcutRows } = loadBlock('remoteMath');
+  const [r1, r2] = remoteShortcutRows();
+  assert.equal(r1.scroll, undefined, 'Reihe 1 scrollt nicht');
+  assert.deepEqual(r1.keys.map((k) => k.c), ['Escape', 'Tab', 'ShiftLeft', 'ControlLeft', 'AltLeft', 'MetaLeft',
+    'ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight']);
+  for (const k of r1.keys.filter((k) => /Left$/.test(k.c) && !/^Arrow/.test(k.c))) assert.ok(k.sticky && k.m, k.l + ' haftet');
+  assert.equal(r2.scroll, true, 'Reihe 2 scrollt quer');
+});
+
+test('Kuerzelleiste: Reihe 2 bringt Handy-Tastatur, Zwischenablage, F1–F12 und Kuerzel', () => {
+  const { remoteShortcutRows } = loadBlock('remoteMath');
+  const keys = remoteShortcutRows()[1].keys;
+  const codes = keys.map((k) => k.c);
+  assert.deepEqual(codes.slice(0, 3), ['__ime', '__clip', '__mic'], 'Tastatur, 📋, 🎙 zuerst');
+  for (let i = 1; i <= 12; i++) assert.ok(codes.includes('F' + i), 'F' + i);
+  for (const c of ['Enter', 'Backspace', 'Home', 'End', 'PageUp', 'PageDown', 'Delete']) assert.ok(codes.includes(c), c);
+  const combos = keys.filter((k) => k.combo);
+  assert.ok(combos.length >= 20);
+  for (const k of combos) {
+    assert.match(k.combo, /^[mcas]+$/, k.l);
+    assert.ok(k.sub, k.l + ' erklaert sich');
+  }
+  const z = combos.find((k) => k.l === '⌘Z');
+  assert.equal(z.c, 'KeyY', '⌘Z auf der deutschen Z-Position');
+});
+
+test('Kuerzel ueber die Handy-Tastatur: Zeichen → Taste (deutsche Mac-Belegung)', () => {
+  const { imeKeyFor } = loadBlock('remoteMath');
+  assert.deepEqual(imeKeyFor('c'), { c: 'KeyC', shift: false });
+  assert.deepEqual(imeKeyFor('C'), { c: 'KeyC', shift: true });
+  assert.deepEqual(imeKeyFor('z'), { c: 'KeyY', shift: false }, 'deutsches z = US-Y-Position');
+  assert.deepEqual(imeKeyFor('y'), { c: 'KeyZ', shift: false });
+  assert.deepEqual(imeKeyFor('5'), { c: 'Digit5', shift: false });
+  assert.deepEqual(imeKeyFor(' '), { c: 'Space', shift: false });
+  assert.equal(imeKeyFor('ä'), null);
+  assert.equal(imeKeyFor('ab'), null, 'nur ein Zeichen');
+  assert.equal(imeKeyFor(''), null);
 });
