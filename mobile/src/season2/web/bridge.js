@@ -258,7 +258,6 @@
   var WIN_SLACK = 200;  // so weit darf das DOM-Fenster überwachsen, bevor beschnitten wird
   // URLs zuerst; Pfade nur, wenn davor kein / : ~ oder Wortzeichen steht — sonst
   // wird die zweite Hälfte einer umgebrochenen URL als eigener "Pfad" erkannt.
-  var URL_RE = /(https?:\/\/[^\s"'<>()]+)|((?<![\w:\/~])(?:~|\.{0,2})\/[\w.\-]+(?:\/[\w.\-]+)+)/g;
 
   function xterm256(c) {
     if (c < 16) return PALETTE[c];
@@ -459,32 +458,12 @@
       };
     }
 
-    // Logische Zeilen (über Umbrüche hinweg) für die Link-Erkennung — reine
-    // String-Arbeit auf den gecachten Texten, kein Zellen-Lesen.
-    var links = {}; // rowIndex -> [{from, to, url}]
-    var g = 0;
-    while (g < total) {
-      var group = [g], text = rows[g].text;
-      var k2 = g + 1;
-      var cols = t.term.cols;
-      while (k2 < total && (rows[k2].wrapped || rows[k2 - 1].text.length >= cols)) {
-        group.push(k2); text += rows[k2].text; k2++;
-      }
-      var m;
-      URL_RE.lastIndex = 0;
-      while ((m = URL_RE.exec(text))) {
-        var url = m[0].replace(/[.,;:)\]]+$/, '');
-        var from = m.index, to = from + url.length;
-        var off = 0;
-        for (var gi = 0; gi < group.length; gi++) {
-          var ri = group[gi], len = rows[ri].text.length;
-          var a = Math.max(from, off) - off, bEnd = Math.min(to, off + len) - off;
-          if (bEnd > a) (links[ri] = links[ri] || []).push({ from: a, to: bEnd, url: url });
-          off += len;
-        }
-      }
-      g = k2;
-    }
+    // Logische Zeilen für die Link-Erkennung: Terminal-Umbrüche UND die harten
+    // Umbrüche, die Claude Code selbst macht (Zeile bis zum Rand, Fortsetzung
+    // eingerückt) — Regel und Tests: stitchRows im Mockup (termText-Block).
+    // Jeder Teil eines umgebrochenen Links trägt so die GANZE URL; ein Tipp
+    // darauf kopiert sie vollständig, ohne Umbrüche und Einrückung.
+    var links = typeof window.stitchLinks === 'function' ? window.stitchLinks(rows, t.term.cols) : {};
 
     // Inneres HTML nur für Zeilen (neu) bauen, deren Inhalt oder Link-Lage sich
     // geändert hat. Gecachte Historie mit unveränderter Link-Signatur ist fertig.
@@ -558,9 +537,11 @@
     if (cs) {
       pre.classList.toggle('selection-mode', !!cs.selectionMode);
       cs.lines = rows.map(function (x) { return x.text; }); // Kopieren/Selektion lesen daraus
+      cs.rowsWrapped = rows.map(function (x) { return x.wrapped; });
+      cs.cols = t.term.cols;
       cs._renderedLen = cs.lines.length;
       if (cs.selection && cs.selection.end >= total) cs.selection = null;
-      if (cs.selection) {
+      if (cs.selection && cs.selection.sc === undefined) {
         pre.querySelectorAll('.term-line').forEach(function (l, i) {
           l.classList.toggle('is-selected', i >= cs.selection.start && i <= cs.selection.end);
         });
@@ -800,14 +781,23 @@
 
     function apply(ev) {
       var base = pre.getBoundingClientRect();
-      var total = pre.querySelectorAll('.term-line').length;
-      var idx = Math.floor((ev.clientY - base.top - padTop + pre.scrollTop) / lineH);
+      var lines = pre.querySelectorAll('.term-line');
+      var total = lines.length;
+      // Der Griff haengt UNTER der Zeile (Stiel nach oben) — gemeint ist die Zeile
+      // ueber dem Finger, nicht die, auf der er liegt.
+      var idx = Math.floor((ev.clientY - lineH * 0.9 - base.top - padTop + pre.scrollTop) / lineH);
       idx = Math.max(0, Math.min(total - 1, idx));
-      if (kind === 'start') cs.selection.start = Math.min(idx, cs.selection.end);
-      else cs.selection.end = Math.max(idx, cs.selection.start);
-      pre.querySelectorAll('.term-line').forEach(function (l, i) {
-        l.classList.toggle('is-selected', i >= cs.selection.start && i <= cs.selection.end);
-      });
+      var col = colAt(pre, lines[idx], ev.clientX, 'round');
+      var sel = cs.selection;
+      if (sel.sc === undefined) { sel.sc = 0; sel.ec = lineText(lines[sel.end]).length; }
+      // Anfang bleibt vor dem Ende und umgekehrt — kein Ueberkreuzen.
+      if (kind === 'start') {
+        if (idx > sel.end || (idx === sel.end && col > sel.ec)) { idx = sel.end; col = sel.ec; }
+        sel.start = idx; sel.sc = col;
+      } else {
+        if (idx < sel.start || (idx === sel.start && col < sel.sc)) { idx = sel.start; col = sel.sc; }
+        sel.end = idx; sel.ec = col;
+      }
       window.positionHandlesAndBubble(cardId);
       // Am Rand weiterziehen scrollt nach — sonst endete die Auswahl am Sichtfeld.
       if (ev.clientY < base.top + 28) pre.scrollTop -= lineH;
@@ -869,15 +859,168 @@
   // scrollTerminalToBottom und updateJumpOrb bleiben die des Mockups: die
   // .card-body ist wieder der echte Scroller.
 
-  /** Zeile in den Kopier-Modus nehmen. */
-  function startLineSelection(line) {
+  // ══ Zeichengenaue Auswahl ═════════════════════════════════════════════════
+  // Vorher kannte die Auswahl nur ganze Zeilen ("von Zeile X bis Y"). Jetzt:
+  // Zeile + Zeichen fuer Anfang und Ende. Langer Druck markiert das Wort unter
+  // dem Finger — auf einem Link den GANZEN Link ueber alle Umbrueche —, die
+  // Griffe verschieben zeichenweise, ein Tipp im Markier-Modus nimmt die Zeile.
+  // Gemalt wird ueber die Custom-Highlight-API: die Zeilen bleiben unberuehrt,
+  // das Neuzeichnen bei laufender Ausgabe stellt die Markierung nur neu her.
+  // Textregeln (Umbrueche, Links, Fuellzeichen): termText-Block im Mockup.
+  var HAS_HL = typeof CSS !== 'undefined' && !!CSS.highlights && typeof Highlight === 'function';
+  var selRanges = {};                       // cardId -> Range
+
+  function selPre(cardId) { return document.querySelector('.card-body[data-card-id="' + cardId + '"]'); }
+  function lineTextEl(line) { return line && line.querySelector('.term-line__text'); }
+  function lineText(line) { var el = lineTextEl(line); return el ? el.textContent : ''; }
+  function selRows(cardId, pre) {
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    var els = pre.querySelectorAll('.term-line');
+    var out = new Array(els.length);
+    for (var i = 0; i < els.length; i++) {
+      out[i] = { text: lineText(els[i]), wrapped: !!(cs && cs.rowsWrapped && cs.rowsWrapped[i]) };
+    }
+    return out;
+  }
+  function selCols(cardId) {
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    return cs && cs.cols ? cs.cols : Infinity; // Cloud-Logs: keine harten Umbrueche verbinden
+  }
+  /** Zeichenbreite (Monospace) aus einer Zeile mit Text messen. */
+  function charWidth(pre) {
+    var els = pre.querySelectorAll('.term-line__text');
+    for (var i = els.length - 1; i >= 0; i--) {
+      var n = els[i].textContent.length;
+      if (n > 4) return els[i].getBoundingClientRect().width / n;
+    }
+    return 8;
+  }
+  /** Fingerposition x → Zeichenspalte in dieser Zeile (round: zwischen zwei Zeichen, floor: das Zeichen). */
+  function colAt(pre, line, x, mode) {
+    var el = lineTextEl(line);
+    if (!el) return 0;
+    var len = el.textContent.length;
+    var left = el.getBoundingClientRect().left;
+    var v = (x - left) / charWidth(pre);
+    var c = mode === 'floor' ? Math.floor(v) : Math.round(v);
+    return Math.max(0, Math.min(len, c));
+  }
+  /** Textknoten + Versatz fuer Zeichen c einer Zeile. */
+  function domPoint(line, c) {
+    var el = lineTextEl(line);
+    if (!el) return { node: line, off: 0 };
+    var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), n, left = c, last = null;
+    while ((n = w.nextNode())) {
+      if (left <= n.length) return { node: n, off: left };
+      left -= n.length; last = n;
+    }
+    return last ? { node: last, off: last.length } : { node: el, off: 0 };
+  }
+  function caretX(pre, line, pt) {
+    var r = document.createRange();
+    try { r.setStart(pt.node, pt.off); r.collapse(true); } catch (e) { return 0; }
+    var rect = r.getBoundingClientRect();
+    var base = pre.getBoundingClientRect();
+    var x = rect.width || rect.left ? rect.left : (lineTextEl(line) || line).getBoundingClientRect().left;
+    return x - base.left - pre.clientLeft + pre.scrollLeft;
+  }
+  function paintHighlight() {
+    if (!HAS_HL) return;
+    var list = Object.keys(selRanges).map(function (k) { return selRanges[k]; }).filter(Boolean);
+    if (list.length) CSS.highlights.set('term-sel', new Highlight(list[0]));
+    for (var i = 1; i < list.length; i++) CSS.highlights.get('term-sel').add(list[i]);
+    if (!list.length) CSS.highlights.delete('term-sel');
+  }
+
+  window.positionHandlesAndBubble = function (cardId) {
+    var pre = selPre(cardId);
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    if (!pre || !cs) return;
+    var hs = pre.querySelector('.sel-handle--start');
+    var he = pre.querySelector('.sel-handle--end');
+    var bubble = pre.querySelector('.copy-bubble');
+    var sel = cs.selection;
+    var lines = pre.querySelectorAll('.term-line');
+    if (!sel || sel.sc === undefined || !lines[sel.start] || !lines[sel.end]) {
+      [hs, he, bubble].forEach(function (el) { if (el) el.remove(); });
+      delete selRanges[cardId]; paintHighlight();
+      return;
+    }
+    var sl = lines[sel.start], el = lines[sel.end];
+    var a = domPoint(sl, sel.sc), b = domPoint(el, sel.ec);
+    if (HAS_HL) {
+      var range = document.createRange();
+      try { range.setStart(a.node, a.off); range.setEnd(b.node, b.off); selRanges[cardId] = range; } catch (e) { delete selRanges[cardId]; }
+      paintHighlight();
+    } else {
+      for (var i = 0; i < lines.length; i++) lines[i].classList.toggle('is-selected', i >= sel.start && i <= sel.end);
+    }
+    if (!hs) { hs = window.makeHandle('start', cardId); pre.appendChild(hs); }
+    if (!he) { he = window.makeHandle('end', cardId); pre.appendChild(he); }
+    if (!bubble) { bubble = window.makeBubble(cardId); pre.appendChild(bubble); }
+    var x1 = caretX(pre, sl, a), x2 = caretX(pre, el, b);
+    hs.style.top = (sl.offsetTop + sl.offsetHeight) + 'px'; hs.style.left = x1 + 'px';
+    he.style.top = (el.offsetTop + el.offsetHeight) + 'px'; he.style.left = x2 + 'px';
+    bubble.style.top = Math.max(0, sl.offsetTop - 38) + 'px';
+    bubble.style.left = Math.max(0, Math.min(Math.min(x1, x2), pre.clientWidth - 100)) + 'px';
+  };
+
+  window.clearSelection = function (cardId) {
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    if (cs) cs.selection = null;
+    var pre = selPre(cardId);
+    if (pre) pre.querySelectorAll('.term-line.is-selected').forEach(function (l) { l.classList.remove('is-selected'); });
+    window.positionHandlesAndBubble(cardId);
+  };
+
+  /** Tipp im Markier-Modus: die ganze Zeile (ohne Fuellzeichen); nochmal = aufheben. */
+  window.handleLineTap = function (pre, line) {
+    var id = pre.dataset.cardId;
+    var cs = window.__tmsCardState && window.__tmsCardState[id];
+    if (!cs) return;
+    var i = Number(line.dataset.i);
+    var len = lineText(line).replace(/\s+$/, '').length;
+    var s0 = cs.selection;
+    if (s0 && s0.start === i && s0.end === i && s0.sc === 0 && s0.ec === len) { window.clearSelection(id); return; }
+    cs.selection = { start: i, end: i, sc: 0, ec: len };
+    window.positionHandlesAndBubble(id);
+  };
+
+  window.makeBubble = function (cardId) {
+    var el = document.createElement('button');
+    el.className = 'copy-bubble';
+    el.textContent = 'Kopieren';
+    el.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+      var pre = selPre(cardId);
+      if (!cs || !cs.selection || !pre) return;
+      var sel = cs.selection;
+      var text = window.copyRange(selRows(cardId, pre), selCols(cardId), sel.start, sel.sc, sel.end, sel.ec);
+      if (!text) { window.toast && window.toast('Nichts markiert'); return; }
+      window.copyText(text);
+      if (window.toast) window.toast('Kopiert ✓');
+      window.clearSelection(cardId);
+    });
+    return el;
+  };
+
+  /** Langer Druck: in den Markier-Modus, Wort bzw. ganzer Link unter dem Finger. */
+  function startLineSelection(line, x) {
     var pre = line.closest('.card-body[data-card-id]');
     if (!pre) return;
     var id = pre.getAttribute('data-card-id');
     if (!pre.classList.contains('selection-mode') && typeof window.toggleCardSelectionMode === 'function') {
       window.toggleCardSelectionMode(id, null);
     }
-    if (typeof window.handleLineTap === 'function') window.handleLineTap(pre, line);
+    var cs = window.__tmsCardState && window.__tmsCardState[id];
+    if (!cs) return;
+    var i = Number(line.dataset.i);
+    var col = x === undefined ? 0 : colAt(pre, line, x, 'floor');
+    var r = window.rangeAt(selRows(id, pre), selCols(id), i, col);
+    // Auf Leerraum gedrueckt: dann eben die Zeile (wie bisher).
+    if (r.sr === r.er && r.sc === r.ec) { window.handleLineTap(pre, line); }
+    else { cs.selection = { start: r.sr, end: r.er, sc: r.sc, ec: r.ec }; window.positionHandlesAndBubble(id); }
     if (navigator.vibrate) navigator.vibrate(10);
   }
 
@@ -889,7 +1032,7 @@
     var line = e.target.closest && e.target.closest('.card-body[data-card-id] .term-line');
     if (!line) return;
     e.preventDefault();
-    startLineSelection(line);
+    startLineSelection(line, e.clientX);
   });
 
   // Langes Drücken auf eine Terminalzeile startet das Markieren — die einzige
@@ -903,9 +1046,10 @@
     selMoved = false;
     selStart = { x: e.clientX, y: e.clientY };
     clearTimeout(selHold);
+    var holdX = e.clientX;
     selHold = setTimeout(function () {
       if (selMoved) return;
-      startLineSelection(line);
+      startLineSelection(line, holdX);
     }, 550);
   }, true);
   document.addEventListener('pointermove', function (e) {
