@@ -349,6 +349,45 @@ private func flags(_ bits: Int) -> CGEventFlags {
   return f
 }
 
+// ── System gestures (Mission Control, Spaces, Spotlight) ───────────────
+// Private CoreGraphics/SkyLight calls behind System Settings' keyboard
+// shortcuts. Just posting ⌃→ is not enough: those shortcuts can be switched
+// off (on the dev Mac "move one space" and Mission Control are), and then
+// the key press does nothing. Instead the helper reads the configured key
+// straight from the WindowServer, enables the shortcut for the moment of the
+// press if needed and restores it afterwards — System Settings stay as they
+// were (verified: switching spaces 166 → 4 → 166 left `enabled = 0` intact).
+@_silgen_name("CGSGetSymbolicHotKeyValue")
+private func CGSGetSymbolicHotKeyValue(_ hotKey: Int32, _ keyEquivalent: UnsafeMutablePointer<UInt16>,
+                                       _ virtualKeyCode: UnsafeMutablePointer<UInt16>,
+                                       _ modifiers: UnsafeMutablePointer<UInt32>) -> Int32
+@_silgen_name("CGSIsSymbolicHotKeyEnabled")
+private func CGSIsSymbolicHotKeyEnabled(_ hotKey: Int32) -> Bool
+@_silgen_name("CGSSetSymbolicHotKeyEnabled")
+private func CGSSetSymbolicHotKeyEnabled(_ hotKey: Int32, _ enabled: Bool) -> Int32
+
+/// Fires one symbolic hot key (32 Mission Control, 33 App windows, 36 Show
+/// Desktop, 64 Spotlight, 79/81 move a space left/right). Blocks ~250 ms
+/// when it had to enable the shortcut: disabling it again before the
+/// WindowServer processed the posted press would swallow it. Serial on
+/// purpose — two quick gestures must not race each other's restore.
+private func triggerSymbolicHotKey(_ id: Int32) {
+  var equiv: UInt16 = 0, code: UInt16 = 0, mods: UInt32 = 0
+  guard CGSGetSymbolicHotKeyValue(id, &equiv, &code, &mods) == 0 else { return }
+  let wasEnabled = CGSIsSymbolicHotKeyEnabled(id)
+  if !wasEnabled { _ = CGSSetSymbolicHotKeyEnabled(id, true) }
+  let flags = CGEventFlags(rawValue: UInt64(mods))
+  for down in [true, false] {
+    let ev = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: down)
+    ev?.flags = flags
+    ev?.post(tap: .cghidEventTap)
+  }
+  if !wasEnabled {
+    usleep(250_000)
+    _ = CGSSetSymbolicHotKeyEnabled(id, false)
+  }
+}
+
 /// Which mouse buttons are currently held (set by the `btn` command).
 private var heldButtons = Set<CGMouseButton>()
 
@@ -477,6 +516,8 @@ func runInputLoop() {
         up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
         up?.post(tap: .cghidEventTap)
       }
+    case "hotkey":
+      if let id = Int32(rest.trimmingCharacters(in: .whitespaces)) { triggerSymbolicHotKey(id) }
     case "quit":
       exit(0)
     default:

@@ -16,7 +16,7 @@ function loadBlock(name) {
   const re = new RegExp(`// ── TMS-TEST-EXPORT: ${name} ──([\\s\\S]*?)// ── /TMS-TEST-EXPORT ──`);
   const m = re.exec(html);
   assert.ok(m, `Block "${name}" fehlt im Mockup — Markierungen nicht entfernen`);
-  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows, clampZoom, clampPan, holdShouldAbort, remoteImeDiff, remoteAltsFor };`)();
+  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows, clampZoom, clampPan, holdShouldAbort, remoteImeDiff, remoteAltsFor, classifyMultiGesture };`)();
 }
 
 test('der markierte Block laesst sich laden', () => {
@@ -293,4 +293,18 @@ test('Grundebene wie am Mac: Pfeile oben, ctrl/⌥/⌘ neben der Leertaste; aufg
   assert.equal(auf.length, zu.length + 1, 'aufgeklappt eine Reihe mehr');
   assert.ok(codes(auf[1]).includes('Digit1') && codes(auf[1]).includes('ß'), 'Ziffernreihe + ß');
   assert.ok(!zu.some((row) => codes(row).includes('Digit1')), 'zugeklappt ohne Ziffernreihe (die sind auf 123)');
+});
+
+test('Mehrfinger-Gesten wie auf dem Mac-Trackpad', () => {
+  const { classifyMultiGesture: g } = loadBlock('remoteMath');
+  assert.equal(g(3, -120, 5, 1, 70), 'swipe-left', 'drei Finger nach links');
+  assert.equal(g(4, 110, -8, 1, 70), 'swipe-right', 'vier Finger nach rechts');
+  assert.equal(g(3, 4, -90, 1, 70), 'swipe-up', 'hoch = Mission Control');
+  assert.equal(g(3, 0, 95, 1, 70), 'swipe-down');
+  assert.equal(g(5, 3, 2, 0.55, 70), 'pinch-in', 'fuenf Finger zusammen = Spotlight');
+  assert.equal(g(4, 0, 0, 1.6, 70), 'pinch-out', 'auseinander = Schreibtisch');
+  assert.equal(g(3, 30, 10, 1, 70), null, 'zu kurz: noch nichts');
+  assert.equal(g(3, 80, 75, 1, 70), null, 'schraeg: unentschieden');
+  assert.equal(g(2, -150, 0, 1, 70), null, 'zwei Finger sind Scrollen, keine Geste');
+  assert.equal(g(3, 0, 0, 0.5, 70), null, 'Zusammenziehen erst ab vier Fingern');
 });

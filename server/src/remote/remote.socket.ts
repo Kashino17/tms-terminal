@@ -65,6 +65,7 @@ function applyInput(input: InputInjector, ev: RemoteInputEvent): void {
     case 's': input.scroll(ev.dx, ev.dy); break;
     case 'k': input.key(ev.c, ev.d, ev.mods); break;
     case 'x': input.text(ev.s); break;
+    case 'g': input.gesture(ev.g); break;
     default: break;
   }
 }

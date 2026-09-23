@@ -52,6 +52,7 @@ function fakeInput(ready?: Promise<void>) {
     scroll: (dx: number, dy: number) => calls.push(`scroll ${dx} ${dy}`),
     key: (c: string, d: boolean) => calls.push(`key ${c} ${d}`),
     text: (s: string) => calls.push(`text ${s}`),
+    gesture: (g: string) => calls.push(`gesture ${g}`),
     stop: async () => { calls.push('stop'); },
   };
   return i as typeof i & InputInjector;
@@ -446,9 +447,11 @@ test('Eingabe-Ereignisse landen beim Injektor', async () => {
   send(ws, { t: 'k', c: 'KeyA', d: true, mods: { s: false, c: false, a: false, m: true } });
   send(ws, { t: 'x', s: 'Hallo' });
   send(ws, { t: 'm', x: 0.5, y: 0.25 });
+  send(ws, { t: 'g', g: 'swipe-up' });
 
   assert.deepEqual(input.calls, [
     'rel 10 -4', 'btn right true', 'scroll 0 -3', 'key KeyA true', 'text Hallo', 'abs 0.5 0.25',
+    'gesture swipe-up',
   ]);
 });
 

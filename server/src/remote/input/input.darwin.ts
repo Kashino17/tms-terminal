@@ -6,6 +6,7 @@ import { toMacKeyCode } from '../keymap';
 import { clamp01 } from '../geometry';
 import { waitForReady, parseInputReadyLine, type InputReadyLine } from './ready';
 import { createHeldState } from './held';
+import { MAC_GESTURE_HOTKEY, isRemoteGesture } from '../gestures';
 
 // Re-exported so this file's own test (and anything else that used to reach
 // them here) keeps working — the actual implementations moved to ready.ts,
@@ -46,6 +47,8 @@ export function toHelperLine(ev: RemoteInputEvent): string | null {
     }
     case 'x':
       return `text ${ev.s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n')}`;
+    case 'g':
+      return isRemoteGesture(ev.g) ? `hotkey ${MAC_GESTURE_HOTKEY[ev.g]}` : null;
     default:
       return null;
   }
@@ -94,6 +97,7 @@ export function createDarwinInput(): InputInjector {
       send({ t: 'k', c: code, d: down, mods });
     },
     text: (s) => send({ t: 'x', s }),
+    gesture: (g) => send({ t: 'g', g }),
 
     async stop() {
       const p = child;

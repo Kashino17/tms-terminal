@@ -6,6 +6,7 @@ import { toWindowsAbsolute } from '../geometry';
 import { winInputScriptPath } from '../paths';
 import { waitForReady } from './ready';
 import { createHeldState } from './held';
+import { WIN_GESTURE_KEYS, isRemoteGesture } from '../gestures';
 
 /**
  * One remote input event → one helper line.
@@ -32,6 +33,14 @@ export function toWinLine(ev: RemoteInputEvent): string | null {
     }
     case 'x':
       return `text ${ev.s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n')}`;
+    case 'g': {
+      // A whole press-and-release chord as several helper lines in one write:
+      // down in order, up in reverse — nothing is left held in between.
+      if (!isRemoteGesture(ev.g)) return null;
+      const vks = WIN_GESTURE_KEYS[ev.g].map(toWinVirtualKey);
+      if (vks.some((vk) => vk === null)) return null;
+      return [...vks.map((vk) => `key ${vk} 1`), ...[...vks].reverse().map((vk) => `key ${vk} 0`)].join('\n');
+    }
     default:
       return null;
   }
@@ -85,6 +94,7 @@ export function createWin32Input(): InputInjector {
       send({ t: 'k', c: code, d: down, mods });
     },
     text: (s) => send({ t: 'x', s }),
+    gesture: (g) => send({ t: 'g', g }),
 
     async stop() {
       const p = child;

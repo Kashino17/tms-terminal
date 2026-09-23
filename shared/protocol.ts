@@ -538,4 +538,10 @@ export type RemoteInputEvent =
   // treated every wire pixel as a full notch and scrolled ~120x too far).
   | { t: 's'; dx: number; dy: number }
   | { t: 'k'; c: string; d: boolean; mods: { s: boolean; c: boolean; a: boolean; m: boolean } }
-  | { t: 'x'; s: string };
+  | { t: 'x'; s: string }
+  // Multi-finger trackpad gesture (3+ fingers on the app's pad). The server
+  // turns it into the platform's own action — see server/src/remote/gestures.ts.
+  | { t: 'g'; g: RemoteGesture };
+
+export type RemoteGesture =
+  | 'swipe-left' | 'swipe-right' | 'swipe-up' | 'swipe-down' | 'pinch-in' | 'pinch-out';

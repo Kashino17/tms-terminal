@@ -1,3 +1,5 @@
+import type { RemoteGesture } from '../../../../shared/protocol';
+
 export interface Mods { s: boolean; c: boolean; a: boolean; m: boolean }
 
 /** Turns remote input events into real system input. Platform backends implement this. */
@@ -26,5 +28,7 @@ export interface InputInjector {
   /** `code` is a DOM KeyboardEvent.code — the key's position, not its character. */
   key(code: string, down: boolean, mods: Mods): void;
   text(s: string): void;
+  /** Multi-finger trackpad gesture → the platform's own action (see gestures.ts). */
+  gesture(g: RemoteGesture): void;
   stop(): Promise<void>;
 }
