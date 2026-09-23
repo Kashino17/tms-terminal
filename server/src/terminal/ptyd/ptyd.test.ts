@@ -168,3 +168,34 @@ test('eine Probe-Verbindung verdraengt den verbundenen Server nicht', async () =
     try { process.kill(daemonPid, 'SIGTERM'); } catch { /* */ }
   }
 });
+
+// tms-terminal status/keeper fragen den Waechter aus, ohne sich als Server
+// anzumelden — der laufende Server darf dadurch nicht verdraengt werden.
+test('info: Auskunft ueber die Terminals, ohne den Server zu verdraengen', async () => {
+  const net = await import('node:net');
+  const sock = tmpSock();
+  const a = await PtyDaemonClient.start(sock, DAEMON);
+  assert.ok(a);
+  const daemonPid = a!.daemonPid;
+  try {
+    const cat = a!.spawn('i1', { file: '/bin/cat', args: [], cwd: os.tmpdir(), env, cols: 80, rows: 24 });
+    await until(() => cat.pid > 0);
+    const info: any = await new Promise((resolve, reject) => {
+      const c = net.createConnection(sock);
+      let buf = '';
+      c.on('connect', () => c.write('{"t":"info"}\n'));
+      c.on('data', (d) => { buf += d; });
+      c.on('end', () => { try { resolve(JSON.parse(buf.trim())); } catch (e) { reject(e); } });
+      c.on('error', reject);
+    });
+    assert.equal(info.t, 'info');
+    assert.equal(info.pid, daemonPid);
+    assert.equal(info.serverAttached, true);
+    assert.deepEqual(info.sessions.map((x: any) => x.id), ['i1']);
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(a!.connected, true, 'Server bleibt verbunden');
+    a!.release();
+  } finally {
+    try { process.kill(daemonPid, 'SIGTERM'); } catch { /* */ }
+  }
+});

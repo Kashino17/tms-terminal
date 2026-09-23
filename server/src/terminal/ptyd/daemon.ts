@@ -33,6 +33,7 @@ const IDLE_EXIT_MS = Number(process.env.PTYD_IDLE_EXIT_MS) || 10 * 60 * 1000;
 interface Held { pty: pty.IPty; cols: number; rows: number; buffer: string }
 
 const held = new Map<string, Held>();
+const startedAt = Date.now();
 /** Exits that happened while no server was attached — reported on the next connect. */
 const pendingExits: WireMessage[] = [];
 let client: net.Socket | null = null;
@@ -125,7 +126,15 @@ function accept(sock: net.Socket): void {
   let attached = false;
   const dec = createDecoder((m) => {
     if (attached) { handle(m); return; }
-    if (m.t === 'attach') { attached = true; attach(sock); }
+    if (m.t === 'attach') { attached = true; attach(sock); return; }
+    // Nur nachsehen (tms-terminal status/keeper): Auskunft geben, NICHT anhaengen —
+    // sonst verdraengte die Abfrage den laufenden Server.
+    if (m.t === 'info') {
+      sock.end(encode({
+        t: 'info', v: PTYD_PROTOCOL_VERSION, pid: process.pid, startedAt, serverAttached: !!client && !client.destroyed,
+        sessions: [...held].map(([id, h]) => ({ id, pid: h.pty.pid, cols: h.cols, rows: h.rows, buffered: h.buffer.length })),
+      }));
+    }
   });
   sock.on('data', (chunk: string) => dec.push(chunk));
   sock.on('error', () => { /* 'close' follows */ });

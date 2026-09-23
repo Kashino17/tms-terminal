@@ -7,6 +7,9 @@
  * Server → daemon
  *   { t:'attach' }               first message: "I am the server now" (a bare
  *                                connect is only a liveness probe)
+ *   { t:'info' }                 instead of attach: one-shot status for the CLI,
+ *                                answered with { t:'info', pid, startedAt,
+ *                                serverAttached, sessions } — never attaches
  *   { t:'create', id, file, args, cwd, env, cols, rows }
  *   { t:'in', id, d }            keystrokes / pasted text
  *   { t:'rs', id, c, r }         resize
