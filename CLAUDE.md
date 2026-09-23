@@ -48,7 +48,10 @@ cd mobile
 - Alias: `tms-terminal`, Password: `tmsTerminal2026`
 
 ## Server
-- Started via `tms-terminal` CLI command (npm global install from `server/`)
+- Started via `tms-terminal` CLI command (npm global install from `server/`) — `tms-terminal help` lists all
+  commands (status, restart, logs -f, doctor, debug, keeper stop, …)
+- **Server log:** `~/.tms-terminal/logs/server.log` (`tms-terminal logs`), keeper log `~/.tms-terminal/ptyd.log`,
+  update log `~/.tms-terminal/update.log`. Timestamps are local time.
 - Default port: 8767
 - Config stored at `~/.tms-terminal/config.json`
 - Firebase service account at `~/.tms-terminal/firebase-service-account.json`
