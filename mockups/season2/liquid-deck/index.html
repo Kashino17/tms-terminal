@@ -823,6 +823,9 @@
   .jump-bottom-orb.pulse::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid rgba(var(--accent-rgb),.55); animation: ringPulse 1.3s ease-out infinite; pointer-events: none; }
   .term-line { display: block; white-space: pre-wrap; word-break: break-word; padding: 1px 0; border-radius: 4px; }
   .term-line.is-selected { background: rgba(var(--accent-rgb),.22); }
+  /* Zeichengenaue Auswahl (bridge.js): der Browser malt die Markierung ueber die
+     Custom-Highlight-API, die Zeilen selbst bleiben unangetastet. */
+  ::highlight(term-sel) { background-color: rgba(var(--accent-rgb),.38); }
   .selection-mode .term-line { cursor: pointer; }
   .selection-mode .term-line:active { background: rgba(var(--accent-rgb),.12); }
   .sgr-b { font-weight: 700; } .sgr-d { opacity: .58; } .sgr-g { color: var(--ok); } .sgr-r { color: var(--err); }
@@ -3823,6 +3826,123 @@
     window.clampPan = clampPan;
     window.holdShouldAbort = holdShouldAbort;
     window.remoteImeDiff = remoteImeDiff;
+  }
+  // ── /TMS-TEST-EXPORT ──
+
+  // ── TMS-TEST-EXPORT: termText ──
+  // Terminal-Text: wann sind zwei Bildschirmzeilen in Wahrheit EINE? Genutzt vom
+  // Link-Tipp (bridge.js, Link-Erkennung) und vom Kopieren (zeichengenaue Auswahl).
+  //
+  // Claude Code bricht lange Zeilen SELBST um (gemessen, 42 Spalten): die Zeile
+  // fuellt die Breite, die Fortsetzung ist eingerueckt — kein Terminal-Umbruch.
+  // Ein Link wurde so beim Kopieren zu "…termina\n  l/releases…". Regeln:
+  //  - Terminal-Umbruch (isWrapped): immer direkt verbinden.
+  //  - Zeile reicht bis an den Rand UND ein Link laeuft ueber die Grenze UND der
+  //    Link ist laenger als eine Zeile: verbinden, Einrueckung und Fuellzeichen
+  //    fallen weg. Claude zerschneidet nur Woerter, die nicht in eine Zeile
+  //    passen — ein kuerzerer Link am Rand ist dort zu Ende.
+  //  - sonst: echter Zeilenumbruch.
+  var TERM_URL_RE = /(https?:\/\/[^\s"'<>()]+)|((?<![\w:\/~])(?:~|\.{0,2})\/[\w.\-]+(?:\/[\w.\-]+)+)/g;
+  var TERM_EDGE = 3;
+
+  /** rows: [{text, wrapped}] → { text, rowFrom[], lead[], keep[] } (Zeile→Position im Ergebnis). */
+  function stitchRows(rows, cols) {
+    var n = rows.length, text = '', cur = '';
+    var rowFrom = new Array(n), lead = new Array(n), keep = new Array(n);
+    for (var r = 0; r < n; r++) {
+      var t = (rows[r] && rows[r].text) || '';
+      if (r > 0 && rows[r].wrapped) {
+        rowFrom[r] = text.length; lead[r] = 0; keep[r] = t.length; text += t; cur += t;
+        continue;
+      }
+      var join = false, ind = 0, rest = t;
+      if (r > 0 && isFinite(cols)) {
+        var prevTrim = ((rows[r - 1] && rows[r - 1].text) || '').replace(/\s+$/, '');
+        ind = /^\s*/.exec(t)[0].length;
+        rest = t.slice(ind);
+        if (rest && ind <= 8 && prevTrim.length >= cols - TERM_EDGE && /[^\s"'<>()]$/.test(prevTrim)) {
+          var curTrim = cur.replace(/\s+$/, ''), at = curTrim.length, cand = curTrim + rest, mm;
+          TERM_URL_RE.lastIndex = 0;
+          while ((mm = TERM_URL_RE.exec(cand))) {
+            if (mm.index < at && mm.index + mm[0].length > at && mm[0].length > cols - ind) { join = true; break; }
+          }
+        }
+      }
+      if (r > 0 && join) {
+        var dropped = cur.length - cur.replace(/\s+$/, '').length;
+        text = text.slice(0, text.length - dropped);
+        cur = cur.slice(0, cur.length - dropped);
+        keep[r - 1] = Math.max(0, keep[r - 1] - dropped);
+        rowFrom[r] = text.length; lead[r] = ind; keep[r] = rest.length; text += rest; cur += rest;
+      } else {
+        if (r > 0) text += '\n';
+        rowFrom[r] = text.length; lead[r] = 0; keep[r] = t.length; text += t; cur = t;
+      }
+    }
+    return { text: text, rowFrom: rowFrom, lead: lead, keep: keep };
+  }
+  /** Zeile/Spalte → Position im zusammengesetzten Text. */
+  function stitchIndex(st, r, c) {
+    return st.rowFrom[r] + Math.min(Math.max(0, c - st.lead[r]), st.keep[r]);
+  }
+  /** Position im zusammengesetzten Text → Zeile/Spalte. */
+  function stitchPos(st, idx, preferEnd) {
+    for (var r = 0; r < st.rowFrom.length; r++) {
+      var a = st.rowFrom[r], b = a + st.keep[r];
+      if (idx < a) return { r: Math.max(0, r - 1), c: st.lead[Math.max(0, r - 1)] + st.keep[Math.max(0, r - 1)] };
+      if (idx < b || (idx === b && (preferEnd || r === st.rowFrom.length - 1 || st.rowFrom[r + 1] > b))) {
+        return { r: r, c: st.lead[r] + (idx - a) };
+      }
+    }
+    var last = st.rowFrom.length - 1;
+    return { r: last, c: st.lead[last] + st.keep[last] };
+  }
+  /** Links je Zeile in Zeilen-Spalten: { row: [{from, to, url}] } — ein Link ueber Umbrueche traegt ueberall die GANZE URL. */
+  function stitchLinks(rows, cols) {
+    var st = stitchRows(rows, cols), out = {}, m;
+    TERM_URL_RE.lastIndex = 0;
+    while ((m = TERM_URL_RE.exec(st.text))) {
+      var url = m[0].replace(/[.,;:)\]]+$/, '');
+      var from = m.index, to = from + url.length;
+      for (var r = 0; r < rows.length; r++) {
+        var a = Math.max(from, st.rowFrom[r]), b = Math.min(to, st.rowFrom[r] + st.keep[r]);
+        if (b > a) (out[r] = out[r] || []).push({ from: st.lead[r] + a - st.rowFrom[r], to: st.lead[r] + b - st.rowFrom[r], url: url });
+      }
+    }
+    return out;
+  }
+  /** Text der Auswahl (sr,sc) bis (er,ec) — ec exklusiv. Fuellzeichen am Zeilenende fallen weg. */
+  function copyRange(rows, cols, sr, sc, er, ec) {
+    // Etwas Vorlauf, damit ein Link, dessen Anfang ueber der Auswahl liegt,
+    // trotzdem als Link erkannt und richtig zusammengesetzt wird.
+    var from = Math.max(0, sr - 8);
+    var part = rows.slice(from, er + 1);
+    var st = stitchRows(part, cols);
+    var a = stitchIndex(st, sr - from, sc), b = stitchIndex(st, er - from, ec);
+    return st.text.slice(a, Math.max(a, b)).split('\n').map(function (l) { return l.replace(/\s+$/, ''); }).join('\n');
+  }
+  /** Langer Druck bei (r,c): der ganze Link, der dort liegt, sonst das Wort. */
+  function rangeAt(rows, cols, r, c) {
+    var from = Math.max(0, r - 8), to = Math.min(rows.length, r + 9);
+    var part = rows.slice(from, to), st = stitchRows(part, cols), idx = stitchIndex(st, r - from, c), m;
+    TERM_URL_RE.lastIndex = 0;
+    while ((m = TERM_URL_RE.exec(st.text))) {
+      var url = m[0].replace(/[.,;:)\]]+$/, '');
+      if (idx >= m.index && idx < m.index + url.length) {
+        var s0 = stitchPos(st, m.index, false), e0 = stitchPos(st, m.index + url.length, true);
+        return { sr: s0.r + from, sc: s0.c, er: e0.r + from, ec: e0.c };
+      }
+    }
+    var t = (rows[r] && rows[r].text) || '';
+    var s = c, e = c;
+    while (s > 0 && /\S/.test(t[s - 1]) && /\S/.test(t[c] || '')) s--;
+    while (e < t.length && /\S/.test(t[e])) e++;
+    if (!/\S/.test(t[c] || '')) { s = c; e = c; }
+    return { sr: r, sc: s, er: r, ec: e };
+  }
+  if (typeof window !== 'undefined') {
+    window.stitchRows = stitchRows; window.stitchLinks = stitchLinks;
+    window.copyRange = copyRange; window.rangeAt = rangeAt;
   }
   // ── /TMS-TEST-EXPORT ──
 
