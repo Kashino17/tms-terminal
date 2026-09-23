@@ -16,7 +16,7 @@ function loadBlock(name) {
   const re = new RegExp(`// ── TMS-TEST-EXPORT: ${name} ──([\\s\\S]*?)// ── /TMS-TEST-EXPORT ──`);
   const m = re.exec(html);
   assert.ok(m, `Block "${name}" fehlt im Mockup — Markierungen nicht entfernen`);
-  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows, clampZoom, clampPan, holdShouldAbort };`)();
+  return new Function(`${m[1]}; return { pointerGain, nextSticky, fitRect, toStageNormalized, classifyPadTap, remoteKeyRows, clampZoom, clampPan, holdShouldAbort, remoteImeDiff };`)();
 }
 
 test('der markierte Block laesst sich laden', () => {
@@ -110,7 +110,11 @@ test('die Grundebene ist eine deutsche Tastatur', () => {
   const { remoteKeyRows } = loadBlock('remoteMath');
   const codes = remoteKeyRows('base').flat().map((k) => k.c);
 
-  assert.ok(codes.includes('KeyZ'), 'Z liegt auf der deutschen Tastatur oben');
+  const byLabel = Object.fromEntries(remoteKeyRows('base').flat().map((k) => [k.l, k.c]));
+  // Positionscodes fuer die deutsche Mac-Belegung: das deutsche z sitzt auf der
+  // US-Y-Position. Frueher stand hier KeyZ — der Mac tippte "y" statt "z".
+  assert.equal(byLabel.z, 'KeyY', 'z muss die US-Y-Position schicken');
+  assert.equal(byLabel.y, 'KeyZ', 'y muss die US-Z-Position schicken');
   assert.ok(codes.includes('Semicolon'), 'Umlaut-Position oe');
   assert.ok(codes.includes('Enter'));
   assert.ok(codes.includes('Backspace'));
@@ -136,7 +140,7 @@ test('die Funktionsebene bringt F1 bis F12', () => {
 
 test('jede Taste hat eine Beschriftung und entweder einen Positionscode oder einen Textweg', () => {
   const { remoteKeyRows } = loadBlock('remoteMath');
-  for (const layer of ['base', 'num', 'fn']) {
+  for (const layer of ['base', 'num', 'fn', 'sc']) {
     for (const key of remoteKeyRows(layer).flat()) {
       assert.ok(key.l && key.l.length > 0, `Beschriftung fehlt bei ${JSON.stringify(key)}`);
       const hasCode = key.c && key.c.length > 0;
@@ -229,4 +233,42 @@ test('holdShouldAbort: genau auf der Schwelle bricht NICHT ab (nur echtes Uebers
   const { holdShouldAbort } = loadBlock('remoteMath');
   assert.equal(holdShouldAbort(100, 100, 108, 100, 8), false, 'Abstand genau 8 -> noch kein Abbruch');
   assert.equal(holdShouldAbort(100, 100, 108.01, 100, 8), true, 'knapp darueber bricht ab');
+});
+
+test('die Kuerzel-Ebene: jede Taste ist ein Kuerzel mit Sondertaste und Erklaerung', () => {
+  const { remoteKeyRows } = loadBlock('remoteMath');
+  const keys = remoteKeyRows('sc').flat().filter((k) => k.combo);
+  assert.ok(keys.length >= 20, 'genug Kuerzel');
+  for (const k of keys) {
+    assert.match(k.combo, /^[msac]+$/, `${k.l}: nur m/s/a/c erlaubt`);
+    assert.ok(k.sub, `${k.l}: kurze Erklaerung fehlt`);
+  }
+  const find = (l) => keys.find((k) => k.l === l);
+  assert.equal(find('⌘Z').c, 'KeyY', 'Rueckgaengig auf deutscher Belegung = US-Y-Position');
+  assert.equal(find('⌘C').combo, 'm');
+  assert.equal(find('⌃C').combo, 'c', 'Abbruch im Terminal ist ctrl, nicht ⌘');
+  assert.ok(remoteKeyRows('sc').flat().some((k) => k.c === 'Enter'), '⏎ auch hier erreichbar');
+});
+
+test('die Grundebene fuehrt zu Kuerzeln, F-Tasten und zur Handy-Tastatur', () => {
+  const { remoteKeyRows } = loadBlock('remoteMath');
+  const codes = remoteKeyRows('base').flat().map((k) => k.c);
+  for (const c of ['Escape', '__layer:sc', '__layer:fn', '__ime', 'Tab']) assert.ok(codes.includes(c), c);
+});
+
+test('die Zeichenebene hat @ # % & ^ ` ß € § °', () => {
+  const { remoteKeyRows } = loadBlock('remoteMath');
+  const texts = new Set(remoteKeyRows('num').flat().map((k) => k.s).filter(Boolean));
+  for (const ch of ['@', '#', '%', '&', '^', '`', 'ß', '€', '§', '°']) assert.ok(texts.has(ch), ch);
+});
+
+test('Handy-Tastatur: Tippen, Autokorrektur, Rueckschritt, Enter', () => {
+  const { remoteImeDiff } = loadBlock('remoteMath');
+  const Z = '\u200b';
+  assert.deepEqual(remoteImeDiff(Z, Z + 'h'), { back: 0, parts: ['h'] }, 'ein Zeichen');
+  assert.deepEqual(remoteImeDiff(Z + 'teh', Z + 'the'), { back: 2, parts: ['he'] }, 'Autokorrektur');
+  assert.deepEqual(remoteImeDiff(Z + 'ab', Z + 'a'), { back: 1, parts: [''] }, 'Rueckschritt im Text');
+  assert.deepEqual(remoteImeDiff(Z, ''), { back: 1, parts: [''] }, 'Rueckschritt bei leerem Feld loescht den Platzhalter');
+  assert.deepEqual(remoteImeDiff(Z + 'ls', Z + 'ls\n'), { back: 0, parts: ['', ''] }, 'Enter');
+  assert.deepEqual(remoteImeDiff(Z, Z + 'Hallo Welt'), { back: 0, parts: ['Hallo Welt'] }, 'Wischtippen: ganzes Wort');
 });

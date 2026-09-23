@@ -2798,9 +2798,31 @@
       var stage = document.getElementById('remoteStage');
       if (!stage || !window.remoteState.w) return;
       var w = stage.clientWidth || stage.getBoundingClientRect().width;
+      // Hoehe begrenzen: die Bedienleiste darunter (Tastatur/Trackpad) braucht
+      // ihren Platz. Nach der Breite allein bemessen war das Bild auf dem
+      // aufgeklappten Fold ~550 px hoch — die Tastatur rutschte aus dem
+      // Bildschirm unter die Navigationsleiste. Im Vollbild gilt das nicht.
+      var maxH = w * 2;
+      var host = stage.closest('[data-screen="remote"]');
+      if (host && !window.remoteState.fullscreen) {
+        var cs = getComputedStyle(host);
+        var used = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        var gap = parseFloat(cs.rowGap || cs.gap) || 0;
+        var n = 0;
+        Array.prototype.forEach.call(host.children, function (el) {
+          if (el === stage || el.id === 'remoteBar' || el.id === 'remoteIme') return;
+          if (getComputedStyle(el).display === 'none') return;
+          used += el.getBoundingClientRect().height; n++;
+        });
+        used += gap * (n + 1);
+        var avail = host.clientHeight - used;
+        var minBar = window.remoteState.page === 'keys' ? Math.max(220, avail * 0.45) : 170;
+        if (avail - minBar > 80) maxH = Math.min(maxH, avail - minBar);
+      }
       // window.-Vorsatz ist Pflicht: der Mockup-Code liegt in einer Kapsel, in
       // die bridge.js nicht hineinsieht (siehe Ausfuhr-Zeilen in Aufgabe 11).
-      var box = window.fitRect(window.remoteState.w, window.remoteState.h, w, w * 2);
+      var fit = window.fitRect(window.remoteState.w, window.remoteState.h, w, maxH);
+      var box = { x: 0, y: 0, w: w, h: Math.min(maxH, fit.h) };
       stage.style.height = box.h + 'px';
       if (canvas) { canvas.width = window.remoteState.w; canvas.height = window.remoteState.h; }
       // Vollbild gehoert der angeschlossenen Hardware: ein von Fingern liegen
