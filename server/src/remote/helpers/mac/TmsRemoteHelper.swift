@@ -349,9 +349,40 @@ private func flags(_ bits: Int) -> CGEventFlags {
   return f
 }
 
+/// Which mouse buttons are currently held (set by the `btn` command).
+private var heldButtons = Set<CGMouseButton>()
+
+/// Move the pointer. While a button is held this MUST be a *Dragged event:
+/// macOS apps only recognize a drag (moving windows, drag-and-drop, text
+/// selection) from leftMouseDragged/rightMouseDragged — a plain mouseMoved
+/// with the button down moved the pointer but nothing ever got dragged.
 private func warp(to p: CGPoint) {
-  CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
+  let (type, button): (CGEventType, CGMouseButton) =
+    heldButtons.contains(.left) ? (.leftMouseDragged, .left)
+    : heldButtons.contains(.right) ? (.rightMouseDragged, .right)
+    : heldButtons.contains(.center) ? (.otherMouseDragged, .center)
+    : (.mouseMoved, .left)
+  // After a drag the next press starts a new click series (like macOS): keep the
+  // count for the matching button-up, but let the double-click window lapse.
+  if type != .mouseMoved, let l = lastPress { lastPress = (l.button, l.at, -1_000, l.count) }
+  CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: button)?
     .post(tap: .cghidEventTap)
+}
+
+/// Click counting for double/triple clicks. Synthetic events always carried
+/// clickState 1, so macOS never saw a double-click (open a file, select a
+/// word). A press counts up when it follows the previous press of the same
+/// button quickly and close by — the system's own double-click rules.
+private var lastPress: (button: CGMouseButton, at: CGPoint, time: TimeInterval, count: Int64)?
+private func clickCount(for button: CGMouseButton, at p: CGPoint) -> Int64 {
+  let now = ProcessInfo.processInfo.systemUptime
+  if let l = lastPress, l.button == button, now - l.time <= NSEvent.doubleClickInterval,
+     abs(l.at.x - p.x) <= 6, abs(l.at.y - p.y) <= 6 {
+    lastPress = (button, p, now, l.count + 1)
+  } else {
+    lastPress = (button, p, now, 1)
+  }
+  return lastPress!.count
 }
 
 /// Undoes the escaping from input.darwin.ts in a single pass.
@@ -414,9 +445,15 @@ func runInputLoop() {
         ? (down ? .rightMouseDown : .rightMouseUp)
         : which == "m" ? (down ? .otherMouseDown : .otherMouseUp)
         : (down ? .leftMouseDown : .leftMouseUp)
-      CGEvent(mouseEventSource: nil, mouseType: type,
-              mouseCursorPosition: current, mouseButton: button)?
-        .post(tap: .cghidEventTap)
+      // Down counts the click; up repeats the same count (that pair is a click).
+      let count: Int64 = down ? clickCount(for: button, at: current)
+        : (lastPress?.button == button ? lastPress!.count : 1)
+      if down { heldButtons.insert(button) } else { heldButtons.remove(button) }
+      if let ev = CGEvent(mouseEventSource: nil, mouseType: type,
+                          mouseCursorPosition: current, mouseButton: button) {
+        ev.setIntegerValueField(.mouseEventClickState, value: count)
+        ev.post(tap: .cghidEventTap)
+      }
     case "scroll":
       CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
               wheel1: Int32(nums.count > 1 ? nums[1] : 0),
