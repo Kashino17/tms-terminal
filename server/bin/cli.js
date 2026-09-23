@@ -31,10 +31,13 @@ function stopExisting() {
     cleanPid();
   }
 
-  // 2. Fallback: kill whatever holds the port (handles orphaned processes)
+  // 2. Fallback: kill whatever LISTENS on the port (handles orphaned servers).
+  //    Only the listener: terminals now outlive the server (terminal keeper,
+  //    server/src/terminal/ptyd), and a program in one of them with an open
+  //    connection TO the server must not be killed by a restart.
   const port = getPort();
   try {
-    const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' }).trim();
+    const pids = execSync(`lsof -ti tcp:${port} -sTCP:LISTEN 2>/dev/null`, { encoding: 'utf8' }).trim();
     if (pids) {
       pids.split('\n').forEach((p) => {
         const n = parseInt(p, 10);
@@ -47,7 +50,7 @@ function stopExisting() {
   const deadline = Date.now() + 2000;
   while (Date.now() < deadline) {
     try {
-      execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' });
+      execSync(`lsof -ti tcp:${port} -sTCP:LISTEN 2>/dev/null`, { encoding: 'utf8' });
       // Still occupied — wait a bit
       execSync('sleep 0.2');
     } catch {
