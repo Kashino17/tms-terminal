@@ -89,6 +89,20 @@ Bildschirm des PCs live aufs Handy, mit Trackpad/Tastatur/Vollbild-Bedienung. Sp
 - `cd mobile && npm run test:mockup` prüft die reinen Rechenfunktionen aus dem markierten
   `TMS-TEST-EXPORT`-Block (27 grün).
 
+## Terminal-Wächter (ptyd)
+Terminals laufen NICHT mehr als Kinder des Servers, sondern in einem abgekoppelten Halteprozess
+(`server/src/terminal/ptyd/daemon.ts`, Socket `~/.tms-terminal/ptyd.sock`, Log `~/.tms-terminal/ptyd.log`).
+Ein Server-Neustart (Ctrl+C, Update, Absturz) lässt Shells und Claude weiterlaufen; der neue Server
+übernimmt sie (`adoptSession`). Terminals enden nur per `terminal:close` — kein Idle-Timeout mehr.
+
+- **Protokoll abwärtskompatibel halten** (`ptyd/wire.ts`): ein laufender Wächter überlebt Server-Updates,
+  ein neuer Server spricht also mit einem alten Wächter. Änderungen an `daemon.ts` wirken erst, wenn der
+  Wächter neu startet — das beendet alle Terminals (nur bei leerem Wächter oder Mac-Neustart tun).
+- Eine Verbindung wird erst mit `{t:'attach'}` zum Server — ein bloßes Verbinden ist nur eine Probe.
+- Windows nutzt weiter node-pty direkt. Die alte Wiederherstellung (`terminal/restore`) greift nur noch
+  für Terminals, die wirklich weg sind (Mac-Neustart).
+- Testen: `node --require ts-node/register --test src/terminal/ptyd/*.test.ts` (7 grün).
+
 ## Key Technical Decisions
 - **No TLS on server** — relies on Tailscale VPN for encryption. Server uses `http.createServer()`.
 - **Protocol:** `http://` and `ws://` (not https/wss) because Tailscale handles encryption
