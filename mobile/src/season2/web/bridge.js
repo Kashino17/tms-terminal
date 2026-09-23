@@ -2569,6 +2569,14 @@
       scharf:  { maxWidth: 1920, fps: 30, bitrateKbps: 3000 },
     };
 
+    /** Die App zeichnet den Zeiger selbst (siehe "Lokaler Zeiger" unten) —
+     *  der Server laesst ihn dafuer aus dem Video weg, wo er das kann. */
+    function startPayload() {
+      var p = { localCursor: true };
+      for (var k in PRESETS[preset]) p[k] = PRESETS[preset][k];
+      return p;
+    }
+
     function veil(text) {
       lastVeil = text || '';
       var v = document.getElementById('remoteVeil');
@@ -2597,6 +2605,88 @@
       if (!canvas) return;
       canvas.style.transformOrigin = 'center center';
       canvas.style.transform = 'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.zoom + ')';
+      renderCursor();
+    }
+
+    // ── Lokaler Zeiger ──────────────────────────────────────────────────────
+    // Der Zeiger im Video lief jeder Bewegung um einen vollen Netz-Umlauf
+    // hinterher (ueber das Tailscale-Relais 100-500 ms). Jetzt laesst der Mac
+    // ihn aus dem Video weg (localCursor), und die App zeichnet ihn selbst:
+    // Trackpad-Bewegungen verschieben ihn SOFORT um genau das Stueck, das sie
+    // auch auf dem Mac bewegen (dx/dy sind Mac-Punkte, siehe input.darwin.ts).
+    // Die echte Position kommt als remote:cursor und korrigiert nur, solange
+    // gerade niemand bewegt — sonst risse die verspaetete Meldung den Zeiger
+    // mitten in der Bewegung zurueck.
+    var cursor = { x: 0.5, y: 0.5, known: false, lastLocalAt: 0 };
+    var linkRttMs = 0;
+    var CURSOR_SVG = '<svg viewBox="0 0 12 18" width="100%" height="100%" aria-hidden="true">'
+      + '<path d="M0.5 0.5 L0.5 14.5 L4 11.2 L6.4 16.8 L8.6 15.9 L6.3 10.5 L11 10.5 Z" '
+      + 'fill="#fff" stroke="#000" stroke-width="1" stroke-linejoin="round"/></svg>';
+
+    function cursorLayer() {
+      var stage = document.getElementById('remoteStage');
+      if (!stage) return null;
+      var layer = document.getElementById('remoteCursorLayer');
+      if (!layer) {
+        // Liegt exakt auf dem Canvas (gleiche Box, gleiche Transformation),
+        // folgt also jedem Zoom und Verschieben von selbst.
+        layer = document.createElement('div');
+        layer.id = 'remoteCursorLayer';
+        layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;transform-origin:center center;z-index:1';
+        layer.innerHTML = '<div id="remoteCursor" style="position:absolute;left:0;top:0;transform-origin:0 0;display:none;filter:drop-shadow(0 1px 1px rgba(0,0,0,.45))">' + CURSOR_SVG + '</div>';
+        // Den Canvas DIESER Buehne nehmen — `canvas` kann nach einem Neuaufbau
+        // kurz noch auf das alte Element zeigen, und insertBefore mit einem
+        // fremden Bezugsknoten wirft.
+        var cv = stage.querySelector('canvas');
+        stage.insertBefore(layer, cv ? cv.nextSibling : null);
+      }
+      return layer;
+    }
+
+    function renderCursor() {
+      var layer = cursorLayer();
+      if (!layer) return;
+      var el = document.getElementById('remoteCursor');
+      var st = window.remoteState;
+      var show = !!(st.localCursor && st.running && cursor.known && st.w);
+      el.style.display = show ? 'block' : 'none';
+      if (!show) return;
+      layer.style.transform = canvas ? canvas.style.transform : '';
+      var stage = document.getElementById('remoteStage');
+      var box = window.fitRect(st.w, st.h, stage.clientWidth, stage.clientHeight);
+      // Mac-Zeiger ist ~18 Punkte hoch — auf dem Handybild waeren das 4-5 px.
+      // Mindestens 16 px, und gegen den Zoom gegengerechnet, damit er beim
+      // Aufziehen nicht zum Riesenpfeil wird.
+      var ptToPx = box.w / (st.w / (st.scale || 1));
+      var h = Math.max(16, 18 * ptToPx);
+      el.style.width = (h * 12 / 18) + 'px';
+      el.style.height = h + 'px';
+      el.style.transform = 'translate(' + (box.x + cursor.x * box.w) + 'px,' + (box.y + cursor.y * box.h) + 'px) scale(' + (1 / view.zoom) + ')';
+    }
+
+    /** Vorhersage: was die App gerade schickt, sieht sie sofort. */
+    function predictCursor(ev) {
+      var st = window.remoteState;
+      if (!st.localCursor || !st.w) return;
+      if (ev.t === 'd') {
+        var ptsW = st.w / (st.scale || 1), ptsH = st.h / (st.scale || 1);
+        cursor.x = Math.min(1, Math.max(0, cursor.x + ev.dx / ptsW));
+        cursor.y = Math.min(1, Math.max(0, cursor.y + ev.dy / ptsH));
+      } else if (ev.t === 'm') {
+        cursor.x = ev.x; cursor.y = ev.y;
+      } else return;
+      cursor.known = true;
+      cursor.lastLocalAt = Date.now();
+      renderCursor();
+    }
+
+    /** Echte Position vom Mac — gilt erst, wenn die eigene Bewegung ruht. */
+    function serverCursor(p) {
+      if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+      var quiet = Date.now() - cursor.lastLocalAt > Math.max(300, linkRttMs * 2 + 100);
+      if (cursor.known && !quiet) return;
+      cursor.x = p.x; cursor.y = p.y; cursor.known = true;
+      renderCursor();
     }
 
     /**
@@ -2794,11 +2884,29 @@
       if (view.length < 6 || (view[0] & 0x7f) !== 0x01) return;
       var keyframe = (view[0] & 0x80) !== 0;
       var ts = (view[1] << 24 | view[2] << 16 | view[3] << 8 | view[4]) >>> 0;
+      // Quittung sofort beim Empfang: daraus misst der Server, wie viel sich
+      // auf der Leitung staut, und verwirft lieber Bilder, als sekundenlang
+      // hinterherzulaufen (server/src/remote/flow.ts).
+      if (ws && ws.readyState === 1) ws.send('{"type":"remote:ack","payload":{"ts":' + ts + '}}');
       if (!ensureDecoder()) return;
       // Vor dem ersten Vollbild ist jedes Zwischenbild sinnlos — der Dekoder
       // haette keinen Ausgangspunkt und zeichnete graue Kloetze.
       if (decoder.state !== 'configured') return;
-      if (!keyframe && !decoder.__gotKey) return;
+      // Kommt der Dekoder nicht hinterher, lieber aufs naechste Vollbild
+      // springen als mit wachsendem Rueckstand weiterzuzeichnen. Ein
+      // verworfenes Zwischenbild entwertet alle folgenden — also bis zum
+      // Vollbild nichts mehr dekodieren und eines anfordern.
+      if (!keyframe && decoder.decodeQueueSize > 2) decoder.__gotKey = false;
+      if (!keyframe && !decoder.__gotKey) {
+        // Hoechstens alle 500 ms nachfragen — geht eine Anforderung verloren
+        // oder kommt das Vollbild spaet, fragt das naechste Zwischenbild erneut.
+        var now = Date.now();
+        if (ws && ws.readyState === 1 && now - (decoder.__keyAskedAt || 0) > 500) {
+          decoder.__keyAskedAt = now;
+          ws.send(JSON.stringify({ type: 'remote:keyframe' }));
+        }
+        return;
+      }
       if (keyframe) decoder.__gotKey = true;
       decoder.decode(new EncodedVideoChunk({
         type: keyframe ? 'key' : 'delta',
@@ -2821,6 +2929,7 @@
             decoder = null;
           }
           window.remoteState.running = true;
+          window.remoteState.localCursor = !!msg.payload.localCursor;
           window.remoteState.w = msg.payload.width;
           window.remoteState.h = msg.payload.height;
           window.remoteState.scale = msg.payload.scale;
@@ -2851,9 +2960,14 @@
           // rttMs jetzt wirklich (Ping/Pong auf der Steuerverbindung),
           // statt ihn fest auf 0 zu senden.
           stat(msg.payload.fps + ' fps · ' + msg.payload.rttMs + ' ms');
+          linkRttMs = msg.payload.rttMs || 0;
+          break;
+        case 'remote:cursor':
+          serverCursor(msg.payload);
           break;
         case 'remote:stopped':
           window.remoteState.running = false;
+          renderCursor();
           veil('Beendet');
           break;
         case 'remote:error':
@@ -2874,7 +2988,11 @@
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = function () {
-        ws.send(JSON.stringify({ type: 'remote:start', payload: PRESETS[preset] }));
+        // Neue Verbindung, Zeigerposition unbekannt. NICHT erst bei
+        // remote:started zuruecksetzen: die erste Positionsmeldung des Macs
+        // kommt VOR remote:started an und waere sonst gleich wieder vergessen.
+        cursor.known = false;
+        ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
         veil('Verbinde …');
       };
       ws.onmessage = function (e) {
@@ -2885,6 +3003,7 @@
         ws = null;
         if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
         window.remoteState.running = false;
+        renderCursor();
         // N1: waehrend suspend() darf hier NIE ein Wiederverbindungs-Zeitgeber
         // entstehen — wantRunning bleibt bei suspend() absichtlich `true`
         // (siehe suspended-Deklaration oben), also reicht dessen Pruefung
@@ -3003,11 +3122,14 @@
         if (!wantRunning) return;
         if (ws && ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'remote:stop' }));
-          ws.send(JSON.stringify({ type: 'remote:start', payload: PRESETS[preset] }));
+          ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
         }
       },
       input: function (ev) {
-        if (ws && ws.readyState === 1 && window.remoteState.running) ws.send(JSON.stringify(ev));
+        if (ws && ws.readyState === 1 && window.remoteState.running) {
+          ws.send(JSON.stringify(ev));
+          predictCursor(ev);
+        }
       },
       dictate: function () { post('mic:start', { target: 'remote' }); },
     };
