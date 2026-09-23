@@ -122,7 +122,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
   /** FIFO der terminal:create-Anfragen — der Server antwortet in Reihenfolge.
    *  Ein Einzelwert ordnete bei mehreren gleichzeitigen Creates falsch zu. */
-  const pendingCards = useRef<Array<{ cardId: string; name?: string }>>([]);
+  const pendingCards = useRef<Array<{ cardId: string; name?: string; custom?: boolean }>>([]);
   /** cardId whose mic is currently recording. */
   const micCard = useRef<string | null>(null);
   /** Set when the user cancels: the recording still stops, its text is dropped. */
@@ -344,12 +344,27 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
       if (m?.type === 'terminal:created' && m.sessionId) {
+        // Vom Manager angelegt: das ist KEINE Antwort auf eine unserer Karten.
+        // Vorher verbrauchte es die naechste wartende Karte — legte man gerade
+        // selbst ein Terminal an, landeten Sitzung und Titel ueber Kreuz.
+        if (m.payload?.fromManager) {
+          const label = typeof m.payload?.label === 'string' && m.payload.label ? m.payload.label : 'Terminal';
+          useTerminalStore.getState().addTab(server.id, {
+            id: m.sessionId, sessionId: m.sessionId, title: label, serverId: server.id, active: false,
+          });
+          call('restoreSessions', [{ sessionId: m.sessionId, name: label }]);
+          return;
+        }
         const pending = pendingCards.current.shift();
         const cardId = pending?.cardId ?? null;
+        // Reiter-ID = Sitzungs-ID, NIE die Karten-ID der Seite: die zaehlt nach
+        // jedem App-Start wieder ab t1 und kollidierte mit gespeicherten Reitern
+        // (vertauschte, doppelte, verlorene Titel — siehe store/tabIdentity.ts).
         useTerminalStore.getState().addTab(server.id, {
-          id: cardId ?? m.sessionId,
+          id: m.sessionId,
           sessionId: m.sessionId,
-          title: pending?.name ?? cardId ?? 'Terminal',
+          title: pending?.name ?? 'Terminal',
+          customTitle: pending?.custom || undefined,
           serverId: server.id,
           active: true,
         });
@@ -1054,12 +1069,17 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // beide auf verschiedene Terminals, und die Beschriftung landete auf
         // dem falschen. Die Karten-ID bleibt nur als Rückfall für eine noch
         // nicht gebundene, brandneue Karte.
+        if (payload.field !== 'name' || !payload.value) break;
         const tabs = useTerminalStore.getState().getTabs(server.id);
-        const tab = payload.sessionId
-          ? tabs.find((t) => t.sessionId === payload.sessionId)
-          : tabs.find((t) => t.id === payload.cardId);
-        if (tab && payload.field === 'name' && payload.value) {
-          useTerminalStore.getState().updateTab(server.id, tab.id, { title: payload.value });
+        const tab = payload.sessionId ? tabs.find((t) => t.sessionId === payload.sessionId) : undefined;
+        if (tab) {
+          useTerminalStore.getState().updateTab(server.id, tab.id, { title: payload.value, customTitle: true });
+        } else {
+          // Karte noch ohne Sitzung (gerade angelegt): der Name gehoert an die
+          // WARTENDE Karte, nicht an einen gespeicherten Reiter, der zufaellig
+          // dieselbe Karten-Nummer von einem frueheren App-Start traegt.
+          const waiting = pendingCards.current.find((p) => p.cardId === payload.cardId);
+          if (waiting) { waiting.name = payload.value; waiting.custom = true; }
         }
         break;
       }
