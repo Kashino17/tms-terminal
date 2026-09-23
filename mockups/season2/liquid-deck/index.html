@@ -1558,7 +1558,12 @@
   .fs-infocard { text-align: center; padding: 24px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
 
   /* ---------- Fernzugriff-Bildschirm ---------- */
-  section[data-screen="remote"]:not([hidden]) { display: flex; flex-direction: column; gap: 8px; height: 100%; padding: 8px; }
+  /* Oben die Insel-Zone, unten die Leiste freihalten wie jeder andere
+     Bildschirm — mit bloss 8px Rand lagen die Kopfzeile (samt Vollbild-Knopf)
+     unter der Insel und die unterste Tastenreihe (⏎, Leertaste) bzw. die
+     Klick-Knoepfe des Trackpads unter der Leiste: nicht erreichbar. */
+  section[data-screen="remote"]:not([hidden]) { display: flex; flex-direction: column; gap: 8px; height: 100%;
+    padding: var(--top-space) 8px calc(var(--safe-bottom) + var(--dock-h) + 20px); }
   .remote-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; }
   .remote-dot { width: 7px; height: 7px; border-radius: 50%; background: #34c759; flex: none; }
   .remote-dot[data-state="off"] { background: #8a8a8e; }
@@ -1579,7 +1584,10 @@
   /* Vollbild fuer angeschlossene Tastatur/Maus: Kopf und Leiste weg, das Bild
      nimmt die ganze Flaeche ein. Manuell umgeschaltet (Knopf/Abzeichen/
      Umschalt+Esc) — keine Geraete-Erkennung, die danebenliegen koennte. */
-  [data-screen="remote"].fullscreen { padding: 0; gap: 0; }
+  section[data-screen="remote"].fullscreen:not([hidden]) { padding: 0; gap: 0; }
+  /* Im Vollbild gehoert die GANZE Flaeche dem Mac: Insel und Leiste lagen sonst
+     ueber dem Bild — ein Mausklick unten (auf das Mac-Dock) traf die App-Leiste. */
+  body.remote-fs #dock, body.remote-fs #statusHeader { display: none !important; }
   [data-screen="remote"].fullscreen .remote-head,
   [data-screen="remote"].fullscreen .remote-seg,
   [data-screen="remote"].fullscreen .remote-bar { display: none; }
@@ -1608,14 +1616,21 @@
   .rk.on { background: rgba(90,169,255,.28); opacity: 1;
            box-shadow: inset 0 0 0 1px rgba(90,169,255,.5); }
   .rk.locked { box-shadow: inset 0 0 0 2px rgba(90,169,255,.85); }
+  .rk.combo { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-size: 13px; }
+  .rk-sub { font-size: 8.5px; opacity: .55; font-weight: 500; letter-spacing: .01em; white-space: nowrap; overflow: hidden; max-width: 100%; }
+  /* Unsichtbar, aber fokussierbar: oeffnet die Handy-Tastatur (⌨). */
+  #remoteIme { position: absolute; left: 0; bottom: 0; width: 40px; height: 40px; opacity: 0;
+               pointer-events: none; border: 0; padding: 0; resize: none; font-size: 16px; }
 
   /* Aufgeklappt ist die Breite da: groessere Tasten, mehr Luft. */
   @media (min-width: 700px) {
-    section[data-screen="remote"] { padding: 14px; gap: 12px; }
+    section[data-screen="remote"]:not([hidden]) { padding: var(--top-space) 14px calc(var(--safe-bottom) + var(--dock-h) + 20px); gap: 12px; }
     .remote-name { font-size: 15px; }
     .remote-pad-btns button { padding: 15px 0; font-size: 12px; }
     .rk { font-size: 17px; }
     .rk.mod { font-size: 13px; }
+    .rk.combo { font-size: 15px; }
+    .rk-sub { font-size: 10px; }
   }
 
   /* ---------- Lock screen ---------- */
@@ -3056,7 +3071,8 @@
       +   '<button data-page="pad" class="on">Trackpad</button>'
       +   '<button data-page="keys">Tastatur</button>'
       + '</div>'
-      + '<div class="remote-bar" id="remoteBar"></div>';
+      + '<div class="remote-bar" id="remoteBar"></div>'
+      + '<textarea id="remoteIme" aria-hidden="true" autocomplete="off" autocapitalize="sentences" spellcheck="true"></textarea>';
 
     host.querySelector('#remoteSeg').addEventListener('click', function (e) {
       var btn = e.target.closest('[data-page]');
@@ -3099,6 +3115,7 @@
     window.remoteState.fullscreen = on;
     var host = document.querySelector('[data-screen="remote"]');
     if (host) host.classList.toggle('fullscreen', on);
+    document.body.classList.toggle('remote-fs', on);
     if (typeof layoutRemoteStage === 'function') layoutRemoteStage();
   };
 
@@ -3125,6 +3142,11 @@
     var bar = document.getElementById('remoteBar');
     bar.innerHTML = page === 'pad' ? remotePadMarkup() : remoteKeysMarkup();
     if (page === 'pad') wireRemotePad(); else wireRemoteKeys();
+    wireRemoteIme();
+    if (page !== 'keys') toggleRemoteIme(false);
+    // Tastatur und Trackpad brauchen unterschiedlich viel Hoehe — das Bild
+    // darueber richtet sich danach (layoutStage in bridge.js).
+    if (typeof window.layoutRemoteStage === 'function') window.layoutRemoteStage();
   }
 
   // Trackpad hat seine Gesten (Aufgabe 12); die Tastenreihe folgt in Aufgabe 13.
@@ -3148,8 +3170,11 @@
         // remoteKeyRows(). escapeHtml() ist hier PFLICHT, nicht nur Stil: ohne
         // sie bricht z.B. das Anfuehrungszeichen-Zeichen das Attribut auf.
         var attr = key.c ? ' data-code="' + key.c + '"' : ' data-text="' + escapeHtml(key.s) + '"';
+        if (key.combo) { attr += ' data-combo="' + key.combo + '"'; cls += ' combo'; }
+        if (key.c === '__ime' && remoteImeOn) cls += ' on';
         return '<button class="' + cls + '"' + attr + style + '>'
-             + escapeHtml(key.l) + '</button>';
+             + escapeHtml(key.l) + (key.sub ? '<span class="rk-sub">' + escapeHtml(key.sub) + '</span>' : '')
+             + '</button>';
       }).join('');
       return '<div class="rk-row">' + keys + '</div>';
     }).join('');
@@ -3249,6 +3274,24 @@
 
       if (code.indexOf('__layer:') === 0) { remoteLayer = code.slice(8); setRemotePage('keys'); return; }
       if (code === '__mic') { if (R) R.dictate(); return; }
+      if (code === '__ime') { toggleRemoteIme(); return; }
+
+      // Kuerzel: Sondertasten runter, Taste tippen, Sondertasten wieder hoch —
+      // unabhaengig von den haftenden Tasten (die bleiben, wie sie sind).
+      if (btn.dataset.combo) {
+        var cm = btn.dataset.combo;
+        var mods = { s: cm.indexOf('s') >= 0, c: cm.indexOf('c') >= 0, a: cm.indexOf('a') >= 0, m: cm.indexOf('m') >= 0 };
+        var modCodes = [['c', 'ControlLeft'], ['a', 'AltLeft'], ['s', 'ShiftLeft'], ['m', 'MetaLeft']]
+          .filter(function (p) { return mods[p[0]]; }).map(function (p) { return p[1]; });
+        if (R) {
+          modCodes.forEach(function (mc) { R.input({ t: 'k', c: mc, d: true, mods: mods }); });
+          R.input({ t: 'k', c: code, d: true, mods: mods });
+          R.input({ t: 'k', c: code, d: false, mods: mods });
+          modCodes.slice().reverse().forEach(function (mc) { R.input({ t: 'k', c: mc, d: false, mods: mods }); });
+        }
+        if (navigator.vibrate) navigator.vibrate(8);
+        return;
+      }
 
       if (code in remoteSticky) {
         var before = remoteSticky[code];
@@ -3265,6 +3308,67 @@
       releaseOnceModifiers();
     });
   }
+  // ── Handy-Tastatur (⌨) ────────────────────────────────────────────────
+  // Die eigene Tastatur des Handys (Wischtippen, Autokorrektur, alle Zeichen)
+  // schreibt auf dem Mac — ueber den Textweg, also unabhaengig von der
+  // Mac-Belegung. Ein unsichtbares Platzhalterzeichen steht immer vorn im
+  // Feld: ⌫ bei "leerem" Feld loescht es, und genau daran erkennen wir den
+  // Rueckschritt (Android-Tastaturen melden ihn sonst nicht zuverlaessig).
+  var remoteImeOn = false;
+  var IME_SENTINEL = '\u200b';
+  var imePrev = IME_SENTINEL;
+  var imeComposing = false;
+
+  function imeReset(el) {
+    el.value = IME_SENTINEL;
+    imePrev = IME_SENTINEL;
+    try { el.setSelectionRange(1, 1); } catch (e) { /* nicht fokussiert */ }
+  }
+  function paintImeKey() {
+    var b = document.querySelector('#remoteKeys [data-code="__ime"]');
+    if (b) b.classList.toggle('on', remoteImeOn);
+  }
+  function toggleRemoteIme(force) {
+    var el = document.getElementById('remoteIme');
+    if (!el) return;
+    var on = force === undefined ? !remoteImeOn : !!force;
+    if (!on) { el.blur(); return; }
+    imeReset(el);
+    el.focus();                       // im Tipp-Ereignis: nur so oeffnet Android die Tastatur
+  }
+  window.closeRemoteIme = function () { toggleRemoteIme(false); };
+  function wireRemoteIme() {
+    var el = document.getElementById('remoteIme');
+    if (!el || el.dataset.wired === '1') return;
+    el.dataset.wired = '1';
+    el.addEventListener('focus', function () { remoteImeOn = true; paintImeKey(); });
+    el.addEventListener('blur', function () { remoteImeOn = false; paintImeKey(); });
+    el.addEventListener('compositionstart', function () { imeComposing = true; });
+    el.addEventListener('compositionend', function () { imeComposing = false; });
+    el.addEventListener('input', function () {
+      var R = window.TMSRemote;
+      var d = remoteImeDiff(imePrev, el.value);
+      imePrev = el.value;
+      if (R) {
+        for (var i = 0; i < d.back; i++) {
+          R.input({ t: 'k', c: 'Backspace', d: true, mods: currentMods() });
+          R.input({ t: 'k', c: 'Backspace', d: false, mods: currentMods() });
+        }
+        d.parts.forEach(function (part, n) {
+          if (n > 0) {
+            R.input({ t: 'k', c: 'Enter', d: true, mods: currentMods() });
+            R.input({ t: 'k', c: 'Enter', d: false, mods: currentMods() });
+          }
+          if (part) R.input({ t: 'x', s: part });
+        });
+      }
+      // Nach Enter, nach geloeschtem Platzhalter oder wenn das Feld lang wird:
+      // frisch anfangen — aber nie mitten in einer laufenden Wortbildung.
+      var sentinelGone = el.value.charAt(0) !== IME_SENTINEL;
+      if (!imeComposing && (d.parts.length > 1 || sentinelGone || el.value.length > 200)) imeReset(el);
+    });
+  }
+
   var remotePadDocCleanup = null; // meldet die Dokument-Auffangnetz-Zuhoerer der VORHERIGEN
                                   // wireRemotePad()-Ausfuehrung ab, damit sie sich beim
                                   // Umschalten Trackpad/Tastatur nicht anhaeufen
@@ -3546,6 +3650,24 @@
     var mod = function (l, c) { return { l: l, c: c, sticky: true, m: true }; };
     var k = function (l, c, w) { return w ? { l: l, c: c, w: w } : { l: l, c: c }; };
     var x = function (ch, w) { return w ? { l: ch, s: ch, w: w } : { l: ch, s: ch }; };
+    // Kuerzel: Sondertasten (m=⌘ s=⇧ a=⌥ c=ctrl) + Taste in EINEM Anschlag,
+    // `sub` erklaert es in einem Wort. Positionscodes wie ueberall hier — also
+    // fuer die deutsche Mac-Belegung: ⌘Z liegt auf der US-Y-Position (KeyY).
+    var sc = function (l, c, combo, sub) { return { l: l, c: c, combo: combo, sub: sub }; };
+
+    if (layer === 'sc') {
+      return [
+        [sc('⌘C','KeyC','m','Kopieren'), sc('⌘V','KeyV','m','Einfügen'), sc('⌘X','KeyX','m','Ausschn.'),
+         sc('⌘Z','KeyY','m','Zurück'), sc('⇧⌘Z','KeyY','ms','Wieder'), sc('⌘A','KeyA','m','Alles')],
+        [sc('⌘⇥','Tab','m','App'), sc('⌘␣','Space','m','Spotlight'), sc('⌘W','KeyW','m','Fenster zu'),
+         sc('⌘Q','KeyQ','m','Beenden'), sc('⌘T','KeyT','m','Tab neu'), sc('⌘S','KeyS','m','Sichern')],
+        [sc('⌃C','KeyC','c','Abbruch'), sc('⌃D','KeyD','c','Ende'), sc('⌃L','KeyL','c','Leeren'),
+         sc('⌃R','KeyR','c','Suche'), sc('⌘F','KeyF','m','Finden'), sc('⌘R','KeyR','m','Neu laden')],
+        [sc('⌥◀','ArrowLeft','a','Wort'), sc('⌥▶','ArrowRight','a','Wort'), sc('⌘◀','ArrowLeft','m','Zeile'),
+         sc('⌘▶','ArrowRight','m','Zeile'), sc('⌃▲','ArrowUp','c','Mission'), sc('⌘⌫','Backspace','m','Zeile weg')],
+        [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
+      ];
+    }
 
     if (layer === 'fn') {
       return [
@@ -3562,17 +3684,20 @@
         [x('-'), x('_'), x('='), x('+'), x('$'), x('/'), x('\\'), x('|'), x('~')],
         [x('['), x(']'), x('{'), x('}'), x('('), x(')'), x('<'), x('>'), x('*')],
         [x(':'), x(';'), x('"'), x('\''), x(','), x('.'), x('!'), x('?'), k('⌫','Backspace', 1.5)],
+        [x('@'), x('#'), x('%'), x('&'), x('^'), x('`'), x('ß'), x('€'), x('§'), x('°')],
         [k('ABC','__layer:base', 1.5), k('␣','Space', 4), k('⏎','Enter', 1.5)],
       ];
     }
     return [
-      [k('esc','Escape'), k('F…','__layer:fn'), mod('⌘','MetaLeft'), mod('⌥','AltLeft'),
-       mod('ctrl','ControlLeft'), k('↹','Tab'), k('🎙','__mic')],
-      [k('q','KeyQ'), k('w','KeyW'), k('e','KeyE'), k('r','KeyR'), k('t','KeyT'), k('z','KeyZ'),
+      [k('esc','Escape'), k('⌘…','__layer:sc'), k('F…','__layer:fn'), mod('⌘','MetaLeft'), mod('⌥','AltLeft'),
+       mod('ctrl','ControlLeft'), k('↹','Tab'), k('⌨','__ime'), k('🎙','__mic')],
+      // z und y: Positionscodes der DEUTSCHEN Mac-Belegung (wie ü/ö/ä). Das
+      // deutsche z sitzt auf der US-Y-Position — mit KeyZ tippte der Mac "y".
+      [k('q','KeyQ'), k('w','KeyW'), k('e','KeyE'), k('r','KeyR'), k('t','KeyT'), k('z','KeyY'),
        k('u','KeyU'), k('i','KeyI'), k('o','KeyO'), k('p','KeyP'), k('ü','BracketLeft')],
       [k('a','KeyA'), k('s','KeyS'), k('d','KeyD'), k('f','KeyF'), k('g','KeyG'), k('h','KeyH'),
        k('j','KeyJ'), k('k','KeyK'), k('l','KeyL'), k('ö','Semicolon'), k('ä','Quote')],
-      [mod('⇧','ShiftLeft'), k('y','KeyY'), k('x','KeyX'), k('c','KeyC'), k('v','KeyV'),
+      [mod('⇧','ShiftLeft'), k('y','KeyZ'), k('x','KeyX'), k('c','KeyC'), k('v','KeyV'),
        k('b','KeyB'), k('n','KeyN'), k('m','KeyM'), k('⌫','Backspace', 1.5)],
       // I15: ▲/▼ fehlten auf jeder Ebene — beim Fernsteuern einer Shell
       // (Verlauf mit den Pfeiltasten durchgehen) ein harter Ausfall. Eigene
@@ -3669,6 +3794,20 @@
     return Math.hypot(curX - startX, curY - startY) > thresholdPx;
   }
 
+  /**
+   * Handy-Tastatur → Mac: was hat sich im Eingabefeld seit dem letzten Mal
+   * geaendert? Rueckschritte fuer alles ab der ersten Abweichung, dann der neue
+   * Text. So kommen Autokorrektur und Wischtippen richtig an ("teh" → "the"
+   * = 2 Rueckschritte + "he"), ohne zu wissen, was die Tastatur intern tat.
+   * Zeilenumbrueche im neuen Text werden zu Enter-Anschlaegen (parts).
+   */
+  function remoteImeDiff(prev, now) {
+    var i = 0;
+    while (i < prev.length && i < now.length && prev[i] === now[i]) i++;
+    var text = now.slice(i);
+    return { back: prev.length - i, parts: text.split('\n') };
+  }
+
   // Der gesamte Mockup-Code steckt in einer Kapsel — ohne diese Zeilen sieht
   // bridge.js keine einzige dieser Funktionen, und der Fernzugriff bricht mit
   // "fitRect is not defined" ab, waehrend die Tests weiter gruen melden (sie
@@ -3683,6 +3822,7 @@
     window.clampZoom = clampZoom;
     window.clampPan = clampPan;
     window.holdShouldAbort = holdShouldAbort;
+    window.remoteImeDiff = remoteImeDiff;
   }
   // ── /TMS-TEST-EXPORT ──
 
