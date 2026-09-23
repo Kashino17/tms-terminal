@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fernzugriff mit mehr Platz fuer das Bild. Dynamic Island, Kopfzeile und untere Leiste sind im Fernzugriff ausgeblendet; alles Noetige steckt jetzt in einem kleinen Kreis in der Ecke, den du an jeden Rand schieben kannst. Antippen oeffnet Status, Vollbild, Trennen und die App-Bereiche. Der Rechtsklick-Knopf reagiert nur noch auf einen kurzen Tipp, versehentliche Rechtsklicks beim Wischen sind weg. Die Tastatur ist wie am Mac aufgebaut: Pfeile oben, ctrl, Option und Befehl neben der Leertaste, aufgeklappt mit Ziffernreihe, Tasten in normaler Handy-Hoehe und darueber ein kleines Trackpad. Optimiert fuer das Fold 7 zu- und aufgeklappt." \
+            --notes "Ziehen im Fernzugriff funktioniert: Trackpad gedrueckt halten und ziehen oder den Linksklick-Knopf halten und mit einem zweiten Finger ziehen, wie auf einem echten Trackpad. Das Halten reagiert jetzt auch, wenn der Finger leicht zittert. Auf dem Mac gehen die Bewegungen als echtes Ziehen raus, dadurch lassen sich Fenster verschieben, Dateien ziehen und Text markieren. Ausserdem funktionieren Doppelklicks jetzt, zum Beispiel zum Oeffnen von Dateien oder Markieren eines Wortes." \
             --latest
