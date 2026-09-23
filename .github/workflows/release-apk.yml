@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Kopieren im Terminal ueberarbeitet. Markieren geht jetzt zeichengenau statt nur zeilenweise: lange druecken markiert das Wort unter dem Finger, die Griffe lassen sich Zeichen fuer Zeichen verschieben, ein Tipp im Markier-Modus nimmt wie bisher die ganze Zeile. Links, die Claude ueber mehrere Zeilen umbricht, werden jetzt als ein Link erkannt: ein Tipp darauf oder langes Druecken kopiert die vollstaendige Adresse ohne Zeilenumbrueche und ohne Leerzeichen. Normaler Text behaelt beim Kopieren seine Zeilen." \
+            --notes "Fernzugriff zeigt jetzt das Bild. Die Verbindung stand zwar, aber die App durfte den Bildstrom nicht entschluesseln und zeigte nur: Dieses Geraet kann den Bildstrom nicht anzeigen. Grund war die interne Adresse der App-Oberflaeche, unter der Android den Video-Dekoder nicht freigibt. Nach dem Update einmal Farbschema und Terminal-Ansicht pruefen, die fallen auf die Vorgabe zurueck." \
             --latest
