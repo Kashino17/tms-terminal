@@ -1619,6 +1619,30 @@
   .rk.on { background: rgba(90,169,255,.28); opacity: 1;
            box-shadow: inset 0 0 0 1px rgba(90,169,255,.5); }
   .rk.locked { box-shadow: inset 0 0 0 2px rgba(90,169,255,.85); }
+  /* Rueckmeldung: gedrueckte Klick-Knoepfe, Ring beim Tippen aufs Trackpad,
+     leuchtender Rand beim Ziehen. */
+  .remote-pad-btns button { transition: background .08s, transform .08s, border-color .08s; }
+  .remote-pad-btns button.is-down { background: rgba(90,169,255,.30); border-color: rgba(90,169,255,.65);
+    opacity: 1; transform: scale(.97); }
+  .remote-pad { transition: box-shadow .12s; }
+  .remote-pad.is-dragging { box-shadow: inset 0 0 0 2px rgba(90,169,255,.65), 0 0 18px rgba(90,169,255,.18); }
+  .pad-ripple { position: absolute; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%;
+    border: 2px solid rgba(90,169,255,.85); background: rgba(90,169,255,.14); pointer-events: none;
+    animation: padRipple .5s ease-out forwards; }
+  .pad-ripple--right { border-color: rgba(255,170,90,.9); background: rgba(255,170,90,.14); }
+  .pad-ripple i { position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px); font-style: normal;
+    font-size: 11px; font-weight: 600; white-space: nowrap; color: rgba(255,255,255,.85); }
+  @keyframes padRipple { from { transform: scale(.5); opacity: 1; } to { transform: scale(1.35); opacity: 0; } }
+  /* Tastatur wie auf dem Handy: gedrueckt, vergroesserte Vorschau, Varianten beim Halten. */
+  .rk.is-pressed { background: rgba(255,255,255,.24); }
+  .rk-pop { position: fixed; z-index: 90; pointer-events: none; transform: translate(-50%, -100%);
+    min-width: 44px; height: 58px; padding: 0 10px; border-radius: 12px; display: grid; place-items: center;
+    background: #3a3f48; color: #fff; font-size: 28px; font-weight: 500; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
+  .rk-alts { position: fixed; z-index: 91; pointer-events: none; transform: translateY(-100%); display: flex; gap: 2px;
+    padding: 4px; border-radius: 12px; background: #3a3f48; box-shadow: 0 8px 22px rgba(0,0,0,.5); }
+  .rk-alts span { min-width: 36px; height: 46px; display: grid; place-items: center; border-radius: 9px;
+    font-size: 22px; color: #fff; }
+  .rk-alts span.on { background: var(--accent, #5aa9ff); }
   .rk.combo { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-size: 13px; }
   .rk-sub { font-size: 8.5px; opacity: .55; font-weight: 500; letter-spacing: .01em; white-space: nowrap; overflow: hidden; max-width: 100%; }
   /* Unsichtbar, aber fokussierbar: oeffnet die Handy-Tastatur (⌨). */
@@ -3123,6 +3147,7 @@
   };
 
   function setRemotePage(page) {
+    if (typeof clearKeyFx === 'function') clearKeyFx(); // keine haengende Vorschau/Varianten-Leiste
     // Wechsel WEG von der Tastatur (z.B. auf "Trackpad"): eine haengengebliebene
     // haftende Sondertaste (⌘/⌥/Strg/⇧) darf hier nicht stehen bleiben — sonst
     // reagiert der Mac auf jeden folgenden Trackpad-Klick/-Anschlag falsch.
@@ -3255,13 +3280,110 @@
   // ohne diese Zeile sieht bridge.js "releaseAllSticky is not defined".
   window.releaseAllSticky = releaseAllSticky;
 
+  // ── Tastatur wie auf dem Handy: Vorschau beim Druecken, Varianten beim Halten ──
+  var ALT_HOLD_MS = 380;
+  var keyFx = null;            // { btn, pop, alts, altEls, sel, timer, pid }
+  var suppressKeyClickUntil = 0;
+
+  function keyLabel(btn) {
+    var l = btn.dataset.text !== undefined ? btn.dataset.text : btn.textContent;
+    var shift = remoteSticky.ShiftLeft !== 'off';
+    return shift && l.length === 1 ? l.toUpperCase() : l;
+  }
+  /** Zeichentaste (Buchstabe, Ziffer, Satzzeichen)? Nur die bekommen die Vorschau. */
+  function isCharKey(btn) {
+    if (btn.dataset.combo || btn.classList.contains('mod')) return false;
+    if (btn.dataset.text !== undefined) return true;
+    return /^(Key[A-Z]|Digit\d|BracketLeft|Semicolon|Quote)$/.test(btn.dataset.code || '');
+  }
+  function clearKeyFx() {
+    if (!keyFx) return;
+    clearTimeout(keyFx.timer);
+    keyFx.btn.classList.remove('is-pressed');
+    if (keyFx.pop) keyFx.pop.remove();
+    if (keyFx.alts) keyFx.alts.remove();
+    keyFx = null;
+  }
+  function openAlts() {
+    if (!keyFx) return;
+    var base = (keyFx.btn.dataset.text !== undefined ? keyFx.btn.dataset.text : keyFx.btn.textContent);
+    var list = remoteAltsFor(base, remoteSticky.ShiftLeft !== 'off');
+    if (!list.length) return;
+    if (keyFx.pop) { keyFx.pop.remove(); keyFx.pop = null; }
+    var r = keyFx.btn.getBoundingClientRect();
+    var bar = document.createElement('div');
+    bar.className = 'rk-alts';
+    bar.innerHTML = list.map(function (ch, i) { return '<span data-i="' + i + '"' + (i === 0 ? ' class="on"' : '') + '>' + escapeHtml(ch) + '</span>'; }).join('');
+    document.body.appendChild(bar);
+    // Ueber der Taste, aber nie ueber den Bildschirmrand hinaus.
+    var w = bar.offsetWidth;
+    var left = Math.max(6, Math.min(r.left + r.width / 2 - 20, window.innerWidth - w - 6));
+    bar.style.left = left + 'px';
+    bar.style.top = (r.top - 6) + 'px';
+    keyFx.alts = bar;
+    keyFx.list = list;
+    keyFx.sel = 0;
+    if (navigator.vibrate) navigator.vibrate(12);
+  }
+  function pickAlt(x) {
+    if (!keyFx || !keyFx.alts) return;
+    var spans = keyFx.alts.querySelectorAll('span');
+    var best = 0, bestD = Infinity;
+    spans.forEach(function (sp, i) {
+      var rr = sp.getBoundingClientRect(), d = Math.abs(x - (rr.left + rr.width / 2));
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    if (best !== keyFx.sel) {
+      spans[keyFx.sel].classList.remove('on');
+      spans[best].classList.add('on');
+      keyFx.sel = best;
+    }
+  }
+
   function wireRemoteKeys() {
     var host = document.getElementById('remoteKeys');
     if (!host) return;
 
+    host.addEventListener('pointerdown', function (e) {
+      var btn = e.target.closest('.rk');
+      if (!btn) return;
+      clearKeyFx();
+      keyFx = { btn: btn, pop: null, alts: null, sel: 0, pid: e.pointerId, timer: null };
+      btn.classList.add('is-pressed');
+      if (navigator.vibrate) navigator.vibrate(5);
+      if (!isCharKey(btn)) return;
+      // Vergroesserte Vorschau ueber der Taste — der Finger verdeckt sie sonst.
+      var r = btn.getBoundingClientRect();
+      var pop = document.createElement('div');
+      pop.className = 'rk-pop';
+      pop.textContent = keyLabel(btn);
+      pop.style.left = (r.left + r.width / 2) + 'px';
+      pop.style.top = (r.top - 4) + 'px';
+      document.body.appendChild(pop);
+      keyFx.pop = pop;
+      keyFx.timer = setTimeout(openAlts, ALT_HOLD_MS);
+    });
+    host.addEventListener('pointermove', function (e) {
+      if (keyFx && keyFx.alts && e.pointerId === keyFx.pid) pickAlt(e.clientX);
+    });
+    function keyUp(e, send) {
+      if (!keyFx || e.pointerId !== keyFx.pid) return;
+      if (keyFx.alts && send) {
+        // Variante gewaehlt: ueber den Textweg senden, der normale Anschlag entfaellt.
+        var ch = keyFx.list[keyFx.sel];
+        if (window.TMSRemote && ch) window.TMSRemote.input({ t: 'x', s: ch });
+        releaseOnceModifiers();
+        suppressKeyClickUntil = Date.now() + 500;
+      }
+      clearKeyFx();
+    }
+    host.addEventListener('pointerup', function (e) { keyUp(e, true); });
+    host.addEventListener('pointercancel', function (e) { keyUp(e, false); });
+
     host.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-code], [data-text]');
       if (!btn) return;
+      if (Date.now() < suppressKeyClickUntil) { suppressKeyClickUntil = 0; return; }
       var R = window.TMSRemote;
 
       // Zeichenebene: der Textweg umgeht die Tastaturbelegung komplett, darum
@@ -3412,8 +3534,22 @@
     function endDrag() {
       if (dragging) {
         dragging = false;
+        pad.classList.remove('is-dragging');
         if (R()) R().input({ t: 'b', b: 'l', d: false });
       }
+    }
+
+    /** Sichtbare Rueckmeldung fuer einen Klick: Ring an der Stelle + kurzes Wort. */
+    function padRipple(x, y, label) {
+      var r = pad.getBoundingClientRect();
+      var el = document.createElement('span');
+      el.className = 'pad-ripple' + (label === 'Rechtsklick' ? ' pad-ripple--right' : '');
+      el.style.left = (x - r.left) + 'px';
+      el.style.top = (y - r.top) + 'px';
+      el.innerHTML = '<i>' + label + '</i>';
+      pad.appendChild(el);
+      setTimeout(function () { el.remove(); }, 520);
+      if (navigator.vibrate) navigator.vibrate(label === 'Rechtsklick' ? [6, 40, 6] : 8);
     }
 
     /**
@@ -3464,6 +3600,8 @@
           holdTimer = null;
           if (pts.size === 1 && pts.has(holdPointerId)) {
             dragging = true;
+            pad.classList.add('is-dragging'); // Halten = Ziehen: Rand leuchtet, solange die Taste unten ist
+            if (navigator.vibrate) navigator.vibrate(12);
             if (R()) R().input({ t: 'b', b: 'l', d: true });
           }
           holdPointerId = null;
@@ -3531,6 +3669,7 @@
         var b = kind === 'right' ? 'r' : 'l';
         R().input({ t: 'b', b: b, d: true });
         R().input({ t: 'b', b: b, d: false });
+        padRipple(e.clientX, e.clientY, kind === 'right' ? 'Rechtsklick' : 'Klick');
       }
       maxFingers = 0;
       gestureMoved = 0;
@@ -3572,6 +3711,8 @@
         if (activeId !== null) return; // schon gedrueckt
         activeId = e.pointerId;
         fixedBtnDown[which] = true;
+        btn.classList.add('is-down');     // leuchtet, solange die Maustaste gedrueckt ist
+        if (navigator.vibrate) navigator.vibrate(8);
         if (R()) R().input({ t: 'b', b: which, d: true });
         try { btn.setPointerCapture(e.pointerId); } catch (err) { /* bestmoeglich */ }
       }
@@ -3580,6 +3721,7 @@
         if (e.pointerId !== activeId) return;
         activeId = null;
         delete fixedBtnDown[which];
+        btn.classList.remove('is-down');
         if (R()) R().input({ t: 'b', b: which, d: false });
       }
 
@@ -3798,6 +3940,25 @@
   }
 
   /**
+   * Varianten beim langen Halten einer Taste — wie auf Handy-Tastaturen.
+   * Gesendet werden sie ueber den Textweg (unabhaengig von der Mac-Belegung).
+   * Mit gedrueckter Umschalttaste die Grossbuchstaben (ß → ẞ, nicht "SS").
+   */
+  var REMOTE_ALTS = {
+    a: 'äàáâæãå', o: 'öòóôõøœ', u: 'üùúû', e: 'éèêë€', i: 'íìîï', s: 'ß$§', c: 'ç©',
+    n: 'ñ', y: 'ýÿ', z: 'ž', l: 'ł',
+    '-': '–—', '"': '„“”«»', "'": '‚‘’', '.': '…•', '?': '¿', '!': '¡', '=': '≠≈',
+    '+': '±', '*': '×•', '/': '÷', '<': '≤«', '>': '≥»', '%': '‰', '$': '€£¥',
+    '0': '°', '1': '¹½', '2': '²', '3': '³',
+  };
+  function remoteAltsFor(label, shift) {
+    var list = REMOTE_ALTS[String(label || '').toLowerCase()];
+    if (!list) return [];
+    var arr = Array.from(list);
+    return shift ? arr.map(function (ch) { return ch === 'ß' ? 'ẞ' : ch.toUpperCase(); }) : arr;
+  }
+
+  /**
    * Handy-Tastatur → Mac: was hat sich im Eingabefeld seit dem letzten Mal
    * geaendert? Rueckschritte fuer alles ab der ersten Abweichung, dann der neue
    * Text. So kommen Autokorrektur und Wischtippen richtig an ("teh" → "the"
@@ -3826,6 +3987,7 @@
     window.clampPan = clampPan;
     window.holdShouldAbort = holdShouldAbort;
     window.remoteImeDiff = remoteImeDiff;
+    window.remoteAltsFor = remoteAltsFor;
   }
   // ── /TMS-TEST-EXPORT ──
 
