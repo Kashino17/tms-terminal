@@ -59,3 +59,12 @@ test('Reparatur ist ohne Wirkung, wenn schon alles stimmt', () => {
   const stored = [tab('s-a', 's-a', 'A'), tab('s-b', 's-b', 'B')];
   assert.deepEqual(repairTabs(stored), stored);
 });
+
+test('isUserTitle: selbst vergebene Namen ja, automatische nein', async () => {
+  const { isUserTitle } = await import('../src/store/tabIdentity.ts');
+  assert.equal(isUserTitle({ title: 'Surfschule Bali' }), true);
+  assert.equal(isUserTitle({ title: 'Terminal 3' }), false);
+  assert.equal(isUserTitle({ title: 'Shell 12' }), false);
+  assert.equal(isUserTitle({ title: 'Terminal' }), false);
+  assert.equal(isUserTitle({ title: 'Terminal 3', customTitle: true }), true, 'ausdruecklich so benannt');
+});

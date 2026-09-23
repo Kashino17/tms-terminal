@@ -22,6 +22,7 @@ import { restoreTerminals } from './terminal/restore/restore';
 import { consumeSnapshot } from './terminal/restore/snapshot.store';
 import { PtyDaemonClient } from './terminal/ptyd/client';
 import { usePtyKeeper } from './terminal/terminal.factory';
+import { titleStore } from './terminal/titles';
 import { shutdown as shutdownWhisper, prewarm as prewarmWhisper } from './audio/whisper-sidecar';
 import { shutdown as shutdownRewriter, prewarm as prewarmRewriter } from './audio/prompt-rewriter-sidecar';
 import { managerService } from './websocket/ws.handler';
@@ -141,6 +142,12 @@ async function main(): Promise<void> {
     applyAutoApprove: (id, on) => setAutoApprove(id, on),
     maxSessions: 50,
   });
+
+  // Titel von Terminals, die es nach Waechter-Uebernahme und Wiederherstellung
+  // nicht mehr gibt, sind Ballast. Die uebrigen geben dem Manager gleich die
+  // richtigen Namen (statt "Shell 4" in seinen Meldungen).
+  titleStore.prune(new Set(globalManager.listSessions().map((x) => x.id)));
+  for (const [id, title] of Object.entries(titleStore.all())) managerService.setSessionLabel(id, title);
 
   if (!managerService.isEnabled()) {
     managerService.start();
@@ -314,6 +321,7 @@ async function main(): Promise<void> {
     const forceExit = setTimeout(() => { logger.warn('Forced exit after timeout'); process.exit(1); }, 5000);
     forceExit.unref();
     logger.info('Shutting down...');
+    void titleStore.flush();
     watcherService.shutdown();
     shutdownWhisper();
     shutdownRewriter();

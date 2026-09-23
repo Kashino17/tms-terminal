@@ -56,3 +56,14 @@ export function repairTabs(list: TerminalTab[]): TerminalTab[] {
   }
   return out;
 }
+
+/**
+ * A title the user chose (worth keeping on the server), as opposed to an
+ * automatic one like "Terminal 3" / "Shell 2". Season 2 never set
+ * customTitle before the server title store existed, so the name decides.
+ */
+export function isUserTitle(tab: Pick<TerminalTab, 'title' | 'customTitle'>): boolean {
+  if (tab.customTitle) return true;
+  const t = (tab.title ?? '').trim();
+  return !!t && !/^(Terminal|Shell)( \d+)?$/.test(t);
+}

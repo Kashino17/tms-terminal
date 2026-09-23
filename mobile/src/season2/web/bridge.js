@@ -1083,6 +1083,24 @@
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
       attachSized(cardId, sessionId);
     },
+    /**
+     * Titel vom Server (Quelle der Wahrheit, siehe server/src/terminal/titles.store.ts)
+     * auf die Karte bringen — auch wenn er auf einem anderen Geraet gesetzt wurde.
+     * Ein gerade bearbeitetes Namensfeld wird nicht ueberschrieben.
+     */
+    setCardTitle: function (sessionId, title) {
+      var cardId = cardOf(sessionId);
+      if (!cardId || !title) return;
+      var sess = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
+      if (!sess || sess.name === title) return;
+      sess.name = title;
+      document.querySelectorAll('[data-id="' + cardId + '"] .card-name').forEach(function (el) {
+        if (el.dataset.editing !== '1') el.value = title;
+      });
+      if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
+      if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
+      if (window.__tmsState && window.__tmsState.overviewOpen && typeof window.renderOverview === 'function') window.renderOverview();
+    },
     /** PTY output. */
     output: function (sessionId, chunk) {
       var cardId = cardOf(sessionId);

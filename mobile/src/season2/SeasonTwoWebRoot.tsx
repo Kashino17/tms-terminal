@@ -20,6 +20,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useSettingsStore } from '../store/settingsStore';
 import { useTerminalStore } from '../store/terminalStore';
+import { isUserTitle } from '../store/tabIdentity';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
 import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '../services/notifications.service';
@@ -323,6 +324,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     // sonst unterdrückt es die erste Meldung nach einem Reload.
     sessionStatus.current = {};
 
+    /** Titel vom Server in den Speicher UND auf die Karte. */
+    const applyServerTitle = (sessionId: string, title: string) => {
+      const st = useTerminalStore.getState();
+      const tab = st.getTabs(server.id).find((t) => t.sessionId === sessionId);
+      if (tab && (tab.title !== title || !tab.customTitle)) st.updateTab(server.id, tab.id, { title, customTitle: true });
+      call('setCardTitle', sessionId, title);
+    };
+
     const unsub = wsService.addMessageListener((m: any) => {
       if (m?.type === 'terminal:output' && m.sessionId && m.payload?.data) {
         recordViewBuffer(m.sessionId, m.payload.data);
@@ -341,6 +350,23 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // unzuverlässigen Attach-Maßen zu vertrauen — die haben als
         // Server-Heal die Doppel-Absätze erzeugt (SIGWINCH-Repaints).
         call('assertDims', m.sessionId);
+        return;
+      }
+      // ── Titel: der Server ist die Quelle der Wahrheit (titles.store.ts) ──
+      if (m?.type === 'terminal:titles') {
+        const serverTitles: Record<string, string> = m.payload?.titles ?? {};
+        for (const [sid, title] of Object.entries(serverTitles)) applyServerTitle(sid, title);
+        // Einmaliges Hochladen: Titel, die bisher nur auf diesem Handy lagen
+        // (vor dem Server-Speicher vergeben), gehen so nicht verloren.
+        for (const tab of useTerminalStore.getState().getTabs(server.id)) {
+          if (tab.sessionId && !(tab.sessionId in serverTitles) && isUserTitle(tab)) {
+            wsService.send({ type: 'terminal:rename', sessionId: tab.sessionId, payload: { title: tab.title } } as never);
+          }
+        }
+        return;
+      }
+      if (m?.type === 'terminal:title' && m.sessionId) {
+        if (typeof m.payload?.title === 'string' && m.payload.title) applyServerTitle(m.sessionId, m.payload.title);
         return;
       }
       if (m?.type === 'terminal:created' && m.sessionId) {
@@ -368,6 +394,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           serverId: server.id,
           active: true,
         });
+        // Vor dem Anlegen schon umbenannt: jetzt, wo die Sitzung existiert, zum Server.
+        if (pending?.custom && pending.name) {
+          wsService.send({ type: 'terminal:rename', sessionId: m.sessionId, payload: { title: pending.name } } as never);
+        }
         if (cardId) {
           call('bindSession', cardId, m.sessionId);
           sheets.pushNotes(cardId);
@@ -483,6 +513,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
     });
+    // Die Titelliste schickt der Server schon beim Verbinden — womöglich bevor
+    // dieser Empfänger stand (Kaltstart: Seite lädt langsamer als der Socket).
+    wsService.send({ type: 'terminal:titles_get' } as never);
     return unsub;
   }, [wsService, server, ready, call, markBusy, setSessionStatus]);
 
@@ -1073,7 +1106,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         const tabs = useTerminalStore.getState().getTabs(server.id);
         const tab = payload.sessionId ? tabs.find((t) => t.sessionId === payload.sessionId) : undefined;
         if (tab) {
+          // Nur eine ECHTE Aenderung zaehlt. Die Seite meldet beim Wiederherstellen
+          // jede Karte mit ihrem gespeicherten Namen als "umbenannt" — das darf
+          // einen neueren Titel auf dem Server (z. B. vom anderen Geraet) nicht
+          // mit dem alten lokalen ueberschreiben.
+          if (tab.title === payload.value) break;
           useTerminalStore.getState().updateTab(server.id, tab.id, { title: payload.value, customTitle: true });
+          // Dauerhaft auf dem Server — ueberlebt Neuinstallation, gilt auf jedem Geraet.
+          wsService.send({ type: 'terminal:rename', sessionId: payload.sessionId, payload: { title: payload.value } } as never);
         } else {
           // Karte noch ohne Sitzung (gerade angelegt): der Name gehoert an die
           // WARTENDE Karte, nicht an einen gespeicherten Reiter, der zufaellig

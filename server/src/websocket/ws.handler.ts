@@ -28,6 +28,24 @@ import { listEntries } from '../manager/entries/entries.store';
 import { ConnectionRateLimiter } from './rate-limiter';
 import { browserBridge } from '../browserbridge/browserbridge.manager';
 import { asPaste } from '../terminal/paste.policy';
+import { titleStore } from '../terminal/titles';
+import { cleanTitle } from '../terminal/titles.store';
+
+// ── Terminal-Titel: auf dem Server gespeichert, an ALLE Apps verteilt ─────────
+// Der Titel eines Terminals gehoert dem Server (titles.store.ts): so ueberlebt
+// er eine Neuinstallation der App und ist auf jedem Geraet derselbe.
+const liveSockets = new Set<WebSocket>();
+function broadcastTitle(sessionId: string, title: string | null): void {
+  for (const sock of liveSockets) {
+    if (sock.readyState === 1) sock.send(JSON.stringify({ type: 'terminal:title', sessionId, payload: { title } }));
+  }
+}
+/** Ein Terminal ist endgueltig weg — sein Titel auch. */
+function forgetTitle(sessionId: string): void {
+  if (titleStore.get(sessionId) === undefined) return;
+  titleStore.remove(sessionId);
+  broadcastTitle(sessionId, null);
+}
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -242,6 +260,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   const rateLimiter = new ConnectionRateLimiter();
 
   logger.success(`Client connected: ${ip}`);
+  liveSockets.add(ws);
+  send(ws, { type: 'terminal:titles', payload: { titles: titleStore.all() } } as any);
 
   // Update the mutable WS reference so manager callbacks always use the current connection
   currentWs = ws;
@@ -437,6 +457,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           clearCwdCheck(sessionId);
           aiSessions.delete(sessionId);
           send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
+          forgetTitle(sessionId);
         },
       );
       ownedSessions.add(session.id);
@@ -448,6 +469,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       const shellNum = ownedSessions.size;
       const sessionLabel = label || `Shell ${shellNum}`;
       managerService.setSessionLabel(session.id, sessionLabel);
+      const given = label ? cleanTitle(label) : null;
+      if (given && titleStore.set(session.id, given)) broadcastTitle(session.id, given);
 
       // Notify the client about the new session
       send(ws, {
@@ -479,6 +502,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       idleDetector.unwatch(sessionId);
       aiSessions.delete(sessionId);
       send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode: 0 } });
+      forgetTitle(sessionId);
       logger.info(`Manager: closed terminal ${sessionId.slice(0, 8)}`);
       return true;
     } catch (err) {
@@ -547,6 +571,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         const apTimer = autopilotTimers.get(sid);
         if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sid); }
         send(ws, { type: 'terminal:closed', sessionId: sid, payload: { exitCode } });
+        forgetTitle(sid);
       },
       clientCols,
       clientRows,
@@ -879,6 +904,23 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
+    if (msgType === 'terminal:titles_get') {
+      send(ws, { type: 'terminal:titles', payload: { titles: titleStore.all() } } as any);
+      return;
+    }
+
+    if (msgType === 'terminal:rename') {
+      const sessionId = (msg as any).sessionId;
+      const title = cleanTitle((msg as any).payload?.title);
+      if (!isValidSessionId(sessionId) || !title || !globalManager.getSession(sessionId)) return;
+      managerService.setSessionLabel(sessionId, title); // der Manager spricht vom Terminal mit seinem Namen
+      if (titleStore.set(sessionId, title)) {
+        logger.info(`Titel ${sessionId.slice(0, 8)} → "${title}"`);
+        broadcastTitle(sessionId, title);
+      }
+      return;
+    }
+
     if (msgType === 'manager:sync_labels') {
       const labels = (msg as any).payload?.labels as Array<{ sessionId: string; name: string }> | undefined;
       if (Array.isArray(labels)) {
@@ -1114,6 +1156,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
               const apTimer = autopilotTimers.get(sessionId);
               if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sessionId); }
               send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
+              forgetTitle(sessionId);
             },
           );
           ownedSessions.add(session.id);
@@ -1167,7 +1210,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         if (attachToThisClient(msg.sessionId, cols, rows)) {
           const session = globalManager.getSession(msg.sessionId)!;
           pendingInputLen.set(session.id, 0); // alter Zählerstand der Vorgängerverbindung
-          if (!managerService.getSessionList().find(s => s.sessionId === session.id)) {
+          const stored = titleStore.get(session.id);
+          if (stored) managerService.setSessionLabel(session.id, stored);
+          else if (!managerService.getSessionList().find(s => s.sessionId === session.id)) {
             managerService.setSessionLabel(session.id, `Shell ${ownedSessions.size}`);
           }
           globalManager.resize(session.id, cols, rows);
@@ -1312,6 +1357,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         aiSessions.delete(msg.sessionId);
         autopilotService.clearSession(msg.sessionId);
         managerService.clearSession(msg.sessionId);
+        forgetTitle(msg.sessionId);
         const apTimer = autopilotTimers.get(msg.sessionId);
         if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(msg.sessionId); }
         if (!globalManager.closeSession(msg.sessionId)) {
@@ -1421,6 +1467,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   });
 
   ws.on('close', () => {
+    liveSockets.delete(ws);
     logger.info(`Client disconnected: ${ip} — detaching ${ownedSessions.size} sessions (kept alive)`);
 
     // Clear the current WS reference so manager messages get buffered
