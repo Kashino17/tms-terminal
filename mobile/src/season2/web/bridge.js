@@ -2779,7 +2779,14 @@
     // Die echte Position kommt als remote:cursor und korrigiert nur, solange
     // gerade niemand bewegt — sonst risse die verspaetete Meldung den Zeiger
     // mitten in der Bewegung zurueck.
-    var cursor = { x: 0.5, y: 0.5, known: false, lastLocalAt: 0 };
+    // srv = letzte echte Position vom Mac. Der Mac meldet nur, wenn sich der
+    // Zeiger BEWEGT — waehrend eigener Bewegung verworfene Meldungen kamen also
+    // nie wieder, und eine einmal entstandene Abweichung (Eingaben, die beim
+    // Neuverbinden unterwegs verloren gingen; die echte Maus am Mac) blieb fuer
+    // immer: Zeiger sichtbar an einer Stelle, Klick landet an einer anderen.
+    // Darum wird die zuletzt gemeldete Position nach jeder Bewegung, sobald
+    // Ruhe ist, nachgezogen (settleCursor).
+    var cursor = { x: 0.5, y: 0.5, known: false, lastLocalAt: 0, srv: null, settleTimer: null };
     var linkRttMs = 0;
     var CURSOR_SVG = '<svg viewBox="0 0 12 18" width="100%" height="100%" aria-hidden="true">'
       + '<path d="M0.5 0.5 L0.5 14.5 L4 11.2 L6.4 16.8 L8.6 15.9 L6.3 10.5 L11 10.5 Z" '
@@ -2819,8 +2826,11 @@
       // Mac-Zeiger ist ~18 Punkte hoch — auf dem Handybild waeren das 4-5 px.
       // Mindestens 16 px, und gegen den Zoom gegengerechnet, damit er beim
       // Aufziehen nicht zum Riesenpfeil wird.
+      // Echte Groesse: der Mac-Pfeil ist ~20 Punkte hoch. Frueher mindestens
+      // 16 px — auf dem Fold 2-4x groesser als das Original, und ein grosser
+      // Pfeil taeuscht vor, man zeige auf etwas, das die Spitze gar nicht trifft.
       var ptToPx = box.w / (st.w / (st.scale || 1));
-      var h = Math.max(16, 18 * ptToPx);
+      var h = Math.max(9, 20 * ptToPx);
       el.style.width = (h * 12 / 18) + 'px';
       el.style.height = h + 'px';
       el.style.transform = 'translate(' + (box.x + cursor.x * box.w) + 'px,' + (box.y + cursor.y * box.h) + 'px) scale(' + (1 / view.zoom) + ')';
@@ -2840,13 +2850,32 @@
       cursor.known = true;
       cursor.lastLocalAt = Date.now();
       renderCursor();
+      armSettle();
     }
 
-    /** Echte Position vom Mac — gilt erst, wenn die eigene Bewegung ruht. */
+    function quietMs() { return Math.max(300, linkRttMs * 2 + 100); }
+
+    /** Nach der letzten eigenen Bewegung (plus Hin- und Rueckweg) die echte Position uebernehmen. */
+    function armSettle() {
+      if (cursor.settleTimer) clearTimeout(cursor.settleTimer);
+      cursor.settleTimer = setTimeout(settleCursor, quietMs() + 20);
+    }
+
+    function settleCursor() {
+      cursor.settleTimer = null;
+      var wait = quietMs() - (Date.now() - cursor.lastLocalAt);
+      if (wait > 0) { cursor.settleTimer = setTimeout(settleCursor, wait + 20); return; }
+      if (!cursor.srv) return;
+      cursor.x = cursor.srv.x; cursor.y = cursor.srv.y; cursor.known = true;
+      renderCursor();
+    }
+
+    /** Echte Position vom Mac — gilt sofort, solange die eigene Bewegung ruht, sonst beim Nachziehen. */
     function serverCursor(p) {
       if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
-      var quiet = Date.now() - cursor.lastLocalAt > Math.max(300, linkRttMs * 2 + 100);
-      if (cursor.known && !quiet) return;
+      cursor.srv = { x: p.x, y: p.y };
+      var quiet = Date.now() - cursor.lastLocalAt > quietMs();
+      if (cursor.known && !quiet) { if (!cursor.settleTimer) armSettle(); return; }
       cursor.x = p.x; cursor.y = p.y; cursor.known = true;
       renderCursor();
     }
@@ -3187,6 +3216,8 @@
         // remote:started zuruecksetzen: die erste Positionsmeldung des Macs
         // kommt VOR remote:started an und waere sonst gleich wieder vergessen.
         cursor.known = false;
+        cursor.srv = null;
+        if (cursor.settleTimer) { clearTimeout(cursor.settleTimer); cursor.settleTimer = null; }
         ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
         veil('Verbinde …');
       };

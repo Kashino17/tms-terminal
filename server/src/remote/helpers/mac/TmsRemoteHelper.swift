@@ -460,6 +460,19 @@ func runInputLoop() {
   // (A local mouse nudging the cursor mid-session could desync this from
   // reality, but that is a far smaller risk than silently losing input.)
   var current = CGEvent(source: nil)?.location ?? screen.origin
+  // …but only while a burst is running. After a pause the WindowServer has long
+  // caught up, and the real position is the truth: someone may have moved the
+  // Mac's own mouse/trackpad in between. Without this re-read the next swipe
+  // on the phone snapped the pointer back to where the helper last left it,
+  // while the app continued from the real position — pointer drawn in one
+  // place, clicks landing in another (reproduced: 120 pt off, permanently).
+  var lastWarpAt = Date.distantPast
+  func resyncIfIdle() {
+    if Date().timeIntervalSince(lastWarpAt) > 0.15, let real = CGEvent(source: nil)?.location {
+      current = real
+    }
+  }
+  func syncIfIdle() { resyncIfIdle(); lastWarpAt = Date() }
 
   while let line = readLine(strippingNewline: true) {
     let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
@@ -469,14 +482,18 @@ func runInputLoop() {
 
     switch cmd {
     case "rel":
+      syncIfIdle()
       current = CGPoint(x: min(max(current.x + (nums.first ?? 0), screen.minX), screen.maxX - 1),
                         y: min(max(current.y + (nums.count > 1 ? nums[1] : 0), screen.minY), screen.maxY - 1))
       warp(to: current)
     case "abs":
+      lastWarpAt = Date()
       current = CGPoint(x: screen.minX + (nums.first ?? 0) * screen.width,
                         y: screen.minY + (nums.count > 1 ? nums[1] : 0) * screen.height)
       warp(to: current)
     case "btn":
+      // A tap after the Mac's own mouse moved must click where the pointer IS.
+      resyncIfIdle()
       let which = rest.first ?? "l"
       let down = rest.hasSuffix("1")
       let button: CGMouseButton = which == "r" ? .right : which == "m" ? .center : .left
