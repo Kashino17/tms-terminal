@@ -282,3 +282,15 @@ test('langes Halten: Varianten wie auf der Handy-Tastatur', () => {
   assert.ok(remoteAltsFor('"').includes('„'), 'deutsche Anfuehrungszeichen');
   assert.deepEqual(remoteAltsFor('x'), [], 'ohne Varianten: nichts');
 });
+
+test('Grundebene wie am Mac: Pfeile oben, ctrl/⌥/⌘ neben der Leertaste; aufgeklappt mit Ziffern', () => {
+  const { remoteKeyRows } = loadBlock('remoteMath');
+  const zu = remoteKeyRows('base', false), auf = remoteKeyRows('base', true);
+  const codes = (row) => row.map((k) => k.c || k.s);
+  assert.ok(['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight'].every((c) => codes(zu[0]).includes(c)), 'Pfeile in der Werkzeugreihe');
+  const last = codes(zu[zu.length - 1]);
+  assert.ok(['ControlLeft', 'AltLeft', 'MetaLeft', 'Space', 'Enter'].every((c) => last.includes(c)), 'Mac-Reihe unten');
+  assert.equal(auf.length, zu.length + 1, 'aufgeklappt eine Reihe mehr');
+  assert.ok(codes(auf[1]).includes('Digit1') && codes(auf[1]).includes('ß'), 'Ziffernreihe + ß');
+  assert.ok(!zu.some((row) => codes(row).includes('Digit1')), 'zugeklappt ohne Ziffernreihe (die sind auf 123)');
+});

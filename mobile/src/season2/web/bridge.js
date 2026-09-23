@@ -2973,12 +2973,19 @@
         var n = 0;
         Array.prototype.forEach.call(host.children, function (el) {
           if (el === stage || el.id === 'remoteBar' || el.id === 'remoteIme') return;
-          if (getComputedStyle(el).display === 'none') return;
+          var cs2 = getComputedStyle(el);
+          // Ausgeblendetes und Schwebendes (Kreis, sein Menue) nimmt keinen Platz weg.
+          if (cs2.display === 'none' || cs2.position === 'fixed' || cs2.position === 'absolute') return;
           used += el.getBoundingClientRect().height; n++;
         });
         used += gap * (n + 1);
         var avail = host.clientHeight - used;
-        var minBar = window.remoteState.page === 'keys' ? Math.max(220, avail * 0.45) : 170;
+        // Tastatur: ihre echte Hoehe (Reihen in Handy-Tastenhoehe) + ein Streifen
+        // Mini-Trackpad; Trackpad-Seite: mindestens 170 px Wischflaeche.
+        var keysEl = document.getElementById('remoteKeys');
+        var minBar = window.remoteState.page === 'keys'
+          ? (keysEl ? keysEl.scrollHeight : 260) + 90
+          : 170;
         if (avail - minBar > 80) maxH = Math.min(maxH, avail - minBar);
       }
       // window.-Vorsatz ist Pflicht: der Mockup-Code liegt in einer Kapsel, in
