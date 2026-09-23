@@ -2818,7 +2818,10 @@
     // Ruhe ist, nachgezogen (settleCursor).
     var cursor = { x: 0.5, y: 0.5, known: false, lastLocalAt: 0, srv: null, settleTimer: null };
     var linkRttMs = 0;
-    var CURSOR_SVG = '<svg viewBox="0 0 12 18" width="100%" height="100%" aria-hidden="true">'
+    // display:block ist Pflicht: ein Inline-SVG sitzt auf der Grundlinie einer
+    // Textzeile und rutschte so ~7 px UNTER den eigentlichen Punkt (gemessen) —
+    // der Pfeil zeigte tiefer, als der Mac klickte.
+    var CURSOR_SVG = '<svg viewBox="0 0 12 18" width="100%" height="100%" style="display:block" aria-hidden="true">'
       + '<path d="M0.5 0.5 L0.5 14.5 L4 11.2 L6.4 16.8 L8.6 15.9 L6.3 10.5 L11 10.5 Z" '
       + 'fill="#fff" stroke="#000" stroke-width="1" stroke-linejoin="round"/></svg>';
 
@@ -2832,7 +2835,7 @@
         layer = document.createElement('div');
         layer.id = 'remoteCursorLayer';
         layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;transform-origin:center center;z-index:1';
-        layer.innerHTML = '<div id="remoteCursor" style="position:absolute;left:0;top:0;transform-origin:0 0;display:none;filter:drop-shadow(0 1px 1px rgba(0,0,0,.45))">' + CURSOR_SVG + '</div>';
+        layer.innerHTML = '<div id="remoteCursor" style="position:absolute;left:0;top:0;line-height:0;transform-origin:0 0;display:none;filter:drop-shadow(0 1px 1px rgba(0,0,0,.45))">' + CURSOR_SVG + '</div>';
         // Den Canvas DIESER Buehne nehmen — `canvas` kann nach einem Neuaufbau
         // kurz noch auf das alte Element zeigen, und insertBefore mit einem
         // fremden Bezugsknoten wirft.
@@ -2852,10 +2855,12 @@
       if (!show) return;
       layer.style.transform = canvas ? canvas.style.transform : '';
       var stage = document.getElementById('remoteStage');
-      var box = window.fitRect(st.w, st.h, stage.clientWidth, stage.clientHeight);
-      // Mac-Zeiger ist ~18 Punkte hoch — auf dem Handybild waeren das 4-5 px.
-      // Mindestens 16 px, und gegen den Zoom gegengerechnet, damit er beim
-      // Aufziehen nicht zum Riesenpfeil wird.
+      // Bildlage exakt wie object-fit:contain sie legt — fitRect rundet auf
+      // ganze Pixel, das waeren bis zu 0,5 px Versatz.
+      var sc = Math.min(stage.clientWidth / st.w, stage.clientHeight / st.h);
+      var box = { w: st.w * sc, h: st.h * sc };
+      box.x = (stage.clientWidth - box.w) / 2;
+      box.y = (stage.clientHeight - box.h) / 2;
       // Echte Groesse: der Mac-Pfeil ist ~20 Punkte hoch. Frueher mindestens
       // 16 px — auf dem Fold 2-4x groesser als das Original, und ein grosser
       // Pfeil taeuscht vor, man zeige auf etwas, das die Spitze gar nicht trifft.
