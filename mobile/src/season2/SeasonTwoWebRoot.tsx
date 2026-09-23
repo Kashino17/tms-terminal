@@ -1219,7 +1219,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <WebView
         ref={webRef}
-        source={{ html: LIQUID_DECK_HTML, baseUrl: 'http://tms.local' }}
+        // https, nicht http: WebCodecs (VideoDecoder) gibt es nur in einem
+        // "sicheren Kontext". Unter http://tms.local fehlte er — der Fernzugriff
+        // bekam Bilder, konnte sie aber nicht dekodieren ("Dieses Geraet kann den
+        // Bildstrom nicht anzeigen"). Nachgewiesen im selben Chrome: http://tms.local
+        // → VideoDecoder undefined, https://tms.local → vorhanden.
+        source={{ html: LIQUID_DECK_HTML, baseUrl: 'https://tms.local' }}
+        // Der Server spricht bewusst ws:// und http:// (Tailscale verschluesselt).
+        // Von einer https-Seite aus ist das "gemischter Inhalt" und ohne diese
+        // Freigabe blockiert — der Fernzugriff baute seine Verbindung nicht auf.
+        mixedContentMode="always"
         originWhitelist={['*']}
         javaScriptEnabled
         domStorageEnabled

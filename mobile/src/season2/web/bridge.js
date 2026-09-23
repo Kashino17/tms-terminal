@@ -3043,7 +3043,11 @@
     function ensureDecoder() {
       if (decoder && decoder.state !== 'closed') return true;
       if (typeof VideoDecoder === 'undefined') {
-        veil('Dieses Geraet kann den Bildstrom nicht anzeigen.');
+        // Haeufigster Grund: die Seite laeuft nicht im sicheren Kontext (dann gibt
+        // es WebCodecs gar nicht) — das sagen, statt das Geraet zu beschuldigen.
+        veil(window.isSecureContext
+          ? 'Dieses Geraet kann den Bildstrom nicht anzeigen (kein WebCodecs).'
+          : 'Bildstrom gesperrt: die App-Oberflaeche laeuft nicht im sicheren Modus — bitte App aktualisieren.');
         return false;
       }
       decoder = new VideoDecoder({
