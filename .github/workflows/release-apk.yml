@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Terminal-Titel bleiben jetzt stabil. Nach einem App-Neustart wurden selbst gesetzte Titel teilweise vertauscht, doppelt angezeigt oder gingen verloren, weil ein neues Terminal die interne Nummer eines aelteren uebernehmen konnte. Terminals werden jetzt ueber ihre eindeutige Sitzung gefuehrt, beim ersten Start repariert die App die gespeicherten Eintraege einmalig. Titel, die schon vorher verloren gingen, lassen sich nicht zurueckholen; einmal neu vergeben bleiben sie jetzt erhalten. Ausserdem erscheinen Terminals, die der Manager anlegt, sofort und bringen keine Titel mehr durcheinander." \
+            --notes "Terminal-Titel liegen jetzt auf dem Server. Wer ein Terminal umbenennt, sieht den Titel auf jedem verbundenen Geraet sofort, und er bleibt auch nach einer Neuinstallation der App oder einem Server-Neustart erhalten. Titel, die bisher nur auf diesem Handy gespeichert waren, laedt die App beim ersten Verbinden einmalig hoch. Der Manager nennt Terminals jetzt beim Namen, also zum Beispiel Surfschule ist fertig statt Shell 4. Voraussetzung: Server neu starten." \
             --latest
