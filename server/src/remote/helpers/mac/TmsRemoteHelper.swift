@@ -39,6 +39,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   private var lastPixelBuffer: CVPixelBuffer?
   private var lastFrameAt = Date.distantPast
   private var heartbeat: DispatchSourceTimer?
+  private var cursorTimer: DispatchSourceTimer?
 
   // Both the stream callback and the heartbeat run here, so they never touch
   // lastPixelBuffer/lastFrameAt/wantKeyframe from two threads at once. Stored
@@ -46,7 +47,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   // can schedule its timer on the exact same queue.
   private let captureQueue = DispatchQueue(label: "tms.capture")
 
-  func start(maxWidth: Int, fps: Int, bitrateKbps: Int) async {
+  func start(maxWidth: Int, fps: Int, bitrateKbps: Int, localCursor: Bool = false) async {
     // I17: wake a sleeping display before anything else. The no-sleep
     // assertion below only prevents FUTURE sleep — it cannot wake a display
     // that is already asleep, which is exactly why the very first session
@@ -116,22 +117,42 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     cfg.height = height
     cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
     cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-    cfg.showsCursor = true
+    // With --local-cursor the app draws the pointer itself, instantly, from
+    // its own prediction — the pointer in the video trailed every movement by
+    // a full network round trip. The real position still comes from here (see
+    // startCursorReports). Bonus: pointer-only motion no longer costs frames.
+    cfg.showsCursor = !localCursor
     cfg.queueDepth = 3
 
-    VTCompressionSessionCreate(
-      allocator: nil, width: Int32(width), height: Int32(height),
-      codecType: kCMVideoCodecType_H264, encoderSpecification: nil,
-      imageBufferAttributes: nil, compressedDataAllocator: nil,
-      outputCallback: nil, refcon: nil, compressionSessionOut: &session)
+    // Low-latency rate control (the video-conferencing mode): keeps every
+    // single frame near the target size instead of averaging over seconds.
+    // Measured on this Mac at 1.5 Mbit/s: keyframes 13-23 KB instead of
+    // 82-282 KB (SSIM 0.950 vs 0.961) — a 282 KB keyframe alone took ~1.5 s
+    // to cross the link and froze the picture every two seconds. Falls back
+    // to the default encoder where the hardware doesn't offer this mode.
+    let lowLatency = [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: kCFBooleanTrue] as CFDictionary
+    for spec in [lowLatency, nil] as [CFDictionary?] {
+      VTCompressionSessionCreate(
+        allocator: nil, width: Int32(width), height: Int32(height),
+        codecType: kCMVideoCodecType_H264, encoderSpecification: spec,
+        imageBufferAttributes: nil, compressedDataAllocator: nil,
+        outputCallback: nil, refcon: nil, compressionSessionOut: &session)
+      if session != nil { break }
+    }
     guard let s = session else { fail("capture_unavailable", "VideoToolbox nicht verfuegbar") }
 
     VTSessionSetProperty(s, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
     VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
     VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel,
                          value: kVTProfileLevel_H264_Baseline_AutoLevel)
+    // Keyframes come on demand (`keyframe` on stdin: session start, decoder
+    // error, recovery after the server dropped frames — see flow.ts). The
+    // periodic one is only a safety net; every two seconds, as before, it
+    // was the biggest recurring stall on a slow link.
     VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
-                         value: NSNumber(value: fps * 2))
+                         value: NSNumber(value: fps * 10))
+    VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
+                         value: NSNumber(value: 10))
     VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AverageBitRate,
                          value: NSNumber(value: bitrateKbps * 1000))
     VTCompressionSessionPrepareToEncodeFrames(s)
@@ -149,6 +170,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     emit("{\"ready\":{\"width\":\(width),\"height\":\(height),\"scale\":\(scale)}}")
     startHeartbeat(on: captureQueue)
+    if localCursor { startCursorReports(on: captureQueue) }
     listenForCommands(session: s)
   }
 
@@ -245,6 +267,28 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
     t.resume()
     heartbeat = t
+  }
+
+  /// Reports the pointer position (normalized to the main display, like the
+  /// `abs` input command) whenever it changed, at most 60 times a second.
+  /// The app uses it to correct its locally predicted pointer — e.g. when
+  /// something on the Mac moved the pointer by itself.
+  private func startCursorReports(on queue: DispatchQueue) {
+    var last = CGPoint(x: -1, y: -1)
+    let t = DispatchSource.makeTimerSource(queue: queue)
+    t.schedule(deadline: .now(), repeating: 1.0 / 60.0)
+    t.setEventHandler {
+      guard let loc = CGEvent(source: nil)?.location else { return }
+      let b = CGDisplayBounds(CGMainDisplayID())
+      guard b.width > 0, b.height > 0 else { return }
+      let p = CGPoint(x: min(max((loc.x - b.minX) / b.width, 0), 1),
+                      y: min(max((loc.y - b.minY) / b.height, 0), 1))
+      if abs(p.x - last.x) < 0.0002 && abs(p.y - last.y) < 0.0002 { return }
+      last = p
+      emit(String(format: "{\"cursor\":{\"x\":%.5f,\"y\":%.5f}}", p.x, p.y))
+    }
+    t.resume()
+    cursorTimer = t
   }
 
   /// VideoToolbox hands out length-prefixed NALs; the wire format is Annex-B.
@@ -416,7 +460,8 @@ if args.contains("--capture") {
   Task {
     await c.start(maxWidth: intArg("--max-width", 1600),
                   fps: intArg("--fps", 30),
-                  bitrateKbps: intArg("--bitrate", 1500))
+                  bitrateKbps: intArg("--bitrate", 1500),
+                  localCursor: args.contains("--local-cursor"))
   }
   RunLoop.main.run()
 } else if args.contains("--input") {

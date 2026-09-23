@@ -87,8 +87,8 @@ test('remote:start meldet die Bildschirmmasse zurueck', async () => {
   const started = ws.typed('remote:started');
   assert.equal(started.length, 1);
   assert.deepEqual(started[0].payload,
-    { width: 3024, height: 1964, scale: 2, fps: 30, codec: 'avc1' });
-  assert.deepEqual(capture.started, { maxWidth: 1600, fps: 30, bitrateKbps: 1500 });
+    { width: 3024, height: 1964, scale: 2, fps: 30, codec: 'avc1', localCursor: false });
+  assert.deepEqual(capture.started, { maxWidth: 1600, fps: 30, bitrateKbps: 1500, localCursor: false });
 });
 
 test('remote:started wartet, bis der Eingabe-Helfer seine Bereitschaft meldet', async () => {
@@ -363,6 +363,76 @@ test('bei vollem Sendepuffer fallen Zwischenbilder weg, Vollbilder nicht', async
 
   capture.dataCb(Buffer.concat([nal(7), nal(8), nal(5), nal(1)]));
   assert.ok(ws.sent.filter((m) => Buffer.isBuffer(m)).length >= 1, 'das Vollbild kommt durch');
+});
+
+// Mit Quittungen der App begrenzt der Server die Verzoegerung selbst: ein Bild,
+// das laenger als Grundlaufzeit + Budget unquittiert bleibt, heisst Stau —
+// weitere Bilder fallen weg, und danach geht es mit einem frischen Vollbild weiter.
+test('mit Quittungen: Stau verwirft Bilder und holt danach ein Vollbild', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  ws.sent.length = 0;
+  const nal = (t: number) => Buffer.concat([Buffer.from([0, 0, 0, 1, 0x60 | t]), Buffer.alloc(4, 0xaa)]);
+  const frames = () => ws.sent.filter((m) => Buffer.isBuffer(m)) as Buffer[];
+  const tsOf = (b: Buffer) => b.readUInt32BE(1);
+  // Ein Bild gilt erst nach kurzer Ruhe als fertig (Leerlauf-Abschluss, annexb.ts).
+  const push = async (...types: number[]) => {
+    capture.dataCb(Buffer.concat(types.map(nal)));
+    await new Promise((r) => setTimeout(r, 25));
+  };
+
+  await push(7, 8, 5);                                                 // Vollbild raus
+  assert.equal(frames().length, 1);
+  send(ws, { type: 'remote:ack', payload: { ts: tsOf(frames()[0]) } }); // sofort quittiert
+  await push(1);                                                       // Zwischenbild, bleibt unquittiert
+  assert.equal(frames().length, 2);
+
+  await new Promise((r) => setTimeout(r, 200));                        // > Budget ohne Quittung
+  await push(1);
+  assert.equal(frames().length, 2, 'im Stau wird verworfen');
+
+  send(ws, { type: 'remote:ack', payload: { ts: tsOf(frames()[1]) } }); // Leitung frei
+  const before = capture.keyframes;
+  await push(1);
+  assert.equal(frames().length, 2, 'ohne Referenz kein Zwischenbild');
+  assert.equal(capture.keyframes, before + 1, 'Vollbild angefordert');
+  await push(7, 8, 5);
+  assert.equal(frames().length, 3, 'das Vollbild geht raus');
+  assert.equal(frames()[2][0], 0x81);
+  send(ws, { type: 'remote:stop' });
+});
+
+// Zeiger lokal: die App zeichnet ihn selbst, der Server reicht nur die echte
+// Position durch. Nur auf Wunsch der App — v1.110.0 fragt nicht danach und
+// behaelt den Zeiger im Video.
+test('localCursor: Aufnahme ohne Zeiger, Positionen gehen als remote:cursor raus', async () => {
+  const { ws, capture } = wire();
+  let cursorCb: ((x: number, y: number) => void) | null = null;
+  (capture as any).onCursor = (cb: (x: number, y: number) => void) => { cursorCb = cb; };
+  send(ws, { type: 'remote:start', payload: { ...QUALITY_PRESETS.auto, localCursor: true } });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(capture.started?.localCursor, true, 'Helfer laesst den Zeiger weg');
+  assert.equal(ws.typed('remote:started')[0].payload.localCursor, true);
+  cursorCb!(0.25, 0.5);
+  assert.deepEqual(ws.typed('remote:cursor')[0].payload, { x: 0.25, y: 0.5 });
+});
+
+test('ohne Wunsch der App bleibt der Zeiger im Video', async () => {
+  const { ws, capture } = wire();
+  (capture as any).onCursor = () => {};
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(capture.started?.localCursor, false);
+  assert.equal(ws.typed('remote:started')[0].payload.localCursor, false);
+});
+
+test('Plattform ohne Zeigermeldung (Windows): localCursor wird abgelehnt', async () => {
+  const { ws, capture } = wire();                         // fakeCapture hat kein onCursor
+  send(ws, { type: 'remote:start', payload: { ...QUALITY_PRESETS.auto, localCursor: true } });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(capture.started?.localCursor, false);
+  assert.equal(ws.typed('remote:started')[0].payload.localCursor, false);
 });
 
 test('Eingabe-Ereignisse landen beim Injektor', async () => {

@@ -57,3 +57,16 @@ test('der uebersetzte Helfer liegt dort, wo der Server ihn sucht', { skip: proce
   assert.ok(fs.existsSync(helperBinaryPath()),
     `Helfer fehlt unter ${helperBinaryPath()} — "npm run build:helper" ausfuehren`);
 });
+
+test('localCursor wird zum Helfer-Schalter --local-cursor', () => {
+  assert.deepEqual(
+    buildHelperArgs({ maxWidth: 1600, fps: 30, bitrateKbps: 1500, localCursor: true }).slice(-1),
+    ['--local-cursor'],
+  );
+  assert.ok(!buildHelperArgs({ maxWidth: 1600, fps: 30, bitrateKbps: 1500 }).includes('--local-cursor'));
+});
+
+test('parseHelperLine liest Zeigerpositionen, verwirft kaputte', () => {
+  assert.deepEqual(parseHelperLine('{"cursor":{"x":0.49207,"y":0.15572}}'), { kind: 'cursor', x: 0.49207, y: 0.15572 });
+  assert.equal(parseHelperLine('{"cursor":{"x":"a","y":1}}'), null);
+});

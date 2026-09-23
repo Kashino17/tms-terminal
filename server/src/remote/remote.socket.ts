@@ -6,7 +6,7 @@ import type { ScreenCapture, CaptureOptions } from './capture/capture.types';
 import { RemoteCaptureError } from './capture/capture.types';
 import type { InputInjector } from './input/input.types';
 import { createAnnexBSplitter, type AccessUnit } from './annexb';
-import { createBitrateGovernor } from './bitrate';
+import { createFrameFlow, type FrameFlow } from './flow';
 import { nextRestartDelay } from './restart';
 import { logger } from '../utils/logger';
 
@@ -91,7 +91,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
   let capture: ScreenCapture | null = null;
   let input: InputInjector | null = null;
   let splitter: ReturnType<typeof createAnnexBSplitter> | null = null;
-  let governor: ReturnType<typeof createBitrateGovernor> | null = null;
+  let flow: FrameFlow | null = null;
   let startedAt = 0;
   let idleTimer: NodeJS.Timeout | null = null;
   let statusTimer: NodeJS.Timeout | null = null;
@@ -138,7 +138,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
     // and it would later revive a session nobody asked for.
     if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
     splitter = null;
-    governor = null;
+    flow = null;
     if (c) await c.stop().catch(() => {});
     if (i) await i.stop().catch(() => {});
     if (tell && (c || i)) reply({ type: 'remote:stopped', payload: { reason } });
@@ -210,13 +210,27 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
         fail(code, message);
         enqueue(async () => { if (capture === c) await stop('fehler', false); });
       });
-      const info = await c.start(opts);
+      // The app asked to draw the pointer itself; only honoured where the
+      // backend can report the position (macOS). Everywhere else the pointer
+      // stays in the video, exactly as before.
+      const localCursor = !!opts.localCursor && typeof c.onCursor === 'function';
+      if (localCursor) {
+        // Same identity rule as onError above: `capture === null` is let
+        // through, because the helper's FIRST report (sent once, right after
+        // it is ready) arrives before `capture = c` below — and on a still
+        // pointer it would be the only one.
+        c.onCursor!((x, y) => {
+          if (capture !== null && capture !== c) return;
+          reply({ type: 'remote:cursor', payload: { x, y } });
+        });
+      }
+      const info = await c.start({ ...opts, localCursor });
       capture = c;
       const injector = deps.makeInput();
       input = injector;
 
       splitter = createAnnexBSplitter();
-      governor = createBitrateGovernor(opts.bitrateKbps);
+      flow = createFrameFlow(opts.bitrateKbps);
       startedAt = Date.now();
       // Only a fresh, externally-requested session clears the crash-backoff
       // count — see the comment on `isRestart` above for why a restart's own
@@ -226,13 +240,18 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
 
       const emit = (units: AccessUnit[]) => {
         for (const au of units) {
-          if (!governor || ws.readyState !== 1) return;
-          const decision = governor.decide(au, ws.bufferedAmount, Date.now());
+          if (!flow || ws.readyState !== 1) return;
+          const now = Date.now();
+          const decision = flow.decide(au, now, ws.bufferedAmount);
           if (decision.bitrateKbps !== null) capture?.setBitrate(decision.bitrateKbps);
+          if (decision.requestKeyframe) capture?.requestKeyframe();
           if (!decision.send) { dropped++; continue; }
-          const frame = packAccessUnit(au, Date.now() - startedAt);
+          // The same integer the app will echo back in remote:ack (see flow.ts).
+          const ts = Math.max(0, Math.floor(now - startedAt));
+          const frame = packAccessUnit(au, ts);
           // Already compressed — a second pass would only cost CPU time.
           ws.send(frame, { compress: false });
+          flow.onSent(ts, now);
           framesSent++;
           bytesSent += frame.length;
         }
@@ -287,7 +306,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
 
       reply({
         type: 'remote:started',
-        payload: { ...info, fps: opts.fps, codec: 'avc1' },
+        payload: { ...info, fps: opts.fps, codec: 'avc1', localCursor },
       });
       // Section 9 of the spec requires logging time + source IP for every
       // session start — `logger.info` timestamps its own lines, `ip` comes
@@ -338,6 +357,12 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
       case 'remote:keyframe':
         capture?.requestKeyframe();
         break;
+      case 'remote:ack': {
+        // One per received frame — feeds the queueing-delay measurement in flow.ts.
+        const ts = (clientMsg.payload as { ts?: unknown } | undefined)?.ts;
+        if (typeof ts === 'number' && Number.isFinite(ts)) flow?.onAck(ts, Date.now());
+        break;
+      }
       default:
         break;                                   // silently discard unknown message types
     }

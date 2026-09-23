@@ -1,6 +1,11 @@
 import type { RemoteErrorCode } from '../../../../shared/protocol';
 
-export interface CaptureOptions { fps: number; maxWidth: number; bitrateKbps: number }
+export interface CaptureOptions {
+  fps: number; maxWidth: number; bitrateKbps: number;
+  /** Leave the pointer out of the video and report its position instead
+   *  (onCursor) — the app draws it locally. Backends without onCursor ignore it. */
+  localCursor?: boolean;
+}
 export interface CaptureInfo { width: number; height: number; scale: number }
 
 /**
@@ -38,5 +43,8 @@ export interface ScreenCapture {
   onError(cb: (code: RemoteErrorCode, message: string) => void): void;
   requestKeyframe(): void;
   setBitrate(kbps: number): void;
+  /** Pointer position (normalized 0..1 to the captured display), only with
+   *  `localCursor`. Optional: Windows keeps the pointer in the video. */
+  onCursor?(cb: (x: number, y: number) => void): void;
   stop(): Promise<void>;
 }

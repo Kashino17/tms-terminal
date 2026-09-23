@@ -478,10 +478,16 @@ export type RemoteQualityPreset = 'sparsam' | 'auto' | 'scharf';
 
 export interface RemoteStartMessage {
   type: 'remote:start';
-  payload: { maxWidth: number; fps: number; bitrateKbps: number };
+  /** localCursor: the app draws the pointer itself (see remote:cursor). */
+  payload: { maxWidth: number; fps: number; bitrateKbps: number; localCursor?: boolean };
 }
 export interface RemoteStopMessage { type: 'remote:stop' }
 export interface RemoteKeyframeMessage { type: 'remote:keyframe' }
+/** Sent by the app for every frame it receives (ts = the frame header's
+ *  timestamp). The server bounds its queueing delay with these — see
+ *  server/src/remote/flow.ts. Older apps don't send it; the server then keeps
+ *  its buffer-size fallback. */
+export interface RemoteAckMessage { type: 'remote:ack'; payload: { ts: number } }
 
 // There is deliberately no `remote:quality` client message: the app switches
 // quality tiers by sending remote:stop followed by remote:start with the new
@@ -491,12 +497,15 @@ export interface RemoteKeyframeMessage { type: 'remote:keyframe' }
 // but that code path was never reachable from the app; removed rather than
 // left as dead code nobody could exercise.
 export type RemoteClientMessage =
-  | RemoteStartMessage | RemoteStopMessage | RemoteKeyframeMessage;
+  | RemoteStartMessage | RemoteStopMessage | RemoteKeyframeMessage | RemoteAckMessage;
 
 export interface RemoteStartedMessage {
   type: 'remote:started';
-  payload: { width: number; height: number; scale: number; fps: number; codec: 'avc1' };
+  /** localCursor: true = the pointer is NOT in the video; draw it from remote:cursor. */
+  payload: { width: number; height: number; scale: number; fps: number; codec: 'avc1'; localCursor?: boolean };
 }
+/** Pointer position on the Mac, normalized 0..1 — only after a localCursor start. */
+export interface RemoteCursorMessage { type: 'remote:cursor'; payload: { x: number; y: number } }
 export interface RemoteStoppedMessage {
   type: 'remote:stopped';
   payload: { reason: string };
@@ -511,7 +520,8 @@ export interface RemoteStatusMessage {
 }
 
 export type RemoteServerMessage =
-  | RemoteStartedMessage | RemoteStoppedMessage | RemoteErrorMessage | RemoteStatusMessage;
+  | RemoteStartedMessage | RemoteStoppedMessage | RemoteErrorMessage | RemoteStatusMessage
+  | RemoteCursorMessage;
 
 /** Input events: short keys, since up to 60 of these can arrive per second. */
 export type RemoteInputEvent =

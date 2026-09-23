@@ -20,17 +20,20 @@ export function buildHelperArgs(opts: CaptureOptions): string[] {
     '--max-width', String(opts.maxWidth),
     '--fps', String(opts.fps),
     '--bitrate', String(opts.bitrateKbps),
+    ...(opts.localCursor ? ['--local-cursor'] : []),
   ];
 }
 
 export type HelperLine =
   | { kind: 'ready'; info: CaptureInfo }
-  | { kind: 'error'; code: RemoteErrorCode; message: string };
+  | { kind: 'error'; code: RemoteErrorCode; message: string }
+  | { kind: 'cursor'; x: number; y: number };
 
 /** Shape of a helper stderr line, loosely — fields are re-checked before use. */
 interface HelperLinePayload {
   ready?: { width: number; height: number; scale: number };
   error?: { code: string; message?: string };
+  cursor?: { x: number; y: number };
 }
 
 /** The helper writes one JSON object per stderr line; everything else is noise. */
@@ -55,6 +58,9 @@ export function parseHelperLine(line: string): HelperLine | null {
       ? (obj.error.code as RemoteErrorCode)
       : 'capture_unavailable';
     return { kind: 'error', code, message: String(obj.error.message ?? '') };
+  }
+  if (obj.cursor && Number.isFinite(obj.cursor.x) && Number.isFinite(obj.cursor.y)) {
+    return { kind: 'cursor', x: obj.cursor.x, y: obj.cursor.y };
   }
   return null;
 }
@@ -92,6 +98,7 @@ export function createDarwinCapture(): ScreenCapture {
   let child: ChildProcess | null = null;
   let onData: (b: Buffer) => void = () => {};
   let onError: (c: RemoteErrorCode, m: string) => void = () => {};
+  let onCursor: (x: number, y: number) => void = () => {};
   // Without this flag, a planned shutdown reports itself as a crash — and the
   // restart logic from Task 18 would start the just-stopped session again.
   let stopping = false;
@@ -142,6 +149,7 @@ export function createDarwinCapture(): ScreenCapture {
           for (const line of lines) {
             const evt = parseHelperLine(line);
             if (!evt) continue;
+            if (evt.kind === 'cursor') { onCursor(evt.x, evt.y); continue; }
             if (evt.kind === 'ready' && !settled) { settle(); resolve(evt.info); }
             else if (evt.kind === 'error') {
               // RemoteCaptureError, not a plain Error: without the code
@@ -175,6 +183,7 @@ export function createDarwinCapture(): ScreenCapture {
 
     onData(cb) { onData = cb; },
     onError(cb) { onError = cb; },
+    onCursor(cb) { onCursor = cb; },
     requestKeyframe() { child?.stdin?.write('keyframe\n'); },
     setBitrate(kbps) { child?.stdin?.write(`bitrate ${Math.round(kbps)}\n`); },
 
