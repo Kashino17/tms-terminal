@@ -3705,7 +3705,7 @@
       if (e.target.closest('[data-btn]')) return;
 
       var wasEmpty = pts.size === 0;
-      pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp, moved: 0 });
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp, moved: 0, sx: e.clientX, sy: e.clientY });
 
       if (wasEmpty) {
         gestureDownAt = e.timeStamp;
@@ -3751,7 +3751,11 @@
       p.x = e.clientX; p.y = e.clientY; p.t = e.timeStamp;
       p.moved += Math.abs(dx) + Math.abs(dy);
       gestureMoved = Math.max(gestureMoved, p.moved);
-      if (gestureMoved > TAP_SLOP) clearHold();
+      // Halten-zum-Ziehen bricht nur bei echter Bewegung ab — gemessen als
+      // Entfernung zum Aufsetzpunkt, nicht als aufsummierter Weg: ein ruhig
+      // aufliegender Finger zittert in 350 ms leicht ueber 10 px Weg, und das
+      // Ziehen kam dann nie zustande (dieselbe Lehre wie beim Bild, holdShouldAbort).
+      if (holdShouldAbort(p.sx, p.sy, e.clientX, e.clientY, 14)) clearHold();
 
       if (!R()) return;
       if (pts.size === 2) {
