@@ -22,9 +22,13 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import type { WebSocketService } from '../../services/websocket.service';
 import { usePortForwardingStore } from '../../store/portForwardingStore';
+// Serverseitige Notizen (klassischer Store) und die Notizen des HTML-Sheets je
+// Karte (eigener Store) sind zwei verschiedene Sachen. Vorher hiessen beide
+// `useNotesStore` — der Import musste Alias nehmen, und wer die Zeile las, sah
+// nicht, dass zwei Notizspeicher gemeint waren.
 import { useNotesStore } from '../../store/notesStore';
 import { useSQLStore } from '../../store/sqlStore';
-import { useNotesStore as useS2NotesStore } from '../store/notesStore';
+import { useS2NotesStore } from '../store/s2NotesStore';
 import { Linking } from 'react-native';
 import { useFavPathsStore } from '../../store/favPathsStore';
 import { fetchPrayerTimes, getCurrentLocation } from '../../services/prayer.service';

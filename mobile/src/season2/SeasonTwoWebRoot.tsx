@@ -26,7 +26,7 @@ import { storageService, getToken } from '../services/storage.service';
 import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '../services/notifications.service';
 import { checkForUpdate, downloadAndInstall, getCurrentVersion } from '../services/updater.service';
 import { getConnection } from '../services/websocket.service';
-import { useS2ConnStore, useS2Connection } from './screens/TerminalsScreen';
+import { useS2ConnStore, useS2Connection } from './s2conn/connection';
 import { useDictation } from './hooks/useDictation';
 import { useManagerWire } from './manager/useManagerWire';
 import { useManagerStore } from '../store/managerStore';

@@ -13,25 +13,13 @@ import {
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../theme';
+import { TOOL_CATALOG, TOOL_ICON_MAP, toolLabel } from './toolCatalog';
 import type { ToolSection } from '../store/orbLayoutStore';
 
 // ── Tool icon definitions ──────────────────────────────────────────────────────
-const TOOL_ICON_MAP: Record<string, { icon: string; color: string; label: string }> = {
-  ports:        { icon: 'share-2',      color: '#10B981', label: 'Ports' },
-  processes:    { icon: 'activity',     color: '#06B6D4', label: 'Prozesse' },
-  sql:          { icon: 'database',     color: '#3B82F6', label: 'SQL' },
-  render:       { icon: 'box',          color: '#6366F1', label: 'Render' },
-  vercel:       { icon: 'triangle',     color: '#F8FAFC', label: 'Vercel' },
-  supabase:     { icon: 'layers',       color: '#3ECF8E', label: 'Supabase' },
-  autoApprove:  { icon: 'check-circle', color: '#22C55E', label: 'Approve' },
-  snippets:     { icon: 'zap',          color: '#F59E0B', label: 'Snippets' },
-  autopilot:    { icon: 'play-circle',  color: '#A78BFA', label: 'Autopilot' },
-  watchers:     { icon: 'bell',         color: '#F59E0B', label: 'Watchers' },
-  files:        { icon: 'folder',       color: '#F59E0B', label: 'Dateien' },
-  screenshots:  { icon: 'camera',       color: '#06B6D4', label: 'Shots' },
-  drawing:      { icon: 'edit-2',       color: '#F59E0B', label: 'Zeichnen' },
-  browser:      { icon: 'globe',        color: '#22C55E', label: 'Browser' },
-};
+// Die Katalogdaten stehen in toolCatalog.ts. `supabase` ist dort bewusst nicht
+// dabei: es stand im Menue, hatte aber keinen Fall im renderPanelContent — der
+// Tipp darauf oeffnete ein leeres Sheet. Die Verbindung steht im SQL-Panel.
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 interface ToolMenuProps {
@@ -58,6 +46,7 @@ export function ToolMenu({
   const [editMode, setEditMode] = useState(false);
   const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [pickerSectionId, setPickerSectionId] = useState<string | null>(null);
 
   const scaleAnim = useRef(new Animated.Value(0.94)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
@@ -172,6 +161,19 @@ export function ToolMenu({
       toolIds: [],
     };
     onSectionsChange([...sections, newSection]);
+  }, [sections, onSectionsChange]);
+
+  // Ein entferntes Werkzeug war vorher fuer die Sitzung weg — Section liess sich
+  // leeren, aber nichts liess sich wieder hereinholen.
+  const handleAddTool = useCallback((sectionId: string, toolId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onSectionsChange(
+      sections.map((s) =>
+        s.id === sectionId && !s.toolIds.includes(toolId)
+          ? { ...s, toolIds: [...s.toolIds, toolId] }
+          : s,
+      ),
+    );
   }, [sections, onSectionsChange]);
 
   const startRename = useCallback((sectionId: string, currentTitle: string) => {
@@ -334,6 +336,18 @@ export function ToolMenu({
                       );
                     })}
                   </View>
+                {/* Add tool button — before this a removed tool was gone for
+                      the rest of the session with no way back. */}
+                  {editMode && (
+                    <TouchableOpacity
+                      style={styles.addToolBtn}
+                      onPress={() => setPickerSectionId(section.id)}
+                      activeOpacity={0.7}
+                    >
+                      <Feather name="plus" size={13} color={colors.primary} />
+                      <Text style={styles.addToolText}>Werkzeug</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               ))}
 
@@ -348,6 +362,42 @@ export function ToolMenu({
                 </TouchableOpacity>
               )}
             </ScrollView>
+
+            {/* ── Tool picker ────────────────────────────────────────── */}
+            {pickerSectionId && (
+              <View style={styles.picker}>
+                <Text style={styles.pickerTitle}>Werkzeug hinzufügen</Text>
+                <ScrollView style={styles.pickerList} showsVerticalScrollIndicator={false}>
+                  {TOOL_CATALOG.filter((t) => {
+                    const sec = sections.find((s) => s.id === pickerSectionId);
+                    return sec && !sec.toolIds.includes(t.id);
+                  }).map((t) => (
+                    <TouchableOpacity
+                      key={t.id}
+                      style={styles.pickerRow}
+                      onPress={() => {
+                        handleAddTool(pickerSectionId, t.id);
+                        setPickerSectionId(null);
+                      }}
+                      activeOpacity={0.6}
+                    >
+                      <Feather name={t.icon as any} size={16} color={t.color} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.pickerLabel}>{t.label}</Text>
+                        <Text style={styles.pickerHint}>{t.hint}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <TouchableOpacity
+                  style={styles.pickerCancel}
+                  onPress={() => setPickerSectionId(null)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.pickerCancelText}>Abbrechen</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </Pressable>
         </Animated.View>
       </Pressable>
@@ -397,6 +447,54 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+
+  addToolBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 2,
+    paddingVertical: 7,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(255,255,255,0.14)',
+  },
+  addToolText: {
+    color: colors.primary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+
+  // ── Tool picker ────────────────────────────────────────────────────────────
+  picker: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(2,6,23,0.96)',
+    paddingBottom: 8,
+  },
+  pickerTitle: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 6,
+  },
+  pickerList: { maxHeight: 220 },
+  pickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  pickerLabel: { color: colors.text, fontSize: 13, fontWeight: '600' },
+  pickerHint: { color: colors.textMuted, fontSize: 11, marginTop: 1 },
+  pickerCancel: { alignItems: 'center', paddingVertical: 10 },
+  pickerCancelText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
 
   // ── Scroll ─────────────────────────────────────────────────────────────────
   scrollArea: {
