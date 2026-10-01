@@ -34,15 +34,11 @@ if (!/export function normalizePrayerPayload/.test(prayerBridgeSource)) {
     'prayerBridge.js: normalizePrayerPayload fehlt oder wurde umbenannt — build-season2-html.js anpassen',
   );
 }
-const prayerBridgeJs = [
-  '<script>',
-  prayerBridgeSource
-    .replace(/^export /gm, '')
-    // Am Dateiende an window haengen. normalizePrayerPayload ist die einzige
-    // Funktion in der Datei; falls das kippt, greift die Pruefung oben.
-    + '\nwindow.__tmsNormalizePrayer = normalizePrayerPayload;',
-  '</script>',
-].join('\n');
+const prayerBridgeJs = prayerBridgeSource
+  .replace(/^export /gm, '')
+  // Am Dateiende an window haengen. normalizePrayerPayload ist die einzige
+  // Funktion in der Datei; falls das kippt, greift die Pruefung oben.
+  + '\nwindow.__tmsNormalizePrayer = normalizePrayerPayload;';
 
 /** Applies a required source patch and fails loudly if the mockup moved on. */
 function patch(label, find, replace) {
