@@ -205,24 +205,65 @@ export async function scheduleTestAdhan(
   return id;
 }
 
-/** Schedule adhan for a specific prayer time today */
+/** Schedule adhan for a specific prayer time today.
+ *
+ * Errechnet die Sekunden bis zur Uhrzeit und stellt den Alarm. Wird der Dienst
+ * aus adhanScheduler.ts benutzt, plant der selbst und ruft direkt
+ * scheduleTestAdhan — dieser Weg bleibt fuer Aufrufer, die nur ein einzelnes
+ * Gebet stellen wollen.
+ *
+ * `now` ist injizierbar, damit sich die Rechnung pruefen laesst. */
 export async function scheduleAdhanForPrayer(
   prayerName: string,
   prayerTime: string,
   prayerArabic: string,
+  now: () => number = Date.now,
 ): Promise<string | null> {
   const enabled = await getAdhanEnabled();
   if (!enabled) return null;
 
   const [h, m] = prayerTime.split(':').map(Number);
-  const now = new Date();
-  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
-  const diffSec = Math.floor((target.getTime() - now.getTime()) / 1000);
+  const stamp = now();
+  const d = new Date(stamp);
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m, 0, 0);
+  const diffSec = Math.floor((target.getTime() - stamp) / 1000);
 
   if (diffSec <= 0) return null; // Already passed
 
   const wecker = prayerName === 'Fajr' ? await getFajrWecker() : false;
   return scheduleTestAdhan(prayerName, prayerTime, prayerArabic, diffSec, wecker);
+}
+
+/** Darf die App einen exakten Alarm stellen? Ab Android 12 nicht mehr automatisch.
+ *  Auf `false` faellt AlarmManager auf eine ungenauere Variante zurueck — der
+ *  Wecker klingelt dann ein paar Minuten zu spaet, aber er klingelt. */
+export async function canScheduleExactAdhan(): Promise<boolean> {
+  try {
+    if (Platform.OS !== 'android' || !AdhanModule?.canScheduleExact) return true;
+    return !!(await AdhanModule.canScheduleExact());
+  } catch {
+    return true; // Im Zweifel nicht den Nutzer mit einer Fehlermeldung behelligen
+  }
+}
+
+/** Android-Einstellung "Alarme & Erinnerungen" fuer exakte Wecker oeffnen. */
+export async function requestExactAlarmPermission(): Promise<boolean> {
+  try {
+    if (Platform.OS !== 'android' || !AdhanModule?.requestExactAlarms) return false;
+    return !!(await AdhanModule.requestExactAlarms());
+  } catch {
+    return false;
+  }
+}
+
+/** Alles, was die Oberflaeche ueber den Adhan wissen muss, in einem Rutsch. */
+export async function readAdhanSettings(): Promise<{
+  enabled: boolean; wecker: boolean; selected: string; exactAlarms: boolean;
+}> {
+  const [enabled, wecker, selected, exactAlarms] = await Promise.all([
+    getAdhanEnabled(), getFajrWecker(), getSelectedAdhan(), canScheduleExactAdhan(),
+  ]);
+  return { enabled, wecker, selected, exactAlarms };
 }
 
 /** Cancel all scheduled adhan alarms/notifications */

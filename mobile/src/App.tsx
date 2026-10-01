@@ -18,6 +18,7 @@ import { useAutopilotStore } from './store/autopilotStore';
 import { registerBackgroundUpdateCheck } from './services/updater.service';
 import { setupAdhanNotificationChannel, playAdhan, stopAdhan } from './services/adhan.service';
 import { setupManagerNotificationChannel } from './services/managerNotifications.service';
+import { startAdhanScheduler } from './services/adhanScheduler';
 
 // Background FCM handler must be registered before any component mounts.
 try {
@@ -88,6 +89,13 @@ export default function App() {
   useEffect(() => {
     setupAdhanNotificationChannel();
     setupManagerNotificationChannel();
+
+    // Adhan-Alarme fuer den ganzen Tag planen. Laeuft hier und nicht in einem
+    // Bildschirm: der klassische HomeScreen ist die einzige Stelle gewesen, an der
+    // Alarme entstanden sind, und den rendert das neue Layout nicht — dort klang
+    // deshalb nie ein Adhan, obwohl die Zeiten stimmten. Der Dienst plant auch
+    // neu, sobald die App wieder in den Vordergrund kommt.
+    startAdhanScheduler();
 
     // Foreground: notification received while app is open
     const fgSub = Notifications.addNotificationReceivedListener(notification => {
