@@ -14,6 +14,8 @@ import {
   scheduleTestAdhan, setupAdhanNotificationChannel,
   getFajrWecker, setFajrWecker,
 } from '../services/adhan.service';
+import { PRAYER_METHODS, usePrayerStore } from '../store/prayerStore';
+import { refreshAdhanSchedule } from '../services/adhanScheduler';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 
@@ -29,14 +31,6 @@ const PRAYER_ICONS: Partial<Record<keyof PrayerTimes, any>> = {
   Isha: require('../../assets/icons/isha.png'),
 };
 
-const METHODS: { id: number; label: string }[] = [
-  { id: 3, label: 'MWL' },
-  { id: 2, label: 'ISNA' },
-  { id: 5, label: 'Egypt' },
-  { id: 4, label: 'Makkah' },
-  { id: 1, label: 'Karachi' },
-];
-
 // Simple cache so we don't re-fetch GPS every time
 let cachedLocation: LocationInfo | null = null;
 let cachedData: { data: PrayerData; method: number; dateKey: string } | null = null;
@@ -47,7 +41,11 @@ export function PrayerTimesScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(!cachedData);
   const [methodLoading, setMethodLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [method, setMethod] = useState(cachedData?.method ?? 3);
+  // Die Methode kommt aus dem Store, nicht aus useState: sonst war sie nach dem
+  // App-Neustart wieder MWL, und das neue Layout haette eine eigene Auswahl
+  // gefuehrt. So teilen sich beide Bildschirme und beide Layouts eine Auswahl.
+  const method = usePrayerStore((s) => s.method);
+  const setMethod = usePrayerStore((s) => s.setMethod);
   const [now, setNow] = useState(Date.now());
   const [adhanId, setAdhanId] = useState('mishary');
   const [adhanOn, setAdhanOn] = useState(true);
@@ -113,11 +111,15 @@ export function PrayerTimesScreen({ navigation }: Props) {
 
   const changeMethod = useCallback((newMethod: number) => {
     if (newMethod === method) return;
-    setMethod(newMethod);
     setMethodLoading(true);
-    // Cache will be invalidated because method changed
+    // Cache leeren, BEVOR der Store den Wert aendert: der Effekt unten liest ihn
+    // synchron, und ein noch gesetzter Cache wuerde die alten Zeiten zeigen.
     cachedData = null;
-  }, [method]);
+    setMethod(newMethod);
+    // Der Scheduler plant mit der neuen Methode neu — sonst kaellten die Alarme
+    // weiter nach den Zeiten der alten Berechnung.
+    void refreshAdhanSchedule('method-change');
+  }, [method, setMethod]);
 
   const nextPrayer = data ? getNextPrayer(data.timings) : null;
   const progress = data ? getPrayerProgress(data.timings) : 0;
@@ -224,13 +226,13 @@ export function PrayerTimesScreen({ navigation }: Props) {
         <View style={s.methodSection}>
           <Text style={s.listTitle}>Berechnungsmethode</Text>
           <View style={s.methodRow}>
-            {METHODS.map(m => (
+            {PRAYER_METHODS.map(m => (
               <TouchableOpacity
                 key={m.id}
                 style={[s.methodChip, method === m.id && s.methodActive]}
                 onPress={() => changeMethod(m.id)}
               >
-                <Text style={[s.methodText, method === m.id && s.methodTextActive]}>{m.label}</Text>
+                <Text style={[s.methodText, method === m.id && s.methodTextActive]}>{m.name}</Text>
               </TouchableOpacity>
             ))}
           </View>

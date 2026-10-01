@@ -32,7 +32,7 @@ import { useS2NotesStore } from '../store/s2NotesStore';
 import { Linking } from 'react-native';
 import { useFavPathsStore } from '../../store/favPathsStore';
 import {
-  fetchPrayerTimes, getCurrentLocation, PRAYER_NAMES, type PrayerTimes,
+  fetchPrayerTimes, getCurrentLocation, getChosenLocation, PRAYER_NAMES, type PrayerTimes,
 } from '../../services/prayer.service';
 import { usePrayerStore, prayerMethodName } from '../../store/prayerStore';
 import { readAdhanSettings, canScheduleExactAdhan } from '../../services/adhan.service';
@@ -291,12 +291,12 @@ export function useSheetBridges({
     (async () => {
       // Von Hand gewaehlter Ort vor GPS: der Nutzer soll auch ohne Standort
       // Gebetszeiten sehen (und den Adhan einstellen) koennen.
-      const chosen = usePrayerStore.getState().location;
+      // getCurrentLocation() gibt einen gespeicherten Ort von selbst zurueck; wir
+      // brauchen aber auch das Label, um es anzuzeigen.
+      const chosen = await getChosenLocation();
       const gps = chosen ? null : await getCurrentLocation().catch(() => null);
       const loc = chosen ?? gps;
       if (!loc || cancelled) return;
-      // Von Hand gewaehlter Ort traegt sein eigenes Label, GPS den Ort aus der
-      // Rueckwaerts-Geokodierung.
       const label = chosen
         ? chosen.label
         : [gps?.city, gps?.country].filter(Boolean).join(', ') || 'GPS';

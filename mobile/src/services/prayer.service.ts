@@ -1,4 +1,5 @@
 import * as Location from 'expo-location';
+import { usePrayerStore, type PrayerLocation } from '../store/prayerStore';
 // Die Rechenlogik liegt in prayer.core.mjs, damit mobile/scripts/prayer.test.mjs
 // sie ohne React Native pruefen kann. Hier nur re-exportiert — eine Quelle.
 import {
@@ -57,7 +58,25 @@ export { PRAYER_NAMES };
 // Cache for reverse geocoding — only re-geocode if position changed significantly
 let lastGeocode: { lat: number; lon: number; city?: string; country?: string } | null = null;
 
+/**
+ * Von Hand gewaehlter Ort vor GPS, oder null.
+ *
+ * Ohne diese Moeglichkeit waere die App bei verweigerter Standort-Berechtigung
+ * komplett blind: keine Zeiten, kein Adhan, und der Schalter in den Einstellungen
+ * waere eine Zeile, die nichts bewirkt. Mit einem gespeicherten Ort laeuft
+ * alles, nur die Ortsanzeige bleibt statisch.
+ */
+export async function getChosenLocation(): Promise<PrayerLocation | null> {
+  return usePrayerStore.getState().location;
+}
+
+/** GPS, aber nur wenn es wirklich etwas Neues ist. */
 export async function getCurrentLocation(): Promise<LocationInfo | null> {
+  // Gespeicherter Ort schlaegt GPS: der Nutzer will die Zeiten fuer diesen Ort,
+  // nicht fuer irgendwo in der Naehe.
+  const chosen = await getChosenLocation();
+  if (chosen) return { latitude: chosen.latitude, longitude: chosen.longitude, city: chosen.label };
+
   try {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') return null;

@@ -897,6 +897,28 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         })();
         return;
       }
+      case 'adhan:location': {
+        void (async () => {
+          const store = usePrayerStore.getState();
+          if (payload.clear) {
+            store.setLocation(null);
+            call('toast', 'Ort zurückgesetzt — wieder GPS');
+          } else {
+            const lat = Number(payload.lat);
+            const lon = Number(payload.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            store.setLocation({
+              latitude: lat,
+              longitude: lon,
+              label: String(payload.label || `${lat.toFixed(2)} / ${lon.toFixed(2)}`),
+            });
+            call('toast', 'Ort gespeichert');
+          }
+          // Die Zeiten kommen ueber den Store zurueck; die Alarme sofort neu.
+          await refreshAdhanSchedule('location-change');
+        })();
+        return;
+      }
       case 'adhan:preview': {
         if (payload.on === false) void stopAdhan();
         else void previewAdhan(String(payload.id ?? 'mishary'));

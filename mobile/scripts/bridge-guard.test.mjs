@@ -53,9 +53,9 @@ test('server:switch bleibt hinter dem Guard — dort IST eine Verbindung noetig'
   assert.ok(serverSwitch > guard, 'server:switch gehoert HINTER den Guard');
 });
 
-test('die sieben Nachrichten der Spec sind alle da', () => {
+test('die acht Nachrichten der Spec sind alle da', () => {
   for (const name of [
-    'adhan:toggle', 'adhan:wecker', 'adhan:reciter',
+    'adhan:toggle', 'adhan:wecker', 'adhan:reciter', 'adhan:location',
     'adhan:method', 'adhan:preview', 'adhan:test', 'adhan:perms',
   ]) {
     assert.ok(
