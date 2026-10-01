@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { upsertTab, repairTabs } from './tabIdentity';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { TerminalTab } from '../types/terminal.types';
 import { ConnectionState } from '../types/websocket.types';
@@ -25,11 +26,13 @@ export const useTerminalStore = create<TerminalState>()(
       connectionStates: {},
 
       addTab(serverId, tab) {
-        const current = get().tabs[serverId] || [];
+        // Never a second tab with the same id or the same session (tabIdentity.ts):
+        // duplicates made renames hit two terminals and closes delete two titles.
+        const current = (get().tabs[serverId] || []).map((t) => ({ ...t, active: false }));
         set({
           tabs: {
             ...get().tabs,
-            [serverId]: [...current.map((t) => ({ ...t, active: false })), { ...tab, active: true }],
+            [serverId]: upsertTab(current, { ...tab, active: true }),
           },
         });
       },
@@ -107,6 +110,20 @@ export const useTerminalStore = create<TerminalState>()(
       storage: createJSONStorage(() => AsyncStorage),
       // Only persist tabs (sessionIds survive app restarts), not runtime connection states
       partialize: (state) => ({ tabs: state.tabs }),
+      // v1: tabs are keyed by sessionId. Stores written before (Season 2 used the
+      // page's card id t1, t2, … which collided after every app restart) get a
+      // one-time repair — see tabIdentity.ts.
+      version: 1,
+      migrate: (persisted: any, version: number) => {
+        if (version < 1 && persisted?.tabs) {
+          const tabs: Record<string, TerminalTab[]> = {};
+          for (const [srv, list] of Object.entries(persisted.tabs as Record<string, TerminalTab[]>)) {
+            tabs[srv] = repairTabs(Array.isArray(list) ? list : []);
+          }
+          return { ...persisted, tabs };
+        }
+        return persisted;
+      },
     },
   ),
 );

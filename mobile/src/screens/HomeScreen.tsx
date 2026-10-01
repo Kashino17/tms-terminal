@@ -10,9 +10,6 @@ import {
   getPrayerProgress, hasPassed, PRAYER_NAMES,
   type PrayerData, type LocationInfo, type PrayerTimes,
 } from '../services/prayer.service';
-import {
-  getAdhanEnabled, scheduleAdhanForPrayer, cancelAllAdhanNotifications,
-} from '../services/adhan.service';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 
@@ -42,25 +39,10 @@ export function HomeScreen({ navigation }: Props) {
     return () => clearInterval(timer);
   }, []);
 
-  // Adhan notifications are now handled globally in App.tsx
-
-  // Schedule adhan notifications for today's remaining prayers
-  useEffect(() => {
-    if (!prayerData) return;
-    const schedulePrayers = async () => {
-      const enabled = await getAdhanEnabled();
-      if (!enabled) return;
-
-      await cancelAllAdhanNotifications();
-      const prayers: (keyof PrayerTimes)[] = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
-      for (const name of prayers) {
-        const timeStr = prayerData.timings[name].replace(/\s*\(.*\)/, '').trim();
-        const info = PRAYER_NAMES[name];
-        await scheduleAdhanForPrayer(info.de, timeStr, info.ar);
-      }
-    };
-    schedulePrayers();
-  }, [prayerData]);
+  // Adhan notifications are now handled globally in App.tsx, das Planen der Alarme
+  // in services/adhanScheduler.ts. Beides absichtlich nicht hier: HomeScreen wird
+  // im Liquid-Glas-Layout nicht gerendert, und ein Bildschirm ist kein Ort, an dem
+  // ein Wecker entstehen sollte.
 
   const loadAll = useCallback(async () => {
     loadServers();

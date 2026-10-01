@@ -7,8 +7,12 @@ const colors = {
   gray: '\x1b[90m',
 };
 
+/** Local time of the machine (the log is read by a person in that time zone —
+ *  UTC stamps had to be converted by hand, e.g. +8 h in Bali). */
 function timestamp(): string {
-  return new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 export const logger = {

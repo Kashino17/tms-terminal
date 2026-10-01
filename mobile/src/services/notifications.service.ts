@@ -2,15 +2,21 @@ import { PermissionsAndroid, Platform, AppState } from 'react-native';
 import messaging from '@react-native-firebase/messaging';
 import * as Notifications from 'expo-notifications';
 
-// Configure how notifications appear when app is in foreground
+// Configure how notifications appear when app is in foreground.
+// The ONE notification handler for the whole app — adhan.service.ts used to set a
+// second one at import time, so which shouldShowAlert won depended on import order.
+// An adhan brings its own fullscreen Activity, so the system banner would double it.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    const isAdhan = notification.request.content.data?.type === 'adhan';
+    return {
+      shouldShowAlert: !isAdhan,
+      shouldPlaySound: !isAdhan,
+      shouldSetBadge: false,
+      shouldShowBanner: !isAdhan,
+      shouldShowList: !isAdhan,
+    };
+  },
 });
 
 // Create a dedicated notification channel for terminal idle alerts (Android)
