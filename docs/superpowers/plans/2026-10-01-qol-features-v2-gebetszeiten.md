@@ -1033,7 +1033,15 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 ## Stand nach der Umsetzung (2026-10-01)
 
-Alle Checkboxen sind abgehakt. `npm run test:mockup`: **78 grün** (vorher 49). `npx tsc --noEmit`: **0 Fehler**.
+Alle Checkboxen sind abgehakt. `npm run test:mockup`: **84 Tests, 83 grün, 1 übersprungen**
+(vorher 49). `npm run test:webview`: **8 grün**. `npx tsc --noEmit`: **0 Fehler**.
+
+**Nachgetragen bei der Abnahme:** Die Layoutprüfung ist nicht ausgefallen, sondern über einen
+Headless-Browser nachgeholt worden — und hat **drei Fehler** gefunden, die kein Test und kein `tsc`
+gesehen hätte: ein doppelter `<script>`-Tag im Build, `post()` vor der Brücke gebunden, und eine
+CSS-Regel gegen sich selbst. Alle drei hätten die Oberfläche funktionierend aussehen lassen und nichts
+getan — der Azān-Schalter wäre da gewesen und hätte keinen Alarm gestellt. Behoben und in
+`mobile/scripts/webview-prayer.test.mjs` festgehalten.
 
 **Was anders lief als geplant** — drei Stellen, alle in der Spec unter
 „Verifiziert nach der Umsetzung" festgehalten:

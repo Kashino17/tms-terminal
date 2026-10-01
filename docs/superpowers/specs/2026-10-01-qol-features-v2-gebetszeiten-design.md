@@ -493,56 +493,92 @@ ob die Vibration „genug" ist. Diese drei Punkte werden bei der Abnahme am Ger�
 
 ## Verifiziert nach der Umsetzung (2026-10-01)
 
-**Automatisch geprüft — 78 Tests grün (`npm run test:mockup`, vorher 49), `tsc --noEmit` ohne Fehler.**
+**Automatisch geprueft — 84 Tests in `npm run test:mockup` (83 gruen, 1 uebersprungen) plus 8 in
+`npm run test:webview`, `tsc --noEmit` ohne Fehler.**
 
-- Der Scheduler sitzt jetzt in `services/adhanScheduler.ts`, nicht mehr im `HomeScreen`. **geändert.**
-- Für die Gebetszeiten gibt es Tests: 9 für die Rechenlogik, 10 für die Planung, 7 für den Bridge-Vertrag,
-  3 für die Nachrichtenreihenfolge. **vorher 0.**
-- Die acht `adhan:`-Nachrichten liegen alle **vor** dem Verbindungs-Guard, und ein Test hält das fest
-  (`scripts/bridge-guard.test.mjs`). Ein zweiter Test hält ausdrücklich fest, dass `server:switch` dort
-  **bleibt** — damit beim nächsten Aufräumen nicht beide gleichgezogen werden. **neu.**
-- `cancelAllAlarms` benutzt denselben festen Slot wie `scheduleAlarm` (1…5 statt zweier
-  `hashCode()`-Formeln). **geändert.**
-- `setPrayer(times, meta)` ist additiv: ohne `meta` zeigt die Seite exakt wie vorher, das ist im Test
-  festgeschrieben. **bestätigt wie geplant.**
-- Der Demo-Schalter `adhanNotif` ist weg. Stattdessen die Gruppe „Gebetsruf (Azān)" in den
-  Einstellungen, sechs echte Zeilen. Ohne `meta` erscheint die Gruppe nicht. **geändert.**
-- `body.is-locked` blendet das Overlay jetzt **nur ohne** `.is-preview` aus — die ausdrücklich ausgelöste
-  Vorschau ist auf dem gesperrten Bildschirm sichtbar. **geändert.**
-- Die Berechnungsmethode liegt im Store `prayerStore` und wird von V1 und V2 geteilt; nach einem
-  Neustart ist sie nicht wieder MWL. **geändert.**
-- Ortswahl als Fallback zum GPS: `getCurrentLocation()` gibt einen gespeicherten Ort zurück, und die Seite
-  kann Koordinaten eintragen. Ohne Berechtigung ist das Feature dadurch nicht mehr blind.
-  **ergänzt, in der Spec nicht geplant.**
+### Drei stumme Fehler, die nur der Browser gesehen hat
+
+Alle drei lagen **ausserhalb jeder `.ts`-Datei** — `tsc` konnte sie nicht sehen, und keiner der fuenf
+vorhandenen Mockup-Tests either. Jeder haette die Oberflaeche funktionierend aussehen lassen und
+nichts getan:
+
+1. **Doppelter `<script>`-Tag im Build.** `prayerBridge.js` bekam vom Build-Skript seine Tags noch
+   einmal mit, obwohl das Template sie schon hatte. Die Seite startete mit einem `SyntaxError`,
+   `window.__tmsNormalizePrayer` existierte nie, `bridge.js` fiel auf seinen Rueckfallzweig zurueck —
+   **der `meta`-Anteil wurde stillschweigend verworfen**. Die Adhan-Gruppe waere nie erschienen,
+   ohne eine einzige Fehlermeldung.
+2. **`post()` zur falschen Zeit gebunden.** Das Mockup stand `var post = window.__tmsPost || function(){}`
+   — ausgewertet beim Laden des Mockups, also **vor** der Bruecke. Fuer die ganze Seitenlaufzeit war
+   `post` eine leere Funktion: **jeder** Schalter (Azān, Fajr-Wecker, Rezi, Methode, Ort, Test,
+   Genauigkeit) waere Dekoration gewesen.
+3. **Eine CSS-Regel, die sich selbst ausgehebelt hat.** `.adhan-overlay__sub, .adhan-overlay__stop {
+   display: none }` sollte „in der Vorschau nicht zeigen" bedeuten — es verbarg aber **immer**,
+   auch den Schliessen-Knopf und die Zeile „Vorschau".
+
+Alle drei stehen jetzt in `mobile/scripts/webview-prayer.test.mjs`. Gegenprobe: jeder Fehler wurde
+einzeln wieder eingebaut, alle drei schlagen an.
+
+**Der Test braucht Playwright, das nicht im Repo liegt.** Er laeuft nur mit gesetztem `TMS_VIZ_PW` und
+meldet sich sonst als uebersprungen, statt eine neue Abhaengigkeit zu ziehen. `npm run test:mockup`
+bleibt download-frei und gruen.
+
+### Nachgemessen (Screenshots bei 380x915 und 412x915)
+
+- Gebetszeiten-Screen: sechs Zeilen inkl. Sunrise, Orts-/Datums-/Hijri-/Methodenzeile, Countdown
+  `HH:MM:SS`, Fortschrittsbalken, Insel zeigt „Asr - 3:26h". **Kein abgeschnittenes Wort.**
+- Einstellungen: die Gruppe „Gebetsruf (Azān)" steht mit **allen sieben Zeilen** vollstaendig im Bild,
+  nachdem der `<section data-screen="settings">` (nicht `.screen-col`) in den Sichtbereich gescrollt
+  wurde. **Kein abgeschnittenes Wort.**
+- Overlay: Vorschau bei gesperrtem Bildschirm sichtbar, reine Anzeige versteckt; Stumm/Laut und
+  Schliessen erscheinen wie gewollt, Uhrzeit und arabischer Name gefuellt.
+- Alle acht `adhan:`-Nachrichten kommen bei der App an; ungueltige Koordinaten werden abgelehnt.
+
+### Gepruefte Einzelbefunde
+
+- Der Scheduler sitzt jetzt in `services/adhanScheduler.ts`, nicht mehr im `HomeScreen`. **geaendert.**
+- Fuer die Gebetszeiten gibt es Tests: 9 Rechenlogik, 10 Planung, 7 Bridge-Vertrag, 5 Zaehler der
+  Seite, 3 Nachrichtenreihenfolge, 8 im Browser. **vorher 0.**
+- Die acht `adhan:`-Nachrichten liegen alle **vor** dem Verbindungs-Guard, und ein Test haelt das fest
+  (`scripts/bridge-guard.test.mjs`). Ein zweiter haelt ausdruecklich fest, dass `server:switch` dort
+  **bleibt** — damit beim naechsten Aufraeumen nicht beide gleichgezogen werden.
+- `cancelAllAlarms` benutzt denselben festen Slot wie `scheduleAlarm` (1...5 statt zweier
+  `hashCode()`-Formeln). **geaendert.**
+- `setPrayer(times, meta)` ist additiv: ohne `meta` zeigt die Seite exakt wie vorher. **wie geplant.**
+- Der Demo-Schalter `adhanNotif` ist weg; ohne `meta` erscheint die Gruppe nicht. **geaendert.**
+- `body.is-locked` blendet das Overlay jetzt **nur ohne** `.is-preview` aus. **geaendert.**
+- Die Berechnungsmethode liegt im Store `prayerStore` und wird von V1 und V2 geteilt.
+- Ortswahl als Fallback zum GPS: ohne Berechtigung ist das Feature nicht mehr blind.
+  **ergaenzt, in der Spec nicht geplant.**
 
 **Zwei Punkte aus dem Plan sind bewusst anders gelaufen:**
 
-- **Task 4 (Boot-Receiver) entfällt.** `RECEIVE_BOOT_COMPLETED` ohne Empfänger war ein echter Befund, aber
-  ein Receiver hätte nichts behoben: er kann keinen Alarm stellen, weil er zum Planen Standort und Zeiten
-  braucht. Der Scheduler plant bei jedem App-Start und bei jedem Zurückkehren in den Vordergrund neu —
-  damit ist der Neustart abgedeckt, sobald die App das nächste Mal aufgeht. Der verbleibende Randfall
-  (Neustart, App nie geöffnet) ist ohne Empfang von Standort nicht lösbar und steht jetzt als Kommentar
-  in `App.tsx`.
-- **Zwei Notizspeicher heißen beide gleich.** `store/notesStore` (serverseitig) und
-  `season2/store/notesStore` (pro Karte im HTML) exportierten `useNotesStore`. Der zweite heißt jetzt
-  `useS2NotesStore` und die Datei `s2NotesStore.ts` — sie ist aber **nicht** der tote Code aus Task 6,
-  sondern lebendig. In der Spec stand, einer der beiden solle weg; das wäre eine Verhaltensänderung
-  gewesen, die hier nicht hingehört.
+- **Task 4 (Boot-Receiver) entfaellt.** `RECEIVE_BOOT_COMPLETED` ohne Empfaenger war ein echter Befund,
+  aber ein Receiver haette nichts behoben: er kann keinen Alarm stellen, weil er zum Planen Standort
+  und Zeiten braucht. Der Scheduler plant bei jedem App-Start und bei jedem Zurueckkehren in den
+  Vordergrund neu — damit ist der Neustart abgedeckt, sobald die App das naechste Mal aufgeht. Der
+  verbleibende Randfall (Neustart, App nie geoeffnet) ist ohne Empfang von Standort nicht loesbar und
+  steht als Kommentar in `App.tsx`.
+- **Zwei Notizspeicher heissen beide gleich.** `store/notesStore` (serverseitig) und
+  `season2/store/notesStore` (pro Karte im HTML) exportierten `useNotesStore`. Der zweite heisst jetzt
+  `useS2NotesStore` — er ist aber **nicht** der tote Code aus Task 6, sondern lebendig. In der Spec
+  stand, einer der beiden solle weg; das waere eine Verhaltensaenderung gewesen.
 
-**Nicht automatisch prüfbar — am Gerät zu bestätigen:**
+**Nebenbei gefunden und mitbehoben:**
 
-- Der Gradle-Build konnte **nicht** laufen: ohne Netz findet Gradle das Plugin
-  `foojay-resolver-convention` nicht, und es liegt auch nicht im Cache. **Vorbestehend** — mit sauberem
-  Arbeitsbaum tritt derselbe Fehler auf. Die Änderung an `AdhanModule.kt` ist damit ungeprüft kompiliert;
-  sie ist klein und ohne neue Abhängigkeit, aber `AdhanBootReceiver` hätte es hier nicht gegeben.
-- Kommt `AdhanFullscreenActivity` bei ausgeschaltetem Bildschirm und gesperrtem Gerät zuverlässig hoch?
-  (Im Code richtig — `setShowWhenLocked`, `requestDismissKeyguard`, Wake-Lock im Receiver. Auf Android 14
-  hängt es zusätzlich an `USE_FULL_SCREEN_INTENT`, das pro App freigegeben werden muss.)
-- Wie viele Sekunden daneben liegt `setAndAllowWhileIdle` zurück, wenn keine exakten Alarme erlaubt sind?
-  Die Zeile „Genauigkeit" in den Einstellungen erscheint deshalb, ist aber ungetestet.
-- Überlebt `adb shell am force-stop` die geplanten Alarme? Wenn nein, braucht der Scheduler zusätzlich
+- **`nextPrayer()` im Mockup mischte zwei Zeitpunkte**: `parsePrayerTime` las gegen `new Date()`,
+  waehrend der Vergleich gegen das uebergebene `now` lief. In der App dasselbe, also unauffaellig —
+  aber testbar war die Funktion dadurch nicht. `parsePrayerTime` bekommt jetzt den Bezugstag.
+
+**Noch am Geraet zu bestaetigen — dafuer gibt es hier keinen Ersatz:**
+
+- Der Gradle-Build. Ohne Netz findet Gradle `foojay-resolver-convention` nicht, und es liegt auch
+  nicht im Cache. Mit sauberem Arbeitsbaum tritt derselbe Fehler auf, er ist also vorbestehend.
+- Kommt `AdhanFullscreenActivity` bei ausgeschaltetem Bildschirm und gesperrtem Geraet zuverlaessig
+  hoch? (Im Code richtig. Auf Android 14 haengt es zusaetzlich an `USE_FULL_SCREEN_INTENT`.)
+- Wie weit liegt `setAndAllowWhileIdle` zurueck, wenn keine exakten Alarme erlaubt sind?
+- Ueberleben die geplanten Alarme ein `am force-stop`? Wenn nein, braucht der Scheduler zusaetzlich
   einen periodischen Refresh statt nur `AppState`.
-- Layoutprüfung bei 380×915 und 412×915 steht aus — es gibt hier keinen Browser und kein Gerät.
+- Die V1-Ansicht laesst sich nur auf dem Geraet beurteilen; hier gibt es kein Geraet.
 
 ## Selbstprüfung des Plans
 
