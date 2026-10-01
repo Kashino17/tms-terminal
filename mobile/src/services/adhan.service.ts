@@ -156,18 +156,10 @@ export async function setupAdhanNotificationChannel(): Promise<void> {
     });
   }
 
-  // Foreground: suppress system notification, show our custom UI instead
-  Notifications.setNotificationHandler({
-    handleNotification: async (notification) => {
-      const isAdhan = notification.request.content.data?.type === 'adhan';
-      return {
-        shouldShowAlert: !isAdhan, // Don't show system alert for adhan (we show our own UI)
-        shouldPlaySound: false,
-        shouldSetBadge: false,
-        priority: Notifications.AndroidNotificationPriority.MAX,
-      };
-    },
-  });
+  // Der Notification-Handler liegt bewusst NICHT mehr hier. Er war an zwei Stellen
+  // gesetzt (hier und notifications.service.ts) mit unterschiedlichem
+  // shouldShowAlert — wer zuletzt geladen wurde, gewann, und das hing von der
+  // Importreihenfolge ab. Der eine Handler in notifications.service.ts erledigt es.
 }
 
 /** Schedule a fullscreen adhan alarm after `delaySec` seconds.

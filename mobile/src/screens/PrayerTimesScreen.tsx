@@ -14,9 +14,6 @@ import {
   scheduleTestAdhan, setupAdhanNotificationChannel,
   getFajrWecker, setFajrWecker,
 } from '../services/adhan.service';
-import { AdhanAlert } from '../components/AdhanAlert';
-import { playAdhan } from '../services/adhan.service';
-import * as Notifications from 'expo-notifications';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 
@@ -56,7 +53,6 @@ export function PrayerTimesScreen({ navigation }: Props) {
   const [adhanOn, setAdhanOn] = useState(true);
   const [previewing, setPreviewing] = useState<string | null>(null);
   const [testCountdown, setTestCountdown] = useState<number | null>(null);
-  const [testAlert, setTestAlert] = useState<{ name: string; time: string; arabic: string; wecker?: boolean } | null>(null);
   const [fajrWeckerOn, setFajrWeckerOn] = useState(false);
 
   useEffect(() => {
@@ -64,22 +60,16 @@ export function PrayerTimesScreen({ navigation }: Props) {
     return () => clearInterval(timer);
   }, []);
 
-  // Load adhan settings + notification listener
+  // Load adhan settings. Der Alarm-Dialog haengt global in App.tsx — hier stand
+  // vorher ein zweites <AdhanAlert> am selben Notification-Listener, also sprang
+  // bei einem Ereignis zweimal ein Fenster auf.
   useEffect(() => {
     getSelectedAdhan().then(setAdhanId);
     getAdhanEnabled().then(setAdhanOn);
     getFajrWecker().then(setFajrWeckerOn);
     setupAdhanNotificationChannel();
 
-    // Listen for foreground notifications (test trigger)
-    const sub = Notifications.addNotificationReceivedListener(notification => {
-      const d = notification.request.content.data;
-      if (d?.type === 'adhan') {
-        setTestAlert({ name: d.prayerName as string, time: d.prayerTime as string, arabic: d.prayerArabic as string, wecker: !!d.isWecker });
-      }
-    });
-
-    return () => { stopAdhan(); sub.remove(); };
+    return () => { stopAdhan(); };
   }, []);
 
   const dateKey = new Date().toISOString().slice(0, 10);
@@ -376,27 +366,8 @@ export function PrayerTimesScreen({ navigation }: Props) {
           )}
         </View>
       </ScrollView>
-
-      {/* Test Adhan Alert Modal */}
-      <AdhanAlert
-        visible={!!testAlert}
-        prayerName={testAlert?.name ?? ''}
-        prayerTime={testAlert?.time ?? ''}
-        prayerArabic={testAlert?.arabic ?? ''}
-        wecker={testAlert?.wecker}
-        onLoud={async () => {
-          if (!testAlert?.wecker) {
-            setTestAlert(null);
-            await playAdhan(adhanId);
-          } else {
-            await playAdhan(adhanId, () => setTestAlert(null));
-          }
-        }}
-        onSilent={() => {
-          setTestAlert(null);
-          stopAdhan();
-        }}
-      />
+      {/* Kein <AdhanAlert> hier — der globale Dialog aus App.tsx zeigt sich, wenn
+          scheduleTestAdhan() die Benachrichtigung ausloest. */}
     </View>
   );
 }
