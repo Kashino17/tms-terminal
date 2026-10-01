@@ -27,6 +27,15 @@ import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '.
 import { checkForUpdate, downloadAndInstall, getCurrentVersion } from '../services/updater.service';
 import { getConnection } from '../services/websocket.service';
 import { useS2ConnStore, useS2Connection } from './s2conn/connection';
+import {
+  setAdhanEnabled, setFajrWecker, setSelectedAdhan, readAdhanSettings,
+  previewAdhan, stopAdhan, scheduleTestAdhan, canScheduleExactAdhan,
+  requestExactAlarmPermission,
+} from '../services/adhan.service';
+import { refreshAdhanSchedule } from '../services/adhanScheduler';
+import { usePrayerStore, prayerMethodName } from '../store/prayerStore';
+import { PRAYER_NAMES, getNextPrayer, type PrayerTimes } from '../services/prayer.service';
+import * as Notifications from 'expo-notifications';
 import { useDictation } from './hooks/useDictation';
 import { useManagerWire } from './manager/useManagerWire';
 import { useManagerStore } from '../store/managerStore';
@@ -117,6 +126,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
+  /** Letzte Gebetszeiten — der Testknopf braucht sie, um einen Alarm zu stellen. */
+  const prayerTimesRef = useRef<PrayerTimes | null>(null);
   const { server, token, wsService, state, rtt } = useS2Connection();
   const setServer = useS2ConnStore((s) => s.setServer);
   const setSeasonTwoEnabled = useSettingsStore((s) => s.setSeasonTwoEnabled);
@@ -230,7 +241,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const activeSessionId = useTerminalStore((s) =>
     server ? (s.tabs[server.id] ?? []).find((t) => t.active)?.sessionId ?? (s.tabs[server.id] ?? [])[0]?.sessionId : undefined,
   );
-  const sheets = useSheetBridges({ ready, call, wsService, server, token, activeSessionId });
+  const sheets = useSheetBridges({
+    ready, call, wsService, server, token, activeSessionId, prayerTimesRef,
+  });
   const fileExplorer = useFileExplorer({ ready, call, server, token });
 
   // ── Pick up the saved server (the WebView has no server picker of its own).
@@ -840,6 +853,87 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (type === 'remote:open' && (!wsService || !server)) {
       call('toast', 'Erst mit dem Server verbinden, dann Fernzugriff öffnen');
       return;
+    }
+
+    // ── Gebetszeiten. Brauchen keinen Server: Standort, Zeiten und Alarme sind
+    //    alle lokal. Sie stehen deshalb VOR dem Guard unten — dahinter waeren
+    //    sie ohne Verbindung stillschweigend weg, und genau das war der Grund,
+    //    warum das neue Layout nie einen Adan klingeln liess, obwohl der
+    //    Bildschirm die richtigen Zeiten anzeigte.
+    switch (type) {
+      case 'adhan:toggle': {
+        void (async () => {
+          await setAdhanEnabled(!!payload.enabled);
+          // Sofort neu planen: der Nutzer will nach dem Schalter keine Minute
+          // auf einen Alarm warten, der erst beim naechsten App-Start kaeme.
+          await refreshAdhanSchedule('v2-toggle');
+          call('setAdhanSettings', await readAdhanSettings());
+        })();
+        return;
+      }
+      case 'adhan:wecker': {
+        void (async () => {
+          await setFajrWecker(!!payload.enabled);
+          await refreshAdhanSchedule('v2-wecker');
+          call('setAdhanSettings', await readAdhanSettings());
+        })();
+        return;
+      }
+      case 'adhan:reciter': {
+        void (async () => {
+          await setSelectedAdhan(String(payload.id ?? 'mishary'));
+          call('setAdhanSettings', await readAdhanSettings());
+          call('toast', 'Rezitateur gespeichert');
+        })();
+        return;
+      }
+      case 'adhan:method': {
+        void (async () => {
+          const m = Number(payload.method);
+          if (!Number.isFinite(m)) return;
+          usePrayerStore.getState().setMethod(m);
+          // useSheetBridges laeuft ueber den Store mit und laedt neu.
+          call('toast', `Berechnung: ${prayerMethodName(m)}`);
+        })();
+        return;
+      }
+      case 'adhan:preview': {
+        if (payload.on === false) void stopAdhan();
+        else void previewAdhan(String(payload.id ?? 'mishary'));
+        return;
+      }
+      case 'adhan:test': {
+        void (async () => {
+          const times = prayerTimesRef.current;
+          const next = times ? getNextPrayer(times) : null;
+          const info = next ? PRAYER_NAMES[next.name] : null;
+          await scheduleTestAdhan(
+            info?.de ?? 'Asr',
+            next?.time ?? '15:30',
+            info?.ar ?? 'العصر',
+            10,
+            false,
+          );
+          call('toast', 'Azān kommt in 10 Sekunden');
+        })();
+        return;
+      }
+      case 'adhan:perms': {
+        void (async () => {
+          if (payload.which === 'exact') {
+            await requestExactAlarmPermission();
+            // Der Nutzer entscheidet auf der Systemseite, und kann das auch dort
+            // wieder zuruecknehmen — darum fragen wir danach gleich noch einmal ab.
+            setTimeout(async () => {
+              call('setAdhanPerms', { exactAlarms: await canScheduleExactAdhan() });
+            }, 800);
+            return;
+          }
+          const { status } = await Notifications.requestPermissionsAsync();
+          call('setAdhanPerms', { notifications: status === 'granted', exactAlarms: await canScheduleExactAdhan() });
+        })();
+        return;
+      }
     }
 
     if (!wsService || !server) return;

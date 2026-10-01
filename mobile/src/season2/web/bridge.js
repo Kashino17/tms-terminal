@@ -21,6 +21,12 @@
   // Reine Funktion in einer eigenen Datei, damit mobile/scripts/prayer-bridge.test.mjs
   // sie ohne Fenster pruefen kann. Hier nur der Aufruf — die Datei wird von
   // build-season2-html.js vor bridge.js eingefuegt.
+  // Das Mockup selbst kennt kein postMessage — es ist eine reine HTML-Seite. Fuer
+  // die Stellen, die jetzt wirklich etwas bestellen (Gebetsruf-Schalter), geben
+  // wir ihm unsere post() als window.__tmsPost. Sonst waeren diese Knoepfe im
+  // Mockup stumm und in der App stumm — zweimal schlecht statt einmal gut.
+  window.__tmsPost = post;
+
   var normalizePrayerPayload = window.__tmsNormalizePrayer;
   if (typeof normalizePrayerPayload !== 'function') {
     // Ohne die Datei waere nur die alte Liste moeglich — nicht stumm werden.

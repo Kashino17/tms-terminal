@@ -31,7 +31,9 @@ import { useSQLStore } from '../../store/sqlStore';
 import { useS2NotesStore } from '../store/s2NotesStore';
 import { Linking } from 'react-native';
 import { useFavPathsStore } from '../../store/favPathsStore';
-import { fetchPrayerTimes, getCurrentLocation, PRAYER_NAMES } from '../../services/prayer.service';
+import {
+  fetchPrayerTimes, getCurrentLocation, PRAYER_NAMES, type PrayerTimes,
+} from '../../services/prayer.service';
 import { usePrayerStore, prayerMethodName } from '../../store/prayerStore';
 import { readAdhanSettings, canScheduleExactAdhan } from '../../services/adhan.service';
 
@@ -47,6 +49,8 @@ interface Args {
   token: string | null;
   /** sessionId of the terminal the sheets act on. */
   activeSessionId?: string;
+  /** Wird mit den geholten Zeiten gefuellt — der Testknopf braucht sie draussen. */
+  prayerTimesRef?: React.MutableRefObject<PrayerTimes | null>;
 }
 
 function humanSize(bytes: number): string {
@@ -56,7 +60,9 @@ function humanSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function useSheetBridges({ ready, call, wsService, server, token, activeSessionId }: Args) {
+export function useSheetBridges({
+  ready, call, wsService, server, token, activeSessionId, prayerTimesRef,
+}: Args) {
   // Mitlesen, damit ein Methoden- oder Ortswechsel die Zeiten neu laedt.
   const method = usePrayerStore((s) => s.method);
   const chosenLocation = usePrayerStore((s) => s.location);
@@ -311,6 +317,9 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
 
       const adhan = await readAdhanSettings();
       if (cancelled) return;
+      // Der Testknopf in der Seite braucht die naechste Uhrzeit, um daraus einen
+      // Alarm zu stellen. Hier ablegen, damit onMessage() sie hat.
+      if (prayerTimesRef) prayerTimesRef.current = data.timings;
       call('setPrayer', times, {
         location: { label, lat: loc.latitude, lon: loc.longitude },
         date: {
