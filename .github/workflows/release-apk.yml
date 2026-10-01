@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Der Mauszeiger im Fernzugriff sitzt jetzt exakt auf dem echten Zeiger. Vorher wurde der Pfeil ein Stueck zu tief gezeichnet, so dass Klicks etwas oberhalb der Pfeilspitze landeten. Enthaelt ausserdem alles aus 1.121.0: gemeinsame Zwischenablage zwischen Handy und Mac und die Handy-Tastatur mit Kuerzelleiste im Fernzugriff." \
+            --notes "Gebetszeiten mit echtem Azān-Schalter auch im neuen Layout. Bisher klang dort nie ein Azān, weil die Alarme am klassischen Startbildschirm geplant wurden — den das neue Layout gar nicht anzeigt. Der Schalter sitzt jetzt in dessen Einstellungen und stellt die Alarme wirklich. Enthaelt ausserdem: Alarme werden app-weit geplant und stehen nach einem Neustart des Handys wieder da, lassen sich erstmals wirklich abbrechen, und Berechnungsort sowie ein von Hand gewaehlter Ort werden zwischen beiden Layouts geteilt. Dazu im Terminal: Reiter sind wieder umbenennbar und kategorisierbar, entfernte Werkzeuge lassen sich wieder hinzufuegen, und Zeichnen und Prozesse sind wieder erreichbar." \
             --latest
