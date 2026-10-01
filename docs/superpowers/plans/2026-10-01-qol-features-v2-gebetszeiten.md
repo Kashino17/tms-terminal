@@ -980,7 +980,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
   | # | Prüfung | Erwartung |
   |---|---|---|
-  | 0 | `./gradlew :app:assembleRelease` | **kompiliert überhaupt?** Der Gradle-Build lief hier nicht (kein Netz, `foojay-resolver-convention` nicht im Cache) |
+  | 0 | `bash mobile/scripts/check-kotlin.sh` | **grün** — `AdhanModule.kt` ist übersetzt (siehe unten). `:app:assembleRelease` selbst ging hier nicht: JitPack-Artefakte aus `expo-blur`/`expo-image-picker` per DNS nicht erreichbar |
   | 1 | V1, Gebetszeiten-Screen | unverändert wie vorher, Methode bleibt über App-Neustart |
   | 2 | V2, Gebetszeiten-Screen | Liste + Sunrise + Ort + Datum + Countdown `HH:MM:SS` |
   | 3 | V2, Einstellungen → Gebetszeiten | Azān-Schalter, Fajr-Wecker, Rezitateur, Berechnung, Ort |
@@ -1057,9 +1057,18 @@ getan — der Azān-Schalter wäre da gewesen und hätte keinen Alarm gestellt. 
    werden beim Laden aus den Abschnitten entfernt (`KNOWN_TOOL_IDS`). Sonst hätte `supabase` in einer
    bestehenden Installation weiter als stummes Werkzeug gestanden und beim Tippen ein leeres Sheet geöffnet.
 
-**Nicht erledigt:** Der Gradle-Build (`compileDebugKotlin`) ließ sich hier nicht ausführen — ohne Netz
-findet Gradle `foojay-resolver-convention` nicht, und es liegt auch nicht im Cache. Der Fehler tritt mit
-leerem Arbeitsbaum genauso auf, ist also vorbestehend. Die Änderung an `AdhanModule.kt` ist damit
-**nicht übersetzt** — vor dem ersten Gerätetest einmal `./gradlew :app:assembleRelease` laufen lassen.
+**Der Kotlin-Teil ist doch geprüft.** `:app:compileDebugKotlin` scheitert hier an JitPack
+(`BlurView` aus `expo-blur`, `Android-Image-Cropper` aus `expo-image-picker`) — DNS flackert, mit
+leerem Arbeitsbaum derselbe Fehler, also vorbestehend und ohne Bezug zu dieser Arbeit. Statt das als
+offen zu lassen, zieht `mobile/scripts/check-kotlin.sh` den Kotlin-Compiler aus dem Gradle-Wrapper-Cache
+und übersetzt `AdhanModule.kt` gegen `android.jar` und `androidx.core`: **grün, Klasse erzeugt.**
+Damit sind Kotlin-Syntax und die Android-API-Nutzung abgedeckt — `AlarmManager`, `PendingIntent`,
+`Uri`, `Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM`. Nicht abgedeckt sind die Anbindung an React
+Native und `AdhanFullscreenActivity` (appcompat, generierte `R`-Klasse). Gegenprobe: eine erfundene
+Methode lässt das Skript rot werden.
+
+**Weiterhin offen, unvermeidbar hier:** kein Gerät an `adb`. Die restlichen zehn Prüfpunkte und das
+Release bleiben zu. Das Release gehört ohne Gerätetest nicht gemacht — Punkt 4 (`dumpsys alarm`) ist
+genau die Messung, die zeigt, ob der Schalter im neuen Layout überhaupt Alarme stellt.
 
 **Vor dem Release noch am Gerät prüfen:** die neunstufige Liste in Task 11, Schritt 4.

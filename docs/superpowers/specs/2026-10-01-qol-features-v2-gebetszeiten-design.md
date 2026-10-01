@@ -571,8 +571,17 @@ bleibt download-frei und gruen.
 
 **Noch am Geraet zu bestaetigen — dafuer gibt es hier keinen Ersatz:**
 
-- Der Gradle-Build. Ohne Netz findet Gradle `foojay-resolver-convention` nicht, und es liegt auch
-  nicht im Cache. Mit sauberem Arbeitsbaum tritt derselbe Fehler auf, er ist also vorbestehend.
+- Der **vollständige** Gradle-Build. `:app:compileDebugKotlin` braucht JitPack (`BlurView` aus
+  `expo-blur`, `Android-Image-Cropper` aus `expo-image-picker`) und scheitert dort an DNS, das
+  zwischen den Läufen flackert. Mit leerem Arbeitsbaum derselbe Fehler — vorbestehend und ohne Bezug
+  zu dieser Arbeit.
+  **Die geänderte Datei ist trotzdem übersetzt:** `mobile/scripts/check-kotlin.sh` zieht den
+  Kotlin-Compiler aus dem Gradle-Wrapper-Cache und übersetzt `AdhanModule.kt` gegen `android.jar` und
+  `androidx.core` — grün, `AdhanModule.class` erzeugt. Geprüft sind damit Kotlin-Syntax und die
+  Android-API-Nutzung (`AlarmManager`, `PendingIntent`, `Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM`).
+  **Nicht** geprüft sind die Anbindung an React Native und `AdhanFullscreenActivity` (braucht
+  appcompat und die generierte `R`-Klasse, beides erst nach dem vollen Build). Gegenprobe: eine
+  erfundene Methode lässt das Skript rot werden.
 - Kommt `AdhanFullscreenActivity` bei ausgeschaltetem Bildschirm und gesperrtem Geraet zuverlaessig
   hoch? (Im Code richtig. Auf Android 14 haengt es zusaetzlich an `USE_FULL_SCREEN_INTENT`.)
 - Wie weit liegt `setAndAllowWhileIdle` zurueck, wenn keine exakten Alarme erlaubt sind?
