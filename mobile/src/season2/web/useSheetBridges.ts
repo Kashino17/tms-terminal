@@ -31,7 +31,9 @@ import { useSQLStore } from '../../store/sqlStore';
 import { useS2NotesStore } from '../store/s2NotesStore';
 import { Linking } from 'react-native';
 import { useFavPathsStore } from '../../store/favPathsStore';
-import { fetchPrayerTimes, getCurrentLocation } from '../../services/prayer.service';
+import { fetchPrayerTimes, getCurrentLocation, PRAYER_NAMES } from '../../services/prayer.service';
+import { usePrayerStore, prayerMethodName } from '../../store/prayerStore';
+import { readAdhanSettings, canScheduleExactAdhan } from '../../services/adhan.service';
 
 type Call = (fn: string, ...args: unknown[]) => void;
 
@@ -55,6 +57,9 @@ function humanSize(bytes: number): string {
 }
 
 export function useSheetBridges({ ready, call, wsService, server, token, activeSessionId }: Args) {
+  // Mitlesen, damit ein Methoden- oder Ortswechsel die Zeiten neu laedt.
+  const method = usePrayerStore((s) => s.method);
+  const chosenLocation = usePrayerStore((s) => s.location);
   /** Directory the Dateien sheet is currently showing. */
   const cwd = useRef('~');
   /** Which sheet is open — so an async reply knows whether it is still wanted. */
@@ -265,23 +270,60 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
     });
   }, [wsService, ready, call]);
 
-  /** Real prayer times, once — the island and the Gebete screen both read them. */
+  /**
+   * Gebetszeiten fuer die Insel, den Gebetszeiten-Screen und die Einstellungen.
+   *
+   * Laeuft bei jedem Wechsel der Berechnungsmethode und des Ortes mit, nicht nur
+   * einmal beim Start — sonst blieb nach dem Umschalten die alte Methode stehen.
+   *
+   * `meta` ist zusaetzlich zur Liste: Ort, Datum, Hijri, Methode, Adhan-Schalter
+   * und Berechtigungen. Ohne meta zeigt die Seite weiter nur Liste und Countdown.
+   */
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
     (async () => {
-      const loc = await getCurrentLocation().catch(() => null);
+      // Von Hand gewaehlter Ort vor GPS: der Nutzer soll auch ohne Standort
+      // Gebetszeiten sehen (und den Adhan einstellen) koennen.
+      const chosen = usePrayerStore.getState().location;
+      const gps = chosen ? null : await getCurrentLocation().catch(() => null);
+      const loc = chosen ?? gps;
       if (!loc || cancelled) return;
-      const data = await fetchPrayerTimes(loc.latitude, loc.longitude).catch(() => null);
+      // Von Hand gewaehlter Ort traegt sein eigenes Label, GPS den Ort aus der
+      // Rueckwaerts-Geokodierung.
+      const label = chosen
+        ? chosen.label
+        : [gps?.city, gps?.country].filter(Boolean).join(', ') || 'GPS';
+
+      const data = await fetchPrayerTimes(loc.latitude, loc.longitude, method).catch(() => null);
       if (!data || cancelled) return;
-      const t = data.timings;
-      call('setPrayer', [
-        { name: 'Fajr', time: t.Fajr }, { name: 'Dhuhr', time: t.Dhuhr }, { name: 'Asr', time: t.Asr },
-        { name: 'Maghrib', time: t.Maghrib }, { name: 'Isha', time: t.Isha },
-      ].map((p) => ({ ...p, time: p.time.slice(0, 5) })));
+
+      const keys = ['Fajr', 'Sunrise', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'] as const;
+      const times = keys
+        .filter((k) => data.timings[k])
+        .map((k) => ({
+          name: PRAYER_NAMES[k].de,
+          de: PRAYER_NAMES[k].de,
+          ar: PRAYER_NAMES[k].ar,
+          emoji: PRAYER_NAMES[k].emoji,
+          time: data.timings[k],
+        }));
+
+      const adhan = await readAdhanSettings();
+      if (cancelled) return;
+      call('setPrayer', times, {
+        location: { label, lat: loc.latitude, lon: loc.longitude },
+        date: {
+          readable: data.date.readable,
+          hijri: `${data.date.hijri.day}. ${data.date.hijri.month.en} ${data.date.hijri.year}`,
+        },
+        method: { id: method, name: prayerMethodName(method) },
+        adhan: { enabled: adhan.enabled, wecker: adhan.wecker, selected: adhan.selected },
+        perms: { notifications: true, exactAlarms: adhan.exactAlarms },
+      });
     })();
     return () => { cancelled = true; };
-  }, [ready, call]);
+  }, [ready, call, method, chosenLocation]);
 
   /** Everything the sheets post back. Returns true when it handled the message. */
   const handle = useCallback((type: string, payload: any): boolean => {

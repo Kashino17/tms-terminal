@@ -18,6 +18,17 @@
     try { RN.postMessage(JSON.stringify({ type: type, payload: payload || {} })); } catch (e) {}
   }
 
+  // Reine Funktion in einer eigenen Datei, damit mobile/scripts/prayer-bridge.test.mjs
+  // sie ohne Fenster pruefen kann. Hier nur der Aufruf — die Datei wird von
+  // build-season2-html.js vor bridge.js eingefuegt.
+  var normalizePrayerPayload = window.__tmsNormalizePrayer;
+  if (typeof normalizePrayerPayload !== 'function') {
+    // Ohne die Datei waere nur die alte Liste moeglich — nicht stumm werden.
+    normalizePrayerPayload = function (times) {
+      return { times: Array.isArray(times) ? times : [], meta: null };
+    };
+  }
+
   var terms = {};        // cardId -> { term, fit, element, host }
   var bound = {};        // cardId -> sessionId | 'pending'
   var byCard = {};       // cardId -> sessionId (resolved only)
@@ -2323,10 +2334,46 @@
   };
   /** Nach einem Upload: den Serverpfad sofort ins Terminal schreiben. */
   window.TMSBridge.insertIntoTerminal = function (text, msg) { insertIntoTerminal(text, msg); };
-  window.TMSBridge.setPrayer = function (times) {
-    window.TMS_DATA.prayerTimes = times;
+  /**
+   * Gebetszeiten in die Seite. `meta` ist optional: ohne sie verhaelt sich die
+   * Seite exakt wie vorher (Liste + Countdown). Die Normalisierung liegt in
+   * prayerBridge.js, damit sie ohne Fenster getestet werden kann.
+   */
+  window.TMSBridge.setPrayer = function (times, meta) {
+    var p = normalizePrayerPayload(times, meta);
+    window.TMS_DATA.prayerTimes = p.times;
+    window.TMS_DATA.prayerMeta = p.meta;
     if (typeof window.renderPrayerList === 'function') window.renderPrayerList();
+    // Kein renderPrayerScreen(): der 1-Sekunden-Ticker laeuft nur, solange der
+    // Screen offen ist. setPrayer kommt auch im Hintergrund, alle paar Sekunden.
+    if (typeof window.renderPrayerMeta === 'function') window.renderPrayerMeta();
+    if (typeof window.renderAdhanSettings === 'function') window.renderAdhanSettings();
     if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
+  };
+
+  /** Nur die Adhan-Einstellungen, ohne die Zeiten neu zu schicken. Wird nach
+   *  jedem Schalter benutzt, damit der Schalter nicht zurueckkippt. */
+  window.TMSBridge.setAdhanSettings = function (adhan) {
+    var meta = window.TMS_DATA.prayerMeta;
+    if (!meta) return;
+    meta.adhan = {
+      enabled: !!adhan.enabled,
+      wecker: !!adhan.wecker,
+      selected: String(adhan.selected || 'mishary'),
+    };
+    if (typeof window.renderAdhanSettings === 'function') window.renderAdhanSettings();
+  };
+
+  /** Nur die Berechtigungen — die kann der Nutzer jederzeit auf der Systemseite
+   *  aendern, ohne dass wir neue Zeiten schicken muessen. */
+  window.TMSBridge.setAdhanPerms = function (perms) {
+    var meta = window.TMS_DATA.prayerMeta;
+    if (!meta) return;
+    meta.perms = {
+      notifications: !!(perms && perms.notifications),
+      exactAlarms: !!(perms && perms.exactAlarms),
+    };
+    if (typeof window.renderAdhanSettings === 'function') window.renderAdhanSettings();
   };
   /** Jump to the Browser screen and load a URL (used by the Ports sheet). */
   window.TMSBridge.openBrowser = function (url) {

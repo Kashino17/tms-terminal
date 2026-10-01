@@ -19,6 +19,30 @@ const OUT = path.resolve(__dirname, '../src/season2/web/liquidDeckHtml.ts');
 let html = fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/index.html'), 'utf8');
 const dataJs = fs.readFileSync(path.join(MOCKUP_DIR, 'shared/data.js'), 'utf8');
 const bridgeJs = fs.readFileSync(path.resolve(__dirname, '../src/season2/web/bridge.js'), 'utf8');
+// Reine Hilfsfunktionen ohne Fenster-Zugriff. Sie kommt VOR bridge.js, weil die
+// Bruecke sie beim Start braucht.
+//
+// Die Datei ist ein ES-Modul, damit der Test sie direkt importieren kann. Fuer die
+// Seite wird daraus ein klassisches Skript: "export " faellt weg, und ganz unten
+// haengt der Aufruf an window. Sonst muesste der Test eine Kopie lesen.
+const prayerBridgeSource = fs.readFileSync(
+  path.resolve(__dirname, '../src/season2/web/prayerBridge.js'),
+  'utf8',
+);
+if (!/export function normalizePrayerPayload/.test(prayerBridgeSource)) {
+  throw new Error(
+    'prayerBridge.js: normalizePrayerPayload fehlt oder wurde umbenannt — build-season2-html.js anpassen',
+  );
+}
+const prayerBridgeJs = [
+  '<script>',
+  prayerBridgeSource
+    .replace(/^export /gm, '')
+    // Am Dateiende an window haengen. normalizePrayerPayload ist die einzige
+    // Funktion in der Datei; falls das kippt, greift die Pruefung oben.
+    + '\nwindow.__tmsNormalizePrayer = normalizePrayerPayload;',
+  '</script>',
+].join('\n');
 
 /** Applies a required source patch and fails loudly if the mockup moved on. */
 function patch(label, find, replace) {
@@ -184,6 +208,7 @@ patch('body end', '</body>', `<style>${xterm.XTERM_CSS}
 </style>
 <script>${xterm.XTERM_XTERM}</script>
 <script>${xterm.XTERM_FIT}</script>
+<script>${prayerBridgeJs}</script>
 <script>${bridgeJs}</script>
 </body>`);
 
