@@ -457,3 +457,91 @@ export type ServerMessage =
   | ManagerStreamEndMessage
   | BrowserBridgeOpenMessage
   | BrowserBridgeCallbackResultMessage;
+
+// ── Remote access (its own WebSocket connection on /remote) ──────────
+// Deliberately not part of ClientMessage/ServerMessage: video and input travel
+// over a second connection that the page opens itself inside the WebView.
+
+export type RemoteErrorCode =
+  | 'permission_screen'
+  | 'permission_input'
+  | 'capture_unavailable'
+  | 'helper_crashed'
+  | 'disabled'
+  | 'unsupported_platform'
+  /** The display went to sleep — ScreenCaptureKit then reports no display at
+   *  all. Its own code because that otherwise looks like a permission problem,
+   *  sending the user hunting in System Settings for a checkbox that's already set. */
+  | 'display_asleep';
+
+export type RemoteQualityPreset = 'sparsam' | 'auto' | 'scharf';
+
+export interface RemoteStartMessage {
+  type: 'remote:start';
+  /** localCursor: the app draws the pointer itself (see remote:cursor). */
+  payload: { maxWidth: number; fps: number; bitrateKbps: number; localCursor?: boolean };
+}
+export interface RemoteStopMessage { type: 'remote:stop' }
+export interface RemoteKeyframeMessage { type: 'remote:keyframe' }
+/** Sent by the app for every frame it receives (ts = the frame header's
+ *  timestamp). The server bounds its queueing delay with these — see
+ *  server/src/remote/flow.ts. Older apps don't send it; the server then keeps
+ *  its buffer-size fallback. */
+export interface RemoteAckMessage { type: 'remote:ack'; payload: { ts: number } }
+
+// There is deliberately no `remote:quality` client message: the app switches
+// quality tiers by sending remote:stop followed by remote:start with the new
+// tier's options (ffmpeg on Windows can't change bitrate mid-stream, so a
+// restart is required either way — see bridge.js's TMSRemote.setQuality).
+// A dedicated message type and server-side handler for this existed early on
+// but that code path was never reachable from the app; removed rather than
+// left as dead code nobody could exercise.
+export type RemoteClientMessage =
+  | RemoteStartMessage | RemoteStopMessage | RemoteKeyframeMessage | RemoteAckMessage;
+
+export interface RemoteStartedMessage {
+  type: 'remote:started';
+  /** localCursor: true = the pointer is NOT in the video; draw it from remote:cursor. */
+  payload: { width: number; height: number; scale: number; fps: number; codec: 'avc1'; localCursor?: boolean };
+}
+/** Pointer position on the Mac, normalized 0..1 — only after a localCursor start. */
+export interface RemoteCursorMessage { type: 'remote:cursor'; payload: { x: number; y: number } }
+export interface RemoteStoppedMessage {
+  type: 'remote:stopped';
+  payload: { reason: string };
+}
+export interface RemoteErrorMessage {
+  type: 'remote:error';
+  payload: { code: RemoteErrorCode; message: string };
+}
+export interface RemoteStatusMessage {
+  type: 'remote:status';
+  payload: { fps: number; kbps: number; rttMs: number; dropped: number };
+}
+
+export type RemoteServerMessage =
+  | RemoteStartedMessage | RemoteStoppedMessage | RemoteErrorMessage | RemoteStatusMessage
+  | RemoteCursorMessage;
+
+/** Input events: short keys, since up to 60 of these can arrive per second. */
+export type RemoteInputEvent =
+  | { t: 'd'; dx: number; dy: number }
+  | { t: 'm'; x: number; y: number }
+  | { t: 'b'; b: 'l' | 'r' | 'm'; d: boolean }
+  // Scroll unit (I9): pixels of the raw touch-gesture delta, unscaled — the
+  // same numbers the pointer-drag `d` event uses. macOS feeds this straight
+  // into CGEvent's scroll wheel in `.pixel` units (a 1:1 match). Windows has
+  // no literal pixel unit for wheel input, but its own Precision Touchpad
+  // driver already sends small, sub-WHEEL_DELTA(120) mouseData values for
+  // smooth scrolling — input-helper.ps1 passes this value straight through
+  // as mouseData, the same idiom, rather than multiplying by 120 (which
+  // treated every wire pixel as a full notch and scrolled ~120x too far).
+  | { t: 's'; dx: number; dy: number }
+  | { t: 'k'; c: string; d: boolean; mods: { s: boolean; c: boolean; a: boolean; m: boolean } }
+  | { t: 'x'; s: string }
+  // Multi-finger trackpad gesture (3+ fingers on the app's pad). The server
+  // turns it into the platform's own action — see server/src/remote/gestures.ts.
+  | { t: 'g'; g: RemoteGesture };
+
+export type RemoteGesture =
+  | 'swipe-left' | 'swipe-right' | 'swipe-up' | 'swipe-down' | 'pinch-in' | 'pinch-out';
