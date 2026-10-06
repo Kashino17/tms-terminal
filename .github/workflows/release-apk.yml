@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Gebetszeiten mit echtem Azān-Schalter auch im neuen Layout. Bisher klang dort nie ein Azān, weil die Alarme am klassischen Startbildschirm geplant wurden — den das neue Layout gar nicht anzeigt. Der Schalter sitzt jetzt in dessen Einstellungen und stellt die Alarme wirklich. Enthaelt ausserdem: Alarme werden app-weit geplant und stehen nach einem Neustart des Handys wieder da, lassen sich erstmals wirklich abbrechen, und Berechnungsort sowie ein von Hand gewaehlter Ort werden zwischen beiden Layouts geteilt. Dazu im Terminal: Reiter sind wieder umbenennbar und kategorisierbar, entfernte Werkzeuge lassen sich wieder hinzufuegen, und Zeichnen und Prozesse sind wieder erreichbar." \
+            --notes "Behebt leere neue Terminals beim Tippen auf + im neuen Kartenlayout. Neue Terminal-Sitzungen werden jetzt auch bei laufenden Titel- und Status-Aktualisierungen zuverlässig gestartet. Bestehende Sitzungen bleiben erhalten. Mit vier Browser-Regressionstests für Terminal-Start, parallele Updates, mehrere neue Karten und die Listenansicht geprüft." \
             --latest

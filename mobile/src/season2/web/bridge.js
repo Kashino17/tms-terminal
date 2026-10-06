@@ -700,8 +700,11 @@
   var timer = null;
   var createTries = {}; // cardId -> Anläufe, die Karte vor dem Anlegen zu vermessen
   function syncTerms() {
-    clearTimeout(timer);
+    // Keep the first scheduled scan: frequent UI updates must not postpone
+    // terminal creation indefinitely.
+    if (timer !== null) return;
     timer = setTimeout(function () {
+      timer = null;
       document.querySelectorAll('.card-body[data-card-id]').forEach(function (host) {
         var cardId = host.getAttribute('data-card-id');
         // The cloud log viewer reuses the card-body markup but is a read-only
@@ -737,21 +740,26 @@
       });
     }, 50);
   }
-  // Watch for cards appearing and disappearing — but xterm rewrites its rows on
-  // every single chunk of output, and reacting to that made syncTerms re-measure
-  // every card continuously. That was the scroll jank. Ignore anything that
-  // happens inside a terminal.
-  // Wir suchen NEUE Karten — nichts sonst. Der Karteninhalt ist unsere eigene
-  // Ausgabe: darauf zu reagieren hieße, sich selbst zu triggern (und genau das
-  // hat vorher jedes Neuzeichnen in eine Endlosschleife geschickt, die das
-  // Vermessen der Karte nie zu Ende kommen ließ — und das Scrollen ruckeln).
+  // Only added/removed card bodies require a scan. Header, status and preview
+  // updates are not card changes; following those repeatedly remeasures every
+  // terminal and can starve a newly added card while other sessions are busy.
+  var cardBodySelector = '.card-body[data-card-id]';
+  function containsCardBody(node) {
+    return node.nodeType === 1 &&
+      (node.matches(cardBodySelector) || node.querySelector(cardBodySelector));
+  }
   new MutationObserver(function (records) {
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
       if (t.nodeType === 1 && t.closest &&
           (t.closest('.card-body[data-card-id]') || t.closest('#tmsEmulators'))) continue;
-      syncTerms();
-      return;
+      var nodes = Array.prototype.concat.call(
+        Array.prototype.slice.call(records[i].addedNodes),
+        Array.prototype.slice.call(records[i].removedNodes)
+      );
+      for (var j = 0; j < nodes.length; j++) {
+        if (containsCardBody(nodes[j])) { syncTerms(); return; }
+      }
     }
   }).observe(document.body, { childList: true, subtree: true });
   window.addEventListener('resize', function () {
