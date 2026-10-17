@@ -39,6 +39,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   // buffer gets looked up again — measured in Task 1.
   private var lastPixelBuffer: CVPixelBuffer?
   private var lastFrameAt = Date.distantPast
+  private var lastLockCheckAt = Date.distantPast
+  private var lastLockedState: Bool? = nil
   private var heartbeat: DispatchSourceTimer?
   private var cursorTimer: DispatchSourceTimer?
 
@@ -255,7 +257,18 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     let t = DispatchSource.makeTimerSource(queue: queue)
     t.schedule(deadline: .now() + 0.1, repeating: 0.1)
     t.setEventHandler { [weak self] in
-      guard let self, let px = self.lastPixelBuffer else { return }
+      guard let self else { return }
+      if Date().timeIntervalSince(self.lastLockCheckAt) >= 0.8 {
+        self.lastLockCheckAt = Date()
+        let dict = CGSessionCopyCurrentDictionary() as? [String: Any]
+        let locked = (dict?["CGSSessionScreenIsLocked"] as? Bool)
+          ?? ((dict?["CGSSessionScreenIsLocked"] as? Int ?? 0) != 0)
+        if self.lastLockedState != locked {
+          self.lastLockedState = locked
+          emit("{\"locked\":\(locked ? "true" : "false")}")
+        }
+      }
+      guard let px = self.lastPixelBuffer else { return }
       let still = Date().timeIntervalSince(self.lastFrameAt)
       if self.wantKeyframe && still > 0.1 {
         self.wantKeyframe = false
@@ -600,6 +613,47 @@ func runClipboardLoop() {
   RunLoop.main.run()
 }
 
+// ── Biometric Mac Unlock (--unlock) ─────────────────────────────────────
+// Reads a single password line from stdin, wakes the display, types the
+// password via CGEvent Unicode injection at .cghidEventTap, and presses Return.
+func runUnlock() {
+  if !AXIsProcessTrusted() {
+    fail("permission_input", "Bedienungshilfen sind nicht freigegeben")
+  }
+  guard let pw = readLine(strippingNewline: true), !pw.isEmpty else {
+    fail("unlock_empty", "Kein Passwort empfangen")
+  }
+
+  var activityAssertion: IOPMAssertionID = 0
+  IOPMAssertionDeclareUserActivity(
+    "TMS Terminal Fingerabdruck-Entsperrung" as CFString,
+    kIOPMUserActiveLocal,
+    &activityAssertion)
+
+  // Give loginwindow / SecurityAgent a brief moment to wake and focus the password field
+  usleep(120_000)
+
+  for chunk in pw.unicodeScalars.map({ UniChar($0.value) }) {
+    var c = chunk
+    let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
+    down?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
+    down?.post(tap: .cghidEventTap)
+    let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
+    up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
+    up?.post(tap: .cghidEventTap)
+    usleep(4_000)
+  }
+
+  usleep(30_000)
+  // Return key (virtualKey 36)
+  for down in [true, false] {
+    let ev = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(36), keyDown: down)
+    ev?.post(tap: .cghidEventTap)
+  }
+  usleep(20_000)
+  exit(0)
+}
+
 // ── Entry point ─────────────────────────────────────────────────────────
 let args = CommandLine.arguments
 func intArg(_ name: String, _ fallback: Int) -> Int {
@@ -620,6 +674,8 @@ if args.contains("--capture") {
   runInputLoop()
 } else if args.contains("--clipboard") {
   runClipboardLoop()
+} else if args.contains("--unlock") {
+  runUnlock()
 } else {
-  fail("capture_unavailable", "Betriebsart fehlt: --capture oder --input")
+  fail("capture_unavailable", "Betriebsart fehlt: --capture, --input oder --unlock")
 }

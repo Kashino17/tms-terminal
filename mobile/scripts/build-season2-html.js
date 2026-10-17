@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MOCKUP_DIR = '/Users/ayysir/Desktop/TMS Terminal/mockups/season2';
+const MOCKUP_DIR = path.resolve(__dirname, '../../mockups/season2');
 const OUT = path.resolve(__dirname, '../src/season2/web/liquidDeckHtml.ts');
 
 let html = fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/index.html'), 'utf8');

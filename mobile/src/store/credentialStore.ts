@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
 const STORAGE_KEY = 'tms:credentials';
+const SECURE_PREFIX = 'tms_credentials_';
+
+function secureKeyFor(serverId: string): string {
+  return `${SECURE_PREFIX}${serverId.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export type FieldType =
@@ -206,7 +212,14 @@ function makeId() {
 }
 
 function save(serverId: string, creds: Credential[]) {
-  AsyncStorage.setItem(`${STORAGE_KEY}:${serverId}`, JSON.stringify(creds)).catch(() => {});
+  const payload = JSON.stringify(creds);
+  const sKey = secureKeyFor(serverId);
+  SecureStore.setItemAsync(sKey, payload)
+    .then(() => AsyncStorage.removeItem(`${STORAGE_KEY}:${serverId}`).catch(() => {}))
+    .catch(() => {
+      // Fallback if payload exceeds SecureStore size limit
+      AsyncStorage.setItem(`${STORAGE_KEY}:${serverId}`, payload).catch(() => {});
+    });
 }
 
 // ── Store ────────────────────────────────────────────────────────────────────
@@ -231,7 +244,17 @@ export const useCredentialStore = create<CredentialState>((set, get) => ({
   async load(serverId) {
     if (get().loaded[serverId]) return;
     try {
-      const raw = await AsyncStorage.getItem(`${STORAGE_KEY}:${serverId}`);
+      const sKey = secureKeyFor(serverId);
+      let raw = await SecureStore.getItemAsync(sKey).catch(() => null);
+      if (!raw) {
+        const legacy = await AsyncStorage.getItem(`${STORAGE_KEY}:${serverId}`);
+        if (legacy) {
+          raw = legacy;
+          await SecureStore.setItemAsync(sKey, legacy)
+            .then(() => AsyncStorage.removeItem(`${STORAGE_KEY}:${serverId}`))
+            .catch(() => {});
+        }
+      }
       const creds: Credential[] = raw ? JSON.parse(raw) : [];
       set((s) => ({
         credentials: { ...s.credentials, [serverId]: creds },

@@ -3285,6 +3285,11 @@
         case 'remote:cursor':
           serverCursor(msg.payload);
           break;
+        case 'remote:locked':
+          window.remoteState.locked = !!(msg.payload && msg.payload.locked);
+          var lockBanner = document.getElementById('remoteLockBanner');
+          if (lockBanner) lockBanner.hidden = !window.remoteState.locked;
+          break;
         case 'remote:stopped':
           window.remoteState.running = false;
           renderCursor();
@@ -3357,6 +3362,11 @@
     // Von setRemoteTarget (oben in dieser Datei) aufgerufen, sobald React
     // Native die Zugangsdaten liefert — das ist der eigentliche Fix fuer C2.
     window.__tmsRemoteTargetReady = maybeConnect;
+
+    window.__tmsBiometricSudo = function (cardId) {
+      var sid = byCard[cardId] || (window.__tmsState && window.__tmsState.activeCardId && byCard[window.__tmsState.activeCardId]);
+      post('biometric:unlock', { mode: 'sudo', sessionId: sid || undefined });
+    };
 
     window.TMSRemote = {
       start: function (which) {
@@ -3454,6 +3464,7 @@
         }
       },
       dictate: function () { post('mic:start', { target: 'remote' }); },
+      biometricUnlock: function () { post('biometric:unlock', { mode: 'remote' }); },
     };
 
     // Der Mockup ruft das beim Vollbildwechsel und nach Gesten auf, kommt aber

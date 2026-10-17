@@ -9,12 +9,13 @@
  * The classic UI is untouched — Season 2 is still just a settings toggle.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert, Modal, TextInput } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as WebBrowser from 'expo-web-browser';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
@@ -156,6 +157,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // Long-Press auf eine Server-Karte öffnet dieses native Aktions-Sheet
   // (Bearbeiten + Löschen) — dieselbe Komponente wie im klassischen Layout.
   const [serverSheet, setServerSheet] = useState<{ title: string; subtitle: string; options: ActionSheetOption[] } | null>(null);
+  const macUnlockConfigured = useRef<boolean>(false);
+  const [macPasswordModal, setMacPasswordModal] = useState<{ visible: boolean; mode: 'remote' | 'sudo'; sessionId?: string } | null>(null);
+  const [macPasswordInput, setMacPasswordInput] = useState('');
   /** Griff auf den nativen Browser — Neuladen und Cache-Leeren gehen nur über ihn. */
   const browserRef = useRef<BrowserHandle>(null);
   // Browser-Bridge: session that triggered the current login-open, so its
@@ -494,6 +498,22 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('sessionExpired', m.sessionId);
         return;
       }
+      if (m?.type === 'mac:unlock_status') {
+        macUnlockConfigured.current = !!m.payload?.configured;
+        return;
+      }
+      if (m?.type === 'mac:biometric_unlock_result') {
+        if (m.payload?.ok) {
+          call('toast', 'Mac entsperrt / bestätigt ✓');
+        } else if (m.payload?.error === 'not_configured') {
+          macUnlockConfigured.current = false;
+          setMacPasswordInput('');
+          setMacPasswordModal({ visible: true, mode: 'remote' });
+        } else {
+          call('toast', `Fehler: ${m.payload?.error ?? 'Unbekannt'}`);
+        }
+        return;
+      }
       if (m?.type === 'terminal:prompt_detected' && m.sessionId) {
         // Auto-Approve führt der SERVER aus (chooseApprovalKey: Enter für
         // nummerierte Prompts, 'y' bei [y/N], nie automatisch bei Freitext).
@@ -513,9 +533,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         const kind = (m.payload as { kind?: string } | undefined)?.kind ?? info.kind;
         if (kind === 'question') return;
 
-        const autoOn = useAutoApproveStore.getState().enabled[sid] ?? true;
-
         setSessionStatus(sid, 'waiting');
+
+        if (kind === 'sudo') {
+          useTerminalStore.getState().setTabNotification(server.id, sid);
+          call('prompt', sid, {
+            ...info,
+            kind: 'sudo',
+            tool: 'sudo / Passwort',
+            target: info.target || 'Terminal',
+            question: 'Mit Fingerabdruck bestätigen?',
+          });
+          return;
+        }
+
+        const autoOn = useAutoApproveStore.getState().enabled[sid] ?? true;
 
         // Reine Berechtigung bei aktivem Auto-Approve: kein Fenster. Genau das
         // soll Auto-Approve ja ersparen — der Server hat es entweder schon
@@ -548,6 +580,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     // dieser Empfänger stand (Kaltstart: Seite lädt langsamer als der Socket).
     wsService.send({ type: 'terminal:titles_get' } as never);
     wsService.send({ type: 'clipboard:list' } as never);
+    wsService.send({ type: 'mac:unlock_status' } as never);
     return unsub;
   }, [wsService, server, ready, call, markBusy, setSessionStatus]);
 
@@ -739,8 +772,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       if (next !== 'active') flushScrollback();
       if (next !== 'active' || !restored.current) return;
       // Kurz warten: der Socket braucht nach dem Aufwachen einen Moment.
-      setTimeout(() => call('reattachAll'), 300);
-      setTimeout(() => call('reattachAll'), 1500);
+      setTimeout(() => call('reattachAll'), 350);
     });
     return () => sub.remove();
   }, [ready, call]);
@@ -1356,6 +1388,40 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
       }
 
+      case 'biometric:unlock': {
+        const mode: 'remote' | 'sudo' = payload?.mode === 'sudo' ? 'sudo' : 'remote';
+        const targetSid = (payload?.sessionId as string | undefined) || activeSessionId;
+        void (async () => {
+          try {
+            const hasHw = await LocalAuthentication.hasHardwareAsync();
+            const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+            if (!hasHw || !isEnrolled) {
+              call('toast', 'Kein Fingerabdruck / Biometrie auf dem Handy eingerichtet');
+              return;
+            }
+            const auth = await LocalAuthentication.authenticateAsync({
+              promptMessage: mode === 'sudo' ? 'Terminal-Passwort mit Fingerabdruck bestätigen' : 'Mac mit Fingerabdruck entsperren',
+              cancelLabel: 'Abbrechen',
+              disableDeviceFallback: false,
+            });
+            if (!auth.success) return;
+
+            if (!macUnlockConfigured.current) {
+              setMacPasswordInput('');
+              setMacPasswordModal({ visible: true, mode, sessionId: targetSid });
+              return;
+            }
+            wsService.send({
+              type: 'mac:biometric_unlock',
+              payload: { mode, sessionId: targetSid },
+            } as never);
+          } catch {
+            call('toast', 'Biometrie-Fehler');
+          }
+        })();
+        break;
+      }
+
       // Die Seite hat nichts mehr zum Zurückgehen. Beenden wird trotzdem nicht
       // einfach durchgewinkt: erst der zweite Druck innerhalb von zwei Sekunden.
       case 'nav:exit':
@@ -1366,7 +1432,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, token, micState, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
+  }, [wsService, server, token, activeSessionId, micState, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
@@ -1457,6 +1523,59 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         options={serverSheet?.options ?? []}
         onClose={() => setServerSheet(null)}
       />
+      {/* Einmalige Einrichtung für Mac-Touch-ID-Relay (speichert im macOS-Schlüsselbund). */}
+      <Modal
+        visible={!!macPasswordModal?.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMacPasswordModal(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>🔓 Mac-Fingerabdruck einrichten</Text>
+            <Text style={styles.modalSub}>
+              Einmalig dein Mac-Passwort eingeben. Es wird verschlüsselt im macOS-Schlüsselbund auf deinem Mac gespeichert — danach reicht dein Handy-Fingerabdruck zum Entsperren und für Passwort-Dialoge.
+            </Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Mac-Passwort"
+              placeholderTextColor="#6B7280"
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={macPasswordInput}
+              onChangeText={setMacPasswordInput}
+            />
+            <View style={styles.modalRow}>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnCancel]}
+                onPress={() => { setMacPasswordInput(''); setMacPasswordModal(null); }}
+              >
+                <Text style={styles.modalBtnCancelText}>Abbrechen</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnConfirm]}
+                onPress={() => {
+                  const pw = macPasswordInput;
+                  const target = macPasswordModal;
+                  setMacPasswordInput('');
+                  setMacPasswordModal(null);
+                  if (!pw || !wsService || !target) return;
+                  wsService.send({ type: 'mac:unlock_setup', payload: { password: pw } } as never);
+                  setTimeout(() => {
+                    wsService.send({
+                      type: 'mac:biometric_unlock',
+                      payload: { mode: target.mode, sessionId: target.sessionId },
+                    } as never);
+                  }, 250);
+                }}
+              >
+                <Text style={styles.modalBtnConfirmText}>Speichern & Entsperren</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1557,4 +1676,39 @@ const styles = StyleSheet.create({
   onboardBtnText: { color: '#0B1220', fontSize: 15, fontWeight: '700' },
   onboardLinkBtn: { marginTop: 6, paddingVertical: 8, paddingHorizontal: 12 },
   onboardLink: { color: '#60A5FA', fontSize: 13, fontWeight: '600' },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.68)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#1e232d',
+    borderRadius: 20,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(138, 184, 255, 0.25)',
+    gap: 12,
+  },
+  modalTitle: { color: '#E7ECF3', fontSize: 17, fontWeight: '700' },
+  modalSub: { color: '#93A1B5', fontSize: 13, lineHeight: 19 },
+  modalInput: {
+    backgroundColor: '#13171f',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    color: '#F3F4F6',
+    fontSize: 15,
+  },
+  modalRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4 },
+  modalBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12 },
+  modalBtnCancel: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  modalBtnCancelText: { color: '#D1D5DB', fontSize: 14, fontWeight: '600' },
+  modalBtnConfirm: { backgroundColor: '#60A5FA' },
+  modalBtnConfirmText: { color: '#0B1220', fontSize: 14, fontWeight: '700' },
 });

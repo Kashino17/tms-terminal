@@ -9,38 +9,61 @@ Protocol:
   Error:    {"id": "req-1", "error": "reason"}
 """
 
+import os
 import sys
 import json
 import re
 
-MODEL_ID = "mlx-community/Llama-3.2-3B-Instruct-4bit"
+# Prefer the 30B-A3B MoE coding model already installed on this M4 Max (only 3B
+# active params per token -> ~100+ tok/s, 30B quality, 100% local on disk).
+LOCAL_CANDIDATES = [
+    os.path.expanduser("~/.lmstudio/models/lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit"),
+    os.path.expanduser("~/.lmstudio/models/mlx-community/gemma-4-26b-a4b-it-4bit"),
+]
+FALLBACK_HF_REPO = "mlx-community/Llama-3.2-3B-Instruct-4bit"
+MODEL_ID = FALLBACK_HF_REPO
 MAX_TOKENS = 512
 
-# Llama 3.2 3B sometimes ignores the "no preamble" rule and prefixes the
-# output with a label like "Rewritten prompt:". Strip it deterministically so
-# the artifact never lands in the user's input field.
+# Strip <think>...</think> blocks and any "Rewritten prompt:" style preamble.
+THINK_RE = re.compile(r"<think>[\s\S]*?</think>\s*", re.IGNORECASE)
 PREAMBLE_RE = re.compile(
-    r"^\s*(?:(?:here is|here's|hier ist)[^:\n]{0,60}:|rewritten prompt\s*:|umgeschriebener prompt\s*:|prompt\s*:)\s*",
+    r"^\s*(?:(?:here is|here's|hier ist)[^:\n]{0,60}:|rewritten prompt\s*:|umgeschriebener prompt\s*:|prompt\s*:|korrigierter text\s*:)\s*",
     re.IGNORECASE,
 )
 
 
+def resolve_rewriter_model():
+    for path in LOCAL_CANDIDATES:
+        if os.path.isdir(path) and os.path.exists(os.path.join(path, "config.json")):
+            return path
+    try:
+        from huggingface_hub import snapshot_download
+        return snapshot_download(repo_id=FALLBACK_HF_REPO, local_files_only=True)
+    except Exception:
+        return FALLBACK_HF_REPO
+
+
 def strip_preamble(text):
-    cleaned = PREAMBLE_RE.sub("", text.strip()).strip()
+    cleaned = THINK_RE.sub("", text or "").strip()
+    cleaned = PREAMBLE_RE.sub("", cleaned).strip()
     # Unwrap if the whole output got quoted.
     if len(cleaned) >= 2 and cleaned[0] == '"' and cleaned[-1] == '"':
         cleaned = cleaned[1:-1].strip()
     return cleaned or text
 
+
 SYSTEM_PROMPT = (
-    "You are a prompt rewriter for an AI coding assistant. "
-    "Convert the user's spoken transcript into a clear, well-structured prompt. "
-    "Rules:\n"
-    "- Keep the user's intent exactly. Do not add requests they did not make.\n"
-    "- Fix grammar and remove filler words (ähm, halt, irgendwie, sozusagen).\n"
-    "- Structure with short bullet points if there are multiple distinct parts; otherwise plain prose.\n"
-    "- Preserve the original language (German stays German, English stays English).\n"
-    "- Output ONLY the rewritten prompt. No preamble, no explanation, no quotation marks."
+    "Du bist ein präziser Diktat- und Prompt-Optimierer für einen Software-Entwickler (TMS Terminal / Claude Code).\n"
+    "Wandle das gesprochene Transkript in einen klaren, sauberen Text um.\n"
+    "Regeln:\n"
+    "- Behalte die Absicht, Details und die Anredeform (IMMER 'du'/'dir', NIEMALS 'Sie') exakt bei.\n"
+    "- Korrigiere Grammatik, Zeichensetzung und entferne Füllwörter (ähm, halt, irgendwie, sozusagen).\n"
+    "- Korrigiere typische Hörfehler bei Fachbegriffen automatisch (z. B. 'Cloud Code' → 'Claude Code', "
+    "'Web View' → 'WebView', 'Tail Scale' → 'Tailscale', 'T M S' → 'TMS', 'P T Y D' → 'ptyd', "
+    "'React Nativ' → 'React Native', 'Work Tree' → 'Worktree').\n"
+    "- Nutze kurze Aufzählungspunkte nur bei mehreren getrennten Aufgaben, sonst normalen Fließtext.\n"
+    "- Behalte die Originalsprache bei (Deutsch bleibt Deutsch, Englisch bleibt Englisch).\n"
+    "- Gib AUSSCHLIESSLICH den bereinigten Text aus. Keine Einleitung, keine Erklärung, keine Anführungszeichen."
 )
 
 
@@ -57,9 +80,10 @@ def main():
         sys.stderr.flush()
         sys.exit(1)
 
-    sys.stderr.write(f"[rewriter-sidecar] Loading model {MODEL_ID}...\n")
+    resolved_model = resolve_rewriter_model()
+    sys.stderr.write(f"[rewriter-sidecar] Loading model {resolved_model}...\n")
     sys.stderr.flush()
-    model, tokenizer = load(MODEL_ID)
+    model, tokenizer = load(resolved_model)
     sys.stderr.write("[rewriter-sidecar] Model loaded.\n")
     sys.stderr.write("[rewriter-sidecar] Ready for requests.\n")
     sys.stderr.flush()

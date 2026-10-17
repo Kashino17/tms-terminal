@@ -225,6 +225,12 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
           reply({ type: 'remote:cursor', payload: { x, y } });
         });
       }
+      if (typeof c.onLockChange === 'function') {
+        c.onLockChange((locked) => {
+          if (capture !== null && capture !== c) return;
+          reply({ type: 'remote:locked', payload: { locked } });
+        });
+      }
       const info = await c.start({ ...opts, localCursor });
       capture = c;
       const injector = deps.makeInput();

@@ -1639,6 +1639,12 @@
                   background: rgba(8,12,18,.72); border: 1px solid rgba(255,255,255,.14);
                   color: rgba(255,255,255,.75); }
   [data-screen="remote"].fullscreen .remote-badge { display: block; }
+  .remote-lock-banner { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 5;
+                        padding: 10px 18px; border-radius: 999px; font: 700 12.5px var(--font-ui);
+                        color: var(--accent-ink); background: var(--accent); border: 1px solid rgba(255,255,255,.28);
+                        box-shadow: 0 8px 28px rgba(0,0,0,.55); cursor: pointer; white-space: nowrap; }
+  .remote-lock-banner[hidden] { display: none !important; }
+  .remote-lock-banner:active { transform: translateX(-50%) scale(.96); }
   .remote-pad { position: relative; height: 100%; border-radius: 14px;
                 background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.10);
                 display: flex; flex-direction: column; touch-action: none; }
@@ -1648,6 +1654,9 @@
   .remote-pad-btns button { flex: 1; padding: 11px 0; border-radius: 10px; font-size: 10px;
                             border: 1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.05);
                             color: inherit; opacity: .75; }
+  .remote-pad-btns button[data-btn="touchid"] { flex: 0 0 auto; padding: 11px 12px;
+                            border-color: rgba(var(--accent-rgb),.38); background: rgba(var(--accent-rgb),.14);
+                            color: var(--accent); opacity: .95; font-weight: 600; }
 
   /* Tasten in Handy-Hoehe (~50 px), nicht auf die Restflaeche gestreckt — zugeklappt
      wurden sie sonst 115 px hoch. Die Flaeche darueber nimmt das Mini-Trackpad. */
@@ -3194,6 +3203,7 @@
       +   '<span class="remote-dot" id="remoteDot"></span>'
       +   '<span class="remote-name" id="remoteName">Fernzugriff</span>'
       +   '<span class="remote-stat" id="remoteStat">verbinde …</span>'
+      +   '<button class="icon-btn glass" id="remoteTouchId" aria-label="Per Fingerabdruck entsperren" title="Mac mit Fingerabdruck entsperren">🔓</button>'
       +   '<button class="icon-btn glass" id="remoteClip" aria-label="Zwischenablage">📋</button>'
       +   '<button class="icon-btn glass" id="remoteFull" aria-label="Vollbild">⤢</button>'
       +   '<button class="icon-btn glass" id="remoteQuit" aria-label="Trennen">✕</button>'
@@ -3201,6 +3211,7 @@
       + '</div>'
       + '<div class="remote-stage" id="remoteStage"><canvas id="remoteCanvas"></canvas>'
       +   '<div class="remote-veil" id="remoteVeil"><span id="remoteVeilText">Verbinde …</span></div>'
+      +   '<button class="remote-lock-banner" id="remoteLockBanner" hidden>🔓 Mac per Fingerabdruck entsperren</button>'
       +   '<button class="remote-badge" id="remoteExit">⌨ + 🖱 · ⤡</button>'
       + '</div>'
       + '<div class="remote-seg" id="remoteSeg">'
@@ -3217,6 +3228,17 @@
       // "Tastatur" heisst: die Handy-Tastatur geht auf. Nur hier, im Tipp selbst,
       // laesst Android das Fokussieren die Tastatur oeffnen.
       if (btn.dataset.page === 'keys') toggleRemoteIme(true);
+    });
+    host.querySelector('#remoteTouchId').addEventListener('click', function () {
+      setOrbMenu(false);
+      if (window.TMSRemote && window.TMSRemote.biometricUnlock) window.TMSRemote.biometricUnlock();
+    });
+    host.querySelector('#remoteLockBanner').addEventListener('pointerdown', function (e) {
+      e.stopPropagation();
+    });
+    host.querySelector('#remoteLockBanner').addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (window.TMSRemote && window.TMSRemote.biometricUnlock) window.TMSRemote.biometricUnlock();
     });
     host.querySelector('#remoteClip').addEventListener('click', function () {
       setOrbMenu(false);
@@ -3386,6 +3408,7 @@
     return '<div class="remote-pad" id="remotePad">'
       + '<span class="remote-pad-hint">Wischen bewegt den Zeiger<br>Tippen klickt · zwei Finger scrollen</span>'
       + '<div class="remote-pad-btns"><button data-btn="l">Linksklick</button>'
+      + '<button data-btn="touchid" title="Mit Fingerabdruck entsperren">🔓 Touch ID</button>'
       + '<button data-btn="r">Rechtsklick</button></div></div>';
   }
   var remoteSticky = { MetaLeft: 'off', AltLeft: 'off', ControlLeft: 'off', ShiftLeft: 'off' };
@@ -3600,6 +3623,7 @@
       if (code === '__mic') { if (R) R.dictate(); return; }
       if (code === '__clip') { openClipboardSheet(); return; }
       if (code === '__ime') { toggleRemoteIme(); return; }
+      if (code === '__touchid') { if (R && R.biometricUnlock) R.biometricUnlock(); return; }
 
       // Kuerzel: Sondertasten runter, Taste tippen, Sondertasten wieder hoch —
       // unabhaengig von den haftenden Tasten (die bleiben, wie sie sind).
@@ -3972,6 +3996,14 @@
       var which = btn.dataset.btn;
       var activeId = null; // verhindert doppeltes d:false (pointerup + lostpointercapture)
 
+      if (which === 'touchid') {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (R() && R().biometricUnlock) R().biometricUnlock();
+        });
+        return;
+      }
+
       // Rechtsklick nur als sauberer TIPP (kurz, ohne Bewegung): vorher loeste
       // schon das Aufsetzen aus — wer eine Wischbewegung dort begann, klickte
       // ungewollt rechts. Der Linksklick bleibt druecken-halten-ziehen.
@@ -4085,7 +4117,7 @@
         mod('⌥', 'AltLeft'), mod('⌘', 'MetaLeft'), k('◀', 'ArrowLeft'), k('▲', 'ArrowUp'),
         k('▼', 'ArrowDown'), k('▶', 'ArrowRight')] },
       { scroll: true, keys: [
-        k('⌨', '__ime'), k('📋', '__clip'), k('🎙', '__mic'), k('⏎', 'Enter'), k('⌫', 'Backspace'),
+        k('⌨', '__ime'), k('📋', '__clip'), k('🎙', '__mic'), k('🔓', '__touchid'), k('⏎', 'Enter'), k('⌫', 'Backspace'),
         sc('⌘C', 'KeyC', 'm', 'Kopieren'), sc('⌘V', 'KeyV', 'm', 'Einfügen'), sc('⌘X', 'KeyX', 'm', 'Ausschn.'),
         sc('⌘Z', 'KeyY', 'm', 'Zurück'), sc('⇧⌘Z', 'KeyY', 'ms', 'Wieder'), sc('⌘A', 'KeyA', 'm', 'Alles'),
         sc('⌘F', 'KeyF', 'm', 'Finden'), sc('⌘S', 'KeyS', 'm', 'Sichern'), sc('⌘T', 'KeyT', 'm', 'Tab neu'),
@@ -4575,6 +4607,7 @@
               <button data-tt-cursor="→" aria-label="Rechts">${arrow(-90)}</button>
             </div>
             <button class="tt-key tt-key--enter" data-tt-key="enter" aria-label="Enter senden" title="Enter">${icon('enter', 18)}</button>
+            <button class="tt-key tt-key--icon" data-tt-key="touchid" aria-label="Passwort per Fingerabdruck" title="Passwort per Fingerabdruck (sudo)">🔓</button>
             <button class="tt-key tt-key--icon" data-tt-tool="screenshots" aria-label="Screenshots" title="Screenshots">${icon('camera', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="files" aria-label="Dateien" title="Dateien">${icon('folder', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="notes" aria-label="Notizen" title="Notizen">${icon('note', 17)}</button>
@@ -4605,6 +4638,9 @@
         else if (k === 'ctrlc' || k === 'esc') handleTermKey(k, id);
         else if (k === 'backspace') handleTermKey('backspace', id);
         else if (k === 'clear') clearActiveTerminal(id);
+        else if (k === 'touchid') {
+          if (typeof window.__tmsBiometricSudo === 'function') window.__tmsBiometricSudo(id);
+        }
         else if (k === 'selectmode') {
           toggleCardSelectionMode(id, null);
           const on = cardState[id].selectionMode;
@@ -5686,6 +5722,12 @@
       updatePendingBadge();
       return;
     }
+    if (data && data.kind === 'sudo') {
+      setIslandActivity('warn', `Passwort · ${session.name}`);
+      syncPromptSheets();
+      updatePendingBadge();
+      return;
+    }
     setIslandActivity('warn', `Claude wartet · ${session.name}`);
     if (cs.autoApprove) {
       autoApproveResolve(id, data, session);
@@ -5720,6 +5762,10 @@
     document.getElementById('permTarget').textContent = data.target || '';
     document.getElementById('permQuestion').textContent = data.question || 'Erlauben?';
     document.getElementById('permAutoBtn').setAttribute('aria-pressed', String(cs.autoApprove));
+    const yesBtn = document.querySelector('#permSheetWrap [data-act="yes"]');
+    if (yesBtn) {
+      yesBtn.textContent = data.kind === 'sudo' ? '🔓 Mit Fingerabdruck bestätigen' : 'Erlauben';
+    }
   }
   // Show the permission sheet iff a non-auto, non-question prompt is pending
   // AND Terminals is active.
@@ -5727,8 +5773,9 @@
     const id = state.pendingPromptId;
     const cs = id ? cardState[id] : null;
     const isQuestion = !!(cs && cs.pendingPrompt && cs.pendingPrompt.kind === 'question');
+    const isSudo = !!(cs && cs.pendingPrompt && cs.pendingPrompt.kind === 'sudo');
     const termActive = !document.querySelector('[data-screen="terminals"]').hidden;
-    const shouldShow = !!(cs && cs.pendingPrompt && !isQuestion && !cs.autoApprove && termActive && !document.body.classList.contains('is-locked'));
+    const shouldShow = !!(cs && cs.pendingPrompt && !isQuestion && (isSudo || !cs.autoApprove) && termActive && !document.body.classList.contains('is-locked'));
     if (shouldShow) {
       renderPermSheet(id);
       if (permWrap.hidden) openSheet(permWrap);
@@ -5794,7 +5841,8 @@
     const id = state.pendingPromptId;
     const cs = id ? cardState[id] : null;
     const isQuestion = !!(cs && cs.pendingPrompt && cs.pendingPrompt.kind === 'question');
-    const pending = !!(cs && cs.pendingPrompt && (isQuestion || !cs.autoApprove));
+    const isSudo = !!(cs && cs.pendingPrompt && cs.pendingPrompt.kind === 'sudo');
+    const pending = !!(cs && cs.pendingPrompt && (isQuestion || isSudo || !cs.autoApprove));
     const termActive = !document.querySelector('[data-screen="terminals"]').hidden;
     const badge = document.getElementById('termPendingBadge');
     if (badge) badge.hidden = !(pending && !termActive);
@@ -5803,6 +5851,7 @@
     const id = state.pendingPromptId;
     if (!id) return;
     const cs = cardState[id];
+    const data = cs && cs.pendingPrompt;
     const session = TMS_DATA.sessions.find(s => s.id === id);
     clearTimeout(cs.autoTimer);
     cs.pendingPrompt = null;
@@ -5810,9 +5859,17 @@
     closeSheet(permWrap);
     updatePendingBadge();
     if (approved) {
+      if (data && data.kind === 'sudo' && typeof window.__tmsBiometricSudo === 'function') {
+        window.__tmsBiometricSudo(id);
+        setIslandActivity('live', `Touch ID · ${session ? session.name : ''}`);
+        return;
+      }
       cs.sim.respond();
       setIslandActivity('live', `Claude arbeitet · ${session.name}`);
     } else {
+      if (data && data.kind === 'sudo') {
+        cs.sim.respond(false);
+      }
       appendOutChunk(cs, '  ⎿ ✖ Abgelehnt — Aktion gestoppt\n');
       renderCardLines(id);
       updateStatusChip(id, 'idle');
@@ -5949,12 +6006,12 @@
     if (!cs) return;
     cs.autoApprove = !cs.autoApprove;
     updateAutoToggleUI(id);
-    // Structural guard, same as handlePrompt(): a pending question prompt is
+    // Structural guard, same as handlePrompt(): a pending question or sudo prompt is
     // never touched by an auto-approve arm/disarm — toggling the flag here
     // only changes what happens to FUTURE tool-permission prompts on this
     // terminal, it must never resolve (or otherwise react to) an already-open
-    // question sheet.
-    if (cs.pendingPrompt && cs.pendingPrompt.kind !== 'question') {
+    // question/sudo sheet.
+    if (cs.pendingPrompt && cs.pendingPrompt.kind !== 'question' && cs.pendingPrompt.kind !== 'sudo') {
       const session = TMS_DATA.sessions.find(s => s.id === id);
       if (cs.autoApprove) { syncPromptSheets(); updatePendingBadge(); autoApproveResolve(id, cs.pendingPrompt, session); }
       else { clearTimeout(cs.autoTimer); renderPermSheet(id); syncPromptSheets(); updatePendingBadge(); }

@@ -27,13 +27,15 @@ export function buildHelperArgs(opts: CaptureOptions): string[] {
 export type HelperLine =
   | { kind: 'ready'; info: CaptureInfo }
   | { kind: 'error'; code: RemoteErrorCode; message: string }
-  | { kind: 'cursor'; x: number; y: number };
+  | { kind: 'cursor'; x: number; y: number }
+  | { kind: 'locked'; locked: boolean };
 
 /** Shape of a helper stderr line, loosely — fields are re-checked before use. */
 interface HelperLinePayload {
   ready?: { width: number; height: number; scale: number };
   error?: { code: string; message?: string };
   cursor?: { x: number; y: number };
+  locked?: boolean;
 }
 
 /** The helper writes one JSON object per stderr line; everything else is noise. */
@@ -61,6 +63,9 @@ export function parseHelperLine(line: string): HelperLine | null {
   }
   if (obj.cursor && Number.isFinite(obj.cursor.x) && Number.isFinite(obj.cursor.y)) {
     return { kind: 'cursor', x: obj.cursor.x, y: obj.cursor.y };
+  }
+  if (typeof obj.locked === 'boolean') {
+    return { kind: 'locked', locked: obj.locked };
   }
   return null;
 }
@@ -99,6 +104,7 @@ export function createDarwinCapture(): ScreenCapture {
   let onData: (b: Buffer) => void = () => {};
   let onError: (c: RemoteErrorCode, m: string) => void = () => {};
   let onCursor: (x: number, y: number) => void = () => {};
+  let onLockChange: (locked: boolean) => void = () => {};
   // Without this flag, a planned shutdown reports itself as a crash — and the
   // restart logic from Task 18 would start the just-stopped session again.
   let stopping = false;
@@ -150,6 +156,7 @@ export function createDarwinCapture(): ScreenCapture {
             const evt = parseHelperLine(line);
             if (!evt) continue;
             if (evt.kind === 'cursor') { onCursor(evt.x, evt.y); continue; }
+            if (evt.kind === 'locked') { onLockChange(evt.locked); continue; }
             if (evt.kind === 'ready' && !settled) { settle(); resolve(evt.info); }
             else if (evt.kind === 'error') {
               // RemoteCaptureError, not a plain Error: without the code
@@ -184,6 +191,7 @@ export function createDarwinCapture(): ScreenCapture {
     onData(cb) { onData = cb; },
     onError(cb) { onError = cb; },
     onCursor(cb) { onCursor = cb; },
+    onLockChange(cb) { onLockChange = cb; },
     requestKeyframe() { child?.stdin?.write('keyframe\n'); },
     setBitrate(kbps) { child?.stdin?.write(`bitrate ${Math.round(kbps)}\n`); },
 

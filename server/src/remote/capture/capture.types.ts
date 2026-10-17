@@ -46,5 +46,7 @@ export interface ScreenCapture {
   /** Pointer position (normalized 0..1 to the captured display), only with
    *  `localCursor`. Optional: Windows keeps the pointer in the video. */
   onCursor?(cb: (x: number, y: number) => void): void;
+  /** Screen lock state changes on macOS (true = lock screen active). */
+  onLockChange?(cb: (locked: boolean) => void): void;
   stop(): Promise<void>;
 }

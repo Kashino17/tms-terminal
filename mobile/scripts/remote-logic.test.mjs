@@ -8,8 +8,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const MOCKUP = '/Users/ayysir/Desktop/TMS Terminal/mockups/season2/liquid-deck/index.html';
+const MOCKUP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../mockups/season2/liquid-deck/index.html');
 
 function loadBlock(name) {
   const html = fs.readFileSync(MOCKUP, 'utf8');
