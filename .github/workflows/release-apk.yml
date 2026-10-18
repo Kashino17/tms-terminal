@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Handy-Fingerabdruck als Touch ID fuer den Mac: Sperrbildschirm, macOS-Passwortdialoge im Fernzugriff und sudo-Abfragen im Terminal direkt per Fingerabdruck entsperren bzw. bestaetigen (Passwort sicher im macOS-Schluesselbund gespeichert). Dazu: Upgrade der Spracheingabe (32 kHz / 128 kbps AAC, zuverlaessiges Diktat auch im Manager & Fernzugriff, Whisper Large-v3 Vollmodell + Qwen3-Coder-30B auf dem Server), sauberes Reattach ohne Duplikate beim Aufwachen und verschluesselter Credential-Store." \
+            --notes "Fernzugriff Maus-Synchronisation & Mac-Entsperrung verbessert: Sub-Pixel-Trackpad-Tracking für präzise langsame Bewegungen auf 120Hz-Displays, Unterdrückung von Finger-Abroll-Zittern beim Tippen-zum-Klicken, exakte Normierung der H.264-Bildhöhe ohne vertikalen Drift, schnellerer & sanfterer Cursor-Abgleich inkl. 400ms-Heartbeat, korrigierter SVG-Zeiger-Hotspot sowie zuverlässiges Entsperren des macOS-Sperrbildschirms über echte Hardware-Keycodes (UCKeyTranslate)." \
             --latest
