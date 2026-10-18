@@ -387,27 +387,65 @@ private func CGSIsSymbolicHotKeyEnabled(_ hotKey: Int32) -> Bool
 @_silgen_name("CGSSetSymbolicHotKeyEnabled")
 private func CGSSetSymbolicHotKeyEnabled(_ hotKey: Int32, _ enabled: Bool) -> Int32
 
-/// Fires one symbolic hot key (32 Mission Control, 33 App windows, 36 Show
-/// Desktop, 64 Spotlight, 79/81 move a space left/right). Blocks ~250 ms
-/// when it had to enable the shortcut: disabling it again before the
-/// WindowServer processed the posted press would swallow it. Serial on
-/// purpose — two quick gestures must not race each other's restore.
-private func triggerSymbolicHotKey(_ id: Int32) {
+/// Checks whether Mission Control ("Spaces Bar" / "ExposeShieldWindow") is
+/// currently open on screen. Checks both window names and WindowManager's
+/// dedicated Expose layers (19 = ExposeShieldWindow, 14 = Spaces Bar) so it
+/// works even without Screen Recording window-name access.
+private func isMissionControlOpen() -> Bool {
+  guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+    return false
+  }
+  return list.contains {
+    let name = ($0[kCGWindowName as String] as? String) ?? ""
+    if name == "ExposeShieldWindow" || name == "Spaces Bar" { return true }
+    let owner = ($0[kCGWindowOwnerName as String] as? String) ?? ""
+    let layer = ($0[kCGWindowLayer as String] as? Int) ?? 0
+    return owner == "WindowManager" && (layer == 19 || layer == 14)
+  }
+}
+
+private func postSymbolicHotKey(_ id: Int32) {
   var equiv: UInt16 = 0, code: UInt16 = 0, mods: UInt32 = 0
   guard CGSGetSymbolicHotKeyValue(id, &equiv, &code, &mods) == 0 else { return }
-  let wasEnabled = CGSIsSymbolicHotKeyEnabled(id)
-  if !wasEnabled { _ = CGSSetSymbolicHotKeyEnabled(id, true) }
+  if !CGSIsSymbolicHotKeyEnabled(id) {
+    _ = CGSSetSymbolicHotKeyEnabled(id, true)
+    usleep(30_000)
+  }
   let flags = CGEventFlags(rawValue: UInt64(mods))
   for down in [true, false] {
     let ev = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: down)
     ev?.flags = flags
     ev?.post(tap: .cghidEventTap)
-  }
-  if !wasEnabled {
-    usleep(250_000)
-    _ = CGSSetSymbolicHotKeyEnabled(id, false)
+    if down { usleep(15_000) }
   }
 }
+
+/// Fires one symbolic hot key (32 Mission Control, 33 App windows, 36 Show
+/// Desktop, 64 Spotlight, 79/81 move a space left/right).
+///
+/// On macOS 15 (WindowManager / Stage Manager):
+/// 1. Disabling the symbolic hot key 250 ms after posting races WindowManager's
+///    asynchronous SystemHotKeyEventMonitor and aborts the ~800 ms space slide,
+///    so gesture hot keys stay enabled once activated.
+/// 2. While Mission Control ("Spaces Bar") is open, 79/81 only moves the
+///    highlight inside the top overview bar without leaving Mission Control.
+///    When Mission Control is open during a space switch (79/81), we first
+///    close Mission Control (32) and then fire the space switch (79/81) so
+///    the user lands directly in the target workspace. Swiping down (33) while
+///    Mission Control is open also closes Mission Control, matching a real trackpad.
+private func triggerSymbolicHotKey(_ id: Int32) {
+  let mcOpen = isMissionControlOpen()
+  if id == 33 && mcOpen {
+    postSymbolicHotKey(32)
+    return
+  }
+  if (id == 79 || id == 81) && mcOpen {
+    postSymbolicHotKey(32)
+    usleep(500_000)
+  }
+  postSymbolicHotKey(id)
+}
+
 
 /// Which mouse buttons are currently held (set by the `btn` command).
 private var heldButtons = Set<CGMouseButton>()
@@ -468,6 +506,9 @@ func runInputLoop() {
   // report that instead of pretending to work.
   if !AXIsProcessTrusted() {
     fail("permission_input", "Bedienungshilfen sind nicht freigegeben")
+  }
+  for hkId: Int32 in [32, 33, 36, 64, 79, 80, 81, 82] {
+    _ = CGSSetSymbolicHotKeyEnabled(hkId, true)
   }
   emit("{\"ready\":{\"input\":true}}")
 
