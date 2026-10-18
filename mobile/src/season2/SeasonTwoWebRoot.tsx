@@ -1561,13 +1561,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
                   setMacPasswordInput('');
                   setMacPasswordModal(null);
                   if (!pw || !wsService || !target) return;
+                  macUnlockConfigured.current = true;
                   wsService.send({ type: 'mac:unlock_setup', payload: { password: pw } } as never);
                   setTimeout(() => {
                     wsService.send({
                       type: 'mac:biometric_unlock',
-                      payload: { mode: target.mode, sessionId: target.sessionId },
+                      payload: { mode: target.mode, sessionId: target.sessionId, password: pw },
                     } as never);
-                  }, 250);
+                  }, 150);
                 }}
               >
                 <Text style={styles.modalBtnConfirmText}>Speichern & Entsperren</Text>

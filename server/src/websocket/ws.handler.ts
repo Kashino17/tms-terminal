@@ -1079,6 +1079,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           send(ws, { type: 'mac:biometric_unlock_result', payload: { ok: false, mode: 'remote', error: 'Passwort darf nicht leer sein' } });
           return;
         }
+        send(ws, { type: 'mac:unlock_status', payload: { configured: true, supported: process.platform === 'darwin' } });
         const saved = await setMacUnlockPassword(password);
         const configured = await hasMacUnlockPassword();
         send(ws, { type: 'mac:unlock_status', payload: { configured, supported: process.platform === 'darwin' } });
@@ -1092,13 +1093,20 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     if (msg.type === 'mac:biometric_unlock') {
       const mode = msg.payload?.mode === 'sudo' ? 'sudo' : 'remote';
       const sid = msg.payload?.sessionId ?? msg.sessionId;
+      const inlinePassword = typeof msg.payload?.password === 'string' && msg.payload.password.length > 0
+        ? msg.payload.password
+        : undefined;
       void (async () => {
+        if (inlinePassword) {
+          await setMacUnlockPassword(inlinePassword);
+          send(ws, { type: 'mac:unlock_status', payload: { configured: true, supported: process.platform === 'darwin' } });
+        }
         if (mode === 'sudo') {
           if (!isValidSessionId(sid)) {
             send(ws, { type: 'mac:biometric_unlock_result', payload: { ok: false, mode: 'sudo', error: 'Keine gültige Terminal-Session' } });
             return;
           }
-          const pwd = await getMacUnlockPassword();
+          const pwd = inlinePassword ?? (await getMacUnlockPassword());
           if (!pwd) {
             send(ws, { type: 'mac:biometric_unlock_result', payload: { ok: false, mode: 'sudo', error: 'Kein Mac-Passwort im Schlüsselbund hinterlegt' } });
             return;

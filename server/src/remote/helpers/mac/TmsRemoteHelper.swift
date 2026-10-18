@@ -630,27 +630,44 @@ func runUnlock() {
     kIOPMUserActiveLocal,
     &activityAssertion)
 
-  // Give loginwindow / SecurityAgent a brief moment to wake and focus the password field
-  usleep(120_000)
+  let src = CGEventSource(stateID: .hidSystemState)
+
+  // Give loginwindow / SecurityAgent time to wake and focus the password field
+  usleep(180_000)
+
+  // Clear any stray characters in the password field first (Cmd+A then Backspace)
+  if let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(0), keyDown: true),
+     let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(0), keyDown: false) {
+    cmdDown.flags = .maskCommand
+    cmdUp.flags = .maskCommand
+    cmdDown.post(tap: .cghidEventTap)
+    cmdUp.post(tap: .cghidEventTap)
+    usleep(15_000)
+    CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(51), keyDown: true)?.post(tap: .cghidEventTap)
+    CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(51), keyDown: false)?.post(tap: .cghidEventTap)
+    usleep(25_000)
+  }
 
   for chunk in pw.unicodeScalars.map({ UniChar($0.value) }) {
     var c = chunk
-    let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
+    let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true)
     down?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
     down?.post(tap: .cghidEventTap)
-    let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
+    usleep(6_000)
+    let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false)
     up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
     up?.post(tap: .cghidEventTap)
-    usleep(4_000)
+    usleep(12_000)
   }
 
-  usleep(30_000)
+  usleep(60_000)
   // Return key (virtualKey 36)
   for down in [true, false] {
-    let ev = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(36), keyDown: down)
+    let ev = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(36), keyDown: down)
     ev?.post(tap: .cghidEventTap)
+    usleep(15_000)
   }
-  usleep(20_000)
+  usleep(30_000)
   exit(0)
 }
 

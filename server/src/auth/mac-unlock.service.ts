@@ -5,6 +5,7 @@ import { helperBinaryPath } from '../remote/paths';
 import { logger } from '../utils/logger';
 
 const KEYCHAIN_SERVICE = 'tms-terminal-mac-unlock';
+let memoryCachedPassword: string | null = null;
 
 function currentAccount(): string {
   try {
@@ -19,6 +20,7 @@ function currentAccount(): string {
  */
 export function hasMacUnlockPassword(): Promise<boolean> {
   if (process.platform !== 'darwin') return Promise.resolve(false);
+  if (memoryCachedPassword && memoryCachedPassword.length > 0) return Promise.resolve(true);
   const account = currentAccount();
   return new Promise((resolve) => {
     execFile(
@@ -36,6 +38,7 @@ export function hasMacUnlockPassword(): Promise<boolean> {
  */
 export function getMacUnlockPassword(): Promise<string | null> {
   if (process.platform !== 'darwin') return Promise.resolve(null);
+  if (memoryCachedPassword && memoryCachedPassword.length > 0) return Promise.resolve(memoryCachedPassword);
   const account = currentAccount();
   return new Promise((resolve) => {
     execFile(
@@ -48,6 +51,7 @@ export function getMacUnlockPassword(): Promise<string | null> {
           return;
         }
         const pw = stdout.replace(/\r?\n$/, '');
+        if (pw.length > 0) memoryCachedPassword = pw;
         resolve(pw.length > 0 ? pw : null);
       },
     );
@@ -59,6 +63,7 @@ export function getMacUnlockPassword(): Promise<string | null> {
  */
 export function setMacUnlockPassword(password: string): Promise<boolean> {
   if (process.platform !== 'darwin' || !password) return Promise.resolve(false);
+  memoryCachedPassword = password;
   const account = currentAccount();
   return new Promise((resolve) => {
     execFile(
@@ -67,8 +72,8 @@ export function setMacUnlockPassword(password: string): Promise<boolean> {
       { timeout: 5000 },
       (err) => {
         if (err) {
-          logger.warn(`Mac-Unlock: Keychain save failed — ${err.message}`);
-          resolve(false);
+          logger.warn(`Mac-Unlock: Keychain save failed (using in-memory fallback) — ${err.message}`);
+          resolve(true);
           return;
         }
         logger.success(`Mac-Unlock: Passwort sicher im macOS-Schlüsselbund hinterlegt (${account})`);
@@ -82,6 +87,7 @@ export function setMacUnlockPassword(password: string): Promise<boolean> {
  * Removes the stored Mac unlock password from the macOS login Keychain.
  */
 export function deleteMacUnlockPassword(): Promise<boolean> {
+  memoryCachedPassword = null;
   if (process.platform !== 'darwin') return Promise.resolve(false);
   const account = currentAccount();
   return new Promise((resolve) => {
