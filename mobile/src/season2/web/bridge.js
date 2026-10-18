@@ -2929,7 +2929,10 @@
       var h = Math.max(9, 20 * ptToPx);
       el.style.width = (h * 12 / 18) + 'px';
       el.style.height = h + 'px';
-      el.style.transform = 'translate(' + (box.x + cursor.x * box.w) + 'px,' + (box.y + cursor.y * box.h) + 'px) scale(' + (1 / view.zoom) + ')';
+      // Die Pfeilspitze im SVG liegt bei (0.5, 0.5) im 12x18-ViewBox — diesen
+      // halben ViewBox-Punkt abziehen, damit die Spitze exakt auf (cursor.x, cursor.y) zeigt.
+      var tipOff = (0.5 * (h / 18)) / (view.zoom || 1);
+      el.style.transform = 'translate(' + (box.x + cursor.x * box.w - tipOff) + 'px,' + (box.y + cursor.y * box.h - tipOff) + 'px) scale(' + (1 / view.zoom) + ')';
     }
 
     /** Vorhersage: was die App gerade schickt, sieht sie sofort. */
@@ -2937,7 +2940,8 @@
       var st = window.remoteState;
       if (!st.localCursor || !st.w) return;
       if (ev.t === 'd') {
-        var ptsW = st.w / (st.scale || 1), ptsH = st.h / (st.scale || 1);
+        var ptsW = Math.max(1, Math.round(st.w / (st.scale || 1)) - 1);
+        var ptsH = Math.max(1, Math.round(st.h / (st.scale || 1)) - 1);
         cursor.x = Math.min(1, Math.max(0, cursor.x + ev.dx / ptsW));
         cursor.y = Math.min(1, Math.max(0, cursor.y + ev.dy / ptsH));
       } else if (ev.t === 'm') {
@@ -2949,18 +2953,18 @@
       armSettle();
     }
 
-    function quietMs() { return Math.max(300, linkRttMs * 2 + 100); }
+    function quietMs() { return Math.max(85, Math.min(220, (linkRttMs || 25) * 1.5 + 40)); }
 
     /** Nach der letzten eigenen Bewegung (plus Hin- und Rueckweg) die echte Position uebernehmen. */
     function armSettle() {
       if (cursor.settleTimer) clearTimeout(cursor.settleTimer);
-      cursor.settleTimer = setTimeout(settleCursor, quietMs() + 20);
+      cursor.settleTimer = setTimeout(settleCursor, quietMs() + 15);
     }
 
     function settleCursor() {
       cursor.settleTimer = null;
       var wait = quietMs() - (Date.now() - cursor.lastLocalAt);
-      if (wait > 0) { cursor.settleTimer = setTimeout(settleCursor, wait + 20); return; }
+      if (wait > 0) { cursor.settleTimer = setTimeout(settleCursor, wait + 15); return; }
       if (!cursor.srv) return;
       cursor.x = cursor.srv.x; cursor.y = cursor.srv.y; cursor.known = true;
       renderCursor();
@@ -2971,7 +2975,18 @@
       if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
       cursor.srv = { x: p.x, y: p.y };
       var quiet = Date.now() - cursor.lastLocalAt > quietMs();
-      if (cursor.known && !quiet) { if (!cursor.settleTimer) armSettle(); return; }
+      if (cursor.known && !quiet) {
+        // Sanfte Drift-Korrektur waehrend der Bewegung, falls Vorhersage und
+        // echte Mac-Position z.B. am Bildschirmrand minimal auseinanderlaufen.
+        var errX = p.x - cursor.x, errY = p.y - cursor.y;
+        if (Math.hypot(errX, errY) < 0.035) {
+          cursor.x += errX * 0.25;
+          cursor.y += errY * 0.25;
+          renderCursor();
+        }
+        if (!cursor.settleTimer) armSettle();
+        return;
+      }
       cursor.x = p.x; cursor.y = p.y; cursor.known = true;
       renderCursor();
     }
@@ -3476,11 +3491,11 @@
     // Manuell umgeschaltet (siehe window.setRemoteFullscreen im Mockup) — hier
     // wird nur noch weitergeleitet, solange window.remoteState.fullscreen an ist.
 
-    /** Rechteck des Bildes innerhalb der Buehne, in Bildschirmkoordinaten. */
+    /** Rechteck des Bildes innerhalb der Buehne, in Bildschirmkoordinaten (inkl. Zoom/Schwenk). */
     function stageBox() {
-      var stage = document.getElementById('remoteStage');
-      if (!stage || !window.remoteState.w) return null;
-      var r = stage.getBoundingClientRect();
+      var target = canvas || document.getElementById('remoteCanvas') || document.getElementById('remoteStage');
+      if (!target || !window.remoteState.w) return null;
+      var r = target.getBoundingClientRect();
       var box = window.fitRect(window.remoteState.w, window.remoteState.h, r.width, r.height);
       return { x: r.left + box.x, y: r.top + box.y, w: box.w, h: box.h };
     }

@@ -96,7 +96,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         content = retried
       }
     }
-    guard let display = content.displays.first else {
+    let mainID = CGMainDisplayID()
+    guard let display = content.displays.first(where: { $0.displayID == mainID }) ?? content.displays.first else {
       // Don't report this as a permission problem: the checkbox is already
       // granted — the display is either asleep or none is attached at all.
       // (Reproduced exactly this way for the asleep case in Task 1's
@@ -289,16 +290,22 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   /// something on the Mac moved the pointer by itself.
   private func startCursorReports(on queue: DispatchQueue) {
     var last = CGPoint(x: -1, y: -1)
+    var lastEmitAt = Date.distantPast
     let t = DispatchSource.makeTimerSource(queue: queue)
     t.schedule(deadline: .now(), repeating: 1.0 / 60.0)
     t.setEventHandler {
       guard let loc = CGEvent(source: nil)?.location else { return }
       let b = CGDisplayBounds(CGMainDisplayID())
-      guard b.width > 0, b.height > 0 else { return }
-      let p = CGPoint(x: min(max((loc.x - b.minX) / b.width, 0), 1),
-                      y: min(max((loc.y - b.minY) / b.height, 0), 1))
-      if abs(p.x - last.x) < 0.0002 && abs(p.y - last.y) < 0.0002 { return }
+      guard b.width > 1, b.height > 1 else { return }
+      let spanW = max(1.0, b.width - 1.0)
+      let spanH = max(1.0, b.height - 1.0)
+      let p = CGPoint(x: min(max((loc.x - b.minX) / spanW, 0), 1),
+                      y: min(max((loc.y - b.minY) / spanH, 0), 1))
+      let now = Date()
+      let moved = abs(p.x - last.x) >= 0.00015 || abs(p.y - last.y) >= 0.00015
+      if !moved && now.timeIntervalSince(lastEmitAt) < 0.4 { return }
       last = p
+      lastEmitAt = now
       emit(String(format: "{\"cursor\":{\"x\":%.5f,\"y\":%.5f}}", p.x, p.y))
     }
     t.resume()
@@ -409,7 +416,7 @@ private var heldButtons = Set<CGMouseButton>()
 /// macOS apps only recognize a drag (moving windows, drag-and-drop, text
 /// selection) from leftMouseDragged/rightMouseDragged — a plain mouseMoved
 /// with the button down moved the pointer but nothing ever got dragged.
-private func warp(to p: CGPoint) {
+private func warp(to p: CGPoint, dx: Double = 0, dy: Double = 0) {
   let (type, button): (CGEventType, CGMouseButton) =
     heldButtons.contains(.left) ? (.leftMouseDragged, .left)
     : heldButtons.contains(.right) ? (.rightMouseDragged, .right)
@@ -418,8 +425,11 @@ private func warp(to p: CGPoint) {
   // After a drag the next press starts a new click series (like macOS): keep the
   // count for the matching button-up, but let the double-click window lapse.
   if type != .mouseMoved, let l = lastPress { lastPress = (l.button, l.at, -1_000, l.count) }
-  CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: button)?
-    .post(tap: .cghidEventTap)
+  if let ev = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: button) {
+    ev.setIntegerValueField(.mouseEventDeltaX, value: Int64(dx.rounded()))
+    ev.setIntegerValueField(.mouseEventDeltaY, value: Int64(dy.rounded()))
+    ev.post(tap: .cghidEventTap)
+  }
 }
 
 /// Click counting for double/triple clicks. Synthetic events always carried
@@ -497,14 +507,18 @@ func runInputLoop() {
     switch cmd {
     case "rel":
       syncIfIdle()
+      let prev = current
       current = CGPoint(x: min(max(current.x + (nums.first ?? 0), screen.minX), screen.maxX - 1),
                         y: min(max(current.y + (nums.count > 1 ? nums[1] : 0), screen.minY), screen.maxY - 1))
-      warp(to: current)
+      warp(to: current, dx: current.x - prev.x, dy: current.y - prev.y)
     case "abs":
       lastWarpAt = Date()
-      current = CGPoint(x: screen.minX + (nums.first ?? 0) * screen.width,
-                        y: screen.minY + (nums.count > 1 ? nums[1] : 0) * screen.height)
-      warp(to: current)
+      let prev = current
+      let spanW = max(1.0, screen.width - 1.0)
+      let spanH = max(1.0, screen.height - 1.0)
+      current = CGPoint(x: min(max(screen.minX + (nums.first ?? 0) * spanW, screen.minX), screen.maxX - 1),
+                        y: min(max(screen.minY + (nums.count > 1 ? nums[1] : 0) * spanH, screen.minY), screen.maxY - 1))
+      warp(to: current, dx: current.x - prev.x, dy: current.y - prev.y)
     case "btn":
       // A tap after the Mac's own mouse moved must click where the pointer IS.
       resyncIfIdle()

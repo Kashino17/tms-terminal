@@ -3838,7 +3838,7 @@
       if (e.target.closest('[data-btn]')) return;
 
       var wasEmpty = pts.size === 0;
-      pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp, moved: 0, sx: e.clientX, sy: e.clientY });
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp, moved: 0, sx: e.clientX, sy: e.clientY, remX: 0, remY: 0 });
 
       if (wasEmpty) {
         gestureDownAt = e.timeStamp;
@@ -3921,12 +3921,30 @@
         // so weit wie die Geste. Der zweite Finger zaehlt trotzdem weiter fuer die
         // Zwei-Finger-Erkennung (pts.size) und die Tippen-Klassifizierung (maxFingers).
         if (e.pointerId === leadPointerId) {
-          R().input({ t: 's', dx: Math.round(dx), dy: Math.round(dy) });
+          var sRawX = dx + (p.remX || 0);
+          var sRawY = dy + (p.remY || 0);
+          var sX = Math.trunc(sRawX), sY = Math.trunc(sRawY);
+          p.remX = sRawX - sX; p.remY = sRawY - sY;
+          if (sX !== 0 || sY !== 0) {
+            R().input({ t: 's', dx: sX, dy: sY });
+          }
         }
       } else {
+        // Kurzes Aufsetz-Zittern (< 3 px im ersten Tipp-Fenster) nicht als
+        // Zeigerbewegung schicken, damit ein Tipp-Klick das Ziel nicht im
+        // letzten Moment verzieht.
+        if (!dragging && p.moved < 3 && (e.timeStamp - gestureDownAt) < 140) return;
         var speed = Math.sqrt(dx * dx + dy * dy) / dt;
         var gain = pointerGain(speed);
-        R().input({ t: 'd', dx: Math.round(dx * gain), dy: Math.round(dy * gain) });
+        var rawX = dx * gain + (p.remX || 0);
+        var rawY = dy * gain + (p.remY || 0);
+        var sendX = Math.trunc(rawX);
+        var sendY = Math.trunc(rawY);
+        p.remX = rawX - sendX;
+        p.remY = rawY - sendY;
+        if (sendX !== 0 || sendY !== 0) {
+          R().input({ t: 'd', dx: sendX, dy: sendY });
+        }
       }
     });
 
