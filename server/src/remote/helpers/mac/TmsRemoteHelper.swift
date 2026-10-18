@@ -613,9 +613,124 @@ func runClipboardLoop() {
   RunLoop.main.run()
 }
 
+import Carbon
+
 // ── Biometric Mac Unlock (--unlock) ─────────────────────────────────────
-// Reads a single password line from stdin, wakes the display, types the
-// password via CGEvent Unicode injection at .cghidEventTap, and presses Return.
+// macOS loginwindow (Lock Screen) ignores synthetic Unicode overrides on
+// virtualKey 0 (treating every char as 'a'). We therefore map each character
+// to its real hardware CGKeyCode + Shift/Option modifiers using the active
+// macOS keyboard layout (UCKeyTranslate) and verify via CGSessionCopyCurrentDictionary
+// that the lock screen actually unlocked.
+private func isMacScreenLocked() -> Bool {
+  let dict = CGSessionCopyCurrentDictionary() as? [String: Any]
+  return (dict?["CGSSessionScreenIsLocked"] as? Bool)
+    ?? ((dict?["CGSSessionScreenIsLocked"] as? Int ?? 0) != 0)
+}
+
+private func buildCharKeyMap() -> [Character: (code: CGKeyCode, shift: Bool, option: Bool)] {
+  var map: [Character: (CGKeyCode, Bool, Bool)] = [:]
+  guard let src = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+        let ptr = TISGetInputSourceProperty(src, kTISPropertyUnicodeKeyLayoutData) else {
+    return map
+  }
+  let data = unsafeBitCast(ptr, to: CFData.self)
+  guard let bytes = CFDataGetBytePtr(data) else { return map }
+  let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
+  let kbdType = UInt32(LMGetKbdType())
+  let mainKeyCodes = (UInt16(0)..<53)
+  let modCombos: [(UInt32, Bool, Bool)] = [
+    (0, false, false),
+    (UInt32(shiftKey >> 8), true, false),
+    (UInt32(optionKey >> 8), false, true),
+    (UInt32((shiftKey | optionKey) >> 8), true, true),
+  ]
+  for (modState, isShift, isOpt) in modCombos {
+    for code in mainKeyCodes {
+      var deadKeyState: UInt32 = 0
+      var chars = [UniChar](repeating: 0, count: 4)
+      var length: Int = 0
+      let status = UCKeyTranslate(
+        layout, code, UInt16(kUCKeyActionDown), modState, kbdType,
+        UInt32(kUCKeyTranslateNoDeadKeysMask), &deadKeyState, 4, &length, &chars
+      )
+      if status == noErr && length == 1, let scalar = UnicodeScalar(chars[0]) {
+        let ch = Character(scalar)
+        if map[ch] == nil {
+          map[ch] = (CGKeyCode(code), isShift, isOpt)
+        }
+      }
+    }
+  }
+  return map
+}
+
+private func postKey(_ code: CGKeyCode, down: Bool, flags: CGEventFlags = []) {
+  guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down) else { return }
+  ev.flags = flags
+  ev.post(tap: .cghidEventTap)
+}
+
+private func typePasswordOnce(_ pw: String, charMap: [Character: (code: CGKeyCode, shift: Bool, option: Bool)]) {
+  // Clear any stray characters in the password box using plain Backspace (virtualKey 51)
+  for _ in 0..<24 {
+    postKey(51, down: true)
+    postKey(51, down: false)
+    usleep(4_000)
+  }
+  usleep(40_000)
+
+  for ch in pw {
+    if let mapped = charMap[ch] {
+      var f = CGEventFlags()
+      if mapped.shift  { f.insert(.maskShift) }
+      if mapped.option { f.insert(.maskAlternate) }
+
+      if mapped.shift {
+        postKey(56, down: true, flags: .maskShift)
+        usleep(8_000)
+      }
+      if mapped.option {
+        postKey(58, down: true, flags: f)
+        usleep(8_000)
+      }
+
+      postKey(mapped.code, down: true, flags: f)
+      usleep(12_000)
+      postKey(mapped.code, down: false, flags: f)
+      usleep(12_000)
+
+      if mapped.option {
+        postKey(58, down: false, flags: mapped.shift ? .maskShift : [])
+        usleep(8_000)
+      }
+      if mapped.shift {
+        postKey(56, down: false, flags: [])
+        usleep(8_000)
+      }
+      usleep(16_000)
+    } else {
+      // Fallback for non-mapped Unicode characters
+      for scalar in String(ch).unicodeScalars {
+        var u = UniChar(scalar.value)
+        let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
+        down?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &u)
+        down?.post(tap: .cghidEventTap)
+        usleep(10_000)
+        let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
+        up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &u)
+        up?.post(tap: .cghidEventTap)
+        usleep(14_000)
+      }
+    }
+  }
+
+  usleep(70_000)
+  // Press Return (virtualKey 36)
+  postKey(36, down: true)
+  usleep(20_000)
+  postKey(36, down: false)
+}
+
 func runUnlock() {
   if !AXIsProcessTrusted() {
     fail("permission_input", "Bedienungshilfen sind nicht freigegeben")
@@ -630,45 +745,45 @@ func runUnlock() {
     kIOPMUserActiveLocal,
     &activityAssertion)
 
-  let src = CGEventSource(stateID: .hidSystemState)
+  let wasLocked = isMacScreenLocked()
+  let charMap = buildCharKeyMap()
 
-  // Give loginwindow / SecurityAgent time to wake and focus the password field
-  usleep(180_000)
+  // Give display / loginwindow a brief moment to wake
+  usleep(150_000)
 
-  // Clear any stray characters in the password field first (Cmd+A then Backspace)
-  if let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(0), keyDown: true),
-     let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(0), keyDown: false) {
-    cmdDown.flags = .maskCommand
-    cmdUp.flags = .maskCommand
-    cmdDown.post(tap: .cghidEventTap)
-    cmdUp.post(tap: .cghidEventTap)
-    usleep(15_000)
-    CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(51), keyDown: true)?.post(tap: .cghidEventTap)
-    CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(51), keyDown: false)?.post(tap: .cghidEventTap)
-    usleep(25_000)
+  typePasswordOnce(pw, charMap: charMap)
+
+  if !wasLocked {
+    // Used for SecurityAgent dialog when screen was already unlocked
+    usleep(50_000)
+    exit(0)
   }
 
-  for chunk in pw.unicodeScalars.map({ UniChar($0.value) }) {
-    var c = chunk
-    let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true)
-    down?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
-    down?.post(tap: .cghidEventTap)
-    usleep(6_000)
-    let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false)
-    up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
-    up?.post(tap: .cghidEventTap)
-    usleep(12_000)
+  // Wait up to 1.8s for loginwindow to unlock
+  for _ in 0..<18 {
+    usleep(100_000)
+    if !isMacScreenLocked() {
+      exit(0)
+    }
   }
 
-  usleep(60_000)
-  // Return key (virtualKey 36)
-  for down in [true, false] {
-    let ev = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(36), keyDown: down)
-    ev?.post(tap: .cghidEventTap)
-    usleep(15_000)
+  // Second attempt: if the lock screen password field was collapsed ("Touch ID oder Passwort eingeben"),
+  // send Return first to open/focus the password capsule, wait 350ms, then type again.
+  postKey(36, down: true)
+  usleep(20_000)
+  postKey(36, down: false)
+  usleep(350_000)
+
+  typePasswordOnce(pw, charMap: charMap)
+
+  for _ in 0..<22 {
+    usleep(100_000)
+    if !isMacScreenLocked() {
+      exit(0)
+    }
   }
-  usleep(30_000)
-  exit(0)
+
+  fail("unlock_failed", "Sperrbildschirm blieb gesperrt — bitte einmal auf das Passwortfeld tippen oder Passwort prüfen")
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────

@@ -128,7 +128,7 @@ export async function unlockMacScreen(explicitPassword?: string): Promise<{ ok: 
       const timer = setTimeout(() => {
         proc.kill('SIGKILL');
         resolve({ ok: false, error: 'Zeitüberschreitung beim Entsperren' });
-      }, 6000);
+      }, 10000);
 
       proc.stderr?.on('data', (chunk: Buffer) => {
         stderr += chunk.toString();
