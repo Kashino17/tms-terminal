@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Terminal (Season 2): Die Karte bekommt jetzt exakt so viele Zeilen, wie hineinpassen — der obere Rand der TUI (Tab-Leiste) wird nicht mehr abgeschnitten. Maus-Eingaben gehen an Programme mit Mouse-Reporting (opencode, vim, htop): Tabs und Buttons sind antippbar, Wischen bzw. Mausrad scrollt die TUI selbst. Bei normalen Shells bleibt das native Scrollen durch den Verlauf unverändert." \
+            --notes "Terminal (Season 2): Update-Knopf installiert jetzt wirklich die neue APK (vorher war es ein Mockup-Toast); die Versionsprüfung hängt nicht mehr an der Server-Verbindung und zeigt keine Demo-Version mehr an. Maus/Tipp/Wischen funktionieren bei opencode auch nach einem App-Neustart: der Reattach-Snapshot verliert die Maus-Modi, sie werden jetzt aus dem Prozessnamen wiederhergestellt. Die Zeilenbemessung aus 1.123.3 bleibt: die TUI-Tab-Leiste wird nicht mehr abgeschnitten, Tabs sind antippbar, Wischen scrollt die TUI." \
             --latest

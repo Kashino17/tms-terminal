@@ -9053,8 +9053,13 @@
             <span class="settings-row__label">Version</span>
             <span class="settings-row__value">v${escapeHtml(TMS_DATA.update.current)}</span>
           </div>
+          ${TMS_DATA.update.latest && TMS_DATA.update.latest !== TMS_DATA.update.current ? `
           <div class="settings-row is-tap" id="updateHintRow">
             <span class="settings-row__label">Update verfügbar<small>v${escapeHtml(TMS_DATA.update.latest)} — ${escapeHtml(TMS_DATA.update.notes)}</small></span>
+            <span class="settings-row__value">›</span>
+          </div>` : ''}
+          <div class="settings-row is-tap" id="updateCheckRow">
+            <span class="settings-row__label">Nach Updates suchen<small>Aktuelle Version prüfen</small></span>
             <span class="settings-row__value">›</span>
           </div>
         </div>
@@ -9097,7 +9102,10 @@
     document.getElementById('pinChangeRow').addEventListener('click', togglePinEditor);
     document.getElementById('lockNowRow').addEventListener('click', lockApp);
     document.getElementById('prayerRow').addEventListener('click', () => show('prayer'));
-    document.getElementById('updateHintRow').addEventListener('click', () => toast(`v${TMS_DATA.update.latest} verfügbar — ${TMS_DATA.update.notes}`));
+    const uh = document.getElementById('updateHintRow');
+    if (uh) uh.addEventListener('click', () => post('update:install', {}));
+    const uc = document.getElementById('updateCheckRow');
+    if (uc) uc.addEventListener('click', () => post('update:check', {}));
     const slider = document.getElementById('fontSizeSlider');
     slider.addEventListener('input', () => {
       termFontSizePx = Number(slider.value);

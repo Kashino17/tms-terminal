@@ -380,6 +380,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
       if (m?.type === 'terminal:reattached' && m.sessionId) {
+        // Der Snapshot des Servers enthaelt keine DECSET-Modi. Der Prozessname
+        // sagt der Seite, ob sie Maus-Reporting lokal wiederherstellen muss
+        // (opencode), sonst blieben Tipp und Wheel nach jedem Kaltstart tot.
+        call('setProcessName', m.sessionId, m.payload?.processName ?? '');
         // Die Seite bestätigt ihre echten xterm-Maße (settle-geschützter
         // Resize-Weg). Heilt eine unterwegs verlorene Breite, ohne den
         // unzuverlässigen Attach-Maßen zu vertrauen — die haben als
@@ -720,11 +724,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   }, [ready, pushServers]);
 
   // ── Update-Banner, getrennt vom Server-Status.
+  //    GitHub ist auch erreichbar, wenn der TMS-Server gerade offline ist —
+  //    die frühere Bedingung `state === 'connected'` verhinderte dann jeden
+  //    Update-Check. Und die Seite startete mit Mockup-Daten (1.4.2/2.0.0),
+  //    wodurch "Über" eine falsche Version und ein Fake-Update zeigte.
   const updateChecked = useRef(0);
+  const updateInit = useRef(false);
   useEffect(() => {
-    if (!ready || state !== 'connected') return;
+    if (!ready) return;
     let cancelled = false;
     (async () => {
+      const current = getCurrentVersion();
+      if (!updateInit.current) {
+        updateInit.current = true;
+        call('setUpdate', { current, latest: current, notes: '' });
+      }
       // Höchstens alle 30 Minuten: vorher hing `rtt` in den Abhängigkeiten,
       // der Effekt lief bei JEDEM RTT-Tick (alle 3s) und hämmerte die
       // GitHub-API — nach ~3 Minuten griff deren Rate-Limit (60/h) und das
@@ -735,10 +749,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       const up = await checkForUpdate().catch(() => null);
       if (cancelled || !up) return; // null heißt auch: schon aktuell
       updateUrl.current = up.downloadUrl;
-      call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
+      call('setUpdate', { current, latest: up.version, notes: up.changelog });
     })();
     return () => { cancelled = true; };
-  }, [ready, state, call]);
+  }, [ready, call]);
 
   // ── Nach jedem RECONNECT neu anhängen. Der Server hängt Sessions beim
   //    Verbindungsabriss ab und puffert ihren Output — ohne Reattach bliebe
@@ -884,6 +898,45 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     // darunter bleibt für alle anderen Nachrichten unverändert.
     if (type === 'remote:open' && (!wsService || !server)) {
       call('toast', 'Erst mit dem Server verbinden, dann Fernzugriff öffnen');
+      return;
+    }
+
+    // ── Updates. Brauchen keinen Server: GitHub ist auch erreichbar, wenn die
+    //    TMS-Verbindung gerade weg ist. Vor dem Guard, sonst wäre der Knopf
+    //    ausgerechnet dann tot, wenn man ihn braucht.
+    if (type === 'update:install') {
+      if (updateUrl.current) {
+        call('toast', 'Update wird geladen …');
+        downloadAndInstall(updateUrl.current).catch(() => call('toast', 'Update fehlgeschlagen'));
+        return;
+      }
+      // Kein Check gelaufen: jetzt nachholen.
+      call('toast', 'Suche nach Updates …');
+      void (async () => {
+        const up = await checkForUpdate().catch(() => null);
+        if (!up) {
+          call('toast', `Du bist auf dem neuesten Stand (v${getCurrentVersion()})`);
+          return;
+        }
+        updateUrl.current = up.downloadUrl;
+        call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
+        call('toast', `Update v${up.version} wird geladen …`);
+        downloadAndInstall(up.downloadUrl).catch(() => call('toast', 'Update fehlgeschlagen'));
+      })();
+      return;
+    }
+    if (type === 'update:check') {
+      call('toast', 'Suche nach Updates …');
+      void (async () => {
+        const up = await checkForUpdate().catch(() => null);
+        if (!up) {
+          call('toast', `Du bist auf dem neuesten Stand (v${getCurrentVersion()})`);
+          return;
+        }
+        updateUrl.current = up.downloadUrl;
+        call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
+        call('toast', `v${up.version} verfügbar`);
+      })();
       return;
     }
 
@@ -1320,13 +1373,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
       }
-
-      case 'update:install':
-        if (updateUrl.current) {
-          call('toast', 'Update wird geladen …');
-          downloadAndInstall(updateUrl.current).catch(() => call('toast', 'Update fehlgeschlagen'));
-        }
-        break;
 
       case 'nav:classic':
         if (payload.screen === 'settings') navigation.navigate('Settings');

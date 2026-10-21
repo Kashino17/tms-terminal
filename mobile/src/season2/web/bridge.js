@@ -264,7 +264,13 @@
     term.onData(function (d) { window.__tmsInput(cardId, d); });
     term.onResize(function (sz) { queueResize(cardId, sz.cols, sz.rows); });
 
-    terms[cardId] = { term: term, box: box, host: host, scrollTotal: 0 };
+    terms[cardId] = { term: term, box: box, host: host, scrollTotal: 0, cardId: cardId };
+    // Kam der Prozessname schon vor dem Mount (Reattach-Rennen), hier nachziehen.
+    var sid0 = byCard[cardId];
+    if (sid0) {
+      terms[cardId].forceMouse = isMouseTui(procBySession[sid0]);
+      forceMouseOn(terms[cardId]);
+    }
     // Monotoner Scroll-Zähler: die Basis der GLOBALEN Zeilen-IDs des Renderers.
     // Absolute Puffer-Indizes allein taugen nicht als Adresse — sobald der
     // xterm-Ringpuffer voll ist (baseY sättigt am Scrollback-Limit), verschiebt
@@ -719,7 +725,7 @@
     var sid = byCard[cardId];
     var t = terms[cardId];
     if (!sid || !t || !queued[sid]) return;
-    queued[sid].forEach(function (c) { t.term.write(c); });
+    queued[sid].forEach(function (c) { writeTerm(t, c); });
     delete queued[sid];
   }
 
@@ -1018,10 +1024,50 @@
   // abgeschnitten (man kommt nie weiter nach oben) und Tabs/Buttons der TUI
   // reagieren nicht. xterm kennt Protokoll und Encoding bereits; wir fragen
   // seinen CoreMouseService, statt SGR-Sequenzen zu raten.
+  //
+  // Reattach-Falle: der Server schickt nach einem App-Neustart nur einen
+  // SerializeAddon-Snapshot. Der enthaelt Text und Farben, aber KEINE DECSET-
+  // Modi — opencode schaltet Maus-Reporting nur EINMAL beim Start ein, nie
+  // beim Resize. Danach waere areMouseEventsActive fuer immer false und
+  // Tipp/Wheel tot. Der Server nennt beim Reattach aber den Vordergrundprozess
+  // (terminal:reattached.processName). Fuer bekannte Maus-TUIs stellen wir die
+  // Modi lokal wieder her; das PTY sieht davon nichts.
+  var procBySession = {};
+  var MOUSE_TUIS = { opencode: 1 };
+  function isMouseTui(name) {
+    var n = String(name || '').toLowerCase().split('/').pop();
+    return !!MOUSE_TUIS[n];
+  }
+  function forceMouseOn(t) {
+    if (!t || t.mouseForced || t.forceBlocked) return;
+    var sid = byCard[t.cardId];
+    if (!isMouseTui(procBySession[sid])) return;
+    t.mouseForced = true;
+    t.forceMouse = true;
+    t.term.write('\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h');
+  }
+  /** Live-Ausgabe beobachten: ein explizites Ausschalten der TUI gewinnt. */
+  function noteMouseModes(t, chunk) {
+    if (!t || !chunk || typeof chunk !== 'string' || chunk.indexOf('\x1b[?100') === -1) return;
+    var on = /\x1b\[\?(?:1000|1002|1003|1006)h/.test(chunk);
+    var off = /\x1b\[\?(?:1000|1002|1003|1006|1015|1016)l/.test(chunk);
+    if (on) t.forceBlocked = false;
+    if (off && !on) {
+      t.forceMouse = false;
+      t.mouseForced = false;
+      t.forceBlocked = true;
+    }
+  }
+  function writeTerm(t, chunk, cb) {
+    noteMouseModes(t, chunk);
+    t.term.write(chunk, cb);
+  }
   function mouseService(t) {
     var core = t && t.term && t.term._core;
     var svc = core && core.coreMouseService;
-    return svc && svc.areMouseEventsActive ? svc : null;
+    if (!svc) return null;
+    if (!svc.areMouseEventsActive) forceMouseOn(t);
+    return svc.areMouseEventsActive ? svc : null;
   }
   /** Zeile/Spalte unter dem Finger -> 0-basierte Screen-Zelle. */
   function mouseCell(pre, line, x) {
@@ -1352,6 +1398,20 @@
 
   // ── React Native → WebView ────────────────────────────────────────────────
   window.TMSBridge = {
+    /** Vordergrundprozess einer Session — vom Server beim Reattach mitgeschickt.
+     *  Bekannte Maus-TUIs (opencode) bekommen ihre DECSET-Modi lokal zurueck,
+     *  weil der Snapshot sie nicht enthaelt. */
+    setProcessName: function (sessionId, name) {
+      if (!sessionId) return;
+      procBySession[sessionId] = name || '';
+      var cardId = cardOf(sessionId);
+      var t = cardId && terms[cardId];
+      if (!t) return;
+      t.forceMouse = isMouseTui(name);
+      t.mouseForced = false;
+      t.forceBlocked = false;
+      forceMouseOn(t);
+    },
     /** Nach einem Reattach die WAHREN xterm-Maße über den normalen,
      *  beruhigten Resize-Weg bestätigen. Stimmen sie mit der PTY überein,
      *  ist das serverseitig ein No-op (kein SIGWINCH, kein Repaint); ging
@@ -1450,7 +1510,7 @@
     output: function (sessionId, chunk) {
       var cardId = cardOf(sessionId);
       if (!cardId || !terms[cardId]) { (queued[sessionId] = queued[sessionId] || []).push(chunk); return; }
-      terms[cardId].term.write(chunk, function () { scheduleRender(cardId); });
+      writeTerm(terms[cardId], chunk, function () { scheduleRender(cardId); });
       refreshPreview(cardId);
     },
     /** App im Vordergrund? Im Hintergrund ruht das Malen (siehe __tmsCardVisible). */
@@ -2745,6 +2805,8 @@
   window.TMSBridge.setUpdate = function (update) {
     window.TMS_DATA.update = update;
     if (typeof window.renderServers === 'function') window.renderServers();
+    if (typeof window.renderSettings === 'function' &&
+        window.TMS_DATA.servers && window.TMS_DATA.servers.length) window.renderSettings();
   };
   /** React Native owns Auto-Approve; make the card's toggle agree with it. */
   window.TMSBridge.setAutoApprove = function (cardId, on) {
