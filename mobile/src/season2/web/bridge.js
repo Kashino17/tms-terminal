@@ -297,27 +297,48 @@
     return xterm256(cell.getBgColor());
   }
 
-  /** Eine Pufferzeile -> [{text, style}] zusammengefasste Abschnitte. */
+  /** Effektiver Zell-Hintergrund; inverse Zellen tauschen Vorder- und Hintergrund. */
+  function cellBg(cell) {
+    var fg = colorOf(cell, true), bg = colorOf(cell, false);
+    // Muss zu runStyle() passen, sonst weicht das Zeilenband vom Lauf ab.
+    if (cell.isInverse()) return fg || '#f0f2f6';
+    return bg;
+  }
+
+  /**
+   * Eine Pufferzeile -> zusammengefasste Abschnitte + der Hintergrund, den ALLE
+   * Zellen der Zeile teilen (oder null).
+   *
+   * Warum das GANZE Zeilenband zählt: eine TUI wie opencode malt ihre Panels
+   * als lückenlose Hintergrundfarbe über die komplette Breite. Ein Inline-Span
+   * deckt aber nur die Font-Box ab (ca. 15px bei 13px Schrift), nicht die
+   * Zeilenhöhe (1,6 → 20,8px) — dadurch blieben zwischen den Zeilen Streifen in
+   * Kartenfarbe stehen. Einen einheitlichen Zeilenhintergrund malt deshalb der
+   * Block .term-line selbst (volle Zeilenhöhe, volle Breite).
+   */
   function rowRuns(line) {
-    var runs = [], cur = null;
+    var runs = [], cur = null, uniformBg;
     for (var i = 0; i < line.length; i++) {
       var cell = line.getCell(i);
       if (!cell) continue;
       var ch = cell.getChars() || ' ';
+      var cbg = cellBg(cell);
+      if (uniformBg === undefined) uniformBg = cbg;
+      else if (uniformBg !== cbg) uniformBg = null;
       var st = (colorOf(cell, true) || '') + '|' + (colorOf(cell, false) || '') + '|' +
                (cell.isBold() ? 'b' : '') + (cell.isDim() ? 'd' : '') +
                (cell.isItalic() ? 'i' : '') + (cell.isUnderline() ? 'u' : '') + (cell.isInverse() ? 'v' : '');
       if (!cur || cur.st !== st) { cur = { st: st, text: '', cell: cell }; runs.push(cur); }
       cur.text += ch;
     }
-    return runs;
+    return { runs: runs, bg: uniformBg === undefined ? null : uniformBg };
   }
 
-  function runStyle(cell) {
+  function runStyle(cell, lineBg) {
     var fg = colorOf(cell, true), bg = colorOf(cell, false), css = '';
     if (cell.isInverse()) { var tmp = fg; fg = bg || '#1e2126'; bg = tmp || '#f0f2f6'; }
     if (fg) css += 'color:' + fg + ';';
-    if (bg) css += 'background:' + bg + ';';
+    if (bg && bg !== lineBg) css += 'background:' + bg + ';';
     if (cell.isBold()) css += 'font-weight:700;';
     if (cell.isDim()) css += 'opacity:.62;';
     if (cell.isItalic()) css += 'font-style:italic;';
@@ -331,13 +352,20 @@
    * Umgebrochene Links werden über die LOGISCHE Zeile erkannt, damit ein Tipp
    * die ganze URL liefert statt der Hälfte bis zum Zeilenumbruch.
    */
-  /** Baut den Inhalt einer .term-line (den inneren __text-Span) für EINE Zeile. */
+  /** Baut den Inhalt einer .term-line (den inneren __text-Span) für EINE Zeile.
+   *  Gibt zusätzlich den einheitlichen Zeilenhintergrund zurück; der gehört auf
+   *  den .term-line-Block (der Patcher schreibt ihn dorthin). */
   function buildRowInner(line, linkRanges) {
-    if (!line) return '<span class="term-line__text"></span>';
-    var runs = rowRuns(line);
+    if (!line) return { inner: '<span class="term-line__text"></span>', bg: null };
+    var rr = rowRuns(line);
+    var runs = rr.runs, lineBg = rr.bg;
     var col = 0, html = '';
     for (var q = 0; q < runs.length; q++) {
-      var run = runs[q], style = runStyle(run.cell), txt = run.text;
+      var run = runs[q], style = runStyle(run.cell, lineBg), txt = run.text;
+      var runBg = cellBg(run.cell);
+      // Ein abweichender Hintergrund innerhalb der Zeile kann nicht am Block
+      // liegen — er bekommt .term-run (inline-block, volle Zeilenhöhe).
+      var runClass = runBg && runBg !== lineBg ? ' class="term-run"' : '';
       // Den Abschnitt an Link-Grenzen zerlegen, damit die URL anklickbar wird.
       var pos = 0;
       while (pos < txt.length) {
@@ -353,7 +381,7 @@
         }
         var piece = txt.slice(pos, stop);
         if (piece) {
-          var inner = '<span style="' + style + '">' + escapeHtml(piece) + '</span>';
+          var inner = '<span' + runClass + ' style="' + style + '">' + escapeHtml(piece) + '</span>';
           html += hit
             ? '<span class="wrapped-link" data-url="' + escapeHtml(hit.url) +
               '" data-short="' + escapeHtml(hit.url.slice(-10)) + '" role="link">' + inner + '</span>'
@@ -363,13 +391,17 @@
       }
       col += txt.length;
     }
-    return '<span class="term-line__text">' + html + '</span>';
+    return { inner: '<span class="term-line__text">' + html + '</span>', bg: lineBg };
   }
 
-  function rowWrapper(k, inner) {
+  function rowWrapper(k, inner, bg) {
     // data-b markiert Bridge-eigene Zeilen: daran erkennt der Patcher fremde
     // Rebuilds (renderCardLines des Mockups) und fällt auf den Vollaufbau zurück.
-    return '<span class="term-line" data-b="1" data-i="' + k + '">' + inner + '</span>';
+    // Der Zeilenhintergrund (TUI-Panel) sitzt am Block, damit er die volle
+    // Zeilenhöhe deckt — nicht am Inline-Span (der nur die Font-Box malt).
+    return '<span class="term-line" data-b="1" data-i="' + k + '"' +
+      (bg ? ' data-bg="' + bg + '" style="background:' + bg + '"' : '') +
+      '>' + inner + '</span>';
   }
 
   function invalidateRowCache(cardId) {
@@ -470,6 +502,7 @@
         text: line ? line.translateToString(true) : '',
         wrapped: !!(line && line.isWrapped),
         inner: null,           // wird unten gebaut, sobald die Links bekannt sind
+        bg: null,              // einheitlicher Zeilenhintergrund (TUI-Panel)
         sig: null,
         frozen: i - trimmed < baseY, // fertig gescrollt = ändert sich nie wieder
       };
@@ -490,7 +523,9 @@
       var sig = '';
       for (var si = 0; si < ranges.length; si++) sig += ranges[si].from + ':' + ranges[si].to + ':' + ranges[si].url + ';';
       if (row.inner !== null && row.sig === sig) continue;
-      row.inner = buildRowInner(buf.getLine(start + r - trimmed), ranges);
+      var built = buildRowInner(buf.getLine(start + r - trimmed), ranges);
+      row.inner = built.inner;
+      row.bg = built.bg;
       row.sig = sig;
     }
 
@@ -508,7 +543,7 @@
 
     if (!canPatch) {
       var out = new Array(total);
-      for (var f = 0; f < total; f++) out[f] = rowWrapper(f, rows[f].inner);
+      for (var f = 0; f < total; f++) out[f] = rowWrapper(f, rows[f].inner, rows[f].bg);
       pre.innerHTML = out.join('');
       dom = t.dom = {};
       for (var f2 = 0; f2 < total; f2++) dom[start + f2] = rows[f2].inner;
@@ -521,9 +556,18 @@
       var keep = Math.min(lineEls.length, total);
       for (var p = 0; p < keep; p++) {
         var absI = start + p;
+        var el = lineEls[p];
         if (dom[absI] !== rows[p].inner) {
-          lineEls[p].innerHTML = rows[p].inner;
+          el.innerHTML = rows[p].inner;
           dom[absI] = rows[p].inner;
+        }
+        // Der Panel-Hintergrund liegt am Block (siehe rowWrapper) und muss
+        // deshalb separat nachgezogen werden — er ändert sich auch dann, wenn
+        // der Zeileninhalt gleich bleibt (TUI malt ihren Hintergrund um).
+        var wantBg = rows[p].bg || '';
+        if ((el.dataset.bg || '') !== wantBg) {
+          if (wantBg) { el.style.background = wantBg; el.dataset.bg = wantBg; }
+          else { el.style.background = ''; delete el.dataset.bg; }
         }
       }
       // Sollte das DOM je LÄNGER sein als das Fenster (kommt regulär nicht
@@ -532,7 +576,7 @@
       if (total > keep) {
         var addHtml = '';
         for (var n = keep; n < total; n++) {
-          addHtml += rowWrapper(n, rows[n].inner);
+          addHtml += rowWrapper(n, rows[n].inner, rows[n].bg);
           dom[start + n] = rows[n].inner;
         }
         if (keep > 0) lineEls[keep - 1].insertAdjacentHTML('afterend', addHtml);

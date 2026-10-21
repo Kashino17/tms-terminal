@@ -821,13 +821,29 @@
   .jump-bottom-orb.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
   .jump-bottom-orb:active { transform: scale(.92); }
   .jump-bottom-orb.pulse::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid rgba(var(--accent-rgb),.55); animation: ringPulse 1.3s ease-out infinite; pointer-events: none; }
-  .term-line { display: block; white-space: pre-wrap; word-break: break-word; padding: 1px 0; border-radius: 4px; }
-  .term-line.is-selected { background: rgba(var(--accent-rgb),.22); }
+  /* Kein vertikales Padding: das Zeilenband (Hintergrund am Block bzw. an
+     .term-run) muss die volle Zeilenhöhe decken. Der 1px-Abstand von vorher
+     steckt jetzt in der Zeilenhöhe — dieselbe Gesamthöhe (1.6em + 2px),
+     gleiche Grundlinie, aber ohne unmalbare Padding-Streifen. */
+  .term-line { display: block; white-space: pre-wrap; word-break: break-word; padding: 0; line-height: calc(1.6em + 2px); border-radius: 0; }
+  /* TUI-Panels (opencode/Claude) malen ihre Zeilen komplett in einer
+     Hintergrundfarbe. Der Block trägt sie (bridge.js: rowWrapper/Patcher), damit
+     sie die VOLLE Zeilenhöhe deckt — ein Inline-Span deckt nur die Font-Box ab,
+     dazwischen blieben Streifen in Kartenfarbe. Abweichende Hintergründe
+     innerhalb einer Zeile laufen als .term-run mit voller Zeilenhöhe.
+     Keine Rundung an der Zeile: über mehrere Zeilen ergäbe sie Sichtschlitze
+     zwischen den Zeilenbändern; die Auswahl bringt ihre Rundung selbst mit. */
+  .term-run { display: inline-block; line-height: inherit; }
+  .term-line.is-selected { background: rgba(var(--accent-rgb),.22) !important; border-radius: 4px; }
+  /* Auswahl/Tap muessen auch Zeilen mit mehreren Hintergruenden (Chips, Cursor)
+     als ein Band faerben — sonst verdeckt der Inline-Hintergrund die Markierung. */
+  .term-line.is-selected .term-run,
+  .selection-mode .term-line:active .term-run { background-color: transparent !important; }
   /* Zeichengenaue Auswahl (bridge.js): der Browser malt die Markierung ueber die
      Custom-Highlight-API, die Zeilen selbst bleiben unangetastet. */
   ::highlight(term-sel) { background-color: rgba(var(--accent-rgb),.38); }
   .selection-mode .term-line { cursor: pointer; }
-  .selection-mode .term-line:active { background: rgba(var(--accent-rgb),.12); }
+  .selection-mode .term-line:active { background: rgba(var(--accent-rgb),.12) !important; }
   .sgr-b { font-weight: 700; } .sgr-d { opacity: .58; } .sgr-g { color: var(--ok); } .sgr-r { color: var(--err); }
   .wrapped-link { color: var(--accent); text-decoration: underline; text-decoration-color: rgba(var(--accent-rgb),.4); text-underline-offset: 2px; cursor: pointer; word-break: break-all; }
 
