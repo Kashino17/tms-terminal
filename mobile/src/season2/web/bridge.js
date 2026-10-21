@@ -104,14 +104,23 @@
    * ein ZWEITES Mal um. Genau das hat den Inhalt zerrissen und verschoben.
    */
   function measureCell(pre) {
+    // Höhe an einer ECHTEN .term-line messen: die Font-Box des Spans ist nur
+    // ~15px hoch, die gezeichnete Zeile aber line-height (1.6em + 2px) ≈ 22,8px.
+    // Mit der Font-Box als Zeilenhöhe bekam die PTY zu viele rows — die TUI malte
+    // mehr Zeilen, als in die Karte passen, und der obere Rand (Tab-Leiste!) war
+    // dauerhaft abgeschnitten.
     var probe = document.createElement('span');
-    probe.className = 'term-line__text';
+    probe.className = 'term-line';
     probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;left:-9999px;';
-    probe.textContent = new Array(101).join('0');
+    var text = document.createElement('span');
+    text.className = 'term-line__text';
+    text.textContent = new Array(101).join('0');
+    probe.appendChild(text);
     pre.appendChild(probe);
-    var r = probe.getBoundingClientRect();
+    var r = text.getBoundingClientRect();
+    var h = probe.getBoundingClientRect().height;
     probe.remove();
-    return { w: r.width / 100, h: r.height };
+    return { w: r.width / 100, h: h };
   }
 
   /** Karte vermessen → gewünschte Spalten/Zeilen. null, wenn (noch) ohne Größe. */
@@ -1001,6 +1010,121 @@
     if (!list.length) CSS.highlights.delete('term-sel');
   }
 
+  // ── Maus an echte TUIs (opencode, vim, htop …) ────────────────────────────
+  // Diese Programme laufen im Alternate Screen und schalten Mouse-Reporting an
+  // (?1000/?1002/?1003 zusammen mit ?1006). Dann gibt es KEINEN Terminal-
+  // Scrollback: der sichtbare Ausschnitt ist die ganze App. Blaettern und
+  // Tippen muessen deshalb als Maus-Event ins PTY — sonst wirkt der Output
+  // abgeschnitten (man kommt nie weiter nach oben) und Tabs/Buttons der TUI
+  // reagieren nicht. xterm kennt Protokoll und Encoding bereits; wir fragen
+  // seinen CoreMouseService, statt SGR-Sequenzen zu raten.
+  function mouseService(t) {
+    var core = t && t.term && t.term._core;
+    var svc = core && core.coreMouseService;
+    return svc && svc.areMouseEventsActive ? svc : null;
+  }
+  /** Zeile/Spalte unter dem Finger -> 0-basierte Screen-Zelle. */
+  function mouseCell(pre, line, x) {
+    var t = terms[pre.getAttribute('data-card-id')];
+    var svc = mouseService(t);
+    if (!svc || !line) return null;
+    var rel = Number(line.dataset.i);
+    if (!isFinite(rel)) return null;
+    var buf = t.term.buffer.active;
+    // Gleiche Rechnung wie renderTerm: globale Zeile -> Pufferzeile -> Screen.
+    var trimmed = (t.scrollTotal === undefined ? buf.baseY : t.scrollTotal) - buf.baseY;
+    var bufLine = (t.domStart || 0) + rel - trimmed;
+    var row = bufLine - buf.baseY;
+    if (row < 0 || row >= t.term.rows) return null; // Historie ist kein Mausziel
+    var col = Math.max(0, Math.min(t.term.cols - 1, colAt(pre, line, x, 'floor')));
+    return { svc: svc, col: col, row: row };
+  }
+  /** xterm-Action: 1 = Druck, 0 = Loslassen, 0/1 + Taste 4 = Wheel hoch/runter. */
+  function sendMouse(svc, col, row, button, action) {
+    try {
+      svc.triggerMouseEvent({ col: col, row: row, button: button, action: action,
+        ctrl: false, alt: false, shift: false });
+    } catch (e) { /* keine Mouse-API: dann lieber nichts senden als Zeichensalat */ }
+  }
+  /** Sichtbare Zeile an y — auch wenn die Karte gerade gescrollt ist. */
+  function lineAtPoint(pre, y) {
+    var lines = pre.querySelectorAll('.term-line');
+    if (!lines.length) return null;
+    var h = lines[0].getBoundingClientRect().height || 20;
+    var top = pre.getBoundingClientRect().top +
+      (parseFloat(getComputedStyle(pre).paddingTop) || 0) - pre.scrollTop;
+    var idx = Math.floor((y - top) / h);
+    return lines[Math.max(0, Math.min(lines.length - 1, idx))];
+  }
+  function sendWheel(pre, x, y, up, ticks) {
+    if (pre.classList.contains('selection-mode')) return false;
+    var cell = mouseCell(pre, lineAtPoint(pre, y), x);
+    if (!cell) return false;
+    for (var i = 0; i < ticks; i++) sendMouse(cell.svc, cell.col, cell.row, 4, up ? 0 : 1);
+    return true;
+  }
+  /** Ein Tipp wird zum Linksklick (Druck + Loslassen) in der TUI. */
+  function sendTap(pre, line, x) {
+    var cell = mouseCell(pre, line, x);
+    if (!cell) return false;
+    sendMouse(cell.svc, cell.col, cell.row, 0, 1);
+    sendMouse(cell.svc, cell.col, cell.row, 0, 0);
+    return true;
+  }
+
+  // Nach Langdruck (Auswahl) oder Wischen darf kein Klick mehr folgen.
+  var tapBlockUntil = 0;
+  var WHEEL_STEP = 20; // px Fingerweg pro Raststufe
+  var touchPan = null;
+
+  document.addEventListener('touchstart', function (e) {
+    touchPan = null;
+    if (e.touches.length !== 1) return;
+    var pre = e.target.closest && e.target.closest('.card-body[data-card-id]');
+    if (!pre || !mouseService(terms[pre.getAttribute('data-card-id')])) return;
+    var p = e.touches[0];
+    touchPan = { pre: pre, y0: p.clientY, x0: p.clientX, lastY: p.clientY, axis: 0, acc: 0 };
+  }, { capture: true, passive: true });
+
+  document.addEventListener('touchmove', function (e) {
+    if (!touchPan || e.touches.length !== 1) return;
+    var p = e.touches[0];
+    var dy = p.clientY - touchPan.lastY, dx = p.clientX - touchPan.x0;
+    if (!touchPan.axis) {
+      if (Math.abs(dx) < 5 && Math.abs(p.clientY - touchPan.y0) < 5) return;
+      // Waagerecht ist eine Karten-/App-Geste — die nicht abfangen.
+      if (Math.abs(dx) > Math.abs(p.clientY - touchPan.y0)) { touchPan = null; return; }
+      touchPan.axis = 1;
+      dy = 0;
+    }
+    e.preventDefault(); // kein DOM-Scroll: die TUI blaettert selbst
+    touchPan.lastY = p.clientY;
+    touchPan.acc += dy;
+    var ticks = Math.floor(Math.abs(touchPan.acc) / WHEEL_STEP);
+    if (ticks > 0) {
+      // Finger nach unten = aeltere Zeilen (Wheel hoch), wie beim nativen Scrollen.
+      var up = touchPan.acc > 0;
+      // An der START-Stelle bleiben: beim Ziehen wandert der Finger sonst ueber
+      // Statusleiste/Eingabefeld, wo ein Wheel-Event nichts mehr bewirkt.
+      sendWheel(touchPan.pre, touchPan.x0, touchPan.y0, up, Math.min(ticks, 6));
+      touchPan.acc -= (up ? 1 : -1) * ticks * WHEEL_STEP;
+      tapBlockUntil = Date.now() + 500;
+    }
+  }, { capture: true, passive: false });
+
+  function endTouchPan() { touchPan = null; }
+  document.addEventListener('touchend', endTouchPan, true);
+  document.addEventListener('touchcancel', endTouchPan, true);
+
+  // Mausrad (Desktop/Chromebook) genauso weiterreichen.
+  document.addEventListener('wheel', function (e) {
+    if (e.ctrlKey) return;
+    var pre = e.target.closest && e.target.closest('.card-body[data-card-id]');
+    if (!pre) return;
+    var ticks = Math.max(1, Math.min(6, Math.round(Math.abs(e.deltaY) / 40) || 1));
+    if (sendWheel(pre, e.clientX, e.clientY, e.deltaY < 0, ticks)) e.preventDefault();
+  }, { capture: true, passive: false });
+
   window.positionHandlesAndBubble = function (cardId) {
     var pre = selPre(cardId);
     var cs = window.__tmsCardState && window.__tmsCardState[cardId];
@@ -1078,6 +1202,7 @@
   function startLineSelection(line, x) {
     var pre = line.closest('.card-body[data-card-id]');
     if (!pre) return;
+    tapBlockUntil = Date.now() + 900; // nach dem Markieren keinen TUI-Klick senden
     var id = pre.getAttribute('data-card-id');
     if (!pre.classList.contains('selection-mode') && typeof window.toggleCardSelectionMode === 'function') {
       window.toggleCardSelectionMode(id, null);
@@ -1174,6 +1299,13 @@
     if (pre.classList.contains('selection-mode')) return; // Zeile antippen = auswählen
 
     if (e.target.closest('.wrapped-link') || e.target.closest('.jump-bottom-orb')) return;
+    // Echte TUI mit Mouse-Reporting: den Tipp als Linksklick ins PTY geben.
+    // Ohne das reagierten Tabs/Buttons von opencode nie — der Tipp landete nur
+    // in der Eingabezeile der App. Ein Klick ist Druck + Loslassen an derselben
+    // Zelle; bei Auswahl/Wischen ist er gesperrt (tapBlockUntil).
+    if (e.detail > 0 && Date.now() >= tapBlockUntil) {
+      sendTap(pre, e.target.closest('.term-line'), e.clientX);
+    }
     var id = pre.getAttribute('data-card-id');
     if (window.__tmsState) window.__tmsState.activeCardId = id;
     if (typeof window.setDockPage === 'function') window.setDockPage('term');

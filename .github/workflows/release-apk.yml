@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Terminal-Darstellung (Season 2) repariert: ANSI-Hintergründe der TUI-Panels decken jetzt die volle Zeilenhöhe statt nur die Schriftbox — die hellen Streifen zwischen den Zeilenbändern sind verschwunden. Auswahl und Tap färben auch Zeilen mit mehreren Hintergründen als ein durchgehendes Band." \
+            --notes "Terminal (Season 2): Die Karte bekommt jetzt exakt so viele Zeilen, wie hineinpassen — der obere Rand der TUI (Tab-Leiste) wird nicht mehr abgeschnitten. Maus-Eingaben gehen an Programme mit Mouse-Reporting (opencode, vim, htop): Tabs und Buttons sind antippbar, Wischen bzw. Mausrad scrollt die TUI selbst. Bei normalen Shells bleibt das native Scrollen durch den Verlauf unverändert." \
             --latest
