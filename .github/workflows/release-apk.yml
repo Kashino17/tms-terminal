@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fernzugriff Maus-Synchronisation & Mac-Entsperrung verbessert: Sub-Pixel-Trackpad-Tracking für präzise langsame Bewegungen auf 120Hz-Displays, Unterdrückung von Finger-Abroll-Zittern beim Tippen-zum-Klicken, exakte Normierung der H.264-Bildhöhe ohne vertikalen Drift, schnellerer & sanfterer Cursor-Abgleich inkl. 400ms-Heartbeat, korrigierter SVG-Zeiger-Hotspot sowie zuverlässiges Entsperren des macOS-Sperrbildschirms über echte Hardware-Keycodes (UCKeyTranslate)." \
+            --notes "Terminal-Darstellung (Season 2) repariert: ANSI-Hintergründe der TUI-Panels decken jetzt die volle Zeilenhöhe statt nur die Schriftbox — die hellen Streifen zwischen den Zeilenbändern sind verschwunden. Auswahl und Tap färben auch Zeilen mit mehreren Hintergründen als ein durchgehendes Band." \
             --latest
