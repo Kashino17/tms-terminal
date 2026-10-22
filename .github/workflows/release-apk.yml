@@ -72,5 +72,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Verbindungen, Terminals und die Season-2-Einstellung gehen beim Aufklappen des Fold nicht mehr verloren: Android baute die App beim Wechsel auf den grossen Bildschirm neu auf, dabei schloss die Datenbank mitten im Schreiben und loeschte sich beim naechsten Oeffnen komplett. Jetzt bleibt die App beim Aufklappen einfach offen, die Datenbank loescht sich nie mehr selbst, und Server, Einstellungen und Terminal-Reiter liegen zusaetzlich als Sicherungskopie auf dem Geraet." \
+            --notes "Aufklappen des Fold lässt die App und ihre Verbindungen offen: Die kleinste Bildschirmbreite wird jetzt abgefangen, statt die Activity neu aufzubauen. Muss Android bei einer anderen Konfigurationsänderung doch neu starten, wartet die App auf ihre gespeicherten Einstellungen und Terminal-Reiter, bevor sie die Oberfläche aufbaut, und eine neu geladene WebView-Seite holt ihre Karten und Sitzungen automatisch zurück. Server, Einstellungen und Terminal-Reiter liegen zusätzlich als Sicherungskopie auf dem Gerät; die Datenbank löscht sich bei einem Schreibfehler nicht mehr selbst." \
             --latest

@@ -9,7 +9,7 @@ import { AppNavigator } from './navigation/AppNavigator';
 import { LockScreen } from './screens/LockScreen';
 import { AdhanAlert } from './components/AdhanAlert';
 import { useLockStore } from './store/lockStore';
-import { useSettingsStore } from './store/settingsStore';
+import { useSettingsStore, settingsHydration } from './store/settingsStore';
 import { colors } from './theme';
 import { ResponsiveProvider } from './hooks/useResponsive';
 import { registerBackgroundHandler, registerForegroundHandler, registerNotificationResponseHandler } from './services/notifications.service';
@@ -47,6 +47,12 @@ export default function App() {
   // on the inner Stack.Navigator alone does not reliably reset navigation
   // state, so initialRouteName was ignored when flipping the Design switch.
   const seasonTwoEnabled = useSettingsStore((s) => s.seasonTwoEnabled);
+  // Do not mount NavigationContainer with the default `false` while the stored
+  // value is still on its way. On a cold start that used to init the classic
+  // navigator first; the remount after hydration is not always visible to
+  // React Navigation, so the app could stay in the old UI.
+  const [settingsHydrated, setSettingsHydrated] = useState(settingsHydration.isDone);
+  useEffect(() => settingsHydration.subscribe(() => setSettingsHydrated(true)), []);
   const [appReady, setAppReady] = useState(false);
   // Der Wecker-Modus (Fajr) laeuft von selbst an, ohne Knopf. Deshalb steht er
   // hier und nicht im Bildschirm — der Dialog muss auch erscheinen, wenn gerade
@@ -139,7 +145,7 @@ export default function App() {
   }, []);
 
   // Blank screen while reading AsyncStorage (~30ms) to prevent flash
-  if (!appReady || !ready) {
+  if (!appReady || !ready || !settingsHydrated) {
     return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
   }
 

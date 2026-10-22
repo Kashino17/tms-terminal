@@ -4,6 +4,10 @@ import { upsertTab, repairTabs } from './tabIdentity';
 import { durableStorage } from '../services/durableStorage';
 import { TerminalTab } from '../types/terminal.types';
 import { ConnectionState } from '../types/websocket.types';
+import { createPersistHydration } from './persistHydration';
+
+/** Season 2 must not decide "there are no tabs" before the store has read them. */
+export const terminalHydration = createPersistHydration();
 
 interface TerminalState {
   tabs: Record<string, TerminalTab[]>;
@@ -125,6 +129,8 @@ export const useTerminalStore = create<TerminalState>()(
         }
         return persisted;
       },
+      // Called on success AND on a failed read; finishHydration does not fire on errors.
+      onRehydrateStorage: () => () => terminalHydration.complete(),
     },
   ),
 );

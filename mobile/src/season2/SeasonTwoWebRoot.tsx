@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useSettingsStore } from '../store/settingsStore';
-import { useTerminalStore } from '../store/terminalStore';
+import { useTerminalStore, terminalHydration } from '../store/terminalStore';
 import { isUserTitle } from '../store/tabIdentity';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
@@ -127,6 +127,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
+  /** Incremented for every fresh page: a reloaded bridge starts without cards. */
+  const [pageEpoch, setPageEpoch] = useState(0);
+  // Restore only after the persisted tabs are in memory; otherwise an empty
+  // store is mistaken for "this server has no terminals" and never retried.
+  const [tabsHydrated, setTabsHydrated] = useState(terminalHydration.isDone);
+  useEffect(() => terminalHydration.subscribe(() => setTabsHydrated(true)), []);
   /** Letzte Gebetszeiten — der Testknopf braucht sie, um einen Alarm zu stellen. */
   const prayerTimesRef = useRef<PrayerTimes | null>(null);
   const { server, token, wsService, state, rtt } = useS2Connection();
@@ -793,7 +799,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
   // ── Once connected, hand the page the sessions that already exist.
   useEffect(() => {
-    if (!ready || !server || state !== 'connected' || restored.current) return;
+    if (!ready || !tabsHydrated || !server || state !== 'connected' || restored.current) return;
     if (!scrollbackReady.current) return; // sonst hingen die Karten leer da
     restored.current = true;
     const live = useTerminalStore
@@ -815,7 +821,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // Terminal kam zurueck, die App zeigte "an", der Server drueckte nichts.
       wsService?.send({ type: 'client:set_auto_approve', sessionId: t.sessionId, payload: { enabled: on } } as never);
     });
-  }, [ready, server, state, call, sheets, scrollbackTick, wsService]);
+  }, [ready, pageEpoch, tabsHydrated, server, state, call, sheets, scrollbackTick, wsService]);
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
   const { micState, toggle: toggleMic } = useDictation({
@@ -858,7 +864,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     try { msg = JSON.parse(event.nativeEvent.data); } catch { return; }
     const { type, payload } = msg;
 
-    if (type === 'bridge:ready') { setReady(true); return; }
+    if (type === 'bridge:ready') {
+      // A native WebView recreation (Fold unfold, Activity relaunch) loads a
+      // fresh page while this React component — and `restored` — survives.
+      // Without resetting it, the new page never gets its cards back.
+      restored.current = false;
+      sessionStatus.current = {};
+      setReady(true);
+      setPageEpoch((n) => n + 1);
+      return;
+    }
 
     // Server-Verwaltung muss IMMER gehen — auch ohne aktive Verbindung (der Guard
     // unten würde sie sonst verschlucken). Bearbeiten nutzt den bestehenden
