@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { TOOL_CATALOG } from '../components/toolCatalog';
+
+/** IDs, die es noch gibt. Alles andere wird beim Laden aus den Abschnitten entfernt. */
+const KNOWN_TOOL_IDS = new Set(TOOL_CATALOG.map((t) => t.id));
 
 interface OrbPosition { xPct: number; yPct: number }
 
@@ -69,7 +73,10 @@ const DEFAULT_GROUPS: OrbGroupData[] = [
 
 const DEFAULT_TOOL_SECTIONS: ToolSection[] = [
   { id: 'monitoring', title: 'Monitoring', toolIds: ['ports', 'processes'] },
-  { id: 'cloud', title: 'Cloud & Daten', toolIds: ['sql', 'render', 'vercel', 'supabase'] },
+  // Kein 'supabase' hier mehr: das Werkzeug stand im Menue, hatte aber keinen Fall
+  // im renderPanelContent — der Tipp oeffnete ein leeres Sheet. Die Verbindung
+  // steht im SQL-Panel.
+  { id: 'cloud', title: 'Cloud & Daten', toolIds: ['sql', 'render', 'vercel'] },
   { id: 'ai', title: 'AI & Workflow', toolIds: ['autoApprove', 'snippets', 'autopilot', 'watchers'] },
   { id: 'files', title: 'Dateien & Medien', toolIds: ['files', 'screenshots', 'drawing', 'browser'] },
 ];
@@ -288,6 +295,18 @@ export const useOrbLayoutStore = create<OrbLayoutState>()(
       // mic orb stayed gone. DEFAULT_DOCK_ORDER lists every catalog orb id.
       onRehydrateStorage: () => (state) => {
         state?.restoreMissingOrbs(DEFAULT_DOCK_ORDER);
+        // Werkzeuge, die es im Katalog nicht mehr gibt (supabase), aus den
+        // gespeicherten Abschnitten entfernen. Sonst steht in einer alten
+        // Installation ein stummes Werkzeug, das beim Tippen ein leeres Sheet
+        // oeffnet — genau der Fehler, den es hier zu beheben galt.
+        if (state) {
+          const clean = state.toolSections.map((s) => ({
+            ...s,
+            toolIds: s.toolIds.filter((id) => KNOWN_TOOL_IDS.has(id)),
+          }));
+          const changed = clean.some((s, i) => s.toolIds.length !== state.toolSections[i].toolIds.length);
+          if (changed) state.updateToolSections(clean);
+        }
       },
     },
   ),

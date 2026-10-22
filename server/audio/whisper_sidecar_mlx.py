@@ -18,8 +18,53 @@ import tempfile
 import numpy as np
 
 CHUNK_DURATION_SECS = 60
-MODEL_REPO = "mlx-community/whisper-large-v3-turbo"
+PRIMARY_MODEL_REPO = "mlx-community/whisper-large-v3-mlx"
+FALLBACK_MODEL_REPO = "mlx-community/whisper-large-v3-turbo"
+MODEL_REPO = PRIMARY_MODEL_REPO
 TARGET_RATE = 16000
+
+# Domain-specific vocabulary prompt so Whisper accurately recognizes German +
+# English coding terms (Denglisch) and project names without misspelling them.
+INITIAL_PROMPT = (
+    "TMS Terminal, Claude Code, Fernzugriff, TypeScript, React Native, Expo, "
+    "WebView, Tailscale, Git, Commit, Branch, Worktree, Server, Terminal, "
+    "Prompt, Refactoring, Build, Release, APK, Hook, Store, Component, API, "
+    "WebSocket, ptyd, MLX, Whisper, sudo, macOS, Keychain, Touch ID, Galaxy Fold."
+)
+
+# Known Whisper silence/outro hallucinations in German/English
+HALLUCINATION_PHRASES = (
+    "untertitel der amara.org-community",
+    "untertitel im auftrag des zdf",
+    "untertitel von",
+    "vielen dank fürs zuschauen",
+    "vielen dank für's zuschauen",
+    "danke fürs zuschauen",
+    "abonnieren sie unseren kanal",
+    "bis zum nächsten mal",
+    "thank you for watching",
+    "thanks for watching",
+    "subtitles by",
+)
+
+
+def resolve_model_path(preferred_repo=PRIMARY_MODEL_REPO):
+    """Resolve HuggingFace repo to a local snapshot path once at startup.
+
+    Passing a local directory path to mlx_whisper.transcribe() avoids a network
+    roundtrip (`Fetching 4 files`) to huggingface.co on every single request.
+    Falls back to FALLBACK_MODEL_REPO if the primary model is unavailable offline.
+    """
+    try:
+        from huggingface_hub import snapshot_download
+        for repo in (preferred_repo, FALLBACK_MODEL_REPO):
+            try:
+                return snapshot_download(repo_id=repo, local_files_only=True)
+            except Exception:
+                continue
+        return snapshot_download(repo_id=preferred_repo)
+    except Exception:
+        return preferred_repo
 
 
 def _find_ffmpeg():
@@ -92,12 +137,81 @@ def wav_bytes_to_float32(raw_bytes):
     return _ffmpeg_to_float32(raw_bytes)
 
 
+def trim_silence(samples, sample_rate, threshold=0.003, pad_secs=0.15):
+    """Trim leading and trailing silence while keeping a small pad_secs margin.
+
+    Returns an empty array if the entire clip contains no speech energy above
+    threshold, preventing Whisper from hallucinating on pure silence.
+    """
+    if samples.shape[0] == 0:
+        return samples
+    win = max(1, int(sample_rate * 0.02))  # 20ms frame
+    if samples.shape[0] < win:
+        return samples if float(np.max(np.abs(samples))) >= threshold else np.zeros(0, dtype=np.float32)
+    # Fast RMS envelope over 20ms frames
+    n_frames = samples.shape[0] // win
+    framed = samples[: n_frames * win].reshape(n_frames, win)
+    rms = np.sqrt(np.mean(framed * framed, axis=1))
+    active = np.flatnonzero(rms >= threshold)
+    if active.size == 0:
+        return np.zeros(0, dtype=np.float32)
+    pad = int(sample_rate * pad_secs)
+    start = max(0, int(active[0]) * win - pad)
+    end = min(samples.shape[0], int(active[-1] + 1) * win + pad)
+    return samples[start:end]
+
+
+def filter_hallucinations(text):
+    """Remove known Whisper silence hallucinations."""
+    if not text:
+        return ""
+    cleaned = text.strip()
+    lower = cleaned.lower().rstrip(".!?,;:")
+    for phrase in HALLUCINATION_PHRASES:
+        if lower == phrase or lower.startswith(phrase + " ") or lower.endswith(" " + phrase):
+            if len(lower) <= len(phrase) + 12:
+                return ""
+    return cleaned
+
+
+def _find_pause_split(samples, target_idx, sample_rate, search_secs=6.0):
+    """Find the lowest-energy 100ms valley near target_idx so we split in a speech pause."""
+    n = samples.shape[0]
+    half_win = int(sample_rate * search_secs)
+    lo = max(1, target_idx - half_win)
+    hi = min(n - 1, target_idx + half_win)
+    frame = max(1, int(sample_rate * 0.1))  # 100ms pause window
+    if hi - lo <= frame * 2:
+        return target_idx
+    region = samples[lo:hi]
+    n_frames = region.shape[0] // frame
+    if n_frames < 2:
+        return target_idx
+    energies = np.mean(region[: n_frames * frame].reshape(n_frames, frame) ** 2, axis=1)
+    # If all frames have identical energy (e.g. synthetic zero array in tests), keep exact target_idx
+    if float(np.max(energies) - np.min(energies)) < 1e-12:
+        return target_idx
+    best_frame = int(np.argmin(energies))
+    return lo + best_frame * frame + frame // 2
+
+
 def split_audio(samples, sample_rate, chunk_secs=CHUNK_DURATION_SECS):
-    """Split samples into <=chunk_secs slices. Short audio (<=1.2x chunk) stays a single chunk."""
+    """Split samples into ~chunk_secs slices at speech pauses. Short audio (<=1.2x chunk) stays a single chunk."""
     chunk_len = int(sample_rate * chunk_secs)
-    if samples.shape[0] <= chunk_len * 1.2:
+    total_len = samples.shape[0]
+    if total_len <= chunk_len * 1.2:
         return [samples]
-    return [samples[i:i + chunk_len] for i in range(0, samples.shape[0], chunk_len)]
+    chunks = []
+    pos = 0
+    while pos < total_len:
+        remaining = total_len - pos
+        if remaining <= chunk_len * 1.2:
+            chunks.append(samples[pos:])
+            break
+        split_at = _find_pause_split(samples, pos + chunk_len, sample_rate)
+        chunks.append(samples[pos:split_at])
+        pos = split_at
+    return chunks
 
 
 def chunk_failure_placeholder(chunk_index, total_chunks, error):
@@ -118,21 +232,40 @@ def _emit(obj):
     print(json.dumps(obj))
 
 
-def transcribe_chunk(mlx_whisper, samples, language):
+def transcribe_chunk(mlx_whisper, samples, language, model_path=None):
     """Transcribe one chunk (numpy float32). One retry, then raise."""
+    trimmed = trim_silence(samples, TARGET_RATE)
+    if trimmed.shape[0] == 0:
+        return ""
+    repo_or_path = model_path or MODEL_REPO
     last_err = None
     for _attempt in range(2):
         try:
             result = mlx_whisper.transcribe(
-                samples, path_or_hf_repo=MODEL_REPO, language=language
+                trimmed,
+                path_or_hf_repo=repo_or_path,
+                language=language,
+                initial_prompt=INITIAL_PROMPT,
+                condition_on_previous_text=False,
+                no_speech_threshold=0.6,
+                compression_ratio_threshold=2.4,
             )
-            return result.get("text", "").strip()
+            return filter_hallucinations(result.get("text", "").strip())
+        except TypeError:
+            # Fallback for test doubles or older mlx_whisper signatures that only accept basic kwargs
+            try:
+                result = mlx_whisper.transcribe(
+                    trimmed, path_or_hf_repo=repo_or_path, language=language
+                )
+                return filter_hallucinations(result.get("text", "").strip())
+            except Exception as e2:  # noqa: BLE001
+                last_err = e2
         except Exception as e:  # noqa: BLE001 — resilience boundary
             last_err = e
     raise last_err
 
 
-def handle_request(mlx_whisper, req):
+def handle_request(mlx_whisper, req, model_path=None):
     req_id = req.get("id", "unknown")
     audio_b64 = req.get("audio_base64", "")
     language = req.get("language", "de")
@@ -150,14 +283,14 @@ def handle_request(mlx_whisper, req):
     parts = []
 
     if total == 1:
-        text = transcribe_chunk(mlx_whisper, chunks[0], language)
+        text = transcribe_chunk(mlx_whisper, chunks[0], language, model_path=model_path)
         _emit({"id": req_id, "text": text})
         return
 
     _log(f"[whisper-mlx] {req_id}: split into {total} chunks")
     for i, chunk in enumerate(chunks):
         try:
-            text = transcribe_chunk(mlx_whisper, chunk, language)
+            text = transcribe_chunk(mlx_whisper, chunk, language, model_path=model_path)
         except Exception as e:  # noqa: BLE001
             _log(f"[whisper-mlx] {req_id}: chunk {i+1}/{total} failed: {e}")
             text = chunk_failure_placeholder(i, total, str(e))
@@ -168,6 +301,7 @@ def handle_request(mlx_whisper, req):
 
 
 def main():
+    global MODEL_REPO
     sys.stdout.reconfigure(line_buffering=True)
     _log("[whisper-mlx] Starting up...")
     try:
@@ -177,11 +311,18 @@ def main():
         _log("[whisper-mlx] Install with: pip install mlx-whisper")
         sys.exit(1)
 
-    # Warm the model so the first real request is fast.
-    _log(f"[whisper-mlx] Loading model {MODEL_REPO}...")
+    resolved_path = resolve_model_path(PRIMARY_MODEL_REPO)
+    MODEL_REPO = resolved_path
+    _log(f"[whisper-mlx] Loading model {PRIMARY_MODEL_REPO} ({resolved_path})...")
     try:
+        # Warm the model with a small synthetic tone so the first real request is instantaneous (~0.25s).
+        warmup_audio = (np.sin(np.linspace(0, 440 * 2 * np.pi, 16000)) * 0.05).astype(np.float32)
         mlx_whisper.transcribe(
-            np.zeros(16000, dtype=np.float32), path_or_hf_repo=MODEL_REPO, language="de"
+            warmup_audio,
+            path_or_hf_repo=resolved_path,
+            language="de",
+            initial_prompt=INITIAL_PROMPT,
+            condition_on_previous_text=False,
         )
     except Exception as e:  # noqa: BLE001
         _log(f"[whisper-mlx] Warmup failed (continuing): {e}")
@@ -196,7 +337,7 @@ def main():
         except json.JSONDecodeError:
             continue
         try:
-            handle_request(mlx_whisper, req)
+            handle_request(mlx_whisper, req, model_path=resolved_path)
         except Exception as e:  # noqa: BLE001
             _emit({"id": req.get("id", "unknown"), "error": str(e)})
 

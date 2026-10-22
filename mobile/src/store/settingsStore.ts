@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { durableStorage } from '../services/durableStorage';
+import { createPersistHydration } from './persistHydration';
+
+/** The UI must not mount before `seasonTwoEnabled` has been read from disk. */
+export const settingsHydration = createPersistHydration();
 
 interface SettingsState {
   /** Idle threshold in seconds. 0 = notifications disabled. Default: 30. */
@@ -98,7 +102,10 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'tms-settings',
-      storage: createJSONStorage(() => AsyncStorage),
+      // Also mirrored to a file: an AsyncStorage wipe must not lose this (durableStorage.core.mjs).
+      storage: createJSONStorage(() => durableStorage),
+      // Called on success AND on a failed read; finishHydration does not fire on errors.
+      onRehydrateStorage: () => () => settingsHydration.complete(),
     },
   ),
 );

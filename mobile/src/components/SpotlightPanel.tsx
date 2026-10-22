@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, fonts } from '../theme';
+import { TOOL_CATALOG } from './toolCatalog';
 import type { TerminalTab } from '../types/terminal.types';
 import { tabDisplayName } from '../utils/tabDisplayName';
 
@@ -31,24 +32,22 @@ interface SpotlightItem {
 
 // ── Static data ─────────────────────────────────────────────────────────────
 
-const TOOL_ITEMS: SpotlightItem[] = [
-  { id: 'autoApprove',  label: 'Auto Approve',  category: 'TOOLS', dotColor: '#22C55E' },
-  { id: 'snippets',     label: 'Snippets',      category: 'TOOLS', dotColor: '#F59E0B' },
-  { id: 'files',        label: 'Dateien',        category: 'TOOLS', dotColor: '#F59E0B' },
-  { id: 'screenshots',  label: 'Screenshots',    category: 'TOOLS', dotColor: '#06B6D4' },
-  { id: 'autopilot',    label: 'Autopilot',      category: 'TOOLS', dotColor: '#A78BFA' },
-  { id: 'watchers',     label: 'Watchers',       category: 'TOOLS', dotColor: '#F59E0B' },
-  { id: 'ports',        label: 'Ports',          category: 'TOOLS', dotColor: '#10B981' },
-  { id: 'sql',          label: 'SQL',            category: 'TOOLS', dotColor: '#3B82F6' },
-  { id: 'render',       label: 'Render',         category: 'TOOLS', dotColor: '#6366F1' },
-  { id: 'vercel',       label: 'Vercel',         category: 'TOOLS', dotColor: '#F8FAFC' },
-  { id: 'supabase',     label: 'Supabase',       category: 'TOOLS', dotColor: '#3ECF8E' },
-];
+// Aus dem Katalog gebaut, damit Spotlight und Werkzeugmenu nie auseinanderlaufen:
+// vorher fehlten hier Werkzeuge, die das Menue zeigte, und umgekehrt.
+const TOOL_ITEMS: SpotlightItem[] = TOOL_CATALOG.map((t) => ({
+  id: t.id,
+  label: t.label,
+  category: 'TOOLS',
+  dotColor: t.color,
+}));
 
 const NAV_ITEMS: SpotlightItem[] = [
   { id: 'browser',      label: 'Browser',        category: 'NAVIGATION', dotColor: '#3B82F6' },
   { id: 'manager',      label: 'Manager Agent',  category: 'NAVIGATION', dotColor: '#A78BFA' },
-  { id: 'draw',         label: 'Zeichnen',       category: 'NAVIGATION', dotColor: '#F59E0B' },
+  // Die IDs muessen mit TOOL_CATALOG uebereinstimmen. Vorher stand hier 'draw',
+  // das Werkzeug hiess aber 'drawing' — handleToolAction() gab bei 'draw' false
+  // zurueck und es passierte gar nichts.
+  { id: 'drawing',     label: 'Zeichnen',       category: 'NAVIGATION', dotColor: '#F59E0B' },
   { id: 'processes',    label: 'Prozesse',       category: 'NAVIGATION', dotColor: '#10B981' },
 ];
 
