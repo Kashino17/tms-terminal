@@ -370,6 +370,43 @@ private func flags(_ bits: Int) -> CGEventFlags {
   return f
 }
 
+// ── Modifier state ──────────────────────────────────────────────────────
+// Events created with a nil source inherit the WindowServer's current
+// modifier flags, and a posted key event *sets* those flags. A hot key's
+// key-up still carries ⌃+fn (79/81), and the app releases a modifier key
+// with the full chord's mods — both left Control stuck system-wide, so every
+// later left click arrived as ⌃-click = right click (measured: combined
+// state 0x840000 CTRL+FN while the phone was only tapping).
+// The helper therefore owns the modifier state: it tracks which modifier
+// keys it holds itself and stamps exactly that onto every event it posts.
+private let modifierMasks: [CGKeyCode: CGEventFlags] = [
+  54: .maskCommand, 55: .maskCommand, 56: .maskShift, 60: .maskShift,
+  58: .maskAlternate, 61: .maskAlternate, 59: .maskControl, 62: .maskControl,
+  63: .maskSecondaryFn,
+]
+private let allModifierMasks: CGEventFlags = [.maskCommand, .maskShift, .maskAlternate,
+                                              .maskControl, .maskSecondaryFn, .maskAlphaShift]
+/// Modifier keys currently held down by this helper (via `key` commands).
+private var heldMods = CGEventFlags()
+
+/// Replaces the inherited modifier bits of `ev` with `mods`.
+private func stamp(_ ev: CGEvent, _ mods: CGEventFlags) {
+  ev.flags = ev.flags.subtracting(allModifierMasks).union(mods)
+}
+
+/// Sets the system-wide modifier state back to what the helper holds, if
+/// something left it different. A Control key-up carrying the wanted flags is
+/// enough: the WindowServer adopts the flags of each posted flagsChanged event.
+/// `posted` = flags of the event just posted — the WindowServer applies events
+/// asynchronously, so reading the live state right after posting would race.
+private func resetModifierState(posted: CGEventFlags? = nil) {
+  let state = (posted ?? CGEventSource.flagsState(.combinedSessionState)).intersection(allModifierMasks)
+  guard state != heldMods.intersection(allModifierMasks) else { return }
+  guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: 59, keyDown: false) else { return }
+  ev.flags = heldMods
+  ev.post(tap: .cghidEventTap)
+}
+
 // ── System gestures (Mission Control, Spaces, Spotlight) ───────────────
 // Private CoreGraphics/SkyLight calls behind System Settings' keyboard
 // shortcuts. Just posting ⌃→ is not enough: those shortcuts can be switched
@@ -407,6 +444,8 @@ private func isMissionControlOpen() -> Bool {
 private func postSymbolicHotKey(_ id: Int32) {
   var equiv: UInt16 = 0, code: UInt16 = 0, mods: UInt32 = 0
   guard CGSGetSymbolicHotKeyValue(id, &equiv, &code, &mods) == 0 else { return }
+  // The hot key's own key-up carries its modifiers (⌃+fn) into the system state.
+  defer { resetModifierState(posted: CGEventFlags(rawValue: UInt64(mods))) }
   if !CGSIsSymbolicHotKeyEnabled(id) {
     _ = CGSSetSymbolicHotKeyEnabled(id, true)
     usleep(30_000)
@@ -466,6 +505,7 @@ private func warp(to p: CGPoint, dx: Double = 0, dy: Double = 0) {
   if let ev = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: button) {
     ev.setIntegerValueField(.mouseEventDeltaX, value: Int64(dx.rounded()))
     ev.setIntegerValueField(.mouseEventDeltaY, value: Int64(dy.rounded()))
+    stamp(ev, heldMods)
     ev.post(tap: .cghidEventTap)
   }
 }
@@ -510,6 +550,8 @@ func runInputLoop() {
   for hkId: Int32 in [32, 33, 36, 64, 79, 80, 81, 82] {
     _ = CGSSetSymbolicHotKeyEnabled(hkId, true)
   }
+  // A previous session (or helper version) may have left a modifier stuck.
+  resetModifierState()
   emit("{\"ready\":{\"input\":true}}")
 
   let screen = CGDisplayBounds(CGMainDisplayID())
@@ -577,30 +619,43 @@ func runInputLoop() {
       if let ev = CGEvent(mouseEventSource: nil, mouseType: type,
                           mouseCursorPosition: current, mouseButton: button) {
         ev.setIntegerValueField(.mouseEventClickState, value: count)
+        stamp(ev, heldMods)
         ev.post(tap: .cghidEventTap)
       }
     case "scroll":
-      CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
-              wheel1: Int32(nums.count > 1 ? nums[1] : 0),
-              wheel2: Int32(nums.first ?? 0), wheel3: 0)?
-        .post(tap: .cghidEventTap)
+      if let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                          wheel1: Int32(nums.count > 1 ? nums[1] : 0),
+                          wheel2: Int32(nums.first ?? 0), wheel3: 0) {
+        stamp(ev, heldMods)
+        ev.post(tap: .cghidEventTap)
+      }
     case "key":
       guard nums.count >= 3 else { break }
-      let ev = CGEvent(keyboardEventSource: nil,
-                       virtualKey: CGKeyCode(nums[0]), keyDown: nums[1] == 1)
-      ev?.flags = flags(Int(nums[2]))
-      ev?.post(tap: .cghidEventTap)
+      let code = CGKeyCode(nums[0]), down = nums[1] == 1
+      guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down) else { break }
+      if let mask = modifierMasks[code] {
+        // A modifier key's own event carries what is held AFTER it — the app
+        // sends its release with the whole chord's mods, which kept it stuck.
+        if down { heldMods.insert(mask) } else { heldMods.remove(mask) }
+        stamp(ev, heldMods)
+        ev.post(tap: .cghidEventTap)
+      } else {
+        stamp(ev, flags(Int(nums[2])).union(heldMods))
+        ev.post(tap: .cghidEventTap)
+        // A chord sent without separate modifier presses must not linger.
+        if !down { resetModifierState(posted: ev.flags) }
+      }
     case "text":
       let text = unescapeText(rest)
       // Feed Unicode directly: independent of the Mac's keyboard layout.
       for chunk in text.unicodeScalars.map({ UniChar($0.value) }) {
         var c = chunk
-        let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
-        down?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
-        down?.post(tap: .cghidEventTap)
-        let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
-        up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
-        up?.post(tap: .cghidEventTap)
+        for down in [true, false] {
+          guard let ev = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) else { continue }
+          ev.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
+          stamp(ev, heldMods)
+          ev.post(tap: .cghidEventTap)
+        }
       }
     case "hotkey":
       if let id = Int32(rest.trimmingCharacters(in: .whitespaces)) { triggerSymbolicHotKey(id) }
