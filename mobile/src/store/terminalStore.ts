@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { upsertTab, repairTabs } from './tabIdentity';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { durableStorage } from '../services/durableStorage';
 import { TerminalTab } from '../types/terminal.types';
 import { ConnectionState } from '../types/websocket.types';
 
@@ -107,7 +107,8 @@ export const useTerminalStore = create<TerminalState>()(
     }),
     {
       name: 'tms-terminal-tabs',
-      storage: createJSONStorage(() => AsyncStorage),
+      // Also mirrored to a file: an AsyncStorage wipe must not lose this (durableStorage.core.mjs).
+      storage: createJSONStorage(() => durableStorage),
       // Only persist tabs (sessionIds survive app restarts), not runtime connection states
       partialize: (state) => ({ tabs: state.tabs }),
       // v1: tabs are keyed by sessionId. Stores written before (Season 2 used the
