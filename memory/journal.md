@@ -148,3 +148,8 @@
 - Vorhandenen GitHub-Release-Workflow gefunden: Er umgeht das bereits dokumentierte lokale Headless-Metro-Problem und nutzt den bestehenden Signaturschlüssel aus Repository-Secrets. Letzter erfolgreicher Release: v1.123.6 am 22.10.2026.
 - Workflow ergänzt um WebView-Build und Regressionstests vor dem APK-Build; Release-Text beschreibt das Fold-Update. Keine neuen Berechtigungen, Schlüssel oder Runner-Dienste nötig.
 - Nächste Prüfung: Tag-Build erfolgreich, APK mit korrekter Paketkennung/Version/Signatur, öffentlicher Latest-Release-Endpunkt für den In-App-Updater. Gerätetest mit echter Samsung-Tastatur bleibt anschließend erforderlich.
+
+### CI-Korrektur für v1.123.8
+- v1.123.7: Feature-Commit `b16ceaf` und Tag erfolgreich gepusht. Die neue Teststufe stoppte korrekt vor Signierung/Veröffentlichung: prayer-counter/term-text benutzten absolute Mac-Pfade; tab-identity importiert TypeScript direkt, was Node 20 nicht unterstützt.
+- Pfade relativ zur Testdatei gemacht und Node 22 mit explizitem Type-Stripping für die Tests ergänzt. Android/Metro bleibt auf dem zuletzt erfolgreichen Node 20. Keine Tests deaktiviert.
+- Neues Release-Ziel v1.123.8 / code 22308; der bereits gepushte, fehlgeschlagene Tag v1.123.7 bleibt unverändert.

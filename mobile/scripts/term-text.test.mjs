@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const MOCKUP = '/Users/ayysir/Desktop/TMS Terminal/mockups/season2/liquid-deck/index.html';
+const MOCKUP = new globalThis.URL('../../mockups/season2/liquid-deck/index.html', import.meta.url);
 function load() {
   const html = fs.readFileSync(MOCKUP, 'utf8');
   const m = /\/\/ ── TMS-TEST-EXPORT: termText ──([\s\S]*?)\/\/ ── \/TMS-TEST-EXPORT ──/.exec(html);

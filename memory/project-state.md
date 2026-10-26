@@ -1,16 +1,17 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-10-26 — Release v1.123.7 vorbereitet_
+_Zuletzt aktualisiert: 2026-10-26 — Release v1.123.8 vorbereitet_
 
 ## Aktueller geprüfter Stand
-- Repository: `/Users/ayysir/Desktop/TMS Terminal`, Branch `feat/fernzugriff`, Basis `8ee3625` (App v1.123.6, tatsächlicher Android-versionCode 22306). Release-Ziel: v1.123.7 mit versionCode 22307 in app.json und Gradle. Die separate ältere Kopie `tms-terminal` wurde nicht verändert.
-- Der Nutzer hat den lokalen Fold-Mockup freigegeben ("ja passt"). Der Nutzer hat anschließend Commit, Push und Veröffentlichung ausdrücklich angefordert, damit das In-App-Update verfügbar wird. Der Release v1.123.7 wird über den bestehenden GitHub-Workflow vorbereitet; Veröffentlichung noch zu verifizieren.
+- Repository: `/Users/ayysir/Desktop/TMS Terminal`, Branch `feat/fernzugriff`, Basis `8ee3625` (App v1.123.6, tatsächlicher Android-versionCode 22306). Release-Ziel: v1.123.8 mit versionCode 22308 in app.json und Gradle. Die separate ältere Kopie `tms-terminal` wurde nicht verändert.
+- Der Nutzer hat den lokalen Fold-Mockup freigegeben ("ja passt"). Der Nutzer hat anschließend Commit, Push und Veröffentlichung ausdrücklich angefordert, damit das In-App-Update verfügbar wird. Der korrigierte Release v1.123.8 wird über den bestehenden GitHub-Workflow vorbereitet; Veröffentlichung noch zu verifizieren.
 - Season-2-Terminal: Bei höchstens 480 CSS-Pixeln sichtbarer Höhe automatisch eine randlose Sitzung mit schmalem Kopf und bestehender Eingabe. Bis 280 px wird die Eingabe auf zwei Zeilen begrenzt. Sitzungswechsel, Lesefokus, Schriftgröße (13–20 px, Standard 15), Sondertasten und Spracheingabe bleiben verfügbar.
 - Die WebView nutzt die tatsächlich sichtbare Höhe (inkl. Android adjustResize) und misst den Terminalinhalt. Spalten UND Zeilen werden nach 350 ms stabiler Größe übernommen. Das ersetzt die bisherige Höhen-Ratsche, die kleine Fenster dauerhaft mit zu vielen PTY-Zeilen betrieben hat.
 - Ungesendete Texte und Cursorposition bleiben pro Sitzung erhalten; Wechsel senden den bereits übertragenen Text nicht erneut an die PTY.
 - Quelle: `mockups/season2/liquid-deck/compact-terminal.{css,js}` mit gezielten Hooks in `index.html` und `mobile/src/season2/web/bridge.js`. `build:season2` bettet beide Dateien in `liquidDeckHtml.ts` ein.
 
 ## Release und Prüfung
+- Tag v1.123.7 wurde gepusht, aber nicht veröffentlicht: Die neue CI-Teststufe fand zwei Tests mit absoluten Mac-Pfaden sowie einen direkten TS-Import, den Node 20 nicht ausführen kann. Die Tests lesen nun relativ zu import.meta.url; Source-Tests verwenden Node 22 mit Type-Stripping, der APK-Build weiterhin Node 20. Für den korrigierten Stand gibt es den neuen Tag v1.123.8; der fehlgeschlagene Tag wird nicht verschoben.
 - Signierter Android-Build über `.github/workflows/release-apk.yml` (die letzten fünf Releases waren erfolgreich). Tag-Push startet den Build; der Workflow veröffentlicht danach die APK als Latest Release für den bestehenden Updater. Neue Vorprüfung: WebView erzeugen, 108 Tests plus übersprungene Browser-Checks ausführen und reproduzierbares Bundle sicherstellen.
 
 - `npm run build:season2`: erfolgreich; alle acht eingebetteten Skripte syntaktisch geprüft.

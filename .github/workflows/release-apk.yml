@@ -38,12 +38,23 @@ jobs:
         working-directory: mobile
         run: npm ci
 
+      - name: Set up Node 22 for source tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Build and test the terminal WebView
         working-directory: mobile
         run: |
           npm run build:season2
-          npm run test:mockup
+          node --experimental-strip-types --test scripts/*.test.mjs
           git diff --exit-code -- src/season2/web/liquidDeckHtml.ts
+
+      # Keep the existing React Native / Metro build on its proven Node version.
+      - name: Restore Node 20 for the APK build
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       # The release keystore + Firebase config are gitignored, so CI gets them
       # from base64 repo secrets. Same keystore as local => stable signing key,
