@@ -134,70 +134,57 @@
     var innerH = host.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     return {
       cols: Math.max(20, Math.floor(innerW / cell.w)),
-      rows: Math.max(5, Math.floor(innerH / cell.h)),
+      rows: Math.max(2, Math.floor(innerH / cell.h)),
     };
   }
 
-  /** SPALTEN-FREEZE: eine neue Breite wird erst übernommen, wenn sie so lange
-   *  stabil ansteht. Jede Spaltenänderung reflowt den xterm-Puffer UND lässt
-   *  die TUI auf das SIGWINCH ihr komplettes Bild neu malen — gegen die frisch
-   *  umgebrochenen alten Zeilen entstehen genau die verklebten/gedoppelten
-   *  Ausgaben. Zwischenwerte laufender Karten-Animationen (520ms-Feder) laufen
-   *  hier ins Leere; nur Falten, Drehen und Schriftgröße kommen durch. */
-  var COLS_SETTLE_MS = 350;
-  function settleCols(cardId, want) {
+  // A keyboard / split divider changes BOTH dimensions. Commit one stable
+  // size after the animation, rather than keeping a permanently oversized TUI
+  // or sending a SIGWINCH for every intermediate animation frame.
+  var SIZE_SETTLE_MS = 350;
+  function applyTerminalSize(cardId, size) {
     var t = terms[cardId];
     if (!t) return;
-    if (t.colsWant === want && t.colsTimer) return; // Timer läuft schon auf dieses Ziel
-    t.colsWant = want;
-    clearTimeout(t.colsTimer);
-    t.colsTimer = setTimeout(function () {
-      t.colsTimer = null;
-      var tt = terms[cardId];
-      if (!tt) return;
-      var fit = measureFit(tt);
-      if (!fit || fit.cols === tt.pinCols) return;      // zurückgeschnappt — Fehlalarm
-      if (fit.cols !== tt.colsWant) { settleCols(cardId, fit.cols); return; } // noch in Bewegung
-      // Echte neue Breite: Ratsche zurücksetzen und EINMAL sauber umstellen.
-      tt.pinCols = fit.cols;
-      tt.pinRows = fit.rows;
-      if (tt.term.cols !== tt.pinCols || tt.term.rows !== tt.pinRows) {
-        try { tt.term.resize(tt.pinCols, tt.pinRows); } catch (e) { return; }
-        invalidateRowCache(cardId);
-        renderTerm(cardId);
-      }
-    }, COLS_SETTLE_MS);
+    if (t.term.cols !== size.cols || t.term.rows !== size.rows) {
+      t.term.resize(size.cols, size.rows);
+      invalidateRowCache(cardId);
+    }
+    t.pinCols = size.cols;
+    t.pinRows = size.rows;
   }
-
-  /** Sofort vermessen. Gibt false zurück, wenn die Karte (noch) keine Größe hat. */
+  function settleTerminalSize(cardId, size) {
+    var t = terms[cardId];
+    if (!t) return;
+    var key = size.cols + 'x' + size.rows;
+    if (t.sizeWant === key && t.sizeTimer) return;
+    t.sizeWant = key;
+    clearTimeout(t.sizeTimer);
+    t.sizeTimer = setTimeout(function () {
+      t.sizeTimer = null;
+      if (terms[cardId] !== t) return; // closed/replaced while waiting
+      var fit = measureFit(t);
+      if (!fit) return;
+      if (fit.cols === t.pinCols && fit.rows === t.pinRows) return;
+      if (fit.cols + 'x' + fit.rows !== t.sizeWant) {
+        settleTerminalSize(cardId, fit);
+        return;
+      }
+      try { applyTerminalSize(cardId, fit); } catch (_) { return; }
+      renderTerm(cardId);
+    }, SIZE_SETTLE_MS);
+  }
   function fitNow(cardId) {
     var t = terms[cardId];
     if (!t) return false;
     var fit = measureFit(t);
     if (!fit) return false;
-    // ZEILEN-RATSCHE — der Kern gegen Dopplungen: Tastatur, Tastenleiste und
-    // Tipp-Modus ändern die Kartenhöhe ständig, und jede Zeilen-Änderung ist
-    // ein SIGWINCH, auf das Claude & Co. ihre KOMPLETTE Oberfläche neu malen —
-    // der alte Frame bleibt als Leiche im Scrollback (die "Dopplungen").
-    // Deshalb: rows wächst nur auf das größte gesehene Maß und schrumpft nie;
-    // wird die Karte kleiner, scrollt sie einfach. Spalten sind zusätzlich
-    // EINGEFROREN: ein neuer Messwert wandert über settleCols() und wird erst
-    // übernommen, wenn er stabil ansteht (Falten, Drehen, Schriftgröße).
     if (t.pinCols === undefined) {
-      t.pinCols = fit.cols;                    // Erstvermessung: sofort übernehmen
-      t.pinRows = fit.rows;
-    } else if (fit.cols !== t.pinCols) {
-      settleCols(cardId, fit.cols);            // Kandidat — Puffer bleibt unangetastet
-      t.pinRows = Math.max(t.pinRows || fit.rows, fit.rows);
+      try { applyTerminalSize(cardId, fit); } catch (_) { return false; }
+    } else if (fit.cols !== t.pinCols || fit.rows !== t.pinRows) {
+      settleTerminalSize(cardId, fit);
     } else {
-      if (t.colsTimer) { clearTimeout(t.colsTimer); t.colsTimer = null; } // zurückgeschnappt
-      t.pinRows = Math.max(t.pinRows || fit.rows, fit.rows);
-    }
-    if (t.term.cols !== t.pinCols || t.term.rows !== t.pinRows) {
-      try { t.term.resize(t.pinCols, t.pinRows); } catch (e) { return false; }
-      // Ein Resize reflowt den Puffer: alle absoluten Zeilenindizes verschieben
-      // sich — der inkrementelle Zeilen-Cache ist damit wertlos.
-      invalidateRowCache(cardId);
+      clearTimeout(t.sizeTimer);
+      t.sizeTimer = null;
     }
     return true;
   }
@@ -228,11 +215,32 @@
   emuHost.style.cssText = 'position:fixed;top:0;left:-4000px;';
   document.body.appendChild(emuHost);
 
+  // Input growth, key accessories and reading focus can change a terminal
+  // without firing a window resize. Observe its actual content box as well.
+  var terminalHostObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (!entry.target.isConnected) { terminalHostObserver.unobserve(entry.target); return; }
+      var id = entry.target.dataset.cardId;
+      if (id && terms[id]) fitSoon(id);
+    });
+  });
+  function observeTerminalHost(t, host) {
+    if (t.host && t.host !== host && terminalHostObserver) terminalHostObserver.unobserve(t.host);
+    t.host = host;
+    if (terminalHostObserver) terminalHostObserver.observe(host);
+    if (!host.__tmsFollowWired) {
+      host.__tmsFollowWired = true;
+      host.addEventListener('scroll', function () {
+        var current = terms[host.dataset.cardId];
+        if (current && current.host === host) current.followTail = host.scrollHeight - host.scrollTop - host.clientHeight < 30;
+      }, { passive: true });
+    }
+  }
   function mountTerm(cardId) {
     var host = document.querySelector('.card-body[data-card-id="' + cardId + '"]');
     if (!host) return;
     var t = terms[cardId];
-    if (t) { t.host = host; fitSoon(cardId); renderTerm(cardId); return; }
+    if (t) { observeTerminalHost(t, host); fitSoon(cardId); renderTerm(cardId); return; }
 
     var box = document.createElement('div');
     box.style.cssText = 'width:600px;height:400px;';
@@ -264,7 +272,8 @@
     term.onData(function (d) { window.__tmsInput(cardId, d); });
     term.onResize(function (sz) { queueResize(cardId, sz.cols, sz.rows); });
 
-    terms[cardId] = { term: term, box: box, host: host, scrollTotal: 0, cardId: cardId };
+    terms[cardId] = { term: term, box: box, host: host, scrollTotal: 0, cardId: cardId, followTail: true };
+    observeTerminalHost(terms[cardId], host);
     // Kam der Prozessname schon vor dem Mount (Reattach-Rennen), hier nachziehen.
     var sid0 = byCard[cardId];
     if (sid0) {
@@ -544,7 +553,7 @@
       row.sig = sig;
     }
 
-    var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
+    var atBottom = t.followTail !== false;
 
     // ── DOM abgleichen statt neu bauen ────────────────────────────────────
     // Der komplette innerHTML-Tausch hat pro Ausgabe-Tick hunderte KB HTML
@@ -663,22 +672,11 @@
     return true;
   };
 
-  // SPALTEN SOFORT, ZEILEN IN RUHE. Eine Spaltenänderung MUSS im Gleichschritt
-  // zur PTY (16 ms): jede Millisekunde Versatz malt die TUI für die falsche
-  // Breite in einen schon umgebrochenen Puffer — die verschränkten Zeilen.
-  // Reines Zeilen-Wachstum dagegen ist Umbruch-NEUTRAL, kommt aber beim
-  // Karten-Aufbau als Serie (die Feder-Animation wächst die Ratsche
-  // 15→24→31→38). Jeder Schritt sofort weitergereicht wäre je ein SIGWINCH,
-  // auf das Claude sein komplettes Bild neu malt — die übereinander
-  // gestapelten Start-Banner. Darum wandern reine Zeilen-Änderungen erst zur
-  // PTY, wenn sie stabil stehen; gesendet wird der DANN aktuelle Stand.
+  // Both dimensions already settle before term.resize(). Forward that stable
+  // size together so the PTY does not lag another animation behind xterm.
   var resizeTimers = {}, lastDims = {};
-  var ROWS_SETTLE_MS = 350;
   function queueResize(cardId, cols, rows) {
     if (!cols || !rows) return;
-    var sid0 = byCard[cardId];
-    var lastCols = sid0 && lastDims[sid0] ? parseInt(lastDims[sid0], 10) : null;
-    var delay = lastCols === cols ? ROWS_SETTLE_MS : 16;
     clearTimeout(resizeTimers[cardId]);
     resizeTimers[cardId] = setTimeout(function () {
       var sid = byCard[cardId];
@@ -691,7 +689,7 @@
       if (lastDims[sid] === key) return;
       lastDims[sid] = key;
       post('terminal:resize', { sessionId: sid, cols: c, rows: r });
-    }, delay);
+    }, 16);
   }
 
   /** Vorschau für Übersicht und Rail — aus dem echten Puffer. */
@@ -821,9 +819,10 @@
       }
     }
   }).observe(document.body, { childList: true, subtree: true });
-  window.addEventListener('resize', function () {
-    Object.keys(terms).forEach(fitSoon);
-  });
+  function fitAllTerminals() { Object.keys(terms).forEach(fitSoon); }
+  window.addEventListener('resize', fitAllTerminals);
+  window.addEventListener('tms:terminal-layout', fitAllTerminals);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', fitAllTerminals);
 
   // ── Replace the mockup's demo plumbing ────────────────────────────────────
   // Not a no-op: xterm owns the pixels, but the mockup still expects this to
@@ -1799,6 +1798,7 @@
   // dann der Bildschirm selbst. Erst wenn nichts mehr übrig ist, darf React
   // Native ans Beenden denken (und fragt dann noch einmal nach).
   window.TMSBridge.handleBack = function () {
+    if (window.TMSCompact && window.TMSCompact.closeOverlay()) return;
     // 0. Fernzugriff im Vollbild: die Zurück-Geste wirkt wie das Abzeichen
     //    (#remoteExit) — verlässt das Vollbild, nicht den Fernzugriffs-
     //    Bildschirm selbst. Ohne das leiten die Dokument-Zuhörer für
@@ -2648,6 +2648,8 @@
   // (er ersetzt ganze Wörter — als Rückschritte plus neuer Text).
   var dockInput = document.getElementById('dockInput');
   var dockLast = '';
+  var dockDrafts = Object.create(null);
+  var dockLastTarget = window.dockTargetId && window.dockTargetId();
 
   function dockToPty() {
     var id = window.dockTargetId && window.dockTargetId();
@@ -2658,44 +2660,48 @@
     dockLast = now;
     if (data) window.__tmsInput(id, data);
   }
-  // Kein Stumm-Schalter: eine programmatische Wertzuweisung feuert ohnehin kein
-  // input-Event. Der Schalter hat stattdessen das erste getippte Zeichen
-  // verschluckt, wenn direkt nach einem Zurücksetzen losgetippt wurde.
-  function dockReset() {
+  function dockReset(cardId) {
+    var id = cardId || (window.dockTargetId && window.dockTargetId());
+    if (id) delete dockDrafts[id];
+    if (id && id !== (window.dockTargetId && window.dockTargetId())) return;
     dockInput.value = '';
     dockLast = '';
-    // Das Feld darf mitwachsen (bis 3 Zeilen) — nach dem Leeren muss es auch
-    // wieder auf eine Zeile zurückfallen, sonst bleibt die Bar aufgebläht.
     if (typeof window.autoGrowInput === 'function') window.autoGrowInput(dockInput);
   }
   if (dockInput) {
     dockInput.addEventListener('input', dockToPty);
     dockInput.addEventListener('focus', function () { dockLast = dockInput.value; });
   }
-
-  // Der Text steht schon im Terminal — beim Absenden fehlt nur noch das Enter.
   window.sendTerminalCommand = function (id, cmd) {
     if (!id) return;
     window.__tmsInput(id, '\r');
-    dockReset();
+    dockReset(id);
   };
-
-  // ^C und Esc verwerfen die Zeile in der Shell — dann auch bei uns.
   var origHandleTermKey = window.handleTermKey;
   window.handleTermKey = function (key, id) {
     origHandleTermKey(key, id);
-    if (key === 'ctrlc' || key === 'esc') dockReset();
+    if (key === 'ctrlc' || key === 'esc' || key === 'enter') dockReset(id);
   };
   var origSendCtrlC = window.sendCtrlC;
-  window.sendCtrlC = function (id) { origSendCtrlC(id); dockReset(); };
+  window.sendCtrlC = function (id) { origSendCtrlC(id); dockReset(id); };
 
-  // Ein anderes Terminal = eine andere Zeile: nicht die alte weiterschreiben.
+  // The PTY already contains the typed draft. Restore only the local field and
+  // its sent-text baseline; replaying it would duplicate the shell input.
   var origSyncDock = window.syncDockTerminal;
-  var dockLastTarget = null;
   window.syncDockTerminal = function () {
-    origSyncDock();
     var id = window.dockTargetId && window.dockTargetId();
-    if (id !== dockLastTarget) { dockLastTarget = id; dockReset(); }
+    if (id !== dockLastTarget) {
+      if (dockLastTarget && (window.TMS_DATA.sessions || []).some(function (s) { return s.id === dockLastTarget; })) {
+        dockDrafts[dockLastTarget] = { value: dockInput.value, sent: dockLast, start: dockInput.selectionStart, end: dockInput.selectionEnd };
+      }
+      dockLastTarget = id;
+      var draft = id && dockDrafts[id];
+      dockInput.value = draft ? draft.value : '';
+      dockLast = draft ? draft.sent : '';
+      if (draft) dockInput.setSelectionRange(draft.start, draft.end);
+      if (typeof window.autoGrowInput === 'function') window.autoGrowInput(dockInput);
+    }
+    origSyncDock();
   };
 
   // Die Seite stimmt NIE selbst zu. Auto-Approve führt der Server aus — er kennt
@@ -2865,6 +2871,7 @@
   window.TMSBridge.sessionExpired = function (sessionId) {
     var cardId = cardOf(sessionId);
     if (!cardId) return;
+    dockReset(cardId);
     delete byCard[cardId];
     bound[cardId] = 'pending';
     var t = terms[cardId];
@@ -2894,6 +2901,7 @@
    *  sie als Geisterkarte stehen: leer, nie gebunden, beim nächsten
    *  Wiederherstellen spurlos verschwunden. Weg damit — den Grund sagt der Toast. */
   window.TMSBridge.sessionCreateFailed = function (cardId) {
+    dockReset(cardId);
     delete bound[cardId];
     delete byCard[cardId];
     if (terms[cardId]) { try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {} delete terms[cardId]; }
@@ -2903,6 +2911,7 @@
   window.TMSBridge.sessionClosed = function (sessionId) {
     var cardId = cardOf(sessionId);
     if (!cardId) return;
+    dockReset(cardId);
     delete bound[cardId];
     delete byCard[cardId];
     if (terms[cardId]) { try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {} delete terms[cardId]; }
@@ -2914,6 +2923,9 @@
    *  zu schließen (die laufen auf dem Server weiter). Danach bestückt
    *  restoreSessions die Seite mit den Terminals des neuen Servers. */
   window.TMSBridge.clearAllTerminals = function () {
+    dockDrafts = Object.create(null);
+    dockLastTarget = null;
+    dockReset();
     Object.keys(terms).forEach(function (cardId) {
       try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {}
       delete terms[cardId];

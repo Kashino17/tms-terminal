@@ -129,6 +129,13 @@ patch('demo boot', `  initLiveSession();
   // gate — the real app has its own security settings; "Jetzt sperren" still works.
   show('terminals');`);
 
+// The short-window layout is shared by the browser mockup and native WebView.
+// Inline both assets: the generated data-URL document cannot resolve relative files.
+patch('compact stylesheet', '<link rel="stylesheet" href="compact-terminal.css">',
+  '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/compact-terminal.css'), 'utf8') + '</style>');
+patch('compact controller', '<script src="compact-terminal.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/compact-terminal.js'), 'utf8') + '</script>');
+
 // ── 5) xterm.js + the bridge, after the mockup's own script.
 function stringExports(file) {
   const text = fs.readFileSync(path.resolve(__dirname, file), 'utf8');

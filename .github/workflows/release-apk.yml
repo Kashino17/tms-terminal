@@ -38,6 +38,13 @@ jobs:
         working-directory: mobile
         run: npm ci
 
+      - name: Build and test the terminal WebView
+        working-directory: mobile
+        run: |
+          npm run build:season2
+          npm run test:mockup
+          git diff --exit-code -- src/season2/web/liquidDeckHtml.ts
+
       # The release keystore + Firebase config are gitignored, so CI gets them
       # from base64 repo secrets. Same keystore as local => stable signing key,
       # so the app updates over the existing install without a reinstall.
@@ -72,5 +79,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Aufklappen des Fold lässt die App und ihre Verbindungen offen: Die kleinste Bildschirmbreite wird jetzt abgefangen, statt die Activity neu aufzubauen. Muss Android bei einer anderen Konfigurationsänderung doch neu starten, wartet die App auf ihre gespeicherten Einstellungen und Terminal-Reiter, bevor sie die Oberfläche aufbaut, und eine neu geladene WebView-Seite holt ihre Karten und Sitzungen automatisch zurück. Server, Einstellungen und Terminal-Reiter liegen zusätzlich als Sicherungskopie auf dem Gerät; die Datenbank löscht sich bei einem Schreibfehler nicht mehr selbst." \
+            --notes "Fold-Splitscreen: Das Terminal nutzt bei kurzen Fenstern die volle Breite und eine kompakte Kopfzeile. Die Ausgabe passt sich an die geöffnete Tastatur an, ohne automatisch die Schrift zu verkleinern. Sitzungswechsler, Lesefokus, Schriftgrößenwahl und ausklappbare Sondertasten bleiben erreichbar. Eingabetexte bleiben pro Sitzung erhalten; Größenwechsel werden nach der Tastaturanimation stabil an das Terminal übertragen." \
             --latest

@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Liquid Deck — TMS Terminal</title>
 <script>
   // Applied BEFORE first paint (blocking, first thing in <head>) so the
@@ -1924,6 +1924,7 @@
   .pin-pad button[data-key="back"] { display: flex; align-items: center; justify-content: center; }
   .pin-pad button[data-key="back"] .ic { width: 22px; height: 22px; }
 </style>
+<link rel="stylesheet" href="compact-terminal.css">
 </head>
 <body class="is-locked">
 <div class="atmosphere" aria-hidden="true">
@@ -3096,6 +3097,7 @@
       statusHeaderEl.addEventListener('animationend', () => statusHeaderEl.classList.remove('is-popping'), { once: true });
     }
     currentScreen = name;
+    if (window.TMSCompact) window.TMSCompact.sync();
     // Fernzugriff = volle Konzentration aufs Bild: Insel und Leiste weg, die
     // Navigation sitzt im verschiebbaren Kreis (remote-orb).
     document.body.classList.toggle('remote-focus', name === 'remote');
@@ -4590,6 +4592,7 @@
     if (session) session.cwd = cwd;
     const label = folderLabel(cwd);
     document.querySelectorAll(`.term-card[data-id="${cardId}"] .card-cwd`).forEach(el => { el.textContent = label; });
+    if (window.TMSCompact) window.TMSCompact.sync();
   };
 
   function cardHeaderHtml(session, id, isList) {
@@ -4891,6 +4894,7 @@
       renderCardLines(id);
     });
     if (!state.activeCardId || state.order.indexOf(state.activeCardId) === -1) state.activeCardId = state.order[0] || null;
+    setActive_syncDock();
   }
 
   // Brings a terminal into view regardless of which view is active —
@@ -4976,6 +4980,7 @@
   }
 
   function focusRenameForCard(id) {
+    if (document.body.classList.contains('compact-terminal') && window.TMSCompact) { window.TMSCompact.rename(id); return; }
     const input = document.querySelector(`.term-card[data-id="${id}"] .card-name`);
     if (!input) return;
     input.readOnly = false;
@@ -5266,6 +5271,7 @@
     if (idx !== -1) {
       const screen = document.querySelector('[data-screen="terminals"]');
       if (!screen || screen.hidden) return false;
+      if (document.body.classList.contains('compact-terminal')) return id === dockTargetId();
       // Im Stack zählt die Wisch-Position: beim Ziehen wird die Nachbarkarte
       // ab der Hälfte des Wegs lebendig, im Ruhezustand malt nur die aktive.
       if (state.terminalView === 'stack') return Math.abs(idx - state.activeFloat) < 0.75;
@@ -5399,6 +5405,7 @@
   }
 
   function refreshPreviews() {
+    if (window.TMSCompact) window.TMSCompact.sync();
     renderRail();
     if (state.overviewOpen) renderOverview();
   }
@@ -5453,7 +5460,7 @@
     let dragging = false, pointerId = null, startX = 0, startY = 0, startFloat = 0, moved = false, cardWidthPx = 300;
 
     stackEl.addEventListener('pointerdown', e => {
-      if (state.overviewOpen) return;
+      if (state.overviewOpen || document.body.classList.contains('compact-terminal')) return;
       const card = e.target.closest('.stack-card');
       if (!card) return;
       const idx = state.order.indexOf(card.dataset.id);
@@ -6425,6 +6432,7 @@
     }
     function onCancel() { const wd = dragging; cleanup(); if (wd) { if (wasOpen) openListRail(card); else closeListRail(card); } }
     surface.addEventListener('pointerdown', e => {
+      if (document.body.classList.contains('compact-terminal')) return;
       // Controls with their own gestures never start a swipe.
       if (e.target.closest('.term-input-row, .card-name, .card-desc, .card-menu-btn, .status-chip, .chevron-btn, .replay-pill, .jump-bottom-orb, .keys-panel')) return;
       pointerId = e.pointerId; startX = e.clientX; startY = e.clientY;
@@ -9759,6 +9767,7 @@
     document.getElementById('dockKeysBtn').classList.toggle('is-on', !!state.keysPanelOpen);
     document.querySelectorAll('.term-card').forEach(c => c.classList.toggle('is-target', c.dataset.id === id));
     if (state.keysPanelOpen) applyKeysPanelVisibility();
+    if (window.TMSCompact) window.TMSCompact.sync();
   }
   // ============================================================
   // Eingabezeile: mitwachsen (bis 3 Zeilen) + Cursor-Schrubber
@@ -9801,7 +9810,7 @@
     const cs = getComputedStyle(el);
     const lh = parseFloat(cs.lineHeight) || 20;
     const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-    const max = lh * 3 + pad;
+    const max = lh * (document.body.classList.contains('compact-tight') ? 2 : 3) + pad;
     // Beim Messen MUSS das Feld auf overflow:hidden stehen. Steht es noch auf
     // „scrollbar" (weil es eben noch dreizeilig war), rechnet Chrome scrollHeight
     // mit dem alten Scroll-Inhalt — das Feld schrumpfte dann nie ganz zurück.
@@ -9999,6 +10008,7 @@
   }
   document.addEventListener('pointerdown', e => {
     dockSwiping = false;
+    if (document.body.classList.contains('compact-terminal')) return;
     if (document.body.classList.contains('is-locked')) return;
     if (state.dockRecording) return; // die Aufnahmeleiste laesst sich nicht wegwischen
     if (!inBottomEdge(e.clientY)) return;
@@ -10254,5 +10264,6 @@
   startLatencyTicker();
   show('lock');
 </script>
+<script src="compact-terminal.js"></script>
 </body>
 </html>
