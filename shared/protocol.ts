@@ -44,6 +44,34 @@ export interface RegisterTokenMessage {
   payload: { token: string };
 }
 
+// ── Client control messages (Client → Server) ──────────────────
+export interface ClientBackgroundingMessage {
+  type: 'client:backgrounding';
+}
+
+export interface ClientSetAiSessionMessage {
+  type: 'client:set_ai_session';
+  sessionId: string;
+  payload: { hasAi: boolean };
+}
+
+export interface ClientSetAutoApproveMessage {
+  type: 'client:set_auto_approve';
+  sessionId: string;
+  payload: { enabled: boolean };
+}
+
+export interface ClientRttMessage {
+  type: 'client:rtt';
+  payload: { rtt: number };
+}
+
+/** seconds === 0 disables idle notifications entirely. */
+export interface ClientSetIdleThresholdMessage {
+  type: 'client:set_idle_threshold';
+  payload: { seconds: number };
+}
+
 // ── Watcher messages (Client → Server) ──────────────────────────
 export interface WatcherListMessage { type: 'watcher:list'; payload: Record<string, never>; }
 export interface WatcherCreateMessage { type: 'watcher:create'; payload: { id: string; type: string; label: string; enabled: boolean; config: Record<string, string> }; }
@@ -70,7 +98,7 @@ export interface AudioTranscribeMessage {
 // ── Manager messages (Client → Server) ────────────────────────────
 export interface ManagerChatMessage {
   type: 'manager:chat';
-  payload: { text: string; targetSessionId?: string };
+  payload: { text: string; targetSessionId?: string; onboarding?: boolean };
 }
 export interface ManagerCancelMessage {
   type: 'manager:cancel';
@@ -81,7 +109,8 @@ export interface ManagerToggleMessage {
 }
 export interface ManagerSetProviderMessage {
   type: 'manager:set_provider';
-  payload: { providerId: string };
+  /** contextLength: desired context size when loading a local (LM Studio) model. */
+  payload: { providerId: string; contextLength?: number };
 }
 export interface ManagerPollMessage {
   type: 'manager:poll';
@@ -112,6 +141,26 @@ export interface ManagerOverviewMessage {
 export interface ManagerOutboxReadMessage {
   type: 'manager:outbox_read';
 }
+/** Pure query for the provider/model list — does not start or stop the manager. */
+export interface ManagerGetProvidersMessage {
+  type: 'manager:get_providers';
+}
+export interface ManagerSetPersonalityMessage {
+  type: 'manager:set_personality';
+  payload: {
+    agentName?: string;
+    tone?: string;
+    detail?: string;
+    emojis?: boolean;
+    proactive?: boolean;
+    customInstruction?: string;
+  };
+}
+/** Client pushes its tab labels so the manager can address terminals by name. */
+export interface ManagerSyncLabelsMessage {
+  type: 'manager:sync_labels';
+  payload: { labels: Array<{ sessionId: string; name: string }> };
+}
 
 // ── File Upload (Client → Server) ────────────────────────────────
 export interface FileUploadMessage {
@@ -136,6 +185,98 @@ export interface BrowserBridgeToggleMessage {
 export interface BrowserBridgeCallbackMessage {
   type: 'browserbridge:callback';
   payload: { url: string; sessionId: string };
+}
+
+// ── Autopilot messages (Client → Server) ──────────────────────
+export type AutopilotItemStatus = 'draft' | 'optimizing' | 'queued' | 'running' | 'done' | 'error';
+
+export interface AutopilotOptimizeMessage {
+  type: 'autopilot:optimize';
+  sessionId: string;
+  payload: { items: Array<{ id: string; text: string }>; cwd: string };
+}
+
+export interface AutopilotAddItemMessage {
+  type: 'autopilot:add_item';
+  sessionId: string;
+  payload: {
+    id: string;
+    text: string;
+    status?: AutopilotItemStatus;
+    optimizedPrompt?: string;
+  };
+}
+
+export interface AutopilotRemoveItemMessage {
+  type: 'autopilot:remove_item';
+  sessionId: string;
+  payload: { id: string };
+}
+
+export interface AutopilotUpdateItemMessage {
+  type: 'autopilot:update_item';
+  sessionId: string;
+  payload: {
+    id: string;
+    text?: string;
+    optimizedPrompt?: string;
+    status?: AutopilotItemStatus;
+    error?: string;
+    completedAt?: number;
+  };
+}
+
+export interface AutopilotReorderMessage {
+  type: 'autopilot:reorder';
+  sessionId: string;
+  payload: { itemIds: string[] };
+}
+
+export interface AutopilotQueueToggleMessage {
+  type: 'autopilot:queue_toggle';
+  sessionId: string;
+  payload: { enabled: boolean };
+}
+
+// ── Terminal titles (Client → Server) ──────────────────────────
+export interface TerminalTitlesGetMessage {
+  type: 'terminal:titles_get';
+}
+
+export interface TerminalRenameMessage {
+  type: 'terminal:rename';
+  sessionId: string;
+  payload: { title: string };
+}
+
+// ── Shared clipboard (Client → Server) ─────────────────────────
+export interface ClipboardListMessage { type: 'clipboard:list'; }
+export interface ClipboardPushMessage { type: 'clipboard:push'; payload: { text: string }; }
+/** Put an older entry back on top and onto the Mac's pasteboard. */
+export interface ClipboardUseMessage { type: 'clipboard:use'; payload: { id: string }; }
+export interface ClipboardDeleteMessage { type: 'clipboard:delete'; payload: { id: string }; }
+export interface ClipboardClearMessage { type: 'clipboard:clear'; }
+
+// ── TTS (Client → Server) ──────────────────────────────────────
+export interface TtsGenerateMessage {
+  type: 'tts:generate';
+  payload: { text: string; messageId: string };
+}
+
+// ── Biometric Mac Unlock & Sudo Relay (Client → Server) ────────
+export interface MacUnlockStatusRequestMessage {
+  type: 'mac:unlock_status';
+}
+
+export interface MacUnlockSetupMessage {
+  type: 'mac:unlock_setup';
+  payload: { password: string };
+}
+
+export interface MacBiometricUnlockMessage {
+  type: 'mac:biometric_unlock';
+  sessionId?: string;
+  payload: { mode: 'remote' | 'sudo'; sessionId?: string; password?: string };
 }
 
 export type ClientMessage =
@@ -167,18 +308,49 @@ export type ClientMessage =
   | ManagerEntriesMessage
   | ManagerOverviewMessage
   | ManagerOutboxReadMessage
+  | ManagerGetProvidersMessage
+  | ManagerSetPersonalityMessage
+  | ManagerSyncLabelsMessage
   | FileUploadMessage
   | AppStateMessage
   | ActiveTabMessage
   | BrowserBridgeToggleMessage
-  | BrowserBridgeCallbackMessage;
+  | BrowserBridgeCallbackMessage
+  | ClientBackgroundingMessage
+  | ClientSetAiSessionMessage
+  | ClientSetAutoApproveMessage
+  | ClientRttMessage
+  | ClientSetIdleThresholdMessage
+  | AutopilotOptimizeMessage
+  | AutopilotAddItemMessage
+  | AutopilotRemoveItemMessage
+  | AutopilotUpdateItemMessage
+  | AutopilotReorderMessage
+  | AutopilotQueueToggleMessage
+  | TerminalTitlesGetMessage
+  | TerminalRenameMessage
+  | ClipboardListMessage
+  | ClipboardPushMessage
+  | ClipboardUseMessage
+  | ClipboardDeleteMessage
+  | ClipboardClearMessage
+  | TtsGenerateMessage
+  | MacUnlockStatusRequestMessage
+  | MacUnlockSetupMessage
+  | MacBiometricUnlockMessage;
 
 // ── Server → Client ──────────────────────────────────────────────
 
 export interface TerminalCreatedMessage {
   type: 'terminal:created';
   sessionId: string;
-  payload: { cols: number; rows: number };
+  payload: {
+    cols: number;
+    rows: number;
+    /** true when the Manager Agent (not the app) opened this terminal. */
+    fromManager?: boolean;
+    label?: string;
+  };
 }
 
 export interface TerminalOutputMessage {
@@ -227,12 +399,26 @@ export interface TerminalPromptDetectedMessage {
     hasPendingInput?: boolean;
     /** Einstufung des Servers (prompt.classifier.ts) — auf dem echten
      *  Bildschirm ermittelt. Die App rät sie nicht mehr aus dem Textschnipsel. */
-    kind?: 'permission' | 'confirm' | 'question';
+    kind?: 'permission' | 'confirm' | 'question' | 'sudo';
   };
 }
 
 export interface PongMessage {
   type: 'pong';
+}
+
+// ── Terminal titles (Server → Client) ──────────────────────────
+/** Full title map — sent on connect and in answer to terminal:titles_get. */
+export interface TerminalTitlesMessage {
+  type: 'terminal:titles';
+  payload: { titles: Record<string, string> };
+}
+
+/** One title changed — broadcast to every connected app (title null = removed). */
+export interface TerminalTitleMessage {
+  type: 'terminal:title';
+  sessionId: string;
+  payload: { title: string | null };
 }
 
 // ── Watcher responses (Server → Client) ──────────────────────────
@@ -339,7 +525,21 @@ export interface ManagerResponseMessage {
 export interface ManagerProvidersMessage {
   type: 'manager:providers';
   payload: {
-    providers: Array<{ id: string; name: string; configured: boolean }>;
+    providers: Array<{
+      id: string;
+      name: string;
+      configured: boolean;
+      isLocal?: boolean;
+      modelType?: string;
+      /** Local (LM Studio) models only — live info from the model discovery,
+       *  the app builds its context slider from these. */
+      modelKey?: string;
+      maxContext?: number;
+      loadedContext?: number | null;
+      loaded?: boolean;
+      available?: boolean;
+      savedContext?: number;
+    }>;
     active: string;
   };
 }
@@ -394,12 +594,13 @@ export interface PhaseInfo {
 
 export interface ManagerThinkingMessage {
   type: 'manager:thinking';
-  payload: { phase: string; detail?: string; elapsed: number };
+  payload: { phase: string; detail?: string; elapsed?: number };
 }
 
 export interface ManagerStreamChunkMessage {
   type: 'manager:stream_chunk';
-  payload: { token: string };
+  /** completionTokens/tps: live token stats, only providers that report them. */
+  payload: { token: string; completionTokens?: number; tps?: number };
 }
 
 export interface ManagerStreamEndMessage {
@@ -424,6 +625,121 @@ export interface BrowserBridgeCallbackResultMessage {
   payload: { status: number; html: string };
 }
 
+// ── Manager extras (Server → Client) ───────────────────────────
+export interface ManagerPersonalityConfiguredMessage {
+  type: 'manager:personality_configured';
+  payload: {
+    agentName: string;
+    tone: string;
+    detail: string;
+    emojis: boolean;
+    proactive: boolean;
+    customInstruction: string;
+  };
+}
+
+export type ManagerTaskStatus = 'pending' | 'running' | 'waiting' | 'done' | 'failed';
+
+export interface ManagerTaskStep {
+  label: string;
+  status: ManagerTaskStatus;
+  trigger: 'manual' | 'on_create' | 'on_prompt_sent' | 'on_claude_idle' | 'on_write' | 'ai_input';
+  targetTerminal?: string;
+}
+
+export interface ManagerTask {
+  id: string;
+  description: string;
+  sessionId: string;
+  sessionLabel: string;
+  status: ManagerTaskStatus;
+  createdAt: number;
+  updatedAt: number;
+  lastCheckedOutput?: string;
+  pendingPrompt?: string;
+  steps: ManagerTaskStep[];
+  linkedTaskIds?: string[];
+}
+
+export interface ManagerTasksMessage {
+  type: 'manager:tasks';
+  payload: { tasks: ManagerTask[] };
+}
+
+/** A local model is being loaded/unloaded in LM Studio — the app shows a "lädt…" chip. */
+export interface ManagerModelLoadingMessage {
+  type: 'manager:model_loading';
+  payload: { providerId: string; loading: boolean };
+}
+
+// ── Shared clipboard (Server → Client) ─────────────────────────
+export interface ClipboardItem {
+  id: string;
+  text: string;
+  source: 'mac' | 'phone';
+  at: number;
+}
+
+export interface ClipboardHistoryMessage {
+  type: 'clipboard:history';
+  payload: { items: ClipboardItem[] };
+}
+
+/** Broadcast on every change: the new top item plus the ids that dropped out. */
+export interface ClipboardAddedMessage {
+  type: 'clipboard:added';
+  payload: { item: ClipboardItem; removed: string[] };
+}
+
+export interface ClipboardRemovedMessage {
+  type: 'clipboard:removed';
+  payload: { ids: string[] };
+}
+
+// ── File upload confirmation (Server → Client) ─────────────────
+export interface ClientFileUploadedMessage {
+  type: 'client:file_uploaded';
+  payload: { path: string; filename: string };
+}
+
+// ── Autopilot responses (Server → Client) ──────────────────────
+export interface AutopilotOptimizedMessage {
+  type: 'autopilot:optimized';
+  sessionId: string;
+  payload: { id: string; optimizedPrompt: string };
+}
+
+export interface AutopilotOptimizeErrorMessage {
+  type: 'autopilot:optimize_error';
+  sessionId: string;
+  /** error may be absent if the optimizer failed without a message (JSON.stringify drops undefined). */
+  payload: { id: string; error?: string };
+}
+
+export interface AutopilotPromptSentMessage {
+  type: 'autopilot:prompt_sent';
+  sessionId: string;
+  payload: { id: string };
+}
+
+export interface AutopilotPromptDoneMessage {
+  type: 'autopilot:prompt_done';
+  sessionId: string;
+  payload: { id: string };
+}
+
+// ── Biometric Mac Unlock & Sudo Relay (Server → Client) ────────
+export interface MacUnlockStatusMessage {
+  type: 'mac:unlock_status';
+  payload: { configured: boolean; supported: boolean };
+}
+
+export interface MacBiometricUnlockResultMessage {
+  type: 'mac:biometric_unlock_result';
+  sessionId?: string;
+  payload: { ok: boolean; mode: 'remote' | 'sudo'; error?: string };
+}
+
 export type ServerMessage =
   | TerminalCreatedMessage
   | TerminalOutputMessage
@@ -441,7 +757,10 @@ export type ServerMessage =
   | SystemSnapshotResponseMessage
   | SystemKillResultMessage
   | AudioTranscriptionMessage
+  | AudioProgressMessage
   | AudioErrorMessage
+  | TTSResultMessage
+  | TTSErrorMessage
   | ManagerSummaryMessage
   | ManagerResponseMessage
   | ManagerProvidersMessage
@@ -456,4 +775,109 @@ export type ServerMessage =
   | ManagerStreamChunkMessage
   | ManagerStreamEndMessage
   | BrowserBridgeOpenMessage
-  | BrowserBridgeCallbackResultMessage;
+  | BrowserBridgeCallbackResultMessage
+  | TerminalTitlesMessage
+  | TerminalTitleMessage
+  | ManagerPersonalityConfiguredMessage
+  | ManagerTasksMessage
+  | ManagerModelLoadingMessage
+  | ClipboardHistoryMessage
+  | ClipboardAddedMessage
+  | ClipboardRemovedMessage
+  | ClientFileUploadedMessage
+  | AutopilotOptimizedMessage
+  | AutopilotOptimizeErrorMessage
+  | AutopilotPromptSentMessage
+  | AutopilotPromptDoneMessage
+  | MacUnlockStatusMessage
+  | MacBiometricUnlockResultMessage;
+
+// ── Remote access (its own WebSocket connection on /remote) ──────────
+// Deliberately not part of ClientMessage/ServerMessage: video and input travel
+// over a second connection that the page opens itself inside the WebView.
+
+export type RemoteErrorCode =
+  | 'permission_screen'
+  | 'permission_input'
+  | 'capture_unavailable'
+  | 'helper_crashed'
+  | 'disabled'
+  | 'unsupported_platform'
+  /** The display went to sleep — ScreenCaptureKit then reports no display at
+   *  all. Its own code because that otherwise looks like a permission problem,
+   *  sending the user hunting in System Settings for a checkbox that's already set. */
+  | 'display_asleep';
+
+export type RemoteQualityPreset = 'sparsam' | 'auto' | 'scharf';
+
+export interface RemoteStartMessage {
+  type: 'remote:start';
+  /** localCursor: the app draws the pointer itself (see remote:cursor). */
+  payload: { maxWidth: number; fps: number; bitrateKbps: number; localCursor?: boolean };
+}
+export interface RemoteStopMessage { type: 'remote:stop' }
+export interface RemoteKeyframeMessage { type: 'remote:keyframe' }
+/** Sent by the app for every frame it receives (ts = the frame header's
+ *  timestamp). The server bounds its queueing delay with these — see
+ *  server/src/remote/flow.ts. Older apps don't send it; the server then keeps
+ *  its buffer-size fallback. */
+export interface RemoteAckMessage { type: 'remote:ack'; payload: { ts: number } }
+
+// There is deliberately no `remote:quality` client message: the app switches
+// quality tiers by sending remote:stop followed by remote:start with the new
+// tier's options (ffmpeg on Windows can't change bitrate mid-stream, so a
+// restart is required either way — see bridge.js's TMSRemote.setQuality).
+// A dedicated message type and server-side handler for this existed early on
+// but that code path was never reachable from the app; removed rather than
+// left as dead code nobody could exercise.
+export type RemoteClientMessage =
+  | RemoteStartMessage | RemoteStopMessage | RemoteKeyframeMessage | RemoteAckMessage;
+
+export interface RemoteStartedMessage {
+  type: 'remote:started';
+  /** localCursor: true = the pointer is NOT in the video; draw it from remote:cursor. */
+  payload: { width: number; height: number; scale: number; fps: number; codec: 'avc1'; localCursor?: boolean };
+}
+/** Pointer position on the Mac, normalized 0..1 — only after a localCursor start. */
+export interface RemoteCursorMessage { type: 'remote:cursor'; payload: { x: number; y: number } }
+/** Mac lock screen state changed — lets the app surface a 1-tap fingerprint unlock button. */
+export interface RemoteLockedMessage { type: 'remote:locked'; payload: { locked: boolean } }
+export interface RemoteStoppedMessage {
+  type: 'remote:stopped';
+  payload: { reason: string };
+}
+export interface RemoteErrorMessage {
+  type: 'remote:error';
+  payload: { code: RemoteErrorCode; message: string };
+}
+export interface RemoteStatusMessage {
+  type: 'remote:status';
+  payload: { fps: number; kbps: number; rttMs: number; dropped: number };
+}
+
+export type RemoteServerMessage =
+  | RemoteStartedMessage | RemoteStoppedMessage | RemoteErrorMessage | RemoteStatusMessage
+  | RemoteCursorMessage | RemoteLockedMessage;
+
+/** Input events: short keys, since up to 60 of these can arrive per second. */
+export type RemoteInputEvent =
+  | { t: 'd'; dx: number; dy: number }
+  | { t: 'm'; x: number; y: number }
+  | { t: 'b'; b: 'l' | 'r' | 'm'; d: boolean }
+  // Scroll unit (I9): pixels of the raw touch-gesture delta, unscaled — the
+  // same numbers the pointer-drag `d` event uses. macOS feeds this straight
+  // into CGEvent's scroll wheel in `.pixel` units (a 1:1 match). Windows has
+  // no literal pixel unit for wheel input, but its own Precision Touchpad
+  // driver already sends small, sub-WHEEL_DELTA(120) mouseData values for
+  // smooth scrolling — input-helper.ps1 passes this value straight through
+  // as mouseData, the same idiom, rather than multiplying by 120 (which
+  // treated every wire pixel as a full notch and scrolled ~120x too far).
+  | { t: 's'; dx: number; dy: number }
+  | { t: 'k'; c: string; d: boolean; mods: { s: boolean; c: boolean; a: boolean; m: boolean } }
+  | { t: 'x'; s: string }
+  // Multi-finger trackpad gesture (3+ fingers on the app's pad). The server
+  // turns it into the platform's own action — see server/src/remote/gestures.ts.
+  | { t: 'g'; g: RemoteGesture };
+
+export type RemoteGesture =
+  | 'swipe-left' | 'swipe-right' | 'swipe-up' | 'swipe-down' | 'pinch-in' | 'pinch-out';

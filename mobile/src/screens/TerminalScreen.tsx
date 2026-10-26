@@ -3,8 +3,9 @@ import { AppState, NativeModules, View, StyleSheet, Text, TouchableOpacity, Aler
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { ToolRail, ToolRailRef, TOOL_RAIL_WIDTH } from '../components/ToolRail';
-import { TerminalTabs } from '../components/TerminalTabs';
+
+import { tabDisplayName } from '../utils/tabDisplayName';
+import { TabActionSheet } from '../components/TabActionSheet';
 import { TerminalToolbar } from '../components/TerminalToolbar';
 import { TerminalView, TerminalViewRef, clearViewBuffer } from '../components/TerminalView';
 import { ConnectionStatus } from '../components/ConnectionStatus';
@@ -90,16 +91,19 @@ export function TerminalScreen({ navigation, route }: Props) {
   const [restoreState, setRestoreState] = useState<RestoreState | null>(null);
   const restoreDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [rangeActive, setRangeActive] = useState(false);
-  const toolRailRef = useRef<ToolRailRef>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   // browserOpen flag is now persisted on each TerminalTab in the store
-  const railWidthAnim = useRef(new Animated.Value(TOOL_RAIL_WIDTH)).current;
 
   // ── New UI state (v5 redesign) ────────────────────────────────────────────
   const [toolMenuVisible, setToolMenuVisible] = useState(false);
   const [toolMenuAnchor, setToolMenuAnchor] = useState({ x: 200, y: 400 });
   const [spotlightVisible, setSpotlightVisible] = useState(false);
   const [activePanelTool, setActivePanelTool] = useState<string | null>(null);
+  /** Startverzeichnis des Datei-Explorers, wenn er ueber einen Pfad-Link im
+   *  Terminal geoeffnet wurde. null = Server-Root. */
+  const [fileStartPath, setFileStartPath] = useState<string | null>(null);
+  /** Reiter, dessen Kebab (lang druecken auf dem Chip) offen ist. */
+  const [actionSheetTabId, setActionSheetTabId] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [termAreaSize, setTermAreaSize] = useState({ width: 400, height: 600 });
@@ -788,6 +792,8 @@ export function TerminalScreen({ navigation, route }: Props) {
     }
   }, [serverId]);
 
+  const actionSheetTab = serverTabs.find((t) => t.id === actionSheetTabId);
+
   // Only render WebViews for tabs that have been activated at least once (lazy-mount)
   const tabsToRender = serverTabs.filter((t) => mountedTabs.has(t.id));
 
@@ -817,10 +823,17 @@ export function TerminalScreen({ navigation, route }: Props) {
     }
   }, [serverId]);
 
-  // Path link clicked in terminal — open file browser at that path
+  // Path link clicked in terminal — open the file browser at that path.
+  // This used to go through toolRailRef, which was never filled: ToolRail is not
+  // rendered any more, so tapping a path did nothing at all. setActivePanelTool
+  // is the route that works — it is what the tools orb uses today.
   const handlePathClicked = useCallback((path: string) => {
-    toolRailRef.current?.openFileBrowser(path);
-  }, []);
+    setToolMenuVisible(false);
+    setActivePanelTool('files');
+    // The panel opens at the server root; the tapped path goes in as the start
+    // directory, and an empty path keeps the previous start directory.
+    setFileStartPath(path);
+  }, [serverId]);
 
   // ToolRail action handler — non-panel tools navigate to their own screen
   const handleToolAction = useCallback((toolId: string): boolean => {
@@ -876,8 +889,10 @@ export function TerminalScreen({ navigation, route }: Props) {
   const handleSelectTool = useCallback((toolId: string) => {
     setToolMenuVisible(false);
     setSpotlightVisible(false);
-    // Tools that open panels
-    const panelTools = ['autoApprove', 'snippets', 'files', 'screenshots', 'sql', 'autopilot', 'watchers', 'ports', 'render', 'vercel', 'supabase'];
+    // Tools that open panels. supabase is not one of them: it had no case in
+    // renderPanelContent, so tapping it opened an empty sheet. The connection
+    // lives in the SQL panel.
+    const panelTools = ['autoApprove', 'snippets', 'files', 'screenshots', 'sql', 'autopilot', 'watchers', 'ports', 'render', 'vercel'];
     if (panelTools.includes(toolId)) {
       setActivePanelTool(toolId);
     } else {
@@ -917,6 +932,7 @@ export function TerminalScreen({ navigation, route }: Props) {
             serverToken={server?.token ?? ''}
             sessionId={activeSession}
             wsService={wsRef.current}
+            initialPath={fileStartPath}
           />
         );
       case 'screenshots':
@@ -1076,6 +1092,7 @@ export function TerminalScreen({ navigation, route }: Props) {
                 : (idx - 1 + serverTabs.length) % serverTabs.length;
               setActiveTab(serverId, serverTabs[next].id);
             }}
+            onTabMenu={(tabId) => setActionSheetTabId(tabId)}
           />
         </View>
 
@@ -1152,6 +1169,21 @@ export function TerminalScreen({ navigation, route }: Props) {
       >
         {renderPanelContent()}
       </ToolPanelSheet>
+
+      {/* Tab-Aktionen — Umbenennen und Kategorie. Beides gab es schon, war aber an
+          die nie gerenderte TerminalTabs gebunden. */}
+      <TabActionSheet
+        visible={!!actionSheetTabId}
+        currentTitle={actionSheetTab ? tabDisplayName(actionSheetTab) : ''}
+        currentCategory={actionSheetTab?.category}
+        onRename={(name) => {
+          if (actionSheetTabId) handleRenameTab(actionSheetTabId, name);
+        }}
+        onCategory={(category) => {
+          if (actionSheetTabId) handleChangeCategory(actionSheetTabId, category);
+        }}
+        onClose={() => setActionSheetTabId(null)}
+      />
 
       {/* Tab Grid View — unchanged */}
       <TabGridView

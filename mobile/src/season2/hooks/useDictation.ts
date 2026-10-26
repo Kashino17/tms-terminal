@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Audio } from 'expo-av';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as FileSystem from 'expo-file-system';
 import type { WebSocketService } from '../../services/websocket.service';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -19,6 +20,8 @@ export type MicState = 'idle' | 'recording' | 'processing';
 // 25s to push through a slow Tailscale/DERP path before the first heartbeat.
 const TRANSCRIPTION_TIMEOUT_MS = 90000;
 
+const KEEP_AWAKE_TAG = 'tms-dictation';
+
 const RECORDING_OPTIONS = {
   android: {
     // AAC in an MP4/m4a container. Android's MediaRecorder cannot emit RIFF
@@ -29,9 +32,9 @@ const RECORDING_OPTIONS = {
     extension: '.m4a',
     outputFormat: 2,
     audioEncoder: 3,
-    sampleRate: 16000,
+    sampleRate: 32000,
     numberOfChannels: 1,
-    bitRate: 64000,
+    bitRate: 128000,
   },
   ios: {
     extension: '.wav',
@@ -47,6 +50,8 @@ const RECORDING_OPTIONS = {
   web: {},
 } as const;
 
+const FALLBACK_DICTATION_SESSION_ID = '__dictation__';
+
 interface UseDictationArgs {
   wsService: WebSocketService | null;
   sessionId: string | undefined;
@@ -58,7 +63,9 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
   const [micState, setMicState] = useState<MicState>('idle');
   const recordingRef = useRef<Audio.Recording | null>(null);
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlightSessionIdRef = useRef<string | null>(null);
   const voicePromptEnhanceEnabled = useSettingsStore((s) => s.voicePromptEnhanceEnabled);
+  const effectiveSessionId = sessionId || FALLBACK_DICTATION_SESSION_ID;
 
   const clearWatchdog = useCallback(() => {
     if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = null; }
@@ -67,19 +74,23 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
   const armWatchdog = useCallback(() => {
     clearWatchdog();
     watchdogRef.current = setTimeout(() => {
+      inFlightSessionIdRef.current = null;
       setMicState('idle');
       onError?.('Transkription abgebrochen (Zeitüberschreitung)');
     }, TRANSCRIPTION_TIMEOUT_MS);
   }, [clearWatchdog, onError]);
 
-  // Server responses for THIS session only.
+  // Server responses for the in-flight dictation session (survives tab switches
+  // and works in Manager / Fernzugriff even when no terminal session is open).
   useEffect(() => {
-    if (!wsService || !sessionId) return;
+    if (!wsService) return;
     return wsService.addMessageListener((msg: unknown) => {
       const m = msg as { type: string; sessionId?: string; payload?: any };
-      if (m.sessionId !== sessionId) return;
+      const targetSid = inFlightSessionIdRef.current ?? effectiveSessionId;
+      if (m.sessionId !== targetSid) return;
       if (m.type === 'audio:transcription') {
         clearWatchdog();
+        inFlightSessionIdRef.current = null;
         setMicState('idle');
         const text = (m.payload?.text ?? '').trim();
         if (text) onText(text);
@@ -88,11 +99,23 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
         armWatchdog();
       } else if (m.type === 'audio:error') {
         clearWatchdog();
+        inFlightSessionIdRef.current = null;
         setMicState('idle');
         onError?.(m.payload?.message ?? 'Transkription fehlgeschlagen');
       }
     });
-  }, [wsService, sessionId, onText, onError, armWatchdog, clearWatchdog]);
+  }, [wsService, effectiveSessionId, onText, onError, armWatchdog, clearWatchdog]);
+
+  // Keep the screen on while a dictation is recording or uploading. Without
+  // this the display dimmed and locked mid-sentence: Android pauses the
+  // activity on screen-off, which stops the recorder, and the socket carrying
+  // the upload dies with it. One tag, so start/stop can never leak a lock.
+  const micBusy = micState !== 'idle';
+  useEffect(() => {
+    if (!micBusy) return;
+    activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
+    return () => { deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => {}); };
+  }, [micBusy]);
 
   // Cleanup on unmount.
   useEffect(() => {
@@ -106,7 +129,7 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
   }, [clearWatchdog]);
 
   const toggle = useCallback(async () => {
-    if (micState === 'processing' || !wsService || !sessionId) return;
+    if (micState === 'processing' || !wsService) return;
 
     if (micState === 'recording') {
       setMicState('processing');
@@ -119,9 +142,11 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
         if (!uri) { setMicState('idle'); return; }
         const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         await FileSystem.deleteAsync(uri, { idempotent: true });
+        const outboundSid = effectiveSessionId;
+        inFlightSessionIdRef.current = outboundSid;
         wsService.send({
           type: 'audio:transcribe',
-          sessionId,
+          sessionId: outboundSid,
           // `format: 'wav'` is a legacy gate string the server requires — the
           // sidecar sniffs the real container by magic bytes (RIFF→WAV else
           // ffmpeg), so iOS PCM-WAV and Android AAC/m4a both decode correctly.
@@ -129,6 +154,7 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
         });
         armWatchdog();
       } catch {
+        inFlightSessionIdRef.current = null;
         setMicState('idle');
         onError?.('Aufnahme konnte nicht gesendet werden');
       }
@@ -146,7 +172,7 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
       setMicState('idle');
       onError?.('Aufnahme konnte nicht gestartet werden');
     }
-  }, [micState, wsService, sessionId, voicePromptEnhanceEnabled, armWatchdog, onError]);
+  }, [micState, wsService, effectiveSessionId, voicePromptEnhanceEnabled, armWatchdog, onError]);
 
   return { micState, toggle };
 }

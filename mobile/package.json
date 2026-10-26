@@ -6,7 +6,10 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "build:season2": "node scripts/build-season2-html.js"
+    "build:season2": "node scripts/build-season2-html.js",
+    "test:mockup": "node --test scripts/*.test.mjs",
+    "test:webview": "node --test scripts/webview-prayer.test.mjs",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "1.21.0",
@@ -27,6 +30,7 @@
     "expo-haptics": "~12.8.1",
     "expo-image-picker": "~14.7.1",
     "expo-intent-launcher": "~10.11.0",
+    "expo-keep-awake": "~12.8.2",
     "expo-local-authentication": "~13.8.0",
     "expo-location": "~16.5.5",
     "expo-notifications": "~0.27.8",
@@ -50,6 +54,7 @@
   "devDependencies": {
     "@babel/core": "^7.20.0",
     "@types/react": "~18.2.45",
+    "patch-package": "^8.0.0",
     "typescript": "^5.3.0"
   },
   "private": true

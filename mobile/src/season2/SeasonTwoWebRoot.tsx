@@ -9,23 +9,34 @@
  * The classic UI is untouched — Season 2 is still just a settings toggle.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert, Modal, TextInput } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as WebBrowser from 'expo-web-browser';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../types/navigation.types';
 import { useSettingsStore } from '../store/settingsStore';
-import { useTerminalStore } from '../store/terminalStore';
+import { useTerminalStore, terminalHydration } from '../store/terminalStore';
+import { isUserTitle } from '../store/tabIdentity';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
 import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '../services/notifications.service';
 import { checkForUpdate, downloadAndInstall, getCurrentVersion } from '../services/updater.service';
 import { getConnection } from '../services/websocket.service';
-import { useS2ConnStore, useS2Connection } from './screens/TerminalsScreen';
+import { useS2ConnStore, useS2Connection } from './s2conn/connection';
+import {
+  setAdhanEnabled, setFajrWecker, setSelectedAdhan, readAdhanSettings,
+  previewAdhan, stopAdhan, scheduleTestAdhan, canScheduleExactAdhan,
+  requestExactAlarmPermission,
+} from '../services/adhan.service';
+import { refreshAdhanSchedule } from '../services/adhanScheduler';
+import { usePrayerStore, prayerMethodName } from '../store/prayerStore';
+import { PRAYER_NAMES, getNextPrayer, type PrayerTimes } from '../services/prayer.service';
+import * as Notifications from 'expo-notifications';
 import { useDictation } from './hooks/useDictation';
 import { useManagerWire } from './manager/useManagerWire';
 import { useManagerStore } from '../store/managerStore';
@@ -116,17 +127,29 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
+  /** Incremented for every fresh page: a reloaded bridge starts without cards. */
+  const [pageEpoch, setPageEpoch] = useState(0);
+  // Restore only after the persisted tabs are in memory; otherwise an empty
+  // store is mistaken for "this server has no terminals" and never retried.
+  const [tabsHydrated, setTabsHydrated] = useState(terminalHydration.isDone);
+  useEffect(() => terminalHydration.subscribe(() => setTabsHydrated(true)), []);
+  /** Letzte Gebetszeiten — der Testknopf braucht sie, um einen Alarm zu stellen. */
+  const prayerTimesRef = useRef<PrayerTimes | null>(null);
   const { server, token, wsService, state, rtt } = useS2Connection();
   const setServer = useS2ConnStore((s) => s.setServer);
   const setSeasonTwoEnabled = useSettingsStore((s) => s.setSeasonTwoEnabled);
 
   /** FIFO der terminal:create-Anfragen — der Server antwortet in Reihenfolge.
    *  Ein Einzelwert ordnete bei mehreren gleichzeitigen Creates falsch zu. */
-  const pendingCards = useRef<Array<{ cardId: string; name?: string }>>([]);
+  const pendingCards = useRef<Array<{ cardId: string; name?: string; custom?: boolean }>>([]);
   /** cardId whose mic is currently recording. */
   const micCard = useRef<string | null>(null);
   /** Set when the user cancels: the recording still stops, its text is dropped. */
   const micDiscard = useRef(false);
+  // Gemeinsame Zwischenablage: der zuletzt abgeglichene Text. Was die App selbst
+  // aufs Handy gelegt hat (vom Mac kommend), darf beim nächsten Lesen nicht als
+  // „am Handy kopiert“ zurück in den Verlauf.
+  const clipSynced = useRef('');
   const restored = useRef(false);
   /** Per-session "is it still producing output" timers — the server has no
    *  status event, so the state has to be derived from the stream itself. */
@@ -140,6 +163,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // Long-Press auf eine Server-Karte öffnet dieses native Aktions-Sheet
   // (Bearbeiten + Löschen) — dieselbe Komponente wie im klassischen Layout.
   const [serverSheet, setServerSheet] = useState<{ title: string; subtitle: string; options: ActionSheetOption[] } | null>(null);
+  const macUnlockConfigured = useRef<boolean>(false);
+  const [macPasswordModal, setMacPasswordModal] = useState<{ visible: boolean; mode: 'remote' | 'sudo'; sessionId?: string } | null>(null);
+  const [macPasswordInput, setMacPasswordInput] = useState('');
   /** Griff auf den nativen Browser — Neuladen und Cache-Leeren gehen nur über ihn. */
   const browserRef = useRef<BrowserHandle>(null);
   // Browser-Bridge: session that triggered the current login-open, so its
@@ -225,7 +251,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const activeSessionId = useTerminalStore((s) =>
     server ? (s.tabs[server.id] ?? []).find((t) => t.active)?.sessionId ?? (s.tabs[server.id] ?? [])[0]?.sessionId : undefined,
   );
-  const sheets = useSheetBridges({ ready, call, wsService, server, token, activeSessionId });
+  const sheets = useSheetBridges({
+    ready, call, wsService, server, token, activeSessionId, prayerTimesRef,
+  });
   const fileExplorer = useFileExplorer({ ready, call, server, token });
 
   // ── Pick up the saved server (the WebView has no server picker of its own).
@@ -323,7 +351,29 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     // sonst unterdrückt es die erste Meldung nach einem Reload.
     sessionStatus.current = {};
 
+    /** Titel vom Server in den Speicher UND auf die Karte. */
+    const applyServerTitle = (sessionId: string, title: string) => {
+      const st = useTerminalStore.getState();
+      const tab = st.getTabs(server.id).find((t) => t.sessionId === sessionId);
+      if (tab && (tab.title !== title || !tab.customTitle)) st.updateTab(server.id, tab.id, { title, customTitle: true });
+      call('setCardTitle', sessionId, title);
+    };
+
     const unsub = wsService.addMessageListener((m: any) => {
+      // ── Gemeinsame Zwischenablage (server/src/clipboard) ──
+      if (m?.type === 'clipboard:history') { call('clipboardSet', m.payload?.items ?? []); return; }
+      if (m?.type === 'clipboard:removed') { call('clipboardRemoved', m.payload?.ids ?? []); return; }
+      if (m?.type === 'clipboard:added' && m.payload?.item) {
+        const item = m.payload.item;
+        call('clipboardAdded', item, m.payload.removed ?? []);
+        // Am Mac kopiert → liegt sofort auch auf dem Handy (nur solange die App
+        // vorne ist; im Hintergrund lässt Android das ohnehin nicht zu).
+        if (item.source === 'mac' && AppState.currentState === 'active' && typeof item.text === 'string') {
+          clipSynced.current = item.text;
+          Clipboard.setStringAsync(item.text).catch(() => {});
+        }
+        return;
+      }
       if (m?.type === 'terminal:output' && m.sessionId && m.payload?.data) {
         recordViewBuffer(m.sessionId, m.payload.data);
         appendScrollback(m.sessionId, m.payload.data);
@@ -336,6 +386,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
       if (m?.type === 'terminal:reattached' && m.sessionId) {
+        // Der Snapshot des Servers enthaelt keine DECSET-Modi. Der Prozessname
+        // sagt der Seite, ob sie Maus-Reporting lokal wiederherstellen muss
+        // (opencode), sonst blieben Tipp und Wheel nach jedem Kaltstart tot.
+        call('setProcessName', m.sessionId, m.payload?.processName ?? '');
         // Die Seite bestätigt ihre echten xterm-Maße (settle-geschützter
         // Resize-Weg). Heilt eine unterwegs verlorene Breite, ohne den
         // unzuverlässigen Attach-Maßen zu vertrauen — die haben als
@@ -343,16 +397,52 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('assertDims', m.sessionId);
         return;
       }
+      // ── Titel: der Server ist die Quelle der Wahrheit (titles.store.ts) ──
+      if (m?.type === 'terminal:titles') {
+        const serverTitles: Record<string, string> = m.payload?.titles ?? {};
+        for (const [sid, title] of Object.entries(serverTitles)) applyServerTitle(sid, title);
+        // Einmaliges Hochladen: Titel, die bisher nur auf diesem Handy lagen
+        // (vor dem Server-Speicher vergeben), gehen so nicht verloren.
+        for (const tab of useTerminalStore.getState().getTabs(server.id)) {
+          if (tab.sessionId && !(tab.sessionId in serverTitles) && isUserTitle(tab)) {
+            wsService.send({ type: 'terminal:rename', sessionId: tab.sessionId, payload: { title: tab.title } } as never);
+          }
+        }
+        return;
+      }
+      if (m?.type === 'terminal:title' && m.sessionId) {
+        if (typeof m.payload?.title === 'string' && m.payload.title) applyServerTitle(m.sessionId, m.payload.title);
+        return;
+      }
       if (m?.type === 'terminal:created' && m.sessionId) {
+        // Vom Manager angelegt: das ist KEINE Antwort auf eine unserer Karten.
+        // Vorher verbrauchte es die naechste wartende Karte — legte man gerade
+        // selbst ein Terminal an, landeten Sitzung und Titel ueber Kreuz.
+        if (m.payload?.fromManager) {
+          const label = typeof m.payload?.label === 'string' && m.payload.label ? m.payload.label : 'Terminal';
+          useTerminalStore.getState().addTab(server.id, {
+            id: m.sessionId, sessionId: m.sessionId, title: label, serverId: server.id, active: false,
+          });
+          call('restoreSessions', [{ sessionId: m.sessionId, name: label }]);
+          return;
+        }
         const pending = pendingCards.current.shift();
         const cardId = pending?.cardId ?? null;
+        // Reiter-ID = Sitzungs-ID, NIE die Karten-ID der Seite: die zaehlt nach
+        // jedem App-Start wieder ab t1 und kollidierte mit gespeicherten Reitern
+        // (vertauschte, doppelte, verlorene Titel — siehe store/tabIdentity.ts).
         useTerminalStore.getState().addTab(server.id, {
-          id: cardId ?? m.sessionId,
+          id: m.sessionId,
           sessionId: m.sessionId,
-          title: pending?.name ?? cardId ?? 'Terminal',
+          title: pending?.name ?? 'Terminal',
+          customTitle: pending?.custom || undefined,
           serverId: server.id,
           active: true,
         });
+        // Vor dem Anlegen schon umbenannt: jetzt, wo die Sitzung existiert, zum Server.
+        if (pending?.custom && pending.name) {
+          wsService.send({ type: 'terminal:rename', sessionId: m.sessionId, payload: { title: pending.name } } as never);
+        }
         if (cardId) {
           call('bindSession', cardId, m.sessionId);
           sheets.pushNotes(cardId);
@@ -418,6 +508,22 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('sessionExpired', m.sessionId);
         return;
       }
+      if (m?.type === 'mac:unlock_status') {
+        macUnlockConfigured.current = !!m.payload?.configured;
+        return;
+      }
+      if (m?.type === 'mac:biometric_unlock_result') {
+        if (m.payload?.ok) {
+          call('toast', 'Mac entsperrt / bestätigt ✓');
+        } else if (m.payload?.error === 'not_configured') {
+          macUnlockConfigured.current = false;
+          setMacPasswordInput('');
+          setMacPasswordModal({ visible: true, mode: 'remote' });
+        } else {
+          call('toast', `Fehler: ${m.payload?.error ?? 'Unbekannt'}`);
+        }
+        return;
+      }
       if (m?.type === 'terminal:prompt_detected' && m.sessionId) {
         // Auto-Approve führt der SERVER aus (chooseApprovalKey: Enter für
         // nummerierte Prompts, 'y' bei [y/N], nie automatisch bei Freitext).
@@ -437,9 +543,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         const kind = (m.payload as { kind?: string } | undefined)?.kind ?? info.kind;
         if (kind === 'question') return;
 
-        const autoOn = useAutoApproveStore.getState().enabled[sid] ?? true;
-
         setSessionStatus(sid, 'waiting');
+
+        if (kind === 'sudo') {
+          useTerminalStore.getState().setTabNotification(server.id, sid);
+          call('prompt', sid, {
+            ...info,
+            kind: 'sudo',
+            tool: 'sudo / Passwort',
+            target: info.target || 'Terminal',
+            question: 'Mit Fingerabdruck bestätigen?',
+          });
+          return;
+        }
+
+        const autoOn = useAutoApproveStore.getState().enabled[sid] ?? true;
 
         // Reine Berechtigung bei aktivem Auto-Approve: kein Fenster. Genau das
         // soll Auto-Approve ja ersparen — der Server hat es entweder schon
@@ -468,6 +586,11 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
     });
+    // Die Titelliste schickt der Server schon beim Verbinden — womöglich bevor
+    // dieser Empfänger stand (Kaltstart: Seite lädt langsamer als der Socket).
+    wsService.send({ type: 'terminal:titles_get' } as never);
+    wsService.send({ type: 'clipboard:list' } as never);
+    wsService.send({ type: 'mac:unlock_status' } as never);
     return unsub;
   }, [wsService, server, ready, call, markBusy, setSessionStatus]);
 
@@ -498,6 +621,34 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     const sub = AppState.addEventListener('change', (s) => { if (s === 'active') jump(); });
     return () => sub.remove();
   }, [ready, call]);
+
+  // Fernzugriff: im Hintergrund ist die Aufnahme reine Verschwendung — sie kostet
+  // auf dem PC Rechenzeit und hier Akku. Das browserseitige visibilitychange ist
+  // im Android-WebView dafür unzuverlässig (feuert nicht sicher, wenn nur die
+  // Activity pausiert), darum hier über AppState statt auf der Seite selbst.
+  // window.TMSRemote sitzt bewusst NICHT unter window.TMSBridge (die Seite ruft
+  // es auch selbst auf, siehe index.html) — deshalb hier direkt statt über
+  // call() angesprochen.
+  //
+  // I7: hier NICHT start()/stop() rufen. Nach einem expliziten "Trennen" auf
+  // der Seite bleiben remoteTarget (die Zugangsdaten) gesetzt — die Kommentar-
+  // Annahme "start()/stop() sind ohne Ziel ein No-op" stimmt dann nicht mehr,
+  // start() baut eine echte neue Verbindung auf. Kommt die App danach aus dem
+  // Hintergrund zurück, würde ein unbedingtes start() also eine NEUE Aufnahme
+  // samt Energie-Assertion auf dem PC anwerfen, obwohl der Nutzer die Sitzung
+  // langst beendet hat und nirgends in der Nähe des Fernzugriffs-Bildschirms
+  // ist. suspend()/resume() (bridge.js) machen dieselbe Pause/Fortsetzung,
+  // aber resume() setzt nur fort, was VORHER tatsächlich lief (wantRunning).
+  useEffect(() => {
+    if (!ready) return;
+    const sub = AppState.addEventListener('change', (s) => {
+      const js = s === 'active'
+        ? 'window.TMSRemote && window.TMSRemote.resume(); true;'
+        : 'window.TMSRemote && window.TMSRemote.suspend(); true;';
+      webRef.current?.injectJavaScript(js);
+    });
+    return () => sub.remove();
+  }, [ready]);
 
   useEffect(() => () => {
     Object.values(idleTimers.current).forEach(clearTimeout);
@@ -579,11 +730,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   }, [ready, pushServers]);
 
   // ── Update-Banner, getrennt vom Server-Status.
+  //    GitHub ist auch erreichbar, wenn der TMS-Server gerade offline ist —
+  //    die frühere Bedingung `state === 'connected'` verhinderte dann jeden
+  //    Update-Check. Und die Seite startete mit Mockup-Daten (1.4.2/2.0.0),
+  //    wodurch "Über" eine falsche Version und ein Fake-Update zeigte.
   const updateChecked = useRef(0);
+  const updateInit = useRef(false);
   useEffect(() => {
-    if (!ready || state !== 'connected') return;
+    if (!ready) return;
     let cancelled = false;
     (async () => {
+      const current = getCurrentVersion();
+      if (!updateInit.current) {
+        updateInit.current = true;
+        call('setUpdate', { current, latest: current, notes: '' });
+      }
       // Höchstens alle 30 Minuten: vorher hing `rtt` in den Abhängigkeiten,
       // der Effekt lief bei JEDEM RTT-Tick (alle 3s) und hämmerte die
       // GitHub-API — nach ~3 Minuten griff deren Rate-Limit (60/h) und das
@@ -594,10 +755,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       const up = await checkForUpdate().catch(() => null);
       if (cancelled || !up) return; // null heißt auch: schon aktuell
       updateUrl.current = up.downloadUrl;
-      call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
+      call('setUpdate', { current, latest: up.version, notes: up.changelog });
     })();
     return () => { cancelled = true; };
-  }, [ready, state, call]);
+  }, [ready, call]);
 
   // ── Nach jedem RECONNECT neu anhängen. Der Server hängt Sessions beim
   //    Verbindungsabriss ab und puffert ihren Output — ohne Reattach bliebe
@@ -631,15 +792,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       if (next !== 'active') flushScrollback();
       if (next !== 'active' || !restored.current) return;
       // Kurz warten: der Socket braucht nach dem Aufwachen einen Moment.
-      setTimeout(() => call('reattachAll'), 300);
-      setTimeout(() => call('reattachAll'), 1500);
+      setTimeout(() => call('reattachAll'), 350);
     });
     return () => sub.remove();
   }, [ready, call]);
 
   // ── Once connected, hand the page the sessions that already exist.
   useEffect(() => {
-    if (!ready || !server || state !== 'connected' || restored.current) return;
+    if (!ready || !tabsHydrated || !server || state !== 'connected' || restored.current) return;
     if (!scrollbackReady.current) return; // sonst hingen die Karten leer da
     restored.current = true;
     const live = useTerminalStore
@@ -661,7 +821,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // Terminal kam zurueck, die App zeigte "an", der Server drueckte nichts.
       wsService?.send({ type: 'client:set_auto_approve', sessionId: t.sessionId, payload: { enabled: on } } as never);
     });
-  }, [ready, server, state, call, sheets, scrollbackTick, wsService]);
+  }, [ready, pageEpoch, tabsHydrated, server, state, call, sheets, scrollbackTick, wsService]);
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
   const { micState, toggle: toggleMic } = useDictation({
@@ -675,13 +835,20 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // Manager-Diktat landet in der Eingabezeile zum Prüfen/Ändern, nicht
       // sofort gesendet — sonst könnte man ein Fehl-Transkript nicht mehr fangen.
       if (card === MANAGER_MIC) call('injectManagerInput', text);
-      else call('dictationResult', card ?? '', text);
+      // Fernzugriff-Diktat geht nicht über TMSBridge (window.TMSRemote sitzt
+      // bewusst daneben, siehe bridge.js) — direkt in die Seite injiziert.
+      else if (card === REMOTE_MIC) {
+        webRef.current?.injectJavaScript(
+          `window.TMSRemote && window.TMSRemote.input(${JSON.stringify({ t: 'x', s: text })}); true;`
+        );
+      } else call('dictationResult', card ?? '', text);
     },
     onError: (msg: string) => {
       const card = micCard.current;
       micCard.current = null;
       micDiscard.current = false;
       if (card === MANAGER_MIC) call('managerMicStopped');
+      else if (card === REMOTE_MIC) { /* Seite zeigt ohnehin nur den Mikro-Zustand, kein eigener Reset noetig */ }
       else call('dictationResult', card ?? '', '');
       call('toast', msg);
     },
@@ -697,7 +864,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     try { msg = JSON.parse(event.nativeEvent.data); } catch { return; }
     const { type, payload } = msg;
 
-    if (type === 'bridge:ready') { setReady(true); return; }
+    if (type === 'bridge:ready') {
+      // A native WebView recreation (Fold unfold, Activity relaunch) loads a
+      // fresh page while this React component — and `restored` — survives.
+      // Without resetting it, the new page never gets its cards back.
+      restored.current = false;
+      sessionStatus.current = {};
+      setReady(true);
+      setPageEpoch((n) => n + 1);
+      return;
+    }
 
     // Server-Verwaltung muss IMMER gehen — auch ohne aktive Verbindung (der Guard
     // unten würde sie sonst verschlucken). Bearbeiten nutzt den bestehenden
@@ -727,6 +903,159 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         });
       })();
       return;
+    }
+
+    // Der Fernzugriff-Knopf kann auf einer Karte stehen, die pushServers() über
+    // ihre eigene Gesundheitsabfrage bereits als "online" markiert hat, obwohl
+    // hier unten noch keine Verbindung steht (z. B. direkt nach Kaltstart,
+    // server === null). Ohne diesen Hinweis drückt man ihn und es passiert
+    // sichtbar nichts. Nur dieser eine Fall — die allgemeine Wächterzeile
+    // darunter bleibt für alle anderen Nachrichten unverändert.
+    if (type === 'remote:open' && (!wsService || !server)) {
+      call('toast', 'Erst mit dem Server verbinden, dann Fernzugriff öffnen');
+      return;
+    }
+
+    // ── Updates. Brauchen keinen Server: GitHub ist auch erreichbar, wenn die
+    //    TMS-Verbindung gerade weg ist. Vor dem Guard, sonst wäre der Knopf
+    //    ausgerechnet dann tot, wenn man ihn braucht.
+    if (type === 'update:install') {
+      if (updateUrl.current) {
+        call('toast', 'Update wird geladen …');
+        downloadAndInstall(updateUrl.current).catch(() => call('toast', 'Update fehlgeschlagen'));
+        return;
+      }
+      // Kein Check gelaufen: jetzt nachholen.
+      call('toast', 'Suche nach Updates …');
+      void (async () => {
+        const up = await checkForUpdate().catch(() => null);
+        if (!up) {
+          call('toast', `Du bist auf dem neuesten Stand (v${getCurrentVersion()})`);
+          return;
+        }
+        updateUrl.current = up.downloadUrl;
+        call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
+        call('toast', `Update v${up.version} wird geladen …`);
+        downloadAndInstall(up.downloadUrl).catch(() => call('toast', 'Update fehlgeschlagen'));
+      })();
+      return;
+    }
+    if (type === 'update:check') {
+      call('toast', 'Suche nach Updates …');
+      void (async () => {
+        const up = await checkForUpdate().catch(() => null);
+        if (!up) {
+          call('toast', `Du bist auf dem neuesten Stand (v${getCurrentVersion()})`);
+          return;
+        }
+        updateUrl.current = up.downloadUrl;
+        call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
+        call('toast', `v${up.version} verfügbar`);
+      })();
+      return;
+    }
+
+    // ── Gebetszeiten. Brauchen keinen Server: Standort, Zeiten und Alarme sind
+    //    alle lokal. Sie stehen deshalb VOR dem Guard unten — dahinter waeren
+    //    sie ohne Verbindung stillschweigend weg, und genau das war der Grund,
+    //    warum das neue Layout nie einen Adan klingeln liess, obwohl der
+    //    Bildschirm die richtigen Zeiten anzeigte.
+    switch (type) {
+      case 'adhan:toggle': {
+        void (async () => {
+          await setAdhanEnabled(!!payload.enabled);
+          // Sofort neu planen: der Nutzer will nach dem Schalter keine Minute
+          // auf einen Alarm warten, der erst beim naechsten App-Start kaeme.
+          await refreshAdhanSchedule('v2-toggle');
+          call('setAdhanSettings', await readAdhanSettings());
+        })();
+        return;
+      }
+      case 'adhan:wecker': {
+        void (async () => {
+          await setFajrWecker(!!payload.enabled);
+          await refreshAdhanSchedule('v2-wecker');
+          call('setAdhanSettings', await readAdhanSettings());
+        })();
+        return;
+      }
+      case 'adhan:reciter': {
+        void (async () => {
+          await setSelectedAdhan(String(payload.id ?? 'mishary'));
+          call('setAdhanSettings', await readAdhanSettings());
+          call('toast', 'Rezitateur gespeichert');
+        })();
+        return;
+      }
+      case 'adhan:method': {
+        void (async () => {
+          const m = Number(payload.method);
+          if (!Number.isFinite(m)) return;
+          usePrayerStore.getState().setMethod(m);
+          // useSheetBridges laeuft ueber den Store mit und laedt neu.
+          call('toast', `Berechnung: ${prayerMethodName(m)}`);
+        })();
+        return;
+      }
+      case 'adhan:location': {
+        void (async () => {
+          const store = usePrayerStore.getState();
+          if (payload.clear) {
+            store.setLocation(null);
+            call('toast', 'Ort zurückgesetzt — wieder GPS');
+          } else {
+            const lat = Number(payload.lat);
+            const lon = Number(payload.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            store.setLocation({
+              latitude: lat,
+              longitude: lon,
+              label: String(payload.label || `${lat.toFixed(2)} / ${lon.toFixed(2)}`),
+            });
+            call('toast', 'Ort gespeichert');
+          }
+          // Die Zeiten kommen ueber den Store zurueck; die Alarme sofort neu.
+          await refreshAdhanSchedule('location-change');
+        })();
+        return;
+      }
+      case 'adhan:preview': {
+        if (payload.on === false) void stopAdhan();
+        else void previewAdhan(String(payload.id ?? 'mishary'));
+        return;
+      }
+      case 'adhan:test': {
+        void (async () => {
+          const times = prayerTimesRef.current;
+          const next = times ? getNextPrayer(times) : null;
+          const info = next ? PRAYER_NAMES[next.name] : null;
+          await scheduleTestAdhan(
+            info?.de ?? 'Asr',
+            next?.time ?? '15:30',
+            info?.ar ?? 'العصر',
+            10,
+            false,
+          );
+          call('toast', 'Azān kommt in 10 Sekunden');
+        })();
+        return;
+      }
+      case 'adhan:perms': {
+        void (async () => {
+          if (payload.which === 'exact') {
+            await requestExactAlarmPermission();
+            // Der Nutzer entscheidet auf der Systemseite, und kann das auch dort
+            // wieder zuruecknehmen — darum fragen wir danach gleich noch einmal ab.
+            setTimeout(async () => {
+              call('setAdhanPerms', { exactAlarms: await canScheduleExactAdhan() });
+            }, 800);
+            return;
+          }
+          const { status } = await Notifications.requestPermissionsAsync();
+          call('setAdhanPerms', { notifications: status === 'granted', exactAlarms: await canScheduleExactAdhan() });
+        })();
+        return;
+      }
     }
 
     if (!wsService || !server) return;
@@ -784,11 +1113,37 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
 
-      case 'mic:start':
-        micCard.current = payload.cardId;
+      case 'mic:start': {
+        // Fernzugriff-Diktat (window.TMSRemote.dictate() in bridge.js) schickt
+        // { target: 'remote' } statt einer cardId — der erkannte Text geht dann
+        // an die Seite zurueck statt in ein Terminal.
+        const wantsTarget = payload?.target === 'remote' ? REMOTE_MIC : payload.cardId;
+        // Es gibt nur EINEN Aufnehmer — toggleMic() ist ein echter Umschalter,
+        // kein "start". Laeuft schon eine Aufnahme (recording ODER processing,
+        // also auch waehrend des Hochladens) fuer ein ANDERES Ziel, wuerde
+        // toggleMic() sie stoppen, aber micCard.current stuende hier drunter
+        // schon auf dem NEUEN Ziel — der transkribierte Text landete beim
+        // falschen Empfaenger (im schlimmsten Fall als Tastatureingabe auf
+        // dem PC). Darum abweisen statt umschalten.
+        //
+        // I14: die Fernzugriffs-Tastatur hat nur einen Mikrofon-Knopf, der
+        // IMMER mic:start schickt (kein eigenes mic:stop) — ohne diese
+        // Unterscheidung machte der obige Wächter jeden zweiten Druck zu
+        // einer bloßen "läuft schon"-Meldung, mit keinem Weg, die eigene
+        // Aufnahme wieder zu beenden. Ein zweiter Druck auf denselben Knopf
+        // ist also "stop", nicht "start" — nur ein wirklich anderes Ziel
+        // (z.B. ein Terminal-Mikro waehrend des Fernzugriffs-Diktats) wird
+        // weiterhin abgewiesen.
+        if (micState !== 'idle') {
+          if (micCard.current === wantsTarget) { toggleMic(); break; } // stop -> upload -> Whisper
+          call('toast', 'Es läuft schon eine Aufnahme');
+          break;
+        }
+        micCard.current = wantsTarget;
         micDiscard.current = false;
         toggleMic(); // start
         break;
+      }
 
       case 'mic:stop':
         // The bar shows "Transkribiere…" until onText lands.
@@ -801,7 +1156,37 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'clipboard:write':
+        // In der App kopiert: aufs Handy UND in den gemeinsamen Verlauf (→ Mac).
+        clipSynced.current = payload.text ?? '';
         Clipboard.setStringAsync(payload.text ?? '').then(() => call('toast', 'Kopiert'));
+        if (payload.text) wsService.send({ type: 'clipboard:push', payload: { text: payload.text } } as never);
+        break;
+
+      case 'clipboard:open':
+        // Android lässt Apps die Zwischenablage nur im Vordergrund lesen — also
+        // hier, beim Öffnen des Verlaufs: was zuletzt in einer anderen App am
+        // Handy kopiert wurde, kommt jetzt dazu (und auf den Mac).
+        Clipboard.getStringAsync().then((t) => {
+          if (t && t.trim() && t !== clipSynced.current) {
+            clipSynced.current = t;
+            wsService.send({ type: 'clipboard:push', payload: { text: t } } as never);
+          }
+        }).catch(() => {}).finally(() => wsService.send({ type: 'clipboard:list' } as never));
+        break;
+
+      case 'clipboard:use':
+        // Ein Eintrag gewählt: auf beide Geräte legen (Server setzt den Mac).
+        clipSynced.current = payload.text ?? '';
+        Clipboard.setStringAsync(payload.text ?? '').catch(() => {});
+        if (payload.id) wsService.send({ type: 'clipboard:use', payload: { id: payload.id } } as never);
+        break;
+
+      case 'clipboard:delete':
+        if (payload.id) wsService.send({ type: 'clipboard:delete', payload: { id: payload.id } } as never);
+        break;
+
+      case 'clipboard:clear':
+        wsService.send({ type: 'clipboard:clear' } as never);
         break;
 
       case 'manager:send': {
@@ -841,6 +1226,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'manager:mic':
+        // Derselbe Wächter wie bei 'mic:start' — derselbe gemeinsame Aufnehmer.
+        if (micState !== 'idle') { call('toast', 'Es läuft schon eine Aufnahme'); break; }
         micCard.current = MANAGER_MIC;
         micDiscard.current = false;
         toggleMic();
@@ -980,22 +1367,27 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // beide auf verschiedene Terminals, und die Beschriftung landete auf
         // dem falschen. Die Karten-ID bleibt nur als Rückfall für eine noch
         // nicht gebundene, brandneue Karte.
+        if (payload.field !== 'name' || !payload.value) break;
         const tabs = useTerminalStore.getState().getTabs(server.id);
-        const tab = payload.sessionId
-          ? tabs.find((t) => t.sessionId === payload.sessionId)
-          : tabs.find((t) => t.id === payload.cardId);
-        if (tab && payload.field === 'name' && payload.value) {
-          useTerminalStore.getState().updateTab(server.id, tab.id, { title: payload.value });
+        const tab = payload.sessionId ? tabs.find((t) => t.sessionId === payload.sessionId) : undefined;
+        if (tab) {
+          // Nur eine ECHTE Aenderung zaehlt. Die Seite meldet beim Wiederherstellen
+          // jede Karte mit ihrem gespeicherten Namen als "umbenannt" — das darf
+          // einen neueren Titel auf dem Server (z. B. vom anderen Geraet) nicht
+          // mit dem alten lokalen ueberschreiben.
+          if (tab.title === payload.value) break;
+          useTerminalStore.getState().updateTab(server.id, tab.id, { title: payload.value, customTitle: true });
+          // Dauerhaft auf dem Server — ueberlebt Neuinstallation, gilt auf jedem Geraet.
+          wsService.send({ type: 'terminal:rename', sessionId: payload.sessionId, payload: { title: payload.value } } as never);
+        } else {
+          // Karte noch ohne Sitzung (gerade angelegt): der Name gehoert an die
+          // WARTENDE Karte, nicht an einen gespeicherten Reiter, der zufaellig
+          // dieselbe Karten-Nummer von einem frueheren App-Start traegt.
+          const waiting = pendingCards.current.find((p) => p.cardId === payload.cardId);
+          if (waiting) { waiting.name = payload.value; waiting.custom = true; }
         }
         break;
       }
-
-      case 'update:install':
-        if (updateUrl.current) {
-          call('toast', 'Update wird geladen …');
-          downloadAndInstall(updateUrl.current).catch(() => call('toast', 'Update fehlgeschlagen'));
-        }
-        break;
 
       case 'nav:classic':
         if (payload.screen === 'settings') navigation.navigate('Settings');
@@ -1031,6 +1423,66 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
       }
 
+      // Fernzugriff-Knopf auf einer Geraetekarte angetippt: die Seite baut ihre
+      // eigene Bildverbindung zum Server auf (siehe window.TMSRemote in bridge.js)
+      // — wir reichen nur Host/Port/Token durch, Bilddaten sieht React Native nie.
+      case 'remote:open': {
+        const targetId = payload.id as string;
+        (async () => {
+          let host: string, port: number, name: string, tok: string | null;
+          if (targetId === server.id) {
+            ({ host, port, name } = server);
+            tok = token;
+          } else {
+            const servers = await storageService.getServers().catch(() => []);
+            const target = servers.find((x) => x.id === targetId);
+            if (!target) return;
+            ({ host, port, name } = target);
+            tok = target.token ?? (await getToken(target.id)) ?? null;
+          }
+          if (!tok) {
+            call('toast', `Für „${name}" fehlt die Anmeldung — bitte einmal in der klassischen Ansicht verbinden`);
+            return;
+          }
+          call('setRemoteTarget', { host, port, token: tok });
+        })();
+        break;
+      }
+
+      case 'biometric:unlock': {
+        const mode: 'remote' | 'sudo' = payload?.mode === 'sudo' ? 'sudo' : 'remote';
+        const targetSid = (payload?.sessionId as string | undefined) || activeSessionId;
+        void (async () => {
+          try {
+            const hasHw = await LocalAuthentication.hasHardwareAsync();
+            const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+            if (!hasHw || !isEnrolled) {
+              call('toast', 'Kein Fingerabdruck / Biometrie auf dem Handy eingerichtet');
+              return;
+            }
+            const auth = await LocalAuthentication.authenticateAsync({
+              promptMessage: mode === 'sudo' ? 'Terminal-Passwort mit Fingerabdruck bestätigen' : 'Mac mit Fingerabdruck entsperren',
+              cancelLabel: 'Abbrechen',
+              disableDeviceFallback: false,
+            });
+            if (!auth.success) return;
+
+            if (!macUnlockConfigured.current) {
+              setMacPasswordInput('');
+              setMacPasswordModal({ visible: true, mode, sessionId: targetSid });
+              return;
+            }
+            wsService.send({
+              type: 'mac:biometric_unlock',
+              payload: { mode, sessionId: targetSid },
+            } as never);
+          } catch {
+            call('toast', 'Biometrie-Fehler');
+          }
+        })();
+        break;
+      }
+
       // Die Seite hat nichts mehr zum Zurückgehen. Beenden wird trotzdem nicht
       // einfach durchgewinkt: erst der zweite Druck innerhalb von zwei Sekunden.
       case 'nav:exit':
@@ -1041,7 +1493,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
+  }, [wsService, server, token, activeSessionId, micState, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
@@ -1059,7 +1511,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <WebView
         ref={webRef}
-        source={{ html: LIQUID_DECK_HTML, baseUrl: 'http://tms.local' }}
+        // https, nicht http: WebCodecs (VideoDecoder) gibt es nur in einem
+        // "sicheren Kontext". Unter http://tms.local fehlte er — der Fernzugriff
+        // bekam Bilder, konnte sie aber nicht dekodieren ("Dieses Geraet kann den
+        // Bildstrom nicht anzeigen"). Nachgewiesen im selben Chrome: http://tms.local
+        // → VideoDecoder undefined, https://tms.local → vorhanden.
+        source={{ html: LIQUID_DECK_HTML, baseUrl: 'https://tms.local' }}
+        // Der Server spricht bewusst ws:// und http:// (Tailscale verschluesselt).
+        // Von einer https-Seite aus ist das "gemischter Inhalt" und ohne diese
+        // Freigabe blockiert — der Fernzugriff baute seine Verbindung nicht auf.
+        mixedContentMode="always"
         originWhitelist={['*']}
         javaScriptEnabled
         domStorageEnabled
@@ -1123,12 +1584,69 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         options={serverSheet?.options ?? []}
         onClose={() => setServerSheet(null)}
       />
+      {/* Einmalige Einrichtung für Mac-Touch-ID-Relay (speichert im macOS-Schlüsselbund). */}
+      <Modal
+        visible={!!macPasswordModal?.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMacPasswordModal(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>🔓 Mac-Fingerabdruck einrichten</Text>
+            <Text style={styles.modalSub}>
+              Einmalig dein Mac-Passwort eingeben. Es wird verschlüsselt im macOS-Schlüsselbund auf deinem Mac gespeichert — danach reicht dein Handy-Fingerabdruck zum Entsperren und für Passwort-Dialoge.
+            </Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Mac-Passwort"
+              placeholderTextColor="#6B7280"
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={macPasswordInput}
+              onChangeText={setMacPasswordInput}
+            />
+            <View style={styles.modalRow}>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnCancel]}
+                onPress={() => { setMacPasswordInput(''); setMacPasswordModal(null); }}
+              >
+                <Text style={styles.modalBtnCancelText}>Abbrechen</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnConfirm]}
+                onPress={() => {
+                  const pw = macPasswordInput;
+                  const target = macPasswordModal;
+                  setMacPasswordInput('');
+                  setMacPasswordModal(null);
+                  if (!pw || !wsService || !target) return;
+                  macUnlockConfigured.current = true;
+                  wsService.send({ type: 'mac:unlock_setup', payload: { password: pw } } as never);
+                  setTimeout(() => {
+                    wsService.send({
+                      type: 'mac:biometric_unlock',
+                      payload: { mode: target.mode, sessionId: target.sessionId, password: pw },
+                    } as never);
+                  }, 150);
+                }}
+              >
+                <Text style={styles.modalBtnConfirmText}>Speichern & Entsperren</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 /** Sentinel cardId: the mic that belongs to the Manager chat, not a terminal. */
 const MANAGER_MIC = '__manager__';
+
+/** Sentinel cardId: the mic that dictates into the Fernzugriff-Verbindung (der PC), nicht in ein Terminal. */
+const REMOTE_MIC = '__remote__';
 
 /**
  * The server reports a detected prompt as a raw text snippet; the permission
@@ -1220,4 +1738,39 @@ const styles = StyleSheet.create({
   onboardBtnText: { color: '#0B1220', fontSize: 15, fontWeight: '700' },
   onboardLinkBtn: { marginTop: 6, paddingVertical: 8, paddingHorizontal: 12 },
   onboardLink: { color: '#60A5FA', fontSize: 13, fontWeight: '600' },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.68)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#1e232d',
+    borderRadius: 20,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(138, 184, 255, 0.25)',
+    gap: 12,
+  },
+  modalTitle: { color: '#E7ECF3', fontSize: 17, fontWeight: '700' },
+  modalSub: { color: '#93A1B5', fontSize: 13, lineHeight: 19 },
+  modalInput: {
+    backgroundColor: '#13171f',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    color: '#F3F4F6',
+    fontSize: 15,
+  },
+  modalRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4 },
+  modalBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12 },
+  modalBtnCancel: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  modalBtnCancelText: { color: '#D1D5DB', fontSize: 14, fontWeight: '600' },
+  modalBtnConfirm: { backgroundColor: '#60A5FA' },
+  modalBtnConfirmText: { color: '#0B1220', fontSize: 14, fontWeight: '700' },
 });

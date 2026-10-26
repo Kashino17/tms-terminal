@@ -46,3 +46,14 @@
 - **2026-04-08 · Git-basiertes Memory statt Datenbank** — 5 Markdown-Dateien in `memory/`, Git-getrackt. Einfach, portabel, keine extra Infrastruktur. CLAUDE.md enthält Anweisungen zum Lesen/Schreiben.
 
 - **2026-04-08 · journal.md als Append-Only Log** — Chronologisches Protokoll, max 100 Einträge, danach Archivierung. Alle anderen Dateien werden überschrieben/aktualisiert.
+
+
+## 2026-10-26 — Kompaktes Terminal anhand verfügbarer Höhe
+
+- Kompaktes Layout bei sichtbarer Viewport-Höhe ≤480 px; bis 280 px höchstens zwei Eingabezeilen. Nicht von Gerätekennung oder einer geschätzten Tastaturhöhe abhängig: Android adjustResize und visualViewport werden ohne doppelten Abzug behandelt.
+- Keine verkleinerte Terminal-Schrift zum Platzsparen: im kompakten Modus 15 px Standard, explizit 13–20 px wählbar. Rahmen, Vorschau-Rail und doppelte Kopfleisten entfallen zugunsten der Ausgabe. Menüs und Sondertasten öffnen bei Bedarf.
+- Die vorhandenen Terminal-Instanzen bleiben erhalten. Beide Dimensionen werden erst nach 350 ms stabiler Messung an die PTY weitergegeben, damit die Tastaturanimation nicht viele Zwischen-Resizes erzeugt.
+- Bereits live gesendete Texte werden beim Sitzungswechsel ausschließlich lokal wiederhergestellt. Der gespeicherte Delta-Ausgangspunkt verhindert doppeltes Senden.
+- Lokaler Build nach expliziter Mockup-Freigabe; Veröffentlichung und automatische Geräteinstallation waren nicht Teil dieses Auftrags.
+
+- Nachtrag 2026-10-26: Der Nutzer hat Commit, Push und Release explizit beauftragt. APK über den bereits existierenden GitHub-Workflow bauen und veröffentlichen; die lokale Build-Blockade erfordert dafür keine Änderung der globalen Node-Installation.

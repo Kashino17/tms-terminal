@@ -126,3 +126,37 @@
 ### Offene Fragen
 - Wie verhält sich der conversational Onboarding-Flow in der Praxis? Findet die AI den richtigen Moment für den CONFIG-Block?
 - Server-Update auf Produktiv-Server steht noch aus
+
+
+## 2026-10-26 — Fold-Splitscreen nach Freigabe umgesetzt
+
+- Ausgangspunkt: Bei aufgeklapptem Fold mit Video oben und Tastatur blieb im TMS-Terminal zu wenig lesbare Ausgabe. Nutzer hat den über Localhost/Tailscale bereitgestellten interaktiven Mockup mit "ja passt" freigegeben.
+- Neue kompakte Season-2-Ansicht für kurze Fenster; bestehende PTY, Eingabe, Sondertasten und Recorder werden weiterverwendet. Sitzungswechsler, Lesefokus und Schriftgrößenwahl sind im schmalen Kopf zugänglich.
+- Viewport- und Inhaltsgrößen werden beobachtet; stabile PTY-Resizes berücksichtigen jetzt auch schrumpfende Höhen. Entwürfe werden je Sitzung einschließlich des bereits gesendeten Textstands gespeichert und ohne erneute Eingabe wiederhergestellt.
+- Der native HTML-Build bettet die neuen CSS-/JS-Dateien ein. 108 Tests bestanden, 2 Browser-Tests übersprungen; acht generierte Inline-Skripte syntaktisch gültig.
+- Visuelle Prüfung auf dem echten Fold mit Samsung-Tastatur steht aus. Keine GitHub-Veröffentlichung, kein Push, keine automatische Installation auf dem Handy.
+
+### Build-Abschluss dieser Sitzung
+- Quellcode ins separate Repository übernommen und Dateihashes verglichen; `git diff --check` sauber. Testlauf auch direkt im Zielrepository: 108 bestanden, 2 Browser-Tests übersprungen. Eingebettetes HTML mit acht Skripten syntaktisch geprüft.
+- Kein APK-Artefakt: Gradle wartet schon in der React-Native-Konfiguration. Node 22 behebt das erste CLI-Import-Hängen, nicht das anschließende `cli config`-Hängen. Thread-/Prozessdiagnose zeigt blockiertes synchrones Lesen lokaler Abhängigkeiten; Einzel-Lesetests gelingen. Ursache nicht abschließend geklärt. Auch TypeScript-Gesamtprüfung blieb ohne Ausgabe hängen.
+- Eigene Build-/TypeScript-Prozesse beendet. Kein `deploy.sh`, kein pauschales Beenden von Gradle-/Node-Prozessen, keine Installation, kein Release. Die lokale Implementierung ist gespeichert; APK und Fold-Gerätetest bleiben offen.
+
+
+## 2026-10-26 — Veröffentlichung des Fold-Updates angefordert
+
+- Nutzer hat Commit, Push und Release ausdrücklich freigegeben, damit die App das Update anbietet. Zielversion v1.123.7, Android-versionCode 22307 (app.json und build.gradle synchronisiert).
+- Vorhandenen GitHub-Release-Workflow gefunden: Er umgeht das bereits dokumentierte lokale Headless-Metro-Problem und nutzt den bestehenden Signaturschlüssel aus Repository-Secrets. Letzter erfolgreicher Release: v1.123.6 am 22.10.2026.
+- Workflow ergänzt um WebView-Build und Regressionstests vor dem APK-Build; Release-Text beschreibt das Fold-Update. Keine neuen Berechtigungen, Schlüssel oder Runner-Dienste nötig.
+- Nächste Prüfung: Tag-Build erfolgreich, APK mit korrekter Paketkennung/Version/Signatur, öffentlicher Latest-Release-Endpunkt für den In-App-Updater. Gerätetest mit echter Samsung-Tastatur bleibt anschließend erforderlich.
+
+### CI-Korrektur für v1.123.8
+- v1.123.7: Feature-Commit `b16ceaf` und Tag erfolgreich gepusht. Die neue Teststufe stoppte korrekt vor Signierung/Veröffentlichung: prayer-counter/term-text benutzten absolute Mac-Pfade; tab-identity importiert TypeScript direkt, was Node 20 nicht unterstützt.
+- Pfade relativ zur Testdatei gemacht und Node 22 mit explizitem Type-Stripping für die Tests ergänzt. Android/Metro bleibt auf dem zuletzt erfolgreichen Node 20. Keine Tests deaktiviert.
+- Neues Release-Ziel v1.123.8 / code 22308; der bereits gepushte, fehlgeschlagene Tag v1.123.7 bleibt unverändert.
+
+### Release abgeschlossen
+- v1.123.8 / Android code 22308 erfolgreich veröffentlicht: https://github.com/Kashino17/tms-terminal/releases/tag/v1.123.8. Feature-Commit `b16ceaf`, CI-Korrektur/Release-Commit `0cb0c5c`, Tag v1.123.8. Branch und Tag gepusht.
+- GitHub-Lauf 40306140012: WebView-Build und alle 108 ausführbaren Tests erfolgreich (2 Browser-Checks übersprungen), Android-Build/Signierung und Veröffentlichung erfolgreich.
+- Veröffentlichte APK (104537152 Bytes) heruntergeladen: Paket `com.tms.terminal`, v1.123.8/code 22308, arm64; Zertifikat identisch zur installierbaren Vorgängerversion v1.123.6. SHA-256: `2c6853be0ff72cbe55cfe3d0816ec96af70dc0f5f581135d7627624463dd8a11`.
+- Öffentlichen Latest-Release-Endpunkt ohne Anmeldung geprüft; die App findet die neue APK über ihren vorhandenen Updater. Einstieg: Einstellungen → Nach Updates suchen. Keine direkte Installation auf dem Gerät vorgenommen.
+- Git-Push hing mit Delta-Packung; der erfolgreiche Aufruf verwendet temporär `pack.window=0`, `pack.threads=1`, HTTP/1.1 und `gh auth git-credential`, ohne globale Git-Konfiguration zu ändern.

@@ -1,0 +1,48 @@
+diff --git a/node_modules/@react-native-async-storage/async-storage/android/src/main/java/com/reactnativecommunity/asyncstorage/ReactDatabaseSupplier.java b/node_modules/@react-native-async-storage/async-storage/android/src/main/java/com/reactnativecommunity/asyncstorage/ReactDatabaseSupplier.java
+--- a/node_modules/@react-native-async-storage/async-storage/android/src/main/java/com/reactnativecommunity/asyncstorage/ReactDatabaseSupplier.java
++++ b/node_modules/@react-native-async-storage/async-storage/android/src/main/java/com/reactnativecommunity/asyncstorage/ReactDatabaseSupplier.java
+@@ -75,22 +75,21 @@
+     if (mDb != null && mDb.isOpen()) {
+       return true;
+     }
+-    // Sometimes retrieving the database fails. We do 2 retries: first without database deletion
+-    // and then with deletion.
++    // Sometimes retrieving the database fails (e.g. it is still being closed while the
++    // Activity is recreated on a foldable). TMS patch: retry WITHOUT ever deleting the
++    // database — the original second try deleted it, wiping every stored key (servers,
++    // settings, terminal tabs) on a single transient failure.
+     SQLiteException lastSQLiteException = null;
+-    for (int tries = 0; tries < 2; tries++) {
++    for (int tries = 0; tries < 5; tries++) {
+       try {
+-        if (tries > 0) {
+-          deleteDatabase();
+-        }
+         mDb = getWritableDatabase();
+         break;
+       } catch (SQLiteException e) {
+         lastSQLiteException = e;
+       }
+-      // Wait before retrying.
++      // Wait before retrying, a little longer each time.
+       try {
+-        Thread.sleep(SLEEP_TIME_MS);
++        Thread.sleep(SLEEP_TIME_MS * (tries + 1));
+       } catch (InterruptedException ie) {
+         Thread.currentThread().interrupt();
+       }
+diff --git a/node_modules/@react-native-async-storage/async-storage/android/src/main/java/com/reactnativecommunity/asyncstorage/AsyncStorageModule.java b/node_modules/@react-native-async-storage/async-storage/android/src/main/java/com/reactnativecommunity/asyncstorage/AsyncStorageModule.java
+--- a/node_modules/@react-native-async-storage/async-storage/android/src/main/java/com/reactnativecommunity/asyncstorage/AsyncStorageModule.java
++++ b/node_modules/@react-native-async-storage/async-storage/android/src/main/java/com/reactnativecommunity/asyncstorage/AsyncStorageModule.java
+@@ -101,8 +101,9 @@
+ 
+   @Override
+   public void onHostDestroy() {
+-    // ensure we close database when activity is destroyed
+-    mReactDatabaseSupplier.closeDatabase();
++    // TMS patch: do NOT close the database here. The React instance (and its pending
++    // writes on the executor) outlives the Activity — a fold/unfold recreates the
++    // Activity — so closing here raced in-flight writes and forced a reopen.
+   }
+ 
+   /**

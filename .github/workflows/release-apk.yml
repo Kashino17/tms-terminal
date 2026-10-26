@@ -38,6 +38,24 @@ jobs:
         working-directory: mobile
         run: npm ci
 
+      - name: Set up Node 22 for source tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build and test the terminal WebView
+        working-directory: mobile
+        run: |
+          npm run build:season2
+          node --experimental-strip-types --test scripts/*.test.mjs
+          git diff --exit-code -- src/season2/web/liquidDeckHtml.ts
+
+      # Keep the existing React Native / Metro build on its proven Node version.
+      - name: Restore Node 20 for the APK build
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       # The release keystore + Firebase config are gitignored, so CI gets them
       # from base64 repo secrets. Same keystore as local => stable signing key,
       # so the app updates over the existing install without a reinstall.
@@ -72,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Der Manager-Agent kann jetzt Termine und Erinnerungen. Sag ihm einfach, dass du am 4. August um 14 Uhr beim Zahnarzt bist oder dass deine Mutter am 30. Geburtstag hat — er legt das an, fragt nach Vorlaufzeiten und meldet sich dann von selbst, als Push und als Nachricht im Chat. Geburtstage wiederholen sich jaehrlich von allein. Weil du viel reist, unterscheidet er zwei Arten von Terminen: wiederkehrende reisen mit dir mit, 8 Uhr bleibt also 8 Uhr, wo immer du bist; einmalige bleiben an die Zeitzone gebunden, in der du sie angelegt hast, der Zahnarzt in Berlin bleibt also Berliner Zeit. Neue Reiter im Manager: Agenda und Notizen. Notizen und To-dos lassen sich direkt abhaken; Artifacts und Memory sind ins Menue gewandert. Oben in der Dynamic Island erscheint sein Profilbild mit der Zahl ungelesener Nachrichten — auch waehrend du im Terminal arbeitest; antippen springt in den Chat. Er weiss ausserdem, woran du arbeitest: er liest Projektstaende, Git-Branches und die Themen deiner letzten Sitzungen mit, meldet fertige Terminals und solche, die auf eine Antwort von dir warten, faellt bei wiederkehrenden Fehlern mit genau einem konkreten Vorschlag ein und fasst morgens und abends kurz zusammen, was ansteht. Alles gedeckelt: hoechstens ein Hinweis pro Terminal und Stunde, kein Thema zweimal, nachts keine Push ausser den Erinnerungen, die du selbst gelegt hast. Erinnerungen funktionieren auch dann, wenn gerade kein KI-Modell erreichbar ist." \
+            --notes "Fold-Splitscreen: Das Terminal nutzt bei kurzen Fenstern die volle Breite und eine kompakte Kopfzeile. Die Ausgabe passt sich an die geöffnete Tastatur an, ohne automatisch die Schrift zu verkleinern. Sitzungswechsler, Lesefokus, Schriftgrößenwahl und ausklappbare Sondertasten bleiben erreichbar. Eingabetexte bleiben pro Sitzung erhalten; Größenwechsel werden nach der Tastaturanimation stabil an das Terminal übertragen." \
             --latest

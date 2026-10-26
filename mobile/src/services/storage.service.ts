@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { durableStorage } from './durableStorage';
 import * as SecureStore from 'expo-secure-store';
 import { ServerProfile } from '../types/server.types';
 
@@ -15,7 +15,8 @@ export const storageService = {
     // list, turning a transient glitch into permanent data loss.
     let servers: ServerProfile[] = [];
     try {
-      const data = await AsyncStorage.getItem(SERVERS_KEY);
+      // durableStorage: if AsyncStorage got wiped, the list comes back from the file copy.
+      const data = await durableStorage.getItem(SERVERS_KEY);
       servers = data ? JSON.parse(data) : [];
     } catch {
       // The index itself is unreadable/corrupt — nothing we can safely return.
@@ -40,7 +41,7 @@ export const storageService = {
   async saveServers(servers: ServerProfile[]): Promise<void> {
     // Strip tokens before writing to AsyncStorage
     const stripped = servers.map(({ token: _, ...rest }) => rest);
-    await AsyncStorage.setItem(SERVERS_KEY, JSON.stringify(stripped));
+    await durableStorage.setItem(SERVERS_KEY, JSON.stringify(stripped));
   },
 
   async addServer(server: ServerProfile): Promise<void> {
