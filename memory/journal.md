@@ -191,3 +191,10 @@
 - Wärme-Fund: versteckte xterm-Renderer bauten bei jedem Rollen alle Zeilen neu (Auswahl-Logik, am Pause-Schalter vorbei) — stillgelegt. Messung (CPU 4× gedrosselt, 10 Terminals Dauerausgabe): 47 → 37 ms Arbeit/s; Fehlerfall: 10 Reste/196 falsche Zeilen → 0/0.
 - Tests: Server 495/495, App 121 bestanden; CI-Lauf 42039586986 grün, v1.125.0 = latest.
 
+## 2026-11-05 (spät) — Windows, Dateien-Gerätewechsel
+
+- Windows-PC zunächst offline; Analyse: node-pty nutzt System-ConPTY (useConptyDll=false) → alternativer Bildschirm wird nicht weitergegeben. Folgen: vim/less mit 200 Zeilen (seit v1.125.0), OpenCode-Maus erst nach Neuverbindung. Fix v1.125.1 (`51ace4c`): ProcessWatch (win32, 4 s Drossel + nachlaufende Prüfung, geteilte PowerShell-Tabelle 1,5 s), App-Namensliste FULLSCREEN_TUIS; Mac meldet auch das Ende einer Vollbild-TUI. Nachgestellt (1049 entfernt): 200 → 32 → 200.
+- Mac-Server-Neustart 22:52: Verlaufssicherung live bestätigt. Log-Meldung präzisiert (`81fdb2f`).
+- Windows später erreichbar (5 ms), aber kein Server auf 8767; SSH-Notizen lesen vom Auto-Mode blockiert → Nutzer soll `tms-terminal doctor` ausführen oder Benutzer/Schlüssel nennen.
+- Dateien: Windows-Pfad nach Gerätewechsel am Mac → HTTP 400 (belegt), Ansicht hing dauerhaft. Fix v1.125.2 (`625b8e1`): Reset auf ~ bei Serverwechsel (Leiste + Vollbild), Rückfall auf ~ bei 400/403/404, Windows-Pfade (filePaths.ts + TMS-TEST-EXPORT fsPath, 3 Tests).
+
