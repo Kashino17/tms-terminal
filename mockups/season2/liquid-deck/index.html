@@ -4368,9 +4368,29 @@
   var TERM_EDGE = 3;
 
   /** rows: [{text, wrapped}] → { text, rowFrom[], lead[], keep[] } (Zeile→Position im Ergebnis). */
+  // Rand = die Breite, bei der Claude den Text GESCHRIEBEN hat — nicht zwingend
+  // die heutige. Verlauf behaelt seine alte Breite (Falten, frueher wechselnde
+  // Kartenbreiten, feste Breite seit v1.124.0): ein bei 39 Spalten umgebrochener
+  // Link endete bei 50 Spalten nicht "am Rand" und zerfiel. Claude fuellt beim
+  // Umbrechen jede Zeile bis an SEINEN Rand — die laengste Zeile in der
+  // Umgebung verraet ihn. Nie breiter als die aktuelle Breite.
+  var TERM_EDGE_WINDOW = 12;
+  // Aufzaehlungszeichen sind nie die Fortsetzung eines Links (Links enthalten
+  // kein Leerzeichen): "…?v=voll" + "- Without…" wurde sonst zu "…voll-".
+  var TERM_LIST_RE = /^(?:[-*•+]|\d+[.)])\s/;
   function stitchRows(rows, cols) {
     var n = rows.length, text = '', cur = '';
     var rowFrom = new Array(n), lead = new Array(n), keep = new Array(n);
+    var lens = new Array(n);
+    for (var q = 0; q < n; q++) lens[q] = ((rows[q] && rows[q].text) || '').replace(/\s+$/, '').length;
+    function edgeAt(r) {
+      var lo = Math.max(0, r - TERM_EDGE_WINDOW), hi = Math.min(n - 1, r + TERM_EDGE_WINDOW), w = 0, near = 0, k;
+      for (k = lo; k <= hi; k++) if (lens[k] > w) w = lens[k];
+      // Beleg verlangen: mindestens ZWEI Zeilen reichen an diesen Rand. Eine
+      // einzelne lange Zeile sagt nichts — dann gilt die aktuelle Breite.
+      for (k = lo; k <= hi; k++) if (lens[k] >= w - 1) near++;
+      return near >= 2 ? Math.min(cols, w) : cols;
+    }
     for (var r = 0; r < n; r++) {
       var t = (rows[r] && rows[r].text) || '';
       if (r > 0 && rows[r].wrapped) {
@@ -4380,13 +4400,14 @@
       var join = false, ind = 0, rest = t;
       if (r > 0 && isFinite(cols)) {
         var prevTrim = ((rows[r - 1] && rows[r - 1].text) || '').replace(/\s+$/, '');
+        var edge = edgeAt(r - 1);
         ind = /^\s*/.exec(t)[0].length;
         rest = t.slice(ind);
-        if (rest && ind <= 8 && prevTrim.length >= cols - TERM_EDGE && /[^\s"'<>()]$/.test(prevTrim)) {
+        if (rest && ind <= 8 && !TERM_LIST_RE.test(rest) && prevTrim.length >= edge - TERM_EDGE && /[^\s"'<>()]$/.test(prevTrim)) {
           var curTrim = cur.replace(/\s+$/, ''), at = curTrim.length, cand = curTrim + rest, mm;
           TERM_URL_RE.lastIndex = 0;
           while ((mm = TERM_URL_RE.exec(cand))) {
-            if (mm.index < at && mm.index + mm[0].length > at && mm[0].length > cols - ind) { join = true; break; }
+            if (mm.index < at && mm.index + mm[0].length > at && mm[0].length > edge - ind) { join = true; break; }
           }
         }
       }

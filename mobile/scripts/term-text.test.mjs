@@ -103,3 +103,56 @@ test('ein Link, der zufaellig genau am Rand endet, schluckt nicht die naechste Z
   assert.equal(links[0][0].url, 'https://example.com/abcdefghijklmno');
   assert.equal(links[1], undefined);
 });
+
+// Echter Fall vom 05.11. (Screenshot 17:28): Claude schrieb bei 39 Spalten eine
+// Aufzaehlung mit Links (Fortsetzung 4 Leerzeichen eingerueckt). Angezeigt wird
+// danach bei 50 Spalten (feste Breite seit v1.124.0) — der Verlauf behaelt seine
+// alte Breite. Die Rand-Regel darf deshalb nicht nur die AKTUELLE Breite kennen.
+const LIST39 = [
+  row('⏺ The mockup is reworked and live on'),
+  row('  the same links:'),
+  row('  - Normal (own domain, enough'),
+  row('    credits):'),
+  row('    https://macbook-pro-2.taile64a95.ts'),
+  row('    .net:8494/preview-email.html?v=voll'),
+  row('  - Without own domain: https://macbook'),
+  row('    -pro-2.taile64a95.ts.net:8494/previ'),
+  row('    ew-email.html?v=ohne-domain'),
+  row('  - 0 credits, mails waiting: https://m'),
+  row('    acbook-pro-2.taile64a95.ts.net:8494'),
+  row('    /preview-email.html?v=warten'),
+  row(''),
+  row('  What changed:'),
+];
+const BASE = 'https://macbook-pro-2.taile64a95.ts.net:8494/preview-email.html?v=';
+
+for (const cols of [39, 50]) {
+  test(`Aufzaehlungs-Links (bei 39 Spalten geschrieben) sind bei ${cols} Spalten je EIN Link`, () => {
+    const { stitchLinks } = load();
+    const links = stitchLinks(LIST39, cols);
+    for (const r of [4, 5]) assert.equal(links[r]?.[0]?.url, BASE + 'voll', `Zeile ${r}`);
+    for (const r of [6, 7, 8]) assert.equal(links[r]?.at(-1)?.url, BASE + 'ohne-domain', `Zeile ${r}`);
+    for (const r of [9, 10, 11]) assert.equal(links[r]?.at(-1)?.url, BASE + 'warten', `Zeile ${r}`);
+    assert.deepEqual([links[5][0].from, links[5][0].to], [4, 39], 'Einrueckung gehoert nicht zum Link');
+  });
+}
+
+test('kurze Zeilen mit Link am Ende werden NICHT mit der naechsten Zeile verklebt', () => {
+  const { stitchLinks } = load();
+  for (const cols of [39, 50]) {
+    // realistische Umgebung: normal umbrochener Fliesstext bis an den Rand
+    const prose = 'Das ist ganz normaler Text, der umgebrochen wird und weiter laeuft bis zum Rand';
+    const lines = []; let cur = '⏺';
+    for (const w of prose.split(' ')) { if ((cur + ' ' + w).length > cols) { lines.push(cur); cur = ' '; } cur += ' ' + w; }
+    lines.push(cur);
+    const rows = [...lines.map((l) => row(l)), row('  Siehe https://example.com/a'), row('  README.md liegt daneben.')];
+    const at = lines.length;
+    assert.equal(stitchLinks(rows, cols)[at][0].url, 'https://example.com/a', `${cols} Spalten`);
+  }
+});
+
+test('eine einzelne lange Zeile ist kein Beleg fuer einen schmaleren Rand', () => {
+  const { stitchLinks } = load();
+  const rows = [row('  Siehe https://example.com/a'), row('  README.md liegt daneben.')];
+  assert.equal(stitchLinks(rows, 50)[0][0].url, 'https://example.com/a');
+});

@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "OpenCode unter Windows: Tippen und Wischen kommen jetzt als Klick und Scrollen bei OpenCode an. Windows verschluckte die Maus-Einschaltung von OpenCode, und die App erkannte OpenCode dort nicht am Namen. Benötigt zusätzlich das Server-Update auf dem Windows-PC." \
+            --notes "Links im Terminal wieder vollständig: Von Claude umgebrochene Links wurden mitten im Link abgeschnitten, vor allem in Aufzählungen und in älterem Verlauf. Jetzt trägt jedes Stück eines umgebrochenen Links die ganze Adresse, ein Tipp kopiert immer den kompletten Link. Ein Aufzählungsstrich in der nächsten Zeile wird nicht mehr an den Link angehängt." \
             --latest
