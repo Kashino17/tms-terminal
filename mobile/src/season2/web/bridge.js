@@ -150,6 +150,17 @@
   // size after the animation, rather than keeping a permanently oversized TUI
   // or sending a SIGWINCH for every intermediate animation frame.
   var SIZE_SETTLE_MS = 350;
+  // ZEILEN-RATSCHE (v1.123.9 zurück; v1.123.7 hatte sie entfernt): Bei gleicher
+  // Breite wachsen die Zeilen nur, sie schrumpfen nie. Die Tastatur drückte die
+  // Karte auf ~13 Zeilen; Claudes Live-Bereich (Eingabe, Fortschritt, Todos) ist
+  // oft höher. Ink erreicht dann beim Neumalen die oberen Zeilen nicht mehr und
+  // jeder Frame bleibt als Kopie im Verlauf stehen (E2E: 1 → 14 Claude-Köpfe nach
+  // 13 Tastatur-Runden). Ist die Karte kleiner, scrollt die Anzeige — renderTerm
+  // hält das Ende (Eingabefeld) sichtbar. Neue Breite setzt die Ratsche zurück.
+  function ratchetFit(t, fit) {
+    if (!fit || t.pinCols === undefined || fit.cols !== t.pinCols) return fit;
+    return fit.rows < t.pinRows ? { cols: fit.cols, rows: t.pinRows } : fit;
+  }
   function applyTerminalSize(cardId, size) {
     var t = terms[cardId];
     if (!t) return;
@@ -170,7 +181,7 @@
     t.sizeTimer = setTimeout(function () {
       t.sizeTimer = null;
       if (terms[cardId] !== t) return; // closed/replaced while waiting
-      var fit = measureFit(t);
+      var fit = ratchetFit(t, measureFit(t));
       if (!fit) return;
       if (fit.cols === t.pinCols && fit.rows === t.pinRows) return;
       if (fit.cols + 'x' + fit.rows !== t.sizeWant) {
@@ -184,7 +195,7 @@
   function fitNow(cardId) {
     var t = terms[cardId];
     if (!t) return false;
-    var fit = measureFit(t);
+    var fit = ratchetFit(t, measureFit(t));
     if (!fit) return false;
     if (t.pinCols === undefined) {
       try { applyTerminalSize(cardId, fit); } catch (_) { return false; }

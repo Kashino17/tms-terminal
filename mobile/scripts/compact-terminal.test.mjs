@@ -36,29 +36,28 @@ function sizing() {
   vm.runInContext(block('  function measureFit(t)', '  function fitSoon(cardId)'), context);
   return { context, host, term, state, resized, time };
 }
-test('opening and closing the keyboard settles both PTY rows and columns to the real content box', () => {
+test('opening and closing the keyboard never shrinks the PTY rows (row ratchet)', () => {
   const t = sizing();
   assert.equal(t.context.fitNow('a'), true);
   assert.equal(t.term.rows, 24);
-  t.host.clientHeight = 180;
-  t.context.fitNow('a');
-  assert.equal(t.term.rows, 24, 'no intermediate SIGWINCH during the keyboard animation');
-  t.time.tick();
-  assert.deepEqual(t.resized, [[80, 8]], 'rows shrink instead of retaining a cropped 24-row TUI');
-  t.host.clientHeight = 500;
+  t.host.clientHeight = 180;                       // keyboard opens
   t.context.fitNow('a'); t.time.tick();
-  assert.deepEqual(t.resized.at(-1), [80, 24]);
-  t.host.clientWidth = 420;
+  assert.deepEqual(t.resized, [],
+    'rows stay at 24: with fewer rows than Claude\'s live region, Ink leaves a copy of every frame (E2E 1 → 14 banners)');
+  t.host.clientHeight = 500;                       // keyboard closes
+  t.context.fitNow('a'); t.time.tick();
+  assert.deepEqual(t.resized, [], 'no SIGWINCH for a keyboard round-trip at all');
+  t.host.clientWidth = 420;                        // a real width change resets the ratchet
   t.context.fitNow('a'); t.time.tick();
   assert.deepEqual(t.resized.at(-1), [40, 24]);
 });
 test('continuous divider dragging produces only the final resize', () => {
   const t = sizing(); t.context.fitNow('a');
-  for (const height of [460, 320, 280, 240]) { t.host.clientHeight = height; t.context.fitNow('a'); }
+  for (const height of [560, 620, 680, 740]) { t.host.clientHeight = height; t.context.fitNow('a'); }
   assert.equal(t.time.pending, 1);
   assert.equal(t.resized.length, 0);
   t.time.tick();
-  assert.deepEqual(t.resized, [[80, 11]]);
+  assert.deepEqual(t.resized, [[80, 36]]);
 });
 test('a cancelled resize does not repaint or resize the terminal', () => {
   const t = sizing(); t.context.fitNow('a');

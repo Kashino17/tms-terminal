@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Terminal-Breite bleibt stabil: Karten weiter hinten im Stapel bekamen bisher eine falsche, größere Breite. Beim Wischen sprang die Breite fast aller Sitzungen um, und Claude-Ausgaben wurden zerhackt. Jetzt hat jede Karte unabhängig von ihrer Position dieselbe Breite." \
+            --notes "Weniger Darstellungsfehler im Terminal: 1) Karten weiter hinten im Stapel bekamen eine falsche, größere Breite, beim Wischen wurden Claude-Ausgaben zerhackt. Jetzt hat jede Karte dieselbe Breite. 2) Beim Öffnen der Tastatur schrumpfte das Terminal so stark, dass Claude Teile seiner Anzeige mehrfach in den Verlauf schrieb (doppelter Claude-Kopf, doppelte Eingaben). Die Zeilenzahl schrumpft jetzt nicht mehr, die Anzeige scrollt stattdessen." \
             --latest
