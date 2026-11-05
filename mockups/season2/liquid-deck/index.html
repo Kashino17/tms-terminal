@@ -6634,6 +6634,11 @@
     fsState.sel.clear(); fsState.selectMode = false;
     renderFilesScreen();
   };
+  /** Gerätewechsel (Bridge): alter Ordner gilt nicht — Home, ggf. neu laden. */
+  window.fsResetDir = function () {
+    fsState.cwd = '~'; fsState.entries = []; fsState.sel.clear(); fsState.selectMode = false;
+    if (currentScreen === 'files') window.fsListDir('~');
+  };
   window.openFilesScreen = function (path) {
     if (path) fsState.cwd = path;
     show('files');
@@ -6654,15 +6659,49 @@
     return list;
   }
 
-  function fsCrumbsHtml() {
-    const parts = fsState.cwd.split('/').filter(Boolean);
+  // ── TMS-TEST-EXPORT: fsPath ──
+  // Pfade im Format des SERVERS: /Users/x (Mac/Linux), ~ oder C:\Users\x
+  // (Windows). Vorher kannte die Ansicht nur „/“ — unter Windows sprang
+  // „Aufwärts“ ins Leere und die Brotkrumen zeigten den ganzen Pfad als einen.
+  // Gegenstück in der App: mobile/src/season2/web/filePaths.ts.
+  function fsIsWin(p) { return /^[A-Za-z]:[\\/]/.test(p) || /^\\\\/.test(p); }
+  function fsParent(p) {
+    if (!p || p === '~' || p === '/') return p || '~';
+    const sep = fsIsWin(p) && p.indexOf('/') === -1 ? '\\' : '/';
+    const t = p.replace(/[\\/]+$/, '');
+    if (/^[A-Za-z]:$/.test(t)) return t + sep;
+    const i = Math.max(t.lastIndexOf('/'), t.lastIndexOf('\\'));
+    if (i < 0) return '~';
+    const parent = t.slice(0, i);
+    if (!parent) return '/';
+    return /^[A-Za-z]:$/.test(parent) ? parent + sep : parent;
+  }
+  /** Brotkrumen: [{ label, target }] — target ist ein gültiger Server-Pfad. */
+  function fsCrumbs(p) {
+    if (!p) return [];
+    if (fsIsWin(p)) {
+      const sep = p.indexOf('/') === -1 ? '\\' : '/';
+      const parts = p.split(/[\\/]/).filter(Boolean);
+      let acc = '';
+      return parts.map(function (part, i) {
+        acc = i === 0 ? part + sep : (i === 1 ? acc + part : acc + sep + part);
+        return { label: part, target: acc };
+      });
+    }
+    const home = p.indexOf('~') === 0;
+    const parts = p.split('/').filter(Boolean);
     let acc = '';
-    return parts.map((p, i) => {
-      acc += (i ? '/' : '') + p;
-      const target = acc;
-      return (i ? '<span class="fs-crumb-sep">›</span>' : '') +
-        '<button class="fs-crumb" data-crumb="' + escapeHtml(target) + '">' + escapeHtml(p) + '</button>';
-    }).join('');
+    return parts.map(function (part, i) {
+      acc = i === 0 ? (home ? part : '/' + part) : acc + '/' + part;
+      return { label: part, target: acc };
+    });
+  }
+  // ── /TMS-TEST-EXPORT ──
+  function fsCrumbsHtml() {
+    return fsCrumbs(fsState.cwd).map((c, i) =>
+      (i ? '<span class="fs-crumb-sep">›</span>' : '') +
+      '<button class="fs-crumb" data-crumb="' + escapeHtml(c.target) + '">' + escapeHtml(c.label) + '</button>'
+    ).join('');
   }
 
   function fsRowHtml(e) {
@@ -6740,15 +6779,14 @@
   };
   function wireFilesScreen(host) {
     host.querySelectorAll('[data-crumb]').forEach(b => b.addEventListener('click', () => {
-      const t = b.dataset.crumb;
-      window.fsListDir(t.indexOf('~') === 0 ? t : '/' + t);
+      window.fsListDir(b.dataset.crumb);
     }));
     const up = host.querySelector('[data-fsup]');
     if (up) up.addEventListener('click', () => {
-      const c = fsState.cwd.replace(/\/+$/, '');
-      if (c === '~' || c === '/' || !c) return;
-      const p = c.replace(/\/[^/]+$/, '');
-      window.fsListDir(p || (c.indexOf('~') === 0 ? '~' : '/'));
+      const c = fsState.cwd;
+      const p = fsParent(c);
+      if (!c || p === c) return;
+      window.fsListDir(p);
     });
     const se = host.querySelector('[data-fssearch]');
     if (se) se.addEventListener('click', () => {

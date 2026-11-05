@@ -2193,6 +2193,11 @@
     return fsBase ? fsBase + '/files/pdfjs/web/viewer.html?file=' + encodeURIComponent(window.fsFileUrl(p)) : '';
   };
   window.fsListDir = function (path) { post('files:listRaw', { path: path }); };
+  /** Gerätewechsel: der Ordner des alten Geräts gilt nicht mehr. */
+  window.TMSBridge.resetFilesDir = function () {
+    window.__tmsCwd = '~';
+    if (window.fsResetDir) window.fsResetDir();
+  };
   window.TMSBridge.setFilesDir = function (path, entries) {
     if (window.fsSetDir) window.fsSetDir(path, entries);
     window.__tmsCwd = path; // Sheet und Screen teilen sich den Ort

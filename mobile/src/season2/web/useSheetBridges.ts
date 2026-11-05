@@ -16,6 +16,7 @@
  *              the terminal, which is the only reason to take one
  *   Gebete     real prayer times for the current location
  */
+import { parentDir, joinDir } from './filePaths';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
@@ -73,14 +74,23 @@ export function useSheetBridges({
   /** Screenshots uploaded this session: server path + a thumbnail URL. */
   const [shots, setShots] = useState<Array<{ path: string; url: string; isVideo?: boolean }>>([]);
 
-  const listFiles = useCallback(async (path: string) => {
+  const listFiles = useCallback(async (path: string): Promise<void> => {
     if (!server || !token) return;
     try {
       const r = await fetch(
         `http://${server.host}:${server.port}/files/list?path=${encodeURIComponent(path)}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        // Gemerkter Ordner gilt hier nicht (anderes Gerät, gelöscht, Windows-
+        // Pfad am Mac …) → einmal auf den Home-Ordner zurückfallen, statt für
+        // immer mit HTTP 400 hängen zu bleiben.
+        if (path !== '~' && (r.status === 400 || r.status === 404 || r.status === 403)) {
+          cwd.current = '~';
+          return listFiles('~');
+        }
+        throw new Error(`HTTP ${r.status}`);
+      }
       const data = await r.json();
       cwd.current = data.path;
       call('setTool', 'files',
@@ -96,6 +106,17 @@ export function useSheetBridges({
       call('toast', `Dateien: ${e?.message ?? 'Laden fehlgeschlagen'}`);
     }
   }, [server, token, call]);
+
+  // Gerätewechsel: der Ordner des alten Geräts gilt hier nicht. Zurück auf den
+  // Home-Ordner — und ist die Dateien-Leiste offen, sofort neu laden.
+  const serverKey = server ? `${server.id}@${server.host}:${server.port}` : '';
+  const lastServerKey = useRef(serverKey);
+  useEffect(() => {
+    if (lastServerKey.current === serverKey) return;
+    lastServerKey.current = serverKey;
+    cwd.current = '~';
+    if (openSheet.current === 'files' && serverKey) void listFiles('~');
+  }, [serverKey, listFiles]);
 
   /** Server path → a URL the page can put in an <img>. */
   const downloadUrl = useCallback((path: string) => (
@@ -382,7 +403,7 @@ export function useSheetBridges({
             const r = await fetch(`http://${server.host}:${server.port}/files/mkdir`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-              body: JSON.stringify({ path: `${cwd.current.replace(/\/$/, '')}/${payload.name}` }),
+              body: JSON.stringify({ path: joinDir(cwd.current, String(payload.name)) }),
             });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             call('toast', 'Ordner angelegt');
@@ -438,9 +459,7 @@ export function useSheetBridges({
       case 'files:cd': {
         const name = String(payload.name ?? '');
         const base = cwd.current;
-        const next = name === '..'
-          ? base.replace(/\/[^/]+\/?$/, '') || '/'
-          : `${base.replace(/\/$/, '')}/${name.replace(/\/$/, '')}`;
+        const next = name === '..' ? parentDir(base) : joinDir(base, name);
         listFiles(next);
         return true;
       }
