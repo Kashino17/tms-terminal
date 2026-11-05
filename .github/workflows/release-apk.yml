@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Keine doppelten Absätze und Box-Reste mehr: Claude zeigt in Bestätigungen oft sehr lange Befehle. War die Box höher als das Terminal, blieben Reste im Verlauf stehen. Terminals haben jetzt intern 200 Zeilen, die Karte zeigt nur den Inhalt. Vollbild-Programme wie vim und OpenCode bekommen weiter die echte Höhe. Dazu weniger Akku und Wärme: versteckte Terminals zeichnen nichts mehr im Hintergrund. Benötigt zusätzlich das Server-Update." \
+            --notes "Windows: Vollbild-Programme wie vim, less und OpenCode werden jetzt auch unter Windows erkannt. Sie bekommen die echte Kartenhöhe, und OpenCode ist sofort scroll- und klickbar statt erst nach einer Neuverbindung. Benötigt zusätzlich das Server-Update (Mac und Windows)." \
             --latest
