@@ -193,7 +193,17 @@
   // Vollbild-Programme (vim, OpenCode, …) brauchen dagegen die echte Höhe.
   var VIRTUAL_ROWS = 200;
   function wantsRealRows(t) {
-    return !t.virt || t.term.buffer.active.type === 'alternate' || !!t.forceMouse;
+    return !t.virt || t.term.buffer.active.type === 'alternate' || !!t.forceMouse || runsFullscreenTui(t);
+  }
+  // Windows: ConPTY gibt den alternativen Bildschirm nicht weiter — vim, less &
+  // Co. sind dort nur am Prozessnamen erkennbar (Server meldet ihn per
+  // terminal:process). Unter macOS/Linux greift schon der Puffer-Wechsel oben.
+  var FULLSCREEN_TUIS = { vim: 1, nvim: 1, vi: 1, view: 1, less: 1, more: 1, man: 1, htop: 1, btop: 1, top: 1,
+    nano: 1, micro: 1, hx: 1, emacs: 1, lazygit: 1, tig: 1, mc: 1, ranger: 1, yazi: 1, k9s: 1, opencode: 1 };
+  function runsFullscreenTui(t) {
+    if (typeof procBySession === 'undefined' || typeof byCard === 'undefined' || !t.cardId) return false;
+    var n = String(procBySession[byCard[t.cardId]] || '').toLowerCase().split(/[\\/]/).pop().replace(/\.exe$/, '');
+    return !!FULLSCREEN_TUIS[n];
   }
   function virtualFit(t, fit) {
     if (!fit || wantsRealRows(t) || fit.rows >= VIRTUAL_ROWS) return fit;
@@ -1553,11 +1563,11 @@
      *  weil der Snapshot sie nicht enthaelt. */
     setProcessName: function (sessionId, name) {
       if (!sessionId) return;
-      procBySession[sessionId] = name || '';
       var cardId = cardOf(sessionId);
       var t = cardId && terms[cardId];
+      var wasReal = t ? wantsRealRows(t) : false;
+      procBySession[sessionId] = name || '';
       if (!t) return;
-      var wasReal = wantsRealRows(t);
       t.forceMouse = isMouseTui(name);
       t.mouseForced = false;
       t.forceBlocked = false;

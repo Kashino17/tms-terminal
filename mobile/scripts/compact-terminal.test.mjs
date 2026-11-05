@@ -127,6 +127,18 @@ test('mouse TUIs (OpenCode under Windows: no alternate screen) also get the real
   const t = virtualSizing(); t.state.forceMouse = true; t.context.fitNow('a');
   assert.deepEqual([t.term.cols, t.term.rows], [50, 21]);
 });
+test('Windows: vim/less are only known by process name (ConPTY hides the alternate screen) → real height', () => {
+  const t = virtualSizing(); t.state.cardId = 'a';
+  t.context.byCard = { a: 'sid-a' }; t.context.procBySession = { 'sid-a': 'pwsh.exe' };
+  t.context.fitNow('a');
+  assert.equal(t.term.rows, 200, 'PowerShell prompt: virtual height');
+  t.context.procBySession['sid-a'] = 'C:\\Program Files\\Vim\\vim91\\vim.exe';
+  t.context.fitNow('a'); t.time.tick();
+  assert.equal(t.term.rows, 21, 'vim.exe: real card height');
+  t.context.procBySession['sid-a'] = 'pwsh.exe';
+  t.context.fitNow('a'); t.time.tick();
+  assert.equal(t.term.rows, 200, 'back at the prompt: virtual height again');
+});
 test('without xterm change tracking the virtual height stays off (old behaviour)', () => {
   const t = sizing(); t.term.buffer = { active: { type: 'normal' } }; t.context.fitNow('a');
   assert.equal(t.term.rows, 21);

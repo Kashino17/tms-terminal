@@ -89,6 +89,24 @@ export function pickForegroundFromTable(table: string, shellPid: number): string
 /** Read the name of the foreground process running inside a shell.
  *  If the shell has a child process (e.g., vim, npm), returns that child's name.
  *  If the shell is idle, returns the shell's own name. */
+/**
+ * Prozesstabelle unter Windows — EIN PowerShell-Start für alle Terminals, die
+ * kurz hintereinander fragen (sonst startete jedes Terminal sein eigenes
+ * PowerShell, und das kostet jeweils spürbar CPU).
+ */
+const WIN_TABLE_TTL_MS = 1500;
+let winTable: { at: number; p: Promise<string> } | null = null;
+function windowsProcessTable(): Promise<string> {
+  const now = Date.now();
+  if (winTable && now - winTable.at < WIN_TABLE_TTL_MS) return winTable.p;
+  const p = execFileAsync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId),$($_.Name)" }',
+  ], 5000);
+  winTable = { at: now, p };
+  return p;
+}
+
 export async function readForegroundProcess(shellPid: number): Promise<string | null> {
   const pidStr = safePid(shellPid);
   if (!pidStr) return null;
@@ -96,10 +114,7 @@ export async function readForegroundProcess(shellPid: number): Promise<string | 
   // dort immer leer, und die App wusste nie, dass OpenCode läuft (kein
   // erzwungener Maus-Modus → Tippen/Wischen kamen nie an).
   if (os.platform() === 'win32') {
-    const table = await execFileAsync('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-Command',
-      'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId),$($_.Name)" }',
-    ], 5000);
+    const table = await windowsProcessTable();
     return pickForegroundFromTable(table, Number(pidStr));
   }
   try {

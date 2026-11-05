@@ -1,3 +1,4 @@
+import { ProcessWatch } from '../terminal/process.watch';
 import type WebSocket from 'ws';
 import type { ClientMessage, ServerMessage } from '../../../shared/protocol';
 import * as path from 'path';
@@ -117,12 +118,37 @@ async function refreshProcessOnAltScreen(ws: WebSocket, sessionId: string): Prom
   const alt = await globalManager.isAltScreen(sessionId);
   const was = altScreenSeen.get(sessionId) ?? false;
   altScreenSeen.set(sessionId, alt);
-  if (!alt || was) return;
+  // Beide Übergänge melden: auch das ENDE (vim beendet) — sonst hielte die App
+  // den alten Namen und gäbe dem Terminal weiter die echte statt der
+  // virtuellen Höhe.
+  if (alt === was) return;
   const name = await readForegroundProcess(session.pty.pid);
   if (!name) return;
   session.processName = name;
   send(ws, { type: 'terminal:process', sessionId, payload: { processName: name } });
 }
+
+// Windows: ConPTY gibt den alternativen Bildschirm nicht weiter — der Start
+// einer Vollbild-TUI ist im Strom unsichtbar. Dort stattdessen nach Ausgabe-
+// Pausen gedrosselt nachsehen (siehe process.watch.ts).
+const procWs = new Map<string, WebSocket>();
+const processWatch = new ProcessWatch({
+  now: () => Date.now(),
+  setTimer: (fn, ms) => { const t = setTimeout(fn, ms); t.unref(); return t; },
+  clearTimer: (t) => clearTimeout(t as NodeJS.Timeout),
+  read: async (sessionId) => {
+    const session = globalManager.getSession(sessionId);
+    return session ? readForegroundProcess(session.pty.pid) : null;
+  },
+  report: (sessionId, name) => {
+    const session = globalManager.getSession(sessionId);
+    const ws = procWs.get(sessionId);
+    if (!session || !ws) return;
+    session.processName = name;
+    send(ws, { type: 'terminal:process', sessionId, payload: { processName: name } });
+  },
+});
+const IS_WINDOWS = os.platform() === 'win32';
 
 /** Debounced cwd re-read — called on every output chunk. */
 function scheduleCwdCheck(ws: WebSocket, sessionId: string): void {
@@ -131,7 +157,8 @@ function scheduleCwdCheck(ws: WebSocket, sessionId: string): void {
   const t = setTimeout(() => {
     cwdCheckTimers.delete(sessionId);
     void refreshCwd(ws, sessionId);
-    void refreshProcessOnAltScreen(ws, sessionId);
+    if (IS_WINDOWS) { procWs.set(sessionId, ws); processWatch.poke(sessionId); }
+    else void refreshProcessOnAltScreen(ws, sessionId);
   }, CWD_SETTLE_MS);
   t.unref();
   cwdCheckTimers.set(sessionId, t);
@@ -142,6 +169,8 @@ function clearCwdCheck(sessionId: string): void {
   const t = cwdCheckTimers.get(sessionId);
   if (t) { clearTimeout(t); cwdCheckTimers.delete(sessionId); }
   altScreenSeen.delete(sessionId);
+  processWatch.forget(sessionId);
+  procWs.delete(sessionId);
 }
 
 /** Push the current best-known cwd immediately (on attach/create) so the
