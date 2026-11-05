@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fold-Splitscreen: Das Terminal nutzt bei kurzen Fenstern die volle Breite und eine kompakte Kopfzeile. Die Ausgabe passt sich an die geöffnete Tastatur an, ohne automatisch die Schrift zu verkleinern. Sitzungswechsler, Lesefokus, Schriftgrößenwahl und ausklappbare Sondertasten bleiben erreichbar. Eingabetexte bleiben pro Sitzung erhalten; Größenwechsel werden nach der Tastaturanimation stabil an das Terminal übertragen." \
+            --notes "Terminal-Breite bleibt stabil: Karten weiter hinten im Stapel bekamen bisher eine falsche, größere Breite. Beim Wischen sprang die Breite fast aller Sitzungen um, und Claude-Ausgaben wurden zerhackt. Jetzt hat jede Karte unabhängig von ihrer Position dieselbe Breite." \
             --latest

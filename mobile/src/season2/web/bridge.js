@@ -120,7 +120,15 @@
     var r = text.getBoundingClientRect();
     var h = probe.getBoundingClientRect().height;
     probe.remove();
-    return { w: r.width / 100, h: h };
+    // getBoundingClientRect zählt CSS-Transforms mit, clientWidth (Basis der
+    // Spaltenrechnung in measureFit) nicht. layoutStack() verkleinert jede
+    // Karte nach Abstand zur aktiven (92,5 / 85 / 77,5 %) — ungekürzt bekam
+    // jede Session eine Breite je nach Stapel-Position (39/42/46/50 Spalten),
+    // und jeder Wisch löste SIGWINCH + Umbruch-Salat aus. Skalierung rausrechnen.
+    var hr = pre.getBoundingClientRect();
+    var sx = pre.offsetWidth ? hr.width / pre.offsetWidth : 1;
+    var sy = pre.offsetHeight ? hr.height / pre.offsetHeight : 1;
+    return { w: r.width / 100 / (sx || 1), h: h / (sy || 1) };
   }
 
   /** Karte vermessen → gewünschte Spalten/Zeilen. null, wenn (noch) ohne Größe. */
