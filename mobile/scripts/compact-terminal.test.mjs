@@ -99,6 +99,38 @@ test('continuous divider dragging produces only the final resize', () => {
   t.time.tick();
   assert.deepEqual(t.resized, [[50, 32]]);
 });
+// VIRTUELLE HÖHE: Claudes Bestätigungs-Boxen sind bei 50 Spalten oft höher als
+// die Karte. Ist die PTY niedriger als die Box, bleiben Box-Reste im Verlauf.
+function virtualSizing(opts) {
+  const t = sizing(opts);
+  t.state.virt = true;
+  t.term.buffer = { active: { type: 'normal' } };
+  return t;
+}
+test('virtual height: the PTY gets 200 rows while the card shows ~21', () => {
+  const t = virtualSizing(); t.context.fitNow('a');
+  assert.deepEqual([t.term.cols, t.term.rows], [50, 200]);
+  t.host.clientHeight = 260; t.context.fitNow('a'); t.time.tick();   // keyboard opens
+  t.host.clientHeight = 500; t.context.fitNow('a'); t.time.tick();   // and closes
+  assert.deepEqual(t.resized, [[50, 200]], 'keyboard never resizes the PTY');
+});
+test('full-screen programs (alternate screen) get the real card height, and 200 again afterwards', () => {
+  const t = virtualSizing(); t.context.fitNow('a');
+  t.term.buffer.active.type = 'alternate';                          // vim / OpenCode start
+  t.context.fitNow('a'); t.time.tick();
+  assert.deepEqual([t.term.cols, t.term.rows], [50, 21], 'ratchet must not keep 200 for vim');
+  t.term.buffer.active.type = 'normal';                             // vim quits
+  t.context.fitNow('a'); t.time.tick();
+  assert.deepEqual([t.term.cols, t.term.rows], [50, 200]);
+});
+test('mouse TUIs (OpenCode under Windows: no alternate screen) also get the real height', () => {
+  const t = virtualSizing(); t.state.forceMouse = true; t.context.fitNow('a');
+  assert.deepEqual([t.term.cols, t.term.rows], [50, 21]);
+});
+test('without xterm change tracking the virtual height stays off (old behaviour)', () => {
+  const t = sizing(); t.term.buffer = { active: { type: 'normal' } }; t.context.fitNow('a');
+  assert.equal(t.term.rows, 21);
+});
 test('a cancelled resize does not repaint or resize the terminal', () => {
   const t = sizing(); t.context.fitNow('a');
   t.host.clientHeight = 200; t.context.fitNow('a');

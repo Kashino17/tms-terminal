@@ -125,6 +125,13 @@ export class SessionMirror {
       const line = buf.getLine(buf.viewportY + y);
       rows.push(line ? line.translateToString(true) : '');
     }
+    // Die App gibt der PTY eine virtuelle Höhe (200 Zeilen, siehe bridge.js) —
+    // darunter liegen oft 170 Leerzeilen, die kein Mensch sieht. Wer „die
+    // letzten N Zeilen" liest (Prompt-Erkennung, Auto-Approve), muss beim
+    // Inhaltsende landen, nicht in der Leere. Nie über den Cursor hinaus kürzen.
+    let n = rows.length;
+    while (n > buf.cursorY + 1 && rows[n - 1] === '') n--;
+    rows.length = n;
     return { rows, cursorX: buf.cursorX, cursorY: buf.cursorY, cols: this.term.cols };
   }
 

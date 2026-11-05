@@ -179,8 +179,27 @@
   // hält das Ende (Eingabefeld) sichtbar. Neue Breite setzt die Ratsche zurück.
   function ratchetFit(t, fit) {
     if (!fit || t.pinCols === undefined || fit.cols !== t.pinCols) return fit;
+    // Wechsel zwischen virtueller und echter Höhe (Vollbild-Programm an/aus)
+    // ist gewollt in BEIDE Richtungen — dort greift die Ratsche nicht.
+    if (t.pinReal !== wantsRealRows(t)) return fit;
     return fit.rows < t.pinRows ? { cols: fit.cols, rows: t.pinRows } : fit;
   }
+  // VIRTUELLE HÖHE (2026-11-05): Die PTY bekommt VIRTUAL_ROWS Zeilen, die Karte
+  // zeigt davon nur den Inhalt bis zum Ende (renderTerm schneidet leere Zeilen
+  // unter dem Inhalt ab). Grund: Claude zeigt in Bestätigungs-Boxen ganze
+  // Befehle — bei 50 Spalten oft 100+ Zeilen hoch. Ist die Box höher als das
+  // Terminal, kann Claude ihren weggerollten Teil nie mehr löschen: Box-Reste
+  // und doppelte Absätze bleiben im Verlauf (E2E: 31 Zeilen → Reste, 200 → keine).
+  // Vollbild-Programme (vim, OpenCode, …) brauchen dagegen die echte Höhe.
+  var VIRTUAL_ROWS = 200;
+  function wantsRealRows(t) {
+    return !t.virt || t.term.buffer.active.type === 'alternate' || !!t.forceMouse;
+  }
+  function virtualFit(t, fit) {
+    if (!fit || wantsRealRows(t) || fit.rows >= VIRTUAL_ROWS) return fit;
+    return { cols: fit.cols, rows: VIRTUAL_ROWS };
+  }
+  function computeFit(t) { return ratchetFit(t, virtualFit(t, measureFit(t))); }
   function applyTerminalSize(cardId, size) {
     var t = terms[cardId];
     if (!t) return;
@@ -190,6 +209,7 @@
     }
     t.pinCols = size.cols;
     t.pinRows = size.rows;
+    t.pinReal = wantsRealRows(t);
   }
   function settleTerminalSize(cardId, size) {
     var t = terms[cardId];
@@ -201,7 +221,7 @@
     t.sizeTimer = setTimeout(function () {
       t.sizeTimer = null;
       if (terms[cardId] !== t) return; // closed/replaced while waiting
-      var fit = ratchetFit(t, measureFit(t));
+      var fit = computeFit(t);
       if (!fit) return;
       if (fit.cols === t.pinCols && fit.rows === t.pinRows) return;
       if (fit.cols + 'x' + fit.rows !== t.sizeWant) {
@@ -215,7 +235,7 @@
   function fitNow(cardId) {
     var t = terms[cardId];
     if (!t) return false;
-    var fit = ratchetFit(t, measureFit(t));
+    var fit = computeFit(t);
     if (!fit) return false;
     if (t.pinCols === undefined) {
       try { applyTerminalSize(cardId, fit); } catch (_) { return false; }
@@ -294,6 +314,28 @@
       convertEol: false,
     });
     term.open(box);
+    // xterms eigener Renderer malt in dieses unsichtbare Kästchen — für nichts:
+    // die Karte baut renderTerm selbst. Seine Pause außerhalb des Bildschirms
+    // griff in der echten Seite nicht (gemessen: alle versteckten Emulatoren
+    // malten jede Zeile, bei 10 Terminals der größte Rechenposten). Fest pausieren.
+    // Gemessen (10 Terminals, Dauerausgabe): 80 000 Neuaufbauten in 70 s kamen
+    // über xterms Auswahl-Logik (SelectionService → handleSelectionChanged →
+    // DomRenderer.renderRows), am Pausen-Schalter vorbei. Darum den Renderer
+    // selbst stilllegen, nicht nur den Takt.
+    var rsvc = term._core && term._core._renderService;
+    if (rsvc && typeof rsvc._renderRows === 'function') {
+      rsvc._renderRows = function () {};
+      rsvc.handleSelectionChanged = function () {};
+      var rdr = rsvc._renderer && rsvc._renderer.value;
+      if (rdr && typeof rdr.renderRows === 'function') {
+        rdr.renderRows = function () {};
+        rdr.handleSelectionChanged = function () {};
+      }
+      if (typeof rsvc._handleIntersectionChange === 'function') {
+        rsvc._handleIntersectionChange = function () { rsvc._isPaused = true; };
+        rsvc._isPaused = true;
+      }
+    }
 
     // Der Emulator ist unsichtbar, aber sein Textfeld ist die Tastatur-Anbindung:
     // ein Tipp ins Terminal fokussiert es. Androids Wortvorschlag komponierte hier
@@ -312,6 +354,36 @@
     term.onResize(function (sz) { queueResize(cardId, sz.cols, sz.rows); });
 
     terms[cardId] = { term: term, box: box, host: host, scrollTotal: 0, cardId: cardId, followTail: true };
+    // Welche Zeilen hat die letzte Ausgabe verändert? xterm kennt das intern
+    // (dieselbe Meldung treibt sonst seinen eigenen Renderer, der hier
+    // unsichtbar pausiert). renderTerm liest damit nur geänderte Zeilen neu
+    // statt den ganzen lebenden Bildschirm — Voraussetzung für die virtuelle
+    // Höhe. Fehlt die Meldung (andere xterm-Version), bleibt alles beim Alten.
+    var ih = term._core && term._core._inputHandler;
+    if (ih && typeof ih.onRequestRefreshRows === 'function') {
+      try {
+        ih.onRequestRefreshRows(function (s0, e0) {
+          var tt = terms[cardId];
+          if (!tt || tt.term !== term) return;
+          var b = term.buffer.active;
+          // Global-ID einer Bildschirmzeile = Scroll-Zähler + Zeile. Gemeldet
+          // wird am Ende eines Schreibvorgangs; was davor schon k Zeilen
+          // hochgerollt ist, lag damals k Zeilen tiefer → Bereich nach oben weiten.
+          var k = tt.dScroll === undefined ? 0 : tt.scrollTotal - tt.dScroll;
+          tt.dScroll = tt.scrollTotal;
+          var g0 = tt.scrollTotal - b.baseY + b.viewportY;
+          var lo = g0 + Math.min(s0, e0) - k, hi = g0 + Math.max(s0, e0);
+          if (tt.dLo === undefined || lo < tt.dLo) tt.dLo = lo;
+          if (tt.dHi === undefined || hi > tt.dHi) tt.dHi = hi;
+        });
+        terms[cardId].virt = true;
+      } catch (_) { /* ohne Meldung: echte Höhe, Voll-Lesen wie bisher */ }
+    }
+    // Vollbild-Programm startet/endet: Höhe umschalten (virtuell ↔ echt).
+    term.buffer.onBufferChange(function () {
+      invalidateRowCache(cardId);
+      fitNow(cardId);
+    });
     observeTerminalHost(terms[cardId], host);
     // Kam der Prozessname schon vor dem Mount (Reattach-Rennen), hier nachziehen.
     var sid0 = byCard[cardId];
@@ -471,6 +543,7 @@
     var t = terms[cardId];
     if (!t) return;
     t.rc = null; t.rcMin = 0; t.dom = null; t.domStart = undefined; t.domLen = 0;
+    t.cEndG = undefined; t.rEnd = undefined; t.dScroll = undefined;
     t.winStart = undefined; // Reflow verschiebt die absoluten Indizes — Fenster neu setzen
     // Globale IDs neu eichen: nach Resize-Reflow (und term.clear/reset) stimmt
     // das Verhältnis Scroll-Zähler ↔ baseY nicht mehr; ab hier gilt wieder
@@ -507,6 +580,29 @@
     if (t.scrollTotal === undefined || t.scrollTotal < baseY) t.scrollTotal = baseY;
     var trimmed = t.scrollTotal - baseY;
     var end = trimmed + baseY + t.term.rows;           // global: eine Zeile hinter der letzten
+    // Virtuelle Höhe: Leere Zeilen UNTER dem Inhalt gehören nicht auf die Karte
+    // (sonst stünde Claudes Eingabefeld über 170 Leerzeilen). Gesucht wird nur
+    // ab dem bekannten Inhaltsende bzw. der tiefsten geänderten Zeile.
+    var dLo = t.dLo, dHi = t.dHi;
+    t.dLo = t.dHi = undefined;
+    var now = Date.now();
+    // Sicherheitsnetz: höchstens einmal pro Sekunde den ganzen Bildschirm neu
+    // lesen — sollte xterm je eine Änderung nicht melden, heilt sie so von selbst.
+    var fullPass = !t.virt || !t.rc || !(t.fullAt > now - 1000);
+    if (fullPass) t.fullAt = now;
+    if (t.virt && buf.type !== 'alternate') {
+      var vpTop = trimmed + baseY;
+      var hiG = (fullPass || t.cEndG === undefined) ? end
+        : Math.min(end, Math.max(t.cEndG, dHi === undefined ? 0 : dHi + 1));
+      var floorG = vpTop + buf.cursorY + 1;
+      while (hiG > floorG) {
+        var ln = buf.getLine(hiG - 1 - trimmed);
+        if (ln && ln.translateToString(true).length) break;
+        hiG--;
+      }
+      t.cEndG = hiG;
+      end = hiG;
+    }
 
     // ── Klebriges Fenster ─────────────────────────────────────────────────
     // Ein mitwanderndes Fenster (immer die letzten MAX_ROWS) verschiebt bei JEDER
@@ -531,6 +627,10 @@
     // Ausgabe alle 800 Zeilen zellenweise neu gebaut: der größte CPU-Fresser
     // des ganzen Layouts.
     var rc = t.rc || (t.rc = {}, t.rcMin = start, t.rc);
+    // Unter das Inhaltsende gefallene Zeilen vergessen: wurden sie dort
+    // geändert, las sie niemand — der alte Stand darf später nicht zurückkommen.
+    if (t.rEnd > end) for (var gz = end; gz < t.rEnd; gz++) delete rc[gz];
+    t.rEnd = end;
     if (start > (t.rcMin || 0)) {
       for (var d = t.rcMin || 0; d < start; d++) delete rc[d];
       t.rcMin = start;
@@ -560,6 +660,8 @@
       // Stand von damals ein: leere Historie ("Grenze nach oben") und alte
       // Inhalte an neuen Zeilennummern (die Dopplungen/Verschiebungen).
       if (c && c.frozen && i < liveFrom) { rows[k] = c; continue; }
+      // Lebende Zeile, die die letzte Ausgabe nicht berührt hat: unverändert.
+      if (c && !fullPass && !(dLo !== undefined && i >= dLo && i <= dHi)) { rows[k] = c; continue; }
       var line = buf.getLine(i - trimmed);
       rows[k] = rc[i] = {
         text: line ? line.translateToString(true) : '',
@@ -1455,10 +1557,12 @@
       var cardId = cardOf(sessionId);
       var t = cardId && terms[cardId];
       if (!t) return;
+      var wasReal = wantsRealRows(t);
       t.forceMouse = isMouseTui(name);
       t.mouseForced = false;
       t.forceBlocked = false;
       forceMouseOn(t);
+      if (wantsRealRows(t) !== wasReal) fitNow(cardId); // Maus-TUI: echte Höhe
     },
     /** Nach einem Reattach die WAHREN xterm-Maße über den normalen,
      *  beruhigten Resize-Weg bestätigen. Stimmen sie mit der PTY überein,
