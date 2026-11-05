@@ -1,10 +1,12 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-05 — Terminal-Darstellung + Windows; Release v1.124.2_
+_Zuletzt aktualisiert: 2026-11-05 (abends) — virtuelle Terminal-Höhe; Release v1.125.0_
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-05 (neu):** Latest Release v1.124.2 (Branch feat/fernzugriff, Live-Tree ~/Developer/tms-terminal). Terminal: feste Breite 50 Spalten, Zeilen-Ratsche, Stapel-Messfehler behoben, umgebrochene Links robust. OpenCode-Maus unter Windows über `terminal:process`. Offen: Windows-PC manuell auf feat/fernzugriff aktualisieren (altes Update braucht bash) und `tms-terminal doctor` auswerten; Fernzugriff Windows dann live testen; Mac-Server nicht neu gestartet (braucht die Server-Änderungen nicht dringend); TERM unter Windows ungesetzt (unbewiesen).
+**Stand 2026-11-05 abends (neueste):** Latest Release v1.125.0 (Commit `32a3d27`), Mac-Server auf `32a3d27` neu gestartet (21:52). Terminals haben intern 200 Zeilen (virtuelle Höhe), die Karte zeigt nur den Inhalt; Vollbild-Programme (vim, OpenCode) bekommen die echte Höhe. Versteckte xterm-Renderer stillgelegt (Hitzequelle). Server sichert Terminal-Verlauf beim Herunterfahren (`~/.tms-terminal/mirrors.json`) und lädt ihn beim Start — erst ab dem NÄCHSTEN Neustart wirksam, noch nicht live beobachtet. Offen: Nutzer muss auf v1.125.0 updaten und prüfen, ob noch Kopien entstehen; Auswahllisten (`/resume`) können länger als die Karte sein; Windows-Punkte unten unverändert offen.
+
+**Stand 2026-11-05 (tagsüber):** Latest Release v1.124.2 (Branch feat/fernzugriff, Live-Tree ~/Developer/tms-terminal). Terminal: feste Breite 50 Spalten, Zeilen-Ratsche, Stapel-Messfehler behoben, umgebrochene Links robust. OpenCode-Maus unter Windows über `terminal:process`. Offen: Windows-PC manuell auf feat/fernzugriff aktualisieren (altes Update braucht bash) und `tms-terminal doctor` auswerten; Fernzugriff Windows dann live testen; Mac-Server nicht neu gestartet (braucht die Server-Änderungen nicht dringend); TERM unter Windows ungesetzt (unbewiesen).
 
 - Repository: `/Users/ayysir/Desktop/TMS Terminal`, Branch `feat/fernzugriff`, Basis `8ee3625` (App v1.123.6, tatsächlicher Android-versionCode 22306). Veröffentlicht: v1.123.8 mit versionCode 22308 in app.json und Gradle. Die separate ältere Kopie `tms-terminal` wurde nicht verändert.
 - Der Nutzer hat den lokalen Fold-Mockup freigegeben ("ja passt"). Der Nutzer hat anschließend Commit, Push und Veröffentlichung ausdrücklich angefordert, damit das In-App-Update verfügbar wird. Der Release v1.123.8 ist über GitHub veröffentlicht und als Latest Release für die App verifiziert.

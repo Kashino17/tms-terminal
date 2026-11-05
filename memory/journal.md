@@ -180,3 +180,14 @@
 - Windows-Server: `tms-terminal update` brauchte bash → scheiterte immer. Jetzt bin/update-runner.js (Node); doctor prüft Fernzugriff (Encoder, ddagrab, Sitzung, Probeaufnahme); ffmpeg Baseline/-bf 0. Windows-PC offline → nicht live getestet; erstes Update dort manuell.
 - Links: Rand-Regel aus Nachbarzeilen (alter Verlauf mit anderer Breite) + Aufzählungszeichen nie Fortsetzung.
 - Releases: v1.123.9, v1.124.0, v1.124.1, v1.124.2 (alle CI grün, latest = v1.124.2). Server-Commit f88aa3e gepusht (Windows).
+- v1.124.3: Verlauf nach App-Neustart — App meldet `fresh` (leeres Terminal), Server schickt dann immer das Vollbild.
+
+## 2026-11-05 (abends) — Verlauf nach Server-Neustart, Box-Reste, Akku
+
+- Server-Neustart (21:42/21:52, mit Aufpasser-Skript ~/.tms-terminal/restart-guard.sh) — alle Claude-Sitzungen liefen im Wächter weiter.
+- „Verlauf weg“ nach Neustart: neuer Server legte für übernommene Terminals einen LEEREN Spiegel an; das nächste Vollbild ersetzte den App-Verlauf. Fix `e6805d7`: Spiegel werden beim Herunterfahren gesichert und beim Übernehmen eingespeist; Spiegel ohne Vorgeschichte schicken nur an leere Clients ein Vollbild.
+- „Dopplungen“: Server-Spiegel selbst enthielt die Reste → nicht App. Ursache belegt mit echtem Claude Code: Unteragenten-Bestätigungen zeigen ganze Befehle (bei 50 Spalten 100–160 Zeilen); Box höher als PTY (31) → Reste. 31 Zeilen → Reste, 200 → keine.
+- Fix v1.125.0 (`32a3d27`): virtuelle Höhe 200 Zeilen, Karte schneidet Leerzeilen ab, liest nur geänderte Zeilen neu (xterm-interne Meldung); Server-`screen()` endet beim Inhalt (Auto-Approve).
+- Wärme-Fund: versteckte xterm-Renderer bauten bei jedem Rollen alle Zeilen neu (Auswahl-Logik, am Pause-Schalter vorbei) — stillgelegt. Messung (CPU 4× gedrosselt, 10 Terminals Dauerausgabe): 47 → 37 ms Arbeit/s; Fehlerfall: 10 Reste/196 falsche Zeilen → 0/0.
+- Tests: Server 495/495, App 121 bestanden; CI-Lauf 42039586986 grün, v1.125.0 = latest.
+
