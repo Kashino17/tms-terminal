@@ -1062,6 +1062,13 @@
   }
   @media (max-width: 699.98px) {
     .stack-card { max-width: 520px; }
+    /* Kompaktes Terminal auf dem Handy: Text statt Rand. Vorher 32px Rand je
+       Seite plus 18px Innenabstand — nur 39 Zeichen bei 13px. Jetzt passen bei
+       fester Breite (bridge.js FIXED_COLS) 50 Zeichen bei ~12,7px hinein. */
+    section[data-screen="terminals"] { padding-left: 6px; padding-right: 6px; }
+    section[data-screen="terminals"] .workspace { padding: 0; }
+    .stack-card .card-header { padding: 8px 10px 6px; }
+    .stack-card .card-body { margin: 0 2px 2px; padding: 6px; }
   }
 
   /* ============================================================
@@ -9049,10 +9056,8 @@
         ${renderAdhanSettingsGroup()}
         <div class="settings-group glass" id="terminalSettingsGroup">
           <div class="settings-group__title">Terminal</div>
-          <div class="settings-row settings-row--stack">
-            <span class="settings-row__label">Schriftgröße<small id="fontSizeValue">${termFontSizePx}px</small></span>
-            <div class="glass glass--dark font-preview" id="fontSizePreview">$ echo "TMS Terminal"</div>
-            <input type="range" class="settings-slider" id="fontSizeSlider" min="11" max="18" value="${termFontSizePx}">
+          <div class="settings-row">
+            <span class="settings-row__label">Schriftgröße<small>Automatisch: 50 Zeichen pro Zeile, die Schrift passt sich der Breite an</small></span>
           </div>
         </div>
         <div class="settings-group glass">
@@ -9115,7 +9120,7 @@
     const uc = document.getElementById('updateCheckRow');
     if (uc) uc.addEventListener('click', () => post('update:check', {}));
     const slider = document.getElementById('fontSizeSlider');
-    slider.addEventListener('input', () => {
+    if (slider) slider.addEventListener('input', () => {
       termFontSizePx = Number(slider.value);
       document.getElementById('fontSizeValue').textContent = `${termFontSizePx}px`;
       document.documentElement.style.setProperty('--term-font-size', termFontSizePx + 'px');

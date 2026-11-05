@@ -41,9 +41,7 @@
     return el;
   }
   const sessions = dialog('compactSessions', 'Deine Sitzungen', '<div class="compact-dialog__sessions"></div><button class="compact-dialog__add">' + icon('plus', 18) + 'Neues Terminal</button>');
-  const settings = dialog('compactSettings', 'Dein Terminal', `<form class="compact-name-form"><input id="compactName" aria-label="Sitzungsname" maxlength="120" autocomplete="off"><button type="submit">Speichern</button></form>
-    <div class="compact-font-row"><span>Schriftgröße</span><div><button data-font="-1" aria-label="Schrift verkleinern">A−</button><output>${fontSize}</output><button data-font="1" aria-label="Schrift vergrößern">A+</button></div></div>
-    <button class="compact-dialog__action" id="compactSessionMenu">${icon('dotsV', 18)}Sitzungsmenü</button>
+  const settings = dialog('compactSettings', 'Dein Terminal', `<form class="compact-name-form"><input id="compactName" aria-label="Sitzungsname" maxlength="120" autocomplete="off"><button type="submit">Speichern</button></form>    <button class="compact-dialog__action" id="compactSessionMenu">${icon('dotsV', 18)}Sitzungsmenü</button>
     <div class="compact-dialog__nav"></div>`);
   [['terminals', 'Terminals'], ['tools', 'Werkzeuge'], ['manager', 'Manager'], ['browser', 'Browser'], ['servers', 'Server'], ['cloud', 'Cloud'], ['settings', 'Einstellungen'], ['prayer', 'Gebetszeiten']].forEach(([screen, label]) => {
     const button = document.createElement('button'); button.textContent = label;

@@ -21,35 +21,66 @@ function clock() {
     get delays() { return [...timers.values()].map(timer => timer.delay); },
   };
 }
-function sizing() {
+// Monospace cell that follows the font like the real page: advance 0.6em,
+// row height 1.6em + 2px. Default font 13px; the bridge may set host.style.fontSize.
+const fontOf = (el) => parseFloat((el.style && el.style.fontSize) || '13px');
+// A 402px card (Fold cover after the compact layout) → 382px text → 12.7px font,
+// 50 cols; 480px text height → 21 rows of 22.32px.
+function sizing({ width = 402, height = 500 } = {}) {
   const time = clock();
   const resized = [];
-  const host = { clientWidth: 820, clientHeight: 500 };
-  const term = { cols: 80, rows: 24, resize(cols, rows) { resized.push([cols, rows]); this.cols = cols; this.rows = rows; } };
+  const host = { clientWidth: width, clientHeight: height, style: {} };
+  const term = { cols: 50, rows: 21, resize(cols, rows) { resized.push([cols, rows]); this.cols = cols; this.rows = rows; } };
   const state = { host, term };
   const context = vm.createContext({
     terms: { a: state }, ...time,
-    measureCell: () => ({ w: 10, h: 20 }),
-    getComputedStyle: () => ({ paddingLeft: '10', paddingRight: '10', paddingTop: '10', paddingBottom: '10' }),
+    measureCell: (el) => ({ w: 0.6 * fontOf(el), h: 1.6 * fontOf(el) + 2 }),
+    getComputedStyle: (el) => ({ paddingLeft: '10', paddingRight: '10', paddingTop: '10', paddingBottom: '10', fontSize: fontOf(el) + 'px' }),
     invalidateRowCache() {}, renderTerm() {},
   });
   vm.runInContext(block('  function measureFit(t)', '  function fitSoon(cardId)'), context);
   return { context, host, term, state, resized, time };
 }
+
+test('every phone-sized card gets exactly 50 columns; the font follows the width', () => {
+  for (const [width, font] of [[402, 12.7], [430, 13.6], [520, 16.6]]) {
+    const t = sizing({ width });
+    const fit = t.context.measureFit(t.state);
+    assert.equal(fit.cols, 50, `${width}px card → 50 cols`);
+    assert.equal(fontOf(t.host), font, `${width}px card → ${font}px font`);
+  }
+});
+test('a wide card (split screen) keeps 50 columns; the font stops at 20px', () => {
+  const t = sizing({ width: 800 });
+  const fit = t.context.measureFit(t.state);
+  assert.equal(fit.cols, 50);
+  assert.equal(fontOf(t.host), 20);
+});
+test('unfolding or widening never changes the PTY width', () => {
+  const t = sizing(); t.context.fitNow('a');
+  for (const width of [430, 800, 520, 402]) { t.host.clientWidth = width; t.context.fitNow('a'); t.time.tick(); }
+  assert.ok(t.resized.every(([cols]) => cols === 50), JSON.stringify(t.resized));
+});
+test('very narrow cards fall back to fewer columns instead of unreadable text', () => {
+  const t = sizing({ width: 302 });
+  const fit = t.context.measureFit(t.state);
+  assert.equal(fontOf(t.host), 10, 'font never below 10px');
+  assert.equal(fit.cols, 47);
+});
 test('opening and closing the keyboard never shrinks the PTY rows (row ratchet)', () => {
   const t = sizing();
   assert.equal(t.context.fitNow('a'), true);
-  assert.equal(t.term.rows, 24);
+  assert.equal(t.term.rows, 21);
   t.host.clientHeight = 180;                       // keyboard opens
   t.context.fitNow('a'); t.time.tick();
   assert.deepEqual(t.resized, [],
-    'rows stay at 24: with fewer rows than Claude\'s live region, Ink leaves a copy of every frame (E2E 1 → 14 banners)');
+    'rows stay at 21: with fewer rows than Claude\'s live region, Ink leaves a copy of every frame (E2E 1 → 14 banners)');
   t.host.clientHeight = 500;                       // keyboard closes
   t.context.fitNow('a'); t.time.tick();
   assert.deepEqual(t.resized, [], 'no SIGWINCH for a keyboard round-trip at all');
-  t.host.clientWidth = 420;                        // a real width change resets the ratchet
+  t.host.clientWidth = 302;                        // a real column change resets the ratchet
   t.context.fitNow('a'); t.time.tick();
-  assert.deepEqual(t.resized.at(-1), [40, 24]);
+  assert.deepEqual(t.resized.at(-1), [47, 26]);
 });
 test('continuous divider dragging produces only the final resize', () => {
   const t = sizing(); t.context.fitNow('a');
@@ -57,7 +88,7 @@ test('continuous divider dragging produces only the final resize', () => {
   assert.equal(t.time.pending, 1);
   assert.equal(t.resized.length, 0);
   t.time.tick();
-  assert.deepEqual(t.resized, [[80, 36]]);
+  assert.deepEqual(t.resized, [[50, 32]]);
 });
 test('a cancelled resize does not repaint or resize the terminal', () => {
   const t = sizing(); t.context.fitNow('a');
@@ -76,7 +107,7 @@ test('hidden hosts and sessions closed during settling cannot receive a stale re
 test('small windows can fit fewer than five terminal rows', () => {
   const t = sizing(); t.host.clientHeight = 80;
   t.context.fitNow('a');
-  assert.equal(t.term.rows, 3);
+  assert.equal(t.term.rows, 2);
 });
 test('a settled row change reaches the PTY promptly and duplicate dimensions are suppressed', () => {
   const time = clock();

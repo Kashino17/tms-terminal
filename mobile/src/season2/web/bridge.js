@@ -140,10 +140,30 @@
     var cs = getComputedStyle(host);
     var innerW = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     var innerH = host.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    cell = fitFont(host, innerW, cell);
     return {
-      cols: Math.max(20, Math.floor(innerW / cell.w)),
+      cols: Math.max(20, Math.min(FIXED_COLS, Math.floor(innerW / cell.w))),
       rows: Math.max(2, Math.floor(innerH / cell.h)),
     };
+  }
+
+  // FESTE BREITE: Jede Sitzung hat FIXED_COLS Spalten — Außendisplay,
+  // aufgeklappt, Split-Screen. Nicht die Spaltenzahl folgt der Kartenbreite,
+  // sondern die Schrift. Jeder Breitenwechsel war sonst ein SIGWINCH, und
+  // Claudes bereits (hart) umgebrochener Verlauf wurde in der neuen Breite
+  // zerhackt. Ab FONT_MAX bleibt rechts Platz frei; unter FONT_MIN lieber
+  // weniger Spalten als unlesbare Schrift.
+  var FIXED_COLS = 50, FONT_MIN = 10, FONT_MAX = 20;
+  function fitFont(host, innerW, cell) {
+    var cur = parseFloat(getComputedStyle(host).fontSize) || 13;
+    var want = Math.floor(Math.max(FONT_MIN, Math.min(FONT_MAX, cur * innerW / (FIXED_COLS * cell.w))) * 10) / 10;
+    for (var i = 0; i < 6; i++) {
+      if (Math.abs(want - cur) >= 0.05) { host.style.fontSize = want + 'px'; cur = want; cell = measureCell(host); }
+      if (Math.floor(innerW / cell.w) >= FIXED_COLS || want <= FONT_MIN) break;
+      // Glyphen-Rundung: echte Zeichenbreite minimal größer als gerechnet.
+      want = Math.max(FONT_MIN, Math.round((want - 0.1) * 10) / 10);
+    }
+    return cell;
   }
 
   // A keyboard / split divider changes BOTH dimensions. Commit one stable
