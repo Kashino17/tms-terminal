@@ -17,6 +17,7 @@ import { getPlatform, getDefaultShell } from './utils/platform';
 import { fcmService } from './notifications/fcm.service';
 import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
+import { saveMirrorStates, takeMirrorStates } from './terminal/mirror.store';
 import { Snapshotter, setActiveSnapshotter } from './terminal/restore/snapshotter';
 import { restoreTerminals } from './terminal/restore/restore';
 import { consumeSnapshot } from './terminal/restore/snapshot.store';
@@ -96,9 +97,13 @@ async function main(): Promise<void> {
     );
     if (keeper) {
       usePtyKeeper(keeper);
+      // Verlauf jedes Terminals vom vorigen Server — sonst startet jeder Spiegel
+      // leer und das nächste Vollbild nimmt der App ihren ganzen Verlauf.
+      let mirrorStates: ReturnType<typeof takeMirrorStates> = {};
+      try { mirrorStates = takeMirrorStates(config.configDir); } catch { /* ohne Verlauf weiter */ }
       for (const t of keeper.adopted) {
         try {
-          globalManager.adoptSession(t.id, t.pty, t.cols, t.rows);
+          globalManager.adoptSession(t.id, t.pty, t.cols, t.rows, mirrorStates[t.id]);
           adoptedIds.add(t.id);
         } catch (e) {
           logger.warn(`Terminal-Waechter: ${t.id} nicht uebernommen — ${(e as Error).message}`);
@@ -319,7 +324,12 @@ async function main(): Promise<void> {
   });
 
   // Graceful shutdown
+  let shuttingDown = false;
   const shutdown = (): void => {
+    // Ein zweites Signal (stop schickt evtl. nach) darf die Verlaufs-Sicherung
+    // nicht mit einer leeren überschreiben.
+    if (shuttingDown) return;
+    shuttingDown = true;
     const forceExit = setTimeout(() => { logger.warn('Forced exit after timeout'); process.exit(1); }, 5000);
     forceExit.unref();
     logger.info('Shutting down...');
@@ -337,22 +347,33 @@ async function main(): Promise<void> {
     // Mit Waechter: loslassen, NICHT beenden — die Terminals laufen weiter und
     // der naechste Server uebernimmt sie. Ohne Waechter sind die PTYs unsere
     // Kinder und muessen sauber beendet werden.
-    if (keeper) {
-      globalManager.releaseAllSessions();
-      keeper.release();
-    } else {
-      globalManager.closeAllSessions();
-    }
+    void (async () => {
+      if (keeper) {
+        // Erst den Verlauf jedes Terminals für den nächsten Server sichern —
+        // die Terminals laufen weiter, ihre Spiegel aber sterben mit uns.
+        try {
+          const states = await globalManager.exportMirrorStates();
+          saveMirrorStates(config.configDir, states);
+          logger.info(`Verlauf von ${Object.keys(states).length} Terminal(s) gesichert`);
+        } catch (e) {
+          logger.warn(`Verlauf nicht gesichert: ${(e as Error).message}`);
+        }
+        globalManager.releaseAllSessions();
+        keeper.release();
+      } else {
+        globalManager.closeAllSessions();
+      }
 
-    // Close all WebSocket connections
-    for (const client of wss.clients) {
-      client.close(1001, 'Server shutting down');
-    }
+      // Close all WebSocket connections
+      for (const client of wss.clients) {
+        client.close(1001, 'Server shutting down');
+      }
 
-    server.close(() => {
-      logger.info('Server closed');
-      process.exit(0);
-    });
+      server.close(() => {
+        logger.info('Server closed');
+        process.exit(0);
+      });
+    })();
   };
 
   process.on('SIGINT', shutdown);

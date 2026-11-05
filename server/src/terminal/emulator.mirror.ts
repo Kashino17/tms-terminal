@@ -38,6 +38,16 @@ const MIRROR_SCROLLBACK = 1500;
 /** So viele Historie-Zeilen wandern maximal ins Snapshot. */
 const SNAPSHOT_SCROLLBACK = 1000;
 
+/** Gesicherter Spiegel (Bildschirm + Historie) — überlebt so einen Server-Neustart. */
+export interface MirrorState {
+  cols: number;
+  rows: number;
+  /** serializeNow()-Ausgabe, gültig für genau cols×rows. */
+  data: string;
+  /** Schon dieser Spiegel kannte nicht die ganze Vergangenheit. */
+  partial?: boolean;
+}
+
 export class SessionMirror {
   private term: Terminal;
   private serializer: SerializeAddon;
@@ -70,6 +80,9 @@ export class SessionMirror {
   /** Hat das Programm Bracketed Paste eingeschaltet (DECSET 2004)? Siehe paste.policy.ts. */
   get bracketedPasteMode(): boolean { return this.term.modes.bracketedPasteMode; }
   get rows(): number { return this.term.rows; }
+  /** Hält der Spiegel so viel Verlauf, wie ein Snapshot überhaupt mitnimmt?
+   *  Dann ist eine fehlende Vorgeschichte egal — sie wäre ohnehin abgeschnitten. */
+  get historyFull(): boolean { return this.term.buffer.normal.length >= SNAPSHOT_SCROLLBACK + this.term.rows; }
 
   /**
    * Wartet den Parser-Rückstand ab (write ist asynchron): ein leeres write

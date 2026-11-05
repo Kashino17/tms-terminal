@@ -3,7 +3,7 @@ import { createPty } from './terminal.factory';
 import { TerminalSession, CreateSessionOptions, PtyLike } from './terminal.types';
 import { readProcessCwd, readForegroundProcess } from './cwd.utils';
 import { planReattach, wantsSnapshot, CLEAR_SEQUENCE } from './reattach.policy';
-import { SessionMirror, type ScreenView } from './emulator.mirror';
+import { SessionMirror, type ScreenView, type MirrorState } from './emulator.mirror';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
@@ -40,6 +40,10 @@ export class TerminalManager {
   private appliedDims = new Map<string, { cols: number; rows: number }>();  // last size actually sent to the pty
   /** Spiegel-Emulator pro Session — die Quelle für Snapshot-Reattaches (emulator.mirror.ts). */
   private mirrors = new Map<string, SessionMirror>();
+  /** Spiegel, die erst NACH dem Start des Terminals angelegt wurden und dessen
+   *  Vergangenheit nicht kennen (übernommen ohne gesicherten Zustand). Ihr
+   *  Vollbild darf den Verlauf eines Clients mit Inhalt nie ersetzen. */
+  private partialMirrors = new Set<string>();
 
   /** Optional callback invoked during detached buffering — allows prompt detector
    *  to keep receiving data for server-side auto-approve and FCM push notifications. */
@@ -121,11 +125,44 @@ export class TerminalManager {
    * Starts detached: output buffers until a client reattaches, exactly like
    * after a disconnect.
    */
-  adoptSession(id: string, pty: PtyLike, cols: number, rows: number): TerminalSession {
+  adoptSession(
+    id: string,
+    pty: PtyLike,
+    cols: number,
+    rows: number,
+    /** Vom vorigen Server gesicherter Spiegel — ohne ihn kennt der neue Spiegel
+     *  nur, was ab jetzt kommt (Verlauf wäre beim nächsten Vollbild weg). */
+    seed?: MirrorState,
+  ): TerminalSession {
     const session = this.wireSession(id, pty, cols, rows, () => {}, () => {});
+    const mirror = this.mirrors.get(id);
+    // Nur bei gleicher Größe: der gesicherte Strom gilt exakt für seine Maße,
+    // und eine PTY ändert über einen Neustart hinweg ihre Größe nicht.
+    if (mirror && seed && seed.cols === cols && seed.rows === rows && seed.data) {
+      mirror.feed(seed.data); // vor jedem PTY-Byte — onData liefert erst später
+      if (seed.partial) this.partialMirrors.add(id);
+    } else {
+      this.partialMirrors.add(id);
+    }
     this.detachSession(id);
-    logger.success(`Session adopted: ${id} (pid ${pty.pid})`);
+    logger.success(`Session adopted: ${id} (pid ${pty.pid}, Verlauf ${this.partialMirrors.has(id) ? 'unbekannt' : 'wiederhergestellt'})`);
     return session;
+  }
+
+  /** Alle Spiegel für den nächsten Server sichern (beim Herunterfahren). */
+  async exportMirrorStates(timeoutMs = 1500): Promise<Record<string, MirrorState>> {
+    const entries = [...this.mirrors.entries()];
+    const flushed = Promise.all(entries.map(([, m]) => m.flushed()));
+    await Promise.race([flushed, new Promise((r) => setTimeout(r, timeoutMs))]);
+    const out: Record<string, MirrorState> = {};
+    for (const [id, m] of entries) {
+      try {
+        out[id] = { cols: m.cols, rows: m.rows, data: m.serializeNow(), partial: this.partialMirrors.has(id) || undefined };
+      } catch (e) {
+        logger.warn(`Spiegel ${id.slice(0, 8)} nicht gesichert: ${(e as Error).message}`);
+      }
+    }
+    return out;
   }
 
   private wireSession(
@@ -321,7 +358,12 @@ export class TerminalManager {
     const overflowed = this.reattachOverflow.has(sessionId);
     const mirror = this.mirrors.get(sessionId);
 
-    if (mirror && wantsSnapshot(session.cols, clientCols, buffered?.length ?? 0, overflowed, clientFresh)) {
+    // Ein Spiegel ohne Vorgeschichte (übernommen ohne gesicherten Zustand) kennt
+    // nur den Rest seit dem Server-Start: sein Vollbild würde einem Client mit
+    // Inhalt den ganzen Verlauf wegnehmen. Dann lieber der Replay-Weg unten.
+    if (mirror && this.partialMirrors.has(sessionId) && mirror.historyFull) this.partialMirrors.delete(sessionId);
+    const mirrorUsable = mirror && (clientFresh || !this.partialMirrors.has(sessionId));
+    if (mirror && mirrorUsable && wantsSnapshot(session.cols, clientCols, buffered?.length ?? 0, overflowed, clientFresh)) {
       this.reattachBuffers.delete(sessionId);
       this.reattachOverflow.delete(sessionId);
       // In Client-Größe reflowen, BEVOR serialisiert wird — das Snapshot muss
@@ -565,6 +607,7 @@ export class TerminalManager {
     this.appliedDims.delete(sessionId);
     this.mirrors.get(sessionId)?.dispose();
     this.mirrors.delete(sessionId);
+    this.partialMirrors.delete(sessionId);
   }
 }
 
