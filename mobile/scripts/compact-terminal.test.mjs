@@ -42,6 +42,15 @@ function sizing({ width = 402, height = 500 } = {}) {
   return { context, host, term, state, resized, time };
 }
 
+test('OpenCode is recognised by its process name on Mac, Linux and Windows', () => {
+  const context = vm.createContext({});
+  vm.runInContext(block('  var MOUSE_TUIS', '  function forceMouseOn(t)'), context);
+  for (const name of ['opencode', '/Users/x/.opencode/bin/opencode', 'opencode.exe', 'OpenCode.EXE',
+    'C:\\Users\\k\\AppData\\Local\\opencode\\opencode.exe']) {
+    assert.equal(context.isMouseTui(name), true, name);
+  }
+  for (const name of ['claude', 'pwsh.exe', 'node.exe', '', undefined]) assert.equal(context.isMouseTui(name), false, String(name));
+});
 test('every phone-sized card gets exactly 50 columns; the font follows the width', () => {
   for (const [width, font] of [[402, 12.7], [430, 13.6], [520, 16.6]]) {
     const t = sizing({ width });

@@ -71,6 +71,14 @@ export class TerminalManager {
     return mirror.screen();
   }
 
+  /** Läuft in dieser Session gerade ein Vollbild-Programm? (false ohne Spiegel) */
+  async isAltScreen(sessionId: string): Promise<boolean> {
+    const mirror = this.mirrors.get(sessionId);
+    if (!mirror) return false;
+    await mirror.flushed();
+    return mirror.altScreen;
+  }
+
   /** Hat diese Session einen Spiegel? Entscheidet, welcher Erkennungsweg gilt. */
   /** Will das Programm in dieser Session Eingefügtes in Bracketed-Paste-Markern? */
   wantsBracketedPaste(sessionId: string): boolean {

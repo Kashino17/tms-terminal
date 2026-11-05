@@ -128,3 +128,14 @@ test('Snapshot enthält Scrollback-Historie, nicht nur das Vollbild', async () =
   assert.ok(snap.includes('historie-10'), 'aus dem Sichtfeld gescrollte Zeilen sind im Snapshot');
   assert.ok(snap.includes('historie-39'), 'die letzte Zeile ist im Snapshot');
 });
+
+test('altScreen meldet den Vollbild-Modus einer TUI (OpenCode, vim) — und das Ende', async () => {
+  const m = new SessionMirror(50, 20);
+  assert.equal(m.altScreen, false);
+  m.feed('\x1b[?1049h\x1b[Hopencode');
+  await m.flushed();
+  assert.equal(m.altScreen, true);
+  m.feed('\x1b[?1049l');
+  await m.flushed();
+  assert.equal(m.altScreen, false);
+});

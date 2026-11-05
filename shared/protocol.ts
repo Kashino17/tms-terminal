@@ -384,6 +384,15 @@ export interface TerminalReattachedMessage {
   };
 }
 
+export interface TerminalProcessMessage {
+  type: 'terminal:process';
+  sessionId: string;
+  /** Foreground program, pushed when a full-screen TUI starts (alternate screen).
+   *  Lets the page force mouse mode for OpenCode even when ConPTY (Windows)
+   *  swallowed the program's own DECSET mouse sequences. */
+  payload: { processName: string };
+}
+
 export interface TerminalCwdMessage {
   type: 'terminal:cwd';
   sessionId: string;
@@ -747,6 +756,7 @@ export type ServerMessage =
   | TerminalErrorMessage
   | TerminalReattachedMessage
   | TerminalCwdMessage
+  | TerminalProcessMessage
   | TerminalPromptDetectedMessage
   | PongMessage
   | WatcherListResponseMessage

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import { globalManager } from '../terminal/terminal.manager';
-import { readProcessCwd, normalizeCwd } from '../terminal/cwd.utils';
+import { readProcessCwd, readForegroundProcess, normalizeCwd } from '../terminal/cwd.utils';
 import { promptDetector } from '../notifications/prompt.detector';
 import { idleDetector } from '../notifications/idle.detector';
 import { fcmService } from '../notifications/fcm.service';
@@ -104,6 +104,26 @@ async function refreshCwd(ws: WebSocket, sessionId: string): Promise<void> {
   send(ws, { type: 'terminal:cwd', sessionId, payload: { cwd: normalizeCwd(raw) } });
 }
 
+// ── Vordergrund-Programm beim Start einer Vollbild-TUI ───────────────
+// Unter Windows schluckt ConPTY die DECSET-Maus-Sequenzen von OpenCode; die
+// Seite erzwingt den Maus-Modus dann nur, wenn sie den Prozessnamen kennt.
+// Bisher kam der erst nach einer Neuverbindung. Jetzt: beim ÜBERGANG in den
+// alternativen Bildschirm einmal nachsehen (nicht bei jeder Ausgabe — unter
+// Windows startet das jedes Mal PowerShell).
+const altScreenSeen = new Map<string, boolean>();
+async function refreshProcessOnAltScreen(ws: WebSocket, sessionId: string): Promise<void> {
+  const session = globalManager.getSession(sessionId);
+  if (!session) return;
+  const alt = await globalManager.isAltScreen(sessionId);
+  const was = altScreenSeen.get(sessionId) ?? false;
+  altScreenSeen.set(sessionId, alt);
+  if (!alt || was) return;
+  const name = await readForegroundProcess(session.pty.pid);
+  if (!name) return;
+  session.processName = name;
+  send(ws, { type: 'terminal:process', sessionId, payload: { processName: name } });
+}
+
 /** Debounced cwd re-read — called on every output chunk. */
 function scheduleCwdCheck(ws: WebSocket, sessionId: string): void {
   const prev = cwdCheckTimers.get(sessionId);
@@ -111,6 +131,7 @@ function scheduleCwdCheck(ws: WebSocket, sessionId: string): void {
   const t = setTimeout(() => {
     cwdCheckTimers.delete(sessionId);
     void refreshCwd(ws, sessionId);
+    void refreshProcessOnAltScreen(ws, sessionId);
   }, CWD_SETTLE_MS);
   t.unref();
   cwdCheckTimers.set(sessionId, t);
@@ -120,6 +141,7 @@ function scheduleCwdCheck(ws: WebSocket, sessionId: string): void {
 function clearCwdCheck(sessionId: string): void {
   const t = cwdCheckTimers.get(sessionId);
   if (t) { clearTimeout(t); cwdCheckTimers.delete(sessionId); }
+  altScreenSeen.delete(sessionId);
 }
 
 /** Push the current best-known cwd immediately (on attach/create) so the

@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Feste Terminal-Breite: Jede Sitzung hat jetzt immer 50 Zeichen pro Zeile, egal ob zugeklappt, aufgeklappt oder im Split-Screen. Statt der Zeilenbreite passt sich die Schrift an. Dadurch wird beim Falten und Umschalten nichts mehr zerhackt. Auf dem Außendisplay hat das Terminal weniger Rand und zeigt 50 statt 39 Zeichen bei fast gleicher Schriftgröße." \
+            --notes "OpenCode unter Windows: Tippen und Wischen kommen jetzt als Klick und Scrollen bei OpenCode an. Windows verschluckte die Maus-Einschaltung von OpenCode, und die App erkannte OpenCode dort nicht am Namen. Benötigt zusätzlich das Server-Update auf dem Windows-PC." \
             --latest

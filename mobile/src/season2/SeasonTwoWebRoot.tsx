@@ -385,6 +385,13 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('setSessionCwd', m.sessionId, m.payload.cwd);
         return;
       }
+      // Eine Vollbild-TUI ist gestartet (Server meldet das Vordergrundprogramm).
+      // Für OpenCode erzwingt die Seite damit den Maus-Modus — nötig unter
+      // Windows, wo ConPTY die Maus-Einschaltsequenzen des Programms schluckt.
+      if (m?.type === 'terminal:process' && m.sessionId && typeof m.payload?.processName === 'string') {
+        call('setProcessName', m.sessionId, m.payload.processName);
+        return;
+      }
       if (m?.type === 'terminal:reattached' && m.sessionId) {
         // Der Snapshot des Servers enthaelt keine DECSET-Modi. Der Prozessname
         // sagt der Seite, ob sie Maus-Reporting lokal wiederherstellen muss

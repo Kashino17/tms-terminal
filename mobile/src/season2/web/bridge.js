@@ -1073,7 +1073,8 @@
   var procBySession = {};
   var MOUSE_TUIS = { opencode: 1 };
   function isMouseTui(name) {
-    var n = String(name || '').toLowerCase().split('/').pop();
+    // Windows liefert "C:\…\opencode.exe" — Pfad (/ oder \) und .exe abstreifen.
+    var n = String(name || '').toLowerCase().split(/[\\/]/).pop().replace(/\.exe$/, '');
     return !!MOUSE_TUIS[n];
   }
   function forceMouseOn(t) {
