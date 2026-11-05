@@ -138,14 +138,17 @@ export class TerminalManager {
     const mirror = this.mirrors.get(id);
     // Nur bei gleicher Größe: der gesicherte Strom gilt exakt für seine Maße,
     // und eine PTY ändert über einen Neustart hinweg ihre Größe nicht.
+    let verlauf: string;
     if (mirror && seed && seed.cols === cols && seed.rows === rows && seed.data) {
       mirror.feed(seed.data); // vor jedem PTY-Byte — onData liefert erst später
       if (seed.partial) this.partialMirrors.add(id);
+      verlauf = seed.partial ? 'wiederhergestellt, Anfang fehlte schon vorher' : 'wiederhergestellt';
     } else {
       this.partialMirrors.add(id);
+      verlauf = seed ? `nicht übernommen (gesichert ${seed.cols}x${seed.rows}, PTY ${cols}x${rows})` : 'unbekannt';
     }
     this.detachSession(id);
-    logger.success(`Session adopted: ${id} (pid ${pty.pid}, Verlauf ${this.partialMirrors.has(id) ? 'unbekannt' : 'wiederhergestellt'})`);
+    logger.success(`Session adopted: ${id} (pid ${pty.pid}, Verlauf ${verlauf})`);
     return session;
   }
 
