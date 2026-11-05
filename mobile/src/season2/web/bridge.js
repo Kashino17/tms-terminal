@@ -787,7 +787,15 @@
     }
     var d = dims(cardId);
     lastDims[sessionId] = d.cols + 'x' + d.rows;
-    post('terminal:attach', { cardId: cardId, sessionId: sessionId, cols: d.cols, rows: d.rows });
+    post('terminal:attach', { cardId: cardId, sessionId: sessionId, cols: d.cols, rows: d.rows, fresh: isFresh(cardId) });
+  }
+  /** Leeres Seiten-Terminal (Kaltstart, neu gebaute Seite)? Dann muss der Server
+   *  das Vollbild MIT Verlauf schicken — bei gleicher Breite und ohne verpasste
+   *  Ausgabe schickte er sonst nichts, und nach einem App-Neustart blieb die
+   *  Karte leer bis auf das, was Claude selbst neu malte. */
+  function isFresh(cardId) {
+    var t = terms[cardId];
+    return !(t && t.gotData);
   }
 
   // Cards appear/disappear whenever the mockup rebuilds its workspace. Follow
@@ -1099,6 +1107,7 @@
   }
   function writeTerm(t, chunk, cb) {
     noteMouseModes(t, chunk);
+    if (chunk) t.gotData = true;
     t.term.write(chunk, cb);
   }
   function mouseService(t) {
@@ -2934,7 +2943,7 @@
       if (!sid) return;
       var d = dims(cardId);
       lastDims[sid] = d.cols + 'x' + d.rows;
-      post('terminal:attach', { cardId: cardId, sessionId: sid, cols: d.cols, rows: d.rows });
+      post('terminal:attach', { cardId: cardId, sessionId: sid, cols: d.cols, rows: d.rows, fresh: isFresh(cardId) });
     });
   };
   /** Der Server konnte für diese Karte keine PTY anlegen. Ohne das hier bliebe

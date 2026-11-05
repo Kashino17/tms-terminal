@@ -617,7 +617,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
    * Die Größe bleibt, wie sie ist — der Aufrufer kennt die Maße des Clients nicht,
    * und ein unnötiges SIGWINCH lässt Claude & Co. ihr ganzes Bild neu malen.
    */
-  const attachToThisClient = (sessionId: string, clientCols?: number, clientRows?: number): boolean => {
+  const attachToThisClient = (sessionId: string, clientCols?: number, clientRows?: number, clientFresh = false): boolean => {
     const session = globalManager.reattachSession(
       sessionId,
       (sid, data) => {
@@ -645,6 +645,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       },
       clientCols,
       clientRows,
+      clientFresh,
     );
     if (!session) return false;
 
@@ -1340,6 +1341,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         }
 
         const { cols, rows } = msg.payload;
+        // Leeres Client-Terminal (App-Kaltstart) → immer Vollbild mit Verlauf.
+        const fresh = msg.payload.fresh === true;
 
         if (!Number.isInteger(cols) || cols < 1 || cols > 500) {
           send(ws, { type: 'terminal:error', sessionId: msg.sessionId, payload: { message: 'Invalid cols: must be integer 1-500' } });
@@ -1354,6 +1357,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         const nowAt = Date.now();
         const prevReattach = lastReattach.get(msg.sessionId);
         if (
+          !fresh &&
           prevReattach &&
           nowAt - prevReattach.at < 1000 &&
           prevReattach.cols === cols &&
@@ -1368,7 +1372,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         // Ein Anhänge-Pfad für alle: derselbe Helfer, den auch die Selbstheilung
         // bei Eingabe/Resize benutzt. Nur hier kennen wir die echten Maße des
         // Clients und dürfen die PTY darauf setzen.
-        if (attachToThisClient(msg.sessionId, cols, rows)) {
+        if (attachToThisClient(msg.sessionId, cols, rows, fresh)) {
           const session = globalManager.getSession(msg.sessionId)!;
           pendingInputLen.set(session.id, 0); // alter Zählerstand der Vorgängerverbindung
           const stored = titleStore.get(session.id);

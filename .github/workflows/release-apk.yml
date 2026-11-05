@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Links im Terminal wieder vollständig: Von Claude umgebrochene Links wurden mitten im Link abgeschnitten, vor allem in Aufzählungen und in älterem Verlauf. Jetzt trägt jedes Stück eines umgebrochenen Links die ganze Adresse, ein Tipp kopiert immer den kompletten Link. Ein Aufzählungsstrich in der nächsten Zeile wird nicht mehr an den Link angehängt." \
+            --notes "Verlauf nach App-Neustart wieder da: Manche Terminals zeigten nach einem Neustart nur noch die Eingabezeile, der bisherige Verlauf fehlte. Die App meldet jetzt, dass ihr Terminal leer ist, und der Server schickt den kompletten Bildschirm samt Verlauf. Benötigt zusätzlich das Server-Update." \
             --latest

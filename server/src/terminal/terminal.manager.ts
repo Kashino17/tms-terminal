@@ -301,6 +301,8 @@ export class TerminalManager {
     onClose: CloseCallback,
     clientCols?: number,
     clientRows?: number,
+    /** Das Terminal des Clients ist leer (App-Kaltstart) → immer Vollbild schicken. */
+    clientFresh = false,
   ): TerminalSession | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
@@ -319,7 +321,7 @@ export class TerminalManager {
     const overflowed = this.reattachOverflow.has(sessionId);
     const mirror = this.mirrors.get(sessionId);
 
-    if (mirror && wantsSnapshot(session.cols, clientCols, buffered?.length ?? 0, overflowed)) {
+    if (mirror && wantsSnapshot(session.cols, clientCols, buffered?.length ?? 0, overflowed, clientFresh)) {
       this.reattachBuffers.delete(sessionId);
       this.reattachOverflow.delete(sessionId);
       // In Client-Größe reflowen, BEVOR serialisiert wird — das Snapshot muss
@@ -342,7 +344,7 @@ export class TerminalManager {
       });
       logger.success(
         `Session reattached via snapshot: ${sessionId.slice(0, 8)} ` +
-        `(cols ${session.cols}→${clientCols ?? '?'}, missed=${buffered?.length ?? 0}B, overflow=${overflowed})`,
+        `(cols ${session.cols}→${clientCols ?? '?'}, missed=${buffered?.length ?? 0}B, overflow=${overflowed}, fresh=${clientFresh})`,
       );
       this.healPtyDims(sessionId, session, clientCols, clientRows);
       return session;

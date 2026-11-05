@@ -1087,7 +1087,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           sessionId: payload.sessionId,
           // `?? 80` would let a 0 through — the server rejects that and the
           // terminal would never receive a single byte.
-          payload: { cols: payload.cols || 80, rows: payload.rows || 24 },
+          // `fresh`: leeres Seiten-Terminal (Kaltstart) → Server schickt Vollbild.
+          payload: { cols: payload.cols || 80, rows: payload.rows || 24, fresh: payload.fresh === true },
         });
         break;
 

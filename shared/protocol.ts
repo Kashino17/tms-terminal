@@ -32,7 +32,9 @@ export interface TerminalClearMessage {
 export interface TerminalReattachMessage {
   type: 'terminal:reattach';
   sessionId: string;
-  payload: { cols: number; rows: number };
+  /** `fresh`: das Terminal des Clients ist leer (App-Kaltstart) — der Server
+   *  schickt dann immer ein Vollbild mit Verlauf statt nur den Rückstand. */
+  payload: { cols: number; rows: number; fresh?: boolean };
 }
 
 export interface PingMessage {
