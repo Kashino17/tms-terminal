@@ -56,11 +56,32 @@ function getPort() {
 }
 
 function listenerPids(port) {
+  if (os.platform() === 'win32') {
+    // Kein lsof. netstat -ano: lauschende Sockets erkennt man an der leeren
+    // Gegenadresse — NICHT am Zustandswort, das ist übersetzt ("ABHÖREN").
+    try {
+      const out = execSync('netstat -ano -p tcp', { encoding: 'utf8', windowsHide: true });
+      return parseWinListeners(out, port);
+    } catch { return []; }
+  }
   try {
     return execSync(`lsof -ti tcp:${port} -sTCP:LISTEN 2>/dev/null`, { encoding: 'utf8' })
       .trim().split('\n').map((p) => parseInt(p, 10)).filter((n) => n > 0);
   } catch { return []; }
 }
+
+function parseWinListeners(netstat, port) {
+  const re = new RegExp(`^\\s*TCP\\s+\\S+:${port}\\s+(?:0\\.0\\.0\\.0:0|\\[::\\]:0)\\s+\\S+\\s+(\\d+)\\s*$`);
+  const pids = new Set();
+  for (const line of netstat.split(/\r?\n/)) {
+    const m = re.exec(line);
+    if (m && +m[1] > 0) pids.add(+m[1]);
+  }
+  return [...pids];
+}
+
+/** Synchron kurz warten — `sleep` gibt es unter Windows nicht. */
+function pause(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
 
 /** Kill whatever is listening on the server port (PID file OR lsof fallback). */
 function stopExisting() {
@@ -84,7 +105,7 @@ function stopExisting() {
   // 3. Wait up to 5s for the port to be released (graceful shutdown saves state first)
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline && listenerPids(port).length > 0) {
-    execSync('sleep 0.2');
+    pause(200);
   }
   return stopped;
 }
@@ -556,7 +577,25 @@ async function main() {
       let ff = '';
       try { ff = execSync('ffmpeg -version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n')[0]; } catch {}
       const major = parseInt((/ffmpeg version (\d+)/.exec(ff) || [])[1] || '0', 10);
-      check(major >= 6, ff ? `ffmpeg ${major}` : 'ffmpeg fehlt', 'Fernzugriff braucht ffmpeg >= 6 (ddagrab)');
+      check(major >= 6, ff ? `ffmpeg ${major}` : 'ffmpeg fehlt', 'Fernzugriff braucht ffmpeg >= 6 (ddagrab): winget install Gyan.FFmpeg — danach neues Terminal + Server neu starten');
+      if (major >= 6) {
+        const ffq = (args) => { try { return execFileSync('ffmpeg', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 15000 }); } catch { return ''; } };
+        const enc = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'libx264'].filter((e) => ffq(['-hide_banner', '-encoders']).includes(e));
+        check(enc.length > 0, enc.length ? `H.264-Encoder: ${enc.join(', ')}` : 'Kein H.264-Encoder in ffmpeg', 'vollständigen Build installieren: winget install Gyan.FFmpeg');
+        const dda = ffq(['-hide_banner', '-filters']).includes('ddagrab');
+        check(dda, dda ? 'Desktop-Abgriff ddagrab vorhanden' : 'ffmpeg ohne ddagrab', 'vollständigen Build installieren: winget install Gyan.FFmpeg');
+        // Ein Dienst (Sitzung 0) hat keinen Desktop — ddagrab liefert dort nichts.
+        const sess = process.env.SESSIONNAME || '';
+        check(!!sess, sess ? `Desktop-Sitzung: ${sess}` : 'Keine Desktop-Sitzung (läuft der Server als Dienst?)', 'Server als angemeldeter Nutzer starten: tms-terminal');
+        if (dda && enc.length) {
+          // Echte Probeaufnahme: ein Bild vom Desktop. Scheitert sie, scheitert der Fernzugriff genauso.
+          const probe = require('child_process').spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'ddagrab=output_idx=0:framerate=5', '-frames:v', '1', '-f', 'null', '-'], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
+          const fine = probe.status === 0;
+          check(fine, fine ? 'Probeaufnahme vom Desktop klappt' : `Probeaufnahme scheitert: ${(probe.stderr || probe.error?.message || '').trim().split('\n').pop()?.slice(0, 160) || 'ohne Meldung'}`, 'Bildschirm entsperrt und an? Grafiktreiber aktuell? Remote-Desktop-Sitzung statt Konsole?');
+        }
+      }
+      const ps1 = path.join(ROOT, 'src', 'remote', 'helpers', 'win', 'input-helper.ps1');
+      check(fs.existsSync(ps1), fs.existsSync(ps1) ? 'Eingabe-Helfer vorhanden' : 'Eingabe-Helfer fehlt', `erwartet: ${ps1}`);
     }
     // Tailscale
     try {
@@ -654,6 +693,35 @@ async function main() {
     const CLI_PATH = path.join(ROOT, 'bin', 'cli.js');
 
     ensureConfigDir();
+
+    // Windows: kein bash — derselbe Ablauf läuft als losgelöstes Node-Skript
+    // (bin/update-runner.js). Vorher scheiterte das Update dort immer.
+    if (os.platform() === 'win32') {
+      const paths = {
+        root: ROOT, cli: CLI_PATH, log: UPDATE_LOG,
+        dist: DIST_DIR, newDist: path.join(ROOT, 'dist.new'), oldDist: path.join(ROOT, 'dist.old'),
+        newIndex: path.join(ROOT, 'dist.new', 'server', 'src', 'index.js'),
+        tsbuildinfo: TSBUILDINFO, newTsbuildinfo: path.join(ROOT, '.tsbuildinfo.new'),
+      };
+      const PATHS_FILE = path.join(CONFIG_DIR, 'update-paths.json');
+      fs.writeFileSync(PATHS_FILE, JSON.stringify(paths, null, 2));
+      if (process.env.TMS_UPDATE_DRY_RUN || has('--dry-run')) {
+        warn(`Trockenlauf — nichts ausgeführt. Pfade: ${PATHS_FILE}`);
+        break;
+      }
+      info('Update läuft im Hintergrund...');
+      hint('Der Server bleibt an, bis der neue Stand fertig gebaut ist —');
+      hint('dann kurzer Neustart. Scheitert etwas, läuft er unverändert weiter.');
+      hint('Unter Windows enden dabei die offenen Terminals (kein Wächter).');
+      hint(`Verlauf: ${UPDATE_LOG}`);
+      const child = spawn(process.execPath, [path.join(ROOT, 'bin', 'update-runner.js'), PATHS_FILE], {
+        detached: true, stdio: 'ignore', cwd: ROOT, windowsHide: true,
+      });
+      child.on('error', (e) => bad(`Update konnte nicht starten: ${e.message}`));
+      child.unref();
+      setTimeout(() => process.exit(0), 500);
+      break;
+    }
 
     // Der Server laeuft weiter, solange noch irgendetwas schiefgehen kann.
     // Frueher war es umgekehrt: erst stoppen, dann pullen und bauen — scheiterte

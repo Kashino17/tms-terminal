@@ -117,3 +117,12 @@ test('computeOutputSize laesst ein bereits kleineres Bild bei exakter Breite unv
     { width: 1600, height: 1000 },
   );
 });
+
+test('jeder Encoder liefert Baseline ohne B-Frames — passend zum Decoder der App (avc1.42E01E) und zum Mac-Helfer', () => {
+  const profile = { h264_nvenc: 'baseline', h264_qsv: 'baseline', h264_amf: 'constrained_baseline', libx264: 'baseline' };
+  for (const enc of ENCODER_PREFERENCE) {
+    const joined = buildFfmpegArgs({ maxWidth: 1600, fps: 30, bitrateKbps: 1500 }, enc).join(' ');
+    assert.ok(joined.includes(`-profile:v ${profile[enc]}`), `${enc}: Profil ${profile[enc]}`);
+    assert.ok(joined.includes('-bf 0'), `${enc}: keine B-Frames (sonst Umsortierung + Verzögerung)`);
+  }
+});

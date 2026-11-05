@@ -29,6 +29,17 @@ function qualityArgs(encoder: string): string[] {
   }
 }
 
+/**
+ * Baseline ohne B-Frames — exakt wie der Mac-Helfer (Baseline_AutoLevel,
+ * AllowFrameReordering=false). Die App öffnet den Decoder als avc1.42E01E
+ * (Baseline); ohne Vorgabe lieferten die Encoder High mit B-Frames, die
+ * Android-Decoder ablehnen oder nur mit Umsortier-Verzögerung zeigen.
+ * AMF kennt kein reines "baseline", nur constrained_baseline.
+ */
+function profileArgs(encoder: string): string[] {
+  return ['-profile:v', encoder === 'h264_amf' ? 'constrained_baseline' : 'baseline', '-bf', '0'];
+}
+
 export function buildFfmpegArgs(opts: CaptureOptions, encoder: string): string[] {
   return [
     '-hide_banner', '-loglevel', 'info',
@@ -44,6 +55,7 @@ export function buildFfmpegArgs(opts: CaptureOptions, encoder: string): string[]
     '-vf', `hwdownload,format=bgra,scale=w='min(iw,${opts.maxWidth})':h=-2,format=nv12`,
     '-c:v', encoder,
     ...qualityArgs(encoder),
+    ...profileArgs(encoder),
     '-b:v', `${opts.bitrateKbps}k`,
     '-g', String(opts.fps * 2),
     '-slices', '1',
