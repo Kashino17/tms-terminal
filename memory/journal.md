@@ -160,3 +160,23 @@
 - Veröffentlichte APK (104537152 Bytes) heruntergeladen: Paket `com.tms.terminal`, v1.123.8/code 22308, arm64; Zertifikat identisch zur installierbaren Vorgängerversion v1.123.6. SHA-256: `2c6853be0ff72cbe55cfe3d0816ec96af70dc0f5f581135d7627624463dd8a11`.
 - Öffentlichen Latest-Release-Endpunkt ohne Anmeldung geprüft; die App findet die neue APK über ihren vorhandenen Updater. Einstieg: Einstellungen → Nach Updates suchen. Keine direkte Installation auf dem Gerät vorgenommen.
 - Git-Push hing mit Delta-Packung; der erfolgreiche Aufruf verwendet temporär `pack.window=0`, `pack.threads=1`, HTTP/1.1 und `gh auth git-credential`, ohne globale Git-Konfiguration zu ändern.
+
+## 2026-10-28 — Diagnose Verbindung bei Bildschirm-Aus und Ruhezustand
+
+- Nutzer meldet Verbindungsabbrüche bei ausgeschaltetem Bildschirm bzw. MacBook-Ruhezustand ohne Netzteil und möchte keinen zusätzlichen Energieverbrauch.
+- Nur Diagnose, keine Änderungen an App, Server, Tailscale oder Energieeinstellungen, kein neuer Release. Ursache am Gerät nicht reproduziert.
+- Aktuelle read-only-Abfrage: Netzbetrieb; pmset AC sleep=0, displaysleep=10, womp=1. Ausgelesene letzte Ereignisse zeigen Display-Aus/Ein; daraus kein Nachweis eines System-Sleep-Abbruchs. Akku-Schlafverhalten nicht verifiziert.
+- Installierte Tailscale.app laut Info.plist: 1.94.1. Offizielles Changelog nennt in 1.98.8 Korrekturen für Verbindungen nach OS-Wake; aktueller Changelog-Stand 1.104.2. Update ist ein sinnvoller Ansatz, aber keine bewiesene Ursache des konkreten Abbruchs. Quelle: https://tailscale.com/changelog
+- Aktueller TMS-Code hält getrennte PTYs ohne Idle-TTL; automatische Wiederverbindung und AppState-Vordergrundbehandlung bestehen bereits. WebSocket-Retries laufen bis maximal 5 Sekunden Abstand; ein expliziter Handshake-Timeout fehlt. Verbesserungsansatz: begrenzter Verbindungsaufbau, verlässliche Wiederaufnahme und langsamere Versuche bei längerem Offline-Zustand statt zusätzlicher Wake-Locks.
+- Technische Grenze: Display-Aus und System-Schlaf unterscheiden. Normaler System-Schlaf unterbricht interaktive Terminal-Ausführung; automatisches Wiederverbinden kann erst nach Wake/Netzrückkehr helfen. Durchgehende Arbeit erfordert einen wachen Rechner und kann gegenüber Schlaf nicht ohne Mehrverbrauch versprochen werden. Empfohlen: bestehendes Energiesparen erhalten und Wiederaufnahme verbessern; bei gewünschtem Live-Betrieb nur während tatsächlicher Nutzung wachhalten, als expliziter Energie-Kompromiss.
+
+## 2026-11-05 — Terminal-Darstellung: Breite, Dopplungen, OpenCode/Windows, Links
+
+- Analyse + Plan-Seite mit Fragen: https://claude.ai/artifact/CRvLBa2xfpSYR9svMNvCrh (Antworten in db `answers`).
+- Ursache „zerhackt“: bridge.js `measureCell` zählte die Stapel-Verkleinerung mit → Karten hinter der aktiven bekamen 42/46/50 statt 39 Spalten, jeder Wisch = SIGWINCH. Live per `stty` auf den PTYs bewiesen.
+- Ursache „doppelt“: Zeilen-Ratsche war in v1.123.7 entfernt → Tastatur drückte PTY auf 13 Zeilen, Claudes Live-Bereich höher → Ink lässt Kopien stehen. E2E (echte Seite + echter Claude Code): 1 → 14 Köpfe; mit Ratsche 1, 0 Resizes.
+- Feste Breite 50 Spalten (Schrift folgt Kartenbreite, 10–20 px) + kompakter Handy-Rand (6 px statt 32 px). Schriftregler entfallen.
+- OpenCode/Windows: ConPTY schluckt Maus-DECSET; Prozessname unter Windows nie ermittelt (pgrep/ps) und `opencode.exe` nicht erkannt → Fix: Get-CimInstance (tiefster Nachfahre), neue Nachricht `terminal:process` bei Alt-Screen-Start, isMouseTui strippt Pfad/.exe.
+- Windows-Server: `tms-terminal update` brauchte bash → scheiterte immer. Jetzt bin/update-runner.js (Node); doctor prüft Fernzugriff (Encoder, ddagrab, Sitzung, Probeaufnahme); ffmpeg Baseline/-bf 0. Windows-PC offline → nicht live getestet; erstes Update dort manuell.
+- Links: Rand-Regel aus Nachbarzeilen (alter Verlauf mit anderer Breite) + Aufzählungszeichen nie Fortsetzung.
+- Releases: v1.123.9, v1.124.0, v1.124.1, v1.124.2 (alle CI grün, latest = v1.124.2). Server-Commit f88aa3e gepusht (Windows).

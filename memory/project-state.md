@@ -1,8 +1,11 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-10-26 — Release v1.123.8 veröffentlicht_
+_Zuletzt aktualisiert: 2026-11-05 — Terminal-Darstellung + Windows; Release v1.124.2_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-05 (neu):** Latest Release v1.124.2 (Branch feat/fernzugriff, Live-Tree ~/Developer/tms-terminal). Terminal: feste Breite 50 Spalten, Zeilen-Ratsche, Stapel-Messfehler behoben, umgebrochene Links robust. OpenCode-Maus unter Windows über `terminal:process`. Offen: Windows-PC manuell auf feat/fernzugriff aktualisieren (altes Update braucht bash) und `tms-terminal doctor` auswerten; Fernzugriff Windows dann live testen; Mac-Server nicht neu gestartet (braucht die Server-Änderungen nicht dringend); TERM unter Windows ungesetzt (unbewiesen).
+
 - Repository: `/Users/ayysir/Desktop/TMS Terminal`, Branch `feat/fernzugriff`, Basis `8ee3625` (App v1.123.6, tatsächlicher Android-versionCode 22306). Veröffentlicht: v1.123.8 mit versionCode 22308 in app.json und Gradle. Die separate ältere Kopie `tms-terminal` wurde nicht verändert.
 - Der Nutzer hat den lokalen Fold-Mockup freigegeben ("ja passt"). Der Nutzer hat anschließend Commit, Push und Veröffentlichung ausdrücklich angefordert, damit das In-App-Update verfügbar wird. Der Release v1.123.8 ist über GitHub veröffentlicht und als Latest Release für die App verifiziert.
 - Season-2-Terminal: Bei höchstens 480 CSS-Pixeln sichtbarer Höhe automatisch eine randlose Sitzung mit schmalem Kopf und bestehender Eingabe. Bis 280 px wird die Eingabe auf zwei Zeilen begrenzt. Sitzungswechsel, Lesefokus, Schriftgröße (13–20 px, Standard 15), Sondertasten und Spracheingabe bleiben verfügbar.
@@ -23,6 +26,15 @@ _Zuletzt aktualisiert: 2026-10-26 — Release v1.123.8 veröffentlicht_
 - Noch auf dem Fold zu prüfen: Video oben + Terminal unten; Samsung-Tastatur auf/zu; Trennlinie verschieben; Schreiben/Sitzungswechsel/Sondertasten; Lesefokus; Rückkehr ins Vollbild; Voice-Aufnahme.
 - Aktuelle CUA-Umgebung bietet keine Browser-Verbindung; ein nativer visueller WebView-Test wurde nicht behauptet.
 - Freigegebener Mockup weiterhin unter `https://macbook-pro-2.taile64a95.ts.net:8453/preview.html` (nur Tailnet, Mac/Server müssen laufen).
+
+## 2026-10-28 — Diagnose Verbindung bei Bildschirm-Aus und Ruhezustand
+
+- Nutzer meldet Verbindungsabbrüche bei ausgeschaltetem Bildschirm bzw. MacBook-Ruhezustand ohne Netzteil und möchte keinen zusätzlichen Energieverbrauch.
+- Nur Diagnose, keine Änderungen an App, Server, Tailscale oder Energieeinstellungen, kein neuer Release. Ursache am Gerät nicht reproduziert.
+- Aktuelle read-only-Abfrage: Netzbetrieb; pmset AC sleep=0, displaysleep=10, womp=1. Ausgelesene letzte Ereignisse zeigen Display-Aus/Ein; daraus kein Nachweis eines System-Sleep-Abbruchs. Akku-Schlafverhalten nicht verifiziert.
+- Installierte Tailscale.app laut Info.plist: 1.94.1. Offizielles Changelog nennt in 1.98.8 Korrekturen für Verbindungen nach OS-Wake; aktueller Changelog-Stand 1.104.2. Update ist ein sinnvoller Ansatz, aber keine bewiesene Ursache des konkreten Abbruchs. Quelle: https://tailscale.com/changelog
+- Aktueller TMS-Code hält getrennte PTYs ohne Idle-TTL; automatische Wiederverbindung und AppState-Vordergrundbehandlung bestehen bereits. WebSocket-Retries laufen bis maximal 5 Sekunden Abstand; ein expliziter Handshake-Timeout fehlt. Verbesserungsansatz: begrenzter Verbindungsaufbau, verlässliche Wiederaufnahme und langsamere Versuche bei längerem Offline-Zustand statt zusätzlicher Wake-Locks.
+- Technische Grenze: Display-Aus und System-Schlaf unterscheiden. Normaler System-Schlaf unterbricht interaktive Terminal-Ausführung; automatisches Wiederverbinden kann erst nach Wake/Netzrückkehr helfen. Durchgehende Arbeit erfordert einen wachen Rechner und kann gegenüber Schlaf nicht ohne Mehrverbrauch versprochen werden. Empfohlen: bestehendes Energiesparen erhalten und Wiederaufnahme verbessern; bei gewünschtem Live-Betrieb nur während tatsächlicher Nutzung wachhalten, als expliziter Energie-Kompromiss.
 
 ## Historischer Stand vom 2026-04-26
 Die folgenden älteren Arbeitsnotizen wurden bewahrt und in dieser Sitzung nicht erneut verifiziert.
