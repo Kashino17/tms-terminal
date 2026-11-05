@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Windows: Vollbild-Programme wie vim, less und OpenCode werden jetzt auch unter Windows erkannt. Sie bekommen die echte Kartenhöhe, und OpenCode ist sofort scroll- und klickbar statt erst nach einer Neuverbindung. Benötigt zusätzlich das Server-Update (Mac und Windows)." \
+            --notes "Dateien: Beim Wechsel zwischen Geräten springt die Dateien-Ansicht jetzt sofort in den Home-Ordner des neuen Geräts, statt mit Fehler 400 hängenzubleiben. Aufwärts, Ordner öffnen und die Pfadleiste funktionieren jetzt auch mit Windows-Pfaden." \
             --latest
