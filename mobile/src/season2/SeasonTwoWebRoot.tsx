@@ -38,6 +38,7 @@ import { usePrayerStore, prayerMethodName } from '../store/prayerStore';
 import { PRAYER_NAMES, getNextPrayer, type PrayerTimes } from '../services/prayer.service';
 import * as Notifications from 'expo-notifications';
 import { useDictation } from './hooks/useDictation';
+import { dictationBubble } from '../services/dictationBubble.service';
 import { useManagerWire } from './manager/useManagerWire';
 import { useManagerStore } from '../store/managerStore';
 import { useManagerBridge, useCloudBridge } from './web/useSeasonTwoBackends';
@@ -941,6 +942,24 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     return primary ? getConnection(primary.id) : null;
   }, []);
 
+  // ── Android dictation bubble: give it the main server so it can stream on
+  // its own (it runs in a separate accessibility service), and keep the
+  // settings row in the page up to date.
+  const voiceEnhance = useSettingsStore((st) => st.voicePromptEnhanceEnabled);
+  useEffect(() => {
+    if (!server || !token || !dictationBubble.available) return;
+    dictationBubble.configure(server.host, Number(server.port), token, voiceEnhance);
+  }, [server, token, voiceEnhance]);
+  const pushBubbleStatus = useCallback(() => {
+    if (!ready || !dictationBubble.available) return;
+    dictationBubble.status().then((st) => { if (st) call('bubbleStatus', st); });
+  }, [ready, call]);
+  useEffect(() => {
+    // Back from the Android accessibility settings → show the new state.
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') pushBubbleStatus(); });
+    return () => sub.remove();
+  }, [pushBubbleStatus]);
+
   // ── Dictation: the page shows the mic states, the recorder lives here.
   const { micState, toggle: toggleMic, cancel: cancelMic } = useDictation({
     wsService: wsService ?? null,
@@ -1295,6 +1314,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       case 'mic:stop':
         // The bar shows "Transkribiere…" until onText lands.
         toggleMic(); // stop -> upload -> Whisper
+        break;
+
+      case 'bubble:status':
+        pushBubbleStatus();
+        break;
+      case 'bubble:open':
+        dictationBubble.openSettings();
+        break;
+      case 'bubble:toggle':
+        dictationBubble.setEnabled(payload?.enabled === true);
+        pushBubbleStatus();
+        break;
+      case 'bubble:wake':
+        dictationBubble.wake();
+        pushBubbleStatus();
         break;
 
       case 'mic:cancel':
@@ -1656,7 +1690,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow, connFor]);
+  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, pushBubbleStatus, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow, connFor]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"

@@ -1797,6 +1797,69 @@
   window.managerRemoveAttachment = function (index) { post('manager:removeAttachment', { index: index }); };
 
   // RN → Seite: Modelle, Anhänge, Transkript in die Eingabezeile.
+  // ── Diktat-Bubble (Android-Bedienungshilfe) in den Einstellungen ──────────
+  // Die Seite rendert die Einstellungen selbst neu (renderSettings); die
+  // Gruppe wird danach jedes Mal angehaengt — ohne das Mockup zu aendern.
+  var bubbleStatus = null;
+  function bubbleTime(ms) {
+    var d = new Date(ms);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  function injectBubbleSettings() {
+    var body = document.getElementById('settingsBody');
+    if (!body) return;
+    var group = document.getElementById('bubbleSettingsGroup');
+    if (!group) {
+      group = document.createElement('div');
+      group.className = 'settings-group glass';
+      group.id = 'bubbleSettingsGroup';
+      var anchor = document.getElementById('terminalSettingsGroup');
+      if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(group, anchor.nextSibling);
+      else body.appendChild(group);
+    }
+    var st = bubbleStatus;
+    var on = !!(st && st.serviceOn);
+    var sleeping = !!(st && st.snoozedUntil > Date.now());
+    var html = '<div class="settings-group__title">Diktat-Bubble</div>' +
+      '<div class="settings-row is-tap" id="bubbleServiceRow">' +
+        '<span class="settings-row__label">Mikrofon in allen Apps<small>' +
+          (!st ? 'Wird geprüft …' : on ? 'Aktiv — erscheint, sobald du ein Textfeld öffnest'
+            : 'Aus — antippen und „TMS Diktat-Bubble“ einschalten') +
+        '</small></span><span class="settings-row__value">' + (on ? 'An' : 'Aus') + '</span></div>';
+    if (on) {
+      html += '<div class="settings-row"><span class="settings-row__label">Bubble anzeigen<small>Gedrückt halten = 15 Min. schlafen</small></span>' +
+        '<label class="switch"><input type="checkbox" id="bubbleEnabledSwitch" ' + (st.enabled ? 'checked' : '') +
+        '><span class="switch__track"><span class="switch__thumb"></span></span></label></div>';
+      if (sleeping) {
+        html += '<div class="settings-row is-tap" id="bubbleWakeRow"><span class="settings-row__label">Schläft bis ' +
+          bubbleTime(st.snoozedUntil) + '<small>Antippen zum Aufwecken</small></span></div>';
+      }
+      html += '<div class="settings-row"><span class="settings-row__label"><small>Samsung: TMS unter Akku → „Nie schlafende Apps“ eintragen, sonst schläft die Bubble ein.</small></span></div>';
+    }
+    group.innerHTML = html;
+    var svc = document.getElementById('bubbleServiceRow');
+    if (svc) svc.addEventListener('click', function () { post('bubble:open', {}); });
+    var sw = document.getElementById('bubbleEnabledSwitch');
+    if (sw) sw.addEventListener('change', function () { post('bubble:toggle', { enabled: sw.checked }); });
+    var wake = document.getElementById('bubbleWakeRow');
+    if (wake) wake.addEventListener('click', function () { post('bubble:wake', {}); });
+  }
+  var origRenderSettings = window.renderSettings;
+  if (typeof origRenderSettings === 'function') {
+    window.renderSettings = function () {
+      var r = origRenderSettings.apply(this, arguments);
+      injectBubbleSettings();
+      post('bubble:status', {});
+      return r;
+    };
+  }
+  window.TMSBridge.bubbleStatus = function (st) {
+    bubbleStatus = st;
+    injectBubbleSettings();
+  };
+  // The page renders its settings once at boot, before this bridge exists.
+  if (document.getElementById('settingsBody')) { injectBubbleSettings(); post('bubble:status', {}); }
+
   window.TMSBridge.setManagerProviders = function (providers, active) {
     window.TMS_DATA.manager.providers = providers || [];
     window.TMS_DATA.manager.activeProvider = active || '';
