@@ -211,3 +211,4 @@
 - Umsetzung (Design+Plan, TDD): Streaming-Upload während Aufnahme, Byte-Offset-Protokoll mit resume/Neu-Upload, Vorab-Transkription, ✕ gibt frei, Fallback für alte Server, Ende-/Dauer-Logs. Opus-Review: 1 Critical (Offset-Rennen) + 7 Important behoben.
 - Leise Sprache: Normalisierung NACH dem Stille-Schnitt; adaptiver Schnitt verworfen (Raumrauschen → „Vielen Dank.“). 0,5-%-Pegel geht weiter verloren (wie vorher).
 - Parallel-Job hatte v1.126.0 genommen → rebased, als v1.127.0 released. Server-Neustart steht aus (Nutzer).
+- Nachtrag v1.127.1 (`b9cd2f3`): Dateien-Leiste/Explorer folgen dem Gerät des vorderen Terminals (term:active); Fingerabdruck pro Gerät (sudo → Gerät der Sitzung, Fernzugriff → angezeigtes Gerät, Windows → Hinweis). tsc 0, 125 Tests grün, Browser-Simulation bestätigt die Meldungen.
