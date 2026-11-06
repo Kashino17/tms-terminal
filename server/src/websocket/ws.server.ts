@@ -1,6 +1,7 @@
 import * as http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { handleConnection } from './ws.handler';
+import { handleConnection, handleDictationConnection } from './ws.handler';
+import { isDictationRequest } from '../audio/dictation.connection';
 import { authenticateWebSocket } from '../auth/auth.middleware';
 import { logger } from '../utils/logger';
 import { isRemotePath, handleRemoteConnection } from '../remote/remote.socket';
@@ -49,6 +50,10 @@ export function createWebSocketServer(server: http.Server): WebSocketServer {
           makeInput: createInputInjector,
           isEnabled: isRemoteEnabled,
         }, ip);
+        return;
+      }
+      if (isDictationRequest(req.url)) {
+        handleDictationConnection(ws, ip);
         return;
       }
       handleConnection(ws, ip);
