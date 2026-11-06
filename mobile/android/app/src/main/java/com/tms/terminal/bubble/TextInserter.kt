@@ -20,25 +20,37 @@ import android.view.accessibility.AccessibilityNodeInfo
 object TextInserter {
     enum class Result { INSERTED, CLIPBOARD }
 
-    fun insert(service: AccessibilityService, text: String): Result {
+    fun copyOnly(service: AccessibilityService, text: String) {
+        val clipboard = service.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("TMS Diktat", text))
+    }
+
+    /**
+     * [allowedPackage]: the app where the user pressed ✓. If another app's field
+     * is focused by now (app switch while transcribing), the text only goes to
+     * the clipboard — never into a field the user did not dictate for.
+     */
+    fun insert(service: AccessibilityService, text: String, allowedPackage: String?): Result {
         val clipboard = service.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val node = focusedEditable(service)
-        if (node == null) {
+        if (node == null || !BubbleRules.pasteAllowed(allowedPackage, node.packageName?.toString())) {
             clipboard.setPrimaryClip(ClipData.newPlainText("TMS Diktat", text))
             return Result.CLIPBOARD
         }
         val showingHint = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && node.isShowingHintText
         val current = if (showingHint) "" else node.text?.toString() ?: ""
         val (merged, cursor) = mergeAtSelection(current, node.textSelectionStart, node.textSelectionEnd, text)
-        val start = minOf(node.textSelectionStart, node.textSelectionEnd).let { if (it < 0) current.length else it.coerceAtMost(current.length) }
-        val piece = merged.substring(start, cursor)
+        val piece = insertedPiece(current, node.textSelectionStart, node.textSelectionEnd, text)
 
         clipboard.setPrimaryClip(ClipData.newPlainText("TMS Diktat", piece))
         if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
-            // Leave the plain transcript (without the joining space) on the clipboard.
-            Handler(Looper.getMainLooper()).postDelayed({
-                clipboard.setPrimaryClip(ClipData.newPlainText("TMS Diktat", text))
-            }, 600)
+            // Leave the plain transcript (without the joining space) on the clipboard
+            // — only when it differs, so the clipboard history gets one entry.
+            if (piece != text) {
+                Handler(Looper.getMainLooper()).postDelayed({
+                    clipboard.setPrimaryClip(ClipData.newPlainText("TMS Diktat", text))
+                }, 600)
+            }
             return Result.INSERTED
         }
         val args = Bundle().apply {

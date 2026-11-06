@@ -15,6 +15,17 @@ class BubbleRulesTest {
     @Test fun hiddenWhileSnoozed() = assertFalse(show(snoozed = 5000, now = 1000))
     @Test fun backAfterSnooze() = assertTrue(show(snoozed = 5000, now = 5001))
     @Test fun staysWhileRecordingEvenWithoutField() = assertTrue(show(editable = false, busy = true))
-    @Test fun offWhenDisabled() = assertFalse(show(enabled = false, busy = true))
+    @Test fun offWhenDisabled() = assertFalse(show(enabled = false))
+    // Review I8: switching the bubble off mid-recording must not hide the pill
+    // while the microphone keeps running.
+    @Test fun runningDictationStaysVisibleEvenIfDisabled() = assertTrue(show(enabled = false, busy = true))
+
+    // Review I4: never paste into another app's field after an app switch.
+    @Test fun pastesOnlyIntoTheAppWhereTheUserConfirmed() {
+        assertTrue(BubbleRules.pasteAllowed("com.whatsapp", "com.whatsapp"))
+        assertFalse(BubbleRules.pasteAllowed("com.whatsapp", "com.android.chrome"))
+        assertFalse(BubbleRules.pasteAllowed(null, "com.android.chrome"))
+        assertFalse(BubbleRules.pasteAllowed("com.whatsapp", null))
+    }
     @Test fun snoozeIsFifteenMinutes() = assertEquals(1000L + 15 * 60_000L, BubbleRules.snoozeUntil(1000))
 }

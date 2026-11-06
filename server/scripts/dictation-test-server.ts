@@ -27,7 +27,12 @@ const mgr = new DictationManager({
     }
     return f;
   },
-  transcribeWav: (b64) => transcribe(b64),
+  // DELAY_MS: slow the transcription down to test app switches while processing.
+  transcribeWav: async (b64) => {
+    const text = await transcribe(b64);
+    if (process.env.DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.DELAY_MS)));
+    return text;
+  },
   rewrite: async (t) => t,
   now: () => Date.now(),
   log: (m) => console.log(new Date().toISOString().slice(11, 19), m),

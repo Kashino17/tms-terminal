@@ -63,3 +63,11 @@ test('handleDictationMessage rejects bad ids and oversized chunks', () => {
   assert.ok(out.some((m) => m.type === 'dictation:error'));
   assert.strictEqual(handleDictationMessage(mgr, { type: 'terminal:input', payload: {} }, send), false);
 });
+
+// Review I6: an 'error' event without a listener throws — and the process-wide
+// uncaughtException handler exits the WHOLE server (all terminals).
+test('a socket error on a dictation connection does not throw', () => {
+  const ws = fakeWs();
+  createDictationConnectionHandler(manager(), () => {})(ws, 'x');
+  assert.doesNotThrow(() => ws.emit('error', new Error('Invalid WebSocket frame')));
+});

@@ -53,10 +53,13 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     private lateinit var socket: DictationSocket
 
     private var state = State.IDLE
-    private var upload: DictationUploadK? = null
+    @Volatile private var upload: DictationUploadK? = null
     private var recordStartedAt = 0L
     private var stoppedAt = 0L
     private var peakSinceStart = 0
+    /** App the user was typing in when pressing ✓ — the transcript only goes back there. */
+    private var confirmedInPackage: String? = null
+    @Volatile private var destroyed = false
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> scheduleEvaluate() }
 
@@ -70,8 +73,8 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         overlay = BubbleOverlay(this, config, this)
         recorder = BubbleRecorder(this)
         socket = DictationSocket(config,
-            onConnected = { worker.post { upload?.onConnected() } },
-            onMessage = { msg -> worker.post { handleServer(msg) } })
+            onConnected = { onWorker { upload?.onConnected() } },
+            onMessage = { msg -> onWorker { handleServer(msg) } })
         config.prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         scheduleEvaluate()
     }
@@ -79,6 +82,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        destroyed = true
         instance = null
         if (::config.isInitialized) config.prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         if (::recorder.isInitialized) recorder.discard()
@@ -93,6 +97,17 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         scheduleEvaluate()
     }
 
+    /** Worker task that can never take the app process down (the service runs in it). */
+    private fun onWorker(block: () -> Unit) {
+        worker.post {
+            try { block() } catch (e: Exception) { Log.w(TAG, "worker task failed", e) }
+        }
+    }
+
+    private fun onMain(block: () -> Unit) {
+        main.post { if (!destroyed) block() }
+    }
+
     // ── visibility ──────────────────────────────────────────────────────
     private val evaluate = Runnable { evaluateNow() }
 
@@ -105,12 +120,12 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     fun reevaluate() = main.post { evaluateNow() }
 
     private fun evaluateNow() {
-        if (!::overlay.isInitialized) return
+        if (destroyed || !::overlay.isInitialized) return
         val busy = state != State.IDLE
         val editable = try { TextInserter.focusedEditable(this) != null } catch (_: Exception) { false }
         val password = try { TextInserter.focusedIsPassword(this) } catch (_: Exception) { false }
         val now = System.currentTimeMillis()
-        val show = config.isConfigured && BubbleRules.shouldShow(
+        val show = (busy || config.isConfigured) && BubbleRules.shouldShow(
             editable, password, ownWindow = false, busy = busy,
             snoozedUntil = config.snoozedUntil, now = now, enabled = config.enabled)
         if (!show) { overlay.show(BubbleOverlay.Mode.HIDDEN); return }
@@ -147,7 +162,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         recordStartedAt = System.currentTimeMillis()
         peakSinceStart = 0
         socket.ensure()
-        worker.post { u.begin() }
+        onWorker { u.begin() }
         overlay.show(BubbleOverlay.Mode.RECORDING)
         main.post(levelTick)
         worker.postDelayed(pumpTick, PUMP_MS)
@@ -159,24 +174,21 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         main.removeCallbacks(levelTick)
         worker.removeCallbacks(pumpTick)
         if (!recorder.stop()) {
-            worker.post { socket.send(JSONObject().put("type", "dictation:cancel").put("payload", JSONObject().put("id", u.id)).toString()) }
+            sendCancel(u)
             finishWith("Aufnahme zu kurz")
             return
         }
+        confirmedInPackage = try { TextInserter.focusedEditable(this)?.packageName?.toString() } catch (_: Exception) { null }
         state = State.PROCESSING
         stoppedAt = System.currentTimeMillis()
+        u.lastHeard = stoppedAt
         overlay.show(BubbleOverlay.Mode.PROCESSING)
-        worker.post { if (upload === u) u.finish() }
+        onWorker { if (upload === u) u.finish() }
         main.postDelayed(watchTick, 15_000)
     }
 
     override fun onCancel() {
-        val u = upload
-        if (u != null && !u.done) {
-            val msg = JSONObject().put("type", "dictation:cancel").put("payload", JSONObject().put("id", u.id)).toString()
-            worker.post { socket.send(msg) }
-        }
-        recorder.discard()
+        upload?.let { if (!it.done) sendCancel(it) }
         reset()
     }
 
@@ -221,10 +233,12 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
             val u = upload ?: return
             if (state != State.PROCESSING) return
             val now = System.currentTimeMillis()
-            if (now - stoppedAt > GIVE_UP_MS) { finishWith("Keine Antwort vom Server — bitte später erneut"); return }
+            // Give up only when the server has been silent that long — it heartbeats
+            // every 5 s while it works, so a long transcription is never cut off.
+            if (now - u.lastHeard > GIVE_UP_MS) { finishWith("Keine Antwort vom Server — bitte später erneut"); return }
             if (socket.isOpen && now - u.lastHeard > RESUME_AFTER_MS) {
                 u.lastHeard = now
-                worker.post { u.onReconnect() }
+                onWorker { u.onReconnect() }
             }
             main.postDelayed(this, 15_000)
         }
@@ -234,8 +248,8 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     private fun handleServer(msg: JSONObject) {
         val u = upload ?: return
         when (u.onServer(msg)) {
-            Outcome.RESULT -> main.post { if (upload === u) deliver(u.text ?: "") }
-            Outcome.ERROR -> main.post { if (upload === u) finishWith(u.error ?: "Transkription fehlgeschlagen") }
+            Outcome.RESULT -> onMain { if (upload === u) deliver(u.text ?: "") }
+            Outcome.ERROR -> onMain { if (upload === u) finishWith(u.error ?: "Transkription fehlgeschlagen") }
             Outcome.RESTART -> if (u.isEnded) u.finish()
             null -> {}
         }
@@ -244,23 +258,32 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     private fun deliver(text: String) {
         val t = text.trim()
         if (t.isEmpty()) { finishWith("Keine Sprache erkannt"); return }
-        val result = try { TextInserter.insert(this, t) } catch (e: Exception) {
-            Log.w(TAG, "insert failed", e); TextInserter.Result.CLIPBOARD
+        val result = try { TextInserter.insert(this, t, confirmedInPackage) } catch (e: Exception) {
+            Log.w(TAG, "insert failed", e)
+            TextInserter.copyOnly(this, t) // never lose the transcript
+            TextInserter.Result.CLIPBOARD
         }
         finishWith(if (result == TextInserter.Result.INSERTED) "Eingefügt" else "In Zwischenablage kopiert")
     }
 
     private fun finishWith(message: String) {
+        if (destroyed) return
         reset()
         overlay.toast(message)
+    }
+
+    /** Sent right away on this thread (OkHttp send is thread-safe) — before reset() closes the socket. */
+    private fun sendCancel(u: DictationUploadK) {
+        socket.send(JSONObject().put("type", "dictation:cancel").put("payload", JSONObject().put("id", u.id)).toString())
     }
 
     private fun reset() {
         main.removeCallbacks(levelTick)
         main.removeCallbacks(watchTick)
         worker.removeCallbacks(pumpTick)
-        recorder.deleteFile()
+        recorder.discard() // also stops a recorder that is still running (error during recording)
         upload = null
+        confirmedInPackage = null
         state = State.IDLE
         socket.close()
         evaluateNow()
@@ -273,7 +296,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     private fun fileIO(file: File) = object : UploadIO {
         override fun send(json: String) = socket.send(json)
         override fun fileSize() = file.length()
-        override fun read(pos: Long, len: Int): ByteArray = RandomAccessFile(file, "r").use { raf ->
+        override fun read(pos: Long, len: Int): ByteArray = if (!file.exists()) ByteArray(0) else RandomAccessFile(file, "r").use { raf ->
             val buf = ByteArray(len)
             raf.seek(pos)
             val n = raf.read(buf, 0, len)

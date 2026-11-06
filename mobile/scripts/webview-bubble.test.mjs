@@ -1,0 +1,70 @@
+/**
+ * Diktat-Bubble in den Season-2-Einstellungen — headless im Browser.
+ *
+ * Begruendung: bridge.js haengt die Gruppe an renderSettings() an. Ein
+ * gleichnamiges `var` im Bridge-IIFE machte die Huelle einmal rekursiv: die
+ * Seite startete nicht (kein bridge:ready, keine TMSBridge-Methoden), und der
+ * Fehler war im Quelltext unsichtbar.
+ *
+ *   TMS_VIZ_PW=<pfad-zu-playwright> node --test scripts/webview-bubble.test.mjs
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const WEB = join(here, '../src/season2/web');
+const PW = process.env.TMS_VIZ_PW;
+const SOURCE = process.env.TMS_DECK_TS || join(WEB, 'liquidDeckHtml.ts');
+
+if (!PW) {
+  test('Bubble-WebView-Pruefung uebersprungen (kein Playwright)', { skip: 'TMS_VIZ_PW nicht gesetzt' }, () => {});
+} else {
+  const require = createRequire(join(PW, 'index.js'));
+  const { chromium } = require('playwright');
+
+  async function boot() {
+    const src = readFileSync(SOURCE, 'utf8');
+    const html = JSON.parse(src.match(/export const LIQUID_DECK_HTML = (".*");\s*$/s)[1]);
+    const file = join(tmpdir(), `tms-webview-bubble-${process.pid}.html`);
+    writeFileSync(file, html);
+    const browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 412, height: 915 } });
+    const posts = [];
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.exposeFunction('__post', (m) => posts.push(JSON.parse(m)));
+    await page.addInitScript(() => { window.ReactNativeWebView = { postMessage: (m) => window.__post(m) }; });
+    await page.goto('file://' + file);
+    await page.waitForTimeout(1200);
+    return { browser, page, posts, errors };
+  }
+
+  test('die Seite startet die Bruecke trotz Bubble-Huelle um renderSettings', async () => {
+    const { browser, page, posts, errors } = await boot();
+    try {
+      assert.deepEqual(errors, []);
+      assert.equal(posts.filter((m) => m.type === 'bridge:ready').length, 1);
+      assert.equal(await page.evaluate(() => typeof window.TMSBridge.setServers), 'function');
+    } finally { await browser.close(); }
+  });
+
+  test('Einstellungen zeigen die Diktat-Bubble und melden Klicks an RN', async () => {
+    const { browser, page, posts } = await boot();
+    try {
+      await page.evaluate(() => { document.body.classList.remove('is-locked'); show('settings'); });
+      await page.evaluate(() => window.TMSBridge.bubbleStatus({ serviceOn: true, enabled: true, snoozedUntil: Date.now() + 60000 }));
+      assert.match(await page.textContent('#bubbleSettingsGroup'), /Diktat-Bubble[\s\S]*Aktiv[\s\S]*Schläft bis/);
+      await page.click('#bubbleWakeRow');
+      await page.click('#bubbleSettingsGroup label.switch');
+      const sent = posts.map((m) => m.type);
+      assert.ok(sent.includes('bubble:status'));
+      assert.ok(sent.includes('bubble:wake'));
+      assert.deepEqual(posts.find((m) => m.type === 'bubble:toggle').payload, { enabled: false });
+    } finally { await browser.close(); }
+  });
+}

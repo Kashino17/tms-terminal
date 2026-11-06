@@ -17,3 +17,13 @@ fun mergeAtSelection(text: String, selStart: Int, selEnd: Int, insert: String): 
     val piece = if (needsSpace) " $insert" else insert
     return (before + piece + text.substring(b)) to (a + piece.length)
 }
+
+/** The text a paste must insert so the result equals [mergeAtSelection] (incl. the joining space). */
+fun insertedPiece(text: String, selStart: Int, selEnd: Int, insert: String): String {
+    val n = text.length
+    val a = if (selStart < 0) n else selStart.coerceIn(0, n)
+    val b = if (selEnd < 0) n else selEnd.coerceIn(0, n)
+    val before = text.substring(0, minOf(a, b))
+    val needsSpace = before.isNotEmpty() && !before.last().isWhitespace() && insert.isNotEmpty() && !insert.first().isWhitespace()
+    return if (needsSpace) " $insert" else insert
+}

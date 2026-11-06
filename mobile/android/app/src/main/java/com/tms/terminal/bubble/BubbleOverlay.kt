@@ -135,16 +135,24 @@ class BubbleOverlay(
                 spinner.visibility = if (processing) View.VISIBLE else View.GONE
                 confirmBtn.visibility = if (processing) View.GONE else View.VISIBLE
                 level.visibility = if (processing) View.GONE else View.VISIBLE
-                if (processing) timer.text = "Transkribiere…"
+                // Reset first: a leftover "Transkribiere…" made the pill measure too
+                // wide on the next recording and placePanel() shifted it left.
+                timer.text = if (processing) "Transkribiere…" else "0:00"
                 root.addView(panel)
             }
             else -> {}
         }
-        if (!rootAttached) {
-            wm.addView(root, params)
-            rootAttached = true
-        } else {
-            wm.updateViewLayout(root, params)
+        try {
+            if (!rootAttached) {
+                wm.addView(root, params)
+                rootAttached = true
+            } else {
+                wm.updateViewLayout(root, params)
+            }
+        } catch (e: Exception) {
+            // The service may be going away (BadTokenException) — never crash the app.
+            rootAttached = false
+            return
         }
         root.post { if (newMode == Mode.BUBBLE) clampIntoScreen() else placePanel() }
     }
@@ -174,7 +182,9 @@ class BubbleOverlay(
         toastParams.x = 0
         toastParams.y = (params.y - dp(56)).coerceAtLeast(dp(24))
         toastParams.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        if (!toastAttached) { wm.addView(toast, toastParams); toastAttached = true } else wm.updateViewLayout(toast, toastParams)
+        try {
+            if (!toastAttached) { wm.addView(toast, toastParams); toastAttached = true } else wm.updateViewLayout(toast, toastParams)
+        } catch (_: Exception) { toastAttached = false; return }
         main.removeCallbacks(hideToast)
         main.postDelayed(hideToast, if (message.length > 40) 3200 else 1900)
         if (screen.heightPixels <= 0) return
@@ -214,7 +224,7 @@ class BubbleOverlay(
                     }
                     if (dragging) {
                         params.x = startX + dx.toInt(); params.y = startY + dy.toInt()
-                        wm.updateViewLayout(root, params)
+                        try { wm.updateViewLayout(root, params) } catch (_: Exception) { }
                         sleepTarget.alpha = if (overSleepTarget()) 1f else 0.55f
                     }
                 }
@@ -244,7 +254,9 @@ class BubbleOverlay(
         sleepParams.x = m.widthPixels / 2 - dp(36)
         sleepParams.y = m.heightPixels - dp(150)
         sleepTarget.alpha = 0.55f
-        if (!sleepAttached) { wm.addView(sleepTarget, sleepParams); sleepAttached = true }
+        if (!sleepAttached) {
+            try { wm.addView(sleepTarget, sleepParams); sleepAttached = true } catch (_: Exception) { }
+        }
     }
 
     private fun hideSleepTarget() {
@@ -273,7 +285,7 @@ class BubbleOverlay(
         val h = root.height.takeIf { it > 0 } ?: dp(52)
         params.x = params.x.coerceIn(0, (m.widthPixels - w).coerceAtLeast(0))
         params.y = params.y.coerceIn(dp(24), (m.heightPixels - h - dp(24)).coerceAtLeast(dp(24)))
-        wm.updateViewLayout(root, params)
+        try { wm.updateViewLayout(root, params) } catch (_: Exception) { }
     }
 
     private fun detach(v: View) {

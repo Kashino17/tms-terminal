@@ -101,7 +101,10 @@ class DictationUploadK(
     /** Socket (re)opened: a start that never got through is repeated, otherwise ask where we stand. */
     fun onConnected() {
         if (done) return
-        if (!ackSeen) begin() else onReconnect()
+        if (!ackSeen) {
+            begin()
+            if (isEnded) finish() // ✓ was pressed while offline: send the rest + end now
+        } else onReconnect()
     }
 
     fun onReconnect() {

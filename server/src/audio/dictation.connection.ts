@@ -80,5 +80,8 @@ export function createDictationConnectionHandler(manager: DictationManager, log:
       handleDictationMessage(manager, msg, send);
     });
     ws.on('close', () => log(`[dictation] bubble disconnected: ${ip}`));
+    // Without a listener an 'error' (bad frame, inflate failure) is thrown and
+    // the process-wide uncaughtException handler takes the whole server down.
+    ws.on('error', (err: Error) => log(`[dictation] bubble socket error from ${ip}: ${err.message}`));
   };
 }

@@ -150,4 +150,16 @@ class DictationUploadKTest {
         u.onConnected()
         assertEquals("dictation:resume", io.types().last())
     }
+
+    // Review I2: ✓ pressed while still offline — on connect the start AND the
+    // whole recording + end must go out, not just the start.
+    @Test fun connectAfterStopSendsStartRestAndEnd() {
+        val io = FakeIO(ByteArray(10)); io.online = false
+        val u = upload(io)
+        u.begin(); u.finish()
+        assertTrue(io.sent.isEmpty())
+        io.online = true
+        u.onConnected()
+        assertEquals(listOf("dictation:start", "dictation:chunk", "dictation:end"), io.types())
+    }
 }
