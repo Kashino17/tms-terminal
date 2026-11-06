@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Alle Geräte in einer Ansicht: Die Terminal-Leiste unten zeigt jetzt die Terminals von MacBook UND Windows gleichzeitig, nach Gerät gruppiert — ein Tipp wechselt, auch aufs andere Gerät. Neuer Fernzugriff-Knopf in der Insel; im Fernzugriff wechselst du oben nahtlos zwischen den Geräten. Stapel/Liste/Übersicht-Knöpfe entfallen." \
+            --notes "Diktat: Die Aufnahme wird schon während des Sprechens zum Mac geschickt und dort vorab transkribiert — auch minutenlange Nachrichten sind Sekunden nach dem Stopp da. Verbindungsabbrüche verlieren keine Aufnahme mehr (wird automatisch nachgeschickt), und das X während Transkribiere gibt das Mikrofon sofort frei. Volle Geschwindigkeit nach dem Server-Update." \
             --latest
