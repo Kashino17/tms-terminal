@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-07 — Alle Geräte in einer Ansicht; Release v1.126.0_
+_Zuletzt aktualisiert: 2026-11-07 — Diktat-Streaming; Release v1.127.0_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-07 nachts (neueste):** Release v1.127.0 (`d6dee27`): Diktat wird während der Aufnahme gestreamt (Android AAC-ADTS, `dictation:*`-Protokoll, Server-Sitzungen unabhängig vom Socket, Vorab-Transkription in ~60-s-Segmenten). E2E echter Sidecar: 4 min → 2,7 s Stopp→Text. ✕ während „Transkribiere…“ gibt Mikrofon frei. **Offen: Mac-Server-Neustart durch Nutzer** (sonst Fallback auf alten Weg), echter Fold-Test (schreibt Samsung-MediaRecorder ADTS fortlaufend?), Teil 2 = systemweite Bubble (eigenes Design). Spec/Plan: `docs/superpowers/{specs,plans}/2026-11-07-dictation-streaming*`.
 
 **Stand 2026-11-07 (neueste):** Release v1.126.0 (`f65ad9b`): Season 2 hält Hauptserver + alle weiteren erreichbaren Geräte gleichzeitig verbunden; Terminal-Leiste nach Gerät gruppiert; Insel nur "+" (Geräte-Wahl) + Fernzugriff mit MAC/WIN-Wechsel. Offen: echter Test Mac+Windows auf dem Fold; Dateien-Explorer folgt noch dem Hauptserver statt dem aktiven Terminal; sudo-Fingerabdruck immer über den Hauptserver.
 

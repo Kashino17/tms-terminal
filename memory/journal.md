@@ -204,3 +204,10 @@
 - Nutzer: mit 2 Geräten ständig zwischen Übersicht und Terminals wechseln = Arbeitsfluss kaputt. Erste 3 Redesign-Varianten (Werkbank/Leitstand/Räume) abgelehnt; Fragen gestellt → Konzept: EINE Buchstaben-Leiste mit Terminals beider Geräte, Fernzugriff aus der Insel mit nahtlosem MAC/WIN-Wechsel, Liquid-Deck-Optik bleibt, Stapel/Liste/Übersicht-Knöpfe raus. Mockups per Tailscale (:8510) gezeigt, freigegeben ("bring es live").
 - Umsetzung `f65ad9b`: RN verbindet neben dem Hauptserver jedes erreichbare Gerät (Peers), sessionId→Server-Routing, create-FIFO pro Server, Seite meldet `terminal:restored` pro Karte; Leiste nach Gerät gruppiert, Insel "+" mit Geräte-Wahl + Fernzugriff, `TMSRemote.switchTo`.
 - Geprüft: tsc 0 Fehler, 125/127 Tests (2 Browser übersprungen), HTML-Diff nur eigene Änderungen, Browser-Simulation mit 2 Geräten (Gruppen, Routing, Create auf WIN, Fernzugriff-Wechsel) und 1 Gerät (unverändert). Echter Gerätetest steht aus.
+
+## 2026-11-07 nachts — Diktat-Streaming (v1.127.0)
+
+- Nutzer: Wispr Flow als Vorbild; unsere Transkription langsam, bricht ab („Zeitüberschreitung“), sperrt danach. Gemessen: Modell NICHT schuld (4 min = 10,6 s large-v3 / 3,8 s turbo). Ursachen im Code: Upload erst nach Stopp als 5-MB-Nachricht, `send()` verwirft still bei getrenntem Socket + Datei schon gelöscht, Ergebnis an alten Socket, Mikro-Sperre in processing, Sidecar-Stau, Rewriter schnitt bei 512 Tokens ab, leise Sprache als Stille weggeschnitten.
+- Umsetzung (Design+Plan, TDD): Streaming-Upload während Aufnahme, Byte-Offset-Protokoll mit resume/Neu-Upload, Vorab-Transkription, ✕ gibt frei, Fallback für alte Server, Ende-/Dauer-Logs. Opus-Review: 1 Critical (Offset-Rennen) + 7 Important behoben.
+- Leise Sprache: Normalisierung NACH dem Stille-Schnitt; adaptiver Schnitt verworfen (Raumrauschen → „Vielen Dank.“). 0,5-%-Pegel geht weiter verloren (wie vorher).
+- Parallel-Job hatte v1.126.0 genommen → rebased, als v1.127.0 released. Server-Neustart steht aus (Nutzer).
