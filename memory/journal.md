@@ -212,3 +212,11 @@
 - Leise Sprache: Normalisierung NACH dem Stille-Schnitt; adaptiver Schnitt verworfen (Raumrauschen → „Vielen Dank.“). 0,5-%-Pegel geht weiter verloren (wie vorher).
 - Parallel-Job hatte v1.126.0 genommen → rebased, als v1.127.0 released. Server-Neustart steht aus (Nutzer).
 - Nachtrag v1.127.1 (`b9cd2f3`): Dateien-Leiste/Explorer folgen dem Gerät des vorderen Terminals (term:active); Fingerabdruck pro Gerät (sudo → Gerät der Sitzung, Fernzugriff → angezeigtes Gerät, Windows → Hinweis). tsc 0, 125 Tests grün, Browser-Simulation bestätigt die Meldungen.
+
+## 2026-11-07 früh — Diktat-Bubble (v1.128.0)
+
+- Teil 2 nach Wispr-Vorbild: Bedienungshilfe + Overlay in allen Apps, Tippen = Aufnahme, ✓ = einfügen (nur in die App, in der ✓ gedrückt wurde), sonst Zwischenablage, Halten = 15 min schlafen. Server: schlanke `?role=dictation`-Verbindung (normale Verbindungen übernehmen `currentWs`).
+- Kotlin-Logik pure + JUnit (33 Tests), Test-Server `server/scripts/dictation-test-server.ts` (Port 8799, TEST_AUDIO/DELAY_MS) für Emulator-E2E. Emulator bekommt keinen Host-Mikroton → echte Mikro-Prüfung erst am Fold.
+- Opus-Review: Critical = gleichnamiges `var origRenderSettings` im Bridge-IIFE → Season 2 startete nicht; neuer Browser-Test `mobile/scripts/webview-bubble.test.mjs` (TMS_VIZ_PW). 8 Important behoben.
+- Parallel-Job hatte v1.127.1 → rebased, liquidDeckHtml neu gebaut, Diff = nur Bridge-Block.
+

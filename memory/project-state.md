@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-07 — Diktat-Streaming; Release v1.127.0_
+_Zuletzt aktualisiert: 2026-11-07 — Diktat-Bubble; Release v1.128.0_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-07 früh (neueste):** Release v1.128.0 (`d2f4199`): systemweite Diktat-Bubble (Android-Bedienungshilfe `com.tms.terminal.bubble.DictationBubbleService`, Overlay, MediaRecorder ADTS, OkHttp-WS `?role=dictation`). Emulator-geprüft: Bubble auf Feld in fremder App, Einfügen, Zwischenablage ohne Feld, App-Wechsel → Zwischenablage, 15-min-Schlaf, Stille-Wächter. **Offen: Server-Neustart (Teil 1+2 brauchen ihn), Bedienungshilfe am Fold einschalten, echter Mikrofon-Test am Fold** (Emulator lieferte keinen Host-Ton). Zurückgestellt: Schlaf-Wecktimer, onClosing, Mikro-Stille mitten in der Aufnahme. Spec/Plan: `docs/superpowers/{specs,plans}/2026-11-07-dictation-bubble*`.
 
 **Stand 2026-11-07 nachts (neueste):** Release v1.127.0 (`d6dee27`): Diktat wird während der Aufnahme gestreamt (Android AAC-ADTS, `dictation:*`-Protokoll, Server-Sitzungen unabhängig vom Socket, Vorab-Transkription in ~60-s-Segmenten). E2E echter Sidecar: 4 min → 2,7 s Stopp→Text. ✕ während „Transkribiere…“ gibt Mikrofon frei. **Offen: Mac-Server-Neustart durch Nutzer** (sonst Fallback auf alten Weg), echter Fold-Test (schreibt Samsung-MediaRecorder ADTS fortlaufend?), Teil 2 = systemweite Bubble (eigenes Design). Spec/Plan: `docs/superpowers/{specs,plans}/2026-11-07-dictation-streaming*`.
 
