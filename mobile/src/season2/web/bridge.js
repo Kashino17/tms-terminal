@@ -46,6 +46,20 @@
     return null;
   }
 
+  // Mehrere Geräte: React Native soll wissen, welches Terminal vorne ist —
+  // Dateien und Fingerabdruck-Bestätigung gehören zu dessen Gerät. Nur echte
+  // Wechsel werden gemeldet.
+  var lastActiveSid = null;
+  window.__tmsReportActive = function () {
+    var st = window.__tmsState;
+    var cardId = st && st.order ? st.order[st.activeIndex] : null;
+    var sid = (cardId && byCard[cardId]) || null;
+    // Eine Karte ohne Sitzung (gerade angelegt) meldet sich erst nach bindSession.
+    if (!sid || sid === lastActiveSid) return;
+    lastActiveSid = sid;
+    post('term:active', { sessionId: sid });
+  };
+
   // ── The mockup asks for this while building cardState (see the builder's
   //    source patch). Every card therefore owns a "sim" that talks to the PTY,
   //    which keeps resolvePrompt()/submitQuestionAnswer() working unchanged.
@@ -1629,6 +1643,7 @@
       });
       restoring = false;
       window.toast = origToast;
+      window.__tmsReportActive();
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
       if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
       // addTerminal() arms the rename field for a brand-new terminal; a restored
@@ -1652,6 +1667,7 @@
     bindSession: function (cardId, sessionId) {
       bound[cardId] = sessionId;
       byCard[cardId] = sessionId;
+      window.__tmsReportActive();
       mountTerm(cardId);
       flush(cardId);
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
@@ -3929,7 +3945,8 @@
         }
       },
       dictate: function () { post('mic:start', { target: 'remote' }); },
-      biometricUnlock: function () { post('biometric:unlock', { mode: 'remote' }); },
+      // Entsperren gilt dem Gerät, das gerade im Fernzugriff zu sehen ist.
+      biometricUnlock: function () { post('biometric:unlock', { mode: 'remote', serverId: window.__remoteSrv || undefined }); },
     };
 
     // Der Mockup ruft das beim Vollbildwechsel und nach Gesten auf, kommt aber

@@ -154,6 +154,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const [peers, setPeers] = useState<S2Server[]>([]);
   const peersRef = useRef<S2Server[]>([]);
   const restoredPeers = useRef<Set<string>>(new Set());
+  /** Sitzung des Terminals, das in der Seite gerade vorne ist (term:active). */
+  const activeSidRef = useRef<string | null>(null);
+  /** Gerät dieses Terminals — Dateien-Leiste und -Explorer folgen ihm. */
+  const [filesSrvId, setFilesSrvId] = useState<string | null>(null);
   const peerPrevState = useRef<Record<string, string>>({});
   /** cardId whose mic is currently recording. */
   const micCard = useRef<string | null>(null);
@@ -176,8 +180,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // Long-Press auf eine Server-Karte öffnet dieses native Aktions-Sheet
   // (Bearbeiten + Löschen) — dieselbe Komponente wie im klassischen Layout.
   const [serverSheet, setServerSheet] = useState<{ title: string; subtitle: string; options: ActionSheetOption[] } | null>(null);
-  const macUnlockConfigured = useRef<boolean>(false);
-  const [macPasswordModal, setMacPasswordModal] = useState<{ visible: boolean; mode: 'remote' | 'sudo'; sessionId?: string } | null>(null);
+  /** Fingerabdruck-Relay pro Gerät: eingerichtet? und kann der Server das überhaupt (nur macOS)? */
+  const macUnlock = useRef<Record<string, { configured: boolean; supported: boolean }>>({});
+  const [macPasswordModal, setMacPasswordModal] = useState<{ visible: boolean; mode: 'remote' | 'sudo'; sessionId?: string; serverId?: string } | null>(null);
   const [macPasswordInput, setMacPasswordInput] = useState('');
   /** Griff auf den nativen Browser — Neuladen und Cache-Leeren gehen nur über ihn. */
   const browserRef = useRef<BrowserHandle>(null);
@@ -271,7 +276,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // Ref sehen sie trotzdem immer die aktuellen Sheet-Funktionen.
   const sheetsRef = useRef(sheets);
   sheetsRef.current = sheets;
-  const fileExplorer = useFileExplorer({ ready, call, server, token });
+  // Dateien zeigen das Gerät des Terminals, das vorne ist — nicht stur den Hauptserver.
+  const filesServer = (filesSrvId && server && filesSrvId !== server.id && peers.find((p) => p.id === filesSrvId)) || server;
+  const filesToken = filesServer && server && filesServer.id !== server.id ? (filesServer.token ?? null) : token;
+  const fileExplorer = useFileExplorer({ ready, call, server: filesServer, token: filesToken });
 
   // ── Pick up the saved server (the WebView has no server picker of its own).
   // `checkedServers` gates the native onboarding overlay so it only appears once
@@ -375,7 +383,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     };
 
     return (m: any) => {
-      if (!primary && !(typeof m?.type === 'string' && m.type.startsWith('terminal:'))) return;
+      if (!primary && !(typeof m?.type === 'string'
+        && (m.type.startsWith('terminal:') || m.type === 'mac:unlock_status' || m.type === 'mac:biometric_unlock_result'))) return;
       // ── Gemeinsame Zwischenablage (server/src/clipboard) ──
       if (m?.type === 'clipboard:history') { call('clipboardSet', m.payload?.items ?? []); return; }
       if (m?.type === 'clipboard:removed') { call('clipboardRemoved', m.payload?.ids ?? []); return; }
@@ -533,16 +542,17 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
       if (m?.type === 'mac:unlock_status') {
-        macUnlockConfigured.current = !!m.payload?.configured;
+        // Ältere Server kennen `supported` noch nicht — dann wie bisher annehmen, dass es geht.
+        macUnlock.current[srvId] = { configured: !!m.payload?.configured, supported: m.payload?.supported !== false };
         return;
       }
       if (m?.type === 'mac:biometric_unlock_result') {
         if (m.payload?.ok) {
           call('toast', 'Mac entsperrt / bestätigt ✓');
         } else if (m.payload?.error === 'not_configured') {
-          macUnlockConfigured.current = false;
+          macUnlock.current[srvId] = { supported: macUnlock.current[srvId]?.supported ?? true, configured: false };
           setMacPasswordInput('');
-          setMacPasswordModal({ visible: true, mode: 'remote' });
+          setMacPasswordModal({ visible: true, mode: 'remote', serverId: srvId });
         } else {
           call('toast', `Fehler: ${m.payload?.error ?? 'Unbekannt'}`);
         }
@@ -910,6 +920,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           live.forEach((t) => { sessionServer.current[t.sessionId] = p.id; });
           if (live.length) call('restoreSessions', live);
           conn.send({ type: 'terminal:titles_get' } as never);
+          conn.send({ type: 'mac:unlock_status' } as never);
         } else if (prev && prev !== 'connected') {
           // Der Server hängt beim Abriss ab und puffert — ohne Reattach froren die Karten ein.
           call('reattachAll');
@@ -1184,6 +1195,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           type: 'terminal:create',
           payload: { cols: payload.cols || 80, rows: payload.rows || 24 },
         });
+        break;
+      }
+
+      // Ein anderes Terminal ist nach vorne gekommen (Tipp in der Leiste, Wischen …).
+      case 'term:active': {
+        const sid = (payload?.sessionId as string | null) || null;
+        activeSidRef.current = sid;
+        const owner = (sid && sessionServer.current[sid]) || server.id;
+        setFilesSrvId((prev) => (prev === owner ? prev : owner));
         break;
       }
 
@@ -1586,7 +1606,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
       case 'biometric:unlock': {
         const mode: 'remote' | 'sudo' = payload?.mode === 'sudo' ? 'sudo' : 'remote';
-        const targetSid = (payload?.sessionId as string | undefined) || activeSessionId;
+        const targetSid = (payload?.sessionId as string | undefined) || activeSidRef.current || activeSessionId;
+        // sudo gehört zum Gerät des Terminals, Entsperren zum Gerät im Fernzugriff.
+        const unlockOn = mode === 'sudo'
+          ? ((targetSid && sessionServer.current[targetSid]) || server.id)
+          : ((payload?.serverId as string | undefined) || server.id);
+        if (macUnlock.current[unlockOn]?.supported === false) {
+          call('toast', 'Fingerabdruck-Bestätigung gibt es nur auf dem Mac');
+          break;
+        }
         void (async () => {
           try {
             const hasHw = await LocalAuthentication.hasHardwareAsync();
@@ -1602,12 +1630,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
             });
             if (!auth.success) return;
 
-            if (!macUnlockConfigured.current) {
+            if (!macUnlock.current[unlockOn]?.configured) {
               setMacPasswordInput('');
-              setMacPasswordModal({ visible: true, mode, sessionId: targetSid });
+              setMacPasswordModal({ visible: true, mode, sessionId: targetSid, serverId: unlockOn });
               return;
             }
-            wsService.send({
+            getConnection(unlockOn).send({
               type: 'mac:biometric_unlock',
               payload: { mode, sessionId: targetSid },
             } as never);
@@ -1756,11 +1784,13 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
                   const target = macPasswordModal;
                   setMacPasswordInput('');
                   setMacPasswordModal(null);
-                  if (!pw || !wsService || !target) return;
-                  macUnlockConfigured.current = true;
-                  wsService.send({ type: 'mac:unlock_setup', payload: { password: pw } } as never);
+                  const unlockSrv = target?.serverId ?? server?.id;
+                  if (!pw || !target || !unlockSrv) return;
+                  const unlockConn = getConnection(unlockSrv);
+                  macUnlock.current[unlockSrv] = { supported: true, configured: true };
+                  unlockConn.send({ type: 'mac:unlock_setup', payload: { password: pw } } as never);
                   setTimeout(() => {
-                    wsService.send({
+                    unlockConn.send({
                       type: 'mac:biometric_unlock',
                       payload: { mode: target.mode, sessionId: target.sessionId, password: pw },
                     } as never);

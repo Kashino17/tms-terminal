@@ -10477,6 +10477,9 @@
     /** Nach jedem Terminalwechsel: Ping-Anzeige + aktuelle Gerätegruppe. */
     window.multiSync = function () {
       if (typeof updateLatencyDisplay === 'function') updateLatencyDisplay();
+      // Die App erfährt, welches Terminal vorne ist: Dateien und Fingerabdruck
+      // gehören zu DESSEN Gerät.
+      if (typeof window.__tmsReportActive === 'function') window.__tmsReportActive();
       var cur = window.__activeServerId();
       document.querySelectorAll('.ts-group').forEach(function (g) { g.classList.toggle('is-current', g.dataset.srv === cur); });
       var seg = document.querySelector('.ts-seg.is-active');

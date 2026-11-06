@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Diktat: Die Aufnahme wird schon während des Sprechens zum Mac geschickt und dort vorab transkribiert — auch minutenlange Nachrichten sind Sekunden nach dem Stopp da. Verbindungsabbrüche verlieren keine Aufnahme mehr (wird automatisch nachgeschickt), und das X während Transkribiere gibt das Mikrofon sofort frei. Volle Geschwindigkeit nach dem Server-Update." \
+            --notes "Dateien folgen jetzt dem Terminal, das vorne ist: Arbeitest du in einem Windows-Terminal, zeigen Dateien-Leiste und Explorer die Dateien des Windows-PCs. Fingerabdruck-Bestätigung (sudo) geht an das Gerät des Terminals, Entsperren im Fernzugriff an das angezeigte Gerät; auf Windows gibt es dafür einen klaren Hinweis." \
             --latest
