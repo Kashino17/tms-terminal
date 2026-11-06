@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Dateien folgen jetzt dem Terminal, das vorne ist: Arbeitest du in einem Windows-Terminal, zeigen Dateien-Leiste und Explorer die Dateien des Windows-PCs. Fingerabdruck-Bestätigung (sudo) geht an das Gerät des Terminals, Entsperren im Fernzugriff an das angezeigte Gerät; auf Windows gibt es dafür einen klaren Hinweis." \
+            --notes "Diktat-Bubble: Ein kleines TMS-Mikrofon erscheint in jeder App, sobald du ein Textfeld öffnest. Antippen = Diktat, ✓ = Text wird eingefügt (oder in die Zwischenablage, wenn kein Feld mehr offen ist), gedrückt halten = 15 Minuten schlafen. Einschalten: Einstellungen → Diktat-Bubble → Bedienungshilfe „TMS Diktat-Bubble“ aktivieren. Braucht das Server-Update." \
             --latest
