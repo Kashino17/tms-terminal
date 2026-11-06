@@ -945,6 +945,7 @@
             cols: (tc && tc.term.cols) || 80,
             rows: (tc && tc.term.rows) || 24,
             name: sessName ? sessName.name : undefined,
+            serverId: (sessName && sessName.server) || undefined,
           });
         }
       });
@@ -1601,7 +1602,10 @@
       var origToast = window.toast;
       window.toast = function () {};
       list.forEach(function (item) {
+        // Mehrere Geräte: die Karte landet in der Gruppe ihres Servers.
+        window.__newTermServer = item.serverId || null;
         window.addTerminal();
+        window.__newTermServer = null;
         var ids = [].map.call(document.querySelectorAll('.card-body[data-card-id]'), function (el) {
           return el.getAttribute('data-card-id');
         });
@@ -1609,6 +1613,9 @@
         if (!cardId) return;
         bound[cardId] = item.sessionId;
         byCard[cardId] = item.sessionId;
+        // React Native braucht die Karten-ID (Notizen, Auto-Approve). Früher
+        // rechnete es sie als t1..tN aus — mit mehreren Geräten stimmt das nicht mehr.
+        post('terminal:restored', { cardId: cardId, sessionId: item.sessionId });
         if (item.name) {
           var sess = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
           if (sess) sess.name = item.name;
@@ -1701,7 +1708,8 @@
     /** Connection state -> Dynamic Island + latency chips. */
     setStatus: function (info) {
       if (typeof window.setIslandActivity === 'function') window.setIslandActivity(info.kind || 'ok', info.label || '');
-      var srv = (window.TMS_DATA.servers || [])[0];
+      var srvList = window.TMS_DATA.servers || [];
+      var srv = srvList.find(function (x) { return x.primary; }) || srvList[0];
       if (srv) {
         if (info.latency != null) srv.latency = info.latency;
         if (info.name) srv.name = info.name;
@@ -2972,9 +2980,24 @@
 
   // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
   window.TMSBridge.setServers = function (servers) {
+    // Die Latenz pflegt die Seite (setStatus / setServerLatency) — eine frische
+    // Liste ohne Wert darf den letzten Ping nicht wegwischen.
+    var prev = {};
+    (window.TMS_DATA.servers || []).forEach(function (s) { prev[s.id] = s.latency; });
+    servers.forEach(function (s) { if (s.latency == null && prev[s.id] != null) s.latency = prev[s.id]; });
     window.TMS_DATA.servers = servers;
     if (typeof window.renderServers === 'function') window.renderServers();
     if (typeof window.renderSettings === 'function') window.renderSettings();
+    // Gerätenamen in Leiste/Kopfzeile erscheinen, sobald ein zweites Gerät da ist.
+    if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
+    if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
+  };
+  /** Ping der weiteren Geräte (der Hauptserver kommt über setStatus). */
+  window.TMSBridge.setServerLatency = function (map) {
+    (window.TMS_DATA.servers || []).forEach(function (s) {
+      if (map && Object.prototype.hasOwnProperty.call(map, s.id)) s.latency = map[s.id];
+    });
+    if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
   };
   window.TMSBridge.setUpdate = function (update) {
     window.TMS_DATA.update = update;
@@ -3047,7 +3070,7 @@
     if (typeof window.toast === 'function') window.toast('Session abgelaufen — starte neu');
     var d = dims(cardId);
     var sessName = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
-    post('terminal:create', { cardId: cardId, cols: d.cols, rows: d.rows, name: sessName ? sessName.name : undefined });
+    post('terminal:create', { cardId: cardId, cols: d.cols, rows: d.rows, name: sessName ? sessName.name : undefined, serverId: (sessName && sessName.server) || undefined });
   };
   /**
    * Nach einem Verbindungsabriss hängt der Server die Sessions ab und puffert
@@ -3802,6 +3825,15 @@
     };
 
     window.TMSRemote = {
+      /** Fernzugriff auf ein bestimmtes Gerät (Insel: MAC | WIN). Erst sauber
+       *  trennen und die alten Zugangsdaten vergessen — sonst verbände start()
+       *  sofort wieder mit dem vorigen Gerät, und die neuen Daten kämen zu spät. */
+      switchTo: function (id) {
+        window.TMSRemote.stop();
+        remoteTarget = null;
+        window.__tmsOpenRemote(id);
+        window.TMSRemote.start('auto');
+      },
       start: function (which) {
         preset = which || preset;
         wantRunning = true;

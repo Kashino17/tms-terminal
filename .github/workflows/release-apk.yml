@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Dateien: Beim Wechsel zwischen Geräten springt die Dateien-Ansicht jetzt sofort in den Home-Ordner des neuen Geräts, statt mit Fehler 400 hängenzubleiben. Aufwärts, Ordner öffnen und die Pfadleiste funktionieren jetzt auch mit Windows-Pfaden." \
+            --notes "Alle Geräte in einer Ansicht: Die Terminal-Leiste unten zeigt jetzt die Terminals von MacBook UND Windows gleichzeitig, nach Gerät gruppiert — ein Tipp wechselt, auch aufs andere Gerät. Neuer Fernzugriff-Knopf in der Insel; im Fernzugriff wechselst du oben nahtlos zwischen den Geräten. Stapel/Liste/Übersicht-Knöpfe entfallen." \
             --latest

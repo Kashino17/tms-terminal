@@ -26,8 +26,8 @@ import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
 import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '../services/notifications.service';
 import { checkForUpdate, downloadAndInstall, getCurrentVersion } from '../services/updater.service';
-import { getConnection } from '../services/websocket.service';
-import { useS2ConnStore, useS2Connection } from './s2conn/connection';
+import { getConnection, type WebSocketService } from '../services/websocket.service';
+import { useS2ConnStore, useS2Connection, type S2Server } from './s2conn/connection';
 import {
   setAdhanEnabled, setFajrWecker, setSelectedAdhan, readAdhanSettings,
   previewAdhan, stopAdhan, scheduleTestAdhan, canScheduleExactAdhan,
@@ -141,7 +141,20 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
   /** FIFO der terminal:create-Anfragen — der Server antwortet in Reihenfolge.
    *  Ein Einzelwert ordnete bei mehreren gleichzeitigen Creates falsch zu. */
-  const pendingCards = useRef<Array<{ cardId: string; name?: string; custom?: boolean }>>([]);
+  const pendingCards = useRef<Record<string, Array<{ cardId: string; name?: string; custom?: boolean }>>>({});
+  /** Jeder Server antwortet nur auf SEINE terminal:create-Anfragen — eine FIFO pro Server. */
+  const pendingFor = (srvId: string) => {
+    if (!pendingCards.current[srvId]) pendingCards.current[srvId] = [];
+    return pendingCards.current[srvId];
+  };
+  /** Mehrere Geräte gleichzeitig: zu welchem Server gehört welche Sitzung. Eingaben,
+   *  Größen, Schließen usw. gehen über die Verbindung GENAU dieses Servers. */
+  const sessionServer = useRef<Record<string, string>>({});
+  /** Weitere erreichbare Geräte neben dem Hauptserver — ihre Terminals stehen mit in der Leiste. */
+  const [peers, setPeers] = useState<S2Server[]>([]);
+  const peersRef = useRef<S2Server[]>([]);
+  const restoredPeers = useRef<Set<string>>(new Set());
+  const peerPrevState = useRef<Record<string, string>>({});
   /** cardId whose mic is currently recording. */
   const micCard = useRef<string | null>(null);
   /** Set when the user cancels: the recording still stops, its text is dropped. */
@@ -254,6 +267,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const sheets = useSheetBridges({
     ready, call, wsService, server, token, activeSessionId, prayerTimesRef,
   });
+  // Die Empfänger der Server-Nachrichten leben länger als ein Render — über eine
+  // Ref sehen sie trotzdem immer die aktuellen Sheet-Funktionen.
+  const sheetsRef = useRef(sheets);
+  sheetsRef.current = sheets;
   const fileExplorer = useFileExplorer({ ready, call, server, token });
 
   // ── Pick up the saved server (the WebView has no server picker of its own).
@@ -344,22 +361,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     }, 2500);
   }, [setSessionStatus]);
 
-  // ── Server → page.
-  useEffect(() => {
-    if (!wsService || !server || !ready) return;
-    // Frisch geladene Seite kennt keine Stati — das Dedupe-Gedächtnis leeren,
-    // sonst unterdrückt es die erste Meldung nach einem Reload.
-    sessionStatus.current = {};
-
+  // ── Server → page. Ein Empfänger pro Gerät: der Hauptserver bedient alles
+  //    (Zwischenablage, Manager, Mac-Entsperren, Browser-Brücke …), jedes weitere
+  //    Gerät nur seine Terminals (terminal:*). So stehen die Terminals aller
+  //    Geräte nebeneinander in einer Leiste.
+  const makeHandler = useCallback((srvId: string, conn: WebSocketService, primary: boolean) => {
     /** Titel vom Server in den Speicher UND auf die Karte. */
     const applyServerTitle = (sessionId: string, title: string) => {
       const st = useTerminalStore.getState();
-      const tab = st.getTabs(server.id).find((t) => t.sessionId === sessionId);
-      if (tab && (tab.title !== title || !tab.customTitle)) st.updateTab(server.id, tab.id, { title, customTitle: true });
+      const tab = st.getTabs(srvId).find((t) => t.sessionId === sessionId);
+      if (tab && (tab.title !== title || !tab.customTitle)) st.updateTab(srvId, tab.id, { title, customTitle: true });
       call('setCardTitle', sessionId, title);
     };
 
-    const unsub = wsService.addMessageListener((m: any) => {
+    return (m: any) => {
+      if (!primary && !(typeof m?.type === 'string' && m.type.startsWith('terminal:'))) return;
       // ── Gemeinsame Zwischenablage (server/src/clipboard) ──
       if (m?.type === 'clipboard:history') { call('clipboardSet', m.payload?.items ?? []); return; }
       if (m?.type === 'clipboard:removed') { call('clipboardRemoved', m.payload?.ids ?? []); return; }
@@ -410,9 +426,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         for (const [sid, title] of Object.entries(serverTitles)) applyServerTitle(sid, title);
         // Einmaliges Hochladen: Titel, die bisher nur auf diesem Handy lagen
         // (vor dem Server-Speicher vergeben), gehen so nicht verloren.
-        for (const tab of useTerminalStore.getState().getTabs(server.id)) {
+        for (const tab of useTerminalStore.getState().getTabs(srvId)) {
           if (tab.sessionId && !(tab.sessionId in serverTitles) && isUserTitle(tab)) {
-            wsService.send({ type: 'terminal:rename', sessionId: tab.sessionId, payload: { title: tab.title } } as never);
+            conn.send({ type: 'terminal:rename', sessionId: tab.sessionId, payload: { title: tab.title } } as never);
           }
         }
         return;
@@ -422,47 +438,48 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
       if (m?.type === 'terminal:created' && m.sessionId) {
+        sessionServer.current[m.sessionId] = srvId;
         // Vom Manager angelegt: das ist KEINE Antwort auf eine unserer Karten.
         // Vorher verbrauchte es die naechste wartende Karte — legte man gerade
         // selbst ein Terminal an, landeten Sitzung und Titel ueber Kreuz.
         if (m.payload?.fromManager) {
           const label = typeof m.payload?.label === 'string' && m.payload.label ? m.payload.label : 'Terminal';
-          useTerminalStore.getState().addTab(server.id, {
-            id: m.sessionId, sessionId: m.sessionId, title: label, serverId: server.id, active: false,
+          useTerminalStore.getState().addTab(srvId, {
+            id: m.sessionId, sessionId: m.sessionId, title: label, serverId: srvId, active: false,
           });
-          call('restoreSessions', [{ sessionId: m.sessionId, name: label }]);
+          call('restoreSessions', [{ sessionId: m.sessionId, name: label, serverId: srvId }]);
           return;
         }
-        const pending = pendingCards.current.shift();
+        const pending = pendingFor(srvId).shift();
         const cardId = pending?.cardId ?? null;
         // Reiter-ID = Sitzungs-ID, NIE die Karten-ID der Seite: die zaehlt nach
         // jedem App-Start wieder ab t1 und kollidierte mit gespeicherten Reitern
         // (vertauschte, doppelte, verlorene Titel — siehe store/tabIdentity.ts).
-        useTerminalStore.getState().addTab(server.id, {
+        useTerminalStore.getState().addTab(srvId, {
           id: m.sessionId,
           sessionId: m.sessionId,
           title: pending?.name ?? 'Terminal',
           customTitle: pending?.custom || undefined,
-          serverId: server.id,
+          serverId: srvId,
           active: true,
         });
         // Vor dem Anlegen schon umbenannt: jetzt, wo die Sitzung existiert, zum Server.
         if (pending?.custom && pending.name) {
-          wsService.send({ type: 'terminal:rename', sessionId: m.sessionId, payload: { title: pending.name } } as never);
+          conn.send({ type: 'terminal:rename', sessionId: m.sessionId, payload: { title: pending.name } } as never);
         }
         if (cardId) {
           call('bindSession', cardId, m.sessionId);
-          sheets.pushNotes(cardId);
+          sheetsRef.current.pushNotes(cardId);
           const on = useAutoApproveStore.getState().enabled[m.sessionId] ?? true; // Standard: an
           useAutoApproveStore.getState().setEnabled(m.sessionId, on);
-          wsService.send({ type: 'client:set_auto_approve', sessionId: m.sessionId, payload: { enabled: on } });
+          conn.send({ type: 'client:set_auto_approve', sessionId: m.sessionId, payload: { enabled: on } });
           call('setAutoApprove', cardId, on);
         }
         return;
       }
       if (m?.type === 'terminal:closed' && m.sessionId) {
-        const tab = useTerminalStore.getState().getTabs(server.id).find((t) => t.sessionId === m.sessionId);
-        if (tab) useTerminalStore.getState().removeTab(server.id, tab.id);
+        const tab = useTerminalStore.getState().getTabs(srvId).find((t) => t.sessionId === m.sessionId);
+        if (tab) useTerminalStore.getState().removeTab(srvId, tab.id);
         dropScrollback(m.sessionId);
         delete sessionStatus.current[m.sessionId];
         clearTimeout(idleTimers.current[m.sessionId]);
@@ -498,7 +515,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // blieb dann für immer leer, kam nie in den Store und war beim nächsten
       // Wiederherstellen spurlos weg. Jetzt: Grund zeigen und die Karte freigeben.
       if (m?.type === 'terminal:error' && m.sessionId === 'none') {
-        const waiting = pendingCards.current.shift();
+        const waiting = pendingFor(srvId).shift();
         call('toast', `Terminal konnte nicht erstellt werden: ${m.payload?.message ?? 'unbekannter Fehler'}`);
         if (waiting) call('sessionCreateFailed', waiting.cardId);
         return;
@@ -507,8 +524,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // "Session not found": die gespeicherte Session gibt es nicht mehr. Wie
         // die klassische App: toten Tab austragen und die Karte neu bestücken —
         // die Seite fordert daraufhin eine frische PTY für dieselbe Karte an.
-        const dead = useTerminalStore.getState().getTabs(server.id).find((t) => t.sessionId === m.sessionId);
-        if (dead) useTerminalStore.getState().removeTab(server.id, dead.id);
+        const dead = useTerminalStore.getState().getTabs(srvId).find((t) => t.sessionId === m.sessionId);
+        if (dead) useTerminalStore.getState().removeTab(srvId, dead.id);
         dropScrollback(m.sessionId);
         delete sessionStatus.current[m.sessionId];
         clearTimeout(idleTimers.current[m.sessionId]);
@@ -553,7 +570,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         setSessionStatus(sid, 'waiting');
 
         if (kind === 'sudo') {
-          useTerminalStore.getState().setTabNotification(server.id, sid);
+          useTerminalStore.getState().setTabNotification(srvId, sid);
           call('prompt', sid, {
             ...info,
             kind: 'sudo',
@@ -571,7 +588,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // bestätigt oder bewusst pausiert (etwa weil gerade getippt wird).
         if (autoOn) return;
 
-        useTerminalStore.getState().setTabNotification(server.id, sid);
+        useTerminalStore.getState().setTabNotification(srvId, sid);
         call('prompt', sid, info);
         return;
       }
@@ -592,14 +609,22 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         call('toast', ok ? 'Login abgeschlossen ✓' : 'Login fehlgeschlagen — im Terminal prüfen');
         return;
       }
-    });
+    };
+  }, [call, markBusy, setSessionStatus]);
+
+  useEffect(() => {
+    if (!wsService || !server || !ready) return;
+    // Frisch geladene Seite kennt keine Stati — das Dedupe-Gedächtnis leeren,
+    // sonst unterdrückt es die erste Meldung nach einem Reload.
+    sessionStatus.current = {};
+    const unsub = wsService.addMessageListener(makeHandler(server.id, wsService, true));
     // Die Titelliste schickt der Server schon beim Verbinden — womöglich bevor
     // dieser Empfänger stand (Kaltstart: Seite lädt langsamer als der Socket).
     wsService.send({ type: 'terminal:titles_get' } as never);
     wsService.send({ type: 'clipboard:list' } as never);
     wsService.send({ type: 'mac:unlock_status' } as never);
     return unsub;
-  }, [wsService, server, ready, call, markBusy, setSessionStatus]);
+  }, [wsService, server, ready, makeHandler]);
 
   // Browser-Bridge: open the login URL stashed by a tapped "Login öffnen" push —
   // on cold start (ready) and whenever the app returns to the foreground.
@@ -696,10 +721,26 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         clearTimeout(timer);
       }
     }));
+    // Jedes weitere erreichbare Gerät mit Anmeldung wird mitverbunden. Einmal
+    // aufgenommen bleibt es — ein kurzer Aussetzer der /health-Prüfung soll seine
+    // Karten nicht abhängen; nur gelöschte Server fallen wieder raus.
+    const known = new Set(servers.map((s) => s.id));
+    const nextPeers = peersRef.current.filter((p) => known.has(p.id) && p.id !== server?.id);
+    for (const { s, online } of checked) {
+      if (!online || s.id === server?.id || nextPeers.some((p) => p.id === s.id)) continue;
+      const tok = s.token ?? (await getToken(s.id).catch(() => null)) ?? null;
+      if (tok) nextPeers.push({ id: s.id, name: s.name, host: s.host, port: s.port, token: tok });
+    }
+    const samePeers = nextPeers.length === peersRef.current.length
+      && nextPeers.every((p, i) => p.id === peersRef.current[i]?.id);
+    if (!samePeers) { peersRef.current = nextPeers; setPeers(nextPeers); }
+    const peerIds = new Set(nextPeers.map((p) => p.id));
     call('setServers', checked.map(({ s, online }) => ({
       id: s.id, name: s.name, host: s.host, port: s.port,
       status: online ? 'online' : 'offline',
-      active: s.id === server?.id, // der aktuell verbundene — Tippen bleibt hier
+      // verbunden: der Hauptserver und jedes mitverbundene Gerät — Tippen bleibt hier
+      active: s.id === server?.id || peerIds.has(s.id),
+      primary: s.id === server?.id,
       sessions: useTerminalStore.getState().getTabs(s.id).length,
       os: '',
       latency: null, // die Seite pflegt die Latenz selbst (setStatus-Ticker)
@@ -712,9 +753,20 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // entfernen (hält auch das klassische Layout via Store synchron) und die Liste
   // neu prüfen/reinschieben.
   const deleteServerNow = useCallback(async (id: string) => {
+    if (peersRef.current.some((p) => p.id === id)) {
+      // Ein mitverbundenes Gerät: seine Karten gehen, alle anderen kommen neu.
+      call('clearAllTerminals');
+      restored.current = false;
+      restoredPeers.current.clear();
+      peerPrevState.current = {};
+      peersRef.current = peersRef.current.filter((p) => p.id !== id);
+      setPeers(peersRef.current);
+    }
     if (server && id === server.id) {
       call('clearAllTerminals');
       restored.current = false;
+      restoredPeers.current.clear();
+      peerPrevState.current = {};
       sessionStatus.current = {};
       Object.values(idleTimers.current).forEach(clearTimeout);
       idleTimers.current = {};
@@ -813,22 +865,70 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       .getState()
       .getTabs(server.id)
       .filter((t) => t.sessionId)
-      .map((t) => ({ sessionId: t.sessionId as string, name: t.title }));
+      .map((t) => ({ sessionId: t.sessionId as string, name: t.title, serverId: server.id }));
+    live.forEach((t) => { sessionServer.current[t.sessionId] = server.id; });
     if (!live.length) return;
+    // Karten-ID, Notizen und Auto-Approve meldet die Seite pro Karte zurück
+    // (terminal:restored): mit mehreren Geräten ist "t1..tN" kein Verlass mehr.
     call('restoreSessions', live);
-    // The page names restored cards t1..tN, in order.
-    live.forEach((t, i) => {
-      const cardId = `t${i + 1}`;
-      sheets.pushNotes(cardId);
-      const on = useAutoApproveStore.getState().enabled[t.sessionId] ?? true;
-      call('setAutoApprove', cardId, on);
-      // ... und dem SERVER sagen. `setAutoApprove` setzt nur den Schalter in der
-      // Seite. Nach einem Server-Neustart erfuhr er den Wert sonst nie (er wird
-      // ausschliesslich bei terminal:created und beim Umlegen geschickt): das
-      // Terminal kam zurueck, die App zeigte "an", der Server drueckte nichts.
-      wsService?.send({ type: 'client:set_auto_approve', sessionId: t.sessionId, payload: { enabled: on } } as never);
-    });
   }, [ready, pageEpoch, tabsHydrated, server, state, call, sheets, scrollbackTick, wsService]);
+
+  // ── Weitere Geräte: mitverbinden und ihre Terminal-Nachrichten empfangen.
+  useEffect(() => {
+    if (!ready || !server) return;
+    const unsubs = peers.filter((p) => p.id !== server.id && p.token).map((p) => {
+      const conn = getConnection(p.id);
+      conn.connect({ host: p.host, port: p.port, token: p.token as string });
+      return conn.addMessageListener(makeHandler(p.id, conn, false));
+    });
+    return () => unsubs.forEach((u) => u());
+  }, [ready, server, peers, makeHandler]);
+
+  // ── … ihre Terminals in die Leiste holen, nach Abrissen neu anhängen, Ping melden.
+  //    Unabhängig vom Hauptserver: schläft der Mac, sind die Windows-Terminals trotzdem da.
+  useEffect(() => {
+    if (!ready || !server || !tabsHydrated) return;
+    let n = 0;
+    const tick = () => {
+      if (!scrollbackReady.current) return;
+      n += 1;
+      const lat: Record<string, number | null> = {};
+      for (const p of peers) {
+        if (p.id === server.id) continue;
+        const conn = getConnection(p.id);
+        const st = conn.state;
+        const prev = peerPrevState.current[p.id];
+        peerPrevState.current[p.id] = st;
+        const r = conn.getRtt?.();
+        lat[p.id] = st === 'connected' && typeof r === 'number' && r > 0 ? Math.round(r) : null;
+        if (st !== 'connected') continue;
+        if (!restoredPeers.current.has(p.id)) {
+          restoredPeers.current.add(p.id);
+          const live = useTerminalStore.getState().getTabs(p.id)
+            .filter((t) => t.sessionId)
+            .map((t) => ({ sessionId: t.sessionId as string, name: t.title, serverId: p.id }));
+          live.forEach((t) => { sessionServer.current[t.sessionId] = p.id; });
+          if (live.length) call('restoreSessions', live);
+          conn.send({ type: 'terminal:titles_get' } as never);
+        } else if (prev && prev !== 'connected') {
+          // Der Server hängt beim Abriss ab und puffert — ohne Reattach froren die Karten ein.
+          call('reattachAll');
+        }
+      }
+      if (n % 3 === 1 && Object.keys(lat).length) call('setServerLatency', lat);
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [ready, server, peers, tabsHydrated, call]);
+
+  /** Verbindung des Servers, zu dem diese Sitzung gehört (sonst der Hauptserver). */
+  const connFor = useCallback((sessionId?: string) => {
+    const primary = useS2ConnStore.getState().server;
+    const owner = sessionId ? sessionServer.current[sessionId] : undefined;
+    if (owner && (!primary || owner !== primary.id)) return getConnection(owner);
+    return primary ? getConnection(primary.id) : null;
+  }, []);
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
   const { micState, toggle: toggleMic } = useDictation({
@@ -876,6 +976,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // fresh page while this React component — and `restored` — survives.
       // Without resetting it, the new page never gets its cards back.
       restored.current = false;
+      restoredPeers.current.clear();
+      peerPrevState.current = {};
       sessionStatus.current = {};
       setReady(true);
       setPageEpoch((n) => n + 1);
@@ -1070,19 +1172,36 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (fileExplorer.handle(type, payload)) return;
 
     switch (type) {
-      case 'terminal:create':
-        pendingCards.current.push({ cardId: payload.cardId, name: payload.name });
+      case 'terminal:create': {
+        // Neues Terminal auf dem gewählten Gerät (Insel "+"), sonst auf dem Hauptserver.
+        const wanted = payload.serverId as string | undefined;
+        const createOn = wanted && wanted !== server.id && peersRef.current.some((p) => p.id === wanted) ? wanted : server.id;
+        pendingFor(createOn).push({ cardId: payload.cardId, name: payload.name });
         // Mit den echten Maßen der Karte, nicht mit 80x24: sonst muss die Shell
         // beim ersten Resize alles neu zeichnen — und genau das erzeugt die
         // doppelten und zerrissenen Zeilen.
-        wsService.send({
+        getConnection(createOn).send({
           type: 'terminal:create',
           payload: { cols: payload.cols || 80, rows: payload.rows || 24 },
         });
         break;
+      }
+
+      // Die Seite hat eine gespeicherte Sitzung wieder auf eine Karte gelegt.
+      case 'terminal:restored': {
+        if (!payload?.cardId || !payload?.sessionId) break;
+        sheets.pushNotes(payload.cardId);
+        const restoredOn = useAutoApproveStore.getState().enabled[payload.sessionId] ?? true;
+        call('setAutoApprove', payload.cardId, restoredOn);
+        // ... und dem SERVER sagen. `setAutoApprove` setzt nur den Schalter in der
+        // Seite. Nach einem Server-Neustart erfuhr er den Wert sonst nie: das
+        // Terminal kam zurueck, die App zeigte "an", der Server drueckte nichts.
+        connFor(payload.sessionId)?.send({ type: 'client:set_auto_approve', sessionId: payload.sessionId, payload: { enabled: restoredOn } } as never);
+        break;
+      }
 
       case 'terminal:attach':
-        wsService.send({
+        connFor(payload.sessionId)?.send({
           type: 'terminal:reattach',
           sessionId: payload.sessionId,
           // `?? 80` would let a 0 through — the server rejects that and the
@@ -1094,11 +1213,11 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
       case 'terminal:input':
         useAutoApproveStore.getState().markTyping(payload.sessionId);
-        wsService.send({ type: 'terminal:input', sessionId: payload.sessionId, payload: { data: payload.data } });
+        connFor(payload.sessionId)?.send({ type: 'terminal:input', sessionId: payload.sessionId, payload: { data: payload.data } });
         break;
 
       case 'terminal:resize':
-        wsService.send({
+        connFor(payload.sessionId)?.send({
           type: 'terminal:resize',
           sessionId: payload.sessionId,
           payload: { cols: payload.cols, rows: payload.rows },
@@ -1106,7 +1225,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'terminal:close':
-        if (payload.sessionId) wsService.send({ type: 'terminal:close', sessionId: payload.sessionId });
+        if (payload.sessionId) connFor(payload.sessionId)?.send({ type: 'terminal:close', sessionId: payload.sessionId });
         break;
 
       case 'autoapprove:set':
@@ -1117,7 +1236,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           // die Prompt-Varianten ([y/N] braucht 'y', nicht Enter!), blockt bei
           // ungesendetem Text und läuft auch, wenn die App im Hintergrund ist.
           // Ohne diese Zeile war der Schalter reine Dekoration.
-          wsService.send({ type: 'client:set_auto_approve', sessionId: payload.sessionId, payload: { enabled: on } });
+          connFor(payload.sessionId)?.send({ type: 'client:set_auto_approve', sessionId: payload.sessionId, payload: { enabled: on } });
         }
         break;
 
@@ -1376,7 +1495,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // dem falschen. Die Karten-ID bleibt nur als Rückfall für eine noch
         // nicht gebundene, brandneue Karte.
         if (payload.field !== 'name' || !payload.value) break;
-        const tabs = useTerminalStore.getState().getTabs(server.id);
+        const renameSrv = (payload.sessionId && sessionServer.current[payload.sessionId]) || server.id;
+        const tabs = useTerminalStore.getState().getTabs(renameSrv);
         const tab = payload.sessionId ? tabs.find((t) => t.sessionId === payload.sessionId) : undefined;
         if (tab) {
           // Nur eine ECHTE Aenderung zaehlt. Die Seite meldet beim Wiederherstellen
@@ -1384,14 +1504,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           // einen neueren Titel auf dem Server (z. B. vom anderen Geraet) nicht
           // mit dem alten lokalen ueberschreiben.
           if (tab.title === payload.value) break;
-          useTerminalStore.getState().updateTab(server.id, tab.id, { title: payload.value, customTitle: true });
+          useTerminalStore.getState().updateTab(renameSrv, tab.id, { title: payload.value, customTitle: true });
           // Dauerhaft auf dem Server — ueberlebt Neuinstallation, gilt auf jedem Geraet.
-          wsService.send({ type: 'terminal:rename', sessionId: payload.sessionId, payload: { title: payload.value } } as never);
+          connFor(payload.sessionId)?.send({ type: 'terminal:rename', sessionId: payload.sessionId, payload: { title: payload.value } } as never);
         } else {
           // Karte noch ohne Sitzung (gerade angelegt): der Name gehoert an die
           // WARTENDE Karte, nicht an einen gespeicherten Reiter, der zufaellig
           // dieselbe Karten-Nummer von einem frueheren App-Start traegt.
-          const waiting = pendingCards.current.find((p) => p.cardId === payload.cardId);
+          const allPending = ([] as Array<{ cardId: string; name?: string; custom?: boolean }>).concat(...Object.values(pendingCards.current));
+          const waiting = allPending.find((p) => p.cardId === payload.cardId);
           if (waiting) { waiting.name = payload.value; waiting.custom = true; }
         }
         break;
@@ -1422,6 +1543,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           // nicht zum neuen Server, also von der Seite abräumen.
           call('clearAllTerminals');
           restored.current = false;         // Restore läuft für den neuen Server neu
+          restoredPeers.current.clear();    // … und für die mitverbundenen Geräte
+          peerPrevState.current = {};
           sessionStatus.current = {};       // Status-Dedupe gehört zur alten Verbindung
           Object.values(idleTimers.current).forEach(clearTimeout);
           idleTimers.current = {};
@@ -1501,7 +1624,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, token, activeSessionId, micState, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow]);
+  }, [wsService, server, token, activeSessionId, micState, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow, connFor]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"

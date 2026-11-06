@@ -1931,6 +1931,67 @@
   .pin-pad button[data-key="back"] { display: flex; align-items: center; justify-content: center; }
   .pin-pad button[data-key="back"] .ic { width: 22px; height: 22px; }
 </style>
+<style>
+  /* ── Ein Arbeitsplatz für alle Geräte ──────────────────────────────────────
+     Die Terminal-Leiste zeigt die Terminals ALLER verbundenen Geräte, nach
+     Gerät gruppiert. Die Insel trägt nur noch "+" und den Fernzugriff;
+     Stapel/Liste/Übersicht entfallen (benutzt wurde nur der Stapel). */
+  #islandTermActions .island-act[data-view], #overviewBtn { display: none !important; }
+
+  .term-switcher__track { justify-content: safe center; overflow-x: auto; scrollbar-width: none; }
+  .term-switcher__track::-webkit-scrollbar { display: none; }
+  .ts-group { display: flex; align-items: center; flex: none; height: 100%; }
+  .ts-dev { flex: none; display: flex; align-items: center; gap: 4px; padding: 0 3px 0 2px;
+    font: 700 9px var(--font-ui); letter-spacing: .12em; color: var(--text-dim); opacity: .55;
+    transition: opacity 160ms ease-out, color 160ms ease-out; pointer-events: none; }
+  .ts-dev i { width: 5px; height: 5px; border-radius: 50%; background: var(--dc); display: block; }
+  .ts-group.is-current .ts-dev { opacity: 1; color: var(--text); }
+  .ts-sep { flex: none; width: 1px; height: 16px; margin: 0 7px; background: var(--glass-border); }
+  .ts-seg { flex-basis: 32px; }
+
+  .card-dev { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; padding: 1px 6px; border-radius: 6px;
+    font: 700 9.5px var(--font-ui); letter-spacing: .1em; vertical-align: 1px;
+    background: rgba(var(--overlay-rgb), .10); color: var(--text); }
+  .card-dev i { width: 5px; height: 5px; border-radius: 50%; background: var(--dc); display: block; }
+
+  .dev-pick { position: fixed; top: calc(var(--safe-top) + 64px); left: 50%; transform: translateX(-50%) translateY(-6px) scale(.97);
+    z-index: 80; width: min(86vw, 300px); padding: 6px; border-radius: 20px; display: flex; flex-direction: column; gap: 4px;
+    opacity: 0; pointer-events: none; transition: opacity 160ms ease-out, transform 260ms var(--ease-out); }
+  .dev-pick.open { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0) scale(1); }
+  .dev-pick__title { padding: 8px 10px 4px; font: 600 11.5px var(--font-ui); color: var(--text-dim); }
+  .dev-pick button { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 12px; border-radius: 14px;
+    color: var(--text); font: 600 14px var(--font-ui); text-align: left; }
+  .dev-pick button:active { background: rgba(var(--overlay-rgb), .08); }
+  .dev-pick button i { width: 9px; height: 9px; border-radius: 50%; background: var(--dc); }
+  .dev-pick button small { margin-left: auto; font: 500 11px ui-monospace, monospace; color: var(--text-dim); }
+
+  /* Fernzugriff: die Insel bleibt — mit Rückweg und Gerätewechsel. */
+  #remotePill { position: fixed; top: calc(var(--safe-top) + 8px); left: 50%; transform: translateX(-50%); z-index: 70;
+    display: none; align-items: center; gap: 3px; padding: 4px; border-radius: 22px; border: 1px solid var(--glass-border); }
+  body.remote-focus #remotePill { display: flex; }
+  body.remote-fs #remotePill { display: none !important; }
+  #remotePill button { height: 34px; border-radius: 17px; display: flex; align-items: center; gap: 6px; padding: 0 11px;
+    color: var(--text-dim); font: 600 12.5px var(--font-ui); white-space: nowrap;
+    transition: background 200ms var(--spring), color 200ms var(--spring); }
+  #remotePill .rp-back { width: 34px; padding: 0; justify-content: center; }
+  #remotePill .rp-back svg { width: 17px; height: 17px; }
+  #remotePill .rp-dev i { width: 7px; height: 7px; border-radius: 50%; background: var(--dc); }
+  #remotePill .rp-dev small { font: 500 10.5px ui-monospace, monospace; opacity: .7; }
+  #remotePill .rp-dev.on { color: var(--text); background: rgba(var(--accent-rgb), .18); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .4); }
+  #remotePill .rp-div { width: 1px; height: 18px; background: var(--glass-border); margin: 0 2px; }
+  body.remote-focus section[data-screen="remote"]:not([hidden]) { padding-top: calc(var(--safe-top) + 58px); }
+
+  /* Nur im Browser-Mockup (ohne App): Attrappe statt Live-Bild. */
+  body.mock-remote #remoteStage { width: 100% !important; height: auto !important; aspect-ratio: 16 / 10; max-height: 62dvh; }
+  body.mock-remote #remoteVeil { display: none !important; }
+  .fake-desk { position: absolute; inset: 0; overflow: hidden; transition: opacity 180ms ease-out; }
+  .fake-desk.swap { opacity: 0; }
+  .fake-desk.mac { background: linear-gradient(160deg, #2b2350, #15233f 60%, #0f1a2e); }
+  .fake-desk.win { background: linear-gradient(160deg, #0f3a5c, #0b2340 60%, #081a30); }
+  .fake-desk .fd-bar { position: absolute; left: 0; right: 0; background: rgba(10,12,18,.6); }
+  .fake-desk.mac .fd-bar { top: 0; height: 4%; }
+  .fake-desk.win .fd-bar { bottom: 0; height: 6.5%; }
+</style>
 <link rel="stylesheet" href="compact-terminal.css">
 </head>
 <body class="is-locked">
@@ -1958,6 +2019,9 @@
     <div class="island-term-actions" id="islandTermActions" role="tablist" aria-label="Terminal-Aktionen">
       <button class="island-act" id="addTerminalBtn" aria-label="Neues Terminal" title="Neues Terminal">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="island-act" id="remoteIslandBtn" aria-label="Fernzugriff" title="Fernzugriff">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
       </button>
       <button class="island-act" data-view="stack" role="tab" aria-selected="true" aria-label="Stack" title="Stack">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="6.5" width="13" height="13" rx="2.5" opacity=".45"/><rect x="4.5" y="4.5" width="13" height="13" rx="2.5"/></svg>
@@ -2394,7 +2458,7 @@
     activeIndex: 0,
     activeFloat: 0,
     activeCardId: null, // last-interacted-with terminal, kept in sync across Stack + Liste (used by the Aa selection toolbar)
-    terminalView: loadTerminalView(),
+    terminalView: 'stack',
     overviewOpen: false,
     islandOpen: false,
     pendingPromptId: null,
@@ -2452,9 +2516,16 @@
       status: 'idle', live: false,
       buffer: ['\x1b[2m~\x1b[0m $ '],
       notes: [], todos: [], cwd: '~',
+      server: window.__newTermServer || (window.__activeServerId ? window.__activeServerId() : undefined),
     };
     TMS_DATA.sessions.push(session);
-    state.order.push(id);
+    {
+      // Ans Ende der Gruppe seines Geräts — die Leiste bleibt nach Gerät sortiert.
+      const srvOf = s => (window.__sessionServerId ? window.__sessionServerId(s) : s && s.server);
+      let at = -1;
+      state.order.forEach((oid, k) => { if (srvOf(TMS_DATA.sessions.find(x => x.id === oid)) === srvOf(session)) at = k; });
+      if (at < 0) state.order.push(id); else state.order.splice(at + 1, 0, id);
+    }
     cardState[id] = { lines: session.buffer.slice(), sim: null, mainSim: null, questionSim: null, questionTimer: null, autoApprove: true, pendingPrompt: null, autoTimer: null, selectionMode: false, selection: null, collapsed: false, showReplay: false, cwd: session.cwd || '' };
     return session;
   }
@@ -2921,8 +2992,12 @@
   // ============================================================
   const statusLatencyLabel = document.getElementById('statusLatencyLabel');
   function updateLatencyDisplay() {
-    const val = TMS_DATA.servers[0].latency;
-    if (statusLatencyLabel) statusLatencyLabel.textContent = (val != null ? val : '—') + ' ms';
+    const curId = window.__activeServerId ? window.__activeServerId() : '';
+    const curSrv = TMS_DATA.servers.find(x => x.id === curId) || TMS_DATA.servers[0];
+    const val = curSrv ? curSrv.latency : null;
+    const many = TMS_DATA.servers.filter(x => x.active || x.primary).length > 1;
+    const tag = many && window.__devShort ? window.__devShort(curSrv) + ' · ' : '';
+    if (statusLatencyLabel) statusLatencyLabel.textContent = tag + (val != null ? val : '—') + ' ms';
     const chip = document.querySelector(`[data-latency-chip="${TMS_DATA.servers[0].id}"]`);
     if (chip) chip.textContent = (val != null ? val : '—') + ' ms';
     const np = nextPrayer();
@@ -4630,7 +4705,11 @@
           ${isList ? `<button class="chevron-btn" data-act="toggle" aria-label="Ein-/Ausklappen" title="Ein-/Ausklappen">${icon('chevron', 16)}</button>` : ''}
           <div class="card-name-wrap">
             <input class="card-name" value="${escapeHtml(session.name)}" readonly aria-label="Terminal-Name">
-            <span class="card-cwd" data-card-cwd>${escapeHtml(folderLabel(cs.cwd || ''))}</span>
+            <span class="card-cwd" data-card-cwd>${(() => {
+              const many = TMS_DATA.servers.filter(x => x.active || x.primary).length > 1;
+              const srv = many && window.__sessionServerId ? TMS_DATA.servers.find(x => x.id === window.__sessionServerId(session)) : null;
+              return srv && window.__devShort ? `<b class="card-dev" style="--dc:${window.__devColor(srv.id)}"><i></i>${escapeHtml(window.__devShort(srv))}</b>` : '';
+            })()}${escapeHtml(folderLabel(cs.cwd || ''))}</span>
           </div>
           <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
           <button class="card-menu-btn" data-act="menu" aria-haspopup="menu" aria-expanded="false" aria-label="Terminal-Menü" title="Menü">${icon('dotsV', 18)}</button>
@@ -4999,7 +5078,7 @@
         stackEl.appendChild(card);
         renderCardLines(session.id);
       }
-      setActive(state.order.length - 1);
+      setActive(state.order.indexOf(session.id));
     }
     renderRail();
     if (state.overviewOpen) renderOverview();
@@ -5481,6 +5560,7 @@
     // is-target ring all key off dockTargetId(). This is the single choke
     // point for user-driven terminal switches, so syncing here covers them all.
     setActive_syncDock();
+    if (typeof window.multiSync === 'function') window.multiSync();
   }
 
   function wireStackDrag() {
@@ -10217,7 +10297,10 @@
   }
   function tsName(i) {
     const s = TMS_DATA.sessions.find(x => x.id === state.order[i]);
-    return s ? s.name : '';
+    if (!s) return '';
+    const many = TMS_DATA.servers.filter(x => x.active || x.primary).length > 1;
+    const srv = many && window.__sessionServerId ? TMS_DATA.servers.find(x => x.id === window.__sessionServerId(s)) : null;
+    return (srv && window.__devShort ? window.__devShort(srv) + ' · ' : '') + s.name;
   }
   /** Punkte nach Nähe zum Daumen skalieren — ein weicher Bauch, kein Sprung. */
   function tsPaint(f) {
@@ -10242,12 +10325,26 @@
     tsEl.hidden = !show;
     document.body.classList.toggle('has-switcher', show);
     if (!show) return;
-    tsTrack.innerHTML = state.order.map((id, i) => {
+    // Ein Strang für alle Geräte, nach Gerät gruppiert. Die Reihenfolge bleibt
+    // state.order (Punkt i = Karte i), damit Wischen/Ziehen unverändert gilt.
+    const curSrv = window.__activeServerId ? window.__activeServerId() : '';
+    const groups = [];
+    state.order.forEach((id, i) => {
       const s = TMS_DATA.sessions.find(x => x.id === id);
+      const sid = window.__sessionServerId ? window.__sessionServerId(s) : '';
+      let g = groups[groups.length - 1];
+      if (!g || g.sid !== sid) { g = { sid, items: [] }; groups.push(g); }
       const initial = escapeHtml(((s ? s.name : '?').trim()[0] || '?').toUpperCase());
-      return `<button class="ts-seg${i === state.activeIndex ? ' is-active' : ''}" data-ts="${i}"
-        aria-label="${escapeHtml(s ? s.name : 'Terminal')}"><span class="ts-dot" style="background:${s ? s.colorTag : 'var(--accent)'}">${initial}</span></button>`;
-    }).join('');
+      g.items.push(`<button class="ts-seg${i === state.activeIndex ? ' is-active' : ''}" data-ts="${i}"
+        aria-label="${escapeHtml(s ? s.name : 'Terminal')}"><span class="ts-dot" style="background:${s ? s.colorTag : 'var(--accent)'}">${initial}</span></button>`);
+    });
+    const showDev = TMS_DATA.servers.filter(x => x.active || x.primary).length > 1 || groups.length > 1;
+    tsTrack.innerHTML = groups.map(g => {
+      const srv = TMS_DATA.servers.find(x => x.id === g.sid);
+      const col = window.__devColor ? window.__devColor(g.sid) : 'var(--accent)';
+      const label = showDev && window.__devShort ? `<span class="ts-dev" style="--dc:${col}"><i></i>${escapeHtml(window.__devShort(srv))}</span>` : '';
+      return `<div class="ts-group${g.sid === curSrv ? ' is-current' : ''}" data-srv="${escapeHtml(g.sid || '')}">${label}${g.items.join('')}</div>`;
+    }).join('<span class="ts-sep" aria-hidden="true"></span>');
     tsDots = [...tsTrack.querySelectorAll('.ts-dot')];
     tsRest(state.activeIndex);
   }
@@ -10257,11 +10354,12 @@
   function tsIndexFromX(x) {
     const segs = tsTrack.querySelectorAll('.ts-seg');
     if (!segs.length) return 0;
-    const first = segs[0].getBoundingClientRect();
-    const step = segs.length > 1
-      ? (segs[segs.length - 1].getBoundingClientRect().left - first.left) / (segs.length - 1)
-      : 1;
-    return clamp((x - (first.left + first.width / 2)) / step, 0, segs.length - 1);
+    // Zwischen den Gerätegruppen liegen Abstände: zwischen den zwei nächsten
+    // Punkten interpolieren statt einen festen Schritt anzunehmen.
+    const c = [...segs].map(s => { const r = s.getBoundingClientRect(); return r.left + r.width / 2; });
+    if (x <= c[0]) return 0;
+    for (let k = 0; k < c.length - 1; k++) if (x <= c[k + 1]) return k + (x - c[k]) / ((c[k + 1] - c[k]) || 1);
+    return c.length - 1;
   }
   function tsFrame() {
     tsRaf = 0;
@@ -10310,7 +10408,8 @@
   // Kurzer Tipp auf einen Punkt springt direkt dorthin.
   tsTrack.addEventListener('click', e => {
     if (tsMoved) return;
-    const seg = e.target.closest('.ts-seg');
+    // Zeiger-Capture kann den Klick auf die Leiste umlenken — dann per Trefferprüfung.
+    const seg = e.target.closest('.ts-seg') || (document.elementFromPoint(e.clientX, e.clientY) || document.body).closest('.ts-seg');
     if (!seg) return;
     const i = Number(seg.dataset.ts);
     setActive(i);
@@ -10327,6 +10426,140 @@
   initLiveSession();
   startLatencyTicker();
   show('lock');
+</script>
+<script>
+  // ============================================================
+  // Ein Arbeitsplatz für alle Geräte.
+  // Jede Sitzung kennt ihr Gerät (session.server). Die Leiste gruppiert danach,
+  // die Insel zeigt den Ping des Geräts, dessen Terminal gerade vorne ist, und
+  // der Fernzugriff öffnet genau dieses Gerät — umschaltbar in der Insel.
+  // Läuft nach dem Hauptskript; die Bridge (App) kommt erst danach, darum wird
+  // sie nur zur Laufzeit, nie beim Laden abgefragt.
+  // ============================================================
+  (function () {
+    var PALETTE = ['#9b8cff', '#3bc9db', '#f59f00', '#e64980', '#51cf66'];
+    function servers() { return (window.TMS_DATA && TMS_DATA.servers) || []; }
+    function primaryId() {
+      var l = servers();
+      var s = l.find(function (x) { return x.primary; }) || l.find(function (x) { return x.active; }) || l[0];
+      return s ? s.id : '';
+    }
+    /** Geräte, mit denen die App gerade verbunden ist (Hauptserver + weitere). */
+    function connected() {
+      var l = servers().filter(function (x) { return x.active || x.primary; });
+      return l.length ? l : servers().slice(0, 1);
+    }
+    window.__devColor = function (id) {
+      var i = servers().findIndex(function (s) { return s.id === id; });
+      return PALETTE[(i < 0 ? 0 : i) % PALETTE.length];
+    };
+    function guessShort(name) {
+      var n = String(name || '').trim();
+      if (/mac|imac|book/i.test(n)) return 'MAC';
+      if (/windows|\bwin\b|\bpc\b/i.test(n)) return 'WIN';
+      if (/linux|ubuntu|debian|vps|hetzner/i.test(n)) return 'LINUX';
+      return (n.split(/\s+/)[0] || 'GERÄT').slice(0, 6).toUpperCase();
+    }
+    /** Kurzname fürs Gerät; bei Doppelungen (zwei Macs) der erste Wortteil. */
+    window.__devShort = function (srv) {
+      if (!srv) return '';
+      var mine = guessShort(srv.name);
+      var clash = servers().some(function (o) { return o.id !== srv.id && guessShort(o.name) === mine; });
+      return clash ? (String(srv.name || '').trim().split(/\s+/)[0] || mine).slice(0, 8).toUpperCase() : mine;
+    };
+    window.__activeServerId = function () {
+      var id = state.order[state.activeIndex];
+      var s = (TMS_DATA.sessions || []).find(function (x) { return x.id === id; });
+      return (s && s.server) || primaryId();
+    };
+    window.__sessionServerId = function (s) { return (s && s.server) || primaryId(); };
+
+    /** Nach jedem Terminalwechsel: Ping-Anzeige + aktuelle Gerätegruppe. */
+    window.multiSync = function () {
+      if (typeof updateLatencyDisplay === 'function') updateLatencyDisplay();
+      var cur = window.__activeServerId();
+      document.querySelectorAll('.ts-group').forEach(function (g) { g.classList.toggle('is-current', g.dataset.srv === cur); });
+      var seg = document.querySelector('.ts-seg.is-active');
+      if (seg && seg.scrollIntoView) seg.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    };
+
+    // ---------- Neues Terminal: bei mehreren Geräten erst das Gerät wählen ----------
+    var addBtn = document.getElementById('addTerminalBtn');
+    var pick = document.createElement('div');
+    pick.className = 'dev-pick glass glass--strong';
+    document.body.appendChild(pick);
+    var pass = false;
+    if (addBtn) addBtn.addEventListener('click', function (e) {
+      if (pass) return;
+      var list = connected();
+      if (list.length < 2) return; // nur ein Gerät: wie bisher sofort anlegen
+      e.stopImmediatePropagation(); e.stopPropagation(); e.preventDefault();
+      pick.innerHTML = '<div class="dev-pick__title">Neues Terminal auf …</div>' + list.map(function (s) {
+        return '<button data-srv="' + s.id + '" style="--dc:' + window.__devColor(s.id) + '"><i></i>' + escapeHtml(s.name) +
+          '<small>' + (s.latency != null ? s.latency + ' ms' : '') + '</small></button>';
+      }).join('');
+      pick.classList.toggle('open');
+    }, true);
+    pick.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-srv]');
+      if (!b) return;
+      pick.classList.remove('open');
+      window.__newTermServer = b.dataset.srv;
+      pass = true; addBtn.click(); pass = false;
+      window.__newTermServer = null;
+    });
+    document.addEventListener('pointerdown', function (e) {
+      if (pick.classList.contains('open') && !pick.contains(e.target) && !(addBtn && addBtn.contains(e.target))) pick.classList.remove('open');
+    });
+
+    // ---------- Fernzugriff aus der Insel ----------
+    var pill = document.createElement('div');
+    pill.id = 'remotePill';
+    pill.className = 'glass glass--strong';
+    document.body.appendChild(pill);
+    function renderPill() {
+      pill.innerHTML =
+        '<button class="rp-back" data-back aria-label="Zurück zu den Terminals"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg></button><span class="rp-div"></span>' +
+        connected().map(function (s) {
+          return '<button class="rp-dev' + (s.id === window.__remoteSrv ? ' on' : '') + '" data-rsrv="' + s.id + '" style="--dc:' + window.__devColor(s.id) + '"><i></i>' +
+            escapeHtml(window.__devShort(s)) + (s.latency != null ? '<small>' + s.latency + ' ms</small>' : '') + '</button>';
+        }).join('');
+    }
+    pill.addEventListener('click', function (e) {
+      if (e.target.closest('[data-back]')) { show('terminals'); return; }
+      var b = e.target.closest('[data-rsrv]');
+      if (b && b.dataset.rsrv !== window.__remoteSrv) openRemote(b.dataset.rsrv);
+    });
+    setInterval(function () { if (document.body.classList.contains('remote-focus')) renderPill(); }, 3000);
+
+    function openRemote(id) {
+      if (!id) return;
+      window.__remoteSrv = id;
+      if (currentScreen !== 'remote') show('remote');
+      if (window.TMSRemote && typeof window.TMSRemote.switchTo === 'function') {
+        window.TMSRemote.switchTo(id);
+      } else {
+        document.body.classList.add('mock-remote');
+        paintMock(id);
+      }
+      renderPill();
+    }
+    window.__openRemoteFor = openRemote;
+    var remoteBtn = document.getElementById('remoteIslandBtn');
+    if (remoteBtn) remoteBtn.addEventListener('click', function (e) { e.stopPropagation(); openRemote(window.__activeServerId()); });
+
+    // Nur im Browser-Mockup: ein Bild-Platzhalter statt des Live-Streams.
+    function paintMock(id) {
+      var stage = document.getElementById('remoteStage');
+      if (!stage) return;
+      var d = stage.querySelector('.fake-desk');
+      if (!d) { d = document.createElement('div'); stage.insertBefore(d, stage.firstChild); }
+      var win = window.__devShort(servers().find(function (s) { return s.id === id; })) === 'WIN';
+      d.className = 'fake-desk swap ' + (win ? 'win' : 'mac');
+      d.innerHTML = '<div class="fd-bar"></div>';
+      requestAnimationFrame(function () { d.classList.remove('swap'); });
+    }
+  })();
 </script>
 <script src="compact-terminal.js"></script>
 </body>
