@@ -198,3 +198,9 @@
 - Windows später erreichbar (5 ms), aber kein Server auf 8767; SSH-Notizen lesen vom Auto-Mode blockiert → Nutzer soll `tms-terminal doctor` ausführen oder Benutzer/Schlüssel nennen.
 - Dateien: Windows-Pfad nach Gerätewechsel am Mac → HTTP 400 (belegt), Ansicht hing dauerhaft. Fix v1.125.2 (`625b8e1`): Reset auf ~ bei Serverwechsel (Leiste + Vollbild), Rückfall auf ~ bei 400/403/404, Windows-Pfade (filePaths.ts + TMS-TEST-EXPORT fsPath, 3 Tests).
 
+
+## 2026-11-07 — Alle Geräte in einer Ansicht (v1.126.0)
+
+- Nutzer: mit 2 Geräten ständig zwischen Übersicht und Terminals wechseln = Arbeitsfluss kaputt. Erste 3 Redesign-Varianten (Werkbank/Leitstand/Räume) abgelehnt; Fragen gestellt → Konzept: EINE Buchstaben-Leiste mit Terminals beider Geräte, Fernzugriff aus der Insel mit nahtlosem MAC/WIN-Wechsel, Liquid-Deck-Optik bleibt, Stapel/Liste/Übersicht-Knöpfe raus. Mockups per Tailscale (:8510) gezeigt, freigegeben ("bring es live").
+- Umsetzung `f65ad9b`: RN verbindet neben dem Hauptserver jedes erreichbare Gerät (Peers), sessionId→Server-Routing, create-FIFO pro Server, Seite meldet `terminal:restored` pro Karte; Leiste nach Gerät gruppiert, Insel "+" mit Geräte-Wahl + Fernzugriff, `TMSRemote.switchTo`.
+- Geprüft: tsc 0 Fehler, 125/127 Tests (2 Browser übersprungen), HTML-Diff nur eigene Änderungen, Browser-Simulation mit 2 Geräten (Gruppen, Routing, Create auf WIN, Fernzugriff-Wechsel) und 1 Gerät (unverändert). Echter Gerätetest steht aus.

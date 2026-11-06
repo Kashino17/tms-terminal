@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-05 (spät) — Windows-Vollbild-Erkennung, Dateien-Gerätewechsel; Release v1.125.2_
+_Zuletzt aktualisiert: 2026-11-07 — Alle Geräte in einer Ansicht; Release v1.126.0_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-07 (neueste):** Release v1.126.0 (`f65ad9b`): Season 2 hält Hauptserver + alle weiteren erreichbaren Geräte gleichzeitig verbunden; Terminal-Leiste nach Gerät gruppiert; Insel nur "+" (Geräte-Wahl) + Fernzugriff mit MAC/WIN-Wechsel. Offen: echter Test Mac+Windows auf dem Fold; Dateien-Explorer folgt noch dem Hauptserver statt dem aktiven Terminal; sudo-Fingerabdruck immer über den Hauptserver.
 
 **Stand 2026-11-05 spät (neueste):** Release v1.125.2 (Build lief bei Notiz noch). Mac-Server auf `81fdb2f`-Vorgänger `6a98c81` neu gestartet (22:52); Verlaufssicherung LIVE bestätigt (4 Terminals gesichert, mirrors.json eingelesen, 743 Zeilen Verlauf direkt nach Neustart). v1.125.1: Windows erkennt Vollbild-Programme per Prozessname (ConPTY gibt 1049 nicht weiter; ProcessWatch gedrosselt, geteilte PowerShell-Tabelle). v1.125.2: Dateien-Ansichten setzen den Ordner beim Gerätewechsel auf ~ zurück, fallen bei 400/403/404 auf ~ zurück, verstehen Windows-Pfade. Offen Windows: Server auf kashno17 antwortete nicht auf 100.80.72.101:8767 (PC erreichbar, SSH-Port offen) — `tms-terminal doctor`-Ausgabe vom Nutzer fehlt; Nutzer sagte, `tms-terminal update` lief dort fehlerfrei (alter bash-Weg — unbelegt, ob es wirkte). Log-Fix `81fdb2f` gepusht, wirkt beim nächsten Mac-Neustart.
 
