@@ -64,5 +64,17 @@
       android:name=".ConnectionService"
       android:exported="false"
       android:foregroundServiceType="dataSync"/>
+    <service
+      android:name=".bubble.DictationBubbleService"
+      android:label="@string/bubble_service_label"
+      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService"/>
+      </intent-filter>
+      <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/tms_bubble_accessibility"/>
+    </service>
   </application>
 </manifest>
