@@ -1,40 +1,51 @@
 /**
- * Season 2 dictation — records via expo-av and transcribes through the
- * server's Whisper pipeline, mirroring the classic TerminalToolbar contract
- * exactly: `audio:transcribe` (base64 wav, 16kHz mono) → `audio:progress`
- * keep-alives → `audio:transcription` | `audio:error`. Includes the same
- * inactivity watchdog so the spinner can never hang forever.
+ * Season 2 dictation — streamed to the server WHILE recording.
+ *
+ * Android records AAC-ADTS (a stream of self-contained frames), so the growing
+ * file can be read and uploaded every couple of seconds; the server transcribes
+ * ~60s segments in the background and after the stop only the rest is left.
+ * Protocol + recovery live in ./dictationClient (unit-tested): byte-offset
+ * chunks, `resume` after a reconnect, re-upload when the server lost the
+ * session. The recording file is kept until a result or a final error.
+ *
+ * ✕ while "Transkribiere…" cancels that dictation and frees the mic at once
+ * (the old hook ignored every tap while processing — the "läuft schon" lock).
+ *
+ * Old servers don't know `dictation:*`: no ack within 5s on a connected socket
+ * → the recording goes the old way (`audio:transcribe`, whole file at once).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import { Audio } from 'expo-av';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as FileSystem from 'expo-file-system';
 import type { WebSocketService } from '../../services/websocket.service';
 import { useSettingsStore } from '../../store/settingsStore';
+import { DictationUpload, type DictationIO } from './dictationClient';
 
 export type MicState = 'idle' | 'recording' | 'processing';
 
-// Must outlast the UPLOAD, not the transcription: the server heartbeats
-// audio:progress every 10s once the message arrives (re-arming this watchdog),
-// but a multi-minute recording is several MB of base64 that can take well over
-// 25s to push through a slow Tailscale/DERP path before the first heartbeat.
-const TRANSCRIPTION_TIMEOUT_MS = 90000;
-
 const KEEP_AWAKE_TAG = 'tms-dictation';
+const PUMP_INTERVAL_MS = 2000;
+const ACK_WAIT_MS = 5000;
+const SILENCE_RESUME_MS = 60_000;
+const SILENCE_CHECK_MS = 15_000;
+// Legacy path only (old server): the server heartbeats audio:progress every
+// 10s once the whole upload has arrived.
+const LEGACY_TIMEOUT_MS = 90_000;
 
 const RECORDING_OPTIONS = {
   android: {
-    // AAC in an MP4/m4a container. Android's MediaRecorder cannot emit RIFF
-    // WAV, so the server decodes this via ffmpeg (see whisper_sidecar_mlx.py).
-    // MediaRecorder constants: outputFormat 2 = MPEG_4, audioEncoder 3 = AAC.
-    // (Previously outputFormat 3 / encoder 1 = AMR_NB — 8 kHz narrowband,
-    //  poor transcription accuracy, and mislabelled `.wav`.)
-    extension: '.m4a',
-    outputFormat: 2,
+    // AAC in an ADTS stream (MediaRecorder OutputFormat.AAC_ADTS = 6,
+    // AudioEncoder.AAC = 3). Unlike MP4/m4a (index at the END of the file),
+    // every ADTS frame stands alone, so the file is decodable while it grows.
+    // 16 kHz = Whisper's native rate, no resampling on the server.
+    extension: '.aac',
+    outputFormat: 6,
     audioEncoder: 3,
-    sampleRate: 32000,
+    sampleRate: 16000,
     numberOfChannels: 1,
-    bitRate: 128000,
+    bitRate: 96000,
   },
   ios: {
     extension: '.wav',
@@ -50,6 +61,9 @@ const RECORDING_OPTIONS = {
   web: {},
 } as const;
 
+// iOS writes WAV whose header is only valid once finished — upload at the end.
+const STREAM_FORMAT: 'adts' | 'file' = Platform.OS === 'android' ? 'adts' : 'file';
+
 const FALLBACK_DICTATION_SESSION_ID = '__dictation__';
 
 interface UseDictationArgs {
@@ -59,120 +73,228 @@ interface UseDictationArgs {
   onError?: (message: string) => void;
 }
 
+function newDictationId(): string {
+  return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function useDictation({ wsService, sessionId, onText, onError }: UseDictationArgs) {
   const [micState, setMicState] = useState<MicState>('idle');
   const recordingRef = useRef<Audio.Recording | null>(null);
-  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inFlightSessionIdRef = useRef<string | null>(null);
+  const uriRef = useRef<string | null>(null);
+  const uploadRef = useRef<DictationUpload | null>(null);
+  const startedAtRef = useRef(0);
+  const pumpTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const legacyWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const legacySessionRef = useRef<string | null>(null);
   const voicePromptEnhanceEnabled = useSettingsStore((s) => s.voicePromptEnhanceEnabled);
   const effectiveSessionId = sessionId || FALLBACK_DICTATION_SESSION_ID;
 
-  const clearWatchdog = useCallback(() => {
-    if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = null; }
+  // Callbacks change every render; the socket listeners read the latest ones.
+  const onTextRef = useRef(onText);
+  const onErrorRef = useRef(onError);
+  onTextRef.current = onText;
+  onErrorRef.current = onError;
+
+  const stopPump = useCallback(() => {
+    if (pumpTimerRef.current) { clearInterval(pumpTimerRef.current); pumpTimerRef.current = null; }
   }, []);
 
-  const armWatchdog = useCallback(() => {
-    clearWatchdog();
-    watchdogRef.current = setTimeout(() => {
-      inFlightSessionIdRef.current = null;
-      setMicState('idle');
-      onError?.('Transkription abgebrochen (Zeitüberschreitung)');
-    }, TRANSCRIPTION_TIMEOUT_MS);
-  }, [clearWatchdog, onError]);
+  const clearLegacyWatchdog = useCallback(() => {
+    if (legacyWatchdogRef.current) { clearTimeout(legacyWatchdogRef.current); legacyWatchdogRef.current = null; }
+  }, []);
 
-  // Server responses for the in-flight dictation session (survives tab switches
-  // and works in Manager / Fernzugriff even when no terminal session is open).
+  /** Forget the current dictation and delete its recording. */
+  const reset = useCallback(() => {
+    stopPump();
+    clearLegacyWatchdog();
+    uploadRef.current = null;
+    legacySessionRef.current = null;
+    const uri = uriRef.current;
+    uriRef.current = null;
+    if (uri) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+    setMicState('idle');
+  }, [stopPump, clearLegacyWatchdog]);
+
+  const deliver = useCallback((text: string) => {
+    reset();
+    const t = text.trim();
+    if (t) onTextRef.current(t);
+  }, [reset]);
+
+  const fail = useCallback((message: string) => {
+    reset();
+    onErrorRef.current?.(message);
+  }, [reset]);
+
+  // ── Server messages ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!wsService) return;
-    return wsService.addMessageListener((msg: unknown) => {
-      const m = msg as { type: string; sessionId?: string; payload?: any };
-      const targetSid = inFlightSessionIdRef.current ?? effectiveSessionId;
-      if (m.sessionId !== targetSid) return;
-      if (m.type === 'audio:transcription') {
-        clearWatchdog();
-        inFlightSessionIdRef.current = null;
-        setMicState('idle');
-        const text = (m.payload?.text ?? '').trim();
-        if (text) onText(text);
-      } else if (m.type === 'audio:progress') {
-        setMicState('processing');
-        armWatchdog();
-      } else if (m.type === 'audio:error') {
-        clearWatchdog();
-        inFlightSessionIdRef.current = null;
-        setMicState('idle');
-        onError?.(m.payload?.message ?? 'Transkription fehlgeschlagen');
-      }
-    });
-  }, [wsService, effectiveSessionId, onText, onError, armWatchdog, clearWatchdog]);
+    return wsService.addMessageListener((raw: unknown) => {
+      const m = raw as { type: string; sessionId?: string; payload?: any };
 
-  // Keep the screen on while a dictation is recording or uploading. Without
-  // this the display dimmed and locked mid-sentence: Android pauses the
-  // activity on screen-off, which stops the recorder, and the socket carrying
-  // the upload dies with it. One tag, so start/stop can never leak a lock.
-  const micBusy = micState !== 'idle';
+      const upload = uploadRef.current;
+      if (upload && m.type.startsWith('dictation:')) {
+        const outcome = upload.onServer(m);
+        if (outcome === 'result') deliver(upload.text ?? '');
+        else if (outcome === 'error') fail(upload.error ?? 'Transkription fehlgeschlagen');
+        else if (outcome === 'restart' && upload.isEnded) upload.finish().catch(() => {});
+        return;
+      }
+
+      // Legacy path (old server).
+      const legacySid = legacySessionRef.current;
+      if (!legacySid || m.sessionId !== legacySid) return;
+      if (m.type === 'audio:transcription') deliver(m.payload?.text ?? '');
+      else if (m.type === 'audio:error') fail(m.payload?.message ?? 'Transkription fehlgeschlagen');
+      else if (m.type === 'audio:progress') armLegacyWatchdog();
+    });
+    // armLegacyWatchdog is stable (only uses refs + fail)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsService, deliver, fail]);
+
+  // ── Reconnect → ask the server where the dictation stands ──────────────
   useEffect(() => {
-    if (!micBusy) return;
+    if (!wsService) return;
+    return wsService.addStateListener((state) => {
+      if (state === 'connected') uploadRef.current?.onReconnect();
+    });
+  }, [wsService]);
+
+  // ── Silence watchdog: no word from the server for 60s → resume (never abort) ─
+  const busy = micState !== 'idle';
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => {
+      const u = uploadRef.current;
+      if (!u || u.done || !u.isEnded || wsService?.state !== 'connected') return;
+      if (Date.now() - u.lastHeard > SILENCE_RESUME_MS) {
+        u.lastHeard = Date.now();
+        u.onReconnect();
+      }
+    }, SILENCE_CHECK_MS);
+    return () => clearInterval(t);
+  }, [busy, wsService]);
+
+  // Keep the screen on while recording or uploading. Without this the display
+  // dimmed and locked mid-sentence: Android pauses the activity on screen-off,
+  // which stops the recorder, and the socket carrying the upload dies with it.
+  useEffect(() => {
+    if (!busy) return;
     activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
     return () => { deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => {}); };
-  }, [micBusy]);
+  }, [busy]);
 
   // Cleanup on unmount.
   useEffect(() => {
     return () => {
+      stopPump();
+      clearLegacyWatchdog();
       if (recordingRef.current) {
         recordingRef.current.stopAndUnloadAsync().catch(() => {});
         recordingRef.current = null;
       }
-      clearWatchdog();
     };
-  }, [clearWatchdog]);
+  }, [stopPump, clearLegacyWatchdog]);
 
-  const toggle = useCallback(async () => {
-    if (micState === 'processing' || !wsService) return;
+  function armLegacyWatchdog() {
+    clearLegacyWatchdog();
+    legacyWatchdogRef.current = setTimeout(() => {
+      fail('Transkription abgebrochen (Zeitüberschreitung)');
+    }, LEGACY_TIMEOUT_MS);
+  }
 
-    if (micState === 'recording') {
-      setMicState('processing');
-      try {
-        const recording = recordingRef.current;
-        if (!recording) { setMicState('idle'); return; }
-        await recording.stopAndUnloadAsync();
-        const uri = recording.getURI();
-        recordingRef.current = null;
-        if (!uri) { setMicState('idle'); return; }
-        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-        await FileSystem.deleteAsync(uri, { idempotent: true });
-        const outboundSid = effectiveSessionId;
-        inFlightSessionIdRef.current = outboundSid;
-        wsService.send({
-          type: 'audio:transcribe',
-          sessionId: outboundSid,
-          // `format: 'wav'` is a legacy gate string the server requires — the
-          // sidecar sniffs the real container by magic bytes (RIFF→WAV else
-          // ffmpeg), so iOS PCM-WAV and Android AAC/m4a both decode correctly.
-          payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
-        });
-        armWatchdog();
-      } catch {
-        inFlightSessionIdRef.current = null;
-        setMicState('idle');
-        onError?.('Aufnahme konnte nicht gesendet werden');
+  const makeIO = useCallback((uri: string): DictationIO => ({
+    send: (msg) => wsService?.send(msg) ?? false,
+    fileSize: async () => {
+      const info = await FileSystem.getInfoAsync(uri);
+      return info.exists && typeof (info as { size?: number }).size === 'number' ? (info as { size: number }).size : 0;
+    },
+    readBase64: (position, length) =>
+      FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64, position, length }),
+    now: () => Date.now(),
+  }), [wsService]);
+
+  const sendLegacy = useCallback(async (uri: string) => {
+    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    legacySessionRef.current = effectiveSessionId;
+    uploadRef.current = null;
+    wsService?.send({
+      type: 'audio:transcribe',
+      sessionId: effectiveSessionId,
+      // `format: 'wav'` is a legacy gate string the server requires — the
+      // sidecar sniffs the real container (RIFF → WAV, else ffmpeg).
+      payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
+    });
+    armLegacyWatchdog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsService, effectiveSessionId, voicePromptEnhanceEnabled]);
+
+  const stop = useCallback(async () => {
+    const recording = recordingRef.current;
+    const upload = uploadRef.current;
+    recordingRef.current = null;
+    stopPump();
+    setMicState('processing');
+    try {
+      if (recording) await recording.stopAndUnloadAsync();
+      const uri = uriRef.current;
+      if (!uri || !upload) { reset(); return; }
+      // Old server? It never acks. Give a fresh connection up to 5s from start.
+      const waitUntil = startedAtRef.current + ACK_WAIT_MS;
+      while (!upload.ackSeen && Date.now() < waitUntil) await new Promise((r) => setTimeout(r, 200));
+      if (uploadRef.current !== upload) return; // cancelled meanwhile
+      if (!upload.ackSeen && wsService?.state === 'connected') {
+        await sendLegacy(uri);
+        return;
       }
-      return;
+      await upload.finish();
+    } catch {
+      fail('Aufnahme konnte nicht gesendet werden');
     }
+  }, [stopPump, reset, fail, sendLegacy, wsService]);
 
+  const start = useCallback(async () => {
+    if (!wsService) return;
     try {
       const { granted } = await Audio.requestPermissionsAsync();
-      if (!granted) { onError?.('Mikrofon-Berechtigung fehlt'); return; }
+      if (!granted) { onErrorRef.current?.('Mikrofon-Berechtigung fehlt'); return; }
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       const { recording } = await Audio.Recording.createAsync(RECORDING_OPTIONS as any);
+      const uri = recording.getURI();
+      if (!uri) { await recording.stopAndUnloadAsync().catch(() => {}); throw new Error('no uri'); }
       recordingRef.current = recording;
+      uriRef.current = uri;
+      startedAtRef.current = Date.now();
+      const upload = new DictationUpload(newDictationId(), STREAM_FORMAT, voicePromptEnhanceEnabled, makeIO(uri));
+      uploadRef.current = upload;
+      upload.begin();
+      if (STREAM_FORMAT === 'adts') {
+        pumpTimerRef.current = setInterval(() => { upload.pump().catch(() => {}); }, PUMP_INTERVAL_MS);
+      }
       setMicState('recording');
     } catch {
-      setMicState('idle');
-      onError?.('Aufnahme konnte nicht gestartet werden');
+      reset();
+      onErrorRef.current?.('Aufnahme konnte nicht gestartet werden');
     }
-  }, [micState, wsService, effectiveSessionId, voicePromptEnhanceEnabled, armWatchdog, onError]);
+  }, [wsService, voicePromptEnhanceEnabled, makeIO, reset]);
 
-  return { micState, toggle };
+  /** Start ↔ stop. Ignored while processing — use cancel() to abandon that. */
+  const toggle = useCallback(async () => {
+    if (micState === 'recording') return stop();
+    if (micState === 'idle') return start();
+  }, [micState, start, stop]);
+
+  /** Throw the current dictation away — recording or processing — and free the mic now. */
+  const cancel = useCallback(async () => {
+    const recording = recordingRef.current;
+    recordingRef.current = null;
+    const upload = uploadRef.current;
+    uploadRef.current = null; // late messages for it are ignored from here on
+    stopPump();
+    if (upload && !upload.done) wsService?.send({ type: 'dictation:cancel', payload: { id: upload.id } });
+    if (recording) await recording.stopAndUnloadAsync().catch(() => {});
+    reset();
+  }, [wsService, reset, stopPump]);
+
+  return { micState, toggle, cancel };
 }

@@ -931,7 +931,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   }, []);
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
-  const { micState, toggle: toggleMic } = useDictation({
+  const { micState, toggle: toggleMic, cancel: cancelMic } = useDictation({
     wsService: wsService ?? null,
     // Without this the hook returns immediately and nothing is ever recorded.
     sessionId: activeSessionId,
@@ -1278,8 +1278,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'mic:cancel':
-        micDiscard.current = true;
-        toggleMic(); // stop the recorder, then throw the transcript away
+        // ✕ — recording OR still transcribing: throw it away and free the mic
+        // right now. (Before, ✕ during "Transkribiere…" only set a discard
+        // flag; the mic stayed locked until the server answered or timed out.)
+        micCard.current = null;
+        micDiscard.current = false;
+        cancelMic();
         break;
 
       case 'clipboard:write':
@@ -1624,7 +1628,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, token, activeSessionId, micState, toggleMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow, connFor]);
+  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow, connFor]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
