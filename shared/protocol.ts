@@ -97,6 +97,16 @@ export interface AudioTranscribeMessage {
   };
 }
 
+// ── Streamed dictation (Client → Server) ──────────────────────
+// The app uploads the growing recording in byte-offset chunks while the user
+// speaks; the server transcribes ahead. Sessions are keyed by `id`, not by
+// socket, so a reconnect resumes them (see server/src/audio/dictation.ts).
+export interface DictationStartMessage  { type: 'dictation:start';  payload: { id: string; format: 'adts' | 'file'; enhance?: boolean } }
+export interface DictationChunkMessage  { type: 'dictation:chunk';  payload: { id: string; offset: number; data: string } }
+export interface DictationEndMessage    { type: 'dictation:end';    payload: { id: string; totalBytes: number } }
+export interface DictationCancelMessage { type: 'dictation:cancel'; payload: { id: string } }
+export interface DictationResumeMessage { type: 'dictation:resume'; payload: { id: string } }
+
 // ── Manager messages (Client → Server) ────────────────────────────
 export interface ManagerChatMessage {
   type: 'manager:chat';
@@ -298,6 +308,11 @@ export type ClientMessage =
   | SystemSnapshotMessage
   | SystemKillMessage
   | AudioTranscribeMessage
+  | DictationStartMessage
+  | DictationChunkMessage
+  | DictationEndMessage
+  | DictationCancelMessage
+  | DictationResumeMessage
   | ManagerChatMessage
   | ManagerCancelMessage
   | ManagerToggleMessage
@@ -476,6 +491,13 @@ export interface AudioProgressMessage {
   sessionId: string;
   payload: { chunk: number; total: number; text: string };
 }
+
+export type DictationStatusName = 'receiving' | 'processing' | 'done' | 'error' | 'unknown';
+export interface DictationAckMessage      { type: 'dictation:ack';      payload: { id: string; bytes: number } }
+export interface DictationStateMessage    { type: 'dictation:state';    payload: { id: string; status: DictationStatusName; bytes: number; text?: string; message?: string } }
+export interface DictationProgressMessage { type: 'dictation:progress'; payload: { id: string } }
+export interface DictationResultMessage   { type: 'dictation:result';   payload: { id: string; text: string } }
+export interface DictationErrorMessage    { type: 'dictation:error';    payload: { id: string; message: string } }
 
 export interface AudioErrorMessage {
   type: 'audio:error';
@@ -752,6 +774,11 @@ export interface MacBiometricUnlockResultMessage {
 }
 
 export type ServerMessage =
+  | DictationAckMessage
+  | DictationStateMessage
+  | DictationProgressMessage
+  | DictationResultMessage
+  | DictationErrorMessage
   | TerminalCreatedMessage
   | TerminalOutputMessage
   | TerminalClosedMessage

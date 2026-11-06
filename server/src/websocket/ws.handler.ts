@@ -20,6 +20,8 @@ import { isAutoApprove, setAutoApprove, clearAutoApprove } from './auto.approve.
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
 import { rewrite as rewritePrompt } from '../audio/prompt-rewriter-sidecar';
 import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
+import { DictationManager, acceptRewrite, type DictationEvent } from '../audio/dictation';
+import { decodeToFloat32 } from '../audio/ffmpeg-decode';
 import { ManagerService } from '../manager/manager.service';
 import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
 import { captureSoon } from '../terminal/restore/snapshotter';
@@ -84,6 +86,29 @@ function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify(msg));
   }
+}
+
+// ── Streamed dictation ──────────────────────────────────────────────
+// One process-wide manager: sessions outlive the socket that started them, so
+// a reconnecting app resumes its dictation instead of losing it.
+const dictations = new DictationManager({
+  decode: (bytes, format) => decodeToFloat32(bytes, format),
+  transcribeWav: (wavBase64) => whisperTranscribe(wavBase64),
+  rewrite: (text) => rewritePrompt(text),
+  now: () => Date.now(),
+  log: (msg) => logger.info(msg),
+});
+setInterval(() => dictations.sweep(), 60_000).unref();
+
+const DICTATION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+// ~1h of 96 kbit/s AAC; anything bigger is not a dictation.
+const DICTATION_MAX_BYTES = 64 * 1024 * 1024;
+
+function dictationSink(ws: WebSocket) {
+  return (ev: DictationEvent) => {
+    const { type, ...payload } = ev;
+    send(ws, { type, payload } as ServerMessage);
+  };
 }
 
 // ── Live working-directory tracking ──────────────────────────────────
@@ -1179,6 +1204,44 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
+    if (msg.type === 'dictation:start' || msg.type === 'dictation:chunk' || msg.type === 'dictation:end'
+      || msg.type === 'dictation:cancel' || msg.type === 'dictation:resume') {
+      const p = (msg as { payload?: Record<string, unknown> }).payload ?? {};
+      const id = p.id;
+      if (typeof id !== 'string' || !DICTATION_ID_RE.test(id)) return;
+      const sink = dictationSink(ws);
+      switch (msg.type) {
+        case 'dictation:start':
+          dictations.start(id, p.format === 'adts' ? 'adts' : 'file', p.enhance === true, sink);
+          break;
+        case 'dictation:chunk': {
+          const offset = p.offset;
+          if (typeof offset !== 'number' || !Number.isInteger(offset) || offset < 0 || typeof p.data !== 'string') return;
+          const data = Buffer.from(p.data, 'base64');
+          if (offset + data.length > DICTATION_MAX_BYTES) {
+            send(ws, { type: 'dictation:error', payload: { id, message: 'Aufnahme zu groß' } });
+            dictations.cancel(id);
+            return;
+          }
+          dictations.chunk(id, offset, data, sink);
+          break;
+        }
+        case 'dictation:end': {
+          const total = p.totalBytes;
+          if (typeof total !== 'number' || !Number.isInteger(total) || total < 0 || total > DICTATION_MAX_BYTES) return;
+          dictations.end(id, total, sink);
+          break;
+        }
+        case 'dictation:cancel':
+          dictations.cancel(id);
+          break;
+        case 'dictation:resume':
+          dictations.resume(id, sink);
+          break;
+      }
+      return;
+    }
+
     if (msg.type === 'audio:transcribe') {
       const sessionId = isValidSessionId(msg.sessionId) ? msg.sessionId : '__dictation__';
       const audio = msg.payload?.audio;
@@ -1204,17 +1267,19 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         send(ws, { type: 'audio:progress', sessionId, payload: { chunk: 0, total: 0, text: '' } });
       }, 10_000);
 
+      const legacyStartedAt = Date.now();
       whisperTranscribe(audio, {
         onProgress: (info) => {
           send(ws, { type: 'audio:progress', sessionId, payload: { chunk: info.chunk, total: info.total, text: info.text } });
         },
       }).then(async (text) => {
+        logger.info(`[whisper] audio:transcribe done in ${Date.now() - legacyStartedAt}ms, ${text.length} chars${enhance ? ' (enhance next)' : ''}`);
         if (!enhance || !text.trim()) {
           send(ws, { type: 'audio:transcription', sessionId, payload: { text } });
           return;
         }
         try {
-          const enhanced = await rewritePrompt(text);
+          const enhanced = acceptRewrite(text, await rewritePrompt(text));
           send(ws, { type: 'audio:transcription', sessionId, payload: { text: enhanced } });
         } catch (rewriteErr) {
           const reason = rewriteErr instanceof Error ? rewriteErr.message : String(rewriteErr);
@@ -1224,7 +1289,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         }
       }).catch((err) => {
         const message = err instanceof Error ? err.message : 'Transkription fehlgeschlagen';
-        logger.warn(`[whisper] Transcription failed: ${message}`);
+        logger.warn(`[whisper] Transcription failed after ${Date.now() - legacyStartedAt}ms: ${message}`);
         send(ws, { type: 'audio:error', sessionId, payload: { message } });
       }).finally(() => {
         clearInterval(keepAlive);
