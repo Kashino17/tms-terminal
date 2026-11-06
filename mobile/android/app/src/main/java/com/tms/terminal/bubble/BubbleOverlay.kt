@@ -108,6 +108,10 @@ class BubbleOverlay(
     private val sleepParams = overlayParams(dp(72), dp(72)).apply {
         flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
     }
+    // Where the bubble itself lives. The wider pill is placed relative to it
+    // and must not move it (it used to stay wherever the pill was clamped to).
+    private var homeX = -1
+    private var homeY = -1
     private var rootAttached = false
     private var toastAttached = false
     private var sleepAttached = false
@@ -122,6 +126,8 @@ class BubbleOverlay(
         mode = newMode
         if (newMode == Mode.HIDDEN) { detach(root); rootAttached = false; hideSleepTarget(); return }
         root.removeAllViews()
+        if (homeX < 0) placeFromConfig()
+        params.x = homeX; params.y = homeY
         when (newMode) {
             Mode.BUBBLE -> root.addView(bubble, FrameLayout.LayoutParams(dp(52), dp(52)))
             Mode.RECORDING, Mode.PROCESSING -> {
@@ -135,13 +141,23 @@ class BubbleOverlay(
             else -> {}
         }
         if (!rootAttached) {
-            placeFromConfig()
             wm.addView(root, params)
             rootAttached = true
         } else {
             wm.updateViewLayout(root, params)
         }
-        root.post { clampIntoScreen() }
+        root.post { if (newMode == Mode.BUBBLE) clampIntoScreen() else placePanel() }
+    }
+
+    /** Pill next to the bubble: grows towards the screen centre, stays on screen. */
+    private fun placePanel() {
+        if (!rootAttached) return
+        val m = ctx.resources.displayMetrics
+        val w = root.width
+        val onRight = homeX + dp(26) > m.widthPixels / 2
+        params.x = if (onRight) homeX + dp(52) - w else homeX
+        params.y = homeY
+        clampIntoScreen()
     }
 
     fun setLevel(fraction: Float) = level.setLevel(fraction)
@@ -208,8 +224,12 @@ class BubbleOverlay(
                     hideSleepTarget()
                     when {
                         e.actionMasked == MotionEvent.ACTION_CANCEL -> {}
-                        sleep -> { params.x = startX; params.y = startY; callbacks.onSnooze() }
-                        dragging -> { clampIntoScreen(); config.x = params.x; config.y = params.y }
+                        sleep -> { params.x = homeX; params.y = homeY; callbacks.onSnooze() }
+                        dragging -> {
+                            clampIntoScreen()
+                            homeX = params.x; homeY = params.y
+                            config.x = homeX; config.y = homeY
+                        }
                         else -> callbacks.onTap()
                     }
                 }
@@ -242,9 +262,8 @@ class BubbleOverlay(
 
     private fun placeFromConfig() {
         val m = ctx.resources.displayMetrics
-        params.gravity = Gravity.TOP or Gravity.START
-        params.x = if (config.x >= 0) config.x else m.widthPixels - dp(52) - dp(12)
-        params.y = if (config.y >= 0) config.y else (m.heightPixels * 0.42f).toInt()
+        homeX = if (config.x >= 0) config.x else m.widthPixels - dp(52) - dp(12)
+        homeY = if (config.y >= 0) config.y else (m.heightPixels * 0.42f).toInt()
     }
 
     private fun clampIntoScreen() {
