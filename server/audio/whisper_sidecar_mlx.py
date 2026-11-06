@@ -152,6 +152,8 @@ def trim_silence(samples, sample_rate, threshold=0.003, pad_secs=0.15):
     n_frames = samples.shape[0] // win
     framed = samples[: n_frames * win].reshape(n_frames, win)
     rms = np.sqrt(np.mean(framed * framed, axis=1))
+    # Absolute on purpose: a threshold relative to the noise floor let
+    # fluctuating room tone through (Whisper then hallucinated "Vielen Dank.").
     active = np.flatnonzero(rms >= threshold)
     if active.size == 0:
         return np.zeros(0, dtype=np.float32)
@@ -181,6 +183,12 @@ def normalize_level(samples):
     if gain <= 1.0:
         return samples
     return np.clip(samples * gain, -1.0, 1.0).astype(np.float32)
+
+
+def prepare_chunk(samples):
+    """Trim silence on the RAW signal (so room tone is never lifted into
+    "speech"), then lift what is left to a level Whisper hears well."""
+    return normalize_level(trim_silence(samples, TARGET_RATE))
 
 
 def filter_hallucinations(text):
@@ -256,7 +264,7 @@ def _emit(obj):
 
 def transcribe_chunk(mlx_whisper, samples, language, model_path=None):
     """Transcribe one chunk (numpy float32). One retry, then raise."""
-    trimmed = trim_silence(normalize_level(samples), TARGET_RATE)
+    trimmed = prepare_chunk(samples)
     if trimmed.shape[0] == 0:
         return ""
     repo_or_path = model_path or MODEL_REPO

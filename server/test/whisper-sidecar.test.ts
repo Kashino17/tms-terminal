@@ -75,6 +75,51 @@ describe('whisper-sidecar watchdog', () => {
     expect(first.kill).toHaveBeenCalledWith('SIGKILL');
   });
 
+  // Review I5: the sidecar is serial. A request merely WAITING behind a long,
+  // healthy one (progress keeps coming) must neither fail nor kill the sidecar.
+  it('does not time out a queued request while the sidecar keeps producing output', async () => {
+    const mod = await import('../src/audio/whisper-sidecar');
+    const a = mod.transcribe('AAAA', { onProgress: () => {} });
+    const b = mod.transcribe('BBBB');
+    await flush();
+    const child = spawned.at(-1);
+    for (let t = 0; t < 3; t++) {
+      vi.advanceTimersByTime(30_000);
+      child.stdout.emit('data', Buffer.from(JSON.stringify({ id: 'req-1', progress: true, chunk: t + 1, total: 4, text: 'x' }) + '\n'));
+      await flush();
+    }
+    child.stdout.emit('data', Buffer.from(JSON.stringify({ id: 'req-1', text: 'a' }) + '\n'));
+    child.stdout.emit('data', Buffer.from(JSON.stringify({ id: 'req-2', text: 'b' }) + '\n'));
+    await expect(a).resolves.toBe('a');
+    await expect(b).resolves.toBe('b');
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  // Review M3: after the SIGKILL a new request may already have started a new
+  // sidecar before the old one's 'exit' fires — that exit must not orphan it.
+  it("a killed sidecar's late exit does not replace the new sidecar", async () => {
+    const mod = await import('../src/audio/whisper-sidecar');
+    const stalled = mod.transcribe('AAAA');
+    await flush();
+    const first = spawned.at(-1);
+    vi.advanceTimersByTime(45_001);
+    await expect(stalled).rejects.toThrow(/Timeout/i);
+    const next = mod.transcribe('CCCC');
+    await flush();
+    expect(spawned.length).toBe(2);
+    const exitCall = first.on.mock.calls.find((c: any[]) => c[0] === 'exit');
+    exitCall[1](null);
+    await flush();
+    const third = mod.transcribe('DDDD');
+    await flush();
+    expect(spawned.length).toBe(2);
+    const second = spawned.at(-1);
+    second.stdout.emit('data', Buffer.from(JSON.stringify({ id: 'req-2', text: 'c' }) + '\n'));
+    second.stdout.emit('data', Buffer.from(JSON.stringify({ id: 'req-3', text: 'd' }) + '\n'));
+    await expect(next).resolves.toBe('c');
+    await expect(third).resolves.toBe('d');
+  });
+
   it('restarts sidecar and retries the request once on crash', async () => {
     const mod = await import('../src/audio/whisper-sidecar');
     const p = mod.transcribe('AAAA');

@@ -118,7 +118,10 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
   const deliver = useCallback((text: string) => {
     reset();
     const t = text.trim();
+    // Empty must still end the page's "Transkribiere…" state for every target
+    // (only onText/onError reach the page) — so it is reported, not swallowed.
     if (t) onTextRef.current(t);
+    else onErrorRef.current?.('Keine Sprache erkannt');
   }, [reset]);
 
   const fail = useCallback((message: string) => {
@@ -214,8 +217,9 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
     now: () => Date.now(),
   }), [wsService]);
 
-  const sendLegacy = useCallback(async (uri: string) => {
+  const sendLegacy = useCallback(async (uri: string, upload: DictationUpload) => {
     const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    if (uploadRef.current !== upload) return; // ✕ while reading — never send a cancelled dictation
     legacySessionRef.current = effectiveSessionId;
     uploadRef.current = null;
     wsService?.send({
@@ -235,21 +239,35 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
     recordingRef.current = null;
     stopPump();
     setMicState('processing');
+    const current = () => uploadRef.current === upload;
+    if (recording) {
+      try {
+        await recording.stopAndUnloadAsync();
+      } catch {
+        // Android throws when the recorder got no audio at all (a quick tap).
+        if (!current()) return;
+        if (upload) wsService?.send({ type: 'dictation:cancel', payload: { id: upload.id } });
+        fail('Aufnahme zu kurz');
+        return;
+      }
+    }
+    // Every await below may race ✕ (+ a new recording): only act while this
+    // dictation is still the current one.
+    if (!current()) return;
     try {
-      if (recording) await recording.stopAndUnloadAsync();
       const uri = uriRef.current;
       if (!uri || !upload) { reset(); return; }
       // Old server? It never acks. Give a fresh connection up to 5s from start.
       const waitUntil = startedAtRef.current + ACK_WAIT_MS;
       while (!upload.ackSeen && Date.now() < waitUntil) await new Promise((r) => setTimeout(r, 200));
-      if (uploadRef.current !== upload) return; // cancelled meanwhile
+      if (!current()) return;
       if (!upload.ackSeen && wsService?.state === 'connected') {
-        await sendLegacy(uri);
+        await sendLegacy(uri, upload);
         return;
       }
       await upload.finish();
     } catch {
-      fail('Aufnahme konnte nicht gesendet werden');
+      if (current()) fail('Aufnahme konnte nicht gesendet werden');
     }
   }, [stopPump, reset, fail, sendLegacy, wsService]);
 

@@ -10,6 +10,13 @@ interface PendingRequest {
 }
 
 const TIMEOUT_MS = 30_000;
+const TIMEOUT_PER_CHAR_MS = 15;
+const MAX_TIMEOUT_MS = 180_000;
+
+/** The rewrite is about as long as the transcript (output budget 2x input tokens), so give long dictations more time. */
+export function rewriteTimeoutFor(chars: number): number {
+  return Math.min(MAX_TIMEOUT_MS, Math.max(TIMEOUT_MS, TIMEOUT_MS + (chars - 1000) * TIMEOUT_PER_CHAR_MS));
+}
 // Bound sidecar startup. Without this, a hung import / model load leaves
 // ensureRunning() pending forever, which makes `await rewrite()` (and thus the
 // whole enhanced-transcription request) hang — the client mic then sticks on
@@ -177,10 +184,11 @@ export async function rewrite(transcript: string): Promise<string> {
   logger.info(`[rewriter] Request ${id}: ${transcript.length} chars`);
 
   return new Promise<string>((resolve, reject) => {
+    const timeoutMs = rewriteTimeoutFor(transcript.length);
     const timer = setTimeout(() => {
-      killSidecar(`request ${id} timed out after ${TIMEOUT_MS}ms`);
-      failActive(new Error(`Prompt-Rewrite Timeout (${Math.round(TIMEOUT_MS / 1000)}s).`));
-    }, TIMEOUT_MS);
+      killSidecar(`request ${id} timed out after ${timeoutMs}ms`);
+      failActive(new Error(`Prompt-Rewrite Timeout (${Math.round(timeoutMs / 1000)}s).`));
+    }, timeoutMs);
 
     activeRequest = { id, resolve, reject, timer };
 

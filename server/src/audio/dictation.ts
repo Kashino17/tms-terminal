@@ -40,6 +40,10 @@ export interface DictationOptions {
 }
 
 const RATE = 16000;
+// Same as nextCut's threshold (1.2 x 60s): below this nothing can be cut.
+const SEGMENT_READY_SECS = 72;
+// Smaller than a couple of AAC frames: decoding may legitimately fail.
+const TINY_RECORDING_BYTES = 4096;
 
 interface Session {
   id: string;
@@ -66,6 +70,7 @@ interface Session {
   error: string;
   computeMs: number;
   audioSecs: number;
+  bytesPerSec: number;        // measured on the last decode; 0 = unknown
 }
 
 /** Use the rewrite unless it lost more than half of the words (truncation/hallucination guard). */
@@ -98,7 +103,7 @@ export class DictationManager {
         id, format, enhance, sink, parts: [], received: 0, status: 'receiving', endTotal: null,
         cursor: 0, texts: [], work: Promise.resolve(), passQueued: false, lastPassAt: 0,
         throttleTimer: null, heartbeat: null, cancelled: false, lastActivity: now, startedAt: now,
-        endedAt: 0, finishedAt: 0, text: '', error: '', computeMs: 0, audioSecs: 0,
+        endedAt: 0, finishedAt: 0, text: '', error: '', computeMs: 0, audioSecs: 0, bytesPerSec: 0,
       };
       this.sessions.set(id, s);
       this.deps.log(`[dictation] ${id}: start (${format}${enhance ? ', enhance' : ''})`);
@@ -119,6 +124,9 @@ export class DictationManager {
     }
     sink({ type: 'dictation:ack', id, bytes: s.received });
     if (s.status !== 'receiving') return;
+    // A gap on a live socket means a chunk was dropped on the way (e.g. by the
+    // rate limiter). The client only re-positions on `state` — tell it.
+    if (offset > s.received) { this.sendState(s); return; }
     if (s.endTotal !== null) this.maybeFinalize(s);
     else if (s.format === 'adts') this.schedulePass(s);
   }
@@ -131,7 +139,7 @@ export class DictationManager {
     if (s.status !== 'receiving') { this.sendState(s); return; }
     s.endTotal = totalBytes;
     s.endedAt = this.deps.now();
-    if (s.received < totalBytes) sink({ type: 'dictation:ack', id, bytes: s.received });
+    if (s.received < totalBytes) this.sendState(s); // client resends from here
     this.maybeFinalize(s);
   }
 
@@ -162,6 +170,12 @@ export class DictationManager {
         this.cancel(id);
       }
     }
+  }
+
+  /** Audio bytes still held in memory for a session (tests / diagnostics). */
+  bufferedBytes(id: string): number {
+    const s = this.sessions.get(id);
+    return s ? s.parts.reduce((n, p) => n + p.length, 0) : 0;
   }
 
   /** Resolves once all queued work for the session has run (tests, E2E). */
@@ -206,6 +220,9 @@ export class DictationManager {
       s.passQueued = false;
       s.lastPassAt = this.deps.now();
       if (s.cancelled || s.status !== 'receiving') return;
+      // Skip the (full) decode while no segment can be cut yet: estimate the
+      // buffered audio from the byte rate measured on the last decode.
+      if (s.bytesPerSec > 0 && s.received / s.bytesPerSec - s.cursor / RATE <= SEGMENT_READY_SECS) return;
       try {
         await this.transcribeReady(s, false);
       } catch (err) {
@@ -216,8 +233,17 @@ export class DictationManager {
   }
 
   private async transcribeReady(s: Session, final: boolean): Promise<void> {
-    const samples = await this.deps.decode(Buffer.concat(s.parts), s.format);
+    if (s.received === 0) return; // nothing recorded
+    let samples: Float32Array;
+    try {
+      samples = await this.deps.decode(Buffer.concat(s.parts), s.format);
+    } catch (err) {
+      // A tap too short to hold one audio frame is "nothing said", not an error.
+      if (final && s.received < TINY_RECORDING_BYTES) return;
+      throw err;
+    }
     s.audioSecs = samples.length / RATE;
+    if (s.audioSecs > 0) s.bytesPerSec = s.received / s.audioSecs;
     for (;;) {
       if (s.cancelled) return;
       const cut = nextCut(samples, s.cursor, RATE, final);
@@ -241,7 +267,14 @@ export class DictationManager {
     s.heartbeat.unref?.();
     s.work = s.work.then(async () => {
       try {
-        await this.transcribeReady(s, true);
+        try {
+          await this.transcribeReady(s, true);
+        } catch (err) {
+          // The Whisper sidecar restarts itself after a crash/stall — one
+          // retry of the remaining segments usually goes through.
+          this.deps.log(`[dictation] ${s.id}: final pass failed, retrying once: ${(err as Error).message}`);
+          await this.transcribeReady(s, true);
+        }
         let text = s.texts.filter(Boolean).join(' ');
         if (s.enhance && text.trim() && !s.cancelled) {
           try {
@@ -261,6 +294,7 @@ export class DictationManager {
         this.emit(s, { type: 'dictation:error', id: s.id, message: s.error });
       } finally {
         s.finishedAt = this.deps.now();
+        s.parts = []; // keep only the result for `resume`, not the audio
         this.clearTimers(s);
       }
     });

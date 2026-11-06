@@ -39,6 +39,12 @@ export class DictationUpload {
   ackSeen = false;
   lastHeard: number;
   private sent = 0;
+  // Bumped on every reset of `sent` (server state). A read that started before
+  // a reset must not be sent under the new position (it holds old bytes).
+  private epoch = 0;
+  // A restart was sent and not yet acknowledged: further `unknown` answers are
+  // for messages that were already in flight, not a new loss.
+  private awaitingRestart = false;
   private ended = false;
   private totalBytes: number | null = null;
   private pumping: Promise<void> | null = null;
@@ -70,21 +76,35 @@ export class DictationUpload {
     if (this.done) return;
     const size = this.totalBytes ?? (await this.io.fileSize());
     while (this.sent < size && !this.done) {
-      const len = Math.min(CHUNK_BYTES, size - this.sent);
-      const data = await this.io.readBase64(this.sent, len);
+      const pos = this.sent;
+      const epoch = this.epoch;
+      const data = await this.io.readBase64(pos, Math.min(CHUNK_BYTES, size - pos));
+      if (epoch !== this.epoch) continue; // reset meanwhile — re-read from the new position
       const got = base64Bytes(data);
       if (got <= 0) return;
-      if (!this.io.send({ type: 'dictation:chunk', payload: { id: this.id, offset: this.sent, data } })) return;
-      this.sent += got;
+      if (!this.io.send({ type: 'dictation:chunk', payload: { id: this.id, offset: pos, data } })) return;
+      if (epoch === this.epoch) this.sent = pos + got;
     }
+  }
+
+  private resetTo(bytes: number): void {
+    this.sent = bytes;
+    this.epoch += 1;
   }
 
   /** Recording stopped: send the rest, then `end`. Safe to call again after a restart. */
   async finish(): Promise<void> {
     this.ended = true;
     if (this.totalBytes === null) this.totalBytes = await this.io.fileSize();
-    await this.pump();
-    if (this.done || this.sent < this.totalBytes) return; // offline — resumed later
+    // pump() may hand back a pump that was already running with an older file
+    // size — keep pumping while it makes progress.
+    for (;;) {
+      const before = this.sent;
+      await this.pump();
+      if (this.done) return;
+      if (this.sent >= this.totalBytes) break;
+      if (this.sent === before) return; // offline — resumed later
+    }
     this.io.send({ type: 'dictation:end', payload: { id: this.id, totalBytes: this.totalBytes } });
   }
 
@@ -102,6 +122,7 @@ export class DictationUpload {
     switch (msg.type) {
       case 'dictation:ack':
         this.ackSeen = true;
+        this.awaitingRestart = false;
         return null;
       case 'dictation:result':
         if (this.done) return null;
@@ -123,15 +144,18 @@ export class DictationUpload {
             return 'error';
           case 'receiving':
             // Authoritative server position: continue from there.
-            this.sent = typeof p.bytes === 'number' ? p.bytes : 0;
+            this.awaitingRestart = false;
+            this.resetTo(typeof p.bytes === 'number' ? p.bytes : 0);
             return 'restart';
           case 'unknown':
+            if (this.awaitingRestart) return null;
             if (this.attempts >= MAX_ATTEMPTS) {
               this.error = 'Transkription fehlgeschlagen (Server hat die Aufnahme verloren)';
               return 'error';
             }
             this.attempts += 1;
-            this.sent = 0;
+            this.resetTo(0);
+            this.awaitingRestart = true;
             this.begin();
             return 'restart';
           default:

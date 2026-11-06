@@ -100,7 +100,39 @@ def test_normalize_level_caps_the_gain_at_20x():
     assert float(np.max(np.abs(out))) <= 20 * 1e-4 + 1e-6
 
 
-def test_quiet_speech_survives_trim_after_normalization():
-    quiet = _tone(0.002)  # below trim_silence's absolute RMS threshold (0.003)
-    assert sc.trim_silence(quiet, 16000).shape[0] == 0
-    assert sc.trim_silence(sc.normalize_level(quiet), 16000).shape[0] > 0
+def _noise(rms, secs=10.0, rate=16000, seed=1):
+    return np.random.default_rng(seed).normal(0, rms, int(secs * rate)).astype(np.float32)
+
+
+def _quiet_speech(level=0.004, floor=0.0003, secs=6.0, rate=16000):
+    """Syllable-like bursts (250 ms on / 150 ms off) over a low noise floor."""
+    out = _noise(floor, secs, rate)
+    t = np.arange(int(0.25 * rate), dtype=np.float32) / rate
+    burst = (np.sin(2 * np.pi * 180 * t) * level).astype(np.float32)
+    step = int(0.4 * rate)
+    for i in range(int(0.5 * rate), out.shape[0] - burst.shape[0], step):
+        out[i:i + burst.shape[0]] += burst
+    return out
+
+
+# Review I6: lifting the level before an absolute silence threshold let pure
+# room tone through to Whisper (hallucinated "Vielen Dank fürs Zuschauen").
+def test_prepare_chunk_drops_pure_room_noise():
+    assert sc.prepare_chunk(_noise(0.001)).shape[0] == 0
+
+
+def test_prepare_chunk_drops_fluctuating_room_noise():
+    n = _noise(0.001) * (1 + 0.5 * np.sin(np.arange(160000) / 16000 * 2 * np.pi * 3)).astype(np.float32)
+    assert sc.prepare_chunk(n.astype(np.float32)).shape[0] == 0
+
+
+def test_prepare_chunk_keeps_quiet_speech_and_lifts_it():
+    quiet = _quiet_speech(level=0.006)
+    out = sc.prepare_chunk(quiet)
+    assert out.shape[0] > 16000 * 4
+    assert float(np.max(np.abs(out))) > 0.05
+
+
+def test_prepare_chunk_keeps_normal_speech_as_before():
+    loud = _quiet_speech(level=0.3, floor=0.002)
+    assert sc.prepare_chunk(loud).shape[0] >= sc.trim_silence(loud, 16000).shape[0]

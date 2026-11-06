@@ -10,6 +10,7 @@ interface PendingRequest {
   audioBase64: string;
   options: TranscribeOptions;
   attempts: number;
+  outputSeqAtArm: number;
 }
 
 // Watchdog: abort a request only if a single chunk makes no progress for this long.
@@ -39,6 +40,10 @@ let lineBuffer = '';
 let requestId = 0;
 const pending = new Map<string, PendingRequest>();
 let startPromise: Promise<void> | null = null;
+// Bumped on ANY sidecar output. The sidecar is serial, so a request waiting in
+// line sees no output of its own — but if the sidecar is still talking, it is
+// alive and busy, not stuck.
+let outputSeq = 0;
 
 function ensureRunning(): Promise<void> {
   if (sidecar && !sidecar.killed) return Promise.resolve();
@@ -68,6 +73,7 @@ function ensureRunning(): Promise<void> {
     }, SIDECAR_START_TIMEOUT_MS);
 
     child.stderr?.on('data', (chunk: Buffer) => {
+      outputSeq++;
       const text = chunk.toString();
       logger.info(`[whisper] ${text.trim()}`);
       if (!resolved && text.includes('Ready for requests')) {
@@ -80,6 +86,7 @@ function ensureRunning(): Promise<void> {
     });
 
     child.stdout?.on('data', (chunk: Buffer) => {
+      outputSeq++;
       lineBuffer += chunk.toString();
       const lines = lineBuffer.split('\n');
       lineBuffer = lines.pop() ?? '';
@@ -115,15 +122,20 @@ function ensureRunning(): Promise<void> {
     child.on('exit', (code) => {
       logger.warn(`[whisper] Sidecar exited with code ${code}`);
       clearTimeout(startTimer);
-      sidecar = null;
-      startPromise = null;
-      for (const [, req] of pending) clearTimeout(req.timer);
 
       if (!resolved) {
         resolved = true;
+        if (sidecar === child) sidecar = null;
+        startPromise = null; // our own start failed
         reject(new Error(`Whisper sidecar failed to start (exit ${code})`));
         return;
       }
+
+      // A killed sidecar may exit AFTER a new one already took over (or is
+      // starting): then this exit must not touch the new one or its requests.
+      if (sidecar !== child) return;
+      sidecar = null;
+      for (const [, req] of pending) clearTimeout(req.timer);
 
       if (pending.size === 0) return;
       // Restart and retry each open request once.
@@ -159,7 +171,10 @@ export interface TranscribeOptions {
 }
 
 function armWatchdog(id: string, req: PendingRequest): void {
+  req.outputSeqAtArm = outputSeq;
   req.timer = setTimeout(() => {
+    // Waiting in line behind a long, healthy request: keep waiting.
+    if (outputSeq !== req.outputSeqAtArm && pending.has(id)) { armWatchdog(id, req); return; }
     pending.delete(id);
     req.reject(new Error(`Transkription Timeout (${CHUNK_STALL_TIMEOUT_MS / 1000}s). Chunk haengt oder Model zu langsam.`));
     // The sidecar works through requests one at a time: if it is stuck on this
@@ -213,7 +228,7 @@ export async function transcribe(audioBase64: string, options: TranscribeOptions
     const req: PendingRequest = {
       resolve, reject, timer: null as unknown as NodeJS.Timeout,
       onProgress: options.onProgress,
-      audioBase64, options, attempts: 1,
+      audioBase64, options, attempts: 1, outputSeqAtArm: outputSeq,
     };
     pending.set(id, req);
     armWatchdog(id, req);

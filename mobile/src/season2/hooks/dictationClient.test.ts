@@ -80,6 +80,7 @@ test('unknown session restarts the upload from zero, up to 3 attempts', async ()
   for (let i = 0; i < 2; i++) {
     assert.strictEqual(u.onServer({ type: 'dictation:state', payload: { id: 'd1', status: 'unknown', bytes: 0 } }), 'restart');
     assert.strictEqual(io.sent.at(-1).type, 'dictation:start');
+    u.onServer({ type: 'dictation:ack', payload: { id: 'd1', bytes: 0 } }); // server took the new start
     await u.finish();
     assert.strictEqual(io.sent.at(-1).type, 'dictation:end');
   }
@@ -125,4 +126,58 @@ test('ackSeen flips on the first ack (old servers never send one)', () => {
   assert.strictEqual(u.ackSeen, false);
   u.onServer({ type: 'dictation:ack', payload: { id: 'd1', bytes: 0 } });
   assert.strictEqual(u.ackSeen, true);
+});
+
+// Review C1: a reset arriving while a chunk is being read must not relabel
+// the bytes read from the old position with the new offset.
+test('a server reset during a pending read does not mislabel the chunk offset', async () => {
+  const io = fakeIO(CHUNK_BYTES * 3);
+  io.file = Buffer.concat([Buffer.alloc(CHUNK_BYTES, 1), Buffer.alloc(CHUNK_BYTES, 2), Buffer.alloc(CHUNK_BYTES, 3)]);
+  const u = new DictationUpload('d1', 'adts', false, io);
+  u.begin();
+  const realRead = io.readBase64;
+  let reads = 0;
+  io.readBase64 = async (pos, len) => {
+    const r = await realRead(pos, len);
+    if (++reads === 2) u.onServer({ type: 'dictation:state', payload: { id: 'd1', status: 'unknown', bytes: 0 } });
+    return r;
+  };
+  await u.pump();
+  await u.pump();
+  for (const m of io.sent.filter((x) => x.type === 'dictation:chunk')) {
+    const bytes = Buffer.from(m.payload.data, 'base64');
+    const expected = io.file.subarray(m.payload.offset, m.payload.offset + bytes.length);
+    assert.ok(bytes.equals(expected), `chunk labelled ${m.payload.offset} carries other bytes`);
+  }
+});
+
+// Review I2: finish() must not stop at the end of a pump that was already
+// running with the old (smaller) file size.
+test('finish sends the tail and end even when a pump with an older size is in flight', async () => {
+  const io = fakeIO(10);
+  const u = new DictationUpload('d1', 'adts', false, io);
+  u.begin();
+  const realSize = io.fileSize;
+  let gate!: () => void;
+  const held = new Promise<void>((r) => { gate = r; });
+  io.fileSize = async () => { const n = await realSize(); await held; return n; };
+  const inflight = u.pump();                 // captures size 10, then waits
+  io.file = Buffer.concat([io.file, Buffer.alloc(6, 9)]);
+  io.fileSize = realSize;
+  const fin = u.finish();
+  gate();
+  await inflight; await fin;
+  assert.deepStrictEqual(chunks(io), [[0, 10], [10, 6]]);
+  assert.strictEqual(io.sent.at(-1).type, 'dictation:end');
+});
+
+// Review M1: one server restart answers several in-flight messages with
+// `unknown` — that is ONE lost session, not several attempts.
+test('repeated unknown before the restart is acknowledged counts as one attempt', () => {
+  const io = fakeIO(4);
+  const u = new DictationUpload('d1', 'adts', false, io);
+  u.onServer({ type: 'dictation:ack', payload: { id: 'd1', bytes: 0 } });
+  u.onServer({ type: 'dictation:state', payload: { id: 'd1', status: 'unknown', bytes: 0 } });
+  assert.strictEqual(u.onServer({ type: 'dictation:state', payload: { id: 'd1', status: 'unknown', bytes: 0 } }), null);
+  assert.strictEqual(u.attempts, 2);
 });

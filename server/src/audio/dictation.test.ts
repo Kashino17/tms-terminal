@@ -198,3 +198,70 @@ test('sweep drops an abandoned upload after 10 idle minutes', () => {
   h.mgr.resume('d1', s.fn);
   assert.strictEqual(s.last('dictation:state').status, 'unknown');
 });
+
+// Review I1: on a live socket a gap means a chunk was dropped (e.g. rate
+// limiter). The client only re-positions on `state`, so say it explicitly.
+test('a gap answers with state receiving at the real position', () => {
+  const h = harness(); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(10), s.fn);
+  h.mgr.chunk('d1', 20, bytes(10), s.fn);
+  const st = s.last('dictation:state');
+  assert.strictEqual(st.status, 'receiving');
+  assert.strictEqual(st.bytes, 10);
+});
+
+test('end with missing bytes answers with state receiving', () => {
+  const h = harness(); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(10), s.fn);
+  h.mgr.end('d1', 20, s.fn);
+  assert.strictEqual(s.last('dictation:state').bytes, 10);
+});
+
+// Review I3: an empty / undecodable recording is "nothing said", not an ffmpeg error.
+test('an empty recording ends with an empty result', async () => {
+  const h = harness({ decode: async (b) => { if (b.length === 0) throw new Error('ffmpeg decode failed'); return new Float32Array(0); } });
+  const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.end('d1', 0, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, '');
+  assert.strictEqual(s.last('dictation:error'), undefined);
+});
+
+// Review I5: the sidecar restarts after a crash — one retry of the final pass
+// means the dictation still arrives.
+test('the final pass is retried once after a transcription failure', async () => {
+  let n = 0;
+  const h = harness({ transcribeWav: async () => { if (n++ === 0) throw new Error('sidecar crashed'); return 'ok'; } });
+  const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(10), s.fn);
+  h.mgr.end('d1', 10, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, 'ok');
+});
+
+// Review I7: no full decode every few seconds while nothing can be cut yet.
+test('streaming does not decode again until a segment could be ready', async () => {
+  let decodes = 0;
+  const h = harness({ decode: async (b) => { decodes++; return new Float32Array(b.length * SAMPLES_PER_BYTE).fill(0.3); } });
+  const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  for (let off = 0; off < 1500; off += 10) {          // 150s in 1s pieces
+    h.mgr.chunk('d1', off, bytes(10), s.fn);
+    await h.mgr.idle('d1');
+  }
+  assert.ok(decodes <= 6, `decoded ${decodes} times`);
+  assert.deepStrictEqual(h.calls.slice(0, 1), [60]);
+});
+
+test('finished sessions drop their audio bytes', async () => {
+  const h = harness(); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(10), s.fn);
+  h.mgr.end('d1', 10, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(h.mgr.bufferedBytes('d1'), 0);
+});
