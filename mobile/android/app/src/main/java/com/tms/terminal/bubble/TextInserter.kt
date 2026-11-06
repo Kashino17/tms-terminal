@@ -6,80 +6,110 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
+import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 
 /**
- * Puts the transcript where the user is typing — or, if no input field is
- * focused any more, only on the clipboard (the user pastes it later).
- *
- * Paste first: it goes through the target app's own input handling and works
- * in WebViews/Compose, where ACTION_SET_TEXT would replace the whole content.
+ * Puts the transcript where the user is typing — directly, WITHOUT the
+ * clipboard. Only when the keyboard is closed / no field is open any more
+ * (or the user switched apps) does it go to the clipboard instead.
  */
 object TextInserter {
     enum class Result { INSERTED, CLIPBOARD }
+
+    private const val TAG = "TmsBubble"
+    private const val MAX_NODES = 4000
 
     fun copyOnly(service: AccessibilityService, text: String) {
         val clipboard = service.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("TMS Diktat", text))
     }
 
-    /**
-     * [allowedPackage]: the app where the user pressed ✓. If another app's field
-     * is focused by now (app switch while transcribing), the text only goes to
-     * the clipboard — never into a field the user did not dictate for.
-     */
+    /** [allowedPackage]: the app where the user pressed ✓. */
     fun insert(service: AccessibilityService, text: String, allowedPackage: String?): Result {
-        val clipboard = service.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val node = focusedEditable(service)
-        if (node == null || !BubbleRules.pasteAllowed(allowedPackage, node.packageName?.toString())) {
-            clipboard.setPrimaryClip(ClipData.newPlainText("TMS Diktat", text))
+        val keyboard = keyboardVisible(service)
+        if (!BubbleRules.shouldInsert(keyboard, node != null, allowedPackage, node?.packageName?.toString())) {
+            Log.i(TAG, "insert: clipboard (keyboard=$keyboard field=${node != null} pkg=${node?.packageName} confirmed=$allowedPackage)")
+            copyOnly(service, text)
             return Result.CLIPBOARD
         }
+        node!!
         val showingHint = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && node.isShowingHintText
         val current = if (showingHint) "" else node.text?.toString() ?: ""
         val (merged, cursor) = mergeAtSelection(current, node.textSelectionStart, node.textSelectionEnd, text)
-        val piece = insertedPiece(current, node.textSelectionStart, node.textSelectionEnd, text)
 
-        clipboard.setPrimaryClip(ClipData.newPlainText("TMS Diktat", piece))
-        if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
-            // Leave the plain transcript (without the joining space) on the clipboard
-            // — only when it differs, so the clipboard history gets one entry.
-            if (piece != text) {
-                Handler(Looper.getMainLooper()).postDelayed({
-                    clipboard.setPrimaryClip(ClipData.newPlainText("TMS Diktat", text))
-                }, 600)
-            }
-            return Result.INSERTED
-        }
+        // 1) Write the text into the field directly — no clipboard involved.
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, merged)
         }
-        clipboard.setPrimaryClip(ClipData.newPlainText("TMS Diktat", text))
         if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
             val sel = Bundle().apply {
                 putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, cursor)
                 putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, cursor)
             }
             node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
+            Log.i(TAG, "insert: setText ok (${node.className} ${node.packageName})")
             return Result.INSERTED
         }
+        // 2) Some fields refuse SET_TEXT — paste is the only other way in.
+        val piece = insertedPiece(current, node.textSelectionStart, node.textSelectionEnd, text)
+        copyOnly(service, piece)
+        if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+            Log.i(TAG, "insert: paste fallback (${node.className} ${node.packageName})")
+            return Result.INSERTED
+        }
+        Log.i(TAG, "insert: field refused both, clipboard")
+        copyOnly(service, text)
         return Result.CLIPBOARD
     }
 
-    /** The input-focused node, if it is an editable, non-password field. */
+    /** The virtual keyboard is on screen. */
+    fun keyboardVisible(service: AccessibilityService): Boolean =
+        service.windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+
+    /**
+     * The focused editable, non-password field. findFocus(FOCUS_INPUT) is not
+     * enough: for web content (Chrome, WebViews — incl. TMS's own input line)
+     * it returns the outer FrameLayout, while the real focused input is a
+     * virtual node deeper in the tree. Fall back to searching for it.
+     */
     fun focusedEditable(service: AccessibilityService): AccessibilityNodeInfo? {
-        val candidates = mutableListOf<AccessibilityNodeInfo>()
-        service.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { candidates.add(it) }
-        if (candidates.isEmpty()) {
+        val roots = buildList {
+            service.rootInActiveWindow?.let { add(it) }
             for (w in service.windows) {
-                w.root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { candidates.add(it) }
+                if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION) w.root?.let { add(it) }
             }
         }
-        return candidates.firstOrNull { it.isEditable && !it.isPassword }
+        for (root in roots) {
+            val f = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (f != null && f.isEditable) return if (f.isPassword) null else f
+        }
+        for (root in roots) {
+            val f = findFocusedEditable(root)
+            if (f != null) return if (f.isPassword) null else f
+        }
+        return null
     }
 
-    fun focusedIsPassword(service: AccessibilityService): Boolean =
-        service.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.isPassword == true
+    fun focusedIsPassword(service: AccessibilityService): Boolean {
+        val root = service.rootInActiveWindow ?: return false
+        val f = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (f != null && f.isEditable) return f.isPassword
+        return findFocusedEditable(root)?.isPassword == true
+    }
+
+    private fun findFocusedEditable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.addLast(root)
+        var seen = 0
+        while (stack.isNotEmpty() && seen < MAX_NODES) {
+            val n = stack.removeLast()
+            seen++
+            if (n.isEditable && n.isFocused) return n
+            for (i in n.childCount - 1 downTo 0) n.getChild(i)?.let { stack.addLast(it) }
+        }
+        return null
+    }
 }

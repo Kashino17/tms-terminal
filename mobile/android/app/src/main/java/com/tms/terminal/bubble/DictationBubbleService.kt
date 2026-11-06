@@ -127,7 +127,8 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         val now = System.currentTimeMillis()
         val show = (busy || config.isConfigured) && BubbleRules.shouldShow(
             editable, password, ownWindow = false, busy = busy,
-            snoozedUntil = config.snoozedUntil, now = now, enabled = config.enabled)
+            snoozedUntil = config.snoozedUntil, now = now, enabled = config.enabled,
+            keyboardVisible = try { TextInserter.keyboardVisible(this) } catch (_: Exception) { false })
         if (!show) { overlay.show(BubbleOverlay.Mode.HIDDEN); return }
         overlay.show(when (state) {
             State.IDLE -> BubbleOverlay.Mode.BUBBLE

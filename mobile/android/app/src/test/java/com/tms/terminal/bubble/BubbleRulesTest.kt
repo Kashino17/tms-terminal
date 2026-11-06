@@ -5,8 +5,22 @@ import org.junit.Test
 
 class BubbleRulesTest {
     private fun show(editable: Boolean = true, password: Boolean = false, own: Boolean = false, busy: Boolean = false,
-                     snoozed: Long = 0, now: Long = 1000, enabled: Boolean = true) =
-        BubbleRules.shouldShow(editable, password, own, busy, snoozed, now, enabled)
+                     snoozed: Long = 0, now: Long = 1000, enabled: Boolean = true, keyboard: Boolean = true) =
+        BubbleRules.shouldShow(editable, password, own, busy, snoozed, now, enabled, keyboard)
+
+    // User: only while the virtual keyboard is open; it vanishes with the keyboard…
+    @Test fun hiddenWhenKeyboardClosed() = assertFalse(show(keyboard = false))
+    // …except a dictation that is already running, which must finish normally.
+    @Test fun runningDictationSurvivesKeyboardClosing() = assertTrue(show(keyboard = false, editable = false, busy = true))
+
+    // Insert straight into the field only while keyboard + field are open in the
+    // same app; otherwise (keyboard closed / no field / other app) clipboard.
+    @Test fun insertsOnlyWithKeyboardAndFieldInSameApp() {
+        assertTrue(BubbleRules.shouldInsert(keyboardVisible = true, fieldFound = true, confirmedIn = "a", focusedNow = "a"))
+        assertFalse(BubbleRules.shouldInsert(keyboardVisible = false, fieldFound = true, confirmedIn = "a", focusedNow = "a"))
+        assertFalse(BubbleRules.shouldInsert(keyboardVisible = true, fieldFound = false, confirmedIn = "a", focusedNow = null))
+        assertFalse(BubbleRules.shouldInsert(keyboardVisible = true, fieldFound = true, confirmedIn = "a", focusedNow = "b"))
+    }
 
     @Test fun showsOnEditableField() = assertTrue(show())
     @Test fun hiddenWithoutField() = assertFalse(show(editable = false))
