@@ -63,6 +63,18 @@ describe('whisper-sidecar watchdog', () => {
     await expect(p).rejects.toThrow(/Timeout/i);
   });
 
+  // The Python sidecar handles requests one after another. A request abandoned
+  // by the watchdog kept it busy, so every later dictation queued behind it.
+  it('kills a stalled sidecar so later requests are not stuck behind it', async () => {
+    const mod = await import('../src/audio/whisper-sidecar');
+    const stalled = mod.transcribe('AAAA');
+    await flush();
+    const first = spawned.at(-1);
+    vi.advanceTimersByTime(45_001);
+    await expect(stalled).rejects.toThrow(/Timeout/i);
+    expect(first.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
   it('restarts sidecar and retries the request once on crash', async () => {
     const mod = await import('../src/audio/whisper-sidecar');
     const p = mod.transcribe('AAAA');

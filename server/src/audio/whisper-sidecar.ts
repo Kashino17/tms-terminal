@@ -162,6 +162,14 @@ function armWatchdog(id: string, req: PendingRequest): void {
   req.timer = setTimeout(() => {
     pending.delete(id);
     req.reject(new Error(`Transkription Timeout (${CHUNK_STALL_TIMEOUT_MS / 1000}s). Chunk haengt oder Model zu langsam.`));
+    // The sidecar works through requests one at a time: if it is stuck on this
+    // one, every later request would queue behind it. Kill it — the exit
+    // handler restarts it and resends the other open requests.
+    const stuck = sidecar;
+    if (stuck && !stuck.killed) {
+      logger.warn(`[whisper] ${id} stalled ${CHUNK_STALL_TIMEOUT_MS / 1000}s — killing sidecar so later requests are not blocked`);
+      stuck.kill('SIGKILL');
+    }
   }, CHUNK_STALL_TIMEOUT_MS);
 }
 

@@ -24,6 +24,12 @@ FALLBACK_HF_REPO = "mlx-community/Llama-3.2-3B-Instruct-4bit"
 MODEL_ID = FALLBACK_HF_REPO
 MAX_TOKENS = 512
 
+
+def max_tokens_for(input_tokens):
+    """Output budget for a rewrite: the cleaned text is about as long as the
+    transcript, so a fixed cap truncated long dictations. 2x input, floor 512."""
+    return max(MAX_TOKENS, 2 * int(input_tokens))
+
 # Strip <think>...</think> blocks and any "Rewritten prompt:" style preamble.
 THINK_RE = re.compile(r"<think>[\s\S]*?</think>\s*", re.IGNORECASE)
 PREAMBLE_RE = re.compile(
@@ -117,7 +123,7 @@ def main():
                 model,
                 tokenizer,
                 prompt=prompt,
-                max_tokens=MAX_TOKENS,
+                max_tokens=max_tokens_for(len(tokenizer.encode(transcript))),
                 verbose=False,
             )
             text = strip_preamble((output or "").strip())

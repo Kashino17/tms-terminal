@@ -71,3 +71,36 @@ def test_split_audio_finds_pause_valley():
     assert pause_start <= chunks[0].shape[0] <= pause_end
     assert sum(c.shape[0] for c in chunks) == samples.shape[0]
 
+
+
+# ── Level normalization: quiet speech must not be dropped as "silence" ──────
+def _tone(level, secs=1.0, rate=16000):
+    t = np.arange(int(secs * rate), dtype=np.float32) / rate
+    return (np.sin(2 * np.pi * 220 * t) * level).astype(np.float32)
+
+
+def test_normalize_level_lifts_quiet_speech_to_about_0_9():
+    out = sc.normalize_level(_tone(0.05))  # needs 18x, inside the 20x cap
+    assert 0.85 <= float(np.max(np.abs(out))) <= 0.95
+
+
+def test_normalize_level_never_lowers_loud_audio():
+    loud = _tone(0.95)  # already above the 0.9 target
+    out = sc.normalize_level(loud)
+    assert np.allclose(out, loud)
+
+
+def test_normalize_level_keeps_silence_silent():
+    out = sc.normalize_level(np.zeros(16000, dtype=np.float32))
+    assert float(np.max(np.abs(out))) == 0.0
+
+
+def test_normalize_level_caps_the_gain_at_20x():
+    out = sc.normalize_level(_tone(1e-4))
+    assert float(np.max(np.abs(out))) <= 20 * 1e-4 + 1e-6
+
+
+def test_quiet_speech_survives_trim_after_normalization():
+    quiet = _tone(0.002)  # below trim_silence's absolute RMS threshold (0.003)
+    assert sc.trim_silence(quiet, 16000).shape[0] == 0
+    assert sc.trim_silence(sc.normalize_level(quiet), 16000).shape[0] > 0

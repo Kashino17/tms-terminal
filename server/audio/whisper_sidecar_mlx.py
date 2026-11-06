@@ -161,6 +161,28 @@ def trim_silence(samples, sample_rate, threshold=0.003, pad_secs=0.15):
     return samples[start:end]
 
 
+TARGET_PEAK = 0.9
+MAX_GAIN = 20.0
+
+
+def normalize_level(samples):
+    """Lift quiet recordings so Whisper (and trim_silence) hear them.
+
+    Scales so the 99.9th-percentile |sample| reaches TARGET_PEAK. Never lowers
+    the level, and caps the gain at MAX_GAIN so pure noise is not blown up.
+    Silence stays silence.
+    """
+    if samples.shape[0] == 0:
+        return samples
+    peak = float(np.percentile(np.abs(samples), 99.9))
+    if peak <= 0.0:
+        return samples
+    gain = min(MAX_GAIN, TARGET_PEAK / peak)
+    if gain <= 1.0:
+        return samples
+    return np.clip(samples * gain, -1.0, 1.0).astype(np.float32)
+
+
 def filter_hallucinations(text):
     """Remove known Whisper silence hallucinations."""
     if not text:
@@ -234,7 +256,7 @@ def _emit(obj):
 
 def transcribe_chunk(mlx_whisper, samples, language, model_path=None):
     """Transcribe one chunk (numpy float32). One retry, then raise."""
-    trimmed = trim_silence(samples, TARGET_RATE)
+    trimmed = trim_silence(normalize_level(samples), TARGET_RATE)
     if trimmed.shape[0] == 0:
         return ""
     repo_or_path = model_path or MODEL_REPO
