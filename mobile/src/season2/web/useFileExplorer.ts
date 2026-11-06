@@ -33,11 +33,17 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
 
   const auth = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
-  const listRaw = useCallback(async (path: string) => {
+  const listRaw = useCallback(async (path: string): Promise<void> => {
     if (!server || !token) return;
     try {
       const r = await fetch(`${base}/files/list?path=${encodeURIComponent(path)}`, { headers: auth });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
+      // Ordner gilt hier nicht (Gerätewechsel, gelöscht …) → einmal Home statt
+      // dauerhaft HTTP 400.
+      if (!r.ok && path !== '~' && (r.status === 400 || r.status === 404 || r.status === 403)) {
+        cwd.current = '~';
+        return listRaw('~');
+      }
       if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
       cwd.current = d.path;
       call('setFilesDir', d.path, (d.entries ?? []).map((e: any) => ({
@@ -49,6 +55,17 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
   }, [server, token, base, auth, call]);
 
   const refresh = useCallback(() => listRaw(cwd.current), [listRaw]);
+
+  // Gerätewechsel: Ordner des alten Geräts verwerfen, die Seite zurücksetzen
+  // (sie lädt neu, falls der Explorer gerade offen ist).
+  const serverKey = server ? `${server.id}@${server.host}:${server.port}` : '';
+  const lastServerKey = useRef(serverKey);
+  useEffect(() => {
+    if (!ready || lastServerKey.current === serverKey) return;
+    lastServerKey.current = serverKey;
+    cwd.current = '~';
+    call('resetFilesDir');
+  }, [ready, serverKey, call]);
 
   const download = useCallback(async (paths: string[], zip: boolean) => {
     if (!server || !token || !paths.length) return;

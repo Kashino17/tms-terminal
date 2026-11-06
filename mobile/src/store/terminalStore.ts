@@ -1,8 +1,13 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { upsertTab, repairTabs } from './tabIdentity';
+import { durableStorage } from '../services/durableStorage';
 import { TerminalTab } from '../types/terminal.types';
 import { ConnectionState } from '../types/websocket.types';
+import { createPersistHydration } from './persistHydration';
+
+/** Season 2 must not decide "there are no tabs" before the store has read them. */
+export const terminalHydration = createPersistHydration();
 
 interface TerminalState {
   tabs: Record<string, TerminalTab[]>;
@@ -25,11 +30,13 @@ export const useTerminalStore = create<TerminalState>()(
       connectionStates: {},
 
       addTab(serverId, tab) {
-        const current = get().tabs[serverId] || [];
+        // Never a second tab with the same id or the same session (tabIdentity.ts):
+        // duplicates made renames hit two terminals and closes delete two titles.
+        const current = (get().tabs[serverId] || []).map((t) => ({ ...t, active: false }));
         set({
           tabs: {
             ...get().tabs,
-            [serverId]: [...current.map((t) => ({ ...t, active: false })), { ...tab, active: true }],
+            [serverId]: upsertTab(current, { ...tab, active: true }),
           },
         });
       },
@@ -104,9 +111,26 @@ export const useTerminalStore = create<TerminalState>()(
     }),
     {
       name: 'tms-terminal-tabs',
-      storage: createJSONStorage(() => AsyncStorage),
+      // Also mirrored to a file: an AsyncStorage wipe must not lose this (durableStorage.core.mjs).
+      storage: createJSONStorage(() => durableStorage),
       // Only persist tabs (sessionIds survive app restarts), not runtime connection states
       partialize: (state) => ({ tabs: state.tabs }),
+      // v1: tabs are keyed by sessionId. Stores written before (Season 2 used the
+      // page's card id t1, t2, … which collided after every app restart) get a
+      // one-time repair — see tabIdentity.ts.
+      version: 1,
+      migrate: (persisted: any, version: number) => {
+        if (version < 1 && persisted?.tabs) {
+          const tabs: Record<string, TerminalTab[]> = {};
+          for (const [srv, list] of Object.entries(persisted.tabs as Record<string, TerminalTab[]>)) {
+            tabs[srv] = repairTabs(Array.isArray(list) ? list : []);
+          }
+          return { ...persisted, tabs };
+        }
+        return persisted;
+      },
+      // Called on success AND on a failed read; finishHydration does not fire on errors.
+      onRehydrateStorage: () => () => terminalHydration.complete(),
     },
   ),
 );

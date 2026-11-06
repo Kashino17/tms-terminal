@@ -15,6 +15,7 @@ import { TERMINAL_THEMES, getThemeById } from '../constants/terminalThemes';
 import { colors, fonts, fontSizes, spacing } from '../theme';
 import { useResponsive } from '../hooks/useResponsive';
 import { getCurrentVersion, checkForPreviousVersion, downloadAndInstall, formatSize } from '../services/updater.service';
+import { clearDurableStorage } from '../services/durableStorage';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Settings'>;
@@ -86,6 +87,7 @@ export function SettingsScreen({ navigation }: Props) {
           style: 'destructive',
           onPress: async () => {
             await AsyncStorage.clear();
+            await clearDurableStorage();
             Alert.alert('Done', 'All data cleared. Restart the app.');
           },
         },

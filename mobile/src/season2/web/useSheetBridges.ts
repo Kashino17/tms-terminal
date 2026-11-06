@@ -16,18 +16,27 @@
  *              the terminal, which is the only reason to take one
  *   Gebete     real prayer times for the current location
  */
+import { parentDir, joinDir } from './filePaths';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import type { WebSocketService } from '../../services/websocket.service';
 import { usePortForwardingStore } from '../../store/portForwardingStore';
+// Serverseitige Notizen (klassischer Store) und die Notizen des HTML-Sheets je
+// Karte (eigener Store) sind zwei verschiedene Sachen. Vorher hiessen beide
+// `useNotesStore` — der Import musste Alias nehmen, und wer die Zeile las, sah
+// nicht, dass zwei Notizspeicher gemeint waren.
 import { useNotesStore } from '../../store/notesStore';
 import { useSQLStore } from '../../store/sqlStore';
-import { useNotesStore as useS2NotesStore } from '../store/notesStore';
+import { useS2NotesStore } from '../store/s2NotesStore';
 import { Linking } from 'react-native';
 import { useFavPathsStore } from '../../store/favPathsStore';
-import { fetchPrayerTimes, getCurrentLocation } from '../../services/prayer.service';
+import {
+  fetchPrayerTimes, getCurrentLocation, getChosenLocation, PRAYER_NAMES, type PrayerTimes,
+} from '../../services/prayer.service';
+import { usePrayerStore, prayerMethodName } from '../../store/prayerStore';
+import { readAdhanSettings, canScheduleExactAdhan } from '../../services/adhan.service';
 
 type Call = (fn: string, ...args: unknown[]) => void;
 
@@ -41,6 +50,8 @@ interface Args {
   token: string | null;
   /** sessionId of the terminal the sheets act on. */
   activeSessionId?: string;
+  /** Wird mit den geholten Zeiten gefuellt — der Testknopf braucht sie draussen. */
+  prayerTimesRef?: React.MutableRefObject<PrayerTimes | null>;
 }
 
 function humanSize(bytes: number): string {
@@ -50,7 +61,12 @@ function humanSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function useSheetBridges({ ready, call, wsService, server, token, activeSessionId }: Args) {
+export function useSheetBridges({
+  ready, call, wsService, server, token, activeSessionId, prayerTimesRef,
+}: Args) {
+  // Mitlesen, damit ein Methoden- oder Ortswechsel die Zeiten neu laedt.
+  const method = usePrayerStore((s) => s.method);
+  const chosenLocation = usePrayerStore((s) => s.location);
   /** Directory the Dateien sheet is currently showing. */
   const cwd = useRef('~');
   /** Which sheet is open — so an async reply knows whether it is still wanted. */
@@ -58,14 +74,23 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
   /** Screenshots uploaded this session: server path + a thumbnail URL. */
   const [shots, setShots] = useState<Array<{ path: string; url: string; isVideo?: boolean }>>([]);
 
-  const listFiles = useCallback(async (path: string) => {
+  const listFiles = useCallback(async (path: string): Promise<void> => {
     if (!server || !token) return;
     try {
       const r = await fetch(
         `http://${server.host}:${server.port}/files/list?path=${encodeURIComponent(path)}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        // Gemerkter Ordner gilt hier nicht (anderes Gerät, gelöscht, Windows-
+        // Pfad am Mac …) → einmal auf den Home-Ordner zurückfallen, statt für
+        // immer mit HTTP 400 hängen zu bleiben.
+        if (path !== '~' && (r.status === 400 || r.status === 404 || r.status === 403)) {
+          cwd.current = '~';
+          return listFiles('~');
+        }
+        throw new Error(`HTTP ${r.status}`);
+      }
       const data = await r.json();
       cwd.current = data.path;
       call('setTool', 'files',
@@ -81,6 +106,17 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       call('toast', `Dateien: ${e?.message ?? 'Laden fehlgeschlagen'}`);
     }
   }, [server, token, call]);
+
+  // Gerätewechsel: der Ordner des alten Geräts gilt hier nicht. Zurück auf den
+  // Home-Ordner — und ist die Dateien-Leiste offen, sofort neu laden.
+  const serverKey = server ? `${server.id}@${server.host}:${server.port}` : '';
+  const lastServerKey = useRef(serverKey);
+  useEffect(() => {
+    if (lastServerKey.current === serverKey) return;
+    lastServerKey.current = serverKey;
+    cwd.current = '~';
+    if (openSheet.current === 'files' && serverKey) void listFiles('~');
+  }, [serverKey, listFiles]);
 
   /** Server path → a URL the page can put in an <img>. */
   const downloadUrl = useCallback((path: string) => (
@@ -261,23 +297,63 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
     });
   }, [wsService, ready, call]);
 
-  /** Real prayer times, once — the island and the Gebete screen both read them. */
+  /**
+   * Gebetszeiten fuer die Insel, den Gebetszeiten-Screen und die Einstellungen.
+   *
+   * Laeuft bei jedem Wechsel der Berechnungsmethode und des Ortes mit, nicht nur
+   * einmal beim Start — sonst blieb nach dem Umschalten die alte Methode stehen.
+   *
+   * `meta` ist zusaetzlich zur Liste: Ort, Datum, Hijri, Methode, Adhan-Schalter
+   * und Berechtigungen. Ohne meta zeigt die Seite weiter nur Liste und Countdown.
+   */
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
     (async () => {
-      const loc = await getCurrentLocation().catch(() => null);
+      // Von Hand gewaehlter Ort vor GPS: der Nutzer soll auch ohne Standort
+      // Gebetszeiten sehen (und den Adhan einstellen) koennen.
+      // getCurrentLocation() gibt einen gespeicherten Ort von selbst zurueck; wir
+      // brauchen aber auch das Label, um es anzuzeigen.
+      const chosen = await getChosenLocation();
+      const gps = chosen ? null : await getCurrentLocation().catch(() => null);
+      const loc = chosen ?? gps;
       if (!loc || cancelled) return;
-      const data = await fetchPrayerTimes(loc.latitude, loc.longitude).catch(() => null);
+      const label = chosen
+        ? chosen.label
+        : [gps?.city, gps?.country].filter(Boolean).join(', ') || 'GPS';
+
+      const data = await fetchPrayerTimes(loc.latitude, loc.longitude, method).catch(() => null);
       if (!data || cancelled) return;
-      const t = data.timings;
-      call('setPrayer', [
-        { name: 'Fajr', time: t.Fajr }, { name: 'Dhuhr', time: t.Dhuhr }, { name: 'Asr', time: t.Asr },
-        { name: 'Maghrib', time: t.Maghrib }, { name: 'Isha', time: t.Isha },
-      ].map((p) => ({ ...p, time: p.time.slice(0, 5) })));
+
+      const keys = ['Fajr', 'Sunrise', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'] as const;
+      const times = keys
+        .filter((k) => data.timings[k])
+        .map((k) => ({
+          name: PRAYER_NAMES[k].de,
+          de: PRAYER_NAMES[k].de,
+          ar: PRAYER_NAMES[k].ar,
+          emoji: PRAYER_NAMES[k].emoji,
+          time: data.timings[k],
+        }));
+
+      const adhan = await readAdhanSettings();
+      if (cancelled) return;
+      // Der Testknopf in der Seite braucht die naechste Uhrzeit, um daraus einen
+      // Alarm zu stellen. Hier ablegen, damit onMessage() sie hat.
+      if (prayerTimesRef) prayerTimesRef.current = data.timings;
+      call('setPrayer', times, {
+        location: { label, lat: loc.latitude, lon: loc.longitude },
+        date: {
+          readable: data.date.readable,
+          hijri: `${data.date.hijri.day}. ${data.date.hijri.month.en} ${data.date.hijri.year}`,
+        },
+        method: { id: method, name: prayerMethodName(method) },
+        adhan: { enabled: adhan.enabled, wecker: adhan.wecker, selected: adhan.selected },
+        perms: { notifications: true, exactAlarms: adhan.exactAlarms },
+      });
     })();
     return () => { cancelled = true; };
-  }, [ready, call]);
+  }, [ready, call, method, chosenLocation]);
 
   /** Everything the sheets post back. Returns true when it handled the message. */
   const handle = useCallback((type: string, payload: any): boolean => {
@@ -327,7 +403,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
             const r = await fetch(`http://${server.host}:${server.port}/files/mkdir`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-              body: JSON.stringify({ path: `${cwd.current.replace(/\/$/, '')}/${payload.name}` }),
+              body: JSON.stringify({ path: joinDir(cwd.current, String(payload.name)) }),
             });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             call('toast', 'Ordner angelegt');
@@ -383,9 +459,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       case 'files:cd': {
         const name = String(payload.name ?? '');
         const base = cwd.current;
-        const next = name === '..'
-          ? base.replace(/\/[^/]+\/?$/, '') || '/'
-          : `${base.replace(/\/$/, '')}/${name.replace(/\/$/, '')}`;
+        const next = name === '..' ? parentDir(base) : joinDir(base, name);
         listFiles(next);
         return true;
       }

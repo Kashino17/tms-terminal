@@ -137,3 +137,23 @@ test('Reattach ohne verpasste Ausgabe bei gleicher Breite lässt den Client unan
   assert.equal(seen.join(''), '', 'kein Clear, kein Snapshot, kein Replay — nichts zu tun');
   mgr.closeSession(id);
 });
+
+test('App-Kaltstart (fresh): gleiche Breite, nichts verpasst — trotzdem Vollbild MIT Verlauf', async () => {
+  const mgr = new TerminalManager();
+  const session = mgr.createSession({ cols: 50, rows: 24 }, () => {}, () => {});
+  const id = session!.id;
+  mgr.write(id, 'echo VERLAUF_VOR_DEM_NEUSTART\r');
+  await sleep(1200);
+
+  mgr.detachSession(id);
+  await sleep(300);
+  // Kaltstart: das Seiten-Terminal ist leer und sagt das.
+  const seen: string[] = [];
+  mgr.reattachSession(id, (_i, data) => seen.push(data), () => {}, 50, 24, true);
+  await sleep(600);
+
+  const got = seen.join('');
+  assert.ok(got.includes('\x1b[3J'), 'Clear vorweg');
+  assert.ok(got.includes('VERLAUF_VOR_DEM_NEUSTART'), 'der bisherige Verlauf kommt mit');
+  mgr.closeSession(id);
+});

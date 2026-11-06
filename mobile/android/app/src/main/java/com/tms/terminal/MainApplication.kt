@@ -31,6 +31,7 @@ class MainApplication : Application(), ReactApplication {
             packages.add(AdhanPackage())
             packages.add(ConnectionPackage())
             packages.add(AgentNotificationPackage())
+            packages.add(com.tms.terminal.bubble.DictationBubblePackage())
             return packages
           }
 

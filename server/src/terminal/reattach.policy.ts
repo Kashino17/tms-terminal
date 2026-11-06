@@ -57,6 +57,11 @@ export function planReattach(
  *  - seine Breite passt nicht mehr zu der, mit der die Session lief, oder
  *  - der Detach-Puffer ist übergelaufen (sein Anfang fehlt).
  *
+ *  - der Client meldet, dass sein Terminal LEER ist (`clientFresh`: App-Kaltstart,
+ *    neu gebaute Seite). Früher deckte das zufällig der Breitenwechsel ab; seit
+ *    der festen Breite (v1.124.0) stimmt die Breite immer — ohne dieses Signal
+ *    schickte der Server dann nichts, und die Karte blieb leer.
+ *
  * Ist nichts davon der Fall (der häufigste Fall: App kurz in den Hintergrund
  * und zurück, nichts passiert), bleibt der Client unangetastet — ein
  * unnötiges Clear+Snapshot ließe den Karteninhalt sichtbar zucken.
@@ -66,7 +71,8 @@ export function wantsSnapshot(
   clientCols: number | undefined,
   bufferedBytes: number,
   overflowed: boolean,
+  clientFresh = false,
 ): boolean {
-  if (bufferedBytes > 0 || overflowed) return true;
+  if (clientFresh || bufferedBytes > 0 || overflowed) return true;
   return clientCols !== undefined && clientCols !== sessionCols;
 }

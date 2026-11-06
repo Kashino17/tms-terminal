@@ -126,3 +126,97 @@
 ### Offene Fragen
 - Wie verhält sich der conversational Onboarding-Flow in der Praxis? Findet die AI den richtigen Moment für den CONFIG-Block?
 - Server-Update auf Produktiv-Server steht noch aus
+
+
+## 2026-10-26 — Fold-Splitscreen nach Freigabe umgesetzt
+
+- Ausgangspunkt: Bei aufgeklapptem Fold mit Video oben und Tastatur blieb im TMS-Terminal zu wenig lesbare Ausgabe. Nutzer hat den über Localhost/Tailscale bereitgestellten interaktiven Mockup mit "ja passt" freigegeben.
+- Neue kompakte Season-2-Ansicht für kurze Fenster; bestehende PTY, Eingabe, Sondertasten und Recorder werden weiterverwendet. Sitzungswechsler, Lesefokus und Schriftgrößenwahl sind im schmalen Kopf zugänglich.
+- Viewport- und Inhaltsgrößen werden beobachtet; stabile PTY-Resizes berücksichtigen jetzt auch schrumpfende Höhen. Entwürfe werden je Sitzung einschließlich des bereits gesendeten Textstands gespeichert und ohne erneute Eingabe wiederhergestellt.
+- Der native HTML-Build bettet die neuen CSS-/JS-Dateien ein. 108 Tests bestanden, 2 Browser-Tests übersprungen; acht generierte Inline-Skripte syntaktisch gültig.
+- Visuelle Prüfung auf dem echten Fold mit Samsung-Tastatur steht aus. Keine GitHub-Veröffentlichung, kein Push, keine automatische Installation auf dem Handy.
+
+### Build-Abschluss dieser Sitzung
+- Quellcode ins separate Repository übernommen und Dateihashes verglichen; `git diff --check` sauber. Testlauf auch direkt im Zielrepository: 108 bestanden, 2 Browser-Tests übersprungen. Eingebettetes HTML mit acht Skripten syntaktisch geprüft.
+- Kein APK-Artefakt: Gradle wartet schon in der React-Native-Konfiguration. Node 22 behebt das erste CLI-Import-Hängen, nicht das anschließende `cli config`-Hängen. Thread-/Prozessdiagnose zeigt blockiertes synchrones Lesen lokaler Abhängigkeiten; Einzel-Lesetests gelingen. Ursache nicht abschließend geklärt. Auch TypeScript-Gesamtprüfung blieb ohne Ausgabe hängen.
+- Eigene Build-/TypeScript-Prozesse beendet. Kein `deploy.sh`, kein pauschales Beenden von Gradle-/Node-Prozessen, keine Installation, kein Release. Die lokale Implementierung ist gespeichert; APK und Fold-Gerätetest bleiben offen.
+
+
+## 2026-10-26 — Veröffentlichung des Fold-Updates angefordert
+
+- Nutzer hat Commit, Push und Release ausdrücklich freigegeben, damit die App das Update anbietet. Zielversion v1.123.7, Android-versionCode 22307 (app.json und build.gradle synchronisiert).
+- Vorhandenen GitHub-Release-Workflow gefunden: Er umgeht das bereits dokumentierte lokale Headless-Metro-Problem und nutzt den bestehenden Signaturschlüssel aus Repository-Secrets. Letzter erfolgreicher Release: v1.123.6 am 22.10.2026.
+- Workflow ergänzt um WebView-Build und Regressionstests vor dem APK-Build; Release-Text beschreibt das Fold-Update. Keine neuen Berechtigungen, Schlüssel oder Runner-Dienste nötig.
+- Nächste Prüfung: Tag-Build erfolgreich, APK mit korrekter Paketkennung/Version/Signatur, öffentlicher Latest-Release-Endpunkt für den In-App-Updater. Gerätetest mit echter Samsung-Tastatur bleibt anschließend erforderlich.
+
+### CI-Korrektur für v1.123.8
+- v1.123.7: Feature-Commit `b16ceaf` und Tag erfolgreich gepusht. Die neue Teststufe stoppte korrekt vor Signierung/Veröffentlichung: prayer-counter/term-text benutzten absolute Mac-Pfade; tab-identity importiert TypeScript direkt, was Node 20 nicht unterstützt.
+- Pfade relativ zur Testdatei gemacht und Node 22 mit explizitem Type-Stripping für die Tests ergänzt. Android/Metro bleibt auf dem zuletzt erfolgreichen Node 20. Keine Tests deaktiviert.
+- Neues Release-Ziel v1.123.8 / code 22308; der bereits gepushte, fehlgeschlagene Tag v1.123.7 bleibt unverändert.
+
+### Release abgeschlossen
+- v1.123.8 / Android code 22308 erfolgreich veröffentlicht: https://github.com/Kashino17/tms-terminal/releases/tag/v1.123.8. Feature-Commit `b16ceaf`, CI-Korrektur/Release-Commit `0cb0c5c`, Tag v1.123.8. Branch und Tag gepusht.
+- GitHub-Lauf 40306140012: WebView-Build und alle 108 ausführbaren Tests erfolgreich (2 Browser-Checks übersprungen), Android-Build/Signierung und Veröffentlichung erfolgreich.
+- Veröffentlichte APK (104537152 Bytes) heruntergeladen: Paket `com.tms.terminal`, v1.123.8/code 22308, arm64; Zertifikat identisch zur installierbaren Vorgängerversion v1.123.6. SHA-256: `2c6853be0ff72cbe55cfe3d0816ec96af70dc0f5f581135d7627624463dd8a11`.
+- Öffentlichen Latest-Release-Endpunkt ohne Anmeldung geprüft; die App findet die neue APK über ihren vorhandenen Updater. Einstieg: Einstellungen → Nach Updates suchen. Keine direkte Installation auf dem Gerät vorgenommen.
+- Git-Push hing mit Delta-Packung; der erfolgreiche Aufruf verwendet temporär `pack.window=0`, `pack.threads=1`, HTTP/1.1 und `gh auth git-credential`, ohne globale Git-Konfiguration zu ändern.
+
+## 2026-10-28 — Diagnose Verbindung bei Bildschirm-Aus und Ruhezustand
+
+- Nutzer meldet Verbindungsabbrüche bei ausgeschaltetem Bildschirm bzw. MacBook-Ruhezustand ohne Netzteil und möchte keinen zusätzlichen Energieverbrauch.
+- Nur Diagnose, keine Änderungen an App, Server, Tailscale oder Energieeinstellungen, kein neuer Release. Ursache am Gerät nicht reproduziert.
+- Aktuelle read-only-Abfrage: Netzbetrieb; pmset AC sleep=0, displaysleep=10, womp=1. Ausgelesene letzte Ereignisse zeigen Display-Aus/Ein; daraus kein Nachweis eines System-Sleep-Abbruchs. Akku-Schlafverhalten nicht verifiziert.
+- Installierte Tailscale.app laut Info.plist: 1.94.1. Offizielles Changelog nennt in 1.98.8 Korrekturen für Verbindungen nach OS-Wake; aktueller Changelog-Stand 1.104.2. Update ist ein sinnvoller Ansatz, aber keine bewiesene Ursache des konkreten Abbruchs. Quelle: https://tailscale.com/changelog
+- Aktueller TMS-Code hält getrennte PTYs ohne Idle-TTL; automatische Wiederverbindung und AppState-Vordergrundbehandlung bestehen bereits. WebSocket-Retries laufen bis maximal 5 Sekunden Abstand; ein expliziter Handshake-Timeout fehlt. Verbesserungsansatz: begrenzter Verbindungsaufbau, verlässliche Wiederaufnahme und langsamere Versuche bei längerem Offline-Zustand statt zusätzlicher Wake-Locks.
+- Technische Grenze: Display-Aus und System-Schlaf unterscheiden. Normaler System-Schlaf unterbricht interaktive Terminal-Ausführung; automatisches Wiederverbinden kann erst nach Wake/Netzrückkehr helfen. Durchgehende Arbeit erfordert einen wachen Rechner und kann gegenüber Schlaf nicht ohne Mehrverbrauch versprochen werden. Empfohlen: bestehendes Energiesparen erhalten und Wiederaufnahme verbessern; bei gewünschtem Live-Betrieb nur während tatsächlicher Nutzung wachhalten, als expliziter Energie-Kompromiss.
+
+## 2026-11-05 — Terminal-Darstellung: Breite, Dopplungen, OpenCode/Windows, Links
+
+- Analyse + Plan-Seite mit Fragen: https://claude.ai/artifact/CRvLBa2xfpSYR9svMNvCrh (Antworten in db `answers`).
+- Ursache „zerhackt“: bridge.js `measureCell` zählte die Stapel-Verkleinerung mit → Karten hinter der aktiven bekamen 42/46/50 statt 39 Spalten, jeder Wisch = SIGWINCH. Live per `stty` auf den PTYs bewiesen.
+- Ursache „doppelt“: Zeilen-Ratsche war in v1.123.7 entfernt → Tastatur drückte PTY auf 13 Zeilen, Claudes Live-Bereich höher → Ink lässt Kopien stehen. E2E (echte Seite + echter Claude Code): 1 → 14 Köpfe; mit Ratsche 1, 0 Resizes.
+- Feste Breite 50 Spalten (Schrift folgt Kartenbreite, 10–20 px) + kompakter Handy-Rand (6 px statt 32 px). Schriftregler entfallen.
+- OpenCode/Windows: ConPTY schluckt Maus-DECSET; Prozessname unter Windows nie ermittelt (pgrep/ps) und `opencode.exe` nicht erkannt → Fix: Get-CimInstance (tiefster Nachfahre), neue Nachricht `terminal:process` bei Alt-Screen-Start, isMouseTui strippt Pfad/.exe.
+- Windows-Server: `tms-terminal update` brauchte bash → scheiterte immer. Jetzt bin/update-runner.js (Node); doctor prüft Fernzugriff (Encoder, ddagrab, Sitzung, Probeaufnahme); ffmpeg Baseline/-bf 0. Windows-PC offline → nicht live getestet; erstes Update dort manuell.
+- Links: Rand-Regel aus Nachbarzeilen (alter Verlauf mit anderer Breite) + Aufzählungszeichen nie Fortsetzung.
+- Releases: v1.123.9, v1.124.0, v1.124.1, v1.124.2 (alle CI grün, latest = v1.124.2). Server-Commit f88aa3e gepusht (Windows).
+- v1.124.3: Verlauf nach App-Neustart — App meldet `fresh` (leeres Terminal), Server schickt dann immer das Vollbild.
+
+## 2026-11-05 (abends) — Verlauf nach Server-Neustart, Box-Reste, Akku
+
+- Server-Neustart (21:42/21:52, mit Aufpasser-Skript ~/.tms-terminal/restart-guard.sh) — alle Claude-Sitzungen liefen im Wächter weiter.
+- „Verlauf weg“ nach Neustart: neuer Server legte für übernommene Terminals einen LEEREN Spiegel an; das nächste Vollbild ersetzte den App-Verlauf. Fix `e6805d7`: Spiegel werden beim Herunterfahren gesichert und beim Übernehmen eingespeist; Spiegel ohne Vorgeschichte schicken nur an leere Clients ein Vollbild.
+- „Dopplungen“: Server-Spiegel selbst enthielt die Reste → nicht App. Ursache belegt mit echtem Claude Code: Unteragenten-Bestätigungen zeigen ganze Befehle (bei 50 Spalten 100–160 Zeilen); Box höher als PTY (31) → Reste. 31 Zeilen → Reste, 200 → keine.
+- Fix v1.125.0 (`32a3d27`): virtuelle Höhe 200 Zeilen, Karte schneidet Leerzeilen ab, liest nur geänderte Zeilen neu (xterm-interne Meldung); Server-`screen()` endet beim Inhalt (Auto-Approve).
+- Wärme-Fund: versteckte xterm-Renderer bauten bei jedem Rollen alle Zeilen neu (Auswahl-Logik, am Pause-Schalter vorbei) — stillgelegt. Messung (CPU 4× gedrosselt, 10 Terminals Dauerausgabe): 47 → 37 ms Arbeit/s; Fehlerfall: 10 Reste/196 falsche Zeilen → 0/0.
+- Tests: Server 495/495, App 121 bestanden; CI-Lauf 42039586986 grün, v1.125.0 = latest.
+
+## 2026-11-05 (spät) — Windows, Dateien-Gerätewechsel
+
+- Windows-PC zunächst offline; Analyse: node-pty nutzt System-ConPTY (useConptyDll=false) → alternativer Bildschirm wird nicht weitergegeben. Folgen: vim/less mit 200 Zeilen (seit v1.125.0), OpenCode-Maus erst nach Neuverbindung. Fix v1.125.1 (`51ace4c`): ProcessWatch (win32, 4 s Drossel + nachlaufende Prüfung, geteilte PowerShell-Tabelle 1,5 s), App-Namensliste FULLSCREEN_TUIS; Mac meldet auch das Ende einer Vollbild-TUI. Nachgestellt (1049 entfernt): 200 → 32 → 200.
+- Mac-Server-Neustart 22:52: Verlaufssicherung live bestätigt. Log-Meldung präzisiert (`81fdb2f`).
+- Windows später erreichbar (5 ms), aber kein Server auf 8767; SSH-Notizen lesen vom Auto-Mode blockiert → Nutzer soll `tms-terminal doctor` ausführen oder Benutzer/Schlüssel nennen.
+- Dateien: Windows-Pfad nach Gerätewechsel am Mac → HTTP 400 (belegt), Ansicht hing dauerhaft. Fix v1.125.2 (`625b8e1`): Reset auf ~ bei Serverwechsel (Leiste + Vollbild), Rückfall auf ~ bei 400/403/404, Windows-Pfade (filePaths.ts + TMS-TEST-EXPORT fsPath, 3 Tests).
+
+
+## 2026-11-07 — Alle Geräte in einer Ansicht (v1.126.0)
+
+- Nutzer: mit 2 Geräten ständig zwischen Übersicht und Terminals wechseln = Arbeitsfluss kaputt. Erste 3 Redesign-Varianten (Werkbank/Leitstand/Räume) abgelehnt; Fragen gestellt → Konzept: EINE Buchstaben-Leiste mit Terminals beider Geräte, Fernzugriff aus der Insel mit nahtlosem MAC/WIN-Wechsel, Liquid-Deck-Optik bleibt, Stapel/Liste/Übersicht-Knöpfe raus. Mockups per Tailscale (:8510) gezeigt, freigegeben ("bring es live").
+- Umsetzung `f65ad9b`: RN verbindet neben dem Hauptserver jedes erreichbare Gerät (Peers), sessionId→Server-Routing, create-FIFO pro Server, Seite meldet `terminal:restored` pro Karte; Leiste nach Gerät gruppiert, Insel "+" mit Geräte-Wahl + Fernzugriff, `TMSRemote.switchTo`.
+- Geprüft: tsc 0 Fehler, 125/127 Tests (2 Browser übersprungen), HTML-Diff nur eigene Änderungen, Browser-Simulation mit 2 Geräten (Gruppen, Routing, Create auf WIN, Fernzugriff-Wechsel) und 1 Gerät (unverändert). Echter Gerätetest steht aus.
+
+## 2026-11-07 nachts — Diktat-Streaming (v1.127.0)
+
+- Nutzer: Wispr Flow als Vorbild; unsere Transkription langsam, bricht ab („Zeitüberschreitung“), sperrt danach. Gemessen: Modell NICHT schuld (4 min = 10,6 s large-v3 / 3,8 s turbo). Ursachen im Code: Upload erst nach Stopp als 5-MB-Nachricht, `send()` verwirft still bei getrenntem Socket + Datei schon gelöscht, Ergebnis an alten Socket, Mikro-Sperre in processing, Sidecar-Stau, Rewriter schnitt bei 512 Tokens ab, leise Sprache als Stille weggeschnitten.
+- Umsetzung (Design+Plan, TDD): Streaming-Upload während Aufnahme, Byte-Offset-Protokoll mit resume/Neu-Upload, Vorab-Transkription, ✕ gibt frei, Fallback für alte Server, Ende-/Dauer-Logs. Opus-Review: 1 Critical (Offset-Rennen) + 7 Important behoben.
+- Leise Sprache: Normalisierung NACH dem Stille-Schnitt; adaptiver Schnitt verworfen (Raumrauschen → „Vielen Dank.“). 0,5-%-Pegel geht weiter verloren (wie vorher).
+- Parallel-Job hatte v1.126.0 genommen → rebased, als v1.127.0 released. Server-Neustart steht aus (Nutzer).
+- Nachtrag v1.127.1 (`b9cd2f3`): Dateien-Leiste/Explorer folgen dem Gerät des vorderen Terminals (term:active); Fingerabdruck pro Gerät (sudo → Gerät der Sitzung, Fernzugriff → angezeigtes Gerät, Windows → Hinweis). tsc 0, 125 Tests grün, Browser-Simulation bestätigt die Meldungen.
+
+## 2026-11-07 früh — Diktat-Bubble (v1.128.0)
+
+- Teil 2 nach Wispr-Vorbild: Bedienungshilfe + Overlay in allen Apps, Tippen = Aufnahme, ✓ = einfügen (nur in die App, in der ✓ gedrückt wurde), sonst Zwischenablage, Halten = 15 min schlafen. Server: schlanke `?role=dictation`-Verbindung (normale Verbindungen übernehmen `currentWs`).
+- Kotlin-Logik pure + JUnit (33 Tests), Test-Server `server/scripts/dictation-test-server.ts` (Port 8799, TEST_AUDIO/DELAY_MS) für Emulator-E2E. Emulator bekommt keinen Host-Mikroton → echte Mikro-Prüfung erst am Fold.
+- Opus-Review: Critical = gleichnamiges `var origRenderSettings` im Bridge-IIFE → Season 2 startete nicht; neuer Browser-Test `mobile/scripts/webview-bubble.test.mjs` (TMS_VIZ_PW). 8 Important behoben.
+- Parallel-Job hatte v1.127.1 → rebased, liquidDeckHtml neu gebaut, Diff = nur Bridge-Block.
+

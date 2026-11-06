@@ -5,7 +5,7 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { WebSocketService } from '../services/websocket.service';
 import { TERMINAL_HTML } from './terminalHtml';
 import { TOOLBAR_HEIGHT } from './TerminalToolbar';
-import { TOOL_RAIL_WIDTH } from './ToolRail';
+
 import { colors, fonts } from '../theme';
 import type { AiToolType } from '../types/terminal.types';
 import { useSQLStore } from '../store/sqlStore';
@@ -162,7 +162,10 @@ interface Props {
   onAiToolDetected?: (tool: AiToolType) => void;
   rangeActive?: boolean;
   onRangeClose?: () => void;
-  railWidth?: Animated.Value;
+  /** Reserved right edge in px, so the visible terminal does not sit under a
+   *  rail. No caller sets it any more (ToolRail was removed) but the prop stays:
+   *  TerminalView must not claim that width from the terminal's line width. */
+  railWidth?: Animated.Value | number;
   onPathClicked?: (path: string) => void;
   /** When true the virtual keyboard is suppressed (e.g. tool panel open). */
   panelOpen?: boolean;
@@ -718,7 +721,7 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
     <Animated.View
       style={
         visible
-          ? [styles.visibleContainer, { bottom: bottomAnim, right: railWidth ?? 0 }]
+          ? [styles.visibleContainer, { bottom: bottomAnim, right: railWidth || 0 }]
           : [styles.hiddenContainer, railWidth ? { right: railWidth } : { right: 0 }]
       }
       pointerEvents={visible ? 'auto' : 'none'}

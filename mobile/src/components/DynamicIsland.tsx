@@ -29,6 +29,8 @@ interface DynamicIslandProps {
   activeTabHasBrowser: boolean;
   onOpenGrid?: () => void;
   onSwipeTab?: (direction: 'left' | 'right') => void;
+  /** Kebab auf einem Tab-Chip. Lang druecken geht auch. */
+  onTabMenu?: (tabId: string) => void;
 }
 
 const DOT_COLORS: Record<string, string> = {
@@ -51,6 +53,7 @@ export function DynamicIsland({
   activeTabHasBrowser,
   onOpenGrid,
   onSwipeTab,
+  onTabMenu,
 }: DynamicIslandProps) {
   const { width: screenWidth } = useWindowDimensions();
   const [expanded, setExpanded] = useState(false);
@@ -285,6 +288,8 @@ export function DynamicIsland({
               <Pressable
                 key={tab.id}
                 onPress={() => { onSelectTab(tab.id); toggle(); }}
+                onLongPress={() => { onTabMenu?.(tab.id); }}
+                delayLongPress={450}
                 style={[
                   s.chip,
                   active && ai && s.chipAiActive,

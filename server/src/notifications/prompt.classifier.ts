@@ -21,7 +21,7 @@ export interface PromptOption {
 }
 
 export interface PromptClass {
-  kind: 'permission' | 'confirm' | 'question' | 'none';
+  kind: 'permission' | 'confirm' | 'question' | 'sudo' | 'none';
   /** Die Taste, die zustimmt. `null` heißt: NIE automatisch drücken. */
   key: string | null;
   question: string;
@@ -48,6 +48,7 @@ const AFFIRMATIVE_GLUED_RE = /^(yes|ja|allow|approve)[,A-Z]/i;
 const YN_DEFAULT_NO = /\[y\/N\]\s*:?\s*$/;   // Vorgabe Nein → 'y' nötig
 const YN_DEFAULT_YES = /\[Y\/n\]\s*:?\s*$/;  // Vorgabe Ja  → Enter genügt
 const YN_NEUTRAL = /\((y\/n|yes\/no)\)\s*:?\s*$/i;
+const SUDO_PROMPT_RE = /(\[sudo\]\s*password\s+for\s+[^:]+:\s*|^password:\s*|enter\s+passphrase\s+for\s+[^:]+:\s*)$/i;
 
 const OPTION_RE = /^\s*(❯|▶|›|>)?\s*(?:([1-9])[.)]\s*)?([●◉○◯])?\s*(\S.*)$/;
 const DIVIDER_RE = /^[─━═╌\-_]{3,}$/;
@@ -64,6 +65,51 @@ export function parseOption(line: string): PromptOption | null {
     selected: !!mark || radio === '●' || radio === '◉',
     text: text.trim(),
   };
+}
+
+/** Auswahl-Cursor einer UNNUMMERIERTEN Liste (Codex-Varianten ohne Nummern,
+ *  generische TUIs). Bewusst nur ›: ❯ ist ein verbreiteter Shell-Prompt und >
+ *  beginnt Zitate/Fortsetzungszeilen — beide stehen mitten in Prosa, ›
+ *  zeichnet nur eine TUI. */
+const CURSOR_ITEM_RE = /^\s*›\s*(\S.*)$/;
+/** Listenzeile ohne Marke (eingerückt wie die Geschwister unter dem Cursor). */
+const PLAIN_ITEM_RE = /^\s{2,}\S/;
+
+/** Ein unnummerierter Listenblock um die letzte ›-Zeile herum. */
+export function findCursorList(
+  rows: string[],
+): { options: PromptOption[]; startY: number; endY: number } | null {
+  // Die letzte ›-Zeile in den untersten TAIL_SCAN Zeilen suchen — darunter
+  // dürfen nur Leerzeilen, Trennlinien oder die Fußzeilen-Legende liegen.
+  let cursor = -1;
+  for (let y = rows.length - 1; y >= 0 && y >= rows.length - TAIL_SCAN; y--) {
+    const t = rows[y].trim();
+    if (CURSOR_ITEM_RE.test(rows[y])) { cursor = y; break; }
+    if (!t || DIVIDER_RE.test(t) || CHROME_RE.test(t)) continue;
+    break; // echter Inhalt UNTER der Marke — dann wartet da keine Liste
+  }
+  if (cursor < 0) return null;
+
+  // Blockgrenzen: die Cursorzeile plus zusammenhängende eingerückte Zeilen
+  // darüber/darunter (die übrigen, nicht markierten Optionen).
+  const isItem = (line: string): boolean =>
+    CURSOR_ITEM_RE.test(line)
+    || (PLAIN_ITEM_RE.test(line) && !CHROME_RE.test(line) && !DIVIDER_RE.test(line));
+  let startY = cursor;
+  while (startY - 1 >= 0 && isItem(rows[startY - 1])) startY--;
+  let endY = cursor;
+  while (endY + 1 < rows.length && isItem(rows[endY + 1])) endY++;
+
+  const options: PromptOption[] = [];
+  for (let y = startY; y <= endY; y++) {
+    const cur = CURSOR_ITEM_RE.exec(rows[y]);
+    options.push({
+      n: null,
+      selected: !!cur,
+      text: (cur ? cur[1] : rows[y].trim()).slice(0, 160),
+    });
+  }
+  return { options, startY, endY };
 }
 
 /**
@@ -141,13 +187,14 @@ export function classifyScreen(screen: ScreenView): PromptClass {
     return { kind: 'question', key: null, question: questionAbove(rows, rows.length), options: [] };
   }
 
-  // Klassisches Ja/Nein: nur wenn der Cursor auf genau dieser Zeile blinkt.
+  // Klassisches Ja/Nein oder sudo/Passwort: nur wenn der Cursor auf genau dieser Zeile blinkt.
   // Steht das Muster mitten im Text, wartet nichts.
   let last = rows.length - 1;
   while (last >= 0 && rows[last].trim() === '') last--;
   if (last >= 0 && screen.cursorY === last) {
     const line = rows[last];
     const q = line.trim().slice(0, 160);
+    if (SUDO_PROMPT_RE.test(line.trim())) return { kind: 'sudo', key: null, question: q, options: [] };
     if (YN_DEFAULT_NO.test(line)) return { kind: 'confirm', key: 'y\r', question: q, options: [] };
     if (YN_DEFAULT_YES.test(line)) return { kind: 'confirm', key: '\r', question: q, options: [] };
     if (YN_NEUTRAL.test(line)) return { kind: 'confirm', key: 'y\r', question: q, options: [] };

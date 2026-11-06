@@ -42,6 +42,7 @@ export class WebSocketService {
   private listeners = new Set<MessageHandler>();
   private persistentHandler: MessageHandler | null = null;
   private onStateChange: StateHandler = () => {};
+  private stateListeners = new Set<StateHandler>();
   private _state: ConnectionState = 'disconnected';
   private netInfoUnsub: (() => void) | null = null;
   private lastNetType: NetInfoStateType | null = null;
@@ -84,6 +85,15 @@ export class WebSocketService {
   private setState(state: ConnectionState): void {
     this._state = state;
     this.onStateChange(state);
+    for (const l of this.stateListeners) {
+      try { l(state); } catch { /* a listener must not break the socket */ }
+    }
+  }
+
+  /** Additional state listener (setStateHandler has a single owner); returns unsubscribe. */
+  addStateListener(handler: StateHandler): () => void {
+    this.stateListeners.add(handler);
+    return () => this.stateListeners.delete(handler);
   }
 
   /** Add a listener; returns an unsubscribe function */
@@ -193,14 +203,17 @@ export class WebSocketService {
     };
   }
 
-  send(msg: object): void {
+  /** Returns false when the socket is not open and the message was dropped. */
+  send(msg: object): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
       const data = JSON.stringify(msg);
       if (data.length > LARGE_SEND_THRESHOLD) {
         this.largeTransferUntil = Date.now() + LARGE_SEND_GRACE_MS;
       }
       this.ws.send(data);
+      return true;
     }
+    return false;
   }
 
   disconnect(): void {
