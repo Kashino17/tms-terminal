@@ -212,7 +212,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
             if (elapsed > SILENCE_WATCH_MS && peakSinceStart == 0) {
                 // Android delivers silence instead of an error when it denies the mic.
                 onCancel()
-                overlay.toast("Mikrofon blockiert — kein Ton von Android")
+                overlay.result(BubbleView.Result.ERROR, "Mikrofon blockiert — kein Ton von Android")
                 return
             }
             main.postDelayed(this, LEVEL_MS)
@@ -264,13 +264,17 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
             TextInserter.copyOnly(this, t) // never lose the transcript
             TextInserter.Result.CLIPBOARD
         }
-        finishWith(if (result == TextInserter.Result.INSERTED) "Eingefügt" else "In Zwischenablage kopiert")
+        if (destroyed) return
+        reset()
+        if (result == TextInserter.Result.INSERTED) overlay.result(BubbleView.Result.INSERTED, "Eingefügt")
+        else overlay.result(BubbleView.Result.CLIPBOARD, "In Zwischenablage")
     }
 
+    /** Ends the dictation with a problem: short shake + caption. */
     private fun finishWith(message: String) {
         if (destroyed) return
         reset()
-        overlay.toast(message)
+        overlay.result(BubbleView.Result.ERROR, message)
     }
 
     /** Sent right away on this thread (OkHttp send is thread-safe) — before reset() closes the socket. */

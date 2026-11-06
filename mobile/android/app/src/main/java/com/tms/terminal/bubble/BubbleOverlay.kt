@@ -2,12 +2,8 @@ package com.tms.terminal.bubble
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.res.ColorStateList
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.PixelFormat
-import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
@@ -17,20 +13,23 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ProgressBar
+import android.view.animation.PathInterpolator
 import android.widget.TextView
-import com.tms.terminal.R
 import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
- * The floating UI: a small translucent bubble, the recording pill
- * (✕ · level · time · ✓), a short toast, and the sleep target at the bottom.
- * All windows are TYPE_ACCESSIBILITY_OVERLAY + NOT_FOCUSABLE, so the text
- * field keeps the input focus while the user dictates.
+ * Two TYPE_ACCESSIBILITY_OVERLAY windows that NEVER change size:
+ *  - the circle window (idle / transcribing / result), and
+ *  - the pill window (full pill width, only while recording) in which the
+ *    circle → pill → circle morph is drawn.
+ * Android animates every move of a window's left edge, and a right-docked
+ * window that shrinks has to move its left edge — the circle jumped and slid
+ * back. With fixed-size windows the hand-over is pixel-identical instead.
+ *
+ * Both are NOT_FOCUSABLE, so the text field keeps the input focus.
+ * Gestures — circle: tap = record, drag = move, hold = sleep 15 min,
+ *            hold while transcribing = cancel.  pill: ✕ left, ✓ right.
  */
 class BubbleOverlay(
     private val ctx: Context,
@@ -50,172 +49,204 @@ class BubbleOverlay(
     private val main = Handler(Looper.getMainLooper())
     private val density = ctx.resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
+    private val ease = PathInterpolator(0.2f, 0f, 0f, 1f)
+    private val spring = PathInterpolator(0.34f, 1.4f, 0.64f, 1f)
 
     var mode = Mode.HIDDEN
         private set
 
-    // ── views ───────────────────────────────────────────────────────────
-    private val root = FrameLayout(ctx)
-    private val bubble = FrameLayout(ctx).apply {
-        background = pill(Color.argb(200, 28, 28, 36), dp(16).toFloat(), Color.argb(60, 255, 255, 255))
-        addView(ImageView(ctx).apply {
-            setImageResource(R.drawable.bubble_wave)
-            imageTintList = ColorStateList.valueOf(Color.argb(235, 255, 255, 255))
-        }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
-        alpha = 0.9f
+    private val circle = BubbleView(ctx)
+    private val pill = BubbleView(ctx)
+    private val size = circle.diameter.toInt()
+    private val pillW = circle.pillWidth.toInt()
+    private val circleParams = overlayParams(size, size)
+    private val pillParams = overlayParams(pillW, size)
+
+    private val caption = TextView(ctx).apply {
+        setTextColor(Color.argb(235, 255, 255, 255)); textSize = 12.5f
+        background = GradientDrawable().apply {
+            setColor(Color.argb(224, 18, 18, 24)); cornerRadius = dp(14).toFloat(); setStroke(dp(1), Color.argb(34, 255, 255, 255))
+        }
+        setPadding(dp(12), dp(7), dp(12), dp(7))
+        alpha = 0f
     }
-    private val level = LevelView(ctx)
-    private val timer = TextView(ctx).apply {
-        setTextColor(Color.WHITE); textSize = 13f; text = "0:00"
-        setPadding(dp(6), 0, dp(6), 0)
+    private val captionParams = overlayParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT).apply {
+        flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
     }
-    private val cancelBtn = roundButton("✕", Color.argb(70, 255, 255, 255)) { callbacks.onCancel() }
-    private val confirmBtn = roundButton("✓", Color.rgb(76, 141, 255)) { callbacks.onConfirm() }
-    private val spinner = ProgressBar(ctx).apply {
-        isIndeterminate = true
-        indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
-        visibility = View.GONE
-    }
-    private val panel = LinearLayout(ctx).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        background = pill(Color.argb(235, 24, 24, 30), dp(26).toFloat(), Color.argb(50, 255, 255, 255))
-        setPadding(dp(6), dp(6), dp(6), dp(6))
-        addView(cancelBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
-        addView(level, LinearLayout.LayoutParams(dp(54), dp(28)).apply { leftMargin = dp(8) })
-        addView(timer)
-        addView(spinner, LinearLayout.LayoutParams(dp(28), dp(28)).apply { rightMargin = dp(6) })
-        addView(confirmBtn, LinearLayout.LayoutParams(dp(40), dp(40)))
-    }
-    private val toast = TextView(ctx).apply {
-        setTextColor(Color.WHITE); textSize = 13f
-        background = pill(Color.argb(235, 24, 24, 30), dp(14).toFloat(), Color.argb(50, 255, 255, 255))
-        setPadding(dp(14), dp(9), dp(14), dp(9))
-    }
+
+    private val sleepSize = dp(64)
     private val sleepTarget = TextView(ctx).apply {
-        text = "Zz"; textSize = 20f; gravity = Gravity.CENTER
-        setTextColor(Color.WHITE)
+        text = "z z"; textSize = 15f; gravity = Gravity.CENTER; letterSpacing = 0.05f
+        setTextColor(Color.argb(220, 255, 255, 255))
         background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(Color.argb(150, 20, 20, 26)); setStroke(dp(2), Color.argb(170, 255, 255, 255))
+            setColor(Color.argb(200, 18, 18, 24)); setStroke(dp(1), Color.argb(70, 255, 255, 255))
         }
+        alpha = 0f
+    }
+    private val sleepParams = overlayParams(sleepSize, sleepSize).apply {
+        flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
     }
 
-    private val params = overlayParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT)
-    private val toastParams = overlayParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT).apply {
-        flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-    }
-    private val sleepParams = overlayParams(dp(72), dp(72)).apply {
-        flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-    }
-    // Where the bubble itself lives. The wider pill is placed relative to it
-    // and must not move it (it used to stay wherever the pill was clamped to).
+    private var circleAttached = false
+    private var pillAttached = false
+    private var hiding = false
+    private var captionAttached = false
+    private var sleepAttached = false
     private var homeX = -1
     private var homeY = -1
-    private var rootAttached = false
-    private var toastAttached = false
-    private var sleepAttached = false
 
     init {
-        setupBubbleTouch()
+        pill.onMorphSettled = { w -> if (w <= size + 1) handBackToCircle() }
+        setupCircleTouch()
+        setupPillTouch()
     }
 
     // ── public API ──────────────────────────────────────────────────────
     fun show(newMode: Mode) {
-        if (newMode == mode) return
+        if (newMode == mode && !(newMode != Mode.HIDDEN && hiding)) return
+        val old = mode
         mode = newMode
-        if (newMode == Mode.HIDDEN) { detach(root); rootAttached = false; hideSleepTarget(); return }
-        root.removeAllViews()
+        if (newMode == Mode.HIDDEN) { fadeOut(); hideSleepTarget(); return }
         if (homeX < 0) placeFromConfig()
-        params.x = homeX; params.y = homeY
         when (newMode) {
-            Mode.BUBBLE -> root.addView(bubble, FrameLayout.LayoutParams(dp(52), dp(52)))
-            Mode.RECORDING, Mode.PROCESSING -> {
-                val processing = newMode == Mode.PROCESSING
-                spinner.visibility = if (processing) View.VISIBLE else View.GONE
-                confirmBtn.visibility = if (processing) View.GONE else View.VISIBLE
-                level.visibility = if (processing) View.GONE else View.VISIBLE
-                // Reset first: a leftover "Transkribiere…" made the pill measure too
-                // wide on the next recording and placePanel() shifted it left.
-                timer.text = if (processing) "Transkribiere…" else "0:00"
-                root.addView(panel)
-            }
+            Mode.RECORDING -> startPill()
+            Mode.PROCESSING -> if (pillAttached) pill.setFace(BubbleView.Face.PROCESSING) else circle.setFace(BubbleView.Face.PROCESSING)
+            Mode.BUBBLE -> if (pillAttached) pill.setFace(BubbleView.Face.IDLE) else circle.setFace(BubbleView.Face.IDLE)
             else -> {}
         }
-        try {
-            if (!rootAttached) {
-                wm.addView(root, params)
-                rootAttached = true
-            } else {
-                wm.updateViewLayout(root, params)
-            }
-        } catch (e: Exception) {
-            // The service may be going away (BadTokenException) — never crash the app.
-            rootAttached = false
-            return
-        }
-        root.post { if (newMode == Mode.BUBBLE) clampIntoScreen() else placePanel() }
+        if (newMode != Mode.RECORDING && !pillAttached && (!circleAttached || hiding)) fadeInCircle(old == Mode.HIDDEN || hiding)
     }
 
-    /** Pill next to the bubble: grows towards the screen centre, stays on screen. */
-    private fun placePanel() {
-        if (!rootAttached) return
-        val m = ctx.resources.displayMetrics
-        val w = root.width
-        val onRight = homeX + dp(26) > m.widthPixels / 2
-        params.x = if (onRight) homeX + dp(52) - w else homeX
-        params.y = homeY
-        clampIntoScreen()
-    }
-
-    fun setLevel(fraction: Float) = level.setLevel(fraction)
+    fun setLevel(fraction: Float) = pill.setLevel(fraction)
 
     fun setElapsed(ms: Long) {
-        if (mode != Mode.RECORDING) return
         val s = ms / 1000
-        timer.text = "%d:%02d".format(s / 60, s % 60)
+        pill.elapsedText = "%d:%02d".format(s / 60, s % 60)
+    }
+
+    /** Result feedback in the circle + a short caption above it. */
+    fun result(kind: BubbleView.Result, message: String) {
+        circle.showResult(kind)
+        if (kind == BubbleView.Result.ERROR) circle.performHapticFeedback(HapticFeedbackConstants.REJECT)
+        toast(message)
     }
 
     fun toast(message: String) {
-        toast.text = message
-        val screen = ctx.resources.displayMetrics
-        toastParams.x = 0
-        toastParams.y = (params.y - dp(56)).coerceAtLeast(dp(24))
-        toastParams.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        caption.text = message
+        caption.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        val m = ctx.resources.displayMetrics
+        if (homeX < 0) placeFromConfig()
+        val cw = caption.measuredWidth
+        val ch = caption.measuredHeight
+        val centre = homeX + size / 2
+        captionParams.x = (centre - cw / 2).coerceIn(dp(8), (m.widthPixels - cw - dp(8)).coerceAtLeast(dp(8)))
+        captionParams.y = if (homeY - ch - dp(10) > dp(24)) homeY - ch - dp(10) else homeY + size + dp(10)
         try {
-            if (!toastAttached) { wm.addView(toast, toastParams); toastAttached = true } else wm.updateViewLayout(toast, toastParams)
-        } catch (_: Exception) { toastAttached = false; return }
-        main.removeCallbacks(hideToast)
-        main.postDelayed(hideToast, if (message.length > 40) 3200 else 1900)
-        if (screen.heightPixels <= 0) return
+            if (!captionAttached) { wm.addView(caption, captionParams); captionAttached = true }
+            else wm.updateViewLayout(caption, captionParams)
+        } catch (_: Exception) { captionAttached = false; return }
+        caption.animate().cancel()
+        caption.translationY = dp(4).toFloat()
+        caption.animate().alpha(1f).translationY(0f).setDuration(180).setInterpolator(ease).start()
+        main.removeCallbacks(hideCaption)
+        main.postDelayed(hideCaption, if (message.length > 32) 2800 else 1500)
     }
 
     fun destroy() {
         main.removeCallbacksAndMessages(null)
-        detach(root); detach(toast); detach(sleepTarget)
-        rootAttached = false; toastAttached = false; sleepAttached = false
+        circle.release(); pill.release()
+        detach(circle); detach(pill); detach(caption); detach(sleepTarget)
+        circleAttached = false; pillAttached = false; captionAttached = false; sleepAttached = false
         mode = Mode.HIDDEN
     }
 
-    // ── gestures: tap = record, drag = move, hold = sleep ──────────────
+    // ── circle ⇄ pill hand-over ─────────────────────────────────────────
+    private fun anchorRight() = homeX + size / 2 > ctx.resources.displayMetrics.widthPixels / 2
+
+    private fun startPill() {
+        val right = anchorRight()
+        pill.anchorRight = right
+        pill.snapTo(BubbleView.Face.IDLE, 0f)
+        pillParams.x = if (right) homeX + size - pillW else homeX
+        pillParams.y = homeY
+        try {
+            if (!pillAttached) { wm.addView(pill, pillParams); pillAttached = true } else wm.updateViewLayout(pill, pillParams)
+        } catch (_: Exception) { pillAttached = false; return }
+        // The pill starts as an identical circle on top; hide ours once it's drawn.
+        pill.post {
+            circle.animate().cancel(); circle.alpha = 0f
+            pill.setFace(BubbleView.Face.RECORDING)
+        }
+    }
+
+    /** The pill has morphed back into a circle: the circle window takes over. */
+    private fun handBackToCircle() {
+        if (!pillAttached) return
+        val face = when (mode) {
+            Mode.PROCESSING -> BubbleView.Face.PROCESSING
+            else -> BubbleView.Face.IDLE
+        }
+        circle.snapTo(face, pill.spinAngle)
+        if (mode == Mode.HIDDEN) { circle.alpha = 0f } else {
+            if (!circleAttached) {
+                circleParams.x = homeX; circleParams.y = homeY
+                try { wm.addView(circle, circleParams); circleAttached = true } catch (_: Exception) { }
+            }
+            circle.animate().cancel(); circle.alpha = 1f; circle.scaleX = 1f; circle.scaleY = 1f
+        }
+        // Remove the pill one frame later, after the circle has drawn.
+        circle.post { detach(pill); pillAttached = false }
+    }
+
+    // ── circle window ───────────────────────────────────────────────────
+    private fun fadeInCircle(fromHidden: Boolean) {
+        hiding = false
+        circle.animate().cancel()
+        circleParams.x = homeX; circleParams.y = homeY
+        try {
+            if (!circleAttached) { wm.addView(circle, circleParams); circleAttached = true } else wm.updateViewLayout(circle, circleParams)
+        } catch (_: Exception) { circleAttached = false; return }
+        if (fromHidden) { circle.alpha = 0f; circle.scaleX = 0.82f; circle.scaleY = 0.82f }
+        circle.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(240).setInterpolator(spring).start()
+    }
+
+    private fun fadeOut() {
+        if (pillAttached) { detach(pill); pillAttached = false }
+        if (!circleAttached) return
+        hiding = true
+        circle.animate().cancel()
+        circle.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).setDuration(160).setInterpolator(ease)
+            .withEndAction { if (hiding) { detach(circle); circleAttached = false; hiding = false } }
+            .start()
+    }
+
+    private val hideCaption = Runnable {
+        caption.animate().alpha(0f).setDuration(220).setInterpolator(ease)
+            .withEndAction { if (caption.alpha == 0f) { detach(caption); captionAttached = false } }.start()
+    }
+
+    // ── gestures ────────────────────────────────────────────────────────
     @SuppressLint("ClickableViewAccessibility")
-    private fun setupBubbleTouch() {
+    private fun setupCircleTouch() {
         val slop = ViewConfiguration.get(ctx).scaledTouchSlop
         var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
         var dragging = false; var held = false
         val hold = Runnable {
             held = true
-            bubble.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            showSleepTarget()
+            circle.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            if (mode == Mode.BUBBLE) showSleepTarget()
         }
-        bubble.setOnTouchListener { _, e ->
+        circle.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX; downY = e.rawY; startX = params.x; startY = params.y
+                    downX = e.rawX; downY = e.rawY; startX = circleParams.x; startY = circleParams.y
                     dragging = false; held = false
-                    main.postDelayed(hold, 450)
+                    circle.pressAnim(true)
+                    if (mode == Mode.BUBBLE || mode == Mode.PROCESSING) main.postDelayed(hold, 450)
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    if (mode != Mode.BUBBLE) return@setOnTouchListener true
                     val dx = e.rawX - downX; val dy = e.rawY - downY
                     if (!dragging && hypot(dx, dy) > slop) {
                         dragging = true
@@ -223,24 +254,28 @@ class BubbleOverlay(
                         showSleepTarget()
                     }
                     if (dragging) {
-                        params.x = startX + dx.toInt(); params.y = startY + dy.toInt()
-                        try { wm.updateViewLayout(root, params) } catch (_: Exception) { }
-                        sleepTarget.alpha = if (overSleepTarget()) 1f else 0.55f
+                        circleParams.x = startX + dx.toInt(); circleParams.y = startY + dy.toInt()
+                        try { wm.updateViewLayout(circle, circleParams) } catch (_: Exception) { }
+                        highlightSleep(overSleepTarget())
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     main.removeCallbacks(hold)
-                    val sleep = (held && !dragging) || (dragging && overSleepTarget())
-                    hideSleepTarget()
-                    when {
-                        e.actionMasked == MotionEvent.ACTION_CANCEL -> {}
-                        sleep -> { params.x = homeX; params.y = homeY; callbacks.onSnooze() }
-                        dragging -> {
-                            clampIntoScreen()
-                            homeX = params.x; homeY = params.y
-                            config.x = homeX; config.y = homeY
+                    circle.pressAnim(false)
+                    val cancelled = e.actionMasked == MotionEvent.ACTION_CANCEL
+                    when (mode) {
+                        Mode.BUBBLE -> {
+                            val sleep = (held && !dragging) || (dragging && overSleepTarget())
+                            hideSleepTarget()
+                            when {
+                                cancelled -> {}
+                                sleep -> { resetCirclePosition(); callbacks.onSnooze() }
+                                dragging -> settleAfterDrag()
+                                else -> callbacks.onTap()
+                            }
                         }
-                        else -> callbacks.onTap()
+                        Mode.PROCESSING -> if (held && !cancelled) callbacks.onCancel()
+                        else -> {}
                     }
                 }
             }
@@ -248,44 +283,70 @@ class BubbleOverlay(
         }
     }
 
-    private fun showSleepTarget() {
-        val m = ctx.resources.displayMetrics
-        sleepParams.gravity = Gravity.TOP or Gravity.START
-        sleepParams.x = m.widthPixels / 2 - dp(36)
-        sleepParams.y = m.heightPixels - dp(150)
-        sleepTarget.alpha = 0.55f
-        if (!sleepAttached) {
-            try { wm.addView(sleepTarget, sleepParams); sleepAttached = true } catch (_: Exception) { }
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupPillTouch() {
+        pill.setOnTouchListener { _, e ->
+            if (e.actionMasked == MotionEvent.ACTION_UP && mode == Mode.RECORDING) {
+                when (pill.hitInPill(e.x)) {
+                    -1 -> callbacks.onCancel()
+                    1 -> callbacks.onConfirm()
+                }
+            }
+            true
         }
     }
 
+    private fun resetCirclePosition() {
+        circleParams.x = homeX; circleParams.y = homeY
+        try { if (circleAttached) wm.updateViewLayout(circle, circleParams) } catch (_: Exception) { }
+    }
+
+    private fun settleAfterDrag() {
+        val m = ctx.resources.displayMetrics
+        homeX = circleParams.x.coerceIn(0, m.widthPixels - size)
+        homeY = circleParams.y.coerceIn(dp(24), m.heightPixels - size - dp(24))
+        resetCirclePosition()
+        config.x = homeX; config.y = homeY
+    }
+
+    private fun showSleepTarget() {
+        val m = ctx.resources.displayMetrics
+        sleepParams.x = m.widthPixels / 2 - sleepSize / 2
+        sleepParams.y = m.heightPixels - dp(150)
+        if (!sleepAttached) {
+            try { wm.addView(sleepTarget, sleepParams); sleepAttached = true } catch (_: Exception) { return }
+        }
+        sleepTarget.animate().cancel()
+        sleepTarget.scaleX = 0.7f; sleepTarget.scaleY = 0.7f
+        sleepTarget.animate().alpha(0.75f).scaleX(1f).scaleY(1f).setDuration(200).setInterpolator(spring).start()
+    }
+
+    private var sleepHot = false
+    private fun highlightSleep(hot: Boolean) {
+        if (hot == sleepHot) return
+        sleepHot = hot
+        if (hot) circle.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        sleepTarget.animate().alpha(if (hot) 1f else 0.75f).scaleX(if (hot) 1.18f else 1f).scaleY(if (hot) 1.18f else 1f)
+            .setDuration(140).setInterpolator(spring).start()
+    }
+
     private fun hideSleepTarget() {
-        if (sleepAttached) { detach(sleepTarget); sleepAttached = false }
+        sleepHot = false
+        if (!sleepAttached) return
+        sleepTarget.animate().alpha(0f).scaleX(0.7f).scaleY(0.7f).setDuration(140).setInterpolator(ease)
+            .withEndAction { detach(sleepTarget); sleepAttached = false }.start()
     }
 
     private fun overSleepTarget(): Boolean {
-        val cx = params.x + root.width / 2f; val cy = params.y + root.height / 2f
-        val tx = sleepParams.x + dp(36).toFloat(); val ty = sleepParams.y + dp(36).toFloat()
-        return abs(cx - tx) < dp(60) && abs(cy - ty) < dp(60)
+        val cx = circleParams.x + size / 2f; val cy = circleParams.y + size / 2f
+        val tx = sleepParams.x + sleepSize / 2f; val ty = sleepParams.y + sleepSize / 2f
+        return abs(cx - tx) < dp(56) && abs(cy - ty) < dp(56)
     }
-
-    // ── helpers ─────────────────────────────────────────────────────────
-    private val hideToast = Runnable { if (toastAttached) { detach(toast); toastAttached = false } }
 
     private fun placeFromConfig() {
         val m = ctx.resources.displayMetrics
-        homeX = if (config.x >= 0) config.x else m.widthPixels - dp(52) - dp(12)
-        homeY = if (config.y >= 0) config.y else (m.heightPixels * 0.42f).toInt()
-    }
-
-    private fun clampIntoScreen() {
-        if (!rootAttached) return
-        val m = ctx.resources.displayMetrics
-        val w = root.width.takeIf { it > 0 } ?: dp(52)
-        val h = root.height.takeIf { it > 0 } ?: dp(52)
-        params.x = params.x.coerceIn(0, (m.widthPixels - w).coerceAtLeast(0))
-        params.y = params.y.coerceIn(dp(24), (m.heightPixels - h - dp(24)).coerceAtLeast(dp(24)))
-        try { wm.updateViewLayout(root, params) } catch (_: Exception) { }
+        homeX = if (config.x >= 0) config.x.coerceAtMost(m.widthPixels - size) else m.widthPixels - size - dp(12)
+        homeY = if (config.y >= 0) config.y.coerceAtMost(m.heightPixels - size - dp(24)) else (m.heightPixels * 0.42f).toInt()
     }
 
     private fun detach(v: View) {
@@ -300,34 +361,4 @@ class BubbleOverlay(
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
         PixelFormat.TRANSLUCENT,
     ).apply { gravity = Gravity.TOP or Gravity.START }
-
-    private fun pill(fill: Int, radius: Float, stroke: Int) = GradientDrawable().apply {
-        setColor(fill); cornerRadius = radius; setStroke(dp(1), stroke)
-    }
-
-    private fun roundButton(label: String, fill: Int, onClick: () -> Unit) = TextView(ctx).apply {
-        text = label; textSize = 18f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
-        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(fill) }
-        setOnClickListener { onClick() }
-    }
-
-    /** Five bars that follow the microphone level. */
-    private class LevelView(ctx: Context) : View(ctx) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        private val shape = floatArrayOf(0.45f, 0.8f, 1f, 0.7f, 0.5f)
-        private var level = 0f
-        private val rect = RectF()
-        fun setLevel(f: Float) { level = level * 0.5f + f.coerceIn(0f, 1f) * 0.5f; invalidate() }
-        override fun onDraw(c: Canvas) {
-            val n = shape.size
-            val gap = width / (n * 2f)
-            val bw = gap
-            for (i in 0 until n) {
-                val h = height * (0.18f + 0.82f * level * shape[i])
-                val x = gap / 2 + i * 2 * gap
-                rect.set(x, (height - h) / 2, x + bw, (height + h) / 2)
-                c.drawRoundRect(rect, bw / 2, bw / 2, paint)
-            }
-        }
-    }
 }

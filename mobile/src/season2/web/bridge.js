@@ -1826,7 +1826,7 @@
       var html = '<div class="settings-group__title">Diktat-Bubble</div>' +
         '<div class="settings-row is-tap" id="bubbleServiceRow">' +
           '<span class="settings-row__label">Mikrofon in allen Apps<small>' +
-            (!st ? 'Wird geprüft …' : on ? 'Aktiv — erscheint, sobald du ein Textfeld öffnest'
+            (!st ? 'Wird geprüft …' : on ? 'Aktiv — erscheint mit der Tastatur, in jeder App'
               : 'Aus — antippen und „TMS Diktat-Bubble“ einschalten') +
           '</small></span><span class="settings-row__value">' + (on ? 'An' : 'Aus') + '</span></div>';
       if (on) {
