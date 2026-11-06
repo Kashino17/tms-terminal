@@ -26,7 +26,7 @@ Cloud-ASR + feinabgestimmtes Llama zum Aufräumen, Ziel < 700 ms p99 Ende-zu-End
 
 1. Ergebnis wenige Sekunden nach Stopp — unabhängig von der Länge (Ziel: ≤ 3 s für den Rest nach Stopp bei direkter Verbindung).
 2. Keine verlorene Aufnahme mehr: Verbindungsabbruch, Reconnect, Server-Sidecar-Absturz → Diktat kommt trotzdem an (automatisch nachgeschickt).
-3. Mikrofon nie gesperrt: neue Aufnahme starten, während die vorige noch verarbeitet wird.
+3. Mikrofon nie gesperrt: ✕ während der Verarbeitung gibt sofort frei, danach kann man direkt neu aufnehmen.
 4. Leise/undeutliche Sprache besser erkannt (Pegel-Normalisierung).
 5. Server-Log zeigt pro Diktat Dauer, Länge, Ergebnis/Fehler.
 
@@ -84,8 +84,7 @@ Regeln: Server hängt nur an, wenn `offset ≤ empfangen < offset+len` (überlap
 
 ### App: `useDictation` neu
 
-- Mehrere Diktate gleichzeitig möglich: höchstens **eine Aufnahme**, beliebig viele in Verarbeitung. Jedes Diktat trägt sein **Ziel** (Karte / Manager / Fernzugriff) mit; `onText(text, target)` / `onError(msg, target)`.
-- `micState`: `'recording'` wenn aufgenommen wird, sonst `'processing'` wenn etwas in Verarbeitung ist, sonst `'idle'`. Der Wächter in `SeasonTwoWebRoot` weist nur noch ab, wenn **aufgenommen** wird — nicht mehr während der Verarbeitung.
+- Weiterhin **ein Diktat zur Zeit** (die Season-2-Leiste kennt nur eine Aufnahme; keine Mockup-/Bridge-Änderung nötig). Aber: **✕ während „Transkribiere…“ gibt sofort frei** — `cancel()` schickt `dictation:cancel`, verwirft ein später eintreffendes Ergebnis und setzt `micState` sofort auf `'idle'`. Heute blockiert `toggle()` genau hier (Ursache der „läuft schon“-Sperre).
 - Zuverlässigkeit: nach jedem Reconnect `resume` für alle offenen Diktate; bei `unknown` (Server neu gestartet) wird die gespeicherte Datei komplett neu hochgeladen (max. 3 Versuche). Kein fester 90-s-Abbruch mehr: Fehler erst, wenn der Server einen meldet oder 3 Versuche gescheitert sind; Funkstille-Wächter (60 s ohne Server-Nachricht bei offener Verbindung) löst `resume` aus, nicht Abbruch.
 - Ein `result` für eine bereits abgeschlossene `id` wird ignoriert (keine Doppel-Einfügung).
 - Fallback: meldet der Server `dictation:*` als unbekannten Nachrichtentyp (alter Server), nutzt der Hook den alten `audio:transcribe`-Weg. (Erkennung: kein `ack` binnen 5 s nach `start` → Fallback.)
