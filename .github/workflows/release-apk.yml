@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Diktat-Bubble: Ein kleines TMS-Mikrofon erscheint in jeder App, sobald du ein Textfeld öffnest. Antippen = Diktat, ✓ = Text wird eingefügt (oder in die Zwischenablage, wenn kein Feld mehr offen ist), gedrückt halten = 15 Minuten schlafen. Einschalten: Einstellungen → Diktat-Bubble → Bedienungshilfe „TMS Diktat-Bubble“ aktivieren. Braucht das Server-Update." \
+            --notes "Diktat-Bubble: Neues, minimalistisches Design mit flüssigen Animationen (kein Springen mehr beim Abschicken). Der Text wird jetzt direkt ins Feld geschrieben — auch in TMS selbst und in Web-Feldern — ohne Umweg über die Zwischenablage. Die Bubble erscheint nur noch mit offener Tastatur; eine laufende Aufnahme läuft weiter, wenn die Tastatur zugeht. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
