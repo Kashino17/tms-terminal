@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-07 — Diktat-Bubble; Release v1.128.0_
+_Zuletzt aktualisiert: 2026-11-07 — Bubble-Redesign; Release v1.129.0_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-07 vormittags (neueste):** Release v1.129.0: Bubble schreibt direkt ins Feld (auch Web/TMS), Zwischenablage nur bei geschlossener Tastatur; sichtbar nur mit Tastatur; neues minimalistisches Design mit Morph-Animationen. Server unverändert (kein Neustart nötig). Update braucht Play-Protect-Pause.
 
 **Stand 2026-11-07 früh (neueste):** Release v1.128.0 (`d2f4199`): systemweite Diktat-Bubble (Android-Bedienungshilfe `com.tms.terminal.bubble.DictationBubbleService`, Overlay, MediaRecorder ADTS, OkHttp-WS `?role=dictation`). Emulator-geprüft: Bubble auf Feld in fremder App, Einfügen, Zwischenablage ohne Feld, App-Wechsel → Zwischenablage, 15-min-Schlaf, Stille-Wächter. **Server neu gestartet 03:01 (`tms-terminal update`, Build 02:57, Live-Test role=dictation: 471 ms Stopp→Text; 6 Terminals im Wächter überlebt).** Offen: App auf v1.128.0, Bedienungshilfe am Fold einschalten, echter Mikrofon-Test am Fold (Emulator lieferte keinen Host-Ton). Zurückgestellt: Schlaf-Wecktimer, onClosing, Mikro-Stille mitten in der Aufnahme. Spec/Plan: `docs/superpowers/{specs,plans}/2026-11-07-dictation-bubble*`.
 

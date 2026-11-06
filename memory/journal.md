@@ -220,3 +220,9 @@
 - Opus-Review: Critical = gleichnamiges `var origRenderSettings` im Bridge-IIFE → Season 2 startete nicht; neuer Browser-Test `mobile/scripts/webview-bubble.test.mjs` (TMS_VIZ_PW). 8 Important behoben.
 - Parallel-Job hatte v1.127.1 → rebased, liquidDeckHtml neu gebaut, Diff = nur Bridge-Block.
 
+## 2026-11-07 — Bubble v1.129.0 (Redesign, direktes Einfügen)
+
+- Nutzer: alles landete in der Zwischenablage, in TMS selbst nie eingefügt; UI hässlich, beim Abschicken „verschwindet kurz nach rechts“; Bubble nur mit Tastatur.
+- Ursache TMS: bei Web-Inhalten liefert findFocus den FrameLayout statt des Eingabeknotens → Baumsuche. Einfügen jetzt per SET_TEXT ohne Zwischenablage; Zwischenablage nur bei Tastatur zu / kein Feld / App-Wechsel. Sichtbar nur mit IME-Fenster.
+- Neues Design (BubbleView gezeichnet, Kreis↔Pille-Morph, Bogen beim Transkribieren, Häkchen/Ablage-Symbol, Schütteln bei Fehler). Springen = Android-Move-Animation bei wandernder linker Fensterkante → zwei feste Fenster mit Übergabe. Per Screenrecord-Frames verifiziert.
+
