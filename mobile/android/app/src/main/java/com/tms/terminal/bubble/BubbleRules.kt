@@ -17,6 +17,10 @@ object BubbleRules {
 
     fun snoozeUntil(now: Long): Long = now + SNOOZE_MS
 
+    /** A wake from the TMS app (after the snooze began) ends it — the two run in different processes. */
+    fun effectiveSnooze(snoozedUntil: Long, wakeAt: Long): Long =
+        if (snoozedUntil == 0L || wakeAt >= snoozedUntil - SNOOZE_MS) 0L else snoozedUntil
+
     /** Write straight into the field only while keyboard + field are open in the app where ✓ was pressed. */
     fun shouldInsert(keyboardVisible: Boolean, fieldFound: Boolean, confirmedIn: String?, focusedNow: String?): Boolean =
         keyboardVisible && fieldFound && pasteAllowed(confirmedIn, focusedNow)

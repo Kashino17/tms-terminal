@@ -36,13 +36,11 @@ class DictationBubbleModule(private val rc: ReactApplicationContext) : ReactCont
     @ReactMethod
     fun setEnabled(enabled: Boolean) {
         config.enabled = enabled
-        BubbleKeepAliveService.sync(rc)
-        DictationBubbleService.instance?.reevaluate()
+        BubbleKeepAliveService.sync(rc) // the bubble itself picks the change up on its next event
     }
 
     @ReactMethod
     fun wake() {
-        config.snoozedUntil = 0
-        DictationBubbleService.instance?.reevaluate()
+        config.wake()
     }
 }

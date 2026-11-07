@@ -22,6 +22,18 @@ class BubbleRulesTest {
         assertFalse(BubbleRules.shouldInsert(keyboardVisible = true, fieldFound = true, confirmedIn = "a", focusedNow = "b"))
     }
 
+    // The app and the bubble live in different processes: "wake" from TMS is a timestamp
+    // the bubble compares with its own snooze, instead of writing the bubble's state.
+    @Test fun wakeFromAppEndsAnEarlierSnooze() {
+        val until = BubbleRules.snoozeUntil(1_000)
+        assertEquals(0L, BubbleRules.effectiveSnooze(until, wakeAt = 2_000))
+    }
+    @Test fun oldWakeDoesNotCancelANewerSnooze() {
+        val until = BubbleRules.snoozeUntil(5_000)
+        assertEquals(until, BubbleRules.effectiveSnooze(until, wakeAt = 2_000))
+    }
+    @Test fun noSnoozeStaysNoSnooze() = assertEquals(0L, BubbleRules.effectiveSnooze(0, wakeAt = 0))
+
     @Test fun showsOnEditableField() = assertTrue(show())
     @Test fun hiddenWithoutField() = assertFalse(show(editable = false))
     @Test fun neverOverPasswordFields() = assertFalse(show(password = true))

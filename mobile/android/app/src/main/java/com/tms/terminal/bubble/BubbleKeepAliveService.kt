@@ -78,7 +78,7 @@ class BubbleKeepAliveService : Service() {
                 stopSelf(); return
             }
             val now = System.currentTimeMillis()
-            val connected = DictationBubbleService.instance != null
+            val connected = DictationBubbleService.instance != null // same ":bubble" process
             if (connected) disconnectedSince = 0L else if (disconnectedSince == 0L) disconnectedSince = now
             val status = KeepAliveRules.status(connected, disconnectedSince, now)
             if (status != shown) {

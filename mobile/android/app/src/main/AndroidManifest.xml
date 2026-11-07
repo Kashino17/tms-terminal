@@ -70,14 +70,19 @@
          accessibility service unbound until the app is opened again. -->
     <service
       android:name=".bubble.BubbleKeepAliveService"
+      android:process=":bubble"
       android:exported="false"
       android:foregroundServiceType="specialUse">
       <property
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
         android:value="Keeps the user-enabled system-wide dictation bubble (accessibility service) running in the background."/>
     </service>
+    <!-- Own small process (no React Native, no WebView): an accessibility binding keeps its
+         process at "visible" priority forever. In the app process that kept the whole UI
+         (WebView, JS, terminals) awake in the background and never let Android freeze it. -->
     <service
       android:name=".bubble.DictationBubbleService"
+      android:process=":bubble"
       android:label="@string/bubble_service_label"
       android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
       android:exported="true">

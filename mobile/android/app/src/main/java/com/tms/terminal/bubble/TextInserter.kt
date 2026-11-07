@@ -93,13 +93,6 @@ object TextInserter {
         return null
     }
 
-    fun focusedIsPassword(service: AccessibilityService): Boolean {
-        val root = service.rootInActiveWindow ?: return false
-        val f = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        if (f != null && f.isEditable) return f.isPassword
-        return findFocusedEditable(root)?.isPassword == true
-    }
-
     private fun findFocusedEditable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val stack = ArrayDeque<AccessibilityNodeInfo>()
         stack.addLast(root)

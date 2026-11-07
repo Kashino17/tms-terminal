@@ -3,7 +3,6 @@ package com.tms.terminal.bubble
 import android.Manifest
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
-import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.HandlerThread
@@ -61,10 +60,6 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     private var confirmedInPackage: String? = null
     @Volatile private var destroyed = false
 
-    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "enabled") BubbleKeepAliveService.sync(this)
-        scheduleEvaluate()
-    }
     private var lastKeepAliveTry = 0L
 
     // ── lifecycle ───────────────────────────────────────────────────────
@@ -79,7 +74,6 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         socket = DictationSocket(config,
             onConnected = { onWorker { upload?.onConnected() } },
             onMessage = { msg -> onWorker { handleServer(msg) } })
-        config.prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         Log.i(TAG, "bubble connected")
         ensureKeepAlive(force = true)
         scheduleEvaluate()
@@ -106,7 +100,6 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     override fun onDestroy() {
         destroyed = true
         instance = null
-        if (::config.isInitialized) config.prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         if (::recorder.isInitialized) recorder.discard()
         if (::socket.isInitialized) socket.close()
         if (::overlay.isInitialized) overlay.destroy()
@@ -138,20 +131,24 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         main.postDelayed(evaluate, 150)
     }
 
-    /** Called by the RN module after wake()/setEnabled(). */
-    fun reevaluate() = main.post { evaluateNow() }
-
     private fun evaluateNow() {
         if (destroyed || !::overlay.isInitialized) return
         ensureKeepAlive()
         val busy = state != State.IDLE
-        val editable = try { TextInserter.focusedEditable(this) != null } catch (_: Exception) { false }
-        val password = try { TextInserter.focusedIsPassword(this) } catch (_: Exception) { false }
         val now = System.currentTimeMillis()
+        val snoozedUntil = config.snoozedUntil
+        val enabled = config.enabled
+        val keyboard = try { TextInserter.keyboardVisible(this) } catch (_: Exception) { false }
+        // Cheap checks first: the field search walks up to thousands of nodes over
+        // binder, so it only runs when everything else would show the bubble —
+        // with the keyboard closed (most of the time) it is skipped entirely.
+        val needField = !busy && config.isConfigured && enabled && now >= snoozedUntil && keyboard
+        // focusedEditable() already returns null for password fields.
+        val editable = needField && try { TextInserter.focusedEditable(this) != null } catch (_: Exception) { false }
         val show = (busy || config.isConfigured) && BubbleRules.shouldShow(
-            editable, password, ownWindow = false, busy = busy,
-            snoozedUntil = config.snoozedUntil, now = now, enabled = config.enabled,
-            keyboardVisible = try { TextInserter.keyboardVisible(this) } catch (_: Exception) { false })
+            editable, password = false, ownWindow = false, busy = busy,
+            snoozedUntil = snoozedUntil, now = now, enabled = enabled,
+            keyboardVisible = keyboard)
         if (!show) { overlay.show(BubbleOverlay.Mode.HIDDEN); return }
         overlay.show(when (state) {
             State.IDLE -> BubbleOverlay.Mode.BUBBLE

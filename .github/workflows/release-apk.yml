@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Diktat-Bubble bleibt jetzt dauerhaft aktiv (wie bei Wispr Flow): eine stille Benachrichtigung Diktat-Bubble bereit hält sie im Hintergrund am Leben. Vorher hat Samsung die App nach längerer Zeit im Hintergrund schlafen gelegt und die Bubble kam erst nach dem Öffnen von TMS zurück. Falls sie doch einmal getrennt wird, sagt es die Benachrichtigung – antippen verbindet sie neu. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Akku: Die Diktat-Bubble läuft jetzt in einem eigenen, kleinen Prozess. Vorher hielt sie die ganze TMS-App im Hintergrund wach (Terminals, Oberfläche) – das hat den Akku leergesaugt. Jetzt schläft TMS im Hintergrund wieder wie früher, und die Bubble sucht nur noch nach Textfeldern, wenn die Tastatur offen ist. Außerdem bleibt die Bubble dauerhaft aktiv (stille Benachrichtigung Diktat-Bubble bereit, wie bei Wispr Flow) und verschwindet nicht mehr nach längerer Zeit im Hintergrund. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
