@@ -226,3 +226,9 @@
 - Ursache TMS: bei Web-Inhalten liefert findFocus den FrameLayout statt des Eingabeknotens → Baumsuche. Einfügen jetzt per SET_TEXT ohne Zwischenablage; Zwischenablage nur bei Tastatur zu / kein Feld / App-Wechsel. Sichtbar nur mit IME-Fenster.
 - Neues Design (BubbleView gezeichnet, Kreis↔Pille-Morph, Bogen beim Transkribieren, Häkchen/Ablage-Symbol, Schütteln bei Fehler). Springen = Android-Move-Animation bei wandernder linker Fensterkante → zwei feste Fenster mit Übergabe. Per Screenrecord-Frames verifiziert.
 
+
+## 2026-11-07/08 — Bubble: dauerhaft aktiv + Akku (v1.129.1, v1.129.2)
+
+- Bubble verschwand nach längerem Hintergrund trotz Samsung „Nie schlafende Apps“. Emulator (Stock-Android) rebindet nach kill -9 in 1 s → Samsung-Verhalten; Wispr-Doku bestätigt („disconnect Accessibility while Settings still shows it enabled“). Nutzer lehnt adb/Wireless-Debugging ab → nach Wispr-Vorbild gebaut: `BubbleKeepAliveService` (FGS specialUse, START_STICKY, Wächter „getrennt – tippen“).
+- Danach Akku leer in Minuten. Messung (Release v1.129.0 im Emulator): A11y-Bindung hielt App-Prozess auf adj 100 → nie eingefroren, RenderThread zeichnete im Hintergrund. Fix: Bubble + Keep-Alive in `:bubble`-Prozess (MainApplication ohne RN-Init dort), Prefs nach Besitzer getrennt (MODE_MULTI_PROCESS), Feldsuche erst nach billigen Checks. 1,83 s → 0,09 s CPU/min.
+- v1.129.2: Benachrichtigung fehlte (keine POST_NOTIFICATIONS-Abfrage in Season 2) → Zeile „Hintergrund-Schutz“ + TMS startet Keep-Alive bei jedem Öffnen. Nutzer: klappt, Benachrichtigung sichtbar. Akku-Beobachtung läuft.

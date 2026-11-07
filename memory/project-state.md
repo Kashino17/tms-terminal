@@ -1,10 +1,12 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-07 — Bubble-Redesign; Release v1.129.0_
+_Zuletzt aktualisiert: 2026-11-08 — Bubble Keep-Alive + Akku-Fix; Release v1.129.2_
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-07 vormittags (neueste):** Release v1.129.0: Bubble schreibt direkt ins Feld (auch Web/TMS), Zwischenablage nur bei geschlossener Tastatur; sichtbar nur mit Tastatur; neues minimalistisches Design mit Morph-Animationen. Server unverändert (kein Neustart nötig). Update braucht Play-Protect-Pause.
+**Stand 2026-11-08 (neueste):** Release v1.129.2 (davor v1.129.1). Bubble läuft im eigenen Prozess `:bubble` + Keep-Alive-Vordergrund-Dienst (stille Benachrichtigung „Diktat-Bubble bereit“, wie Wispr Flow) → verschwindet nicht mehr nach langem Hintergrund (Samsung entkoppelte die Bedienungshilfe). Akku-Fresser behoben: A11y-Bindung im App-Prozess hielt ganz TMS wach (gemessen 1,83 s → 0,09 s CPU/min App-Wechsel; App friert wieder ein). Einstellungszeile „Hintergrund-Schutz“ (An/Prüfen/Aus). Nutzer bestätigt: Benachrichtigung sichtbar, Bubble geht. **Offen:** Nutzer beobachtet Akku/Wärme am 2026-11-08 (Einstellungen → Akku → Akkuverbrauch). Server unverändert.
+
+**Stand 2026-11-07 vormittags:** Release v1.129.0: Bubble schreibt direkt ins Feld (auch Web/TMS), Zwischenablage nur bei geschlossener Tastatur; sichtbar nur mit Tastatur; neues minimalistisches Design mit Morph-Animationen. Server unverändert (kein Neustart nötig). Update braucht Play-Protect-Pause.
 
 **Stand 2026-11-07 früh (neueste):** Release v1.128.0 (`d2f4199`): systemweite Diktat-Bubble (Android-Bedienungshilfe `com.tms.terminal.bubble.DictationBubbleService`, Overlay, MediaRecorder ADTS, OkHttp-WS `?role=dictation`). Emulator-geprüft: Bubble auf Feld in fremder App, Einfügen, Zwischenablage ohne Feld, App-Wechsel → Zwischenablage, 15-min-Schlaf, Stille-Wächter. **Server neu gestartet 03:01 (`tms-terminal update`, Build 02:57, Live-Test role=dictation: 471 ms Stopp→Text; 6 Terminals im Wächter überlebt).** Offen: App auf v1.128.0, Bedienungshilfe am Fold einschalten, echter Mikrofon-Test am Fold (Emulator lieferte keinen Host-Ton). Zurückgestellt: Schlaf-Wecktimer, onClosing, Mikro-Stille mitten in der Aufnahme. Spec/Plan: `docs/superpowers/{specs,plans}/2026-11-07-dictation-bubble*`.
 
