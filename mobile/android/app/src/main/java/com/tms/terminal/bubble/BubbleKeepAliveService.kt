@@ -37,7 +37,7 @@ class BubbleKeepAliveService : Service() {
 
     companion object {
         private const val TAG = "TmsBubble"
-        private const val CHANNEL_ID = "tms_bubble"
+        const val CHANNEL_ID = "tms_bubble"
         private const val NOTIFICATION_ID = 9002
         private const val CHECK_MS = 15_000L
 
@@ -59,6 +59,25 @@ class BubbleKeepAliveService : Service() {
                 // accessibility event or app start tries again.
                 Log.w(TAG, "keep-alive start refused", e)
             }
+        }
+
+        /** Runs in the ":bubble" process — ask the system, not the static flag. */
+        @Suppress("DEPRECATION")
+        fun isRunning(ctx: Context): Boolean {
+            val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            return try {
+                am.getRunningServices(Int.MAX_VALUE).any {
+                    it.service.className == BubbleKeepAliveService::class.java.name && it.foreground
+                }
+            } catch (_: Exception) { false }
+        }
+
+        /** The "Diktat-Bubble bereit" notification can actually be seen (app + channel allowed). */
+        fun notificationVisible(ctx: Context): Boolean {
+            if (!androidx.core.app.NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return false
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+            val ch = ctx.getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL_ID) ?: return true
+            return ch.importance != NotificationManager.IMPORTANCE_NONE
         }
 
         fun isAccessibilityOn(ctx: Context): Boolean {

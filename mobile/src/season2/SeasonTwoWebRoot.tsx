@@ -954,9 +954,18 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (!ready || !dictationBubble.available) return;
     dictationBubble.status().then((st) => { if (st) call('bubbleStatus', st); });
   }, [ready, call]);
+  // Keep-alive (Wispr-style foreground service): started from the foreground on every
+  // app start / return, because Samsung may refuse the start from the background.
+  useEffect(() => { dictationBubble.startKeepAlive(); }, []);
   useEffect(() => {
-    // Back from the Android accessibility settings → show the new state.
-    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') pushBubbleStatus(); });
+    // Back in TMS (e.g. from the accessibility / notification settings): restart the
+    // keep-alive if needed and show the new state — again once the service is up.
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st !== 'active') return;
+      dictationBubble.startKeepAlive();
+      pushBubbleStatus();
+      setTimeout(pushBubbleStatus, 1200);
+    });
     return () => sub.remove();
   }, [pushBubbleStatus]);
 
@@ -1329,6 +1338,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       case 'bubble:wake':
         dictationBubble.wake();
         pushBubbleStatus();
+        break;
+      case 'bubble:keepalive':
+        dictationBubble.startKeepAlive();
+        setTimeout(pushBubbleStatus, 1200); // the service reports running once it is foreground
+        break;
+      case 'bubble:notify':
+        void (async () => {
+          const cur = await Notifications.getPermissionsAsync();
+          let granted = cur.granted;
+          if (!granted && cur.canAskAgain) granted = (await Notifications.requestPermissionsAsync()).granted;
+          dictationBubble.startKeepAlive(); // re-post the notification now that it may show
+          const st = await dictationBubble.status();
+          if (!granted || (st && st.notifications === false)) dictationBubble.openNotificationSettings();
+          setTimeout(pushBubbleStatus, 800);
+        })();
         break;
 
       case 'mic:cancel':

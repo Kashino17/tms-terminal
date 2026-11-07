@@ -9,6 +9,10 @@ export interface BubbleStatus {
   serviceOn: boolean;
   enabled: boolean;
   snoozedUntil: number;
+  /** Keep-alive foreground service running (missing on older native builds). */
+  keepAlive?: boolean;
+  /** Its "Diktat-Bubble bereit" notification is allowed to show. */
+  notifications?: boolean;
 }
 
 interface NativeBubble {
@@ -17,6 +21,8 @@ interface NativeBubble {
   openAccessibilitySettings(): void;
   setEnabled(enabled: boolean): void;
   wake(): void;
+  startKeepAlive?(): void;
+  openNotificationSettings?(): void;
 }
 
 const native: NativeBubble | null =
@@ -34,4 +40,6 @@ export const dictationBubble = {
   openSettings(): void { native?.openAccessibilitySettings(); },
   setEnabled(enabled: boolean): void { native?.setEnabled(enabled); },
   wake(): void { native?.wake(); },
+  startKeepAlive(): void { native?.startKeepAlive?.(); },
+  openNotificationSettings(): void { native?.openNotificationSettings?.(); },
 };

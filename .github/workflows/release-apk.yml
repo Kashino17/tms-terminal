@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Akku: Die Diktat-Bubble läuft jetzt in einem eigenen, kleinen Prozess. Vorher hielt sie die ganze TMS-App im Hintergrund wach (Terminals, Oberfläche) – das hat den Akku leergesaugt. Jetzt schläft TMS im Hintergrund wieder wie früher, und die Bubble sucht nur noch nach Textfeldern, wenn die Tastatur offen ist. Außerdem bleibt die Bubble dauerhaft aktiv (stille Benachrichtigung Diktat-Bubble bereit, wie bei Wispr Flow) und verschwindet nicht mehr nach längerer Zeit im Hintergrund. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Diktat-Bubble: Neue Zeile Hintergrund-Schutz in den Einstellungen zeigt, ob die Bubble im Hintergrund wach gehalten wird – und führt mit einem Tipp zur Lösung (Benachrichtigung erlauben oder Schutz starten). TMS startet den Schutz außerdem bei jedem Öffnen selbst. Enthält die Akku-Verbesserung aus 1.129.1. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest

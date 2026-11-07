@@ -67,4 +67,34 @@ if (!PW) {
       assert.deepEqual(posts.find((m) => m.type === 'bubble:toggle').payload, { enabled: false });
     } finally { await browser.close(); }
   });
+
+  // Wispr-Vorbild: die Einstellungen zeigen, ob der Hintergrund-Schutz laeuft,
+  // und fuehren mit einem Tipp zur fehlenden Erlaubnis bzw. starten ihn.
+  test('Hintergrund-Schutz: Zustand sichtbar, Tipp fuehrt zur Loesung', async () => {
+    const { browser, page, posts } = await boot();
+    try {
+      await page.evaluate(() => { document.body.classList.remove('is-locked'); show('settings'); });
+      const row = () => page.textContent('#bubbleKeepRow');
+      const st = (o) => page.evaluate((x) => window.TMSBridge.bubbleStatus(Object.assign({ serviceOn: true, enabled: true, snoozedUntil: 0 }, x)), o);
+
+      await st({ keepAlive: true, notifications: true });
+      assert.match(await row(), /Hintergrund-Schutz[\s\S]*Aktiv/);
+      await page.click('#bubbleKeepRow');
+      assert.equal(posts.filter((m) => m.type === 'bubble:notify' || m.type === 'bubble:keepalive').length, 0);
+
+      await st({ keepAlive: true, notifications: false });
+      assert.match(await row(), /Benachrichtigung/);
+      await page.click('#bubbleKeepRow');
+      assert.equal(posts.filter((m) => m.type === 'bubble:notify').length, 1);
+
+      await st({ keepAlive: false, notifications: true });
+      assert.match(await row(), /Nicht aktiv/);
+      await page.click('#bubbleKeepRow');
+      assert.equal(posts.filter((m) => m.type === 'bubble:keepalive').length, 1);
+
+      // Bubble in TMS ausgeschaltet: kein Schutz noetig, keine Zeile.
+      await st({ enabled: false, keepAlive: false, notifications: true });
+      assert.equal(await page.$('#bubbleKeepRow'), null);
+    } finally { await browser.close(); }
+  });
 }

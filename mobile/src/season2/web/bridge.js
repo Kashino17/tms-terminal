@@ -1837,7 +1837,17 @@
           html += '<div class="settings-row is-tap" id="bubbleWakeRow"><span class="settings-row__label">Schläft bis ' +
             bubbleTime(st.snoozedUntil) + '<small>Antippen zum Aufwecken</small></span></div>';
         }
-        html += '<div class="settings-row"><span class="settings-row__label"><small>Samsung: TMS unter Akku → „Nie schlafende Apps“ eintragen, sonst schläft die Bubble ein.</small></span></div>';
+        // Hintergrund-Schutz (wie Wispr Flow): Vordergrund-Dienst + Benachrichtigung
+        // „Diktat-Bubble bereit“. Ältere Apps melden keepAlive nicht → keine Zeile.
+        if (st.enabled && typeof st.keepAlive === 'boolean') {
+          var ka = st.keepAlive, nt = st.notifications !== false;
+          html += '<div class="settings-row' + (ka && nt ? '' : ' is-tap') + '" id="bubbleKeepRow">' +
+            '<span class="settings-row__label">Hintergrund-Schutz<small>' +
+              (!ka ? 'Nicht aktiv — antippen zum Starten'
+                : nt ? 'Aktiv — die Bubble bleibt im Hintergrund wach'
+                : 'Aktiv, aber die Benachrichtigung ist blockiert — antippen zum Erlauben') +
+            '</small></span><span class="settings-row__value">' + (!ka ? 'Aus' : nt ? 'An' : 'Prüfen') + '</span></div>';
+        }
       }
       group.innerHTML = html;
       var svc = document.getElementById('bubbleServiceRow');
@@ -1846,6 +1856,12 @@
       if (sw) sw.addEventListener('change', function () { post('bubble:toggle', { enabled: sw.checked }); });
       var wake = document.getElementById('bubbleWakeRow');
       if (wake) wake.addEventListener('click', function () { post('bubble:wake', {}); });
+      var keep = document.getElementById('bubbleKeepRow');
+      if (keep) keep.addEventListener('click', function () {
+        var s = bubbleStatus || {};
+        if (!s.keepAlive) post('bubble:keepalive', {});
+        else if (s.notifications === false) post('bubble:notify', {});
+      });
     }
     var bubbleOrigRenderSettings = window.renderSettings;
     if (typeof bubbleOrigRenderSettings === 'function') {
