@@ -1,6 +1,5 @@
 package com.tms.terminal.bubble
 
-import android.content.ComponentName
 import android.content.Intent
 import android.provider.Settings
 import com.facebook.react.bridge.Arguments
@@ -23,7 +22,7 @@ class DictationBubbleModule(private val rc: ReactApplicationContext) : ReactCont
     @ReactMethod
     fun getStatus(promise: Promise) {
         val map = Arguments.createMap()
-        map.putBoolean("serviceOn", isServiceEnabled())
+        map.putBoolean("serviceOn", BubbleKeepAliveService.isAccessibilityOn(rc))
         map.putBoolean("enabled", config.enabled)
         map.putDouble("snoozedUntil", config.snoozedUntil.toDouble())
         promise.resolve(map)
@@ -37,6 +36,7 @@ class DictationBubbleModule(private val rc: ReactApplicationContext) : ReactCont
     @ReactMethod
     fun setEnabled(enabled: Boolean) {
         config.enabled = enabled
+        BubbleKeepAliveService.sync(rc)
         DictationBubbleService.instance?.reevaluate()
     }
 
@@ -44,11 +44,5 @@ class DictationBubbleModule(private val rc: ReactApplicationContext) : ReactCont
     fun wake() {
         config.snoozedUntil = 0
         DictationBubbleService.instance?.reevaluate()
-    }
-
-    private fun isServiceEnabled(): Boolean {
-        val mine = ComponentName(rc, DictationBubbleService::class.java)
-        val list = Settings.Secure.getString(rc.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-        return list.split(':').any { ComponentName.unflattenFromString(it) == mine }
     }
 }

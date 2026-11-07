@@ -15,6 +15,7 @@
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
@@ -64,6 +65,17 @@
       android:name=".ConnectionService"
       android:exported="false"
       android:foregroundServiceType="dataSync"/>
+    <!-- Keeps the dictation bubble alive like Wispr Flow: ongoing notification +
+         foreground service, so Samsung does not kill/freeze the process and leave the
+         accessibility service unbound until the app is opened again. -->
+    <service
+      android:name=".bubble.BubbleKeepAliveService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Keeps the user-enabled system-wide dictation bubble (accessibility service) running in the background."/>
+    </service>
     <service
       android:name=".bubble.DictationBubbleService"
       android:label="@string/bubble_service_label"

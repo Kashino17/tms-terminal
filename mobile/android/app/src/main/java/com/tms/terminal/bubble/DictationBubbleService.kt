@@ -61,7 +61,11 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     private var confirmedInPackage: String? = null
     @Volatile private var destroyed = false
 
-    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> scheduleEvaluate() }
+    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "enabled") BubbleKeepAliveService.sync(this)
+        scheduleEvaluate()
+    }
+    private var lastKeepAliveTry = 0L
 
     // ── lifecycle ───────────────────────────────────────────────────────
     override fun onServiceConnected() {
@@ -76,7 +80,25 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
             onConnected = { onWorker { upload?.onConnected() } },
             onMessage = { msg -> onWorker { handleServer(msg) } })
         config.prefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        Log.i(TAG, "bubble connected")
+        ensureKeepAlive(force = true)
         scheduleEvaluate()
+    }
+
+    /** User switched the accessibility service off — the keep-alive notification goes too. */
+    override fun onUnbind(intent: Intent?): Boolean {
+        Log.i(TAG, "bubble unbound by system")
+        stopService(Intent(this, BubbleKeepAliveService::class.java))
+        return super.onUnbind(intent)
+    }
+
+    /** Wispr-style foreground service; retried on later events if Android refused the start. */
+    private fun ensureKeepAlive(force: Boolean = false) {
+        if (BubbleKeepAliveService.running || !config.enabled) return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastKeepAliveTry < 30_000L) return
+        lastKeepAliveTry = now
+        BubbleKeepAliveService.sync(this)
     }
 
     override fun onInterrupt() {}
@@ -121,6 +143,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
 
     private fun evaluateNow() {
         if (destroyed || !::overlay.isInitialized) return
+        ensureKeepAlive()
         val busy = state != State.IDLE
         val editable = try { TextInserter.focusedEditable(this) != null } catch (_: Exception) { false }
         val password = try { TextInserter.focusedIsPassword(this) } catch (_: Exception) { false }
