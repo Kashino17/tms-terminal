@@ -248,3 +248,6 @@
 
 ## 2026-11-08 — Bubble v1.129.6
 - Fold-Protokoll ausgewertet: Feld immer erkannt, Ausfall = Tastatur nicht in Fensterliste gesehen + keine spätere Fenstermeldung. Fix: bei aktivem Feld ~10 s jede Sekunde nachschauen, Accessibility-Cache aus, Protokoll „Tastatur meldet sich“. Released ohne Emulator-Test (Mac überlastet), Nutzer testet am Handy.
+
+## 2026-11-08 — Bubble v1.129.7
+- Protokoll v1.129.6: Erkennung ok („sichtbar“), aber Bubble nicht auf dem Schirm. Ursache im Overlay: Position nur einmal berechnet (Fold innen→außen = außerhalb), verlorenes Fenster nicht neu angelegt. Fix + Protokoll-Zeile „Bubble bei x,y“. Released ohne Emulator-Test (Mac überlastet).

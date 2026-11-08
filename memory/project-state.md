@@ -1,10 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-08 — Bubble wartet nicht mehr auf Tastatur-Meldung; Release v1.129.6_
+_Zuletzt aktualisiert: 2026-11-08 — Bubble-Position auf aktivem Fold-Bildschirm; Release v1.129.7_
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-08 abends (neueste):** Release v1.129.6: Bubble schaut bei aktivem Feld ~10 s selbst nach der Tastatur (Samsung meldet sie verspätet), Cache aus. Davor v1.129.5: Bubble entscheidet über Android-Eingabesitzung (flagInputMethodEditor, onStartInput/onUpdateSelection) statt Baumsuche; „Protokoll kopieren“ in Einstellungen. Emulator ok, Samsung-Aussetzer nicht reproduziert. **Offen:** Nutzer testet; bei Ausfall Protokoll einfügen lassen.
+**Stand 2026-11-08 abends (neueste):** Release v1.129.7: Bubble wird bei jedem Erscheinen auf dem aktiven Bildschirm platziert (Fold), verlorenes Fenster neu angelegt, Protokoll „Bubble bei x,y“. Davor v1.129.6: Bubble schaut bei aktivem Feld ~10 s selbst nach der Tastatur (Samsung meldet sie verspätet), Cache aus. Davor v1.129.5: Bubble entscheidet über Android-Eingabesitzung (flagInputMethodEditor, onStartInput/onUpdateSelection) statt Baumsuche; „Protokoll kopieren“ in Einstellungen. Emulator ok, Samsung-Aussetzer nicht reproduziert. **Offen:** Nutzer testet; bei Ausfall Protokoll einfügen lassen.
 
 **Stand 2026-11-08 nachmittags:** Release v1.129.4: v1.129.3 zeigte Bubble nach Feld zu/auf nicht mehr (Verdacht clearCache, entfernt). Neue Zeile „Letzte Prüfung“ für Diagnose am Fold. **Offen:** Nutzer testet; bei Ausfall „Letzte Prüfung“ + „Letzter Abbruch“ ablesen lassen.
 
@@ -59,7 +59,7 @@ _Zuletzt aktualisiert: 2026-11-08 — Bubble wartet nicht mehr auf Tastatur-Meld
 ## Historischer Stand vom 2026-04-26
 Die folgenden älteren Arbeitsnotizen wurden bewahrt und in dieser Sitzung nicht erneut verifiziert.
 
-_Zuletzt aktualisiert: 2026-11-08 — Bubble wartet nicht mehr auf Tastatur-Meldung; Release v1.129.6_
+_Zuletzt aktualisiert: 2026-11-08 — Bubble-Position auf aktivem Fold-Bildschirm; Release v1.129.7_
 
 ## Aktuelle Version
 - **App:** v1.21.3 — Voice Prompt Enhancer (Llama 3.2 3B Instruct via MLX rewritet Sprach-Eingabe in polierte AI-Prompts; Toggle in Settings → Sprache → "KI-Prompt-Modus"; default off)
