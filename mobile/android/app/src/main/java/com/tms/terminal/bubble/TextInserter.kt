@@ -65,9 +65,33 @@ object TextInserter {
         return Result.CLIPBOARD
     }
 
-    /** The virtual keyboard is on screen. */
+    /** The virtual keyboard is on screen — on any display (Fold: inner/cover screen). */
     fun keyboardVisible(service: AccessibilityService): Boolean =
-        service.windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        allWindows(service).any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+
+    private fun allWindows(service: AccessibilityService): List<AccessibilityWindowInfo> =
+        if (Build.VERSION.SDK_INT >= 30) {
+            val byDisplay = service.windowsOnAllDisplays
+            (0 until byDisplay.size()).flatMap { byDisplay.valueAt(it) }
+        } else service.windows
+
+    /** Protocol: what Android lists right now, e.g. "APP Chrome | IME@1600 | SYS". */
+    fun describeWindows(service: AccessibilityService): String = try {
+        allWindows(service).joinToString(" | ") { w ->
+            val t = when (w.type) {
+                AccessibilityWindowInfo.TYPE_APPLICATION -> "APP"
+                AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "IME"
+                AccessibilityWindowInfo.TYPE_SYSTEM -> "SYS"
+                AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "OVL"
+                AccessibilityWindowInfo.TYPE_SPLIT_SCREEN_DIVIDER -> "DIV"
+                else -> "T${w.type}"
+            }
+            val r = android.graphics.Rect().also { w.getBoundsInScreen(it) }
+            val d = if (Build.VERSION.SDK_INT >= 30 && w.displayId != 0) "@d${w.displayId}" else ""
+            val title = w.title?.toString()?.take(18)?.let { " $it" } ?: ""
+            "$t$d$title ${r.top}-${r.bottom}"
+        }.take(240)
+    } catch (e: Exception) { "? ${e.javaClass.simpleName}" }
 
     /**
      * The focused editable, non-password field. findFocus(FOCUS_INPUT) is not

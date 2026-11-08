@@ -73,6 +73,8 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     @Volatile private var inputActive = false
     @Volatile private var inputPassword = false
     @Volatile private var inputPackage: String? = null
+    /** Protocol: the first cursor move per input session while hidden is logged. */
+    private var cursorLogged = false
 
     override fun onCreateInputMethod(): android.accessibilityservice.InputMethod {
         inputSignal = true
@@ -86,6 +88,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
             inputActive = true
             inputPassword = BubbleRules.isPasswordInput(attribute.inputType)
             inputPackage = attribute.packageName
+            cursorLogged = false
             trace?.add("Eingabe beginnt ${attribute.packageName}${if (inputPassword) " (Passwort)" else ""}${if (restarting) " (neu)" else ""}")
             main.post { if (!destroyed) scheduleEvaluate() }
         }
@@ -95,7 +98,16 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int,
                                        candidatesStart: Int, candidatesEnd: Int) {
             super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
-            main.post { if (!destroyed && overlay.mode == BubbleOverlay.Mode.HIDDEN) { lastTrigger = "Cursor"; scheduleEvaluate() } }
+            main.post {
+                if (destroyed || overlay.mode != BubbleOverlay.Mode.HIDDEN) return@post
+                // Cursor moving while hidden = the user is in the field (typing / tapping).
+                // Logged once per session with the window list: proof of what Android shows.
+                if (inputActive && !cursorLogged) {
+                    cursorLogged = true
+                    trace?.add("Cursor bewegt, Bubble versteckt · ${TextInserter.describeWindows(this@DictationBubbleService)}")
+                }
+                lastTrigger = "Cursor"; scheduleEvaluate()
+            }
         }
 
         override fun onFinishInput() {
@@ -207,13 +219,19 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         if (why == lastWhy) return
         lastWhy = why
         trace?.add("Prüfung #$settleAttempt nach $lastTrigger: $why")
+        // A field is in use but no keyboard window: record what Android lists instead.
+        if (inputActive && why == "Tastatur zu") trace?.add("  Fenster: ${TextInserter.describeWindows(this)}")
         try { config.recordCheck(why, now) } catch (_: Exception) {}
     }
 
     /** Still hidden although it might belong on screen: look again shortly. */
     private fun scheduleSettle(keyboard: Boolean) {
         val awaitingKeyboard = inputSignal && inputActive && !inputPassword && !keyboard
-        val d = BubbleRules.settleDelay(settleAttempt++, keyboard, awaitingKeyboard) ?: return
+        val d = BubbleRules.settleDelay(settleAttempt++, keyboard, awaitingKeyboard)
+        if (d == null) {
+            if (awaitingKeyboard) trace?.add("10 s keine Tastatur gefunden · ${TextInserter.describeWindows(this)}")
+            return
+        }
         main.removeCallbacks(evaluate)
         main.postDelayed(evaluate, d)
     }

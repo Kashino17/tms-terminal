@@ -15,7 +15,7 @@ import java.util.Locale
 class BubbleTrace(ctx: Context, private val io: Handler) {
     companion object {
         private const val FILE = "bubble_trace.txt"
-        private const val MAX_LINES = 80
+        private const val MAX_LINES = 160
 
         /** Read from the app process (same files dir). */
         fun read(ctx: Context): String =
