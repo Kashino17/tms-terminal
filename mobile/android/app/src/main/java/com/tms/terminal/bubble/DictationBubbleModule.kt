@@ -27,14 +27,19 @@ class DictationBubbleModule(private val rc: ReactApplicationContext) : ReactCont
         map.putBoolean("serviceOn", BubbleKeepAliveService.isAccessibilityOn(rc))
         map.putBoolean("enabled", config.enabled)
         map.putDouble("snoozedUntil", config.snoozedUntil.toDouble())
+        map.putBoolean("bound", BubbleKeepAliveService.isBound(rc))
         map.putBoolean("keepAlive", BubbleKeepAliveService.isRunning(rc))
         map.putBoolean("notifications", BubbleKeepAliveService.notificationVisible(rc))
+        BubbleDiagnostics.lastExit(rc)?.let {
+            map.putDouble("lastExitAt", it.at.toDouble())
+            map.putString("lastExit", it.text)
+        }
         promise.resolve(map)
     }
 
     @ReactMethod
     fun openAccessibilitySettings() {
-        rc.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        rc.startActivity(BubbleKeepAliveService.settingsIntent(rc))
     }
 
     /** From the foreground app Android always allows the start (Samsung may refuse it in the background). */

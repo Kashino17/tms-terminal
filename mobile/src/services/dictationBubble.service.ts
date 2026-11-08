@@ -7,12 +7,18 @@ import { NativeModules, Platform } from 'react-native';
 
 export interface BubbleStatus {
   serviceOn: boolean;
+  /** Actually bound by Android. false while serviceOn = "stopped": switched on but dead
+   *  (after "Stopp" in "Aktive Apps" / force stop) — only toggling the switch revives it. */
+  bound?: boolean;
   enabled: boolean;
   snoozedUntil: number;
   /** Keep-alive foreground service running (missing on older native builds). */
   keepAlive?: boolean;
   /** Its "Diktat-Bubble bereit" notification is allowed to show. */
   notifications?: boolean;
+  /** Last time Android ended the bubble's process (not counting updates), and why. */
+  lastExitAt?: number;
+  lastExit?: string;
 }
 
 interface NativeBubble {

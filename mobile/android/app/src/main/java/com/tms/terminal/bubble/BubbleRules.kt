@@ -17,6 +17,17 @@ object BubbleRules {
 
     fun snoozeUntil(now: Long): Long = now + SNOOZE_MS
 
+    /**
+     * After an event the bubble stays hidden: check again a few times. The keyboard
+     * window and the field's focus often land a few hundred ms after the tap, and
+     * then no further event comes — the bubble used to appear only after closing and
+     * reopening the field. With the keyboard still closed only the first two (it may
+     * just be opening). null = stop checking.
+     */
+    private val SETTLE_DELAYS_MS = longArrayOf(250, 450, 800, 1_500)
+    fun settleDelay(attempt: Int, keyboardVisible: Boolean): Long? =
+        if (!keyboardVisible && attempt >= 2) null else SETTLE_DELAYS_MS.getOrNull(attempt)
+
     /** A wake from the TMS app (after the snooze began) ends it — the two run in different processes. */
     fun effectiveSnooze(snoozedUntil: Long, wakeAt: Long): Long =
         if (snoozedUntil == 0L || wakeAt >= snoozedUntil - SNOOZE_MS) 0L else snoozedUntil

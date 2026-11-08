@@ -30,8 +30,8 @@ import androidx.core.app.NotificationCompat
  * process back after a kill, which lets Android rebind the bubble.
  *
  * Watchdog: if accessibility is on but the bubble stays unbound for
- * [KeepAliveRules.GRACE_MS], the notification says so; tapping it opens TMS,
- * which is what makes Android reconnect it.
+ * [KeepAliveRules.GRACE_MS], the notification says so; tapping it opens the
+ * bubble's accessibility switch — toggling it is the only way back (see isBound).
  */
 class BubbleKeepAliveService : Service() {
 
@@ -78,6 +78,36 @@ class BubbleKeepAliveService : Service() {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
             val ch = ctx.getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL_ID) ?: return true
             return ch.importance != NotificationManager.IMPORTANCE_NONE
+        }
+
+        /**
+         * Actually bound by Android — not just switched on. After "Stopp" in the
+         * notification shade's "Aktive Apps" (or a force stop) Android keeps the
+         * switch on but marks the service crashed and never rebinds it, not even
+         * when TMS is opened; only switching it off and on again (or an update /
+         * reboot) clears that. Works from any process: the list holds bound services.
+         */
+        fun isBound(ctx: Context): Boolean {
+            val am = ctx.getSystemService(Context.ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
+            val mine = ComponentName(ctx, DictationBubbleService::class.java)
+            return try {
+                am.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK).any {
+                    val si = it.resolveInfo?.serviceInfo
+                    si != null && ComponentName(si.packageName, si.name) == mine
+                }
+            } catch (_: Exception) { false }
+        }
+
+        /**
+         * The accessibility settings, with the bubble's entry highlighted where the
+         * Settings app supports it. (Its own details page needs a system-only permission.)
+         */
+        fun settingsIntent(ctx: Context): Intent {
+            val key = ComponentName(ctx, DictationBubbleService::class.java).flattenToString()
+            return Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .putExtra(":settings:fragment_args_key", key)
+                .putExtra(":settings:show_fragment_args", android.os.Bundle().apply { putString(":settings:fragment_args_key", key) })
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
         fun isAccessibilityOn(ctx: Context): Boolean {
@@ -150,12 +180,14 @@ class BubbleKeepAliveService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun build(status: KeepAliveRules.Status): Notification {
-        val open = packageManager.getLaunchIntentForPackage(packageName)
-        val pi = PendingIntent.getActivity(this, 2, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val (title, text) = when (status) {
-            KeepAliveRules.Status.READY -> "Diktat-Bubble bereit" to "Erscheint, sobald du in einer App tippst"
-            KeepAliveRules.Status.DISCONNECTED -> "Diktat-Bubble getrennt" to "Tippen, um sie wieder zu verbinden"
+        // Stopped: opening TMS does not bring it back (see isBound) — go straight to its switch.
+        val (title, text, target) = when (status) {
+            KeepAliveRules.Status.READY -> Triple("Diktat-Bubble bereit", "Erscheint, sobald du in einer App tippst",
+                packageManager.getLaunchIntentForPackage(packageName))
+            KeepAliveRules.Status.DISCONNECTED -> Triple("Diktat-Bubble von Android gestoppt",
+                "Antippen und den Schalter einmal aus- und wieder einschalten", settingsIntent(this))
         }
+        val pi = PendingIntent.getActivity(this, 2, target, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)

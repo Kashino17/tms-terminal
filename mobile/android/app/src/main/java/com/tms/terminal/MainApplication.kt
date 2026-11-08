@@ -56,7 +56,7 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
-    if (isBubbleProcess) return
+    if (isBubbleProcess) { com.tms.terminal.bubble.BubbleDiagnostics.installCrashRecorder(this); return }
     SoLoader.init(this, false)
     if (!BuildConfig.REACT_NATIVE_UNSTABLE_USE_RUNTIME_SCHEDULER_ALWAYS) {
       ReactFeatureFlags.unstable_useRuntimeSchedulerAlways = false

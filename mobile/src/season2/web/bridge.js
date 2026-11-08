@@ -1822,14 +1822,19 @@
       }
       var st = bubbleStatus;
       var on = !!(st && st.serviceOn);
+      // Switched on, but Android stopped it ("Stopp" in "Aktive Apps" / force stop) and
+      // will not rebind it until the switch is toggled — opening TMS does not help.
+      var stopped = on && st.bound === false;
       var sleeping = !!(st && st.snoozedUntil > Date.now());
       var html = '<div class="settings-group__title">Diktat-Bubble</div>' +
         '<div class="settings-row is-tap" id="bubbleServiceRow">' +
           '<span class="settings-row__label">Mikrofon in allen Apps<small>' +
-            (!st ? 'Wird geprüft …' : on ? 'Aktiv — erscheint mit der Tastatur, in jeder App'
+            (!st ? 'Wird geprüft …'
+              : stopped ? 'Von Android gestoppt — antippen, dann den Schalter einmal aus- und wieder einschalten'
+              : on ? 'Aktiv — erscheint mit der Tastatur, in jeder App'
               : 'Aus — antippen und „TMS Diktat-Bubble“ einschalten') +
-          '</small></span><span class="settings-row__value">' + (on ? 'An' : 'Aus') + '</span></div>';
-      if (on) {
+          '</small></span><span class="settings-row__value">' + (stopped ? 'Gestoppt' : on ? 'An' : 'Aus') + '</span></div>';
+      if (on && !stopped) {
         html += '<div class="settings-row"><span class="settings-row__label">Bubble anzeigen<small>Gedrückt halten = 15 Min. schlafen</small></span>' +
           '<label class="switch"><input type="checkbox" id="bubbleEnabledSwitch" ' + (st.enabled ? 'checked' : '') +
           '><span class="switch__track"><span class="switch__thumb"></span></span></label></div>';
@@ -1848,6 +1853,15 @@
                 : 'Aktiv, aber die Benachrichtigung ist blockiert — antippen zum Erlauben') +
             '</small></span><span class="settings-row__value">' + (!ka ? 'Aus' : nt ? 'An' : 'Prüfen') + '</span></div>';
         }
+      }
+      // Diagnose: wann und warum Android die Bubble zuletzt beendet hat (ohne Updates).
+      if (st && st.lastExit && st.lastExitAt) {
+        var d = new Date(st.lastExitAt);
+        var when = String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '. ' + bubbleTime(st.lastExitAt);
+        html += '<div class="settings-row" id="bubbleExitRow"><span class="settings-row__label">Letzter Abbruch<small>' +
+          when + ' — ' + String(st.lastExit).replace(/[&<>"]/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+          }) + '</small></span></div>';
       }
       group.innerHTML = html;
       var svc = document.getElementById('bubbleServiceRow');

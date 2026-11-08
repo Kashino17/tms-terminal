@@ -97,4 +97,39 @@ if (!PW) {
       assert.equal(await page.$('#bubbleKeepRow'), null);
     } finally { await browser.close(); }
   });
+
+  test('Von Android gestoppt: nicht mehr "An", Tipp oeffnet den Schalter', async () => {
+    const { browser, page, posts } = await boot();
+    try {
+      await page.evaluate(() => { document.body.classList.remove('is-locked'); show('settings'); });
+      const st = (o) => page.evaluate((x) => window.TMSBridge.bubbleStatus(Object.assign({ serviceOn: true, enabled: true, snoozedUntil: 0, keepAlive: true, notifications: true }, x)), o);
+
+      // Switch on, but Android does not bind it any more.
+      await st({ bound: false });
+      const row = await page.textContent('#bubbleServiceRow');
+      assert.match(row, /Von Android gestoppt/);
+      assert.match(row, /Gestoppt/);
+      assert.doesNotMatch(row, /\bAn\b/);
+      // Controls that cannot work while it is stopped are hidden.
+      assert.equal(await page.$('#bubbleEnabledSwitch'), null);
+      assert.equal(await page.$('#bubbleKeepRow'), null);
+      await page.click('#bubbleServiceRow');
+      assert.equal(posts.filter((m) => m.type === 'bubble:open').length, 1);
+
+      // Repaired (or an older native build that does not report bound): normal again.
+      await st({ bound: true });
+      assert.match(await page.textContent('#bubbleServiceRow'), /Aktiv/);
+      assert.notEqual(await page.$('#bubbleEnabledSwitch'), null);
+      await st({});
+      assert.match(await page.textContent('#bubbleServiceRow'), /Aktiv/);
+      assert.equal(await page.$('#bubbleExitRow'), null);
+
+      // Diagnose: the last exit reason is shown (escaped), so the cause is visible without adb.
+      await st({ bound: false, lastExitAt: new Date(2026, 10, 8, 3, 12).getTime(), lastExit: 'Von Hand gestoppt <x>' });
+      const exit = await page.textContent('#bubbleExitRow');
+      assert.match(exit, /Letzter Abbruch/);
+      assert.match(exit, /08\.11\. 03:12/);
+      assert.match(exit, /Von Hand gestoppt <x>/);
+    } finally { await browser.close(); }
+  });
 }

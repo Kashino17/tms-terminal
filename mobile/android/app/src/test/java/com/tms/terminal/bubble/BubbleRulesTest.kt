@@ -54,4 +54,20 @@ class BubbleRulesTest {
         assertFalse(BubbleRules.pasteAllowed("com.whatsapp", null))
     }
     @Test fun snoozeIsFifteenMinutes() = assertEquals(1000L + 15 * 60_000L, BubbleRules.snoozeUntil(1000))
+
+    // The keyboard window and the field's focus often arrive a few hundred ms after the
+    // tap — re-check a few times instead of waiting for the next event (that never comes).
+    @Test fun hiddenBubbleIsRecheckedSeveralTimesThenStops() {
+        val delays = generateSequence(0) { it + 1 }.map { BubbleRules.settleDelay(it, keyboardVisible = true) }.takeWhile { it != null }.toList()
+        assertTrue(delays.size >= 3)
+        assertTrue((delays.sumOf { it!! }) in 1_500L..4_000L)
+        assertNull(BubbleRules.settleDelay(delays.size, keyboardVisible = true))
+    }
+
+    // Keyboard still closed (most app switches): only a short look for a keyboard that is
+    // just opening — app switching must not cost battery.
+    @Test fun withoutKeyboardOnlyAShortRecheck() {
+        assertNotNull(BubbleRules.settleDelay(0, keyboardVisible = false))
+        assertNull(BubbleRules.settleDelay(2, keyboardVisible = false))
+    }
 }

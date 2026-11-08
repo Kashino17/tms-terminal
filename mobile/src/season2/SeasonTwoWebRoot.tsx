@@ -954,20 +954,37 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (!ready || !dictationBubble.available) return;
     dictationBubble.status().then((st) => { if (st) call('bubbleStatus', st); });
   }, [ready, call]);
+  // Switched on but stopped by Android (no rebind until the switch is toggled): say so
+  // on every app start / return — otherwise the bubble is just silently gone.
+  const warnIfBubbleStopped = useCallback(() => {
+    if (!ready || !dictationBubble.available) return;
+    dictationBubble.status().then((st) => {
+      if (st && st.serviceOn && st.enabled && st.bound === false) {
+        call('toast', 'Diktat-Bubble von Android gestoppt — Einstellungen → Diktat-Bubble antippen');
+      }
+    });
+  }, [ready, call]);
   // Keep-alive (Wispr-style foreground service): started from the foreground on every
   // app start / return, because Samsung may refuse the start from the background.
   useEffect(() => { dictationBubble.startKeepAlive(); }, []);
   useEffect(() => {
+    const t = setTimeout(warnIfBubbleStopped, 2500); // a normal rebind takes ~1 s
+    return () => clearTimeout(t);
+  }, [warnIfBubbleStopped]);
+  useEffect(() => {
     // Back in TMS (e.g. from the accessibility / notification settings): restart the
     // keep-alive if needed and show the new state — again once the service is up.
+    let warn: ReturnType<typeof setTimeout> | undefined;
     const sub = AppState.addEventListener('change', (st) => {
       if (st !== 'active') return;
       dictationBubble.startKeepAlive();
       pushBubbleStatus();
       setTimeout(pushBubbleStatus, 1200);
+      clearTimeout(warn);
+      warn = setTimeout(warnIfBubbleStopped, 2500);
     });
-    return () => sub.remove();
-  }, [pushBubbleStatus]);
+    return () => { sub.remove(); clearTimeout(warn); };
+  }, [pushBubbleStatus, warnIfBubbleStopped]);
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
   const { micState, toggle: toggleMic, cancel: cancelMic } = useDictation({
