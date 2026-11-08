@@ -1,10 +1,12 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-08 — Bubble-Stopp-Erkennung + Diagnose; Release v1.129.3_
+_Zuletzt aktualisiert: 2026-11-08 — Bubble-Anzeige-Fix + Letzte Prüfung; Release v1.129.4_
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-08 mittags (neueste):** Release v1.129.3. Bubble war weg, obwohl Schalter an (nur aus/ein half): „Stopp“ in „Aktive Apps“/Force-Stop lässt Android den Dienst als abgestürzt markieren und nie neu binden — App kann das nicht selbst beheben. Jetzt: Erkennung (Einstellungen „Von Android gestoppt“, Hinweis beim Öffnen, Benachrichtigung → Bedienungshilfen), Zeile „Letzter Abbruch“ mit Android-Grund. Bubble erscheint zuverlässiger beim Feld-Öffnen (Nachprüfungen). **Offen:** Nutzer fragen, ob er „Stopp“ gedrückt hat / was „Letzter Abbruch“ zeigt; Akku-Beobachtung.
+**Stand 2026-11-08 nachmittags (neueste):** Release v1.129.4: v1.129.3 zeigte Bubble nach Feld zu/auf nicht mehr (Verdacht clearCache, entfernt). Neue Zeile „Letzte Prüfung“ für Diagnose am Fold. **Offen:** Nutzer testet; bei Ausfall „Letzte Prüfung“ + „Letzter Abbruch“ ablesen lassen.
+
+**Stand 2026-11-08 mittags:** Release v1.129.3. Bubble war weg, obwohl Schalter an (nur aus/ein half): „Stopp“ in „Aktive Apps“/Force-Stop lässt Android den Dienst als abgestürzt markieren und nie neu binden — App kann das nicht selbst beheben. Jetzt: Erkennung (Einstellungen „Von Android gestoppt“, Hinweis beim Öffnen, Benachrichtigung → Bedienungshilfen), Zeile „Letzter Abbruch“ mit Android-Grund. Bubble erscheint zuverlässiger beim Feld-Öffnen (Nachprüfungen). **Offen:** Nutzer fragen, ob er „Stopp“ gedrückt hat / was „Letzter Abbruch“ zeigt; Akku-Beobachtung.
 
 **Stand 2026-11-08 früh:** Release v1.129.2 (davor v1.129.1). Bubble läuft im eigenen Prozess `:bubble` + Keep-Alive-Vordergrund-Dienst (stille Benachrichtigung „Diktat-Bubble bereit“, wie Wispr Flow) → verschwindet nicht mehr nach langem Hintergrund (Samsung entkoppelte die Bedienungshilfe). Akku-Fresser behoben: A11y-Bindung im App-Prozess hielt ganz TMS wach (gemessen 1,83 s → 0,09 s CPU/min App-Wechsel; App friert wieder ein). Einstellungszeile „Hintergrund-Schutz“ (An/Prüfen/Aus). Nutzer bestätigt: Benachrichtigung sichtbar, Bubble geht. **Offen:** Nutzer beobachtet Akku/Wärme am 2026-11-08 (Einstellungen → Akku → Akkuverbrauch). Server unverändert.
 

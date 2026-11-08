@@ -237,3 +237,7 @@
 - Bubble weg trotz Schalter an; Emulator: `am stop-app` (= „Stopp“ in Aktive Apps) → Dienst „crashed“, kein Rebind, auch nicht beim App-Öffnen; nur Schalter aus/ein (Nutzer bestätigt).
 - Erkennung via gebundene Dienste, Hinweis/Benachrichtigung führen zum Schalter, „Letzter Abbruch“ aus ApplicationExitInfo.
 - Feld-Erkennung robuster (Nachprüfen + Cache leeren); CPU-Mehrkosten im Rauschen.
+
+## 2026-11-08 — Bubble-Anzeige-Fix (v1.129.4)
+- v1.129.3: Bubble einmal sichtbar, danach nie wieder (Status gebunden/an). clearCache() in Nachprüfung entfernt; „Letzte Prüfung“ in Einstellungen (Entscheidung + Sekunde).
+- Emulator: nach Update kann „Bound + Crashed“ entstehen → An aber unsichtbar, Toggle hilft (nicht sicher die Fold-Ursache).
