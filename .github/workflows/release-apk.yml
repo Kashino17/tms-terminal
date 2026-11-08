@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Diktat-Bubble: Wird jetzt immer auf dem gerade aktiven Bildschirm platziert. Auf dem Fold lag sie nach dem Wechsel zwischen Innen- und Außen-Bildschirm teils außerhalb des sichtbaren Bereichs – erkannt, aber unsichtbar. Beim Auf- und Zuklappen wandert sie jetzt mit; ein vom System entferntes Bubble-Fenster wird neu angelegt. Das Protokoll zeigt, wo die Bubble erscheint. Hinweis: Vor dem Update Play Protect kurz pausieren; falls die Bubble danach fehlt, in den Bedienungshilfen einmal aus- und wieder einschalten." \
+            --notes "Diktat-Bubble: Sucht die Tastatur jetzt auf allen Bildschirmen (Fold: Innen- und Außen-Bildschirm). Fehlt die Tastatur trotzdem, schreibt die Bubble ins Protokoll, was Android in dem Moment auflistet – damit lässt sich der verbleibende Samsung-Aussetzer gezielt beheben. Protokoll fasst jetzt 160 Zeilen. Hinweis: Vor dem Update Play Protect kurz pausieren; falls die Bubble danach fehlt, in den Bedienungshilfen einmal aus- und wieder einschalten." \
             --latest
