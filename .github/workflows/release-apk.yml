@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Diktat-Bubble: Neue Zeile Hintergrund-Schutz in den Einstellungen zeigt, ob die Bubble im Hintergrund wach gehalten wird – und führt mit einem Tipp zur Lösung (Benachrichtigung erlauben oder Schutz starten). TMS startet den Schutz außerdem bei jedem Öffnen selbst. Enthält die Akku-Verbesserung aus 1.129.1. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Diktat-Bubble: Erkennt jetzt, wenn Android die Bubble gestoppt hat (z. B. über Stopp bei Aktive Apps) – statt fälschlich An zeigen Einstellungen, ein Hinweis beim Öffnen und die Benachrichtigung das an und führen mit einem Tipp zum Schalter (einmal aus- und wieder einschalten). Neue Zeile Letzter Abbruch zeigt, wann und warum Android die Bubble beendet hat. Außerdem erscheint die Bubble zuverlässiger beim Öffnen eines Eingabefelds. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
