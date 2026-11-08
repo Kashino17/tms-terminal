@@ -1854,6 +1854,17 @@
             '</small></span><span class="settings-row__value">' + (!ka ? 'Aus' : nt ? 'An' : 'Prüfen') + '</span></div>';
         }
       }
+      // Diagnose: letzte Entscheidung der Bubble (sichtbar / Tastatur zu / kein Feld …).
+      // Steht die Zeit still, obwohl gerade getippt wird, kommen keine Ereignisse mehr an.
+      if (st && st.lastCheck && st.lastCheckAt) {
+        var cd = new Date(st.lastCheckAt);
+        var ct = String(cd.getDate()).padStart(2, '0') + '.' + String(cd.getMonth() + 1).padStart(2, '0') + '. ' +
+          bubbleTime(st.lastCheckAt) + ':' + String(cd.getSeconds()).padStart(2, '0');
+        html += '<div class="settings-row" id="bubbleCheckRow"><span class="settings-row__label">Letzte Prüfung<small>' +
+          ct + ' — ' + String(st.lastCheck).replace(/[&<>"]/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+          }) + '</small></span></div>';
+      }
       // Diagnose: wann und warum Android die Bubble zuletzt beendet hat (ohne Updates).
       if (st && st.lastExit && st.lastExitAt) {
         var d = new Date(st.lastExitAt);

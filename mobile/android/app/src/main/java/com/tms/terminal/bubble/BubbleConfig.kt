@@ -34,6 +34,11 @@ class BubbleConfig(private val context: Context) {
         get() = BubbleRules.effectiveSnooze(state.getLong("snoozedUntil", 0L), app.getLong("wakeAt", 0L))
         set(v) { state.edit().putLong("snoozedUntil", v).apply() }
 
+    /** Last show/hide decision of the bubble ("why"), written by the bubble only when it changes. */
+    fun recordCheck(text: String, at: Long) { state.edit().putString("check", text).putLong("checkAt", at).apply() }
+    val lastCheck: String get() = state.getString("check", "") ?: ""
+    val lastCheckAt: Long get() = state.getLong("checkAt", 0L)
+
     /** Called from the app process: ends a running snooze without touching the bubble's file. */
     fun wake() { app.edit().putLong("wakeAt", System.currentTimeMillis()).apply() }
 

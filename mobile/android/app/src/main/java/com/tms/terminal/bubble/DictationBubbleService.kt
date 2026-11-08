@@ -4,7 +4,6 @@ import android.Manifest
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -135,6 +134,14 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         main.postDelayed(evaluate, 150)
     }
 
+    private var lastWhy = ""
+    /** Stores the decision for the settings page — only on change, so typing costs no writes. */
+    private fun record(why: String, now: Long) {
+        if (why == lastWhy) return
+        lastWhy = why
+        try { config.recordCheck(why, now) } catch (_: Exception) {}
+    }
+
     /** Still hidden although it might belong on screen: look again shortly. */
     private fun scheduleSettle(keyboard: Boolean) {
         val d = BubbleRules.settleDelay(settleAttempt++, keyboard) ?: return
@@ -154,17 +161,13 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         // binder, so it only runs when everything else would show the bubble —
         // with the keyboard closed (most of the time) it is skipped entirely.
         val needField = !busy && config.isConfigured && enabled && now >= snoozedUntil && keyboard
-        // A re-check must not trust the node cache: a field cached as "not focused" is
-        // exactly what kept the bubble hidden until the field was reopened.
-        if (needField && settleAttempt > 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            try { clearCache() } catch (_: Exception) {}
-        }
         // focusedEditable() already returns null for password fields.
         val editable = needField && try { TextInserter.focusedEditable(this) != null } catch (_: Exception) { false }
         val show = (busy || config.isConfigured) && BubbleRules.shouldShow(
             editable, password = false, ownWindow = false, busy = busy,
             snoozedUntil = snoozedUntil, now = now, enabled = enabled,
             keyboardVisible = keyboard)
+        record(BubbleRules.why(busy, config.isConfigured, enabled, now < snoozedUntil, keyboard, editable, show), now)
         if (!show) {
             overlay.show(BubbleOverlay.Mode.HIDDEN)
             // Only worth another look when nothing but keyboard/field kept it hidden.

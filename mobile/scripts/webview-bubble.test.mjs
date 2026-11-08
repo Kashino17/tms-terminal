@@ -130,6 +130,13 @@ if (!PW) {
       assert.match(exit, /Letzter Abbruch/);
       assert.match(exit, /08\.11\. 03:12/);
       assert.match(exit, /Von Hand gestoppt <x>/);
+
+      // Last decision of the bubble, with seconds (is it still receiving events?).
+      await st({ lastCheckAt: new Date(2026, 10, 8, 12, 43, 7).getTime(), lastCheck: 'Tastatur offen, aber kein Eingabefeld erkannt' });
+      const check = await page.textContent('#bubbleCheckRow');
+      assert.match(check, /Letzte Prüfung/);
+      assert.match(check, /08\.11\. 12:43:07/);
+      assert.match(check, /kein Eingabefeld erkannt/);
     } finally { await browser.close(); }
   });
 }

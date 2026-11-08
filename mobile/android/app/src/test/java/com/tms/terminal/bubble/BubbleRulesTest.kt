@@ -70,4 +70,18 @@ class BubbleRulesTest {
         assertNotNull(BubbleRules.settleDelay(0, keyboardVisible = false))
         assertNull(BubbleRules.settleDelay(2, keyboardVisible = false))
     }
+
+    // Diagnosis on the phone: the last decision in words, most specific cause first.
+    @Test fun whyNamesTheBlockingCause() {
+        fun why(busy: Boolean = false, configured: Boolean = true, enabled: Boolean = true, snoozed: Boolean = false,
+                keyboard: Boolean = true, field: Boolean = true, shown: Boolean = true) =
+            BubbleRules.why(busy, configured, enabled, snoozed, keyboard, field, shown)
+        assertEquals("sichtbar", why())
+        assertEquals("Aufnahme läuft", why(busy = true, keyboard = false))
+        assertEquals("nicht eingerichtet (kein Server)", why(configured = false, shown = false))
+        assertEquals("in TMS ausgeschaltet", why(enabled = false, shown = false))
+        assertEquals("schläft", why(snoozed = true, shown = false))
+        assertEquals("Tastatur zu", why(keyboard = false, field = false, shown = false))
+        assertEquals("Tastatur offen, aber kein Eingabefeld erkannt", why(field = false, shown = false))
+    }
 }

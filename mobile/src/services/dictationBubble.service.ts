@@ -19,6 +19,9 @@ export interface BubbleStatus {
   /** Last time Android ended the bubble's process (not counting updates), and why. */
   lastExitAt?: number;
   lastExit?: string;
+  /** The bubble's last show/hide decision in words, and when it was made. */
+  lastCheckAt?: number;
+  lastCheck?: string;
 }
 
 interface NativeBubble {

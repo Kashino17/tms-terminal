@@ -17,6 +17,19 @@ object BubbleRules {
 
     fun snoozeUntil(now: Long): Long = now + SNOOZE_MS
 
+    /** The last show/hide decision in words — shown in TMS settings to diagnose on the phone. */
+    fun why(busy: Boolean, configured: Boolean, enabled: Boolean, snoozed: Boolean,
+            keyboard: Boolean, field: Boolean, shown: Boolean): String = when {
+        busy -> "Aufnahme läuft"
+        shown -> "sichtbar"
+        !configured -> "nicht eingerichtet (kein Server)"
+        !enabled -> "in TMS ausgeschaltet"
+        snoozed -> "schläft"
+        !keyboard -> "Tastatur zu"
+        !field -> "Tastatur offen, aber kein Eingabefeld erkannt"
+        else -> "versteckt"
+    }
+
     /**
      * After an event the bubble stays hidden: check again a few times. The keyboard
      * window and the field's focus often land a few hundred ms after the tap, and

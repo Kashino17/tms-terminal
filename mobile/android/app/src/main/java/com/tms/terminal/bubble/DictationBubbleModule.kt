@@ -30,6 +30,10 @@ class DictationBubbleModule(private val rc: ReactApplicationContext) : ReactCont
         map.putBoolean("bound", BubbleKeepAliveService.isBound(rc))
         map.putBoolean("keepAlive", BubbleKeepAliveService.isRunning(rc))
         map.putBoolean("notifications", BubbleKeepAliveService.notificationVisible(rc))
+        if (config.lastCheckAt > 0) {
+            map.putDouble("lastCheckAt", config.lastCheckAt.toDouble())
+            map.putString("lastCheck", config.lastCheck)
+        }
         BubbleDiagnostics.lastExit(rc)?.let {
             map.putDouble("lastExitAt", it.at.toDouble())
             map.putString("lastExit", it.text)
