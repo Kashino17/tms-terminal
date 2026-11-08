@@ -71,6 +71,18 @@ class BubbleRulesTest {
         assertNull(BubbleRules.settleDelay(2, keyboardVisible = false))
     }
 
+    // A field is in use but the keyboard is not in the window list yet (Samsung: the
+    // "window added" report comes late or never) — keep looking at least every second
+    // for a while, then stop so a field left open with the keyboard closed costs nothing.
+    @Test fun fieldInUseKeepsLookingForTheKeyboardThenStops() {
+        val delays = generateSequence(0) { it + 1 }
+            .map { BubbleRules.settleDelay(it, keyboardVisible = false, awaitingKeyboard = true) }
+            .takeWhile { it != null }.toList()
+        assertTrue(delays.all { it!! <= 1_500L })
+        assertTrue(delays.sumOf { it!! } in 8_000L..15_000L)
+        assertTrue(delays.size < 30)
+    }
+
     // Diagnosis on the phone: the last decision in words, most specific cause first.
     @Test fun whyNamesTheBlockingCause() {
         fun why(busy: Boolean = false, configured: Boolean = true, enabled: Boolean = true, snoozed: Boolean = false,

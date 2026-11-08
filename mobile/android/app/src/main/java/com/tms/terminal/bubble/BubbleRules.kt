@@ -52,8 +52,22 @@ object BubbleRules {
      * just be opening). null = stop checking.
      */
     private val SETTLE_DELAYS_MS = longArrayOf(250, 450, 800, 1_500)
-    fun settleDelay(attempt: Int, keyboardVisible: Boolean): Long? =
-        if (!keyboardVisible && attempt >= 2) null else SETTLE_DELAYS_MS.getOrNull(attempt)
+
+    /**
+     * awaitingKeyboard: a field is in use (system input session) but the keyboard is not
+     * in the window list yet. The keyboard announces itself first and lands in the list
+     * later with its own "window added" report — on Samsung that report comes late or
+     * never, and the bubble stayed hidden until the field was reopened. So keep looking
+     * every second for ~10 s instead of waiting for it.
+     */
+    private const val KEYBOARD_POLL_MS = 1_000L
+    private const val KEYBOARD_POLLS = 7
+    fun settleDelay(attempt: Int, keyboardVisible: Boolean, awaitingKeyboard: Boolean = false): Long? = when {
+        awaitingKeyboard -> SETTLE_DELAYS_MS.getOrNull(attempt)
+            ?: if (attempt < SETTLE_DELAYS_MS.size + KEYBOARD_POLLS) KEYBOARD_POLL_MS else null
+        !keyboardVisible && attempt >= 2 -> null
+        else -> SETTLE_DELAYS_MS.getOrNull(attempt)
+    }
 
     /** A wake from the TMS app (after the snooze began) ends it — the two run in different processes. */
     fun effectiveSnooze(snoozedUntil: Long, wakeAt: Long): Long =

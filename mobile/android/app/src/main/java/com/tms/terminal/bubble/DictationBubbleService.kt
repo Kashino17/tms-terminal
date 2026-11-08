@@ -114,6 +114,10 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         workerThread = HandlerThread("tms-bubble").also { it.start() }
         worker = Handler(workerThread.looper)
         trace = BubbleTrace(this, worker).also { it.add("verbunden (Android ${android.os.Build.VERSION.SDK_INT})") }
+        // Without the cache every keyboard check asks the system for the real window list.
+        // The cache only refreshes on window reports — the very reports that are late or
+        // missing when the keyboard opens, so a re-check would read the stale list again.
+        if (android.os.Build.VERSION.SDK_INT >= 33) try { setCacheEnabled(false) } catch (_: Exception) {}
         config = BubbleConfig(this)
         overlay = BubbleOverlay(this, config, this)
         recorder = BubbleRecorder(this)
@@ -159,6 +163,12 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event != null) lastTrigger = "${event.eventType.toString(16)}/${event.packageName ?: "-"}"
+        // The keyboard announces itself before it shows up in the window list — logged so
+        // the protocol shows whether the list ever caught up.
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            event.className?.toString()?.endsWith("SoftInputWindow") == true) {
+            trace?.add("Tastatur meldet sich ${event.packageName}")
+        }
         if (com.tms.terminal.BuildConfig.DEBUG && event != null) Log.d(TAG, "ev ${AccessibilityEvent.eventTypeToString(event.eventType)} ${event.packageName} ${event.className} wc=${event.windowChanges}")
         scheduleEvaluate()
     }
@@ -196,7 +206,8 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
 
     /** Still hidden although it might belong on screen: look again shortly. */
     private fun scheduleSettle(keyboard: Boolean) {
-        val d = BubbleRules.settleDelay(settleAttempt++, keyboard) ?: return
+        val awaitingKeyboard = inputSignal && inputActive && !inputPassword && !keyboard
+        val d = BubbleRules.settleDelay(settleAttempt++, keyboard, awaitingKeyboard) ?: return
         main.removeCallbacks(evaluate)
         main.postDelayed(evaluate, d)
     }
