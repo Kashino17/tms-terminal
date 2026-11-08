@@ -254,3 +254,6 @@
 
 ## 2026-11-08 — Bubble v1.129.8
 - Protokoll v1.129.7: Position jetzt ok; Restausfälle ohne jedes Tastatur-Signal, Nutzer bestätigt Tastatur war offen. Suche auf allen Displays + Fensterliste im Protokoll bei Ausfall. Emulator 5/5.
+
+## 2026-11-08 — Bubble v1.129.9
+- Protokoll + Screenshots: Bubble-Fenster da, aber Einblend-Animation (alpha 0→1) lief am Samsung nicht an → durchsichtig. Jetzt sofort sichtbar, Animation nur Deko, Ausblenden per Timer. Emulator ok auch ohne Animationen.
