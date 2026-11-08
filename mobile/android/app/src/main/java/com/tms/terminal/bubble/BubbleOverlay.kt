@@ -4,9 +4,12 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Point
+import android.hardware.display.DisplayManager
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.view.Display
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -35,6 +38,8 @@ class BubbleOverlay(
     private val ctx: Context,
     private val config: BubbleConfig,
     private val callbacks: Callbacks,
+    /** Protocol line (shown under "Protokoll kopieren"). */
+    private val log: (String) -> Unit = {},
 ) {
     interface Callbacks {
         fun onTap()
@@ -108,7 +113,8 @@ class BubbleOverlay(
         val old = mode
         mode = newMode
         if (newMode == Mode.HIDDEN) { fadeOut(); hideSleepTarget(); return }
-        if (homeX < 0) placeFromConfig()
+        // Every appearance is placed on the screen as it is now (Fold: inner ⇄ cover).
+        if (homeX < 0 || old == Mode.HIDDEN || hiding) placeFromConfig()
         when (newMode) {
             Mode.RECORDING -> startPill()
             Mode.PROCESSING -> if (pillAttached) pill.setFace(BubbleView.Face.PROCESSING) else circle.setFace(BubbleView.Face.PROCESSING)
@@ -135,12 +141,12 @@ class BubbleOverlay(
     fun toast(message: String) {
         caption.text = message
         caption.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
-        val m = ctx.resources.displayMetrics
+        val (sw, _) = screen()
         if (homeX < 0) placeFromConfig()
         val cw = caption.measuredWidth
         val ch = caption.measuredHeight
         val centre = homeX + size / 2
-        captionParams.x = (centre - cw / 2).coerceIn(dp(8), (m.widthPixels - cw - dp(8)).coerceAtLeast(dp(8)))
+        captionParams.x = (centre - cw / 2).coerceIn(dp(8), (sw - cw - dp(8)).coerceAtLeast(dp(8)))
         captionParams.y = if (homeY - ch - dp(10) > dp(24)) homeY - ch - dp(10) else homeY + size + dp(10)
         try {
             if (!captionAttached) { wm.addView(caption, captionParams); captionAttached = true }
@@ -161,8 +167,21 @@ class BubbleOverlay(
         mode = Mode.HIDDEN
     }
 
+    /** Screen size changed (Fold opened/closed, rotation): move a visible circle onto it. */
+    private var lastScreen: Pair<Int, Int>? = null
+    fun onScreenChanged() {
+        val now = screen()
+        if (now == lastScreen) return
+        lastScreen = now
+        log("Bildschirm jetzt ${now.first}×${now.second}")
+        if (mode == Mode.HIDDEN || pillAttached || !circleAttached) return
+        placeFromConfig()
+        resetCirclePosition()
+        reportPlacement()
+    }
+
     // ── circle ⇄ pill hand-over ─────────────────────────────────────────
-    private fun anchorRight() = homeX + size / 2 > ctx.resources.displayMetrics.widthPixels / 2
+    private fun anchorRight() = homeX + size / 2 > screen().first / 2
 
     private fun startPill() {
         val right = anchorRight()
@@ -204,11 +223,35 @@ class BubbleOverlay(
         hiding = false
         circle.animate().cancel()
         circleParams.x = homeX; circleParams.y = homeY
+        // Trust the view, not our flag: a window the system dropped must be added again,
+        // otherwise the update fails and the bubble stays away while "visible".
+        circleAttached = circle.isAttachedToWindow
         try {
-            if (!circleAttached) { wm.addView(circle, circleParams); circleAttached = true } else wm.updateViewLayout(circle, circleParams)
-        } catch (_: Exception) { circleAttached = false; return }
+            if (!circleAttached) wm.addView(circle, circleParams) else wm.updateViewLayout(circle, circleParams)
+            circleAttached = true
+        } catch (e: Exception) {
+            circleAttached = false
+            log("Bubble-Fenster fehlgeschlagen: ${e.javaClass.simpleName} ${e.message?.take(80) ?: ""}")
+            return
+        }
         if (fromHidden) { circle.alpha = 0f; circle.scaleX = 0.82f; circle.scaleY = 0.82f }
         circle.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(240).setInterpolator(spring).start()
+        if (fromHidden) reportPlacement()
+    }
+
+    /** Protocol: where the circle really ended up, measured after layout. */
+    private fun reportPlacement() {
+        circle.postDelayed({
+            if (mode == Mode.HIDDEN) return@postDelayed
+            val loc = IntArray(2)
+            circle.getLocationOnScreen(loc)
+            val (w, h) = screen()
+            val onScreen = loc[0] >= 0 && loc[1] >= 0 && loc[0] + size <= w && loc[1] + size <= h
+            log("Bubble bei ${loc[0]},${loc[1]} · Bildschirm ${w}×$h" +
+                (if (!circle.isAttachedToWindow) " · NICHT angehängt" else "") +
+                (if (circle.windowVisibility != View.VISIBLE) " · Fenster unsichtbar" else "") +
+                (if (!onScreen) " · AUSSERHALB" else ""))
+        }, 300)
     }
 
     private fun fadeOut() {
@@ -302,17 +345,17 @@ class BubbleOverlay(
     }
 
     private fun settleAfterDrag() {
-        val m = ctx.resources.displayMetrics
-        homeX = circleParams.x.coerceIn(0, m.widthPixels - size)
-        homeY = circleParams.y.coerceIn(dp(24), m.heightPixels - size - dp(24))
+        val (w, h) = screen()
+        val (x, y) = BubbleRules.placeBubble(circleParams.x.coerceAtLeast(0), circleParams.y.coerceAtLeast(0), w, h, size, dp(24))
+        homeX = x; homeY = y
         resetCirclePosition()
         config.x = homeX; config.y = homeY
     }
 
     private fun showSleepTarget() {
-        val m = ctx.resources.displayMetrics
-        sleepParams.x = m.widthPixels / 2 - sleepSize / 2
-        sleepParams.y = m.heightPixels - dp(150)
+        val (w, h) = screen()
+        sleepParams.x = w / 2 - sleepSize / 2
+        sleepParams.y = h - dp(150)
         if (!sleepAttached) {
             try { wm.addView(sleepTarget, sleepParams); sleepAttached = true } catch (_: Exception) { return }
         }
@@ -344,10 +387,26 @@ class BubbleOverlay(
     }
 
     private fun placeFromConfig() {
-        val m = ctx.resources.displayMetrics
-        homeX = if (config.x >= 0) config.x.coerceAtMost(m.widthPixels - size) else m.widthPixels - size - dp(12)
-        homeY = if (config.y >= 0) config.y.coerceAtMost(m.heightPixels - size - dp(24)) else (m.heightPixels * 0.42f).toInt()
+        val (w, h) = screen()
+        val (x, y) = BubbleRules.placeBubble(config.x, config.y, w, h, size, dp(24))
+        homeX = x; homeY = y
     }
+
+    /**
+     * Size of the panel that is on right now. The service's resources can still hold the
+     * other Fold screen's metrics; the display itself always reports the active panel.
+     */
+    private fun screen(): Pair<Int, Int> {
+        return try {
+            val d = (ctx.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager).getDisplay(Display.DEFAULT_DISPLAY)
+            val p = Point()
+            @Suppress("DEPRECATION") d.getRealSize(p)
+            if (p.x > 0 && p.y > 0) Pair(p.x, p.y) else metricsSize()
+        } catch (_: Exception) { metricsSize() }
+    }
+
+    private fun metricsSize(): Pair<Int, Int> =
+        ctx.resources.displayMetrics.let { Pair(it.widthPixels, it.heightPixels) }
 
     private fun detach(v: View) {
         try { if (v.isAttachedToWindow) wm.removeView(v) } catch (_: Exception) { }

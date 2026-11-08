@@ -83,6 +83,23 @@ class BubbleRulesTest {
         assertTrue(delays.size < 30)
     }
 
+    // Fold: position saved / first computed on the wide inner screen (2184 px) must land
+    // on the narrow cover screen (1080 px) — the bubble was "visible" off-screen.
+    @Test fun bubbleIsPlacedOnTheCurrentScreen() {
+        val size = 150; val margin = 60
+        val (x, y) = BubbleRules.placeBubble(savedX = 1990, savedY = 1500, screenW = 1080, screenH = 2520, size = size, margin = margin)
+        assertTrue(x in 0..(1080 - size)); assertTrue(y in margin..(2520 - size - margin))
+        assertEquals(1080 - size, x) // was right-docked, stays right-docked
+        // Taller saved y than the screen allows (inner 1968 high → cover) stays on screen too.
+        val (_, y2) = BubbleRules.placeBubble(1990, 2400, 2184, 1968, size, margin)
+        assertTrue(y2 <= 1968 - size - margin)
+        // Nothing saved: right edge, a bit below the middle.
+        val (x3, y3) = BubbleRules.placeBubble(-1, -1, 1080, 2520, size, margin)
+        assertTrue(x3 in 1080 / 2..(1080 - size)); assertTrue(y3 in margin..(2520 - size - margin))
+        // Saved position on a narrow screen used on the wide one: unchanged.
+        assertEquals(Pair(400, 900), BubbleRules.placeBubble(400, 900, 2184, 1968, size, margin))
+    }
+
     // Diagnosis on the phone: the last decision in words, most specific cause first.
     @Test fun whyNamesTheBlockingCause() {
         fun why(busy: Boolean = false, configured: Boolean = true, enabled: Boolean = true, snoozed: Boolean = false,

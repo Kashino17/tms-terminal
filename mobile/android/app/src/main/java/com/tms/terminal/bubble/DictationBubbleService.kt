@@ -119,7 +119,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         // missing when the keyboard opens, so a re-check would read the stale list again.
         if (android.os.Build.VERSION.SDK_INT >= 33) try { setCacheEnabled(false) } catch (_: Exception) {}
         config = BubbleConfig(this)
-        overlay = BubbleOverlay(this, config, this)
+        overlay = BubbleOverlay(this, config, this) { trace?.add(it) }
         recorder = BubbleRecorder(this)
         socket = DictationSocket(config,
             onConnected = { onWorker { upload?.onConnected() } },
@@ -146,6 +146,12 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     }
 
     override fun onInterrupt() {}
+
+    /** Fold opened/closed or rotated: keep a visible bubble on the screen that is on now. */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (!destroyed && ::overlay.isInitialized) overlay.onScreenChanged()
+    }
 
     override fun onDestroy() {
         destroyed = true

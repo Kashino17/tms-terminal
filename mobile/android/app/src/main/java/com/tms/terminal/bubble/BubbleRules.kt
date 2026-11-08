@@ -80,4 +80,17 @@ object BubbleRules {
     /** Paste only into the app where the user pressed ✓ — otherwise clipboard. */
     fun pasteAllowed(confirmedIn: String?, focusedNow: String?): Boolean =
         confirmedIn != null && confirmedIn == focusedNow
+
+    /**
+     * Where the bubble goes on the screen as it is NOW. The Fold switches between a wide
+     * inner and a narrow cover screen; a spot computed or saved on one lay outside the
+     * other — the bubble was "visible" off-screen. savedX/Y < 0 = never moved.
+     */
+    fun placeBubble(savedX: Int, savedY: Int, screenW: Int, screenH: Int, size: Int, margin: Int): Pair<Int, Int> {
+        val maxX = (screenW - size).coerceAtLeast(0)
+        val maxY = (screenH - size - margin).coerceAtLeast(margin)
+        val x = if (savedX >= 0) savedX.coerceIn(0, maxX) else (maxX - margin / 2).coerceAtLeast(0)
+        val y = if (savedY >= 0) savedY.coerceIn(margin, maxY) else (screenH * 0.42f).toInt().coerceIn(margin, maxY)
+        return Pair(x, y)
+    }
 }
