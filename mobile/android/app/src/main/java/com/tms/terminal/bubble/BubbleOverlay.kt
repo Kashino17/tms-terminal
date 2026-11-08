@@ -221,6 +221,7 @@ class BubbleOverlay(
     // ── circle window ───────────────────────────────────────────────────
     private fun fadeInCircle(fromHidden: Boolean) {
         hiding = false
+        main.removeCallbacks(finishHide)
         circle.animate().cancel()
         circleParams.x = homeX; circleParams.y = homeY
         // Trust the view, not our flag: a window the system dropped must be added again,
@@ -234,22 +235,46 @@ class BubbleOverlay(
             log("Bubble-Fenster fehlgeschlagen: ${e.javaClass.simpleName} ${e.message?.take(80) ?: ""}")
             return
         }
-        if (fromHidden) { circle.alpha = 0f; circle.scaleX = 0.82f; circle.scaleY = 0.82f }
-        circle.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(240).setInterpolator(spring).start()
+        // Fully opaque right away — the animation is decoration only. On the Fold the
+        // bubble process sometimes got no animation frames: a fade-in from alpha 0 then
+        // stayed invisible ("Bubble bei 811,760" = still at the start scale, 300 ms later).
+        circle.alpha = 1f
+        if (fromHidden) {
+            circle.scaleX = 0.9f; circle.scaleY = 0.9f
+            circle.animate().scaleX(1f).scaleY(1f).setDuration(200).setInterpolator(spring).start()
+        } else { circle.scaleX = 1f; circle.scaleY = 1f }
+        main.removeCallbacks(snapCircle)
+        main.postDelayed(snapCircle, 350)
         if (fromHidden) reportPlacement()
+    }
+
+    /** End state without frames: full size, opaque — whatever the animation did. */
+    private val snapCircle = Runnable {
+        if (mode == Mode.HIDDEN || hiding || pillAttached || !circleAttached) return@Runnable
+        circle.animate().cancel()
+        circle.alpha = 1f; circle.scaleX = 1f; circle.scaleY = 1f
+    }
+
+    /** Remove the hidden circle on a timer, not at the animation's end (may never come). */
+    private val finishHide = Runnable {
+        if (!hiding) return@Runnable
+        circle.animate().cancel()
+        detach(circle); circleAttached = false; hiding = false
     }
 
     /** Protocol: where the circle really ended up, measured after layout. */
     private fun reportPlacement() {
-        circle.postDelayed({
-            if (mode == Mode.HIDDEN) return@postDelayed
-            val loc = IntArray(2)
-            circle.getLocationOnScreen(loc)
+        main.postDelayed({
+            if (mode == Mode.HIDDEN || hiding) return@postDelayed
             val (w, h) = screen()
-            val onScreen = loc[0] >= 0 && loc[1] >= 0 && loc[0] + size <= w && loc[1] + size <= h
-            log("Bubble bei ${loc[0]},${loc[1]} · Bildschirm ${w}×$h" +
+            val x = circleParams.x; val y = circleParams.y
+            val onScreen = x >= 0 && y >= 0 && x + size <= w && y + size <= h
+            log("Bubble bei $x,$y · Bildschirm ${w}×$h" +
                 (if (!circle.isAttachedToWindow) " · NICHT angehängt" else "") +
                 (if (circle.windowVisibility != View.VISIBLE) " · Fenster unsichtbar" else "") +
+                (if (circle.alpha < 0.99f) " · durchsichtig ${"%.2f".format(circle.alpha)}" else "") +
+                // Started at 0.9: still there after 300 ms = no animation frames arrived.
+                (if (circle.scaleX < 0.99f) " · Animation hängt" else "") +
                 (if (!onScreen) " · AUSSERHALB" else ""))
         }, 300)
     }
@@ -258,10 +283,11 @@ class BubbleOverlay(
         if (pillAttached) { detach(pill); pillAttached = false }
         if (!circleAttached) return
         hiding = true
+        main.removeCallbacks(snapCircle)
         circle.animate().cancel()
-        circle.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).setDuration(160).setInterpolator(ease)
-            .withEndAction { if (hiding) { detach(circle); circleAttached = false; hiding = false } }
-            .start()
+        circle.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).setDuration(160).setInterpolator(ease).start()
+        main.removeCallbacks(finishHide)
+        main.postDelayed(finishHide, 200)
     }
 
     private val hideCaption = Runnable {
