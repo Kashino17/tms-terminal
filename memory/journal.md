@@ -251,3 +251,6 @@
 
 ## 2026-11-08 — Bubble v1.129.7
 - Protokoll v1.129.6: Erkennung ok („sichtbar“), aber Bubble nicht auf dem Schirm. Ursache im Overlay: Position nur einmal berechnet (Fold innen→außen = außerhalb), verlorenes Fenster nicht neu angelegt. Fix + Protokoll-Zeile „Bubble bei x,y“. Released ohne Emulator-Test (Mac überlastet).
+
+## 2026-11-08 — Bubble v1.129.8
+- Protokoll v1.129.7: Position jetzt ok; Restausfälle ohne jedes Tastatur-Signal, Nutzer bestätigt Tastatur war offen. Suche auf allen Displays + Fensterliste im Protokoll bei Ausfall. Emulator 5/5.
