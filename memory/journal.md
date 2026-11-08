@@ -245,3 +245,6 @@
 ## 2026-11-08 — Bubble-Erkennung neu (v1.129.5)
 - Nutzer: Bubble erscheint oft erst nach 2–3× Öffnen, „Pflaster statt Ursache“. Erkennung umgebaut: Android-Eingabesitzung (Passwort aus inputType) statt Feldsuche im App-Baum; Cursor-Bewegung als Auslöser.
 - „Protokoll kopieren“ für Fehlersuche am Fold. Emulator-Tests ok; alter Code dort ebenfalls ok → Wirkung am Fold offen.
+
+## 2026-11-08 — Bubble v1.129.6
+- Fold-Protokoll ausgewertet: Feld immer erkannt, Ausfall = Tastatur nicht in Fensterliste gesehen + keine spätere Fenstermeldung. Fix: bei aktivem Feld ~10 s jede Sekunde nachschauen, Accessibility-Cache aus, Protokoll „Tastatur meldet sich“. Released ohne Emulator-Test (Mac überlastet), Nutzer testet am Handy.

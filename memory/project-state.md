@@ -1,10 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-08 — Bubble-Erkennung über Android-Eingabesitzung; Release v1.129.5_
+_Zuletzt aktualisiert: 2026-11-08 — Bubble wartet nicht mehr auf Tastatur-Meldung; Release v1.129.6_
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-08 abends (neueste):** Release v1.129.5: Bubble entscheidet über Android-Eingabesitzung (flagInputMethodEditor, onStartInput/onUpdateSelection) statt Baumsuche; „Protokoll kopieren“ in Einstellungen. Emulator ok, Samsung-Aussetzer nicht reproduziert. **Offen:** Nutzer testet; bei Ausfall Protokoll einfügen lassen.
+**Stand 2026-11-08 abends (neueste):** Release v1.129.6: Bubble schaut bei aktivem Feld ~10 s selbst nach der Tastatur (Samsung meldet sie verspätet), Cache aus. Davor v1.129.5: Bubble entscheidet über Android-Eingabesitzung (flagInputMethodEditor, onStartInput/onUpdateSelection) statt Baumsuche; „Protokoll kopieren“ in Einstellungen. Emulator ok, Samsung-Aussetzer nicht reproduziert. **Offen:** Nutzer testet; bei Ausfall Protokoll einfügen lassen.
 
 **Stand 2026-11-08 nachmittags:** Release v1.129.4: v1.129.3 zeigte Bubble nach Feld zu/auf nicht mehr (Verdacht clearCache, entfernt). Neue Zeile „Letzte Prüfung“ für Diagnose am Fold. **Offen:** Nutzer testet; bei Ausfall „Letzte Prüfung“ + „Letzter Abbruch“ ablesen lassen.
 
@@ -59,7 +59,7 @@ _Zuletzt aktualisiert: 2026-11-08 — Bubble-Erkennung über Android-Eingabesitz
 ## Historischer Stand vom 2026-04-26
 Die folgenden älteren Arbeitsnotizen wurden bewahrt und in dieser Sitzung nicht erneut verifiziert.
 
-_Zuletzt aktualisiert: 2026-04-26 (Voice Prompt Enhancer released v1.21.3)_
+_Zuletzt aktualisiert: 2026-11-08 — Bubble wartet nicht mehr auf Tastatur-Meldung; Release v1.129.6_
 
 ## Aktuelle Version
 - **App:** v1.21.3 — Voice Prompt Enhancer (Llama 3.2 3B Instruct via MLX rewritet Sprach-Eingabe in polierte AI-Prompts; Toggle in Settings → Sprache → "KI-Prompt-Modus"; default off)
