@@ -241,3 +241,7 @@
 ## 2026-11-08 — Bubble-Anzeige-Fix (v1.129.4)
 - v1.129.3: Bubble einmal sichtbar, danach nie wieder (Status gebunden/an). clearCache() in Nachprüfung entfernt; „Letzte Prüfung“ in Einstellungen (Entscheidung + Sekunde).
 - Emulator: nach Update kann „Bound + Crashed“ entstehen → An aber unsichtbar, Toggle hilft (nicht sicher die Fold-Ursache).
+
+## 2026-11-08 — Bubble-Erkennung neu (v1.129.5)
+- Nutzer: Bubble erscheint oft erst nach 2–3× Öffnen, „Pflaster statt Ursache“. Erkennung umgebaut: Android-Eingabesitzung (Passwort aus inputType) statt Feldsuche im App-Baum; Cursor-Bewegung als Auslöser.
+- „Protokoll kopieren“ für Fehlersuche am Fold. Emulator-Tests ok; alter Code dort ebenfalls ok → Wirkung am Fold offen.

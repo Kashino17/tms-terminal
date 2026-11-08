@@ -1,10 +1,12 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-08 — Bubble-Anzeige-Fix + Letzte Prüfung; Release v1.129.4_
+_Zuletzt aktualisiert: 2026-11-08 — Bubble-Erkennung über Android-Eingabesitzung; Release v1.129.5_
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-08 nachmittags (neueste):** Release v1.129.4: v1.129.3 zeigte Bubble nach Feld zu/auf nicht mehr (Verdacht clearCache, entfernt). Neue Zeile „Letzte Prüfung“ für Diagnose am Fold. **Offen:** Nutzer testet; bei Ausfall „Letzte Prüfung“ + „Letzter Abbruch“ ablesen lassen.
+**Stand 2026-11-08 abends (neueste):** Release v1.129.5: Bubble entscheidet über Android-Eingabesitzung (flagInputMethodEditor, onStartInput/onUpdateSelection) statt Baumsuche; „Protokoll kopieren“ in Einstellungen. Emulator ok, Samsung-Aussetzer nicht reproduziert. **Offen:** Nutzer testet; bei Ausfall Protokoll einfügen lassen.
+
+**Stand 2026-11-08 nachmittags:** Release v1.129.4: v1.129.3 zeigte Bubble nach Feld zu/auf nicht mehr (Verdacht clearCache, entfernt). Neue Zeile „Letzte Prüfung“ für Diagnose am Fold. **Offen:** Nutzer testet; bei Ausfall „Letzte Prüfung“ + „Letzter Abbruch“ ablesen lassen.
 
 **Stand 2026-11-08 mittags:** Release v1.129.3. Bubble war weg, obwohl Schalter an (nur aus/ein half): „Stopp“ in „Aktive Apps“/Force-Stop lässt Android den Dienst als abgestürzt markieren und nie neu binden — App kann das nicht selbst beheben. Jetzt: Erkennung (Einstellungen „Von Android gestoppt“, Hinweis beim Öffnen, Benachrichtigung → Bedienungshilfen), Zeile „Letzter Abbruch“ mit Android-Grund. Bubble erscheint zuverlässiger beim Feld-Öffnen (Nachprüfungen). **Offen:** Nutzer fragen, ob er „Stopp“ gedrückt hat / was „Letzter Abbruch“ zeigt; Akku-Beobachtung.
 
