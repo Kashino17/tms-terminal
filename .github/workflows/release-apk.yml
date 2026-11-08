@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Diktat-Bubble: Neue Erkennung – die Bubble verlässt sich jetzt auf das Eingabe-Signal von Android (wie die Tastatur selbst) statt das Eingabefeld in der fremden App zu suchen. Sie erscheint damit zuverlässiger, auch in Web-Apps und beim erneuten Öffnen der Tastatur; Passwortfelder bleiben ausgenommen. Neu in den Einstellungen: Protokoll kopieren – für die Fehlersuche. Hinweis: Vor dem Update Play Protect kurz pausieren; falls die Bubble danach fehlt, in den Bedienungshilfen einmal aus- und wieder einschalten." \
+            --notes "Diktat-Bubble: Erscheint jetzt auch, wenn Android die geöffnete Tastatur verspätet meldet. Bisher wartete die Bubble auf diese Meldung und blieb weg, bis das Eingabefeld erneut geöffnet wurde; jetzt schaut sie bei aktivem Feld selbst nach (bis zu 10 Sekunden) und liest dabei immer den aktuellen Stand. Das Protokoll zeigt zusätzlich, wann sich die Tastatur meldet. Hinweis: Vor dem Update Play Protect kurz pausieren; falls die Bubble danach fehlt, in den Bedienungshilfen einmal aus- und wieder einschalten." \
             --latest
