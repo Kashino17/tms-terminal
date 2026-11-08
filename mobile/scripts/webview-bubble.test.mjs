@@ -137,6 +137,10 @@ if (!PW) {
       assert.match(check, /Letzte Prüfung/);
       assert.match(check, /08\.11\. 12:43:07/);
       assert.match(check, /kein Eingabefeld erkannt/);
+
+      // Protocol for diagnosis: one tap copies it (RN does the clipboard).
+      await page.click('#bubbleTraceRow');
+      assert.equal(posts.filter((m) => m.type === 'bubble:copytrace').length, 1);
     } finally { await browser.close(); }
   });
 }

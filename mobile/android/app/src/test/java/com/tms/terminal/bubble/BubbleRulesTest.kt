@@ -83,5 +83,21 @@ class BubbleRulesTest {
         assertEquals("schläft", why(snoozed = true, shown = false))
         assertEquals("Tastatur zu", why(keyboard = false, field = false, shown = false))
         assertEquals("Tastatur offen, aber kein Eingabefeld erkannt", why(field = false, shown = false))
+        assertEquals("Passwortfeld", BubbleRules.why(false, true, true, false, keyboard = true, field = false, shown = false, password = true))
+    }
+
+    // The system tells the bubble each input start with the field's type — passwords from
+    // that, instead of searching the app's view tree (unreliable in web apps).
+    @Test fun passwordInputTypesAreRecognised() {
+        val t = android.text.InputType.TYPE_CLASS_TEXT
+        val n = android.text.InputType.TYPE_CLASS_NUMBER
+        assertTrue(BubbleRules.isPasswordInput(t or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD))
+        assertTrue(BubbleRules.isPasswordInput(t or android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD))
+        assertTrue(BubbleRules.isPasswordInput(t or android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD))
+        assertTrue(BubbleRules.isPasswordInput(n or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD))
+        assertFalse(BubbleRules.isPasswordInput(t or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE))
+        assertFalse(BubbleRules.isPasswordInput(t or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS))
+        assertFalse(BubbleRules.isPasswordInput(n))
+        assertFalse(BubbleRules.isPasswordInput(0))
     }
 }

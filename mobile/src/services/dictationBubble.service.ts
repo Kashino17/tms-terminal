@@ -31,6 +31,7 @@ interface NativeBubble {
   setEnabled(enabled: boolean): void;
   wake(): void;
   startKeepAlive?(): void;
+  copyTrace?(): Promise<number>;
   openNotificationSettings?(): void;
 }
 
@@ -50,5 +51,10 @@ export const dictationBubble = {
   setEnabled(enabled: boolean): void { native?.setEnabled(enabled); },
   wake(): void { native?.wake(); },
   startKeepAlive(): void { native?.startKeepAlive?.(); },
+  /** Copies the bubble's decision protocol to the clipboard; number of lines, or null if unsupported. */
+  async copyTrace(): Promise<number | null> {
+    if (!native?.copyTrace) return null;
+    try { return await native.copyTrace(); } catch { return null; }
+  },
   openNotificationSettings(): void { native?.openNotificationSettings?.(); },
 };

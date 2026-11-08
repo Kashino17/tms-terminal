@@ -1356,6 +1356,11 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         dictationBubble.wake();
         pushBubbleStatus();
         break;
+      case 'bubble:copytrace':
+        void dictationBubble.copyTrace().then((n) => {
+          call('toast', n === null ? 'Protokoll nicht verfügbar' : `Protokoll kopiert (${n} Einträge) — jetzt im Chat einfügen`);
+        });
+        break;
       case 'bubble:keepalive':
         dictationBubble.startKeepAlive();
         setTimeout(pushBubbleStatus, 1200); // the service reports running once it is foreground

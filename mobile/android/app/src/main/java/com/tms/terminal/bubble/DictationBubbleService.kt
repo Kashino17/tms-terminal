@@ -50,6 +50,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     private lateinit var overlay: BubbleOverlay
     private lateinit var recorder: BubbleRecorder
     private lateinit var socket: DictationSocket
+    private var trace: BubbleTrace? = null
 
     private var state = State.IDLE
     @Volatile private var upload: DictationUploadK? = null
@@ -62,12 +63,57 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
 
     private var lastKeepAliveTry = 0L
 
+    // ── input sessions (Android 13+) ────────────────────────────────────
+    // The system reports every text-input start/end in any app to the service
+    // (flagInputMethodEditor), with the field's type — the same signal the keyboard
+    // gets. Searching the app's view tree for a focused field instead was the root
+    // cause of the bubble not appearing: web apps report that focus late or never.
+    /** True once Android handed us an input method — the input-session signal is available. */
+    @Volatile private var inputSignal = false
+    @Volatile private var inputActive = false
+    @Volatile private var inputPassword = false
+    @Volatile private var inputPackage: String? = null
+
+    override fun onCreateInputMethod(): android.accessibilityservice.InputMethod {
+        inputSignal = true
+        return SessionWatcher()
+    }
+
+    @androidx.annotation.RequiresApi(33)
+    private inner class SessionWatcher : android.accessibilityservice.InputMethod(this) {
+        override fun onStartInput(attribute: android.view.inputmethod.EditorInfo, restarting: Boolean) {
+            super.onStartInput(attribute, restarting)
+            inputActive = true
+            inputPassword = BubbleRules.isPasswordInput(attribute.inputType)
+            inputPackage = attribute.packageName
+            trace?.add("Eingabe beginnt ${attribute.packageName}${if (inputPassword) " (Passwort)" else ""}${if (restarting) " (neu)" else ""}")
+            main.post { if (!destroyed) scheduleEvaluate() }
+        }
+
+        // Tapping into a field moves the cursor — also when the field already had focus
+        // and only the keyboard comes back (no focus event then).
+        override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int,
+                                       candidatesStart: Int, candidatesEnd: Int) {
+            super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+            main.post { if (!destroyed && overlay.mode == BubbleOverlay.Mode.HIDDEN) { lastTrigger = "Cursor"; scheduleEvaluate() } }
+        }
+
+        override fun onFinishInput() {
+            super.onFinishInput()
+            inputActive = false
+            inputPassword = false
+            trace?.add("Eingabe endet")
+            main.post { if (!destroyed) scheduleEvaluate() }
+        }
+    }
+
     // ── lifecycle ───────────────────────────────────────────────────────
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         workerThread = HandlerThread("tms-bubble").also { it.start() }
         worker = Handler(workerThread.looper)
+        trace = BubbleTrace(this, worker).also { it.add("verbunden (Android ${android.os.Build.VERSION.SDK_INT})") }
         config = BubbleConfig(this)
         overlay = BubbleOverlay(this, config, this)
         recorder = BubbleRecorder(this)
@@ -108,7 +154,12 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         super.onDestroy()
     }
 
+    /** What triggered the next check — for the protocol only. */
+    private var lastTrigger = ""
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event != null) lastTrigger = "${event.eventType.toString(16)}/${event.packageName ?: "-"}"
+        if (com.tms.terminal.BuildConfig.DEBUG && event != null) Log.d(TAG, "ev ${AccessibilityEvent.eventTypeToString(event.eventType)} ${event.packageName} ${event.className} wc=${event.windowChanges}")
         scheduleEvaluate()
     }
 
@@ -139,6 +190,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
     private fun record(why: String, now: Long) {
         if (why == lastWhy) return
         lastWhy = why
+        trace?.add("Prüfung #$settleAttempt nach $lastTrigger: $why")
         try { config.recordCheck(why, now) } catch (_: Exception) {}
     }
 
@@ -157,17 +209,19 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         val snoozedUntil = config.snoozedUntil
         val enabled = config.enabled
         val keyboard = try { TextInserter.keyboardVisible(this) } catch (_: Exception) { false }
-        // Cheap checks first: the field search walks up to thousands of nodes over
-        // binder, so it only runs when everything else would show the bubble —
-        // with the keyboard closed (most of the time) it is skipped entirely.
         val needField = !busy && config.isConfigured && enabled && now >= snoozedUntil && keyboard
-        // focusedEditable() already returns null for password fields.
-        val editable = needField && try { TextInserter.focusedEditable(this) != null } catch (_: Exception) { false }
+        // Keyboard open = the user is typing. Only a password field keeps the bubble away;
+        // that comes from the system's input session (Android 13+). Older Android: the
+        // view-tree search (focusedEditable() returns null for password fields).
+        val editable = needField && if (inputSignal) !(inputActive && inputPassword)
+            else try { TextInserter.focusedEditable(this) != null } catch (_: Exception) { false }
         val show = (busy || config.isConfigured) && BubbleRules.shouldShow(
             editable, password = false, ownWindow = false, busy = busy,
             snoozedUntil = snoozedUntil, now = now, enabled = enabled,
             keyboardVisible = keyboard)
-        record(BubbleRules.why(busy, config.isConfigured, enabled, now < snoozedUntil, keyboard, editable, show), now)
+        if (com.tms.terminal.BuildConfig.DEBUG) Log.d(TAG, "eval a=$settleAttempt kb=$keyboard field=$editable input=$inputActive/$inputPackage pw=$inputPassword show=$show")
+        record(BubbleRules.why(busy, config.isConfigured, enabled, now < snoozedUntil, keyboard, editable, show,
+            password = inputSignal && inputActive && inputPassword), now)
         if (!show) {
             overlay.show(BubbleOverlay.Mode.HIDDEN)
             // Only worth another look when nothing but keyboard/field kept it hidden.
@@ -224,6 +278,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
             return
         }
         confirmedInPackage = try { TextInserter.focusedEditable(this)?.packageName?.toString() } catch (_: Exception) { null }
+            ?: inputPackage.takeIf { inputActive }
         state = State.PROCESSING
         stoppedAt = System.currentTimeMillis()
         u.lastHeard = stoppedAt

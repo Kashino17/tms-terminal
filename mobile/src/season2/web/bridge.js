@@ -1865,6 +1865,11 @@
             return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
           }) + '</small></span></div>';
       }
+      // Diagnose: die letzten Entscheidungen der Bubble zum Einfuegen in den Chat.
+      if (st && on) {
+        html += '<div class="settings-row is-tap" id="bubbleTraceRow"><span class="settings-row__label">Protokoll kopieren' +
+          '<small>Für die Fehlersuche — danach im Chat einfügen</small></span></div>';
+      }
       // Diagnose: wann und warum Android die Bubble zuletzt beendet hat (ohne Updates).
       if (st && st.lastExit && st.lastExitAt) {
         var d = new Date(st.lastExitAt);
@@ -1879,6 +1884,8 @@
       if (svc) svc.addEventListener('click', function () { post('bubble:open', {}); });
       var sw = document.getElementById('bubbleEnabledSwitch');
       if (sw) sw.addEventListener('change', function () { post('bubble:toggle', { enabled: sw.checked }); });
+      var traceRow = document.getElementById('bubbleTraceRow');
+      if (traceRow) traceRow.addEventListener('click', function () { post('bubble:copytrace', {}); });
       var wake = document.getElementById('bubbleWakeRow');
       if (wake) wake.addEventListener('click', function () { post('bubble:wake', {}); });
       var keep = document.getElementById('bubbleKeepRow');

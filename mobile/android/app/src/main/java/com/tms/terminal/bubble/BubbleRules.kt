@@ -17,15 +17,29 @@ object BubbleRules {
 
     fun snoozeUntil(now: Long): Long = now + SNOOZE_MS
 
+    /** Password fields (from the input type the system reports at input start): no bubble there. */
+    fun isPasswordInput(inputType: Int): Boolean {
+        val cls = inputType and android.text.InputType.TYPE_MASK_CLASS
+        val variation = inputType and android.text.InputType.TYPE_MASK_VARIATION
+        return when (cls) {
+            android.text.InputType.TYPE_CLASS_TEXT -> variation == android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                variation == android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                variation == android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+            android.text.InputType.TYPE_CLASS_NUMBER -> variation == android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            else -> false
+        }
+    }
+
     /** The last show/hide decision in words — shown in TMS settings to diagnose on the phone. */
     fun why(busy: Boolean, configured: Boolean, enabled: Boolean, snoozed: Boolean,
-            keyboard: Boolean, field: Boolean, shown: Boolean): String = when {
+            keyboard: Boolean, field: Boolean, shown: Boolean, password: Boolean = false): String = when {
         busy -> "Aufnahme läuft"
         shown -> "sichtbar"
         !configured -> "nicht eingerichtet (kein Server)"
         !enabled -> "in TMS ausgeschaltet"
         snoozed -> "schläft"
         !keyboard -> "Tastatur zu"
+        password -> "Passwortfeld"
         !field -> "Tastatur offen, aber kein Eingabefeld erkannt"
         else -> "versteckt"
     }

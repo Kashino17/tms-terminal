@@ -75,6 +75,16 @@ class DictationBubbleModule(private val rc: ReactApplicationContext) : ReactCont
         BubbleKeepAliveService.sync(rc) // the bubble itself picks the change up on its next event
     }
 
+    /** Puts the bubble's recent decisions on the clipboard; resolves the number of lines. */
+    @ReactMethod
+    fun copyTrace(promise: Promise) {
+        val text = BubbleTrace.read(rc)
+        val head = "TMS Diktat-Bubble Protokoll · Android ${Build.VERSION.SDK_INT} · ${Build.MANUFACTURER} ${Build.MODEL}\n"
+        val cm = rc.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("TMS Bubble-Protokoll", head + text))
+        promise.resolve(text.lines().count { it.isNotEmpty() })
+    }
+
     @ReactMethod
     fun wake() {
         config.wake()
