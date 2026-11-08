@@ -3,6 +3,11 @@
 # Stays alive and reads commands from stdin: spawning a process per keystroke
 # would cost 50-100 ms and wreck the whole latency budget. Add-Type compiles the
 # C# once at startup using in-box tooling — nothing to install.
+#
+# The read loop itself runs in C# (TmsInput.Run), not in PowerShell: the
+# interpreted loop paid string splitting, casts and a switch per line, for
+# every one of the ~60-120 pointer events a second — the pointer trailed the
+# finger. C# 5 only (Windows PowerShell 5.1's Add-Type compiler).
 
 Add-Type @"
 using System;
@@ -23,6 +28,12 @@ public class TmsInput {
 
   [DllImport("user32.dll", SetLastError = true)]
   public static extern uint SendInput(uint n, INPUT[] inputs, int size);
+  [StructLayout(LayoutKind.Sequential)]
+  public struct POINT { public int X, Y; }
+  [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+  [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  const int SM_XVIRTUALSCREEN = 76, SM_YVIRTUALSCREEN = 77, SM_CXVIRTUALSCREEN = 78, SM_CYVIRTUALSCREEN = 79;
 
   const uint MOUSE = 0, KEYBOARD = 1;
   const uint MOVE = 0x0001, ABSOLUTE = 0x8000, WHEEL = 0x0800, HWHEEL = 0x1000;
@@ -39,9 +50,23 @@ public class TmsInput {
     INPUT i = new INPUT(); i.type = MOUSE;
     i.mi.dx = x; i.mi.dy = y; i.mi.dwFlags = MOVE | ABSOLUTE | VIRTUALDESK; Send(i);
   }
+  // A relative SendInput is a "mickey" count: Windows runs it through the
+  // pointer speed slider and "Enhance pointer precision", so the pointer
+  // went a different distance than the app predicted (it draws the pointer
+  // itself and corrects to the real position afterwards — a visible jump).
+  // Instead: read the real position, add exactly dx/dy physical pixels, and
+  // place it there absolutely. Same idea as the macOS helper's `rel`.
   public static void MoveRelative(int dx, int dy) {
+    POINT p;
+    if (!GetCursorPos(out p)) return;
+    int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int vw = Math.Max(2, GetSystemMetrics(SM_CXVIRTUALSCREEN)), vh = Math.Max(2, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+    int x = Math.Min(vx + vw - 1, Math.Max(vx, p.X + dx));
+    int y = Math.Min(vy + vh - 1, Math.Max(vy, p.Y + dy));
     INPUT i = new INPUT(); i.type = MOUSE;
-    i.mi.dx = dx; i.mi.dy = dy; i.mi.dwFlags = MOVE; Send(i);
+    i.mi.dx = (int)Math.Round((x - vx) * 65535.0 / (vw - 1));
+    i.mi.dy = (int)Math.Round((y - vy) * 65535.0 / (vh - 1));
+    i.mi.dwFlags = MOVE | ABSOLUTE | VIRTUALDESK; Send(i);
   }
   public static void Button(string which, bool down) {
     INPUT i = new INPUT(); i.type = MOUSE;
@@ -106,6 +131,37 @@ public class TmsInput {
     }
     return sb.ToString();
   }
+
+  static int Num(string[] n, int i) {
+    int v; return (i < n.Length && int.TryParse(n[i], out v)) ? v : 0;
+  }
+
+  // One command per line, same protocol as before (see input.win32.ts).
+  // Returns at end of input or on `quit`.
+  public static void Run() {
+    // Physical pixels everywhere: GetCursorPos/GetSystemMetrics in a
+    // DPI-unaware process report scaled values on a 125-200 % desktop.
+    try { SetProcessDPIAware(); } catch (Exception) { }
+    System.IO.TextReader input = Console.In;
+    string line;
+    while ((line = input.ReadLine()) != null) {
+      int sp = line.IndexOf(' ');
+      string cmd = sp < 0 ? line : line.Substring(0, sp);
+      string rest = sp < 0 ? "" : line.Substring(sp + 1);
+      string[] n = rest.Split(' ');
+      try {
+        switch (cmd) {
+          case "abs": MoveAbsolute(Num(n, 0), Num(n, 1)); break;
+          case "rel": MoveRelative(Num(n, 0), Num(n, 1)); break;
+          case "btn": Button(n[0], n.Length > 1 && n[1] == "1"); break;
+          case "scroll": Scroll(Num(n, 0), Num(n, 1)); break;
+          case "key": Key((ushort)Num(n, 0), n.Length > 1 && n[1] == "1"); break;
+          case "text": Text(Unescape(rest)); break;
+          case "quit": return;
+        }
+      } catch (Exception) { /* one bad line must not end the session */ }
+    }
+  }
 }
 "@
 
@@ -117,21 +173,4 @@ public class TmsInput {
 # this script's read loop (below) is even running.
 [Console]::Error.WriteLine('{"ready":{"input":true}}')
 
-while ($true) {
-  $line = [Console]::In.ReadLine()
-  if ($null -eq $line) { break }
-  $parts = $line.Split(' ', 2)
-  $cmd = $parts[0]
-  $rest = if ($parts.Length -gt 1) { $parts[1] } else { '' }
-  $n = $rest.Split(' ')
-
-  switch ($cmd) {
-    'abs'    { [TmsInput]::MoveAbsolute([int]$n[0], [int]$n[1]) }
-    'rel'    { [TmsInput]::MoveRelative([int]$n[0], [int]$n[1]) }
-    'btn'    { [TmsInput]::Button($n[0], $n[1] -eq '1') }
-    'scroll' { [TmsInput]::Scroll([int]$n[0], [int]$n[1]) }
-    'key'    { [TmsInput]::Key([uint16]$n[0], $n[1] -eq '1') }
-    'text'   { [TmsInput]::Text([TmsInput]::Unescape($rest)) }
-    'quit'   { exit 0 }
-  }
-}
+[TmsInput]::Run()

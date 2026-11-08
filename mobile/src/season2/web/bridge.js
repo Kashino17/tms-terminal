@@ -3107,7 +3107,7 @@
   // Tippt der Nutzer den Fernzugriff-Knopf auf der Geraetekarte an: React
   // Native holt die Zugangsdaten und reicht sie ueber setRemoteTarget zurueck
   // (siehe weiter unten) — die Seite baut die Bildverbindung selbst auf.
-  window.__tmsOpenRemote = function (id) { post('remote:open', { id: id }); };
+  window.__tmsOpenRemote = function (id) { remoteWantId = id || null; post('remote:open', { id: id }); };
 
   // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
   window.TMSBridge.setServers = function (servers) {
@@ -3157,7 +3157,14 @@
   // Tastendruck (der TMSRemote.start() erneut aufruft) verbindet. Der Haken
   // unten holt das nach, sobald die Zugangsdaten tatsaechlich da sind.
   var remoteTarget = null;
+  // Das Gerät, dessen Zugangsdaten gerade erwartet werden. Die Antworten von
+  // React Native kommen asynchron (fremdes Gerät: erst nach einem Speicher-
+  // Zugriff) — beim schnellen Wechsel MAC → WIN konnte die späte MAC-Antwort
+  // nach der WIN-Antwort eintreffen, und der nächste Neuversuch verband dann
+  // wieder mit dem Mac, während die Insel WIN zeigte.
+  var remoteWantId = null;
   window.TMSBridge.setRemoteTarget = function (t) {
+    if (t && t.id && remoteWantId && t.id !== remoteWantId) return;
     remoteTarget = t;
     if (typeof window.__tmsRemoteTargetReady === 'function') window.__tmsRemoteTargetReady();
   };
@@ -3896,10 +3903,18 @@
 
       var url = 'ws://' + remoteTarget.host + ':' + remoteTarget.port
               + '/remote?token=' + encodeURIComponent(remoteTarget.token);
-      ws = new WebSocket(url);
-      ws.binaryType = 'arraybuffer';
+      // Jede Verbindung reagiert nur, solange sie DIE aktuelle ist. Das
+      // Schließen einer alten meldet sich erst eine Netz-Runde später — beim
+      // Gerätewechsel stand dann schon die neue, und der späte onclose der
+      // alten setzte `ws = null`: die neue lief unbemerkt weiter, ein
+      // "Neuversuch" öffnete eine dritte, und zwei Bildströme (MAC und WIN)
+      // zeichneten abwechselnd in denselben Dekoder.
+      var sock = new WebSocket(url);
+      ws = sock;
+      sock.binaryType = 'arraybuffer';
 
-      ws.onopen = function () {
+      sock.onopen = function () {
+        if (ws !== sock) { try { sock.close(); } catch (e) {} return; }
         // Neue Verbindung, Zeigerposition unbekannt. NICHT erst bei
         // remote:started zuruecksetzen: die erste Positionsmeldung des Macs
         // kommt VOR remote:started an und waere sonst gleich wieder vergessen.
@@ -3909,11 +3924,13 @@
         ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
         veil('Verbinde …');
       };
-      ws.onmessage = function (e) {
+      sock.onmessage = function (e) {
+        if (ws !== sock) return;
         if (typeof e.data === 'string') { try { onControl(JSON.parse(e.data)); } catch (err) {} }
         else onBinary(e.data);
       };
-      ws.onclose = function () {
+      sock.onclose = function () {
+        if (ws !== sock) return; // eine längst abgelöste Verbindung
         ws = null;
         if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
         window.remoteState.running = false;
@@ -3928,7 +3945,7 @@
         veil('Verbindung verloren — neuer Versuch …');
         retryTimer = setTimeout(connect, Math.min(500 * retry, 4000));
       };
-      ws.onerror = function () { try { ws.close(); } catch (e) {} };
+      sock.onerror = function () { try { sock.close(); } catch (e) {} };
     }
 
     // C2: eine Sitzung wird gewuenscht (wantRunning), aber es steht noch
@@ -3962,6 +3979,9 @@
       switchTo: function (id) {
         window.TMSRemote.stop();
         remoteTarget = null;
+        // Das letzte Bild gehört dem vorigen Gerät — nicht stehen lassen, bis
+        // das neue sein erstes Vollbild schickt.
+        if (ctx && canvas) { try { ctx.clearRect(0, 0, canvas.width, canvas.height); } catch (e) {} }
         window.__tmsOpenRemote(id);
         window.TMSRemote.start('auto');
       },

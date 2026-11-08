@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pickEncoder, buildFfmpegArgs, parseCaptureSize, computeOutputSize, ENCODER_PREFERENCE,
+  pickEncoder, buildFfmpegArgs, parseCaptureSize, computeOutputSize, ENCODER_PREFERENCE, parseCursorLine, captureScale,
 } from './capture.win32';
 import { splitLines } from '../lines';
 
@@ -125,4 +125,30 @@ test('jeder Encoder liefert Baseline ohne B-Frames — passend zum Decoder der A
     assert.ok(joined.includes(`-profile:v ${profile[enc]}`), `${enc}: Profil ${profile[enc]}`);
     assert.ok(joined.includes('-bf 0'), `${enc}: keine B-Frames (sonst Umsortierung + Verzögerung)`);
   }
+});
+
+// Fernzugriff Windows: die App zeichnet den Zeiger selbst (sofort), das Video
+// darf keinen zweiten, verspäteten Zeiger tragen.
+test('mit lokalem Zeiger lässt ddagrab den Zeiger aus dem Bild', () => {
+  const on = buildFfmpegArgs({ maxWidth: 1600, fps: 30, bitrateKbps: 1500, localCursor: true }, 'h264_nvenc').join(' ');
+  assert.ok(on.includes('ddagrab=output_idx=0:framerate=30:draw_mouse=0'));
+  const off = buildFfmpegArgs({ maxWidth: 1600, fps: 30, bitrateKbps: 1500 }, 'h264_nvenc').join(' ');
+  assert.ok(!off.includes('draw_mouse'), 'ohne lokalen Zeiger bleibt er im Video wie bisher');
+});
+
+test('Zeiger-Meldung des Helfers wird gelesen und begrenzt', () => {
+  assert.deepEqual(parseCursorLine('{"cursor":{"x":0.50000,"y":0.25000}}'), { x: 0.5, y: 0.25 });
+  assert.deepEqual(parseCursorLine('{"cursor":{"x":1.2,"y":-0.1}}\r'), { x: 1, y: 0 });
+  assert.equal(parseCursorLine('irgendwas'), null);
+  assert.equal(parseCursorLine('{"cursor":{"x":"a","y":1}}'), null);
+});
+
+// Die App rechnet mit scale, wie weit eine relative Bewegung über das Bild
+// führt (Breite/scale = Bildschirmbreite in Bewegungs-Einheiten). Fest 1 ließ
+// den vorhergesagten Zeiger bei 2560-px-Desktop und 1600-px-Bild 1,6x
+// vorauslaufen.
+test('scale = Bildbreite pro Desktop-Pixel, wie beim Mac', () => {
+  assert.equal(captureScale(2560, 1600), 0.625);
+  assert.equal(captureScale(1920, 1920), 1);
+  assert.equal(captureScale(0, 1600), 1);
 });

@@ -2,6 +2,7 @@ import { spawn, ChildProcess, execFileSync } from 'node:child_process';
 import type { RemoteErrorCode } from '../../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types';
 import { splitLines } from '../lines';
+import { winCursorScriptPath } from '../paths';
 
 /** GPU encoders first — ddagrab already hands us frames on the graphics card. */
 export const ENCODER_PREFERENCE = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'libx264'] as const;
@@ -43,7 +44,9 @@ function profileArgs(encoder: string): string[] {
 export function buildFfmpegArgs(opts: CaptureOptions, encoder: string): string[] {
   return [
     '-hide_banner', '-loglevel', 'info',
-    '-f', 'lavfi', '-i', `ddagrab=output_idx=0:framerate=${opts.fps}`,
+    // With a local pointer the app draws the arrow itself and the video must
+    // not carry a second, delayed one (see cursor-helper.ps1).
+    '-f', 'lavfi', '-i', `ddagrab=output_idx=0:framerate=${opts.fps}${opts.localCursor ? ':draw_mouse=0' : ''}`,
     // `min(iw,${maxWidth})` — not a bare `${maxWidth}` — so the filter only
     // ever shrinks. A bare target width scales up whenever the desktop is
     // narrower than the requested tier (e.g. a 1600px desktop on the
@@ -62,6 +65,32 @@ export function buildFfmpegArgs(opts: CaptureOptions, encoder: string): string[]
     '-bsf:v', 'dump_extra',
     '-f', 'h264', 'pipe:1',
   ];
+}
+
+/**
+ * One stdout line of cursor-helper.ps1 → normalized position, or null.
+ * Same shape as the macOS helper's report: {"cursor":{"x":0.5,"y":0.25}}.
+ */
+export function parseCursorLine(line: string): { x: number; y: number } | null {
+  const t = line.trim();
+  if (!t.startsWith('{')) return null;
+  try {
+    const c = (JSON.parse(t) as { cursor?: { x?: unknown; y?: unknown } }).cursor;
+    if (!c || typeof c.x !== 'number' || typeof c.y !== 'number' || !Number.isFinite(c.x) || !Number.isFinite(c.y)) return null;
+    return { x: Math.min(1, Math.max(0, c.x)), y: Math.min(1, Math.max(0, c.y)) };
+  } catch { return null; }
+}
+
+/**
+ * Video pixels per desktop pixel — the same meaning as the macOS helper's
+ * `scale` (video width / display width in the units relative motion uses).
+ * The app divides by it to know how far one `rel` unit moves the pointer
+ * across the picture; the old fixed 1 was wrong whenever the desktop was
+ * wider than the quality tier (2560 px desktop, 1600 px video: the predicted
+ * pointer ran 1.6x ahead of the real one).
+ */
+export function captureScale(desktopWidth: number, videoWidth: number): number {
+  return desktopWidth > 0 && videoWidth > 0 ? videoWidth / desktopWidth : 1;
 }
 
 /** ffmpeg reports the real (pre-filter) desktop size on stderr. */
@@ -110,15 +139,62 @@ function availableEncoders(): string[] {
  *  caller's side to ffmpeg staying silent, so both need this backstop. */
 const START_TIMEOUT_MS = 10_000;
 
+/** After this many lost pointer reporters the box gets the pointer back in
+ *  the video (no onCursor → the server doesn't offer a local pointer) until
+ *  the server restarts — a reporter that can't run must not cost the whole
+ *  session its three restart attempts every time. */
+const POINTER_GIVE_UP = 2;
+let pointerFailures = 0;
+
 export function createWin32Capture(): ScreenCapture {
   let child: ChildProcess | null = null;
   let onData: (b: Buffer) => void = () => {};
   let onError: (c: RemoteErrorCode, m: string) => void = () => {};
+  let onCursor: ((x: number, y: number) => void) | null = null;
+  let pointer: ChildProcess | null = null;
   // Same as on macOS: a planned shutdown must not be reported as a crash, or the
   // restart logic from Task 18 would start the just-stopped session again.
   let stopping = false;
 
-  return {
+  /** The pointer reporter for a local pointer (cursor-helper.ps1). The video
+   *  carries no pointer then — if the reporter dies, the session must restart
+   *  (with the pointer back in the picture on a failing box) rather than go on
+   *  without any pointer at all. */
+  function startPointer(cb: (x: number, y: number) => void) {
+    const p = spawn('powershell.exe',
+      ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', winCursorScriptPath()],
+      { stdio: ['pipe', 'pipe', 'ignore'] });
+    pointer = p;
+    p.stdin?.on('error', () => {});
+    let rest = '';
+    p.stdout?.on('data', (b: Buffer) => {
+      const split = splitLines(rest, b.toString());
+      rest = split.rest;
+      for (const line of split.lines) {
+        const pos = parseCursorLine(line);
+        if (pos && pointer === p) cb(pos.x, pos.y);
+      }
+    });
+    const lost = () => {
+      if (pointer !== p) return;
+      pointer = null;
+      if (stopping) return;
+      pointerFailures++;
+      onError('helper_crashed', 'Zeiger-Melder beendet');
+    };
+    p.on('exit', lost);
+    p.on('error', lost);
+  }
+
+  function stopPointer() {
+    const p = pointer;
+    pointer = null;
+    if (!p) return;
+    try { p.stdin?.end(); } catch { /* already gone */ }
+    setTimeout(() => { try { p.kill(); } catch { /* already gone */ } }, 300).unref();
+  }
+
+  const api: ScreenCapture = {
     start(opts) {
       return new Promise<CaptureInfo>((resolve, reject) => {
         const encoder = pickEncoder(availableEncoders());
@@ -148,6 +224,8 @@ export function createWin32Capture(): ScreenCapture {
 
         proc.stdout.on('data', (b: Buffer) => onData(b));
 
+        if (opts.localCursor && onCursor) startPointer(onCursor);
+
         proc.stderr.on('data', (b: Buffer) => {
           const text = b.toString();
           tail = (tail + text).slice(-4096);
@@ -166,13 +244,14 @@ export function createWin32Capture(): ScreenCapture {
             // itself must reflect what the -vf filter actually outputs, not
             // the raw pre-filter desktop size (see computeOutputSize above).
             const out = computeOutputSize(opts, size);
-            resolve({ width: out.width, height: out.height, scale: 1 });
+            resolve({ width: out.width, height: out.height, scale: captureScale(size.width, out.width) });
             return;
           }
         });
 
         proc.on('exit', (code) => {
           child = null;
+          stopPointer();
           if (stopping) return;                      // planned shutdown
           if (!settled) { settle(); reject(new Error(`ffmpeg beendet (${code}): ${tail.slice(-200)}`)); }
           else onError('helper_crashed', `ffmpeg beendet (${code})`);
@@ -200,6 +279,7 @@ export function createWin32Capture(): ScreenCapture {
       const proc = child;
       stopping = true;
       child = null;
+      stopPointer();
       if (!proc) return;
       proc.kill('SIGTERM');
       await new Promise<void>((resolve) => {
@@ -208,4 +288,6 @@ export function createWin32Capture(): ScreenCapture {
       });
     },
   };
+  if (pointerFailures < POINTER_GIVE_UP) api.onCursor = (cb) => { onCursor = cb; };
+  return api;
 }

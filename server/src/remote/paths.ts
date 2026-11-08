@@ -48,3 +48,8 @@ export function macBuildScriptPath(): string {
 export function winInputScriptPath(): string {
   return path.join(serverRoot(), 'src', 'remote', 'helpers', 'win', 'input-helper.ps1');
 }
+
+/** `<root>/src/remote/helpers/win/cursor-helper.ps1` — reports the Windows pointer position (local pointer). */
+export function winCursorScriptPath(): string {
+  return path.join(serverRoot(), 'src', 'remote', 'helpers', 'win', 'cursor-helper.ps1');
+}

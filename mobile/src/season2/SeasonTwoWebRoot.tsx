@@ -1679,7 +1679,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
             call('toast', `Für „${name}" fehlt die Anmeldung — bitte einmal in der klassischen Ansicht verbinden`);
             return;
           }
-          call('setRemoteTarget', { host, port, token: tok });
+          call('setRemoteTarget', { id: targetId, host, port, token: tok });
         })();
         break;
       }

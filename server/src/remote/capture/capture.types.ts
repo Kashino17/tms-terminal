@@ -44,7 +44,7 @@ export interface ScreenCapture {
   requestKeyframe(): void;
   setBitrate(kbps: number): void;
   /** Pointer position (normalized 0..1 to the captured display), only with
-   *  `localCursor`. Optional: Windows keeps the pointer in the video. */
+   *  `localCursor`. macOS: from the capture helper; Windows: cursor-helper.ps1. */
   onCursor?(cb: (x: number, y: number) => void): void;
   /** Screen lock state changes on macOS (true = lock screen active). */
   onLockChange?(cb: (locked: boolean) => void): void;
