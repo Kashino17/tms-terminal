@@ -54,6 +54,25 @@ if (!PW) {
       window.WebSocket = FakeWS;
       window.__open = (i) => { const s = window.__socks[i]; s.readyState = 1; s.onopen && s.onopen(); };
       window.__closed = (i) => { const s = window.__socks[i]; s.readyState = 3; s.onclose && s.onclose(); };
+      // Nachgebauter Dekoder: Rückstand (decodeQueueSize) stellt der Test ein.
+      window.__decoded = 0;
+      window.__queue = 0;
+      window.VideoDecoder = class {
+        constructor() { this.state = 'unconfigured'; }
+        configure() { this.state = 'configured'; }
+        get decodeQueueSize() { return window.__queue; }
+        decode() { window.__decoded++; }
+        close() { this.state = 'closed'; }
+      };
+      window.EncodedVideoChunk = class { constructor(o) { Object.assign(this, o); } };
+      window.__frame = (i, key) => {
+        const b = new Uint8Array(12); b[0] = 0x01 | (key ? 0x80 : 0);
+        window.__socks[i].onmessage({ data: b.buffer });
+      };
+      window.__startedWith = (i, extra) => {
+        const s = window.__socks[i];
+        s.onmessage({ data: JSON.stringify({ type: 'remote:started', payload: Object.assign({ width: 100, height: 60, scale: 1 }, extra) }) });
+      };
       window.__started = (i) => {
         const s = window.__socks[i];
         s.onmessage && s.onmessage({ data: JSON.stringify({ type: 'remote:started', payload: { width: 100, height: 60, scale: 1 } }) });
@@ -130,4 +149,32 @@ if (!PW) {
       assert.equal(r.running, false, 'WIN läuft erst mit seinem eigenen remote:started');
     } finally { await browser.close(); }
   });
+
+  // Windows kann kein Vollbild auf Anfrage liefern: ein kurzer Rückstand im
+  // Dekoder (Relais liefert Bilder gebündelt) darf dort kein Standbild auslösen.
+  for (const [name, extra, expectDrop] of [
+    ['Windows: kurzer Dekoder-Rückstand wird aufgeholt statt verworfen', { keyframeOnDemand: false }, false],
+    ['Mac: Rückstand → Vollbild anfordern wie bisher', {}, true],
+  ]) {
+    test(name, async () => {
+      const { browser, page, errors } = await boot();
+      try {
+        const r = await page.evaluate(({ MAC, extra }) => {
+          window.TMSRemote.switchTo('mac');
+          window.TMSBridge.setRemoteTarget(MAC);
+          window.__open(0); window.__startedWith(0, extra);
+          window.__frame(0, true);
+          window.__queue = 5;
+          window.__frame(0, false);
+          return {
+            decoded: window.__decoded,
+            askedKey: window.__socks[0].sent.some((d) => d.indexOf('remote:keyframe') >= 0),
+          };
+        }, { MAC, extra });
+        assert.deepEqual(errors, []);
+        assert.equal(r.askedKey, expectDrop);
+        assert.equal(r.decoded, expectDrop ? 1 : 2);
+      } finally { await browser.close(); }
+    });
+  }
 }

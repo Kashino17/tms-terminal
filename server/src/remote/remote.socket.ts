@@ -237,7 +237,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
       input = injector;
 
       splitter = createAnnexBSplitter();
-      flow = createFrameFlow(opts.bitrateKbps);
+      flow = createFrameFlow(opts.bitrateKbps, { keyframeOnDemand: c.keyframeOnDemand !== false });
       startedAt = Date.now();
       // Only a fresh, externally-requested session clears the crash-backoff
       // count — see the comment on `isRestart` above for why a restart's own
@@ -313,7 +313,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
 
       reply({
         type: 'remote:started',
-        payload: { ...info, fps: opts.fps, codec: 'avc1', localCursor },
+        payload: { ...info, fps: opts.fps, codec: 'avc1', localCursor, keyframeOnDemand: c.keyframeOnDemand !== false },
       });
       // Section 9 of the spec requires logging time + source IP for every
       // session start — `logger.info` timestamps its own lines, `ip` comes

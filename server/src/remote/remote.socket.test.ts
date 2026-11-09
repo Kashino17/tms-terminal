@@ -88,7 +88,7 @@ test('remote:start meldet die Bildschirmmasse zurueck', async () => {
   const started = ws.typed('remote:started');
   assert.equal(started.length, 1);
   assert.deepEqual(started[0].payload,
-    { width: 3024, height: 1964, scale: 2, fps: 30, codec: 'avc1', localCursor: false });
+    { width: 3024, height: 1964, scale: 2, fps: 30, codec: 'avc1', localCursor: false, keyframeOnDemand: true });
   assert.deepEqual(capture.started, { maxWidth: 1600, fps: 30, bitrateKbps: 1500, localCursor: false });
 });
 

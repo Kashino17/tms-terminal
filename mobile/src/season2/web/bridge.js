@@ -3810,7 +3810,12 @@
       // springen als mit wachsendem Rueckstand weiterzuzeichnen. Ein
       // verworfenes Zwischenbild entwertet alle folgenden — also bis zum
       // Vollbild nichts mehr dekodieren und eines anfordern.
-      if (!keyframe && decoder.decodeQueueSize > 2) decoder.__gotKey = false;
+      // Windows (ffmpeg) kann kein Vollbild auf Anfrage schneiden — dort
+      // hiesse Verwerfen bis zu 2 s Standbild. Ein paar Bilder Rueckstand,
+      // wie sie ein Relais in Buendeln abliefert, holt der Dekoder in
+      // Sekundenbruchteilen auf; erst ein echter Rueckstau wird verworfen.
+      var lagLimit = window.remoteState.keyframeOnDemand === false ? 8 : 2;
+      if (!keyframe && decoder.decodeQueueSize > lagLimit) decoder.__gotKey = false;
       if (!keyframe && !decoder.__gotKey) {
         // Hoechstens alle 500 ms nachfragen — geht eine Anforderung verloren
         // oder kommt das Vollbild spaet, fragt das naechste Zwischenbild erneut.
@@ -3844,6 +3849,7 @@
           }
           window.remoteState.running = true;
           window.remoteState.localCursor = !!msg.payload.localCursor;
+          window.remoteState.keyframeOnDemand = msg.payload.keyframeOnDemand !== false;
           window.remoteState.w = msg.payload.width;
           window.remoteState.h = msg.payload.height;
           window.remoteState.scale = msg.payload.scale;
@@ -3873,7 +3879,10 @@
           // in der Kopfzeile, nicht die Bitrate — und der Server misst
           // rttMs jetzt wirklich (Ping/Pong auf der Steuerverbindung),
           // statt ihn fest auf 0 zu senden.
-          stat(msg.payload.fps + ' fps · ' + msg.payload.rttMs + ' ms');
+          // Verworfene Bilder sichtbar machen: daran sieht man am Geraet, ob
+          // ein Standbild von der Leitung kam.
+          stat(msg.payload.fps + ' fps · ' + msg.payload.rttMs + ' ms'
+            + (msg.payload.dropped > 0 ? ' · ' + msg.payload.dropped + ' verworfen' : ''));
           linkRttMs = msg.payload.rttMs || 0;
           break;
         case 'remote:cursor':

@@ -23,6 +23,13 @@ import { createBitrateGovernor } from './bitrate';
 
 /** Queueing allowed on top of the base round trip before frames are dropped. */
 export const QUEUE_BUDGET_MS = 120;
+/**
+ * Same, for a capture that cannot cut a keyframe on request (Windows/ffmpeg):
+ * there every dropped frame costs a frozen picture until the next scheduled
+ * keyframe (up to two seconds), so a short jitter spike over a relay is far
+ * cheaper to sit out than to drop.
+ */
+export const SLOW_KEY_QUEUE_BUDGET_MS = 350;
 /** Data stuck in our own send buffer counts as congestion regardless of acks. */
 const BUFFER_LIMIT = 256 * 1024;
 /** The base round trip is the minimum over this window, so it can follow a path change. */
@@ -41,7 +48,14 @@ export interface FrameFlow {
   setTarget(kbps: number): void;
 }
 
-export function createFrameFlow(targetKbps: number): FrameFlow {
+export interface FrameFlowOptions {
+  /** false = the capture only produces keyframes on its own schedule. */
+  keyframeOnDemand?: boolean;
+}
+
+export function createFrameFlow(targetKbps: number, options: FrameFlowOptions = {}): FrameFlow {
+  const slowKeys = options.keyframeOnDemand === false;
+  const budget = slowKeys ? SLOW_KEY_QUEUE_BUDGET_MS : QUEUE_BUDGET_MS;
   const legacy = createBitrateGovernor(targetKbps);
   let target = targetKbps;
   let current = targetKbps;
@@ -82,9 +96,12 @@ export function createFrameFlow(targetKbps: number): FrameFlow {
 
       const base = baseRtt(nowMs);
       const queueDelay = base !== null && inflight.length ? nowMs - inflight[0].sentAt - base : 0;
-      const congested = queueDelay > QUEUE_BUDGET_MS || bufferedBytes > BUFFER_LIMIT;
+      const congested = queueDelay > budget || bufferedBytes > BUFFER_LIMIT;
 
-      if (congested) {
+      // Without keyframes on request a dropped keyframe means waiting for the
+      // next scheduled one — the freeze doubles. It is the frame that ENDS a
+      // freeze, so it always goes out.
+      if (congested && !(slowKeys && au.keyframe)) {
         needKey = true;
         calmSince = null;
         let bitrateKbps: number | null = null;

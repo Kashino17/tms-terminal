@@ -42,6 +42,9 @@ export interface ScreenCapture {
   onData(cb: (chunk: Buffer) => void): void;
   onError(cb: (code: RemoteErrorCode, message: string) => void): void;
   requestKeyframe(): void;
+  /** false = requestKeyframe() can't cut one; keyframes only come on the
+   *  encoder's own schedule (Windows/ffmpeg). Absent = true. */
+  keyframeOnDemand?: boolean;
   setBitrate(kbps: number): void;
   /** Pointer position (normalized 0..1 to the captured display), only with
    *  `localCursor`. macOS: from the capture helper; Windows: cursor-helper.ps1. */

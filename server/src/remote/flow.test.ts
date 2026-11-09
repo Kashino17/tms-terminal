@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { createFrameFlow, QUEUE_BUDGET_MS } from './flow';
+import { createFrameFlow, QUEUE_BUDGET_MS, SLOW_KEY_QUEUE_BUDGET_MS } from './flow';
 
 const key = { keyframe: true };
 const delta = { keyframe: false };
@@ -110,4 +110,31 @@ test('ein Sendepuffer-Rückstau gilt auch mit Quittungen als Stau', () => {
   const flow = createFrameFlow(1500);
   sendAt(flow, 0, 0); flow.onAck(0, 100);
   assert.strictEqual(flow.decide(delta, 200, 400 * 1024).send, false);
+});
+
+// Windows (ffmpeg) kann kein Vollbild auf Anfrage schneiden: jedes verworfene
+// Bild heißt Standbild bis zum nächsten planmäßigen Vollbild (bis 2 s). Eine
+// kurze Zacke über das Relais wird ausgesessen statt verworfen…
+test('ohne Vollbild auf Anfrage: kurze Laufzeit-Zacke wird ausgesessen', () => {
+  const flow = createFrameFlow(1500, { keyframeOnDemand: false });
+  sendAt(flow, 0, 0); flow.onAck(0, 100);
+  sendAt(flow, 1000, 1000);
+  assert.strictEqual(flow.decide(delta, 1000 + 100 + QUEUE_BUDGET_MS + 50, 0).send, true);
+  assert.strictEqual(flow.decide(delta, 1000 + 100 + SLOW_KEY_QUEUE_BUDGET_MS + 1, 0).send, false,
+    'echter Stau wird weiter verworfen');
+});
+
+// …und das Vollbild, das ein Standbild beendet, wird nie verworfen.
+test('ohne Vollbild auf Anfrage: Vollbild geht auch im Stau raus', () => {
+  const flow = createFrameFlow(1500, { keyframeOnDemand: false });
+  sendAt(flow, 0, 0); flow.onAck(0, 100);
+  sendAt(flow, 1000, 1000);
+  const late = 1000 + 100 + SLOW_KEY_QUEUE_BUDGET_MS + 1;
+  assert.strictEqual(flow.decide(delta, late, 0).send, false);
+  assert.strictEqual(flow.decide(key, late + 33, 0).send, true);
+  const mac = createFrameFlow(1500);
+  sendAt(mac, 0, 0); mac.onAck(0, 100);
+  sendAt(mac, 1000, 1000);
+  assert.strictEqual(mac.decide(key, 1000 + 100 + QUEUE_BUDGET_MS + 1, 0).send, false,
+    'der Mac schneidet sein Vollbild nach dem Stau frisch — dort bleibt es beim Verwerfen');
 });

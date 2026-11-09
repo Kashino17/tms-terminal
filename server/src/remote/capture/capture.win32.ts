@@ -124,13 +124,36 @@ export function computeOutputSize(
   return { width, height };
 }
 
+/** The encoder probe runs ffmpeg once and blocks — done once per server run,
+ *  not on every (re)start of a session. A failed probe is not remembered. */
+let encodersCache: string[] | null = null;
 function availableEncoders(): string[] {
+  if (encodersCache) return encodersCache;
   try {
     const out = execFileSync('ffmpeg', ['-hide_banner', '-encoders'], { encoding: 'utf8' });
-    return ENCODER_PREFERENCE.filter((e) => out.includes(e));
+    const found = ENCODER_PREFERENCE.filter((e) => out.includes(e));
+    if (found.length) encodersCache = found;
+    return found;
   } catch {
     return [];
   }
+}
+
+/**
+ * ffmpeg cannot change its bitrate while running, so on Windows a bitrate
+ * change means a second ffmpeg at the new rate that takes over once it
+ * delivers (see `respawn`). That costs a capture start, so not on every nudge
+ * of the flow control: down only for a real cut and at most every few
+ * seconds, up only for a clear step and rarely.
+ *
+ * Returns null = leave it, 0 = now, >0 = ask again after that many ms.
+ */
+export const RESPAWN_DOWN_GAP_MS = 5_000;
+export const RESPAWN_UP_GAP_MS = 30_000;
+export function bitrateRespawnWait(runningKbps: number, wantKbps: number, sinceSpawnMs: number): number | null {
+  if (wantKbps <= runningKbps * 0.85) return Math.max(0, RESPAWN_DOWN_GAP_MS - sinceSpawnMs);
+  if (wantKbps >= runningKbps * 1.3) return Math.max(0, RESPAWN_UP_GAP_MS - sinceSpawnMs);
+  return null;
 }
 
 /** ffmpeg must report the desktop size within this long, or `start()` rejects
@@ -147,7 +170,15 @@ const POINTER_GIVE_UP = 2;
 let pointerFailures = 0;
 
 export function createWin32Capture(): ScreenCapture {
+  /** The ffmpeg whose picture goes out. */
   let child: ChildProcess | null = null;
+  /** A replacement at a new bitrate, until its first picture arrives. */
+  let pending: ChildProcess | null = null;
+  let running: CaptureOptions | null = null;
+  let encoder: string | null = null;
+  let lastSpawnAt = 0;
+  let wantKbps: number | null = null;
+  let respawnTimer: NodeJS.Timeout | null = null;
   let onData: (b: Buffer) => void = () => {};
   let onError: (c: RemoteErrorCode, m: string) => void = () => {};
   let onCursor: ((x: number, y: number) => void) | null = null;
@@ -194,17 +225,75 @@ export function createWin32Capture(): ScreenCapture {
     setTimeout(() => { try { p.kill(); } catch { /* already gone */ } }, 300).unref();
   }
 
+  function launch(opts: CaptureOptions, enc: string): ChildProcess {
+    lastSpawnAt = Date.now();
+    return spawn('ffmpeg', buildFfmpegArgs(opts, enc), { stdio: ['ignore', 'pipe', 'pipe'] });
+  }
+
+  /** The live ffmpeg died on its own: same report as before. */
+  function lostLive(proc: ChildProcess, code: number | null) {
+    if (child !== proc) return;
+    child = null;
+    stopPointer();
+    if (!stopping) onError('helper_crashed', `ffmpeg beendet (${code})`);
+  }
+
+  /**
+   * New bitrate = second ffmpeg. The running one keeps delivering until the
+   * new one's first data arrives (a fresh ffmpeg always opens with SPS/PPS +
+   * keyframe), then it takes over and the old one is stopped — no gap, and
+   * the switch itself ends any freeze. If the replacement fails (Windows
+   * limits desktop duplications per session), the old one simply stays.
+   */
+  function respawn(kbps: number) {
+    if (stopping || !child || !running || !encoder || pending) return;
+    const opts = { ...running, bitrateKbps: kbps };
+    const proc = launch(opts, encoder);
+    pending = proc;
+    proc.stderr?.on('data', () => { /* drained; nothing to parse after start */ });
+    proc.stdout?.on('data', (b: Buffer) => {
+      if (pending === proc) {
+        const old = child;
+        pending = null;
+        child = proc;
+        running = opts;
+        if (old) { try { old.kill('SIGTERM'); } catch { /* already gone */ } }
+      }
+      if (child === proc) onData(b);
+    });
+    const gone = (code: number | null) => {
+      if (pending === proc) { pending = null; return; } // never took over: keep the old one
+      lostLive(proc, code);
+    };
+    proc.on('exit', gone);
+    proc.on('error', () => gone(null));
+  }
+
+  function evaluateBitrate() {
+    if (respawnTimer) { clearTimeout(respawnTimer); respawnTimer = null; }
+    if (stopping || !running || wantKbps === null) return;
+    const wait = bitrateRespawnWait(running.bitrateKbps, wantKbps, Date.now() - lastSpawnAt);
+    if (wait === null) return;
+    if (wait === 0) { if (!pending) respawn(wantKbps); return; }
+    respawnTimer = setTimeout(evaluateBitrate, wait);
+    respawnTimer.unref();
+  }
+
   const api: ScreenCapture = {
+    keyframeOnDemand: false,
+
     start(opts) {
       return new Promise<CaptureInfo>((resolve, reject) => {
-        const encoder = pickEncoder(availableEncoders());
-        if (!encoder) {
+        const enc = pickEncoder(availableEncoders());
+        if (!enc) {
           reject(new Error(
             'ffmpeg mit H.264-Encoder nicht gefunden. Einmalig einrichten mit:  winget install ffmpeg'));
           return;
         }
+        encoder = enc;
+        running = opts;
 
-        const proc = spawn('ffmpeg', buildFfmpegArgs(opts, encoder), { stdio: ['ignore', 'pipe', 'pipe'] });
+        const proc = launch(opts, enc);
         child = proc;
         let settled = false;
         let tail = '';
@@ -222,11 +311,11 @@ export function createWin32Capture(): ScreenCapture {
           reject(new Error('ffmpeg antwortet nicht (Zeitlimit ueberschritten)'));
         }, START_TIMEOUT_MS);
 
-        proc.stdout.on('data', (b: Buffer) => onData(b));
+        proc.stdout?.on('data', (b: Buffer) => { if (child === proc) onData(b); });
 
         if (opts.localCursor && onCursor) startPointer(onCursor);
 
-        proc.stderr.on('data', (b: Buffer) => {
+        proc.stderr?.on('data', (b: Buffer) => {
           const text = b.toString();
           tail = (tail + text).slice(-4096);
           if (settled) return;
@@ -250,11 +339,15 @@ export function createWin32Capture(): ScreenCapture {
         });
 
         proc.on('exit', (code) => {
-          child = null;
-          stopPointer();
-          if (stopping) return;                      // planned shutdown
-          if (!settled) { settle(); reject(new Error(`ffmpeg beendet (${code}): ${tail.slice(-200)}`)); }
-          else onError('helper_crashed', `ffmpeg beendet (${code})`);
+          if (!settled) {
+            child = null;
+            stopPointer();
+            if (stopping) return;
+            settle();
+            reject(new Error(`ffmpeg beendet (${code}): ${tail.slice(-200)}`));
+            return;
+          }
+          lostLive(proc, code);
         });
 
         proc.on('error', () => {
@@ -269,17 +362,21 @@ export function createWin32Capture(): ScreenCapture {
     onData(cb) { onData = cb; },
     onError(cb) { onError = cb; },
 
-    // ffmpeg can change neither the keyframe schedule nor the bitrate while
-    // running — both are baked into the start arguments. Task 10 restarts the
-    // capture instead when the quality preset changes, so these stay no-ops.
-    requestKeyframe() { /* intentionally empty: see comment above */ },
-    setBitrate() { /* intentionally empty: see comment above */ },
+    // ffmpeg cannot cut a keyframe on request (keyframeOnDemand: false tells
+    // the flow control to drop less and never drop a keyframe); a bitrate
+    // change goes through a replacement ffmpeg, see respawn().
+    requestKeyframe() { /* not possible with ffmpeg: see keyframeOnDemand */ },
+    setBitrate(kbps) { wantKbps = kbps; evaluateBitrate(); },
 
     async stop() {
       const proc = child;
+      const next = pending;
       stopping = true;
       child = null;
+      pending = null;
+      if (respawnTimer) { clearTimeout(respawnTimer); respawnTimer = null; }
       stopPointer();
+      if (next) { try { next.kill('SIGTERM'); } catch { /* already gone */ } }
       if (!proc) return;
       proc.kill('SIGTERM');
       await new Promise<void>((resolve) => {
