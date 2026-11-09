@@ -3163,7 +3163,59 @@
   // nach der WIN-Antwort eintreffen, und der nächste Neuversuch verband dann
   // wieder mit dem Mac, während die Insel WIN zeigte.
   var remoteWantId = null;
+  // ── Fernzugriffe laufen, bis der Nutzer sie schliesst ────────────────────
+  // Bildschirmwechsel, Hintergrund, Netzabbruch, Geraetewechsel: die Sitzung
+  // auf dem Rechner bleibt (Bildschirm aus, Ton am Handy …) — der Server haelt
+  // sie, bis jemand "Schliessen" sagt. Welche Geraete gerade eine haben, merkt
+  // sich das Handy hier (gruener Punkt in der Insel), ueber App-Neustarts hinweg.
+  var remoteAlive = (function () {
+    try { return JSON.parse(localStorage.getItem('tms-remote-alive') || '{}') || {}; } catch (e) { return {}; }
+  })();
+  var remoteClosing = {};
+  function setRemoteAlive(id, on) {
+    if (!id || !!remoteAlive[id] === !!on) return;
+    if (on) remoteAlive[id] = true; else delete remoteAlive[id];
+    try { localStorage.setItem('tms-remote-alive', JSON.stringify(remoteAlive)); } catch (e) {}
+    renderRemoteAlive();
+  }
+  function renderRemoteAlive() {
+    if (document.body) document.body.classList.toggle('remote-alive', Object.keys(remoteAlive).length > 0);
+    if (typeof window.__renderRemoteAlive === 'function') window.__renderRemoteAlive();
+  }
+  window.__remoteAliveIds = function () { return Object.keys(remoteAlive); };
+  window.__setRemoteAlive = setRemoteAlive;
+  /** Sitzung eines Geraets schliessen, zu dem gerade keine Bildverbindung
+   *  steht: kurz verbinden, remote:stop, fertig (der Server beendet dann die
+   *  ruhende Sitzung). Unerreichbar = der Punkt bleibt, spaeter erneut. */
+  function closeRemoteVia(t) {
+    var s;
+    try { s = new WebSocket('ws://' + t.host + ':' + t.port + '/remote?token=' + encodeURIComponent(t.token)); }
+    catch (e) { return; }
+    var finished = false;
+    var done = function () {
+      if (finished) return;
+      finished = true;
+      setRemoteAlive(t.id, false);
+      try { s.close(); } catch (e) {}
+    };
+    s.onopen = function () {
+      try { s.send(JSON.stringify({ type: 'remote:stop' })); } catch (e) {}
+      setTimeout(done, 800);
+    };
+    s.onmessage = function (e) { if (typeof e.data === 'string' && e.data.indexOf('remote:stopped') >= 0) done(); };
+    s.onerror = function () {
+      if (!finished && typeof window.toast === 'function') window.toast('Gerät nicht erreichbar — die Verbindung bleibt vorerst bestehen');
+    };
+  }
+  window.__closeRemoteDevice = function (id) {
+    if (!id) return;
+    remoteClosing[id] = true;
+    post('remote:open', { id: id });
+  };
+  setTimeout(renderRemoteAlive, 0);
+
   window.TMSBridge.setRemoteTarget = function (t) {
+    if (t && t.id && remoteClosing[t.id]) { delete remoteClosing[t.id]; closeRemoteVia(t); return; }
     if (t && t.id && remoteWantId && t.id !== remoteWantId) return;
     remoteTarget = t;
     if (typeof window.__tmsRemoteTargetReady === 'function') window.__tmsRemoteTargetReady();
@@ -3389,6 +3441,10 @@
     // denen stop() nur noch die aktuelle erreicht.
     var suspended = false;
     var preset = 'auto';
+    /** Qualitaet je Geraet — eine ruhende Sitzung wird nur mit denselben
+     *  Wuenschen uebernommen (sonst startet der Rechner neu). */
+    var presetByDev = {};
+    function curDev() { return (remoteTarget && remoteTarget.id) || remoteWantId || null; }
     // Ueberlebt den Neuaufbau der Buehne (siehe buildRemoteScreen-Einklinkung
     // weiter unten) — sonst zeigt die frische Leiste kurz "Verbinde …", obwohl
     // die Verbindung laengst steht oder gerade an einem echten Fehler haengt.
@@ -3995,6 +4051,7 @@
             decoder = null;
           }
           window.remoteState.running = true;
+          setRemoteAlive(curDev(), true);
           window.remoteState.localCursor = !!msg.payload.localCursor;
           window.remoteState.keyframeOnDemand = msg.payload.keyframeOnDemand !== false;
           if (typeof msg.payload.unlock === 'boolean') unlockKnown = msg.payload.unlock;
@@ -4044,11 +4101,13 @@
           break;
         case 'remote:stopped':
           window.remoteState.running = false;
+          setRemoteAlive(curDev(), false);
           renderCursor();
           veil('Beendet');
           break;
         case 'remote:error':
           window.remoteState.running = false;
+          setRemoteAlive(curDev(), false);
           veil(remoteErrorText(msg.payload));
           break;
       }
@@ -4082,6 +4141,9 @@
         // Der Mac meldet seinen Sperrzustand gleich zu Beginn neu.
         resetLock();
         ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
+        // Gerade nicht zu sehen (anderer Bildschirm, Hintergrund): die Sitzung
+        // laeuft, aber ohne Bildstrom.
+        if (suspended) ws.send(JSON.stringify({ type: 'remote:view', payload: { visible: false } }));
         veil('Verbinde …');
       };
       sock.onmessage = function (e) {
@@ -4100,7 +4162,10 @@
         // (siehe suspended-Deklaration oben), also reicht dessen Pruefung
         // allein nicht mehr.
         soundReset();
-        if (!wantRunning || suspended) return;
+        // Auch im Hintergrund/auf anderem Bildschirm wieder verbinden: die
+        // Sitzung soll laufen, bis der Nutzer sie schliesst (der Server haelt
+        // sie inzwischen, siehe remote.socket.ts park()).
+        if (!wantRunning) return;
         // Nie aufgeben: die Verbindung faellt unterwegs staendig kurz weg.
         retry = Math.min(retry + 1, 6);
         veil('Verbindung verloren — neuer Versuch …');
@@ -4119,6 +4184,24 @@
     // (aus einem echten Netzabbruch, nicht aus suspend()) wird hier VOR dem
     // eigenen connect() geraeumt — sonst feuert er kurz danach ein zweites
     // Mal, waehrend die frische Verbindung schon steht.
+    /** Bildverbindung zu, Sitzung bleibt: kein remote:stop — der Server laesst
+     *  sie ruhen (Geraetewechsel). Alles Gehaltene vorher loslassen. */
+    function detach() {
+      if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+      if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
+      if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+      wantRunning = false;
+      suspended = false;
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      var old = ws;
+      ws = null;
+      if (old) { try { old.close(); } catch (e) {} }
+      if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+      window.remoteState.running = false;
+      resetLock();
+      soundReset();
+    }
+
     function maybeConnect() {
       if (!wantRunning || ws) return;
       if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
@@ -4138,13 +4221,28 @@
        *  trennen und die alten Zugangsdaten vergessen — sonst verbände start()
        *  sofort wieder mit dem vorigen Gerät, und die neuen Daten kämen zu spät. */
       switchTo: function (id) {
-        window.TMSRemote.stop();
+        var cur = curDev();
+        // Dasselbe Geraet, Sitzung laeuft schon: nur wieder zeigen.
+        if (id && id === cur && wantRunning) {
+          suspended = true;
+          window.TMSRemote.resume();
+          return;
+        }
+        if (cur) presetByDev[cur] = preset;
+        // Das vorige Geraet NICHT beenden: ohne remote:stop ruht seine Sitzung
+        // auf dem Rechner weiter, bis der Nutzer sie schliesst.
+        detach();
         remoteTarget = null;
         // Das letzte Bild gehört dem vorigen Gerät — nicht stehen lassen, bis
         // das neue sein erstes Vollbild schickt.
         if (ctx && canvas) { try { ctx.clearRect(0, 0, canvas.width, canvas.height); } catch (e) {} }
         window.__tmsOpenRemote(id);
-        window.TMSRemote.start('auto');
+        window.TMSRemote.start(presetByDev[id] || 'auto');
+      },
+      /** Sitzung eines Geraets beenden (Insel: "Schliessen"). */
+      closeDevice: function (id) {
+        if (id && id === curDev() && (wantRunning || ws)) { window.TMSRemote.stop(); return; }
+        window.__closeRemoteDevice(id);
       },
       start: function (which) {
         preset = which || preset;
@@ -4186,6 +4284,7 @@
         // und plant faelschlich einen Wiederverbindungs-Zeitgeber.
         wantRunning = false;
         suspended = false;
+        setRemoteAlive(curDev(), false);
         if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
         if (ws) { try { ws.close(); } catch (e) {} ws = null; }
@@ -4217,13 +4316,13 @@
         // wieder auf (neue Aufnahme + Energie-Assertion auf dem Mac), und
         // ein spaeteres resume() haette zusammen mit diesem Zeitgeber zwei
         // parallele Verbindungen aufgemacht.
+        //
+        // Neu: weg vom Fernzugriff / App im Hintergrund heisst nur noch "Bild
+        // aus". Die Verbindung und die Sitzung auf dem Rechner bleiben (der
+        // Nutzer will sie behalten, bis er sie selbst schliesst); der Server
+        // schickt solange keine Bilder, der Ton laeuft weiter.
         suspended = true;
-        soundReset();
-        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
-        if (ws) { try { ws.close(); } catch (e) {} ws = null; }
-        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
-        window.remoteState.running = false;
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:view', payload: { visible: false } }));
       },
       /** Setzt nur fort, was vorher lief (wantRunning) — nach einem
        *  expliziten "Trennen" bleibt das ein No-op, siehe suspend() oben. */
@@ -4232,7 +4331,8 @@
         // waehrend das Terminal offen ist, bleibt die Sitzung pausiert.
         if (!remoteVisible()) return;
         suspended = false;
-        maybeConnect();
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:view', payload: { visible: true } }));
+        else maybeConnect();
       },
       /** Stufenwechsel = neu starten: ffmpeg auf Windows kann die Bitrate nicht im Lauf aendern. */
       /** Ton aufs Handy / Verdunkeln umschalten — neu starten wie bei der Qualitaet. */
@@ -4255,6 +4355,7 @@
       },
       setQuality: function (which) {
         preset = which;
+        if (curDev()) presetByDev[curDev()] = which;
         if (!wantRunning) return;
         if (ws && ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'remote:stop' }));

@@ -365,6 +365,22 @@
   .status-dot.is-live { background: var(--accent); animation: dotBreathe 1.4s ease-in-out infinite; }
   .status-dot.is-warn { background: var(--warn); animation: dotBreathe 1.1s ease-in-out infinite; }
   .status-dot.is-ok { background: var(--ok); }
+  /* Fernzugriff laeuft weiter (Bildschirm aus, Ton am Handy …), bis man ihn
+     selbst schliesst — der gruene Punkt sagt das, die Insel zeigt Oeffnen/Schliessen. */
+  .island-remote-dot { display: none; width: 8px; height: 8px; border-radius: 50%; flex: none; position: relative;
+    background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .island-remote-dot::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: var(--ok);
+    animation: ringPulse 2.2s ease-out infinite; }
+  body.remote-alive .island-remote-dot { display: inline-block; }
+  .isl-remote { padding: 4px 6px; }
+  .isl-remote-row { display: flex; align-items: center; gap: 10px; padding: 8px 6px; }
+  .isl-remote-row + .isl-remote-row { border-top: 1px solid var(--line, rgba(255,255,255,.08)); }
+  .isl-remote-row__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .isl-remote-row__name { flex: 1; min-width: 0; font-weight: 600; display: flex; flex-direction: column; }
+  .isl-remote-row__name small { font-weight: 400; opacity: .6; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .isl-remote-btn { flex: none; border: 0; border-radius: 12px; padding: 7px 11px; font: 600 12.5px inherit; font-family: inherit;
+    color: var(--text); background: rgba(var(--accent-rgb), .18); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .35); }
+  .isl-remote-btn--close { background: rgba(255, 90, 90, .14); box-shadow: inset 0 0 0 1px rgba(255, 90, 90, .35); }
   .status-hd__metrics { display: flex; align-items: center; gap: 10px; flex: none; }
   .status-hd__metric { display: flex; align-items: center; gap: 5px; font-size: var(--fs-caption); font-weight: 600; color: var(--text-dim); font-variant-numeric: tabular-nums; }
   .status-hd__metric .ic { width: var(--icon-sm); height: var(--icon-sm); }
@@ -1979,6 +1995,8 @@
   #remotePill .rp-back { width: 34px; padding: 0; justify-content: center; }
   #remotePill .rp-back svg { width: 17px; height: 17px; }
   #remotePill .rp-dev i { width: 7px; height: 7px; border-radius: 50%; background: var(--dc); }
+  /* Dieses Geraet hat eine laufende Sitzung (auch wenn gerade ein anderes gezeigt wird). */
+  #remotePill .rp-dev.is-alive i { box-shadow: 0 0 0 2px var(--bg, #0b0f17), 0 0 0 3.5px var(--ok); }
   #remotePill .rp-dev small { font: 500 10.5px ui-monospace, monospace; opacity: .7; }
   #remotePill .rp-dev.on { color: var(--text); background: rgba(var(--accent-rgb), .18); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .4); }
   #remotePill .rp-div { width: 1px; height: 18px; background: var(--glass-border); margin: 0 2px; }
@@ -2015,6 +2033,7 @@
       <span class="island-mgr-badge__ava" id="islandMgrBadgeAva"></span>
       <span class="island-mgr-badge__count" id="islandMgrBadgeCount">0</span>
     </button>
+    <span class="island-remote-dot" id="islandRemoteDot" title="Fernzugriff aktiv" aria-label="Fernzugriff aktiv"></span>
     <span class="status-hd__activity">
       <span class="status-dot" id="statusDot"></span>
       <span class="status-hd__label" id="statusActivityLabel">Bereit</span>
@@ -2737,6 +2756,27 @@
     statusActivityLabel.textContent = label;
   }
 
+  /** Laufende Fernzugriffe: wiederherstellen (Oeffnen) oder beenden (Schliessen). */
+  function remoteAliveSection() {
+    const ids = (window.__remoteAliveIds && window.__remoteAliveIds()) || [];
+    if (!ids.length) return '';
+    const rows = ids.map(id => {
+      const srv = (TMS_DATA.servers || []).find(x => x.id === id);
+      const short = srv && window.__devShort ? window.__devShort(srv) : (srv ? srv.name : 'Gerät');
+      return `<div class="isl-remote-row">
+        <span class="isl-remote-row__dot"></span>
+        <span class="isl-remote-row__name">Fernzugriff ${escapeHtml(short)}<small>läuft, bis du schließt</small></span>
+        <button class="isl-remote-btn" type="button" data-ralive-open="${escapeHtml(id)}">Öffnen</button>
+        <button class="isl-remote-btn isl-remote-btn--close" type="button" data-ralive-close="${escapeHtml(id)}">Schließen</button>
+      </div>`;
+    }).join('');
+    return `<div class="isl-card isl-remote" aria-label="Fernzugriff aktiv">${rows}</div>`;
+  }
+  window.__renderRemoteAlive = function () {
+    if (state.islandOpen) renderIslandExpanded();
+    if (typeof window.__renderRemotePill === 'function') window.__renderRemotePill();
+  };
+
   function renderIslandExpanded() {
     const np = nextPrayer();
     const live = TMS_DATA.sessions.find(s => s.live);
@@ -2761,6 +2801,8 @@
         </span>
         <button class="isl-close" id="islandCloseBtn" type="button" aria-label="Schließen">${icon('x', 15)}</button>
       </div>
+
+      ${remoteAliveSection()}
 
       <div class="isl-card">
         <div class="isl-stat ${online ? 'isl-stat--live' : ''}">
@@ -2820,6 +2862,21 @@
     document.getElementById('islandCloseBtn').addEventListener('click', e => {
       e.stopPropagation();
       closeIsland();
+    });
+    statusDetailBody.querySelectorAll('[data-ralive-open]').forEach(b => {
+      b.addEventListener('click', e => {
+        e.stopPropagation();
+        closeIsland();
+        if (window.__openRemoteFor) window.__openRemoteFor(b.dataset.raliveOpen);
+      });
+    });
+    statusDetailBody.querySelectorAll('[data-ralive-close]').forEach(b => {
+      b.addEventListener('click', e => {
+        e.stopPropagation();
+        if (window.TMSRemote && window.TMSRemote.closeDevice) window.TMSRemote.closeDevice(b.dataset.raliveClose);
+        toast('Fernzugriff wird geschlossen');
+        renderIslandExpanded();
+      });
     });
     // Das frühere „Mehr" der Bottom-Bar wohnt jetzt hier: die Insel ist die
     // Stelle, an der ohnehin schon alles Übergreifende steht.
@@ -3134,9 +3191,9 @@
       // jeder Weg, es ueber ein echtes pointerup noch zu bemerken) gerade
       // komplett neu aufgebaut wird (siehe buildRemoteScreen-Einklinkung).
       if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
-      // Weg vom Fernzugriff = Sitzung am Rechner ruht: kein Bildstrom im
-      // Hintergrund, Vorhang weg, Ton wieder am Rechner. Zurueck auf dem
-      // Bildschirm verbindet sie sich wieder (bridge.js, buildRemoteScreen).
+      // Weg vom Fernzugriff = nur das Bild ruht: die Sitzung am Rechner laeuft
+      // weiter (Bildschirm aus, Ton am Handy), bis der Nutzer sie schliesst
+      // (Insel → Fernzugriff aktiv → Schliessen, oder ✕ im Fernzugriff).
       if (window.TMSRemote && typeof window.TMSRemote.suspend === 'function') window.TMSRemote.suspend();
     }
     // Terminals, Browser UND Manager haben ihre eigene Bar-Seite (Eingabezeile,
@@ -3275,6 +3332,7 @@
           e.stopPropagation();
           if (!online) { toast(`${srv.name} ist offline`); return; }
           // Die Seite oeffnet ihre eigene Verbindung — React Native liefert nur die Zugangsdaten.
+          if (window.__openRemoteFor) { window.__openRemoteFor(srv.id); return; }
           if (window.__tmsOpenRemote) window.__tmsOpenRemote(srv.id);
           show('remote');
           if (window.TMSRemote) window.TMSRemote.start('auto');
@@ -10541,7 +10599,8 @@
       pill.innerHTML =
         '<button class="rp-back" data-back aria-label="Zurück zu den Terminals"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg></button><span class="rp-div"></span>' +
         connected().map(function (s) {
-          return '<button class="rp-dev' + (s.id === window.__remoteSrv ? ' on' : '') + '" data-rsrv="' + s.id + '" style="--dc:' + window.__devColor(s.id) + '"><i></i>' +
+          var alive = window.__remoteAliveIds && window.__remoteAliveIds().indexOf(s.id) >= 0;
+          return '<button class="rp-dev' + (s.id === window.__remoteSrv ? ' on' : '') + (alive ? ' is-alive' : '') + '" data-rsrv="' + s.id + '" style="--dc:' + window.__devColor(s.id) + '"><i></i>' +
             escapeHtml(window.__devShort(s)) + (s.latency != null ? '<small>' + s.latency + ' ms</small>' : '') + '</button>';
         }).join('');
     }
@@ -10565,6 +10624,7 @@
       renderPill();
     }
     window.__openRemoteFor = openRemote;
+    window.__renderRemotePill = renderPill;
     var remoteBtn = document.getElementById('remoteIslandBtn');
     if (remoteBtn) remoteBtn.addEventListener('click', function (e) { e.stopPropagation(); openRemote(window.__activeServerId()); });
 

@@ -180,6 +180,8 @@ const EXTRA_READY_MS = 8_000;
  *  layout takes a few seconds — measured on the PC, the helper itself allows
  *  15 s for the device and 8 s for the switch. */
 const DISPLAY_READY_MS = 30_000;
+/** A keyframe on request restarts ffmpeg — at most this often. */
+const KEYFRAME_RESPAWN_GAP_MS = 2_000;
 /** Pause before another capture start on a just-switched virtual display. */
 const VIRTUAL_RETRY_MS = 1_500;
 /** Putting the layout back (and the device off) also takes a moment. */
@@ -495,7 +497,14 @@ export function createWin32Capture(): ScreenCapture {
     // ffmpeg cannot cut a keyframe on request (keyframeOnDemand: false tells
     // the flow control to drop less and never drop a keyframe); a bitrate
     // change goes through a replacement ffmpeg, see respawn().
-    requestKeyframe() { /* not possible with ffmpeg: see keyframeOnDemand */ },
+    // ffmpeg can't cut one on request — but a fresh ffmpeg starts with one
+    // (same seamless handover as a bitrate change). Asked for when a resting
+    // session is picked up again or its picture shown again; rate-limited so
+    // a burst of requests doesn't restart ffmpeg over and over.
+    requestKeyframe() {
+      if (stopping || !running || pending || Date.now() - lastSpawnAt < KEYFRAME_RESPAWN_GAP_MS) return;
+      respawn(running.bitrateKbps);
+    },
     setBitrate(kbps) { wantKbps = kbps; evaluateBitrate(); },
 
     async stop() {
@@ -566,7 +575,9 @@ export function createWin32Capture(): ScreenCapture {
 
         proc.stdout?.on('data', (b: Buffer) => { if (child === proc) onData(b); });
 
-        if (opts.localCursor && onCursor) startPointer(onCursor);
+        // Through the variable, not its value: a resumed session (remote.socket
+        // park/adopt) registers a new callback on the running capture.
+        if (opts.localCursor && onCursor) startPointer((x, y) => onCursor?.(x, y));
 
         proc.stderr?.on('data', (b: Buffer) => {
           const text = b.toString();

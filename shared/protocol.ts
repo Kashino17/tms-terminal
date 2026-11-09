@@ -876,8 +876,13 @@ export interface RemoteAckMessage { type: 'remote:ack'; payload: { ts: number } 
 // A dedicated message type and server-side handler for this existed early on
 // but that code path was never reachable from the app; removed rather than
 // left as dead code nobody could exercise.
+/** The app shows the picture (true) or not (false: other screen, app in the
+ *  background). Hidden = the session keeps running on the computer (screen
+ *  off, sound on the phone ...), only the picture isn't sent. Older servers
+ *  ignore it. */
+export interface RemoteViewMessage { type: 'remote:view'; payload: { visible: boolean } }
 export type RemoteClientMessage =
-  | RemoteStartMessage | RemoteStopMessage | RemoteKeyframeMessage | RemoteAckMessage;
+  | RemoteStartMessage | RemoteStopMessage | RemoteKeyframeMessage | RemoteAckMessage | RemoteViewMessage;
 
 export interface RemoteStartedMessage {
   type: 'remote:started';

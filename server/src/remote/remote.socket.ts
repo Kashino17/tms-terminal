@@ -2,7 +2,7 @@ import type {
   RemoteClientMessage, RemoteServerMessage, RemoteErrorCode, RemoteQualityPreset,
   RemoteInputEvent,
 } from '../../../shared/protocol';
-import type { ScreenCapture, CaptureOptions } from './capture/capture.types';
+import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture/capture.types';
 import { RemoteCaptureError } from './capture/capture.types';
 import type { InputInjector } from './input/input.types';
 import { createAnnexBSplitter, type AccessUnit } from './annexb';
@@ -73,6 +73,48 @@ export function packAudio(packet: Buffer, tsMs: number): Buffer {
 /** Sound is tiny next to the picture; only a link that is truly stuck skips it. */
 export const AUDIO_SKIP_BUFFERED = 1_000_000;
 
+// ── A session outlives its connection ─────────────────────────────────────
+// The user wants remote access to stay on until THEY close it — not end when
+// the phone switches screens, goes to the background or its network drops for
+// a moment. So a connection that goes away without `remote:stop` leaves its
+// session here ("resting"): the computer keeps its state (screen off / virtual
+// display, sound muted), and the next `remote:start` with the same options
+// picks it up instead of starting over. One per server — the app runs one
+// session per computer. As a safety net it ends after hours without any phone.
+
+/** A resting session ends by itself after this long without a connection. */
+export const PARK_MAX_MS = 6 * 60 * 60_000;
+
+interface Parked {
+  capture: ScreenCapture;
+  input: InputInjector;
+  opts: CaptureOptions;
+  info: CaptureInfo;
+  timer: NodeJS.Timeout;
+}
+let parked: Parked | null = null;
+
+/** Ends the resting session (if any); true if there was one. */
+export async function endParked(): Promise<boolean> {
+  const p = parked;
+  if (!p) return false;
+  parked = null;
+  clearTimeout(p.timer);
+  await p.capture.stop().catch(() => {});
+  await p.input.stop().catch(() => {});
+  logger.info('Remote: ruhende Sitzung beendet');
+  return true;
+}
+
+/** Test hook: is there a resting session? */
+export function hasParkedSession(): boolean { return parked !== null; }
+
+/** Same request = the resting session can be picked up as it is. */
+export function sameRemoteOpts(a: CaptureOptions, b: CaptureOptions): boolean {
+  return a.maxWidth === b.maxWidth && a.fps === b.fps && a.bitrateKbps === b.bitrateKbps
+    && !!a.localCursor === !!b.localCursor && !!a.audio === !!b.audio && !!a.curtain === !!b.curtain;
+}
+
 function applyInput(input: InputInjector, ev: RemoteInputEvent): void {
   switch (ev.t) {
     case 'd': input.moveRelative(ev.dx, ev.dy); break;
@@ -124,6 +166,11 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
   let restartAttempt = 0;
   let restartTimer: NodeJS.Timeout | null = null;
   let lastOpts: CaptureOptions | null = null;
+  let lastInfo: CaptureInfo | null = null;
+  /** The app shows the picture (remote:view). Hidden: no video is sent. */
+  let visible = true;
+  /** The app said remote:stop — then a closing connection really ends it. */
+  let userStopped = false;
 
   const reply = (msg: RemoteServerMessage) => {
     if (ws.readyState === 1) ws.send(JSON.stringify(msg));
@@ -161,6 +208,32 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
     if (tell && (c || i)) reply({ type: 'remote:stopped', payload: { reason } });
   }
 
+  /** The connection is gone but nobody closed the session: let it rest
+   *  (see Parked above) instead of ending it. False if there is nothing to keep. */
+  function park(): boolean {
+    const c = capture, i = input;
+    if (!c || !i || !lastOpts || !lastInfo) return false;
+    capture = null; input = null;
+    if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
+    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+    if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+    splitter = null;
+    flow = null;
+    // Nobody to send to; a crash while resting just ends it.
+    c.onData(() => {});
+    c.onAudio?.(() => {});
+    c.onCursor?.(() => {});
+    c.onLockChange?.(() => {});
+    c.onError(() => { if (parked && parked.capture === c) void endParked(); });
+    if (parked) void endParked();
+    const timer = setTimeout(() => { void endParked(); }, PARK_MAX_MS);
+    timer.unref();
+    parked = { capture: c, input: i, opts: lastOpts, info: lastInfo, timer };
+    logger.info(`Remote: Verbindung weg, Sitzung ruht (${ip}) — bleibt an, bis sie geschlossen wird`);
+    return true;
+  }
+
   // `isRestart` is set only by the crash-recovery retry below, never by a
   // client-issued `remote:start`. It decides whether a successful start resets
   // the crash-backoff counter (see `restartAttempt` just below): if every
@@ -179,6 +252,20 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
     // A stray second `remote:start` replaces the running session — stop the
     // previous capture first so it never keeps running orphaned.
     await stop('neustart', false);
+    userStopped = false;
+
+    // A resting session with the same options is picked up as it is; one
+    // with other options (quality, sound, screen off changed) is ended first.
+    let adopt: Parked | null = null;
+    if (!isRestart && parked) {
+      if (sameRemoteOpts(parked.opts, opts)) {
+        adopt = parked;
+        parked = null;
+        clearTimeout(adopt.timer);
+      } else {
+        await endParked();
+      }
+    }
 
     // Everything that can throw — including building the capture and wiring its
     // error callback — stays inside the try. The placeholder factory (and any
@@ -190,7 +277,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
       // 'helper_crashed' can both rebuild the capture from the options that
       // were actually last requested, not some earlier quality tier.
       lastOpts = opts;
-      const c = deps.makeCapture();
+      const c = adopt ? adopt.capture : deps.makeCapture();
       // Errors can arrive well after this capture has been replaced by a newer
       // session — real platform backends report crashes and dropped helper
       // processes asynchronously, often several ticks later. Both checks below
@@ -257,10 +344,13 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
           reply({ type: 'remote:locked', payload: { locked } });
         });
       }
-      const info = await c.start({ ...opts, localCursor });
+      const info = adopt ? adopt.info : await c.start({ ...opts, localCursor });
+      lastInfo = info;
       capture = c;
-      const injector = deps.makeInput();
+      const injector = adopt ? adopt.input : deps.makeInput();
       input = injector;
+      const resumed = adopt !== null;
+      adopt = null; // owned by this connection now
 
       splitter = createAnnexBSplitter();
       flow = createFrameFlow(opts.bitrateKbps, { keyframeOnDemand: c.keyframeOnDemand !== false });
@@ -274,6 +364,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
       const emit = (units: AccessUnit[]) => {
         for (const au of units) {
           if (!flow || ws.readyState !== 1) return;
+          if (!visible) continue; // picture not shown: the session runs on, nothing sent
           const now = Date.now();
           const decision = flow.decide(au, now, ws.bufferedAmount);
           if (decision.bitrateKbps !== null) capture?.setBitrate(decision.bitrateKbps);
@@ -347,13 +438,21 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
       // Section 9 of the spec requires logging time + source IP for every
       // session start — `logger.info` timestamps its own lines, `ip` comes
       // from the HTTP upgrade in ws.server.ts.
-      logger.info(`Remote: Sitzung gestartet von ${ip} (${info.width}x${info.height} @${opts.fps})`);
+      logger.info(`Remote: Sitzung ${resumed ? 'fortgesetzt' : 'gestartet'} von ${ip} (${info.width}x${info.height} @${opts.fps})`);
+      // A picked-up session's encoder is mid-stream: the new decoder needs a keyframe.
+      if (resumed) c.requestKeyframe();
     } catch (e) {
       // A RemoteCaptureError carries the code the helper actually reported
       // (permission_screen, permission_input, display_asleep, ...) through
       // to the client. Anything else — a timeout, an unexpected exit — has
       // no known code and falls back to the generic capture_unavailable,
       // same as before.
+      // Failed before the picked-up session was taken over: don't leak it.
+      if (adopt) {
+        const a = adopt as Parked;
+        await a.capture.stop().catch(() => {});
+        await a.input.stop().catch(() => {});
+      }
       const code = e instanceof RemoteCaptureError ? e.code : 'capture_failed';
       const message = e instanceof Error ? e.message : String(e);
       // Logged too: the phone only shows it briefly, and a failed start
@@ -392,8 +491,26 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
         enqueue(() => start(clientMsg.payload));
         break;
       case 'remote:stop':
-        enqueue(() => stop('vom Nutzer beendet'));
+        enqueue(async () => {
+          userStopped = true;
+          // Closing from the app ends a resting session too (also one this
+          // connection never picked up: "Verbindung schließen" in the island).
+          if (!capture && !input && parked) {
+            await endParked();
+            reply({ type: 'remote:stopped', payload: { reason: 'vom Nutzer beendet' } });
+            return;
+          }
+          await stop('vom Nutzer beendet');
+        });
         break;
+      case 'remote:view': {
+        const v = (clientMsg.payload as { visible?: unknown } | undefined)?.visible;
+        const was = visible;
+        visible = v !== false;
+        // Shown again: the decoder needs a fresh keyframe to start from.
+        if (visible && !was) capture?.requestKeyframe();
+        break;
+      }
       case 'remote:keyframe':
         capture?.requestKeyframe();
         break;
@@ -408,7 +525,9 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
     }
   });
 
-  ws.on('close', () => { enqueue(() => stop('Verbindung getrennt', false)); });
+  // Gone without remote:stop (screen switch, background, network): the
+  // session rests and waits for the phone (see park()).
+  ws.on('close', () => { enqueue(async () => { if (userStopped || !park()) await stop('Verbindung getrennt', false); }); });
 
   // A dropped/reset connection fires 'error' on this EventEmitter. Node throws
   // synchronously for an 'error' event with no listener, which lands in the
@@ -417,7 +536,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
   // Treat it exactly like a close: log it, tear the session down, never crash.
   ws.on('error', (err) => {
     logger.error(`Remote: socket error — ${err.message}`);
-    enqueue(() => stop('Socket-Fehler', false));
+    enqueue(async () => { if (userStopped || !park()) await stop('Socket-Fehler', false); });
   });
 
   // N2 (Nachprüfung): reject up front instead of accepting the connection

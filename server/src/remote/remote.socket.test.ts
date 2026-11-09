@@ -1,8 +1,9 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import {
   isRemotePath, handleRemoteConnection, QUALITY_PRESETS, packAccessUnit, computeRttMs, packAudio,
+  endParked, hasParkedSession, sameRemoteOpts,
 } from './remote.socket';
 import { logger } from '../utils/logger';
 import { RemoteCaptureError } from './capture/capture.types';
@@ -71,6 +72,10 @@ function wire(overrides: Partial<{ enabled: boolean }> = {}) {
 }
 
 const send = (ws: FakeWs, msg: unknown) => ws.emit('message', Buffer.from(JSON.stringify(msg)), false);
+const tick = () => new Promise((r) => setImmediate(r));
+
+// Eine ruhende Sitzung gilt serverweit — kein Test darf sie dem naechsten hinterlassen.
+afterEach(async () => { await endParked(); });
 
 test('isRemotePath erkennt nur den Fernzugriffs-Pfad', () => {
   assert.equal(isRemotePath('/remote?token=abc'), true);
@@ -169,15 +174,116 @@ test('remote:stop haelt Aufnahme und Eingabe an', async () => {
   assert.equal(ws.typed('remote:stopped').length, 1);
 });
 
-test('faellt die Verbindung weg, bleibt kein Helfer zurueck', async () => {
+test('faellt die Verbindung weg, ruht die Sitzung — und endet erst, wenn sie geschlossen wird', async () => {
   const { ws, capture, input } = wire();
   send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
-  await new Promise((r) => setImmediate(r));
+  await tick();
   ws.close();
-  await new Promise((r) => setImmediate(r));
+  await tick();
 
-  assert.equal(capture.stopped, true, 'kein verwaister Aufnahmeprozess');
+  assert.equal(capture.stopped, false, 'Bildschirm aus / Ton bleiben am Rechner, bis der Nutzer schliesst');
+  assert.equal(hasParkedSession(), true);
+  assert.equal(await endParked(), true);
+  assert.equal(capture.stopped, true, 'beim Schliessen bleibt kein Helfer zurueck');
   assert.ok(input.calls.includes('stop'));
+});
+
+test('remote:stop und dann Verbindung weg: nichts ruht, alles ist beendet', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await tick();
+  send(ws, { type: 'remote:stop' });
+  ws.close();
+  await tick(); await tick();
+  assert.equal(capture.stopped, true);
+  assert.equal(hasParkedSession(), false);
+});
+
+test('die naechste Verbindung mit denselben Wuenschen uebernimmt die ruhende Sitzung', async () => {
+  const capture = fakeCapture();
+  const input = fakeInput();
+  let made = 0;
+  const deps = { makeCapture: () => { made++; return capture; }, makeInput: () => input, isEnabled: () => true };
+  const ws1 = new FakeWs();
+  handleRemoteConnection(ws1 as any, deps);
+  send(ws1, { type: 'remote:start', payload: { ...QUALITY_PRESETS.auto, curtain: true } });
+  await tick();
+  ws1.close();
+  await tick();
+
+  const ws2 = new FakeWs();
+  handleRemoteConnection(ws2 as any, deps);
+  send(ws2, { type: 'remote:start', payload: { ...QUALITY_PRESETS.auto, curtain: true } });
+  await tick();
+
+  assert.equal(made, 1, 'keine zweite Aufnahme — der Rechner bleibt, wie er ist');
+  assert.equal(capture.stopped, false);
+  assert.equal(ws2.typed('remote:started').length, 1);
+  assert.equal(capture.keyframes, 1, 'der neue Dekoder bekommt ein Vollbild');
+  assert.equal(hasParkedSession(), false);
+  // Das Bild kommt jetzt bei der NEUEN Verbindung an.
+  const nal = (t: number) => Buffer.concat([Buffer.from([0, 0, 0, 1, 0x60 | t]), Buffer.alloc(4, 0xaa)]);
+  capture.dataCb(Buffer.concat([nal(7), nal(8), nal(5)]));
+  capture.dataCb(nal(1));
+  assert.equal(ws2.sent.filter((m) => Buffer.isBuffer(m)).length, 1);
+  assert.equal(ws1.sent.filter((m) => Buffer.isBuffer(m)).length, 0);
+});
+
+test('andere Wuensche (Qualitaet, Bildschirm aus) beenden die ruhende Sitzung und starten neu', async () => {
+  const first = fakeCapture();
+  const second = fakeCapture();
+  const caps = [first, second];
+  const deps = { makeCapture: () => caps.shift()!, makeInput: () => fakeInput(), isEnabled: () => true };
+  const ws1 = new FakeWs();
+  handleRemoteConnection(ws1 as any, deps);
+  send(ws1, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await tick();
+  ws1.close();
+  await tick();
+  const ws2 = new FakeWs();
+  handleRemoteConnection(ws2 as any, deps);
+  send(ws2, { type: 'remote:start', payload: QUALITY_PRESETS.scharf });
+  await tick(); await tick();
+  assert.equal(first.stopped, true);
+  assert.ok(second.started, 'frische Aufnahme mit den neuen Wuenschen');
+});
+
+test('„Verbindung schließen“ von einer frischen Verbindung beendet die ruhende Sitzung', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await tick();
+  ws.close();
+  await tick();
+  const other = new FakeWs();
+  handleRemoteConnection(other as any, { makeCapture: fakeCapture, makeInput: () => fakeInput(), isEnabled: () => true });
+  send(other, { type: 'remote:stop' });
+  await tick(); await tick();
+  assert.equal(capture.stopped, true);
+  assert.equal(other.typed('remote:stopped').length, 1);
+});
+
+test('remote:view false: kein Bild unterwegs, die Sitzung laeuft weiter; true holt ein Vollbild', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await tick();
+  const nal = (t: number) => Buffer.concat([Buffer.from([0, 0, 0, 1, 0x60 | t]), Buffer.alloc(4, 0xaa)]);
+  send(ws, { type: 'remote:view', payload: { visible: false } });
+  capture.dataCb(Buffer.concat([nal(7), nal(8), nal(5)]));
+  capture.dataCb(nal(1));
+  assert.equal(ws.sent.filter((m) => Buffer.isBuffer(m)).length, 0, 'nichts gesendet, solange niemand hinschaut');
+  assert.equal(capture.stopped, false);
+  send(ws, { type: 'remote:view', payload: { visible: true } });
+  assert.equal(capture.keyframes, 1);
+  capture.dataCb(Buffer.concat([nal(7), nal(8), nal(5)]));
+  capture.dataCb(nal(1));
+  assert.ok(ws.sent.filter((m) => Buffer.isBuffer(m)).length >= 1);
+});
+
+test('sameRemoteOpts vergleicht alle Wuensche', () => {
+  const a = { ...QUALITY_PRESETS.auto, localCursor: true, audio: true, curtain: true };
+  assert.equal(sameRemoteOpts(a, { ...a }), true);
+  assert.equal(sameRemoteOpts(a, { ...a, curtain: false }), false);
+  assert.equal(sameRemoteOpts(a, { ...a, maxWidth: 1920 }), false);
 });
 
 test('ein Aufnahmefehler wird als remote:error weitergereicht', async () => {
@@ -200,7 +306,7 @@ test('kaputte Nachrichten legen die Verbindung nicht lahm', async () => {
   assert.equal(ws.typed('remote:started').length, 1, 'danach geht es normal weiter');
 });
 
-test('ein Socket-Fehler bringt den Prozess nicht zum Absturz und raeumt die Sitzung ab', async () => {
+test('ein Socket-Fehler bringt den Prozess nicht zum Absturz, die Sitzung ruht', async () => {
   const { ws, capture, input } = wire();
   send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
   await new Promise((r) => setImmediate(r));
@@ -210,7 +316,10 @@ test('ein Socket-Fehler bringt den Prozess nicht zum Absturz und raeumt die Sitz
   ws.emit('error', new Error('ECONNRESET'));
   await new Promise((r) => setImmediate(r));
 
-  assert.equal(capture.stopped, true, 'kein verwaister Aufnahmeprozess nach Socket-Fehler');
+  // Wie ein Verbindungsabbruch: die Sitzung ruht, bis sie geschlossen wird.
+  assert.equal(capture.stopped, false);
+  assert.equal(await endParked(), true);
+  assert.equal(capture.stopped, true, 'kein verwaister Aufnahmeprozess nach dem Schliessen');
   assert.ok(input.calls.includes('stop'));
 });
 

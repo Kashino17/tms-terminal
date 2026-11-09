@@ -391,7 +391,11 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     // 1.0 and silently breaks pointer mapping in geometry.ts. Verified via
     // real capture: --max-width 1280 on a 1728pt-wide display measures
     // scale ~0.7407; --max-width above the display's pixel width measures 1.0.
-    let width = min(maxWidth, display.width)
+    var width = min(maxWidth, display.width)
+    // "Auto" (1600) on a 1728-point MacBook: 1600 is no clean fraction of the
+    // 3456 Retina pixels and comes out soft, the point width (exactly half the
+    // pixels) is sharp. Within 10 % below the point width, take the point width.
+    if width < display.width && Double(width) >= Double(display.width) * 0.9 { width = display.width }
     let height = Int((Double(display.height) * Double(width) / Double(display.width)).rounded(.down)) & ~1
     let scale = Double(width) / Double(display.width)
 

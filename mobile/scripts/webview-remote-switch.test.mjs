@@ -257,7 +257,7 @@ if (!PW) {
   // Nutzer: "Wenn ich zurück zum Terminal gehe, sollte der Fernzugriff aus sein" —
   // vorher lief die Sitzung im Hintergrund weiter (Vorhang/Ton am Rechner blieben
   // an), und jede Wiederverbindung meldete erneut "Server zu alt".
-  test('Fernzugriff verlassen pausiert die Sitzung, zurück verbindet neu', async () => {
+  test('Fernzugriff verlassen: nur das Bild ruht, die Sitzung bleibt; zurück zeigt es wieder', async () => {
     const { browser, page, errors } = await boot();
     try {
       const r = await page.evaluate(async ({ MAC }) => {
@@ -268,18 +268,88 @@ if (!PW) {
         window.__open(0); window.__startedWith(0, {});
         show('terminals');
         const s0 = window.__socks[0];
-        const left = { stopSent: s0.sent.some((d) => d.indexOf('remote:stop') >= 0), closed: s0.readyState >= 2, socks: window.__socks.length };
-        window.TMSRemote.resume();               // App aus dem Hintergrund, Terminal offen
+        const has = (t) => s0.sent.some((d) => d.indexOf(t) >= 0);
+        const left = { stopSent: has('remote:stop'), hidden: has('"visible":false'), open: s0.readyState === 1, socks: window.__socks.length };
+        window.TMSRemote.suspend();              // App in den Hintergrund
+        window.TMSRemote.resume();               // und zurück, Terminal offen
         await new Promise((res) => setTimeout(res, 50));
-        const resumedOnTerminals = window.__socks.length;
+        const onTerminals = { socks: window.__socks.length, shown: has('"visible":true') };
         show('remote');
         await new Promise((res) => setTimeout(res, 50));
-        return { left, resumedOnTerminals, back: window.__socks.length };
+        return { left, onTerminals, back: { socks: window.__socks.length, shown: has('"visible":true'), open: s0.readyState === 1 },
+                 dot: document.body.classList.contains('remote-alive') };
       }, { MAC });
       assert.deepEqual(errors, []);
-      assert.deepEqual(r.left, { stopSent: true, closed: true, socks: 1 }, 'beim Verlassen beendet');
-      assert.equal(r.resumedOnTerminals, 1, 'im Terminal verbindet nichts neu');
-      assert.equal(r.back, 2, 'zurück im Fernzugriff: neue Verbindung');
+      assert.deepEqual(r.left, { stopSent: false, hidden: true, open: true, socks: 1 }, 'beim Verlassen läuft die Sitzung weiter, nur ohne Bild');
+      assert.deepEqual(r.onTerminals, { socks: 1, shown: false }, 'im Terminal kommt kein Bild');
+      assert.deepEqual(r.back, { socks: 1, shown: true, open: true }, 'zurück: dieselbe Verbindung, Bild wieder an');
+      assert.equal(r.dot, true, 'grüner Punkt: Fernzugriff aktiv');
+    } finally { await browser.close(); }
+  });
+
+  test('Gerätewechsel beendet das vorige Gerät nicht; ✕ beendet wirklich', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      const r = await page.evaluate(async ({ MAC, WIN }) => {
+        document.body.classList.remove('is-locked');
+        show('remote');
+        window.TMSRemote.switchTo('mac');
+        window.TMSBridge.setRemoteTarget(MAC);
+        window.__open(0); window.__startedWith(0, {});
+        window.TMSRemote.switchTo('win');
+        window.TMSBridge.setRemoteTarget(WIN);
+        window.__open(1); window.__startedWith(1, {});
+        const macStopped = window.__socks[0].sent.some((d) => d.indexOf('remote:stop') >= 0);
+        const aliveBoth = window.__remoteAliveIds().sort();
+        window.TMSRemote.stop();                 // ✕ im Fernzugriff
+        return { macStopped, aliveBoth, winStopped: window.__socks[1].sent.some((d) => d.indexOf('remote:stop') >= 0),
+                 aliveAfter: window.__remoteAliveIds() };
+      }, { MAC, WIN });
+      assert.deepEqual(errors, []);
+      assert.equal(r.macStopped, false, 'MAC-Sitzung ruht nur');
+      assert.deepEqual(r.aliveBoth, ['mac', 'win']);
+      assert.equal(r.winStopped, true);
+      assert.deepEqual(r.aliveAfter, ['mac'], 'nur MAC läuft noch');
+    } finally { await browser.close(); }
+  });
+
+  test('Insel: grüner Punkt, „Fernzugriff aktiv“ mit Öffnen/Schließen; Schließen beendet die ruhende Sitzung', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      const r = await page.evaluate(async ({ MAC, WIN }) => {
+        document.body.classList.remove('is-locked');
+        show('remote');
+        window.TMSRemote.switchTo('mac');
+        window.TMSBridge.setRemoteTarget(MAC);
+        window.__open(0); window.__startedWith(0, {});
+        window.TMSRemote.switchTo('win');
+        window.TMSBridge.setRemoteTarget(WIN);
+        window.__open(1); window.__startedWith(1, {});
+        show('terminals');
+        const dot = getComputedStyle(document.getElementById('islandRemoteDot')).display !== 'none';
+        document.getElementById('statusHeader').click();
+        await new Promise((res) => setTimeout(res, 100));
+        const rows = [...document.querySelectorAll('.isl-remote-row')].length;
+        // MAC schließen: es steht keine Bildverbindung zu ihm — die App holt Zugangsdaten und schickt remote:stop.
+        document.querySelector('[data-ralive-close="mac"]').click();
+        const asked = window.__posts.filter((p) => p.type === 'remote:open').map((p) => p.payload.id).pop();
+        window.TMSBridge.setRemoteTarget(MAC);
+        const closer = window.__socks[window.__socks.length - 1];
+        closer.readyState = 1; closer.onopen();
+        const stopSent = closer.sent.some((d) => d.indexOf('remote:stop') >= 0);
+        closer.onmessage({ data: JSON.stringify({ type: 'remote:stopped', payload: { reason: 'x' } }) });
+        await new Promise((res) => setTimeout(res, 50));
+        return { dot, rows, asked, stopSent, alive: window.__remoteAliveIds(), winStillOpen: window.__socks[1].readyState === 1,
+                 rowsAfter: [...document.querySelectorAll('.isl-remote-row')].length };
+      }, { MAC, WIN });
+      assert.deepEqual(errors, []);
+      assert.equal(r.dot, true);
+      assert.equal(r.rows, 2);
+      assert.equal(r.asked, 'mac');
+      assert.equal(r.stopSent, true);
+      assert.deepEqual(r.alive, ['win']);
+      assert.equal(r.winStillOpen, true, 'WIN bleibt unberührt');
+      assert.equal(r.rowsAfter, 1);
     } finally { await browser.close(); }
   });
 
