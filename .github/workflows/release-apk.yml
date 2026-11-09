@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fernzugriff Windows: weniger Standbilder. Kurze Netz-Zacken werden ausgesessen statt Bilder zu verwerfen, Vollbilder gehen immer durch, und bei Stau senkt Windows jetzt die Bitrate (nahtloser Wechsel). Die Statuszeile zeigt verworfene Bilder an. Dafuer auf dem Windows-PC einmal tms-terminal update ausfuehren und den Server neu starten. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Fernzugriff: Zwei neue Schalter im Menue. Ton aufs Handy (🔊): alles, was der Computer abspielt, hoerst du auf dem Handy, am Computer bleibt es still. Verdunkeln (🌑): der Bildschirm am Computer wird schwarz und dunkel, auf dem Handy siehst du alles normal. Ausserdem: der Mac-Entsperr-Hinweis und Touch ID erscheinen nicht mehr bei Windows. Dafuer auf jedem Computer einmal tms-terminal update ausfuehren und den Server neu starten. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
