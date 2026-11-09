@@ -9,7 +9,7 @@
  *   Prozesse   WebSocket system:snapshot
  *   Watcher    WebSocket watcher:list / watcher:update
  *   Ports      the saved port forwards; a tap opens one in the in-app browser
- *   Snippets   the same AsyncStorage snippets the classic panel uses
+ *   Snippets   own empty list on the phone (durableStorage 'tms-bund-snippets')
  *   SQL        the statements detected in terminal output (sqlStore)
  *   Notizen    notesStore (global) + per-terminal notes/todos (season2 store)
  *   Screens.   camera / gallery -> upload to the server -> the path goes into
@@ -18,7 +18,6 @@
  */
 import { parentDir, joinDir } from './filePaths';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import type { WebSocketService } from '../../services/websocket.service';
@@ -27,7 +26,8 @@ import { usePortForwardingStore } from '../../store/portForwardingStore';
 // Karte (eigener Store) sind zwei verschiedene Sachen. Vorher hiessen beide
 // `useNotesStore` — der Import musste Alias nehmen, und wer die Zeile las, sah
 // nicht, dass zwei Notizspeicher gemeint waren.
-import { useNotesStore } from '../../store/notesStore';
+import { useNotesStore, BUND_NOTES_KEY } from '../../store/notesStore';
+import { durableStorage } from '../../services/durableStorage';
 import { useSQLStore } from '../../store/sqlStore';
 import { useS2NotesStore } from '../store/s2NotesStore';
 import { Linking } from 'react-native';
@@ -40,7 +40,14 @@ import { readAdhanSettings, canScheduleExactAdhan } from '../../services/adhan.s
 
 type Call = (fn: string, ...args: unknown[]) => void;
 
-const SNIPPETS_KEY = 'tms:snippets';
+// Bund: eigene, leere Snippet-Liste auf dem Handy (durableStorage, überlebt
+// Updates) — nicht die alte, vorbefüllte 'tms:snippets' der klassischen Ansicht.
+const SNIPPETS_KEY = 'tms-bund-snippets';
+type BundSnippet = { id: string; name: string; cmd: string };
+const readSnippets = async (): Promise<BundSnippet[]> => {
+  try { const raw = await durableStorage.getItem(SNIPPETS_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
+};
+const writeSnippets = (l: BundSnippet[]) => durableStorage.setItem(SNIPPETS_KEY, JSON.stringify(l)).catch(() => {});
 
 interface Args {
   ready: boolean;
@@ -209,13 +216,8 @@ export function useSheetBridges({
   }, [server, token, shots, downloadUrl, call]);
 
   const pushSnippets = useCallback(async () => {
-    const raw = await AsyncStorage.getItem(SNIPPETS_KEY);
-    const list: Array<{ id: string; text: string }> = raw ? JSON.parse(raw) : [];
-    call('setTool', 'snippets', list.map((sn) => ({
-      id: sn.id,
-      label: sn.text.split('\n')[0].slice(0, 40),
-      cmd: sn.text,
-    })));
+    const list = await readSnippets();
+    call('setTool', 'snippets', list.map((sn) => ({ id: sn.id, label: sn.name, cmd: sn.cmd })));
   }, [call]);
 
   const openTool = useCallback(async (tool: string) => {
@@ -264,9 +266,8 @@ export function useSheetBridges({
         break;
 
       case 'notes': {
-        if (!server) break;
         await useNotesStore.getState().load();
-        const items = useNotesStore.getState().getItems(server.id);
+        const items = useNotesStore.getState().getItems(BUND_NOTES_KEY);
         call('setTool', 'notes', items.map((n) => ({
           title: '',
           body: n.text,
@@ -432,10 +433,21 @@ export function useSheetBridges({
 
       case 'snippet:add': {
         (async () => {
-          const raw = await AsyncStorage.getItem(SNIPPETS_KEY);
-          const list: Array<{ id: string; text: string }> = raw ? JSON.parse(raw) : [];
-          list.unshift({ id: `s-${Date.now()}`, text: String(payload.text) });
-          await AsyncStorage.setItem(SNIPPETS_KEY, JSON.stringify(list));
+          const cmd = String(payload.cmd ?? payload.text ?? '').trim();
+          if (!cmd) return;
+          const list = await readSnippets();
+          list.unshift({ id: `s-${Date.now()}`, name: String(payload.name ?? '').trim() || cmd.split('\n')[0].slice(0, 40), cmd });
+          await writeSnippets(list);
+          pushSnippets();
+        })();
+        return true;
+      }
+
+      case 'snippet:edit': {
+        (async () => {
+          const list = await readSnippets();
+          await writeSnippets(list.map((sn) => (sn.id === payload.id
+            ? { ...sn, name: String(payload.name ?? sn.name), cmd: String(payload.cmd ?? sn.cmd) } : sn)));
           pushSnippets();
         })();
         return true;
@@ -443,9 +455,7 @@ export function useSheetBridges({
 
       case 'snippet:delete': {
         (async () => {
-          const raw = await AsyncStorage.getItem(SNIPPETS_KEY);
-          const list: Array<{ id: string; text: string }> = raw ? JSON.parse(raw) : [];
-          await AsyncStorage.setItem(SNIPPETS_KEY, JSON.stringify(list.filter((sn) => sn.id !== payload.id)));
+          await writeSnippets((await readSnippets()).filter((sn) => sn.id !== payload.id));
           pushSnippets();
         })();
         return true;

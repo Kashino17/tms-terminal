@@ -54,6 +54,7 @@ import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flu
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
 import { activeDeviceId } from './bund/devices.core.mjs';
 import type { BundDevice } from './bund/devices.core.mjs';
+import { clipStore, toLegacyItems } from './bund/clipboardStore';
 
 // Direktlinks zu den API-Key-/Token-Seiten der Cloud-Anbieter. Getippt in der
 // Verbinden-Karte (nur solange nicht verbunden) und geöffnet im geteilten
@@ -415,18 +416,23 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     };
 
     return (m: any) => {
-      if (!primary && typeof m?.type === 'string' && (m.type.startsWith('clipboard:') || m.type.startsWith('manager:'))) return;
+      if (!primary && typeof m?.type === 'string' && m.type.startsWith('manager:')) return;
       // ── Gemeinsame Zwischenablage (server/src/clipboard) ──
-      if (m?.type === 'clipboard:history') { call('clipboardSet', m.payload?.items ?? []); return; }
-      if (m?.type === 'clipboard:removed') { call('clipboardRemoved', m.payload?.ids ?? []); return; }
+      // Der Verlauf liegt auf dem Handy (bund/clipboardStore). Jedes Gerät meldet
+      // seine Kopien; den alten Server-Verlauf übernehmen wir genau einmal.
+      if (m?.type === 'clipboard:history') { void clipStore.importOnce(srvId, m.payload?.items ?? []); return; }
+      if (m?.type === 'clipboard:removed') return;
       if (m?.type === 'clipboard:added' && m.payload?.item) {
         const item = m.payload.item;
-        call('clipboardAdded', item, m.payload.removed ?? []);
-        // Am Mac kopiert → liegt sofort auch auf dem Handy (nur solange die App
-        // vorne ist; im Hintergrund lässt Android das ohnehin nicht zu).
-        if (item.source === 'mac' && AppState.currentState === 'active' && typeof item.text === 'string') {
-          clipSynced.current = item.text;
-          Clipboard.setStringAsync(item.text).catch(() => {});
+        // 'phone' = von uns selbst hingeschickt — kommt nur als Echo zurück.
+        if (item.source !== 'phone' && typeof item.text === 'string') {
+          clipStore.add({ text: item.text, src: srvId, at: Date.now() });
+          // Am Gerät kopiert → liegt sofort auch auf dem Handy (nur solange die
+          // App vorne ist; im Hintergrund lässt Android das ohnehin nicht zu).
+          if (AppState.currentState === 'active') {
+            clipSynced.current = item.text;
+            Clipboard.setStringAsync(item.text).catch(() => {});
+          }
         }
         return;
       }
@@ -667,6 +673,13 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     wsService.send({ type: 'mac:unlock_status' } as never);
     return unsub;
   }, [wsService, server, ready, makeHandler]);
+
+  // Zwischenablage (auf dem Handy) → Seite, bei jeder Änderung.
+  useEffect(() => {
+    if (!ready) return;
+    void clipStore.load();
+    return clipStore.subscribe((l) => call('clipboardSet', toLegacyItems(l)));
+  }, [ready, call]);
 
   // Browser-Bridge: open the login URL stashed by a tapped "Login öffnen" push —
   // on cold start (ready) and whenever the app returns to the foreground.
@@ -1428,37 +1441,48 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
 
       case 'clipboard:write':
-        // In der App kopiert: aufs Handy UND in den gemeinsamen Verlauf (→ Mac).
+        // In der App kopiert: aufs Handy, in den Verlauf und aufs Gerät vorne.
         clipSynced.current = payload.text ?? '';
         Clipboard.setStringAsync(payload.text ?? '').then(() => call('toast', 'Kopiert'));
-        if (payload.text) ws.send({ type: 'clipboard:push', payload: { text: payload.text } } as never);
+        if (payload.text) {
+          clipStore.add({ text: payload.text, src: 'phone', at: Date.now() });
+          ws.send({ type: 'clipboard:push', payload: { text: payload.text } } as never);
+        }
         break;
 
       case 'clipboard:open':
         // Android lässt Apps die Zwischenablage nur im Vordergrund lesen — also
         // hier, beim Öffnen des Verlaufs: was zuletzt in einer anderen App am
-        // Handy kopiert wurde, kommt jetzt dazu (und auf den Mac).
-        Clipboard.getStringAsync().then((t) => {
+        // Handy kopiert wurde, kommt jetzt dazu.
+        void clipStore.load().then(() => Clipboard.getStringAsync()).then((t) => {
           if (t && t.trim() && t !== clipSynced.current) {
             clipSynced.current = t;
-            ws.send({ type: 'clipboard:push', payload: { text: t } } as never);
+            clipStore.add({ text: t, src: 'phone', at: Date.now() });
           }
-        }).catch(() => {}).finally(() => ws.send({ type: 'clipboard:list' } as never));
+        }).catch(() => {}).finally(() => call('clipboardSet', toLegacyItems(clipStore.get())));
         break;
 
-      case 'clipboard:use':
-        // Ein Eintrag gewählt: auf beide Geräte legen (Server setzt den Mac).
-        clipSynced.current = payload.text ?? '';
-        Clipboard.setStringAsync(payload.text ?? '').catch(() => {});
-        if (payload.id) ws.send({ type: 'clipboard:use', payload: { id: payload.id } } as never);
+      case 'clipboard:use': {
+        // Eintrag gewählt: aufs Handy und aufs Gerät des Terminals vorne.
+        const text = String(payload.text ?? clipStore.get().find((c) => c.id === payload.id)?.text ?? '');
+        if (!text) break;
+        clipSynced.current = text;
+        Clipboard.setStringAsync(text).catch(() => {});
+        clipStore.add({ text, src: clipStore.get().find((c) => c.text === text)?.src ?? 'phone', at: Date.now() });
+        ws.send({ type: 'clipboard:push', payload: { text } } as never);
+        break;
+      }
+
+      case 'clipboard:pin':
+        if (payload.id) clipStore.pin(String(payload.id));
         break;
 
       case 'clipboard:delete':
-        if (payload.id) ws.send({ type: 'clipboard:delete', payload: { id: payload.id } } as never);
+        if (payload.id) clipStore.remove(String(payload.id));
         break;
 
       case 'clipboard:clear':
-        ws.send({ type: 'clipboard:clear' } as never);
+        clipStore.clear();
         break;
 
       case 'manager:send': {
