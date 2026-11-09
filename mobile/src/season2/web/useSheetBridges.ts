@@ -7,10 +7,8 @@
  *
  *   Dateien    HTTP /files/list on the server (walkable)
  *   Prozesse   WebSocket system:snapshot
- *   Watcher    WebSocket watcher:list / watcher:update
  *   Ports      the saved port forwards; a tap opens one in the in-app browser
  *   Snippets   own empty list on the phone (durableStorage 'tms-bund-snippets')
- *   SQL        the statements detected in terminal output (sqlStore)
  *   Notizen    notesStore (global) + per-terminal notes/todos (season2 store)
  *   Screens.   camera / gallery -> upload to the server -> the path goes into
  *              the terminal, which is the only reason to take one
@@ -28,7 +26,6 @@ import { usePortForwardingStore } from '../../store/portForwardingStore';
 // nicht, dass zwei Notizspeicher gemeint waren.
 import { useNotesStore, BUND_NOTES_KEY } from '../../store/notesStore';
 import { durableStorage } from '../../services/durableStorage';
-import { useSQLStore } from '../../store/sqlStore';
 import { useS2NotesStore } from '../store/s2NotesStore';
 import { Linking } from 'react-native';
 import { useFavPathsStore } from '../../store/favPathsStore';
@@ -232,10 +229,6 @@ export function useSheetBridges({
         wsService?.send({ type: 'system:snapshot' });
         break;
 
-      case 'watchers':
-        wsService?.send({ type: 'watcher:list' });
-        break;
-
       case 'ports': {
         if (!server) break;
         await usePortForwardingStore.getState().load(server.id);
@@ -249,17 +242,6 @@ export function useSheetBridges({
       case 'snippets':
         await pushSnippets();
         break;
-
-      case 'sql': {
-        const entries = activeSessionId ? useSQLStore.getState().entries[activeSessionId] ?? [] : [];
-        call('setTool', 'sql', {
-          statements: entries.map((e) => ({
-            sql: e.sql,
-            time: new Date(e.detectedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
-          })),
-        });
-        break;
-      }
 
       case 'screenshots':
         call('setTool', 'screenshots', shots);
@@ -285,14 +267,6 @@ export function useSheetBridges({
       if (m?.type === 'system:snapshot' && openSheet.current === 'processes') {
         call('setTool', 'processes', (m.payload?.processes ?? []).map((p: any) => ({
           pid: p.pid, name: p.name, cpu: p.cpu, mem: Math.round(p.mem),
-        })));
-      } else if (m?.type === 'watcher:list' && openSheet.current === 'watchers') {
-        call('setTool', 'watchers', (m.payload?.watchers ?? []).map((w: any) => ({
-          id: w.id,
-          pattern: w.config?.pattern ?? w.label,
-          session: w.type,
-          hits: w.hits ?? 0,
-          active: !!w.enabled,
         })));
       }
     });
@@ -461,11 +435,6 @@ export function useSheetBridges({
         return true;
       }
 
-      case 'watcher:delete':
-        wsService?.send({ type: 'watcher:delete', payload: { id: payload.id } });
-        setTimeout(() => wsService?.send({ type: 'watcher:list' }), 300);
-        return true;
-
       case 'files:cd': {
         const name = String(payload.name ?? '');
         const base = cwd.current;
@@ -506,9 +475,6 @@ export function useSheetBridges({
         return true;
       }
 
-      case 'watcher:toggle':
-        wsService?.send({ type: 'watcher:update', payload: { id: payload.id, enabled: !!payload.on } });
-        return true;
 
       case 'notes:sync':
         useS2NotesStore.setState((s) => ({

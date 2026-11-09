@@ -14,29 +14,12 @@ import { DashboardScreen } from '../screens/DashboardScreen';
 import { PinSetupScreen } from '../screens/PinSetupScreen';
 import { BrowserScreen } from '../screens/BrowserScreen';
 import { ProcessMonitorScreen } from '../screens/ProcessMonitorScreen';
-import { ManagerChatScreen } from '../screens/ManagerChatScreen';
-import { ManagerChatScreenV2 } from '../screens/ManagerChatScreenV2';
-import { ManagerMemoryScreen } from '../screens/ManagerMemoryScreen';
-import { ManagerArtifactsScreen } from '../screens/ManagerArtifactsScreen';
 import { SeasonTwoWebRoot } from '../season2/SeasonTwoWebRoot';
 import { colors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import type { RootStackParamList } from '../types/navigation.types';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
-
-/**
- * Switches between the legacy ManagerChatScreen and the redesigned V2 based on
- * the `managerChatRedesignEnabled` flag in settings. Lets users toggle the new
- * UI on/off in Settings without re-deploying.
- */
-function ManagerChatRouter(props: {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'ManagerChat'>;
-  route: RouteProp<RootStackParamList, 'ManagerChat'>;
-}) {
-  const useV2 = useSettingsStore((s) => s.managerChatRedesignEnabled);
-  return useV2 ? <ManagerChatScreenV2 {...props} /> : <ManagerChatScreen {...props} />;
-}
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -208,38 +191,6 @@ export function AppNavigator() {
         }}
       />
 
-      {/* ── Manager Chat — slide up from bottom (chat feel) ──── */}
-      <Stack.Screen
-        name="ManagerChat"
-        component={ManagerChatRouter}
-        options={{
-          headerShown: false,
-          animation: 'slide_from_bottom',
-          animationDuration: 300,
-        }}
-      />
-
-      {/* ── Manager Memory — slide from right ─────────────────── */}
-      <Stack.Screen
-        name="ManagerMemory"
-        component={ManagerMemoryScreen}
-        options={{
-          headerShown: false,
-          animation: 'slide_from_right',
-          animationDuration: 250,
-        }}
-      />
-
-      {/* ── Manager Artifacts — slide from right ────────────────── */}
-      <Stack.Screen
-        name="ManagerArtifacts"
-        component={ManagerArtifactsScreen}
-        options={{
-          headerShown: false,
-          animation: 'slide_from_right',
-          animationDuration: 250,
-        }}
-      />
     </Stack.Navigator>
   );
 }

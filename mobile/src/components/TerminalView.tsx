@@ -8,7 +8,6 @@ import { TOOLBAR_HEIGHT } from './TerminalToolbar';
 
 import { colors, fonts } from '../theme';
 import type { AiToolType } from '../types/terminal.types';
-import { useSQLStore } from '../store/sqlStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { getThemeById } from '../constants/terminalThemes';
@@ -217,7 +216,6 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
   const [selection, setSelection] = useState('');
   const [selText,   setSelText]   = useState('');
   const [tapStep,   setTapStep]   = useState(1); // 1=tap start  2=tap end  0=done
-  const addSQLEntry = useSQLStore((state) => state.addEntry);
   const terminalTheme = useSettingsStore((state) => state.terminalTheme);
   const externalKeyboardMode = useSettingsStore((state) => state.externalKeyboardMode);
   // Drives the container's bottom edge so xterm.js stays above the keyboard.
@@ -650,8 +648,6 @@ export const TerminalView = forwardRef<TerminalViewRef, Props>(function Terminal
       } else if (msg.type === 'all_text') {
         copyText(msg.text ?? '');
         setSelection('');
-      } else if (msg.type === 'sql_detected' && sessionId && Array.isArray(msg.sqls)) {
-        (msg.sqls as string[]).forEach((sql) => addSQLEntry(sessionId, sql));
       } else if (msg.type === 'tap_step') {
         setTapStep(msg.step);
       } else if (msg.type === 'sel_update') {

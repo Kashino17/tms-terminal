@@ -19,7 +19,6 @@ import { registerBackgroundUpdateCheck } from './services/updater.service';
 import {
   setupAdhanNotificationChannel, playAdhan, stopAdhan, getSelectedAdhan,
 } from './services/adhan.service';
-import { setupManagerNotificationChannel } from './services/managerNotifications.service';
 import { startAdhanScheduler } from './services/adhanScheduler';
 
 // Background FCM handler must be registered before any component mounts.
@@ -101,7 +100,6 @@ export default function App() {
   // Global Adhan notification listeners (works from any screen, lockscreen, background)
   useEffect(() => {
     setupAdhanNotificationChannel();
-    setupManagerNotificationChannel();
 
     // Adhan-Alarme fuer den ganzen Tag planen. Laeuft hier und nicht in einem
     // Bildschirm: der klassische HomeScreen ist die einzige Stelle gewesen, an der

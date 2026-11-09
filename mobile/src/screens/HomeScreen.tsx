@@ -278,7 +278,7 @@ export function HomeScreen({ navigation }: Props) {
                     navigation.navigate('Terminal', {
                       serverId: onlineSv.id, serverName: onlineSv.name,
                       serverHost: onlineSv.host, serverPort: onlineSv.port,
-                      token: onlineSv.token ?? '', openManager: true,
+                      token: onlineSv.token ?? '',
                     });
                   }}
                   activeOpacity={0.7}

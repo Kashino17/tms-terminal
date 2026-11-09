@@ -106,7 +106,7 @@ export function ServerListScreen({ navigation }: Props) {
         navigation.navigate('Terminal', {
           serverId: item.id, serverName: item.name,
           serverHost: item.host, serverPort: item.port,
-          token: item.token ?? '', openManager: true,
+          token: item.token ?? '',
         });
       }}
     />

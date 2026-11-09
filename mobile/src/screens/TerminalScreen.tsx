@@ -18,10 +18,8 @@ import { ToolPanelSheet } from '../components/ToolPanelSheet';
 import { useOrbLayoutStore } from '../store/orbLayoutStore';
 import { SnippetsPanel } from '../components/SnippetsPanel';
 import { ScreenshotPanel } from '../components/ScreenshotPanel';
-import { SQLPanel } from '../components/SQLPanel';
 import { AutoApprovePanel } from '../components/AutoApprovePanel';
 import { AutopilotPanel } from '../components/AutopilotPanel';
-import { WatchersPanel } from '../components/WatchersPanel';
 import { FileBrowserPanel } from '../components/FileBrowserPanel';
 import { PortForwardingPanel } from '../components/PortForwardingPanel';
 import { RenderPanel } from '../components/RenderPanel';
@@ -44,8 +42,6 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useBrowserTabsStore } from '../store/browserTabsStore';
 import { SplitLayout } from '../components/SplitLayout';
 import { useSplitViewStore } from '../store/splitViewStore';
-import { useManagerStore } from '../store/managerStore';
-import { notifyManagerResponse } from '../services/managerNotifications.service';
 import { consumeDrawingResult } from './DrawingScreen';
 import { TabGridView } from '../components/TabGridView';
 import { stripAnsi } from '../utils/stripAnsi';
@@ -67,7 +63,7 @@ type Props = {
 };
 
 export function TerminalScreen({ navigation, route }: Props) {
-  const { serverId, serverName, openManager } = route.params as { serverId: string; serverName: string; openManager?: boolean; [k: string]: any };
+  const { serverId, serverName } = route.params as { serverId: string; serverName: string; [k: string]: any };
   const { height: screenHeight } = useWindowDimensions();
   const screenHeightRef = useRef(screenHeight);
   screenHeightRef.current = screenHeight;
@@ -158,28 +154,6 @@ export function TerminalScreen({ navigation, route }: Props) {
     };
   }, []);
 
-  // Auto-open Manager Chat if navigated with openManager flag
-  const openManagerHandled = useRef(false);
-  useEffect(() => {
-    // Reset flag when openManager changes (new navigation intent)
-    if (!openManager) {
-      openManagerHandled.current = false;
-      return;
-    }
-    if (connState === 'connected' && !openManagerHandled.current) {
-      openManagerHandled.current = true;
-      setTimeout(() => {
-        navigation.navigate('ManagerChat', {
-          wsService: wsRef.current,
-          serverId,
-          serverHost: server?.host ?? '',
-          serverPort: server?.port ?? 8767,
-          serverToken: server?.token ?? '',
-        });
-      }, 0);
-    }
-  }, [openManager, connState, serverId, server, navigation]);
-
   // Keyboard detection for orb dock
   useEffect(() => {
     const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
@@ -265,33 +239,7 @@ export function TerminalScreen({ navigation, route }: Props) {
       const m = msg as { type: string; sessionId?: string; payload?: any };
 
       if (m.type === 'terminal:created' && m.sessionId) {
-        const fromManager = m.payload?.fromManager === true;
-        const managerLabel = m.payload?.label as string | undefined;
-
-        if (fromManager) {
-          // Manager Agent created a new terminal — add a tab and immediately
-          // mount its WebView so it connects (terminal:reattach) and renders
-          // the full TUI. Without this, the WebView is lazy-mounted only when
-          // the user navigates to the tab, leaving it as a headless PTY.
-          const currentTabs = useTerminalStore.getState().getTabs(serverId);
-          const prevActiveTab = currentTabs.find(t => t.active);
-          const newTab = {
-            id: `mgr-${Date.now()}`,
-            sessionId: m.sessionId,
-            title: managerLabel ?? `Shell ${currentTabs.length + 1}`,
-            serverId,
-            active: false,
-          };
-          addTab(serverId, newTab);
-          // addTab forces active:true on the new tab — restore previous focus
-          // so Manager terminals don't steal the user's current terminal tab.
-          if (prevActiveTab) {
-            setActiveTab(serverId, prevActiveTab.id);
-          }
-          // Immediately mount the WebView so xterm.js loads, connects to the
-          // session, and renders Claude's TUI — even while user stays on ManagerChat.
-          setMountedTabs((prev) => new Set([...prev, newTab.id]));
-        } else {
+        {
           // Normal flow: assign sessionId to the oldest pending tab
           const pending = useTerminalStore.getState().getTabs(serverId).find((t) => !t.sessionId);
           if (pending) {
@@ -427,65 +375,6 @@ export function TerminalScreen({ navigation, route }: Props) {
 
     });
 
-    // ── Persistent Manager Agent message handler ─────────────────────────
-    // Registered via setPersistentHandler — survives screen unmount so manager
-    // responses are NEVER lost, even when the app is closed (foreground service
-    // keeps process + WebSocket alive, this handler keeps processing messages).
-    ws.setPersistentHandler((data: unknown) => {
-      const m = data as { type: string; payload?: any };
-      if (!m.type?.startsWith('manager:')) return;
-
-      const store = useManagerStore.getState();
-      const chatKey = m.payload?.targetSessionId ?? store.activeChat;
-      const agentName = store.personality.agentName;
-
-      switch (m.type) {
-        case 'manager:summary':
-          store.addSummary(m.payload.text, m.payload.sessions, m.payload.timestamp, 'alle');
-          notifyManagerResponse(m.payload.text, agentName, store.personality.agentAvatarUri);
-          break;
-        case 'manager:response':
-          store.addResponse(m.payload.text, m.payload.actions, chatKey);
-          notifyManagerResponse(m.payload.text, agentName, store.personality.agentAvatarUri);
-          break;
-        case 'manager:error':
-          store.addError(m.payload.message, chatKey);
-          break;
-        case 'manager:providers':
-          store.setProviders(m.payload.providers, m.payload.active);
-          // Sync persisted provider choice back to server if it differs
-          const persisted = store.activeProvider;
-          if (persisted && persisted !== m.payload.active && m.payload.providers.some((p: any) => p.id === persisted)) {
-            wsRef.current?.send({ type: 'manager:set_provider', payload: { providerId: persisted } } as any);
-          }
-          break;
-        case 'manager:status':
-          store.setEnabled(m.payload.enabled);
-          break;
-        case 'manager:personality_configured':
-          if (m.payload) {
-            store.setPersonality(m.payload);
-            store.setOnboarded(true);
-          }
-          break;
-        case 'manager:thinking':
-          store.setThinking(m.payload.phase, m.payload.detail, m.payload.elapsed, chatKey);
-          break;
-        case 'manager:stream_chunk':
-          store.appendStreamChunk(m.payload.token, m.payload.completionTokens != null ? { completionTokens: m.payload.completionTokens, tps: m.payload.tps ?? 0 } : undefined);
-          break;
-        case 'manager:stream_end':
-          store.finishStream(m.payload.text, m.payload.actions, m.payload.phases, m.payload.images, m.payload.presentations);
-          notifyManagerResponse(m.payload.text, agentName, store.personality.agentAvatarUri);
-          break;
-        case 'manager:tasks':
-          if (Array.isArray(m.payload?.tasks)) {
-            store.setDelegatedTasks(m.payload.tasks);
-          }
-          break;
-      }
-    });
-
     // Only connect if not already connected (connection persists across screen mounts)
     if (ws.state !== 'connected' && ws.state !== 'connecting') {
       ws.connect({ host: server.host, port: server.port, token: server.token });
@@ -538,17 +427,6 @@ export function TerminalScreen({ navigation, route }: Props) {
       console.log(`[Idle] Threshold sent to server: ${threshold}s`);
     }
 
-    // Sync manager API keys to server
-    const { apiKeys: keys } = useManagerStore.getState();
-    if (keys.kimi) {
-      wsRef.current.send({ type: 'manager:set_api_key', payload: { providerId: 'kimi', apiKey: keys.kimi } } as any);
-    }
-    if (keys.glm) {
-      wsRef.current.send({ type: 'manager:set_api_key', payload: { providerId: 'glm', apiKey: keys.glm } } as any);
-    }
-    if (keys.openai) {
-      wsRef.current.send({ type: 'manager:set_api_key', payload: { providerId: 'openai', apiKey: keys.openai } } as any);
-    }
   }, [connState]);
 
   // Poll RTT from WebSocket service and update state for ConnectionStatus
@@ -866,16 +744,6 @@ export function TerminalScreen({ navigation, route }: Props) {
       });
       return true;
     }
-    if (toolId === 'manager') {
-      navigation.navigate('ManagerChat', {
-        wsService: wsRef.current,
-        serverId,
-        serverHost: server?.host ?? '',
-        serverPort: server?.port ?? 8767,
-        serverToken: server?.token ?? '',
-      });
-      return true;
-    }
     return false;
   }, [navigation, server, serverId]);
 
@@ -946,12 +814,8 @@ export function TerminalScreen({ navigation, route }: Props) {
             onUploaded={injectPathToActiveTerminal}
           />
         );
-      case 'sql':
-        return <SQLPanel sessionId={activeSession} serverId={serverId} />;
       case 'autopilot':
         return <AutopilotPanel sessionId={activeSession} wsService={wsRef.current} serverId={serverId} />;
-      case 'watchers':
-        return <WatchersPanel serverId={serverId} wsService={wsRef.current} />;
       case 'ports':
         return <PortForwardingPanel serverId={serverId} />;
       case 'render':

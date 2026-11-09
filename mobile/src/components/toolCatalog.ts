@@ -20,13 +20,11 @@ export interface ToolDef {
 export const TOOL_CATALOG: ToolDef[] = [
   { id: 'ports',        icon: 'share-2',      color: '#10B981', label: 'Ports',      hint: 'Port-Weiterleitungen anlegen' },
   { id: 'processes',    icon: 'activity',     color: '#06B6D4', label: 'Prozesse',   hint: 'CPU, RAM und einzelne Prozesse' },
-  { id: 'sql',          icon: 'database',     color: '#3B82F6', label: 'SQL',        hint: 'Erkannte Queries und Supabase' },
   { id: 'render',       icon: 'box',          color: '#6366F1', label: 'Render',     hint: 'Projekte und Deploy-Logs' },
   { id: 'vercel',       icon: 'triangle',     color: '#F8FAFC', label: 'Vercel',     hint: 'Projekte und Deploy-Logs' },
   { id: 'autoApprove',  icon: 'check-circle', color: '#22C55E', label: 'Approve',    hint: 'Berechtigungen je Reiter' },
   { id: 'snippets',     icon: 'zap',          color: '#F59E0B', label: 'Snippets',   hint: 'Wiederkehrende Befehle' },
   { id: 'autopilot',    icon: 'play-circle',  color: '#A78BFA', label: 'Autopilot',  hint: 'Aufgaben nacheinander abarbeiten' },
-  { id: 'watchers',     icon: 'bell',         color: '#F59E0B', label: 'Watchers',   hint: 'Auf Dateien, Prozesse und Logs achten' },
   { id: 'files',        icon: 'folder',       color: '#F59E0B', label: 'Dateien',    hint: 'Explorer mit Vorschau und Download' },
   { id: 'screenshots',  icon: 'camera',       color: '#06B6D4', label: 'Shots',      hint: 'Bilder und Videos ins Terminal laden' },
   { id: 'drawing',      icon: 'edit-2',       color: '#F59E0B', label: 'Zeichnen',   hint: 'Skizze zeichnen und Pfad einsetzen' },

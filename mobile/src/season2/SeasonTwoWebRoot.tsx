@@ -39,9 +39,7 @@ import { PRAYER_NAMES, getNextPrayer, type PrayerTimes } from '../services/praye
 import * as Notifications from 'expo-notifications';
 import { useDictation } from './hooks/useDictation';
 import { dictationBubble } from '../services/dictationBubble.service';
-import { useManagerWire } from './manager/useManagerWire';
-import { useManagerStore } from '../store/managerStore';
-import { useManagerBridge, useCloudBridge } from './web/useSeasonTwoBackends';
+import { useCloudBridge } from './web/useSeasonTwoBackends';
 import { useCloudAuthStore, type CloudPlatform } from '../store/cloudAuthStore';
 import { useCloudOrgStore } from '../store/cloudOrgStore';
 import { useSheetBridges } from './web/useSheetBridges';
@@ -194,8 +192,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const updateUrl = useRef<string | null>(null);
   /** Zeitpunkt des letzten Zurück auf dem Startbildschirm — für „nochmal zum Beenden". */
   const lastBackAt = useRef(0);
-  /** Bilder, die an die nächste Manager-Nachricht angehängt werden (Upload-Pfade + lokale URI). */
-  const mgrAttachments = useRef<Array<{ uri: string; path?: string }>>([]);
   const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, onScreen: false, tabId: null, url: '', rect: null });
   // Long-Press auf eine Server-Karte öffnet dieses native Aktions-Sheet
   // (Bearbeiten + Löschen) — dieselbe Komponente wie im klassischen Layout.
@@ -225,55 +221,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     webRef.current?.injectJavaScript(js);
   }, []);
 
-  // Bild(er) für die Manager-Nachricht wählen, hochladen, als Miniaturen zeigen.
-  // Spiegelt den klassischen Screen: Upload nach /upload/screenshot; die lokale
-  // URI bleibt für die Vorschau, der Serverpfad geht später mit der Nachricht raus.
-  const pickManagerImages = useCallback(async () => {
-    if (!server || !token) { call('toast', 'Kein Server verbunden'); return; }
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) { call('toast', 'Galerie-Berechtigung fehlt'); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-      allowsMultipleSelection: true,
-      selectionLimit: 4,
-    });
-    if (result.canceled || !result.assets.length) return;
-    // Erst als „lädt" zeigen, damit man sofort sieht, dass es ankommt.
-    const pending = result.assets.map((a) => ({ uri: a.uri, uploading: true }));
-    mgrAttachments.current = [...mgrAttachments.current, ...pending.map(({ uri }) => ({ uri }))];
-    call('setManagerAttachments', [...mgrAttachments.current.slice(0, -pending.length), ...pending]);
-    for (let i = 0; i < result.assets.length; i++) {
-      const asset = result.assets[i];
-      try {
-        const data = asset.base64
-          ?? (await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
-        const res = await fetch(`http://${server.host}:${server.port}/upload/screenshot`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ filename: asset.fileName ?? `manager_${i}.jpg`, data, mimeType: 'image/jpeg' }),
-        });
-        const json = res.ok ? await res.json() : null;
-        const idx = mgrAttachments.current.findIndex((a) => a.uri === asset.uri);
-        if (idx >= 0 && json?.path) mgrAttachments.current[idx].path = json.path;
-      } catch {
-        call('toast', 'Ein Bild konnte nicht hochgeladen werden');
-      }
-    }
-    call('setManagerAttachments', mgrAttachments.current);
-  }, [server, token, call]);
-
-  // Manager answers must land in the store even while another screen is open.
-  useManagerWire(wsService);
-  const sendManager = useManagerBridge(wsService, ready, call);
-
-  // Modell-Liste holen, sobald verbunden. Der Server schickt sie sonst nur bei
-  // manager:toggle (das Season 2 nie sendet) — daher stand im Modell-Sheet
-  // "Keine Modelle gemeldet". Reine Abfrage, startet den Manager nicht.
-  useEffect(() => {
-    if (!wsService || state !== 'connected') return;
-    wsService.send({ type: 'manager:get_providers' });
-  }, [wsService, state]);
   // Browser-Bridge: tell the server whether terminal browser-opens should be
   // routed here. Fires on connect and whenever the toggle changes (incl. after
   // a server switch, which re-connects). See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
@@ -403,7 +350,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   }, [setSessionStatus]);
 
   // ── Server → page. Ein Empfänger pro Gerät: der Hauptserver bedient alles
-  //    (Zwischenablage, Manager, Mac-Entsperren, Browser-Brücke …), jedes weitere
+  //    (Zwischenablage, Mac-Entsperren, Browser-Brücke …), jedes weitere
   //    Gerät nur seine Terminals (terminal:*). So stehen die Terminals aller
   //    Geräte nebeneinander in einer Leiste.
   const makeHandler = useCallback((srvId: string, conn: WebSocketService, primary: boolean) => {
@@ -416,7 +363,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     };
 
     return (m: any) => {
-      if (!primary && typeof m?.type === 'string' && m.type.startsWith('manager:')) return;
       // ── Gemeinsame Zwischenablage (server/src/clipboard) ──
       // Der Verlauf liegt auf dem Handy (bund/clipboardStore). Jedes Gerät meldet
       // seine Kopien; den alten Server-Verlauf übernehmen wir genau einmal.
@@ -485,17 +431,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       }
       if (m?.type === 'terminal:created' && m.sessionId) {
         sessionServer.current[m.sessionId] = srvId;
-        // Vom Manager angelegt: das ist KEINE Antwort auf eine unserer Karten.
-        // Vorher verbrauchte es die naechste wartende Karte — legte man gerade
-        // selbst ein Terminal an, landeten Sitzung und Titel ueber Kreuz.
-        if (m.payload?.fromManager) {
-          const label = typeof m.payload?.label === 'string' && m.payload.label ? m.payload.label : 'Terminal';
-          useTerminalStore.getState().addTab(srvId, {
-            id: m.sessionId, sessionId: m.sessionId, title: label, serverId: srvId, active: false,
-          });
-          call('restoreSessions', [{ sessionId: m.sessionId, name: label, serverId: srvId }]);
-          return;
-        }
         const pending = pendingFor(srvId).shift();
         const cardId = pending?.cardId ?? null;
         // Reiter-ID = Sitzungs-ID, NIE die Karten-ID der Seite: die zaehlt nach
@@ -530,30 +465,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         delete sessionStatus.current[m.sessionId];
         clearTimeout(idleTimers.current[m.sessionId]);
         call('sessionClosed', m.sessionId); // die Seite räumt die Karte weg
-        return;
-      }
-      if (m?.type === 'manager:unread') {
-        call('setUnread', m.payload?.unread ?? 0);
-        return;
-      }
-      if (m?.type === 'manager:proactive') {
-        call('proactive', m.payload ?? {});
-        return;
-      }
-      if (m?.type === 'manager:agenda_data') {
-        call('setAgenda', m.payload?.items ?? []);
-        return;
-      }
-      if (m?.type === 'manager:entries_data') {
-        call('setEntries', m.payload?.entries ?? []);
-        return;
-      }
-      if (m?.type === 'manager:memory_data' && m.payload?.memory) {
-        const mem = m.payload.memory;
-        const items: Array<{ id: string; text: string; time: string }> = [];
-        for (const j of mem.journal ?? []) items.push({ id: `j-${j.date}`, text: j.text, time: j.date });
-        for (const i of mem.insights ?? []) items.push({ id: `i-${i.date}-${i.text.slice(0, 12)}`, text: i.text, time: i.date });
-        call('setManagerMemory', items.slice(-40).reverse());
         return;
       }
       // Ein fehlgeschlagenes terminal:create antwortet mit sessionId 'none' —
@@ -1043,12 +954,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       const card = micCard.current;
       micCard.current = null;
       if (micDiscard.current) { micDiscard.current = false; return; } // abgebrochen
-      // Manager-Diktat landet in der Eingabezeile zum Prüfen/Ändern, nicht
-      // sofort gesendet — sonst könnte man ein Fehl-Transkript nicht mehr fangen.
-      if (card === MANAGER_MIC) call('injectManagerInput', text);
       // Fernzugriff-Diktat geht nicht über TMSBridge (window.TMSRemote sitzt
       // bewusst daneben, siehe bridge.js) — direkt in die Seite injiziert.
-      else if (card === REMOTE_MIC) {
+      if (card === REMOTE_MIC) {
         webRef.current?.injectJavaScript(
           `window.TMSRemote && window.TMSRemote.input(${JSON.stringify({ t: 'x', s: text })}); true;`
         );
@@ -1058,8 +966,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       const card = micCard.current;
       micCard.current = null;
       micDiscard.current = false;
-      if (card === MANAGER_MIC) call('managerMicStopped');
-      else if (card === REMOTE_MIC) { /* Seite zeigt ohnehin nur den Mikro-Zustand, kein eigener Reset noetig */ }
+      if (card === REMOTE_MIC) { /* Seite zeigt ohnehin nur den Mikro-Zustand, kein eigener Reset noetig */ }
       else call('dictationResult', card ?? '', '');
       call('toast', msg);
     },
@@ -1485,80 +1392,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         clipStore.clear();
         break;
 
-      case 'manager:send': {
-        // Angehängte Bilder als Serverpfade an den Text hängen, damit das Modell
-        // sie lesen kann (wie im klassischen Screen), dann die Anhänge leeren.
-        const paths = mgrAttachments.current.map((a) => a.path).filter(Boolean);
-        const text = paths.length
-          ? `${payload.text}\n\n[Angehängte Bilder: ${paths.join(', ')}]`
-          : payload.text;
-        sendManager(text);
-        if (mgrAttachments.current.length) {
-          mgrAttachments.current = [];
-          call('setManagerAttachments', []);
-        }
-        break;
-      }
-
-      case 'manager:outboxRead':
-        ws.send({ type: 'manager:outbox_read' });
-        break;
-
-      case 'manager:agendaList':
-        ws.send({ type: 'manager:agenda', payload: { action: 'list' } });
-        break;
-
-      case 'manager:entriesList':
-        ws.send({ type: 'manager:entries', payload: { action: 'list' } });
-        break;
-
-      case 'manager:entryToggle':
-        // Die Seite hat schon optimistisch umgeschaltet; der Server antwortet
-        // mit der vollständigen Liste und korrigiert notfalls.
-        ws.send({
-          type: 'manager:entries',
-          payload: { action: payload.done ? 'complete' : 'reopen', args: { id: payload.id } },
-        });
-        break;
-
-      case 'manager:mic':
-        // Derselbe Wächter wie bei 'mic:start' — derselbe gemeinsame Aufnehmer.
-        if (micState !== 'idle') { call('toast', 'Es läuft schon eine Aufnahme'); break; }
-        micCard.current = MANAGER_MIC;
-        micDiscard.current = false;
-        toggleMic();
-        break;
-
-      case 'manager:setProvider': {
-        // Ein lokales Modell wird erst geladen, bevor es aktiv ist — optimistisch
-        // vorstellen, aber den Ladezustand zeigen, bis der Server bestätigt.
-        const st = useManagerStore.getState();
-        st.setActiveProvider(payload.providerId);
-        if (typeof payload.contextLength === 'number') st.setModelLoading(payload.providerId);
-        ws.send({
-          type: 'manager:set_provider',
-          payload: {
-            providerId: payload.providerId,
-            ...(typeof payload.contextLength === 'number' ? { contextLength: payload.contextLength } : {}),
-          },
-        });
-        break;
-      }
-
-      case 'manager:clear':
-        // Nur den sichtbaren Verlauf des aktiven Chats — Gedächtnis bleibt.
-        useManagerStore.getState().clearSessionMessages(useManagerStore.getState().activeChat);
-        break;
-
-      case 'manager:attach':
-        pickManagerImages();
-        break;
-
-      case 'manager:removeAttachment':
-        mgrAttachments.current = mgrAttachments.current.filter((_, i) => i !== payload.index);
-        call('setManagerAttachments', mgrAttachments.current);
-        break;
-
       case 'cloud:open':
         loadCloudDetail(payload.projectId);
         break;
@@ -1595,25 +1428,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
       case 'nav:screen':
         if (payload.screen === 'cloud') { pushCloudOrg(); pushCloudAccounts(); loadCloud(); }
-        if (payload.screen === 'manager') {
-          // Memory frisch vom Server; Artefakte aus den Manager-Nachrichten
-          // (Bilder/Präsentationen), antippbar über den In-App-Browser.
-          ws.send({ type: 'manager:memory_read' } as never);
-          const msgs = useManagerStore.getState().messages ?? [];
-          const arts: Array<{ id: string; title: string; kind: string; time: string; url: string }> = [];
-          for (const msg of msgs) {
-            const when = new Date(msg.timestamp).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-            for (const f of msg.images ?? []) {
-              arts.push({ id: `img-${f}`, title: f, kind: 'Bild', time: when,
-                url: `http://${server?.host}:${server?.port}/generated-images/${encodeURIComponent(f)}?token=${token}` });
-            }
-            for (const f of msg.presentations ?? []) {
-              arts.push({ id: `prs-${f}`, title: f, kind: 'Präsentation', time: when,
-                url: `http://${server?.host}:${server?.port}/generated-presentations/${encodeURIComponent(f)}?token=${token}` });
-            }
-          }
-          call('setManagerArtifacts', arts.reverse());
-        }
         break;
 
       case 'browser:sync':
@@ -1779,7 +1593,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, pushBubbleStatus, call, navigation, setSeasonTwoEnabled, setServer, sendManager, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, pickManagerImages, deleteServerNow, connFor]);
+  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, pushBubbleStatus, call, navigation, setSeasonTwoEnabled, setServer, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, deleteServerNow, connFor]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
@@ -1933,8 +1747,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   );
 }
 
-/** Sentinel cardId: the mic that belongs to the Manager chat, not a terminal. */
-const MANAGER_MIC = '__manager__';
 
 /** Sentinel cardId: the mic that dictates into the Fernzugriff-Verbindung (der PC), nicht in ein Terminal. */
 const REMOTE_MIC = '__remote__';

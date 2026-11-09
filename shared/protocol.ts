@@ -74,13 +74,6 @@ export interface ClientSetIdleThresholdMessage {
   payload: { seconds: number };
 }
 
-// ── Watcher messages (Client → Server) ──────────────────────────
-export interface WatcherListMessage { type: 'watcher:list'; payload: Record<string, never>; }
-export interface WatcherCreateMessage { type: 'watcher:create'; payload: { id: string; type: string; label: string; enabled: boolean; config: Record<string, string> }; }
-export interface WatcherUpdateMessage { type: 'watcher:update'; payload: { id: string; enabled?: boolean }; }
-export interface WatcherDeleteMessage { type: 'watcher:delete'; payload: { id: string }; }
-export interface WatcherTestMessage   { type: 'watcher:test';   payload: { id: string }; }
-
 // ── System monitor messages (Client → Server) ──────────────────
 export interface SystemSnapshotMessage { type: 'system:snapshot'; }
 export interface SystemKillMessage     { type: 'system:kill'; payload: { pid: number; signal?: string }; }
@@ -106,73 +99,6 @@ export interface DictationChunkMessage  { type: 'dictation:chunk';  payload: { i
 export interface DictationEndMessage    { type: 'dictation:end';    payload: { id: string; totalBytes: number } }
 export interface DictationCancelMessage { type: 'dictation:cancel'; payload: { id: string } }
 export interface DictationResumeMessage { type: 'dictation:resume'; payload: { id: string } }
-
-// ── Manager messages (Client → Server) ────────────────────────────
-export interface ManagerChatMessage {
-  type: 'manager:chat';
-  payload: { text: string; targetSessionId?: string; onboarding?: boolean };
-}
-export interface ManagerCancelMessage {
-  type: 'manager:cancel';
-}
-export interface ManagerToggleMessage {
-  type: 'manager:toggle';
-  payload: { enabled: boolean };
-}
-export interface ManagerSetProviderMessage {
-  type: 'manager:set_provider';
-  /** contextLength: desired context size when loading a local (LM Studio) model. */
-  payload: { providerId: string; contextLength?: number };
-}
-export interface ManagerPollMessage {
-  type: 'manager:poll';
-  payload?: { targetSessionId?: string };
-}
-export interface ManagerSetApiKeyMessage {
-  type: 'manager:set_api_key';
-  payload: { providerId: string; apiKey: string };
-}
-export interface ManagerMemoryReadMessage {
-  type: 'manager:memory_read';
-}
-export interface ManagerMemoryWriteMessage {
-  type: 'manager:memory_write';
-  payload: { section: string; data: unknown };
-}
-export interface ManagerAgendaMessage {
-  type: 'manager:agenda';
-  payload: { action: 'list' | 'add' | 'update' | 'delete'; args?: Record<string, string> };
-}
-export interface ManagerEntriesMessage {
-  type: 'manager:entries';
-  payload: { action: 'list' | 'add' | 'complete' | 'reopen' | 'update' | 'delete'; args?: Record<string, string> };
-}
-export interface ManagerOverviewMessage {
-  type: 'manager:overview';
-}
-export interface ManagerOutboxReadMessage {
-  type: 'manager:outbox_read';
-}
-/** Pure query for the provider/model list — does not start or stop the manager. */
-export interface ManagerGetProvidersMessage {
-  type: 'manager:get_providers';
-}
-export interface ManagerSetPersonalityMessage {
-  type: 'manager:set_personality';
-  payload: {
-    agentName?: string;
-    tone?: string;
-    detail?: string;
-    emojis?: boolean;
-    proactive?: boolean;
-    customInstruction?: string;
-  };
-}
-/** Client pushes its tab labels so the manager can address terminals by name. */
-export interface ManagerSyncLabelsMessage {
-  type: 'manager:sync_labels';
-  payload: { labels: Array<{ sessionId: string; name: string }> };
-}
 
 // ── File Upload (Client → Server) ────────────────────────────────
 export interface FileUploadMessage {
@@ -300,11 +226,6 @@ export type ClientMessage =
   | TerminalReattachMessage
   | PingMessage
   | RegisterTokenMessage
-  | WatcherListMessage
-  | WatcherCreateMessage
-  | WatcherUpdateMessage
-  | WatcherDeleteMessage
-  | WatcherTestMessage
   | SystemSnapshotMessage
   | SystemKillMessage
   | AudioTranscribeMessage
@@ -313,21 +234,6 @@ export type ClientMessage =
   | DictationEndMessage
   | DictationCancelMessage
   | DictationResumeMessage
-  | ManagerChatMessage
-  | ManagerCancelMessage
-  | ManagerToggleMessage
-  | ManagerSetProviderMessage
-  | ManagerPollMessage
-  | ManagerSetApiKeyMessage
-  | ManagerMemoryReadMessage
-  | ManagerMemoryWriteMessage
-  | ManagerAgendaMessage
-  | ManagerEntriesMessage
-  | ManagerOverviewMessage
-  | ManagerOutboxReadMessage
-  | ManagerGetProvidersMessage
-  | ManagerSetPersonalityMessage
-  | ManagerSyncLabelsMessage
   | FileUploadMessage
   | AppStateMessage
   | ActiveTabMessage
@@ -364,8 +270,6 @@ export interface TerminalCreatedMessage {
   payload: {
     cols: number;
     rows: number;
-    /** true when the Manager Agent (not the app) opened this terminal. */
-    fromManager?: boolean;
     label?: string;
   };
 }
@@ -447,32 +351,6 @@ export interface TerminalTitleMessage {
   payload: { title: string | null };
 }
 
-// ── Watcher responses (Server → Client) ──────────────────────────
-export interface WatcherListResponseMessage {
-  type: 'watcher:list';
-  payload: { watchers: Array<{ id: string; type: string; label: string; enabled: boolean; config: Record<string, string> }> };
-}
-
-export interface WatcherCreatedMessage {
-  type: 'watcher:created';
-  payload: { id: string; type: string; label: string; enabled: boolean; config: Record<string, string> };
-}
-
-export interface WatcherUpdatedMessage {
-  type: 'watcher:updated';
-  payload: { id: string; enabled: boolean };
-}
-
-export interface WatcherDeletedMessage {
-  type: 'watcher:deleted';
-  payload: { id: string };
-}
-
-export interface WatcherTestResultMessage {
-  type: 'watcher:test_result';
-  payload: { id: string; success: boolean; message?: string };
-}
-
 // ── System responses (Server → Client) ──────────────────────────
 export interface SystemKillResultMessage {
   type: 'system:kill_result';
@@ -537,172 +415,6 @@ export interface SystemSnapshotResponseMessage {
       user: string;
     }>;
   };
-}
-
-// ── Manager responses (Server → Client) ──────────────────────────
-export interface ManagerSummaryMessage {
-  type: 'manager:summary';
-  payload: {
-    text: string;
-    sessions: Array<{ sessionId: string; label: string; hasActivity: boolean }>;
-    timestamp: number;
-  };
-}
-export interface ManagerResponseMessage {
-  type: 'manager:response';
-  payload: {
-    text: string;
-    actions?: Array<{ type: string; sessionId: string; detail: string }>;
-  };
-}
-export interface ManagerProvidersMessage {
-  type: 'manager:providers';
-  payload: {
-    providers: Array<{
-      id: string;
-      name: string;
-      configured: boolean;
-      isLocal?: boolean;
-      modelType?: string;
-      /** Local (LM Studio) models only — live info from the model discovery,
-       *  the app builds its context slider from these. */
-      modelKey?: string;
-      maxContext?: number;
-      loadedContext?: number | null;
-      loaded?: boolean;
-      available?: boolean;
-      savedContext?: number;
-    }>;
-    active: string;
-  };
-}
-export interface ManagerErrorMessage {
-  type: 'manager:error';
-  payload: { message: string };
-}
-export interface ManagerStatusMessage {
-  type: 'manager:status';
-  payload: { enabled: boolean };
-}
-export interface ManagerMemoryDataMessage {
-  type: 'manager:memory_data';
-  payload: { memory: unknown };
-}
-export interface ManagerAgendaDataMessage {
-  type: 'manager:agenda_data';
-  payload: {
-    items: Array<{
-      id: string; title: string; note?: string; at: string; allDay: boolean;
-      repeat: string; reminderOffsets: number[]; occurrenceAt: number;
-    }>;
-  };
-}
-export interface ManagerEntriesDataMessage {
-  type: 'manager:entries_data';
-  payload: {
-    entries: Array<{
-      id: string; text: string; checkable: boolean; done: boolean;
-      due?: string; project?: string; updatedAt: number;
-    }>;
-  };
-}
-export interface ManagerProactiveMessage {
-  type: 'manager:proactive';
-  payload: {
-    id: string; kind: string; text: string; createdAt: number;
-    project?: string; sessionId?: string; unread: number;
-  };
-}
-export interface ManagerUnreadMessage {
-  type: 'manager:unread';
-  payload: { unread: number };
-}
-
-// ── Manager streaming (Server → Client) ──────────────────────────
-export interface PhaseInfo {
-  phase: string;
-  label: string;
-  duration: number;
-}
-
-export interface ManagerThinkingMessage {
-  type: 'manager:thinking';
-  payload: { phase: string; detail?: string; elapsed?: number };
-}
-
-export interface ManagerStreamChunkMessage {
-  type: 'manager:stream_chunk';
-  /** completionTokens/tps: live token stats, only providers that report them. */
-  payload: { token: string; completionTokens?: number; tps?: number };
-}
-
-export interface ManagerStreamEndMessage {
-  type: 'manager:stream_end';
-  payload: {
-    text: string;
-    actions?: Array<{ type: string; sessionId: string; detail: string }>;
-    phases: PhaseInfo[];
-    images?: string[];
-    presentations?: string[];
-    tasks?: Array<{ id: string; description: string; sessionLabel: string; status: string }>;
-  };
-}
-
-// Browser-Bridge (terminal→app browser). See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
-export interface BrowserBridgeOpenMessage {
-  type: 'browserbridge:open';
-  payload: { url: string; host: string; sessionId: string };
-}
-export interface BrowserBridgeCallbackResultMessage {
-  type: 'browserbridge:callback_result';
-  payload: { status: number; html: string };
-}
-
-// ── Manager extras (Server → Client) ───────────────────────────
-export interface ManagerPersonalityConfiguredMessage {
-  type: 'manager:personality_configured';
-  payload: {
-    agentName: string;
-    tone: string;
-    detail: string;
-    emojis: boolean;
-    proactive: boolean;
-    customInstruction: string;
-  };
-}
-
-export type ManagerTaskStatus = 'pending' | 'running' | 'waiting' | 'done' | 'failed';
-
-export interface ManagerTaskStep {
-  label: string;
-  status: ManagerTaskStatus;
-  trigger: 'manual' | 'on_create' | 'on_prompt_sent' | 'on_claude_idle' | 'on_write' | 'ai_input';
-  targetTerminal?: string;
-}
-
-export interface ManagerTask {
-  id: string;
-  description: string;
-  sessionId: string;
-  sessionLabel: string;
-  status: ManagerTaskStatus;
-  createdAt: number;
-  updatedAt: number;
-  lastCheckedOutput?: string;
-  pendingPrompt?: string;
-  steps: ManagerTaskStep[];
-  linkedTaskIds?: string[];
-}
-
-export interface ManagerTasksMessage {
-  type: 'manager:tasks';
-  payload: { tasks: ManagerTask[] };
-}
-
-/** A local model is being loaded/unloaded in LM Studio — the app shows a "lädt…" chip. */
-export interface ManagerModelLoadingMessage {
-  type: 'manager:model_loading';
-  payload: { providerId: string; loading: boolean };
 }
 
 // ── Shared clipboard (Server → Client) ─────────────────────────
@@ -773,6 +485,16 @@ export interface MacBiometricUnlockResultMessage {
   payload: { ok: boolean; mode: 'remote' | 'sudo'; error?: string };
 }
 
+// Browser-Bridge (terminal→app browser). See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
+export interface BrowserBridgeOpenMessage {
+  type: 'browserbridge:open';
+  payload: { url: string; host: string; sessionId: string };
+}
+export interface BrowserBridgeCallbackResultMessage {
+  type: 'browserbridge:callback_result';
+  payload: { status: number; html: string };
+}
+
 export type ServerMessage =
   | DictationAckMessage
   | DictationStateMessage
@@ -788,11 +510,6 @@ export type ServerMessage =
   | TerminalProcessMessage
   | TerminalPromptDetectedMessage
   | PongMessage
-  | WatcherListResponseMessage
-  | WatcherCreatedMessage
-  | WatcherUpdatedMessage
-  | WatcherDeletedMessage
-  | WatcherTestResultMessage
   | SystemSnapshotResponseMessage
   | SystemKillResultMessage
   | AudioTranscriptionMessage
@@ -800,26 +517,10 @@ export type ServerMessage =
   | AudioErrorMessage
   | TTSResultMessage
   | TTSErrorMessage
-  | ManagerSummaryMessage
-  | ManagerResponseMessage
-  | ManagerProvidersMessage
-  | ManagerErrorMessage
-  | ManagerStatusMessage
-  | ManagerMemoryDataMessage
-  | ManagerAgendaDataMessage
-  | ManagerEntriesDataMessage
-  | ManagerProactiveMessage
-  | ManagerUnreadMessage
-  | ManagerThinkingMessage
-  | ManagerStreamChunkMessage
-  | ManagerStreamEndMessage
   | BrowserBridgeOpenMessage
   | BrowserBridgeCallbackResultMessage
   | TerminalTitlesMessage
   | TerminalTitleMessage
-  | ManagerPersonalityConfiguredMessage
-  | ManagerTasksMessage
-  | ManagerModelLoadingMessage
   | ClipboardHistoryMessage
   | ClipboardAddedMessage
   | ClipboardRemovedMessage

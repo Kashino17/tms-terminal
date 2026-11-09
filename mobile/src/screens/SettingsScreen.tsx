@@ -9,7 +9,6 @@ import type { RootStackParamList } from '../types/navigation.types';
 import { useLockStore } from '../store/lockStore';
 import { useSettingsStore, IDLE_THRESHOLD_OPTIONS, LOCK_GRACE_OPTIONS } from '../store/settingsStore';
 import { useCloudAuthStore } from '../store/cloudAuthStore';
-import { useManagerStore } from '../store/managerStore';
 import { useCloudProjectsStore } from '../store/cloudProjectsStore';
 import { TERMINAL_THEMES, getThemeById } from '../constants/terminalThemes';
 import { colors, fonts, fontSizes, spacing } from '../theme';
@@ -24,13 +23,9 @@ type Props = {
 export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
-  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, browserBridgeEnabled, setBrowserBridgeEnabled, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection, voicePromptEnhanceEnabled, setVoicePromptEnhanceEnabled, managerChatRedesignEnabled, setManagerChatRedesignEnabled, seasonTwoEnabled, setSeasonTwoEnabled } = useSettingsStore();
+  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, browserBridgeEnabled, setBrowserBridgeEnabled, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection, voicePromptEnhanceEnabled, setVoicePromptEnhanceEnabled, seasonTwoEnabled, setSeasonTwoEnabled } = useSettingsStore();
   const { tokens, notificationsEnabled, pollingIntervalMs, setNotificationsEnabled, setPollingIntervalMs, clearPlatform } = useCloudAuthStore();
   const { clearCache } = useCloudProjectsStore();
-  const { apiKeys, setApiKey } = useManagerStore();
-  const [kimiKeyInput, setKimiKeyInput] = useState(apiKeys.kimi);
-  const [glmKeyInput, setGlmKeyInput] = useState(apiKeys.glm);
-  const [openaiKeyInput, setOpenaiKeyInput] = useState(apiKeys.openai);
   const [idlePickerVisible, setIdlePickerVisible] = useState(false);
   const [themePickerVisible, setThemePickerVisible] = useState(false);
   const [pollingPickerVisible, setPollingPickerVisible] = useState(false);
@@ -450,35 +445,6 @@ export function SettingsScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {/* ── Manager Chat Beta ── */}
-        <View style={[styles.section, { marginBottom: rs(28) }]}>
-          <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>Beta</Text>
-
-          <View style={styles.card}>
-            <TouchableOpacity
-              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
-              onPress={() => setManagerChatRedesignEnabled(!managerChatRedesignEnabled)}
-              activeOpacity={0.7}
-              accessibilityRole="switch"
-              accessibilityState={{ checked: managerChatRedesignEnabled }}
-            >
-              <View style={styles.rowLeft}>
-                <Feather name="layout" size={ri(18)} color={managerChatRedesignEnabled ? colors.primary : colors.textMuted} style={{ marginRight: rs(12) }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.label, { fontSize: rf(16) }]}>Manager Chat Redesign</Text>
-                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Multi-Spotlight, Tool-Sidebar, Group-Tabs, Direct-Mode (work in progress)</Text>
-                </View>
-              </View>
-              <Switch
-                value={managerChatRedesignEnabled}
-                onValueChange={setManagerChatRedesignEnabled}
-                trackColor={{ false: colors.border, true: colors.primary + '88' }}
-                thumbColor={managerChatRedesignEnabled ? colors.primary : colors.textDim}
-              />
-            </TouchableOpacity>
-          </View>
-        </View>
-
         {/* ── Cloud ── */}
         <View style={[styles.section, { marginBottom: rs(28) }]}>
           <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>Cloud</Text>
@@ -610,131 +576,6 @@ export function SettingsScreen({ navigation }: Props) {
             </View>
           </Pressable>
         </Modal>
-
-        {/* ── Manager Agent ── */}
-        <View style={[styles.section, { marginBottom: rs(28) }]}>
-          <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>Manager Agent</Text>
-
-          <View style={styles.card}>
-            {/* Kimi API Key */}
-            <View style={{ paddingHorizontal: rs(16), paddingVertical: rs(14) }}>
-              <View style={styles.rowLeft}>
-                <Feather name="zap" size={ri(18)} color="#6366F1" style={{ marginRight: rs(12) }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.label, { fontSize: rf(16) }]}>Kimi K2.5</Text>
-                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Moonshot AI API Key</Text>
-                </View>
-              </View>
-              <View style={{ flexDirection: 'row', marginTop: rs(8), gap: rs(8) }}>
-                <TextInput
-                  style={[styles.apiKeyInput, { fontSize: rf(13), flex: 1, paddingHorizontal: rs(12), paddingVertical: rs(8) }]}
-                  value={kimiKeyInput}
-                  onChangeText={setKimiKeyInput}
-                  placeholder="sk-..."
-                  placeholderTextColor={colors.textDim}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <TouchableOpacity
-                  style={[styles.apiKeySaveBtn, {
-                    paddingHorizontal: rs(14),
-                    paddingVertical: rs(8),
-                    opacity: kimiKeyInput !== apiKeys.kimi ? 1 : 0.4,
-                  }]}
-                  onPress={() => {
-                    setApiKey('kimi', kimiKeyInput);
-                    Alert.alert('Gespeichert', 'Kimi API Key wird beim nächsten Verbinden übertragen.');
-                  }}
-                  disabled={kimiKeyInput === apiKeys.kimi}
-                  activeOpacity={0.7}
-                >
-                  <Text style={{ color: colors.primary, fontSize: rf(13), fontWeight: '600' }}>Speichern</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
-
-            {/* GLM API Key */}
-            <View style={{ paddingHorizontal: rs(16), paddingVertical: rs(14) }}>
-              <View style={styles.rowLeft}>
-                <Feather name="cpu" size={ri(18)} color="#10B981" style={{ marginRight: rs(12) }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.label, { fontSize: rf(16) }]}>GLM 5.0 Turbo</Text>
-                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>ZhipuAI API Key</Text>
-                </View>
-              </View>
-              <View style={{ flexDirection: 'row', marginTop: rs(8), gap: rs(8) }}>
-                <TextInput
-                  style={[styles.apiKeyInput, { fontSize: rf(13), flex: 1, paddingHorizontal: rs(12), paddingVertical: rs(8) }]}
-                  value={glmKeyInput}
-                  onChangeText={setGlmKeyInput}
-                  placeholder="API Key..."
-                  placeholderTextColor={colors.textDim}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <TouchableOpacity
-                  style={[styles.apiKeySaveBtn, {
-                    paddingHorizontal: rs(14),
-                    paddingVertical: rs(8),
-                    opacity: glmKeyInput !== apiKeys.glm ? 1 : 0.4,
-                  }]}
-                  onPress={() => {
-                    setApiKey('glm', glmKeyInput);
-                    Alert.alert('Gespeichert', 'GLM API Key wird beim nächsten Verbinden übertragen.');
-                  }}
-                  disabled={glmKeyInput === apiKeys.glm}
-                  activeOpacity={0.7}
-                >
-                  <Text style={{ color: colors.primary, fontSize: rf(13), fontWeight: '600' }}>Speichern</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={[styles.separator, { marginHorizontal: rs(16) }]} />
-
-            {/* OpenAI API Key */}
-            <View style={{ paddingHorizontal: rs(16), paddingVertical: rs(14) }}>
-              <View style={styles.rowLeft}>
-                <Feather name="image" size={ri(18)} color="#F59E0B" style={{ marginRight: rs(12) }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.label, { fontSize: rf(16) }]}>OpenAI</Text>
-                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Bildgenerierung (gpt-image-1)</Text>
-                </View>
-              </View>
-              <View style={{ flexDirection: 'row', marginTop: rs(8), gap: rs(8) }}>
-                <TextInput
-                  style={[styles.apiKeyInput, { fontSize: rf(13), flex: 1, paddingHorizontal: rs(12), paddingVertical: rs(8) }]}
-                  value={openaiKeyInput}
-                  onChangeText={setOpenaiKeyInput}
-                  placeholder="sk-..."
-                  placeholderTextColor={colors.textDim}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <TouchableOpacity
-                  style={[styles.apiKeySaveBtn, {
-                    paddingHorizontal: rs(14),
-                    paddingVertical: rs(8),
-                    opacity: openaiKeyInput !== apiKeys.openai ? 1 : 0.4,
-                  }]}
-                  onPress={() => {
-                    setApiKey('openai', openaiKeyInput);
-                    Alert.alert('Gespeichert', 'OpenAI API Key wird beim nächsten Verbinden übertragen.');
-                  }}
-                  disabled={openaiKeyInput === apiKeys.openai}
-                  activeOpacity={0.7}
-                >
-                  <Text style={{ color: colors.primary, fontSize: rf(13), fontWeight: '600' }}>Speichern</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </View>
 
         {/* ── Version ── */}
         <View style={[styles.section, { marginBottom: rs(28) }]}>
