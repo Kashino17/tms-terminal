@@ -17,7 +17,6 @@ import { isPasswordSet } from './auth/password.service';
 import { logger } from './utils/logger';
 import { getPlatform, getDefaultShell } from './utils/platform';
 import { fcmService } from './notifications/fcm.service';
-import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
 import { saveMirrorStates, takeMirrorStates } from './terminal/mirror.store';
 import { Snapshotter, setActiveSnapshotter } from './terminal/restore/snapshotter';
@@ -29,7 +28,6 @@ import { titleStore } from './terminal/titles';
 import { clipboardHub } from './clipboard';
 import { shutdown as shutdownWhisper, prewarm as prewarmWhisper, dictationAvailable } from './audio/whisper-sidecar';
 import { shutdown as shutdownRewriter, prewarm as prewarmRewriter } from './audio/prompt-rewriter-sidecar';
-import { managerService } from './websocket/ws.handler';
 import { isAutoApprove, setAutoApprove } from './websocket/auto.approve.state';
 
 // ── Global error handlers ────────────────────────────────────────────
@@ -70,13 +68,6 @@ async function main(): Promise<void> {
   // Initialize FCM push notifications (optional — skips gracefully if not configured)
   fcmService.init();
 
-  // Initialize watchers (file/process/keyword monitors with push notifications)
-  watcherService.init();
-
-  // Auto-start Manager Agent in headless mode.
-  // The Manager runs autonomously (heartbeat, task tracking, AI calls).
-  // When a client connects, callbacks get wired up for UI streaming.
-  // Until then, messages are buffered and flushed on first connect.
   // Terminal-Waechter (ptyd): haelt die Terminals ausserhalb dieses Prozesses,
   // damit ein Neustart, ein Update oder ein Absturz des Servers sie NICHT mehr
   // beendet. Was dort weiterlief, wird hier einfach uebernommen — kein
@@ -152,16 +143,9 @@ async function main(): Promise<void> {
   });
 
   // Titel von Terminals, die es nach Waechter-Uebernahme und Wiederherstellung
-  // nicht mehr gibt, sind Ballast. Die uebrigen geben dem Manager gleich die
-  // richtigen Namen (statt "Shell 4" in seinen Meldungen).
+  // nicht mehr gibt, sind Ballast.
   titleStore.prune(new Set(globalManager.listSessions().map((x) => x.id)));
   clipboardHub.start(); // gemeinsame Zwischenablage: Kopien am Mac landen im Verlauf
-  for (const [id, title] of Object.entries(titleStore.all())) managerService.setSessionLabel(id, title);
-
-  if (!managerService.isEnabled()) {
-    managerService.start();
-    logger.info('Manager: auto-started in headless mode (no client needed)');
-  }
   if (restoreResult.restored.length > 0) {
     const parts = [`${restoreResult.restored.length} Terminal(s) nach dem Neustart wiederhergestellt.`];
     if (restoreResult.resumed.length > 0) {
@@ -178,7 +162,7 @@ async function main(): Promise<void> {
     if (restoreResult.failed.length > 0) {
       parts.push(`${restoreResult.failed.length} liess(en) sich nicht wiederherstellen.`);
     }
-    managerService.pushSystemNotice(`\u267b\ufe0f ${parts.join(' ')}`, `restore:${Date.now()}`);
+    logger.info(parts.join(' '));
   }
 
   // Ab jetzt laufend mitschreiben — auch ein Absturz soll abgedeckt sein,
@@ -190,7 +174,7 @@ async function main(): Promise<void> {
       listSessions: () => globalManager.listSessions().map(sess => ({
         id: sess.id, pid: sess.pty.pid, cols: sess.cols, rows: sess.rows, cwd: sess.cwd,
       })),
-      labelFor: (id) => managerService.getSessionList().find(x => x.sessionId === id)?.label,
+      labelFor: (id) => titleStore.all()[id],
       autoApproveFor: (id) => isAutoApprove(id),
     },
   });
@@ -221,60 +205,6 @@ async function main(): Promise<void> {
       handleUploadRequest(req, res);
     } else if (req.url === '/upload/drawing') {
       handleDrawingUpload(req, res);
-    } else if (req.url?.startsWith('/generated-images/')) {
-      // Serve generated images (JWT-protected)
-      const authHeader = req.headers['authorization'] ?? '';
-      let token = authHeader.replace(/^Bearer\s+/i, '');
-      if (!token) {
-        try {
-          const u = new URL(req.url, 'http://localhost');
-          token = u.searchParams.get('token') ?? '';
-        } catch {}
-      }
-      if (!token || !validateToken(token)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized' }));
-        return;
-      }
-      const filename = decodeURIComponent(req.url.replace('/generated-images/', '').split('?')[0]);
-      // Prevent path traversal
-      if (filename.includes('..') || filename.includes('/')) {
-        res.writeHead(400); res.end('Bad request'); return;
-      }
-      const filePath = path.join(os.homedir(), 'Desktop', 'Image Generations', filename);
-      if (!fs.existsSync(filePath)) {
-        res.writeHead(404); res.end('Not found'); return;
-      }
-      const ext = path.extname(filename).toLowerCase();
-      const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'application/octet-stream';
-      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=86400' });
-      fs.createReadStream(filePath).pipe(res);
-    } else if (req.url?.startsWith('/generated-presentations/')) {
-      // Serve generated presentations (JWT-protected)
-      const authHeader = req.headers['authorization'] ?? '';
-      let token = authHeader.replace(/^Bearer\s+/i, '');
-      if (!token) {
-        try {
-          const u = new URL(req.url, 'http://localhost');
-          token = u.searchParams.get('token') ?? '';
-        } catch {}
-      }
-      if (!token || !validateToken(token)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized' }));
-        return;
-      }
-      const filename = decodeURIComponent(req.url.replace('/generated-presentations/', '').split('?')[0]);
-      // Prevent path traversal
-      if (filename.includes('..') || filename.includes('/')) {
-        res.writeHead(400); res.end('Bad request'); return;
-      }
-      const filePath = path.join(__dirname, '..', 'generated-presentations', filename);
-      if (!fs.existsSync(filePath)) {
-        res.writeHead(404); res.end('Not found'); return;
-      }
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
-      fs.createReadStream(filePath).pipe(res);
     } else if (req.url?.startsWith('/files/')) {
       // pdf.js viewer assets are public statics — the PDF itself still needs
       // the token via /files/download.
@@ -343,7 +273,6 @@ async function main(): Promise<void> {
     logger.info('Shutting down...');
     void titleStore.flush();
     clipboardHub.stop();
-    watcherService.shutdown();
     shutdownWhisper();
     shutdownRewriter();
 

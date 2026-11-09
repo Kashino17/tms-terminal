@@ -57,8 +57,6 @@ const MESSAGE_CATEGORIES: Record<string, string> = {
   'system:snapshot':  'actions',
   'system:kill':      'actions',
 
-  'manager:chat':     'ai',
-  'manager:poll':     'ai',
   'audio:transcribe': 'ai',
   'autopilot:optimize': 'ai',
 

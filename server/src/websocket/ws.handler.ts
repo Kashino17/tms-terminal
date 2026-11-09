@@ -9,7 +9,6 @@ import { readProcessCwd, readForegroundProcess, normalizeCwd } from '../terminal
 import { promptDetector } from '../notifications/prompt.detector';
 import { idleDetector } from '../notifications/idle.detector';
 import { fcmService } from '../notifications/fcm.service';
-import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 import { autopilotService } from '../autopilot/autopilot.service';
@@ -23,12 +22,7 @@ import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../aud
 import { DictationManager, acceptRewrite } from '../audio/dictation';
 import { handleDictationMessage, createDictationConnectionHandler } from '../audio/dictation.connection';
 import { decodeToFloat32 } from '../audio/ffmpeg-decode';
-import { ManagerService } from '../manager/manager.service';
-import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
 import { captureSoon } from '../terminal/restore/snapshotter';
-import { handleAgendaTool, handleEntriesTool, buildOverview } from '../manager/tools/stufe1.handlers';
-import { listAgenda } from '../manager/agenda/agenda.store';
-import { listEntries } from '../manager/entries/entries.store';
 import { ConnectionRateLimiter } from './rate-limiter';
 import { browserBridge } from '../browserbridge/browserbridge.manager';
 import { asPaste } from '../terminal/paste.policy';
@@ -204,8 +198,6 @@ function isValidSessionId(sessionId: unknown): sessionId is string {
   return typeof sessionId === 'string' && sessionId.length > 0 && sessionId.length < 50;
 }
 
-const VALID_WATCHER_TYPES = ['file', 'process', 'keyword'] as const;
-
 // Last known FCM tokens — persists across client reconnects so that
 // prompt notifications can still be sent even if the client briefly disconnects.
 const MAX_PERSISTED_TOKENS = 10;
@@ -251,74 +243,8 @@ const lastUserInputAt = new Map<string, number>();
 // Auto-approve is blocked if pendingInputLen > 0 (user has unsent text).
 const pendingInputLen = new Map<string, number>();
 
-// ── Manager Agent ────────────────────────────────────────────────────
-export const managerService = new ManagerService(loadManagerConfig());
-
-// Save manager state on graceful shutdown (before process exits)
-process.on('SIGINT', () => managerService.saveStateOnShutdown());
-process.on('SIGTERM', () => managerService.saveStateOnShutdown());
-
-// Mutable reference to the current WebSocket connection.
-// Manager callbacks use this instead of the closure-captured `ws` so that
-// responses are always sent to the CURRENT client, not a stale dead socket.
+// The connection that receives browser-bridge pushes (the most recent one).
 let currentWs: WebSocket | null = null;
-// Buffer for manager messages sent while the client is disconnected.
-// Flushed on reconnect.
-const pendingManagerMessages: ServerMessage[] = [];
-
-const MAX_PENDING_MANAGER_MESSAGES = 100;
-
-function sendManager(msg: ServerMessage): void {
-  if (currentWs && currentWs.readyState === currentWs.OPEN) {
-    currentWs.send(JSON.stringify(msg));
-  } else {
-    // Client disconnected — buffer the message for delivery on reconnect
-    pendingManagerMessages.push(msg);
-    // Cap buffer to prevent unbounded growth during long disconnects
-    if (pendingManagerMessages.length > MAX_PENDING_MANAGER_MESSAGES) {
-      const dropped = pendingManagerMessages.length - MAX_PENDING_MANAGER_MESSAGES;
-      pendingManagerMessages.splice(0, dropped);
-      logger.info(`Manager: dropped ${dropped} old buffered messages (cap=${MAX_PENDING_MANAGER_MESSAGES})`);
-    }
-    logger.info(`Manager: buffered message (type=${msg.type}, queue=${pendingManagerMessages.length})`);
-  }
-}
-
-function flushPendingManagerMessages(ws: WebSocket): void {
-  if (pendingManagerMessages.length === 0) return;
-  logger.info(`Manager: flushing ${pendingManagerMessages.length} buffered messages`);
-  while (pendingManagerMessages.length > 0) {
-    const msg = pendingManagerMessages.shift()!;
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify(msg));
-    }
-  }
-}
-
-function setupManagerCallbacks(ws: WebSocket): void {
-  managerService.setCallbacks(
-    (summary) => sendManager({ type: 'manager:summary', payload: summary }),
-    (response) => sendManager({ type: 'manager:response', payload: response }),
-    (error) => sendManager({ type: 'manager:error', payload: { message: error } }),
-    (config) => sendManager({ type: 'manager:personality_configured', payload: config }),
-    (phase, detail, elapsed) => sendManager({ type: 'manager:thinking', payload: { phase, detail, elapsed } }),
-    (token, tokenStats) => sendManager({ type: 'manager:stream_chunk', payload: { token, ...tokenStats } }),
-    (text, actions, phases, images, presentations) => sendManager({ type: 'manager:stream_end', payload: { text, actions, phases, images, presentations } }),
-    createTerminalForManager,
-    closeTerminalForManager,
-    (tasks) => sendManager({ type: 'manager:tasks', payload: { tasks } }),
-  );
-
-  // Proactive messages: reminders, check-ins, suggestions the agent raises itself.
-  managerService.setProactiveCallback((msg, unread) => {
-    sendManager({ type: 'manager:proactive', payload: { ...msg, unread } });
-  });
-}
-
-// These need to be module-level so setupManagerCallbacks can reference them
-// They're assigned inside handleConnection when ws is available
-let createTerminalForManager: (label?: string) => string | null = () => null;
-let closeTerminalForManager: (sessionId: string) => boolean = () => false;
 
 // ── Autopilot state ──────────────────────────────────────────────────
 const aiSessions = new Set<string>(); // sessions where AI tool was detected
@@ -356,7 +282,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     send(ws, { type: 'mac:unlock_status', payload: { configured, supported: process.platform === 'darwin' } });
   });
 
-  // Update the mutable WS reference so manager callbacks always use the current connection
   currentWs = ws;
 
   // Browser-Bridge: when a captured browser-open is forwarded, push the URL to
@@ -369,8 +294,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
   });
 
-  // Flush any manager messages that were buffered while disconnected
-  flushPendingManagerMessages(ws);
 
   /** „Shell 3" — dieselbe Beschriftung wie beim Idle-Push. */
   const terminalLabel = (sessionId: string): string => {
@@ -547,85 +470,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     });
   };
 
-  /** Create a new terminal session on behalf of the Manager Agent. */
-  createTerminalForManager = (label?: string): string | null => {
-    try {
-      const cols = 80;
-      const rows = 24;
-      const session = globalManager.createSession(
-        { cols, rows },
-        (sessionId, data) => {
-          send(ws, { type: 'terminal:output', sessionId, payload: { data } });
-          promptDetector.feed(sessionId, data);
-          screenPromptWatcher.poke(sessionId);
-          idleDetector.activity(sessionId);
-          scheduleCwdCheck(ws, sessionId);
-          resetAutopilotTimer(sessionId);
-          managerService.feedOutput(sessionId, data);
-        },
-        (sessionId, exitCode) => {
-          ownedSessions.delete(sessionId);
-          promptDetector.unwatch(sessionId);
-          screenPromptWatcher.unwatch(sessionId);
-          lastQuestionPush.delete(sessionId);
-          idleDetector.unwatch(sessionId);
-          clearCwdCheck(sessionId);
-          aiSessions.delete(sessionId);
-          send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
-          forgetTitle(sessionId);
-        },
-      );
-      ownedSessions.add(session.id);
-      sessionGens.set(session.id, globalManager.getAttachGen(session.id));
-      watchSession(session.id);
-      watchSessionIdle(session.id);
-      pushInitialCwd(ws, session.id);
-
-      const shellNum = ownedSessions.size;
-      const sessionLabel = label || `Shell ${shellNum}`;
-      managerService.setSessionLabel(session.id, sessionLabel);
-      const given = label ? cleanTitle(label) : null;
-      if (given && titleStore.set(session.id, given)) broadcastTitle(session.id, given);
-
-      // Notify the client about the new session
-      send(ws, {
-        type: 'terminal:created',
-        sessionId: session.id,
-        payload: { cols: session.cols, rows: session.rows, fromManager: true, label: sessionLabel },
-      });
-
-      logger.info(`Manager: created terminal "${sessionLabel}" (${session.id.slice(0, 8)})`);
-      return session.id;
-    } catch (err) {
-      logger.warn(`Manager: failed to create terminal — ${err instanceof Error ? err.message : err}`);
-      return null;
-    }
-  };
-
-  /** Close a terminal session on behalf of the Manager Agent. */
-  closeTerminalForManager = (sessionId: string): boolean => {
-    try {
-      if (!ownedSessions.has(sessionId)) {
-        logger.warn(`Manager: cannot close session ${sessionId.slice(0, 8)} — not owned by this connection`);
-        return false;
-      }
-      globalManager.closeSession(sessionId);
-      ownedSessions.delete(sessionId);
-      promptDetector.unwatch(sessionId);
-      screenPromptWatcher.unwatch(sessionId);
-      lastQuestionPush.delete(sessionId);
-      idleDetector.unwatch(sessionId);
-      aiSessions.delete(sessionId);
-      send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode: 0 } });
-      forgetTitle(sessionId);
-      logger.info(`Manager: closed terminal ${sessionId.slice(0, 8)}`);
-      return true;
-    } catch (err) {
-      logger.warn(`Manager: failed to close terminal — ${err instanceof Error ? err.message : err}`);
-      return false;
-    }
-  };
-
   /** Reset the autopilot idle timer for a session. Fires after AUTOPILOT_IDLE_MS of inactivity. */
   const resetAutopilotTimer = (sessionId: string): void => {
     const existing = autopilotTimers.get(sessionId);
@@ -675,7 +519,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         idleDetector.activity(sid);
         scheduleCwdCheck(ws, sid);
         resetAutopilotTimer(sid);
-        managerService.feedOutput(sid, data);
       },
       (sid, exitCode) => {
         ownedSessions.delete(sid);
@@ -880,111 +723,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
-    // ── Manager Agent message handlers ────────────────────────────────
-    if (msg.type === 'manager:toggle') {
-      const enabled = !!msg.payload?.enabled;
-      if (enabled) {
-        setupManagerCallbacks(ws);
-        managerService.start();
-      } else {
-        managerService.stop();
-      }
-      send(ws, { type: 'manager:status', payload: { enabled } });
-      // Also send provider list on toggle
-      void managerService.getProviders().then((p) =>
-        send(ws, { type: 'manager:providers', payload: p }));
-      return;
-    }
-
-    // Reine Abfrage der Modell-Liste — ohne den Manager zu starten/stoppen.
-    // Season 2 braucht das beim Verbinden: der Server schickte die Liste bisher
-    // nur bei manager:toggle, das Season 2 nie sendet ("Keine Modelle gemeldet").
-    if (msg.type === 'manager:get_providers') {
-      void managerService.getProviders().then((p) =>
-        send(ws, { type: 'manager:providers', payload: p }));
-      return;
-    }
-
-    if (msg.type === 'manager:chat') {
-      // Ensure callbacks are set on every chat (survives server restarts + reconnects)
-      setupManagerCallbacks(ws);
-      if (!managerService.isEnabled()) managerService.start();
-
-      const text = msg.payload?.text;
-      const targetSessionId = msg.payload?.targetSessionId;
-      const onboarding = !!msg.payload?.onboarding;
-      if (typeof text === 'string' && text.length > 0) {
-        managerService.handleChat(text, targetSessionId, onboarding).catch((err) => {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          send(ws, { type: 'manager:error', payload: { message: errMsg } });
-        });
-      }
-      return;
-    }
-
-    if (msg.type === 'manager:cancel') {
-      managerService.cancelCurrentRequest();
-      send(ws, { type: 'manager:stream_end', payload: { text: '⛔ Abgebrochen.', actions: [], phases: [] } });
-      return;
-    }
-
-    if (msg.type === 'manager:poll') {
-      setupManagerCallbacks(ws);
-      if (!managerService.isEnabled()) managerService.start();
-      const pollTarget = msg.payload?.targetSessionId;
-      managerService.poll(pollTarget, true).catch((err) => {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        send(ws, { type: 'manager:error', payload: { message: errMsg } });
-      });
-      return;
-    }
-
-    if (msg.type === 'manager:set_provider') {
-      const providerId = msg.payload?.providerId;
-      const contextLength = msg.payload?.contextLength;
-      if (typeof providerId === 'string') {
-        void (async () => {
-          try {
-            // Ein lokales Modell wird jetzt geladen (kann ~1-2 min dauern) —
-            // der App vorher Bescheid geben, damit der Chip "lädt…" zeigt.
-            send(ws, { type: 'manager:model_loading', payload: { providerId, loading: true } });
-            await managerService.setProvider(providerId, typeof contextLength === 'number' ? contextLength : undefined);
-            const p = await managerService.getProviders();
-            send(ws, { type: 'manager:providers', payload: p });
-          } catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            send(ws, { type: 'manager:error', payload: { message: errMsg } });
-          } finally {
-            send(ws, { type: 'manager:model_loading', payload: { providerId, loading: false } });
-          }
-        })();
-      }
-      return;
-    }
-
-    if (msg.type === 'manager:set_personality') {
-      const payload = msg.payload;
-      if (payload && typeof payload === 'object') {
-        managerService.setPersonality(payload);
-      }
-      return;
-    }
-
-    if (msg.type === 'manager:set_api_key') {
-      const { providerId, apiKey } = msg.payload ?? {};
-      if (typeof providerId === 'string' && typeof apiKey === 'string') {
-        const updates: Record<string, string> = {};
-        if (providerId === 'kimi') updates.kimiApiKey = apiKey;
-        else if (providerId === 'glm') updates.glmApiKey = apiKey;
-        else if (providerId === 'openai') updates.openaiApiKey = apiKey;
-        managerService.updateProviderConfig(updates);
-        saveManagerConfig(updates);
-        void managerService.getProviders().then((p) =>
-          send(ws, { type: 'manager:providers', payload: p }));
-      }
-      return;
-    }
-
     // ── File Upload from mobile app ───────────────────────────────
     if (msg.type === 'client:file_upload') {
       const { filename, data, mimeType } = msg.payload ?? {};
@@ -996,8 +734,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           const filePath = path.join(uploadDir, `${Date.now()}_${safeName}`);
           fs.writeFileSync(filePath, Buffer.from(data, 'base64'));
           logger.info(`File upload: ${safeName} (${mimeType}) → ${filePath}`);
-          // Send file path to manager as a chat message
-          managerService.handleChat(`[DATEI-UPLOAD] Der User hat eine Datei gesendet: ${filePath} (${mimeType || 'unbekannt'}, ${safeName}). Verarbeite sie entsprechend.`).catch(() => {});
           send(ws, { type: 'client:file_uploaded', payload: { path: filePath, filename: safeName } });
         } catch (err) {
           logger.warn(`File upload failed: ${err}`);
@@ -1009,14 +745,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     // ── App State tracking ──────────────────────────────────────────
     if (msg.type === 'client:app_state') {
       const { foreground } = msg.payload ?? {};
-      (managerService as any).appForeground = !!foreground;
       logger.info(`App state: ${foreground ? 'foreground' : 'background'}`);
       return;
     }
     if (msg.type === 'client:active_tab') {
-      const { tabId, sessionId: tabSessionId } = msg.payload ?? {};
-      (managerService as any).activeTabId = tabId;
-      (managerService as any).activeSessionId = tabSessionId;
       return;
     }
 
@@ -1049,89 +781,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       const sessionId = msg.sessionId;
       const title = cleanTitle(msg.payload?.title);
       if (!isValidSessionId(sessionId) || !title || !globalManager.getSession(sessionId)) return;
-      managerService.setSessionLabel(sessionId, title); // der Manager spricht vom Terminal mit seinem Namen
       if (titleStore.set(sessionId, title)) {
         logger.info(`Titel ${sessionId.slice(0, 8)} → "${title}"`);
         broadcastTitle(sessionId, title);
       }
-      return;
-    }
-
-    if (msg.type === 'manager:sync_labels') {
-      const labels = msg.payload?.labels;
-      if (Array.isArray(labels)) {
-        // Clean up stale labels: remove any session labels not in the current sync
-        const syncedIds = new Set(labels.map(l => l.sessionId));
-        const currentList = managerService.getSessionList();
-        for (const { sessionId } of currentList) {
-          if (!syncedIds.has(sessionId) && !ownedSessions.has(sessionId)) {
-            managerService.clearSession(sessionId);
-          }
-        }
-        // Apply new labels
-        for (const { sessionId, name } of labels) {
-          if (typeof sessionId === 'string' && typeof name === 'string') {
-            managerService.setSessionLabel(sessionId, name);
-          }
-        }
-        logger.info(`Manager: synced ${labels.length} labels from client`);
-      }
-      return;
-    }
-
-    if (msg.type === 'manager:memory_read') {
-      const mem = require('../manager/manager.memory');
-      send(ws, { type: 'manager:memory_data', payload: { memory: mem.loadMemory() } });
-      return;
-    }
-
-    if (msg.type === 'manager:memory_write') {
-      const { section, data } = msg.payload ?? {};
-      if (typeof section === 'string' && data !== undefined) {
-        const mem = require('../manager/manager.memory');
-        mem.updateMemorySection(section, data);
-        send(ws, { type: 'manager:memory_data', payload: { memory: mem.loadMemory() } });
-      }
-      return;
-    }
-
-    if (msg.type === 'manager:overview') {
-      const terminals = managerService.getSessionList().map(s => ({ label: s.label, status: '—' }));
-      send(ws, {
-        type: 'manager:response',
-        payload: { text: buildOverview({ nowMs: Date.now(), terminals }) },
-      });
-      return;
-    }
-
-    if (msg.type === 'manager:agenda') {
-      const payload = msg.payload ?? {};
-      if (payload.action !== 'list') {
-        handleAgendaTool({ action: payload.action, ...(payload.args ?? {}) }, Date.now());
-      }
-      const now = Date.now();
-      const items = listAgenda(now, now + 365 * 24 * 60 * 60 * 1000).map(e => ({
-        id: e.item.id, title: e.item.title, note: e.item.note, at: e.item.at,
-        allDay: e.item.allDay, repeat: e.item.repeat,
-        reminderOffsets: e.item.reminders.map(r => r.offsetMinutes),
-        occurrenceAt: e.occurrenceAt,
-      }));
-      send(ws, { type: 'manager:agenda_data', payload: { items } });
-      return;
-    }
-
-    if (msg.type === 'manager:entries') {
-      const payload = msg.payload ?? {};
-      if (payload.action !== 'list') {
-        handleEntriesTool({ action: payload.action, ...(payload.args ?? {}) });
-      }
-      send(ws, { type: 'manager:entries_data', payload: { entries: listEntries() } });
-      return;
-    }
-
-    if (msg.type === 'manager:outbox_read') {
-      const unread = managerService.markOutboxRead();
-      send(ws, { type: 'manager:unread', payload: { unread } });
       return;
     }
 
@@ -1312,8 +965,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           const oldest = persistedTokens.values().next().value;
           if (oldest !== undefined) persistedTokens.delete(oldest);
         }
-        watcherService.setDeviceToken(deviceToken);
-        managerService.setFcmTokens(persistedTokens);
         logger.success(`FCM token registered for ${ip} (len=${deviceToken.length})`);
         break;
       }
@@ -1341,7 +992,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
               idleDetector.activity(sessionId);
               scheduleCwdCheck(ws, sessionId);
               resetAutopilotTimer(sessionId);
-              managerService.feedOutput(sessionId, data);
             },
             (sessionId, exitCode) => {
               ownedSessions.delete(sessionId);
@@ -1363,9 +1013,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           watchSession(session.id);
           watchSessionIdle(session.id);
           pushInitialCwd(ws, session.id);
-          // Register session with manager — initial label, client will sync real names
-          const shellNum = ownedSessions.size;
-          managerService.setSessionLabel(session.id, `Shell ${shellNum}`);
           send(ws, {
             type: 'terminal:created',
             sessionId: session.id,
@@ -1427,11 +1074,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         if (attachToThisClient(msg.sessionId, cols, rows, fresh)) {
           const session = globalManager.getSession(msg.sessionId)!;
           pendingInputLen.set(session.id, 0); // alter Zählerstand der Vorgängerverbindung
-          const stored = titleStore.get(session.id);
-          if (stored) managerService.setSessionLabel(session.id, stored);
-          else if (!managerService.getSessionList().find(s => s.sessionId === session.id)) {
-            managerService.setSessionLabel(session.id, `Shell ${ownedSessions.size}`);
-          }
           globalManager.resize(session.id, cols, rows);
 
           // Autopilot-Warteschlange nachziehen — sie lief weiter, während der Client weg war.
@@ -1493,7 +1135,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         trackPendingInput(msg.sessionId, data);
         idleDetector.activity(msg.sessionId);
         resetAutopilotTimer(msg.sessionId);
-        managerService.trackUserInput(msg.sessionId);
 
         // Große Texte (Diktat, Zwischenablage) als EINEN Einfügeblock — sonst
         // zerteilt macOS sie und Claude Code zeigt nur noch den Rest (paste.policy.ts).
@@ -1573,7 +1214,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         idleDetector.unwatch(msg.sessionId);
         aiSessions.delete(msg.sessionId);
         autopilotService.clearSession(msg.sessionId);
-        managerService.clearSession(msg.sessionId);
         forgetTitle(msg.sessionId);
         const apTimer = autopilotTimers.get(msg.sessionId);
         if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(msg.sessionId); }
@@ -1584,68 +1224,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
             payload: { message: 'Session not found' },
           });
         }
-        break;
-      }
-
-      // ── Watcher messages ──────────────────────────────────────────────
-      case 'watcher:list': {
-        const watchers = watcherService.getAll();
-        send(ws, { type: 'watcher:list', payload: { watchers } });
-        break;
-      }
-
-      case 'watcher:create': {
-        const w = msg.payload;
-        if (!w || typeof w.id !== 'string' || typeof w.label !== 'string' || typeof w.type !== 'string' || typeof w.enabled !== 'boolean' || !w.config || typeof w.config !== 'object') {
-          send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Invalid watcher:create payload' } });
-          break;
-        }
-        // Validate watcher type against whitelist
-        if (!(VALID_WATCHER_TYPES as readonly string[]).includes(w.type)) {
-          send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: `Invalid watcher type: must be one of ${VALID_WATCHER_TYPES.join(', ')}` } });
-          break;
-        }
-        watcherService.create(w as { id: string; type: 'file' | 'process' | 'keyword'; label: string; enabled: boolean; config: Record<string, string> });
-        send(ws, { type: 'watcher:created', payload: w as { id: string; type: string; label: string; enabled: boolean; config: Record<string, string> } });
-        break;
-      }
-
-      case 'watcher:update': {
-        const payload = msg.payload;
-        if (!payload || typeof payload.id !== 'string') {
-          send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Invalid watcher:update payload' } });
-          break;
-        }
-        // Whitelist allowed update fields — only enabled, label, config
-        const allowedUpdates: Partial<{ enabled: boolean; label: string; config: Record<string, string> }> = {};
-        if ('enabled' in payload && typeof payload.enabled === 'boolean') allowedUpdates.enabled = payload.enabled;
-        if ('label' in payload && typeof (payload as Record<string, unknown>).label === 'string') allowedUpdates.label = (payload as Record<string, unknown>).label as string;
-        if ('config' in payload && typeof (payload as Record<string, unknown>).config === 'object' && (payload as Record<string, unknown>).config !== null) allowedUpdates.config = (payload as Record<string, unknown>).config as Record<string, string>;
-        const updated = watcherService.update(payload.id, allowedUpdates);
-        if (updated) {
-          send(ws, { type: 'watcher:updated', payload: updated as { id: string; enabled: boolean } });
-        }
-        break;
-      }
-
-      case 'watcher:delete': {
-        const payload = msg.payload;
-        if (!payload || typeof payload.id !== 'string') {
-          send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Invalid watcher:delete payload' } });
-          break;
-        }
-        watcherService.delete(payload.id);
-        send(ws, { type: 'watcher:deleted', payload: { id: payload.id } });
-        break;
-      }
-
-      case 'watcher:test': {
-        const payload = msg.payload;
-        if (!payload || typeof payload.id !== 'string') {
-          send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Invalid watcher:test payload' } });
-          break;
-        }
-        watcherService.test(payload.id);
         break;
       }
 
@@ -1687,7 +1265,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     liveSockets.delete(ws);
     logger.info(`Client disconnected: ${ip} — detaching ${ownedSessions.size} sessions (kept alive)`);
 
-    // Clear the current WS reference so manager messages get buffered
+    // This was the browser-bridge target: no app connected → shim opens locally
     if (currentWs === ws) {
       currentWs = null;
       browserBridge.setNotifier(null); // no app connected → shim falls back to local open
@@ -1699,13 +1277,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
     ownedSessions.clear();
     sessionGens.clear();
-
-    // Distill manager memory on disconnect (session end)
-    if (managerService.isEnabled()) {
-      managerService.distill().catch(err => {
-        logger.warn(`Manager: disconnect distill failed — ${err instanceof Error ? err.message : err}`);
-      });
-    }
   });
 
   ws.on('error', (err) => {
