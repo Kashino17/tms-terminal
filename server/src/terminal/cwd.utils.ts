@@ -16,7 +16,7 @@ export function normalizeCwd(p: string, home: string = os.homedir()): string {
 /** Safe exec helper — uses execFile (no shell) to prevent command injection. */
 function execFileAsync(bin: string, args: string[], timeout = 2000): Promise<string> {
   return new Promise((resolve) => {
-    execFileCb(bin, args, { encoding: 'utf8', timeout }, (err, stdout) => {
+    execFileCb(bin, args, { encoding: 'utf8', timeout, windowsHide: true }, (err, stdout) => {
       resolve(err ? '' : (stdout ?? '').trim());
     });
   });

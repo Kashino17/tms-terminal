@@ -52,7 +52,7 @@ export function createWin32Input(): InputInjector {
     ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', winInputScriptPath()],
     // stderr piped, not ignored: I11's readiness line (and any reported
     // error) travels on stderr, same as the macOS helper.
-    { stdio: ['pipe', 'ignore', 'pipe'] },
+    { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true },
   );
   let child: ChildProcess | null = proc;
   proc.on('exit', () => { child = null; });

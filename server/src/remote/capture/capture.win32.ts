@@ -131,7 +131,7 @@ let encodersCache: string[] | null = null;
 function availableEncoders(): string[] {
   if (encodersCache) return encodersCache;
   try {
-    const out = execFileSync('ffmpeg', ['-hide_banner', '-encoders'], { encoding: 'utf8' });
+    const out = execFileSync('ffmpeg', ['-hide_banner', '-encoders'], { encoding: 'utf8', windowsHide: true });
     const found = ENCODER_PREFERENCE.filter((e) => out.includes(e));
     if (found.length) encodersCache = found;
     return found;
@@ -176,7 +176,7 @@ const EXTRA_READY_MS = 8_000;
 function powershell(script: string, extra: string[] = []): ChildProcess {
   return spawn('powershell.exe',
     ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...extra],
-    { stdio: ['pipe', 'pipe', 'pipe'] });
+    { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 }
 
 /** Puts back mute state / brightness a killed helper left behind. */
@@ -257,7 +257,7 @@ export function createWin32Capture(): ScreenCapture {
   function startPointer(cb: (x: number, y: number) => void) {
     const p = spawn('powershell.exe',
       ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', winCursorScriptPath()],
-      { stdio: ['pipe', 'pipe', 'ignore'] });
+      { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     pointer = p;
     p.stdin?.on('error', () => {});
     let rest = '';
@@ -311,7 +311,7 @@ export function createWin32Capture(): ScreenCapture {
     const ready = await waitReady(p, p.stderr, 'audio');
     if (!ready || stopping) { endHelper(p, winAudioScriptPath()); if (soundProc === p) soundProc = null; return false; }
     const rate = Number(ready.rate) > 0 ? Number(ready.rate) : 48000;
-    const enc = spawn('ffmpeg', buildOpusEncoderArgs(rate, 2), { stdio: ['pipe', 'pipe', 'ignore'] });
+    const enc = spawn('ffmpeg', buildOpusEncoderArgs(rate, 2), { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     opusProc = enc;
     enc.stdin?.on('error', () => {});
     enc.on('error', () => {});
@@ -335,7 +335,7 @@ export function createWin32Capture(): ScreenCapture {
 
   function launch(opts: CaptureOptions, enc: string): ChildProcess {
     lastSpawnAt = Date.now();
-    return spawn('ffmpeg', buildFfmpegArgs(opts, enc), { stdio: ['ignore', 'pipe', 'pipe'] });
+    return spawn('ffmpeg', buildFfmpegArgs(opts, enc), { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   }
 
   /** The live ffmpeg died on its own: same report as before. */

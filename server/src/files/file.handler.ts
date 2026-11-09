@@ -385,7 +385,7 @@ function trashWindows(filePath: string): void {
   const escapedPath = filePath.replace(/'/g, "''");
   execSync(
     `powershell -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escapedPath}', 'OnlyErrorDialogs', 'SendToRecycleBin')"`,
-    { timeout: 10000 }
+    { timeout: 10000, windowsHide: true }
   );
 }
 

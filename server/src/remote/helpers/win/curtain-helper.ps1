@@ -7,6 +7,12 @@
 # monitors, WMI for laptop panels. The previous brightness goes to disk first
 # and comes back when the helper ends (also by `-Restore` after a kill).
 #
+# The mouse pointer is drawn by Windows above every window, the curtain too —
+# so all standard pointer shapes are swapped for an empty one while it is up
+# (the phone draws its own pointer; the video leaves it out anyway). Putting
+# the user's pointers back = reloading the scheme (SPI_SETCURSORS), also by
+# `-Restore` and on the next start, in case the helper was killed.
+#
 # If the window can't be excluded from the capture, it is NOT shown — it would
 # black out the remote picture too.
 #
@@ -29,6 +35,12 @@ public class TmsCurtain {
   [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
   [DllImport("user32.dll")] static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint key, byte alpha, uint flags);
   [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int w, int h, uint flags);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int cmd);
+  [DllImport("user32.dll")] static extern IntPtr CreateCursor(IntPtr inst, int xHot, int yHot, int w, int h, byte[] andMask, byte[] xorMask);
+  [DllImport("user32.dll")] static extern IntPtr CopyIcon(IntPtr icon);
+  [DllImport("user32.dll")] static extern bool SetSystemCursor(IntPtr cursor, uint id);
+  [DllImport("user32.dll")] static extern bool DestroyCursor(IntPtr cursor);
+  [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, IntPtr data, uint winIni);
 
   delegate bool MonitorEnum(IntPtr monitor, IntPtr dc, IntPtr rect, IntPtr data);
   [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorEnum cb, IntPtr data);
@@ -45,6 +57,11 @@ public class TmsCurtain {
   const uint LWA_ALPHA = 0x2;
   static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
   const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10;
+  const int SW_SHOWNOACTIVATE = 4;
+  const uint SPI_SETCURSORS = 0x57;
+  // OCR_NORMAL, IBEAM, WAIT, CROSS, UP, SIZENWSE, SIZENESW, SIZEWE, SIZENS,
+  // SIZEALL, NO, HAND, APPSTARTING, HELP, PIN, PERSON.
+  static readonly uint[] POINTERS = { 32512, 32513, 32514, 32515, 32516, 32642, 32643, 32644, 32645, 32646, 32648, 32649, 32650, 32651, 32671, 32672 };
 
   class Curtain : Form {
     public bool Excluded;
@@ -68,6 +85,40 @@ public class TmsCurtain {
     string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".tms-terminal");
     Directory.CreateDirectory(dir);
     return Path.Combine(dir, "curtain-brightness.txt");
+  }
+
+  static string PointerFile() {
+    return Path.Combine(Path.GetDirectoryName(BrightnessFile()), "curtain-pointer.txt");
+  }
+
+  // ── Pointer: every standard shape becomes an empty 32x32 cursor ─────────
+  static void HidePointer() {
+    byte[] andMask = new byte[128];
+    for (int i = 0; i < andMask.Length; i++) andMask[i] = 0xFF; // AND 1 + XOR 0 = screen unchanged
+    byte[] xorMask = new byte[128];
+    IntPtr blank = CreateCursor(IntPtr.Zero, 0, 0, 32, 32, andMask, xorMask);
+    if (blank == IntPtr.Zero) return;
+    File.WriteAllText(PointerFile(), "1"); // before the swap: a kill in between still restores
+    foreach (uint id in POINTERS) {
+      IntPtr copy = CopyIcon(blank); // SetSystemCursor takes ownership of (destroys) its handle
+      if (copy != IntPtr.Zero && !SetSystemCursor(copy, id)) DestroyCursor(copy);
+    }
+    DestroyCursor(blank);
+  }
+
+  static void RestorePointer() {
+    try {
+      string f = PointerFile();
+      if (!File.Exists(f)) return;
+      SystemParametersInfo(SPI_SETCURSORS, 0, IntPtr.Zero, 0);
+      File.Delete(f);
+    } catch (Exception) { }
+  }
+
+  /// Everything a killed curtain may have left behind.
+  public static void Restore() {
+    RestorePointer();
+    RestoreBrightness();
   }
 
   // ── Brightness: "ddc <index> <value>" / "wmi <value>" per line ──────────
@@ -146,7 +197,7 @@ public class TmsCurtain {
 
   public static void Run() {
     try { SetProcessDPIAware(); } catch (Exception) { }
-    RestoreBrightness();
+    Restore();
     List<Curtain> curtains = new List<Curtain>();
     foreach (Screen s in Screen.AllScreens) {
       Curtain c = new Curtain();
@@ -167,6 +218,11 @@ public class TmsCurtain {
       }
     }
     foreach (Curtain c in curtains) c.Show();
+    // The server starts this process hidden (no console window popping up on
+    // the PC). Windows applies that startup "hidden" to the process's FIRST
+    // ShowWindow call — which is the first curtain's. Showing again fixes it.
+    foreach (Curtain c in curtains) ShowWindow(c.Handle, SW_SHOWNOACTIVATE);
+    try { HidePointer(); } catch (Exception) { }
     Console.Out.WriteLine("{\"ready\":{\"curtain\":true}}");
     Console.Out.Flush();
 
@@ -193,11 +249,11 @@ public class TmsCurtain {
     try { Application.Run(); }
     finally {
       dim.Join(3000);
-      RestoreBrightness();
+      Restore();
     }
   }
 }
 "@
 
-if ($Restore) { [TmsCurtain]::RestoreBrightness(); exit 0 }
+if ($Restore) { [TmsCurtain]::Restore(); exit 0 }
 [TmsCurtain]::Run()

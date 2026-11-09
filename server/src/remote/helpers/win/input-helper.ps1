@@ -55,7 +55,7 @@ public class TmsInput {
   // went a different distance than the app predicted (it draws the pointer
   // itself and corrects to the real position afterwards — a visible jump).
   // Instead: read the real position, add exactly dx/dy physical pixels, and
-  // place it there absolutely. Same idea as the macOS helper's `rel`.
+  // place it there absolutely. Same idea as the macOS helper's "rel".
   public static void MoveRelative(int dx, int dy) {
     POINT p;
     if (!GetCursorPos(out p)) return;
@@ -79,7 +79,7 @@ public class TmsInput {
   // macOS backend feeds straight into CGEvent's .pixel-unit scroll wheel
   // event, and the bridge's gesture math is calibrated against that. WHEEL
   // (and HWHEEL) instead expect multiples of WHEEL_DELTA (120 = one notch),
-  // and the previous `dy * 120` treated every wire pixel as a full notch —
+  // and the previous "dy * 120" treated every wire pixel as a full notch —
   // the same swipe scrolled roughly 120x further on Windows than on macOS.
   // Windows' own Precision Touchpad driver sends exactly this kind of small,
   // sub-120 mouseData for smooth scrolling (accumulated by the recipient
@@ -137,7 +137,7 @@ public class TmsInput {
   }
 
   // One command per line, same protocol as before (see input.win32.ts).
-  // Returns at end of input or on `quit`.
+  // Returns at end of input or on "quit".
   public static void Run() {
     // Physical pixels everywhere: GetCursorPos/GetSystemMetrics in a
     // DPI-unaware process report scaled values on a 125-200 % desktop.
