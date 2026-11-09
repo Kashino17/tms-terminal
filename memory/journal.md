@@ -261,3 +261,6 @@
 ## 2026-11-09 — Fernzugriff v1.129.10
 - Flackern MAC/WIN beim Wechsel: Handler hingen an globaler `ws`; später onclose der alten Verbindung nullte die neue, Neuversuch + verwaiste Ströme in einem Dekoder. Fix Socket-Identität, remoteWantId, RN schickt id. Test webview-remote-switch.test.mjs (vorher 3/3 rot, jetzt grün).
 - Windows-Delay: Zeiger nur im Video, relative SendInput mit Beschleunigung, PowerShell-Schleife → cursor-helper.ps1 + draw_mouse=0, exaktes rel, C#-Run-Loop, scale korrekt. C# per dotnet LangVersion 5 geprüft. Windows-PC offline, nicht live getestet.
+
+## 2026-11-09 — Fernzugriff v1.129.11
+- Windows-Standbild: Verwerfen + kein Vollbild auf Anfrage + keine Live-Bitrate. Fix: größeres Budget/keine Vollbild-Verwürfe/App-Rückstand 8, Bitrate via zweitem ffmpeg (nahtlose Übergabe, Fake-ffmpeg-Prozesstest), Statuszeile zeigt Verwürfe.

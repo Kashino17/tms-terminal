@@ -1,10 +1,12 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-09 — Fernzugriff MAC/WIN-Wechsel + Windows-Zeiger; Release v1.129.10_
+_Zuletzt aktualisiert: 2026-11-09 — Windows-Fernzugriff Standbild; Release v1.129.11_
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-09 (neueste):** Release v1.129.10: Fernzugriff-Gerätewechsel mischte Bilder (später onclose der alten Bild-ws warf neue weg, Verwaiste liefen weiter) → Socket-Identität + Geräte-ID an setRemoteTarget. Windows: lokaler Zeiger (cursor-helper.ps1, draw_mouse=0), exaktes rel statt Beschleunigung, C#-Leseschleife. **Offen:** Windows-PC `tms-terminal update` + Neustart; Windows kein Vollbild auf Anfrage (GOP 2 s); Bubble-Feedback v1.129.9.
+**Stand 2026-11-09 spät (neueste):** Release v1.129.11: Windows-Standbild — Fluss kennt keyframeOnDemand=false (350 ms Budget, Vollbilder nie verwerfen), App holt Dekoder-Rückstand bis 8 auf, Bitrate per zweitem ffmpeg mit nahtloser Übergabe, Statuszeile „N verworfen“. **Offen:** Windows-PC update + Neustart, Gerätetest; terminal-create.test „restoring and rebuilding cards“ hängt (älter, nicht Fernzugriff).
+
+**Stand 2026-11-09:** Release v1.129.10: Fernzugriff-Gerätewechsel mischte Bilder (später onclose der alten Bild-ws warf neue weg, Verwaiste liefen weiter) → Socket-Identität + Geräte-ID an setRemoteTarget. Windows: lokaler Zeiger (cursor-helper.ps1, draw_mouse=0), exaktes rel statt Beschleunigung, C#-Leseschleife. **Offen:** Windows-PC `tms-terminal update` + Neustart; Windows kein Vollbild auf Anfrage (GOP 2 s); Bubble-Feedback v1.129.9.
 
 **Stand 2026-11-08 abends:** Release v1.129.9: Bubble sofort voll sichtbar — Einblend-Animation lief am Samsung nicht an (durchsichtige Bubble). Davor v1.129.8: Tastatur-Suche auf allen Displays, Fensterliste im Protokoll bei Ausfall (Rest-Ausfälle ohne Tastatur-Signal, Nutzer bestätigt Tastatur offen). Davor v1.129.7: Bubble wird bei jedem Erscheinen auf dem aktiven Bildschirm platziert (Fold), verlorenes Fenster neu angelegt, Protokoll „Bubble bei x,y“. Davor v1.129.6: Bubble schaut bei aktivem Feld ~10 s selbst nach der Tastatur (Samsung meldet sie verspätet), Cache aus. Davor v1.129.5: Bubble entscheidet über Android-Eingabesitzung (flagInputMethodEditor, onStartInput/onUpdateSelection) statt Baumsuche; „Protokoll kopieren“ in Einstellungen. Emulator ok, Samsung-Aussetzer nicht reproduziert. **Offen:** Nutzer testet; bei Ausfall Protokoll einfügen lassen.
 
@@ -61,7 +63,7 @@ _Zuletzt aktualisiert: 2026-11-09 — Fernzugriff MAC/WIN-Wechsel + Windows-Zeig
 ## Historischer Stand vom 2026-04-26
 Die folgenden älteren Arbeitsnotizen wurden bewahrt und in dieser Sitzung nicht erneut verifiziert.
 
-_Zuletzt aktualisiert: 2026-11-09 — Fernzugriff MAC/WIN-Wechsel + Windows-Zeiger; Release v1.129.10_
+_Zuletzt aktualisiert: 2026-11-09 — Windows-Fernzugriff Standbild; Release v1.129.11_
 
 ## Aktuelle Version
 - **App:** v1.21.3 — Voice Prompt Enhancer (Llama 3.2 3B Instruct via MLX rewritet Sprach-Eingabe in polierte AI-Prompts; Toggle in Settings → Sprache → "KI-Prompt-Modus"; default off)
