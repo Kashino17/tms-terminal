@@ -130,7 +130,10 @@ export function useSheetBridges({
   ), [server, token]);
 
   /** Pick an image, upload it, and remember where it landed. */
-  const captureShot = useCallback(async (source: 'camera' | 'library') => {
+  // Ziel (Gerät + Karte) steht beim Antippen fest: `server`/`token` sind in
+  // dieser Closure eingefroren, und die Pfade gehen in genau die Karte, von der
+  // aus gestartet wurde — auch wenn währenddessen das Terminal gewechselt wird.
+  const captureShot = useCallback(async (source: 'camera' | 'library', cardId: string | null) => {
     if (!server || !token) return;
     try {
       const perm = source === 'camera'
@@ -200,7 +203,9 @@ export function useSheetBridges({
       // Ein Bild hochzuladen hat nur einen Zweck: die KI soll es ansehen. Also
       // landet der Serverpfad sofort im Terminal — still (null), die Meldung
       // kommt gleich gebündelt.
-      call('insertIntoTerminal', next.slice(0, uploaded.length).map((s) => s.path).join(' '), null);
+      const paths = next.slice(0, uploaded.length).map((s) => s.path).join(' ');
+      if (cardId) call('insertIntoCard', cardId, paths, null);
+      else call('insertIntoTerminal', paths, null);
       // Und KEIN setTool: die Galerie soll sich hinterher nicht wieder
       // aufklappen. Liste still nachführen, Sheet zu, kurz bestätigen.
       const n = uploaded.length;
@@ -448,7 +453,7 @@ export function useSheetBridges({
         return true;
 
       case 'shot:capture':
-        captureShot(payload.source === 'camera' ? 'camera' : 'library');
+        captureShot(payload.source === 'camera' ? 'camera' : 'library', payload.cardId ? String(payload.cardId) : null);
         return true;
 
       case 'shot:delete': {

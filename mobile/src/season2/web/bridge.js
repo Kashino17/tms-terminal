@@ -2828,10 +2828,10 @@
         if (cap) cap.addEventListener('click', function () {
           var flash = document.getElementById('shotFlash');
           if (flash) { flash.classList.add('is-flashing'); setTimeout(function () { flash.classList.remove('is-flashing'); }, 160); }
-          post('shot:capture', { source: 'camera' });
+          post('shot:capture', { source: 'camera', cardId: activeCardId() });
         });
         var pick = document.getElementById('shotPickBtn');
-        if (pick) pick.addEventListener('click', function () { post('shot:capture', { source: 'library' }); });
+        if (pick) pick.addEventListener('click', function () { post('shot:capture', { source: 'library', cardId: activeCardId() }); });
       },
     };
   };
@@ -2891,6 +2891,14 @@
   };
   /** Nach einem Upload: den Serverpfad sofort ins Terminal schreiben. */
   window.TMSBridge.insertIntoTerminal = function (text, msg) { insertIntoTerminal(text, msg); };
+  /** Upload fertig: Pfade in GENAU die Karte, von der aus gestartet wurde. Ist
+   *  sie nicht mehr vorne, gehen sie direkt an ihre Eingabe (ohne Enter). */
+  window.TMSBridge.insertIntoCard = function (cardId, text, msg) {
+    if (!text) return;
+    if (!cardId || !document.querySelector('.term-card[data-id="' + cardId + '"]') || cardId === activeCardId()) { insertIntoTerminal(text, msg); return; }
+    if (typeof window.__tmsInput === 'function') window.__tmsInput(cardId, text);
+    if (msg !== null) toast(msg || 'Eingefügt');
+  };
   /**
    * Gebetszeiten in die Seite. `meta` ist optional: ohne sie verhaelt sich die
    * Seite exakt wie vorher (Liste + Countdown). Die Normalisierung liegt in
