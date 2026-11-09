@@ -3589,21 +3589,11 @@
       if (el) el.textContent = text;
     }
 
-    // ── Bildgesten: Zoom, Verschieben, langer Druck ─────────────────────────
-    // `view` haelt Zoom/Versatz des Canvas innerhalb der Buehne. Bleibt hier
-    // (nicht in layoutStage()) deklariert, weil applyView() es unabhaengig
-    // vom Layout jederzeit neu aufs Canvas anwenden koennen muss (nach jeder
-    // Geste, nicht nur nach jedem Resize).
-    var view = { zoom: 1, x: 0, y: 0 };
-    var pinch = null;
-    var holdTimer = null;
-
-    function applyView() {
-      if (!canvas) return;
-      canvas.style.transformOrigin = 'center center';
-      canvas.style.transform = 'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.zoom + ')';
-      renderCursor();
-    }
+    // ── Bild, Zoom und Gesten gehoeren dem Mockup (Fernzugriff v2) ─────────
+    // Das Bild IST das Trackpad: Lage/Groesse/Zoom rechnet rxLayout() im
+    // Mockup, die Gesten auf der Flaeche ebenso. Hier bleiben nur Video,
+    // Ton, Verbindung und das Zeiger-Modell (Vorhersage + Abgleich mit dem Mac).
+    function applyView() { renderCursor(); }
 
     // ── Lokaler Zeiger ──────────────────────────────────────────────────────
     // Der Zeiger im Video lief jeder Bewegung um einen vollen Netz-Umlauf
@@ -3630,53 +3620,14 @@
       + '<path d="M0.5 0.5 L0.5 14.5 L4 11.2 L6.4 16.8 L8.6 15.9 L6.3 10.5 L11 10.5 Z" '
       + 'fill="#fff" stroke="#000" stroke-width="1" stroke-linejoin="round"/></svg>';
 
-    function cursorLayer() {
-      var stage = document.getElementById('remoteStage');
-      if (!stage) return null;
-      var layer = document.getElementById('remoteCursorLayer');
-      if (!layer) {
-        // Liegt exakt auf dem Canvas (gleiche Box, gleiche Transformation),
-        // folgt also jedem Zoom und Verschieben von selbst.
-        layer = document.createElement('div');
-        layer.id = 'remoteCursorLayer';
-        layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;transform-origin:center center;z-index:1';
-        layer.innerHTML = '<div id="remoteCursor" style="position:absolute;left:0;top:0;line-height:0;transform-origin:0 0;display:none;filter:drop-shadow(0 1px 1px rgba(0,0,0,.45))">' + CURSOR_SVG + '</div>';
-        // Den Canvas DIESER Buehne nehmen — `canvas` kann nach einem Neuaufbau
-        // kurz noch auf das alte Element zeigen, und insertBefore mit einem
-        // fremden Bezugsknoten wirft.
-        var cv = stage.querySelector('canvas');
-        stage.insertBefore(layer, cv ? cv.nextSibling : null);
-      }
-      return layer;
-    }
-
+    /** Zeichnen macht das Mockup (#rxCursor, folgt Zoom und Ausschnitt). */
     function renderCursor() {
-      var layer = cursorLayer();
-      if (!layer) return;
-      var el = document.getElementById('remoteCursor');
+      if (typeof window.rxCursorChanged === 'function') window.rxCursorChanged();
+    }
+    /** Fuer das Mockup: wo der Mac-Zeiger gerade steht (0..1), null = unbekannt/im Video. */
+    function cursorPos() {
       var st = window.remoteState;
-      var show = !!(st.localCursor && st.running && cursor.known && st.w);
-      el.style.display = show ? 'block' : 'none';
-      if (!show) return;
-      layer.style.transform = canvas ? canvas.style.transform : '';
-      var stage = document.getElementById('remoteStage');
-      // Bildlage exakt wie object-fit:contain sie legt — fitRect rundet auf
-      // ganze Pixel, das waeren bis zu 0,5 px Versatz.
-      var sc = Math.min(stage.clientWidth / st.w, stage.clientHeight / st.h);
-      var box = { w: st.w * sc, h: st.h * sc };
-      box.x = (stage.clientWidth - box.w) / 2;
-      box.y = (stage.clientHeight - box.h) / 2;
-      // Echte Groesse: der Mac-Pfeil ist ~20 Punkte hoch. Frueher mindestens
-      // 16 px — auf dem Fold 2-4x groesser als das Original, und ein grosser
-      // Pfeil taeuscht vor, man zeige auf etwas, das die Spitze gar nicht trifft.
-      var ptToPx = box.w / (st.w / (st.scale || 1));
-      var h = Math.max(9, 20 * ptToPx);
-      el.style.width = (h * 12 / 18) + 'px';
-      el.style.height = h + 'px';
-      // Die Pfeilspitze im SVG liegt bei (0.5, 0.5) im 12x18-ViewBox — diesen
-      // halben ViewBox-Punkt abziehen, damit die Spitze exakt auf (cursor.x, cursor.y) zeigt.
-      var tipOff = (0.5 * (h / 18)) / (view.zoom || 1);
-      el.style.transform = 'translate(' + (box.x + cursor.x * box.w - tipOff) + 'px,' + (box.y + cursor.y * box.h - tipOff) + 'px) scale(' + (1 / view.zoom) + ')';
+      return st.localCursor && st.running && cursor.known && st.w ? { x: cursor.x, y: cursor.y } : null;
     }
 
     /** Vorhersage: was die App gerade schickt, sieht sie sofort. */
@@ -3735,174 +3686,10 @@
       renderCursor();
     }
 
-    /**
-     * Gesten auf dem Bild selbst: Aufziehen zoomt (bis 3×, siehe clampZoom im
-     * Mockup), ein Finger bei Zoom>1 verschiebt (clampPan haelt es im
-     * Rahmen), Doppeltipp springt zwischen 1× und 2×, und ein langer Druck
-     * versetzt den Zeiger dorthin — die einzige Moeglichkeit, ihn schnell ueber
-     * eine weite Strecke zu setzen, denn das Trackpad braucht dafuer mehrere
-     * Wischer.
-     *
-     * Zustand JE Zeiger (Map von pointerId), nicht global — sonst verrechnet
-     * sich ein Zwei-Finger-Zoom bei ueber Kreuz bewegten Fingern, und das
-     * Abheben eines beliebigen Fingers wuerde die Geste des anderen killen.
-     */
-    function wireStageGestures() {
-      var stage = document.getElementById('remoteStage');
-      if (!stage || stage.dataset.wired === '1') return;
-      stage.dataset.wired = '1';
-      stage.style.touchAction = 'none';
-
-      var points = new Map();
-      var lastTap = 0;
-
-      stage.addEventListener('pointerdown', function (e) {
-        if (window.remoteState.fullscreen) return;      // dort gehoert alles der Maus
-        // startX/startY sind der Aufsetzpunkt und bleiben fuer die gesamte Geste
-        // unveraendert (siehe holdShouldAbort im Mockup) — x/y sind die jeweils
-        // LETZTE Position und wandern bei jedem pointermove mit (fuer die
-        // Verschiebe-/Pinch-Deltas weiter unten).
-        points.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
-        if (points.size === 2) {
-          var p = Array.from(points.values());
-          pinch = { d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), zoom: view.zoom };
-          if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-          return;
-        }
-        // Langer Druck aufs Bild: Zeiger dorthin — sendet eine Zeigerbewegung,
-        // keinen Klick, es gibt also nichts, was haengen bleiben koennte.
-        var start = { x: e.clientX, y: e.clientY };
-        holdTimer = setTimeout(function () {
-          holdTimer = null;
-          var box = stageBox();
-          if (!box) return;
-          var n = window.toStageNormalized(start.x, start.y, box);
-          if (n) {
-            window.TMSRemote.input({ t: 'm', x: n.x, y: n.y });
-            if (navigator.vibrate) navigator.vibrate(12);
-          }
-        }, 400);
-      });
-
-      stage.addEventListener('pointermove', function (e) {
-        if (!points.has(e.pointerId)) return;
-        var prev = points.get(e.pointerId);
-        var dx = e.clientX - prev.x;
-        var dy = e.clientY - prev.y;
-        points.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: prev.startX, startY: prev.startY });
-        // Entfernung zum AUFSETZPUNKT dieses Fingers (holdShouldAbort im
-        // Mockup), NICHT die aufsummierte Pfadlaenge seit dem Aufsetzen — die
-        // Summe misst zurueckgelegte Strecke, nicht Abweichung vom Start: ein
-        // Finger, der ruhig aufliegt, aber leicht zittert, sammelt darueber
-        // in 400ms genug Mikroschritte, um die Schwelle grundlos zu reissen,
-        // und der lange Druck stuerbe bei ruhiger Hand seltener durch als bei
-        // unruhiger. Ueber die Entfernung zum Start bricht nur eine ECHTE
-        // Bewegung ab; Zittern oder Hin-und-Herwischen zurueck zum Ausgangs-
-        // punkt bricht bewusst nicht ab (harmloser als der umgekehrte Fehler).
-        if (holdTimer && window.holdShouldAbort(prev.startX, prev.startY, e.clientX, e.clientY, 8)) {
-          clearTimeout(holdTimer); holdTimer = null;
-        }
-
-        if (pinch && points.size === 2) {
-          var pp = Array.from(points.values());
-          var d = Math.hypot(pp[0].x - pp[1].x, pp[0].y - pp[1].y);
-          view.zoom = window.clampZoom(pinch.zoom * (d / pinch.d));
-        } else if (points.size === 1 && view.zoom > 1) {
-          var r = stage.getBoundingClientRect();
-          view.x = window.clampPan(view.x + dx, view.zoom, r.width);
-          view.y = window.clampPan(view.y + dy, view.zoom, r.height);
-        }
-        applyView();
-      });
-
-      function up(e) {
-        points.delete(e.pointerId);
-        if (points.size < 2) pinch = null;
-        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-        // Vollbild gehoert der angeschlossenen Maus: ein echter Doppelklick
-        // damit bubbelt bis hierher genauso wie ein Doppeltipp (pointerdown
-        // wurde oben zwar schon uebersprungen, aber "up" laeuft trotzdem) —
-        // ohne diese Bedingung wuerde er faelschlich den Bild-Zoom umschalten.
-        if (window.remoteState.fullscreen) return;
-
-        var now = Date.now();
-        if (now - lastTap < 300) {                      // Doppeltipp
-          view.zoom = view.zoom > 1 ? 1 : 2;
-          view.x = 0; view.y = 0;
-          applyView();
-          lastTap = 0;
-        } else {
-          lastTap = now;
-        }
-      }
-      stage.addEventListener('pointerup', up);
-      stage.addEventListener('pointercancel', up);
-    }
-
-    /** Die Buehne bekommt genau die Hoehe, die das Bild seitenrichtig braucht. */
+    /** Lage und Groesse des Bildes rechnet das Mockup (rxLayout): Fuellen/Ganz,
+     *  Ausschnitt folgt dem Zeiger, bei offener Tastatur wird es nie kleiner. */
     function layoutStage() {
-      var stage = document.getElementById('remoteStage');
-      if (!stage || !window.remoteState.w) return;
-      var w = stage.clientWidth || stage.getBoundingClientRect().width;
-      // Hoehe begrenzen: die Bedienleiste darunter (Tastatur/Trackpad) braucht
-      // ihren Platz. Nach der Breite allein bemessen war das Bild auf dem
-      // aufgeklappten Fold ~550 px hoch — die Tastatur rutschte aus dem
-      // Bildschirm unter die Navigationsleiste. Im Vollbild gilt das nicht.
-      var maxH = w * 2;
-      var host = stage.closest('[data-screen="remote"]');
-      if (host && !window.remoteState.fullscreen) {
-        var cs = getComputedStyle(host);
-        var used = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-        var gap = parseFloat(cs.rowGap || cs.gap) || 0;
-        var n = 0;
-        Array.prototype.forEach.call(host.children, function (el) {
-          if (el === stage || el.id === 'remoteBar' || el.id === 'remoteIme') return;
-          var cs2 = getComputedStyle(el);
-          // Ausgeblendetes und Schwebendes (Kreis, sein Menue) nimmt keinen Platz weg.
-          if (cs2.display === 'none' || cs2.position === 'fixed' || cs2.position === 'absolute') return;
-          used += el.getBoundingClientRect().height; n++;
-        });
-        used += gap * (n + 1);
-        var avail = host.clientHeight - used;
-        // Tastatur: ihre echte Hoehe (Reihen in Handy-Tastenhoehe) + ein Streifen
-        // Mini-Trackpad; Trackpad-Seite: mindestens 170 px Wischflaeche.
-        var keysEl = document.getElementById('remoteKeys');
-        var minBar = window.remoteState.page === 'keys'
-          ? (keysEl ? keysEl.scrollHeight : 260) + 90
-          : 170;
-        if (avail - minBar > 80) maxH = Math.min(maxH, avail - minBar);
-      }
-      // window.-Vorsatz ist Pflicht: der Mockup-Code liegt in einer Kapsel, in
-      // die bridge.js nicht hineinsieht (siehe Ausfuhr-Zeilen in Aufgabe 11).
-      var fit = window.fitRect(window.remoteState.w, window.remoteState.h, w, maxH);
-      var box = { x: 0, y: 0, w: w, h: Math.min(maxH, fit.h) };
-      stage.style.height = box.h + 'px';
-      if (canvas) { canvas.width = window.remoteState.w; canvas.height = window.remoteState.h; }
-      // Vollbild gehoert der angeschlossenen Hardware: ein von Fingern liegen
-      // gebliebener Zoom/Versatz wuerde die absolute Mausabbildung weiter
-      // unten (stageBox()) verfaelschen, die von einem unverzerrten Bild
-      // ausgeht — darum hier zurueckgesetzt, sobald die Buehne (neu) vermessen
-      // wird, waehrend Vollbild an ist.
-      if (window.remoteState.fullscreen) { view.zoom = 1; view.x = 0; view.y = 0; }
-      else {
-        // Zoom/Versatz ueberleben bewusst einen Bildschirmwechsel (Verlassen
-        // und Zurueckkommen an den Fernzugriff baut die Buehne komplett neu,
-        // siehe buildRemoteScreen-Einklinkung oben) — anders als beim
-        // Vollbild-Eintritt gibt es hier keinen Korrektheitsgrund, den Zoom
-        // wegzuwerfen (clampZoom haengt nicht von der Buehnengroesse ab,
-        // bleibt also so oder so gueltig), und ein weggeworfener Zoom waere
-        // fuer die Nutzerin nur eine unbegruendete Ueberraschung. Der Versatz
-        // dagegen HAENGT von der Buehnengroesse ab (clampPan bekommt sie als
-        // Parameter) — wurde die Buehne inzwischen anders vermessen (Drehung,
-        // anderer Container), kann ein alter Versatz ausserhalb des gueltigen
-        // Bereichs liegen und das Bild schief sitzen lassen. Darum hier mit
-        // der vorhandenen Klemmfunktion gegen die frisch vermessene Buehne
-        // nachgezogen (w/box.h statt einem erneuten getBoundingClientRect,
-        // sie sind gerade eben aus derselben Messung hervorgegangen).
-        view.x = window.clampPan(view.x, view.zoom, w);
-        view.y = window.clampPan(view.y, view.zoom, box.h);
-      }
-      applyView();
+      if (typeof window.rxLayout === 'function') window.rxLayout();
     }
 
     // ── Lebenszyklus der Buehne ─────────────────────────────────────────────
@@ -4251,12 +4038,6 @@
         if (typeof window.buildRemoteScreen === 'function' && !document.getElementById('remoteStage')) {
           window.buildRemoteScreen();
         }
-        // Ausserhalb des if: die Buehne steht in der Praxis meist schon (der
-        // Aufrufer zeigt den Bildschirm typischerweise vor start()), darum
-        // wuerde eine Verschachtelung im if oben die Gesten nie verdrahten.
-        // wireStageGestures() ist ueber stage.dataset.wired selbst dagegen
-        // abgesichert, mehrfach am selben Element zu haengen.
-        wireStageGestures();
         maybeConnect();
       },
       stop: function () {
@@ -4371,6 +4152,7 @@
       dictate: function () { post('mic:start', { target: 'remote' }); },
       // Entsperren gilt dem Gerät, das gerade im Fernzugriff zu sehen ist.
       biometricUnlock: function () { post('biometric:unlock', { mode: 'remote', serverId: window.__remoteSrv || undefined }); },
+      cursorPos: cursorPos,
     };
 
     // Der Mockup ruft das beim Vollbildwechsel und nach Gesten auf, kommt aber

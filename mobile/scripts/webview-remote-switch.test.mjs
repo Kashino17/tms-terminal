@@ -200,17 +200,19 @@ if (!PW) {
       const r = await page.evaluate(({ MAC, WIN }) => {
         show('remote');
         const vis = (sel) => { const el = document.querySelector(sel); return !!el && !el.hidden && getComputedStyle(el).display !== 'none'; };
+        // Fernzugriff v2: Touch ID liegt im Menue (Geraete-Chip), nicht mehr dauerhaft auf dem Trackpad.
+        const touchVis = () => { document.getElementById('rxMenuBtn').click(); const v = vis('#remoteTouchId'); window.rxCloseSheet(); return v; };
         window.TMSRemote.switchTo('mac');
         window.TMSBridge.setRemoteTarget(MAC);
         window.__open(0); window.__startedWith(0, { unlock: true });
         window.__socks[0].onmessage({ data: JSON.stringify({ type: 'remote:locked', payload: { locked: true } }) });
-        const onMac = { banner: vis('#remoteLockBanner'), touch: vis('[data-btn="touchid"]') };
+        const onMac = { banner: vis('#remoteLockBanner'), touch: touchVis() };
         window.TMSRemote.switchTo('win');
         window.TMSBridge.setRemoteTarget(WIN);
         window.__open(1);
         const connecting = { banner: vis('#remoteLockBanner') };
         window.__startedWith(1, { unlock: false });
-        const onWin = { banner: vis('#remoteLockBanner'), touch: vis('[data-btn="touchid"]') };
+        const onWin = { banner: vis('#remoteLockBanner'), touch: touchVis() };
         return { onMac, connecting, onWin };
       }, { MAC, WIN });
       assert.deepEqual(errors, []);
@@ -375,6 +377,65 @@ if (!PW) {
       assert.deepEqual(errors, []);
       assert.equal(r.n, 1, 'nur einmal');
       assert.ok(r.left >= 0 && r.right <= r.vw, `ganz sichtbar (${r.left}..${r.right} von ${r.vw})`);
+    } finally { await browser.close(); }
+  });
+  // Fernzugriff v2: das Bild IST das Trackpad — kein eigener Pad-Bereich,
+  // das Bild fuellt die Flaeche, Gesten auf dem Bild werden zu Eingaben,
+  // und die Handy-Tastatur macht das Bild nie kleiner.
+  test('v2: Bild füllt die Fläche, Gesten senden Zeiger/Klick/Scroll, Tastatur verkleinert nicht', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      const r = await page.evaluate(async ({ MAC }) => {
+        show('remote');
+        window.TMSRemote.switchTo('mac');
+        window.TMSBridge.setRemoteTarget(MAC);
+        window.__open(0);
+        window.__startedWith(0, { width: 1600, height: 1000, scale: 2, localCursor: true });
+        window.__socks[0].onmessage({ data: JSON.stringify({ type: 'remote:cursor', payload: { x: 0.5, y: 0.5 } }) });
+        const ok = document.querySelector('.rx-coach__ok'); if (ok) ok.click();
+        const st = document.getElementById('remoteStage');
+        const rect = () => document.getElementById('remoteView').getBoundingClientRect();
+        const sr = st.getBoundingClientRect(), v0 = rect();
+        const out = {
+          canvas: [document.getElementById('remoteCanvas').width, document.getElementById('remoteCanvas').height],
+          fills: v0.left <= sr.left + 1 && v0.right >= sr.right - 1 && v0.top <= sr.top + 1 && v0.bottom >= sr.bottom - 1,
+          cursorShown: getComputedStyle(document.getElementById('rxCursor')).display !== 'none',
+          noPadArea: !document.querySelector('.rx-padhint, .remote-pad, #remoteSeg'),
+        };
+        const n0 = window.__socks[0].sent.length;
+        const pe = (type, id, x, y) => st.dispatchEvent(new PointerEvent(type, { pointerId: id, clientX: x, clientY: y, bubbles: true, pointerType: 'touch' }));
+        const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+        pe('pointerdown', 1, 200, 400); for (let i = 1; i <= 8; i++) { await wait(16); pe('pointermove', 1, 200 + i * 8, 400); } pe('pointerup', 1, 264, 400);
+        await wait(60); pe('pointerdown', 1, 200, 400); await wait(40); pe('pointerup', 1, 200, 400);
+        await wait(60); pe('pointerdown', 1, 200, 400); pe('pointerdown', 2, 260, 400); await wait(40); pe('pointerup', 1, 200, 400); pe('pointerup', 2, 260, 400);
+        await wait(60); pe('pointerdown', 1, 200, 500); pe('pointerdown', 2, 260, 500);
+        for (let i = 1; i <= 6; i++) { await wait(16); pe('pointermove', 1, 200, 500 - i * 10); pe('pointermove', 2, 260, 500 - i * 10); }
+        pe('pointerup', 1, 200, 440); pe('pointerup', 2, 260, 440);
+        await wait(80);
+        const ev = window.__socks[0].sent.slice(n0).map((d) => { try { return JSON.parse(d); } catch (e) { return {}; } });
+        out.move = ev.some((e) => e.t === 'd' && e.dx > 0);
+        out.left = ev.some((e) => e.t === 'b' && e.b === 'l' && e.d) && ev.some((e) => e.t === 'b' && e.b === 'l' && !e.d);
+        out.right = ev.some((e) => e.t === 'b' && e.b === 'r' && e.d);
+        out.scroll = ev.some((e) => e.t === 's' && e.dy < 0);
+        // Handy-Tastatur auf: Flaeche schrumpft (wie adjustResize) — Bild darf nicht kleiner werden.
+        const before = rect().width;
+        document.getElementById('remoteIme').focus();
+        window.layoutRemoteStage();
+        out.imeNotSmaller = rect().width >= before - 1;
+        out.modsRow = getComputedStyle(document.getElementById('rxMods')).display !== 'none';
+        return out;
+      }, { MAC });
+      assert.deepEqual(errors, []);
+      assert.deepEqual(r.canvas, [1600, 1000], 'Canvas in Bildgroesse');
+      assert.equal(r.noPadArea, true, 'kein eigener Trackpad-Bereich mehr');
+      assert.equal(r.fills, true, 'zugeklappt fuellt das Bild die Flaeche');
+      assert.equal(r.cursorShown, true, 'Zeiger sichtbar, sobald der Mac ihn meldet');
+      assert.equal(r.move, true, 'Wischen bewegt den Zeiger');
+      assert.equal(r.left, true, 'Tippen = Linksklick');
+      assert.equal(r.right, true, 'Zwei-Finger-Tipp = Rechtsklick');
+      assert.equal(r.scroll, true, 'Zwei Finger schieben = Scrollen');
+      assert.equal(r.imeNotSmaller, true, 'Tastatur auf: Bild wird nicht kleiner');
+      assert.equal(r.modsRow, true, 'Tastatur auf: Sondertasten-Reihe da');
     } finally { await browser.close(); }
   });
 }

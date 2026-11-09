@@ -279,3 +279,6 @@
 - Mac-Umbau abgeraten (bereits exakt 2:1 Retina), stattdessen Auto 1728.
 - Fernzugriff bleibt bis zum Schließen (Server-Ruhe/Übernahme, remote:view, Insel-Punkt). Tests: Server 572, WebView 12 grün.
 
+## 2026-11-10 — Fernzugriff-Redesign (v1.132.0)
+- Mockup mit Nutzer: Bild = Trackpad, eine Leiste, Menü am Geräte-Chip; Runde 2: Pad-Fläche raus, Füllen/Ganz statt Leerraum, alles matt statt Glas.
+- Live: bridge.js entschlackt (−233 Zeilen alter Zoom/Layout/Zeiger), neuer WebView-Test v2 (Fläche gefüllt, Gesten → Eingaben, Tastatur verkleinert nicht); Test fand „Füllen schrumpft bei Tastatur“ → behoben. Alle Mobile-Tests grün.

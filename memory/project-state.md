@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-10 — Fernzugriff läuft bis zum Schließen, Windows virtueller Bildschirm; Release v1.131.0_
+_Zuletzt aktualisiert: 2026-11-10 — Fernzugriff neu gestaltet (Bild = Trackpad); Release v1.132.0_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-10 abends (neueste):** Release v1.132.0: Fernzugriff-Redesign. Bild = Trackpad (kein Pad-Bereich, keine Klick-Knöpfe), Tipp/2-Finger-Tipp/Halten/2-Finger-Scroll mit Schwung/Spreizen-Zoom; Bild Füllen|Ganz (zugeklappt Füllen, aufgeklappt Ganz, gemerkt), Tastatur auf = nie kleiner, Ausschnitt folgt Zeiger; EINE matte Leiste (Gerät=Menü, ⌨, ⤢, Lieblingskürzel, Kürzel-Fach); Menü mit Gerätewechsel, Touch ID, Zwischenablage, Spielmodus, 🔊/🌑, Trackpad|Direkt, Minimieren/Schließen. Kein Glas (Nutzerwunsch). bridge.js gibt Layout/Gesten/Zeigerzeichnen ans Mockup ab (cursorPos/rxCursorChanged/rxLayout). Bausteine + Demo: `mockups/season2/fernzugriff-v2/` (untracked), Demo über Tailscale :8531. **Offen:** Gerätetest am Fold (echte Handy-Tastatur, Scroll-Gefühl), Dateien senden/holen braucht Server-Teil (Kachel erscheint erst mit rxFiles*-Hooks).
 
 **Stand 2026-11-10 (neueste):** Release v1.131.0: Fernzugriff läuft, bis der Nutzer schließt (✕ oder Insel → Schließen) — Server lässt Sitzung ohne remote:stop ruhen (6 h Sicherung), gleiche Wünsche übernehmen sie; remote:view versteckt nur das Bild; grüner Punkt + Öffnen/Schließen oben in der Insel. Windows: 🌑 = virtueller Bildschirm (VDD 25.7.23, `tms-terminal display install|test|restore|uninstall`), Display wirklich aus, Bild 1:1. Mac „Auto“ 1728 statt 1600. Startfehler jetzt capture_failed + Log. **Offen:** PC `tms-terminal update`, Mac-Server-Neustart durch Nutzer (dist a119e89 gebaut), Gerätetest Hintergrund/Android; Mac-Umbau auf virtuellen Bildschirm bewusst NICHT gemacht (kein Gewinn, s. decisions).
 
