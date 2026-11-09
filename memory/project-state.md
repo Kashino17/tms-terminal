@@ -1,10 +1,12 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-09 — Windows-Fernzugriff Standbild; Release v1.129.11_
+_Zuletzt aktualisiert: 2026-11-09 — Fernzugriff Ton aufs Handy + Verdunkeln; Release v1.130.0_
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-09 spät (neueste):** Release v1.129.11: Windows-Standbild — Fluss kennt keyframeOnDemand=false (350 ms Budget, Vollbilder nie verwerfen), App holt Dekoder-Rückstand bis 8 auf, Bitrate per zweitem ffmpeg mit nahtloser Übergabe, Statuszeile „N verworfen“. **Offen:** Windows-PC update + Neustart, Gerätetest; terminal-create.test „restoring and rebuilding cards“ hängt (älter, nicht Fernzugriff).
+**Stand 2026-11-09 nachts (neueste):** Release v1.130.0: Fernzugriff-Schalter 🔊 Ton aufs Handy (Mac Core-Audio-Tap stumm + Opus, Windows WASAPI-Loopback + ffmpeg Opus) und 🌑 Verdunkeln (Mac Vorhang aus SCK ausgenommen + Helligkeit 0; Windows WDA_EXCLUDEFROMCAPTURE + DDC/WMI); Mac-Sperrhinweis/Touch ID nicht mehr auf WIN. Server-dist gebaut. **Offen:** Mac-Server-Neustart durch Nutzer, Windows update+Neustart, Gerätetests (Mac entsperrt mit Vorhang; Windows: Loopback trotz Stumm? Vorhang aus ddagrab?).
+
+**Stand 2026-11-09 spät:** Release v1.129.11: Windows-Standbild — Fluss kennt keyframeOnDemand=false (350 ms Budget, Vollbilder nie verwerfen), App holt Dekoder-Rückstand bis 8 auf, Bitrate per zweitem ffmpeg mit nahtloser Übergabe, Statuszeile „N verworfen“. **Offen:** Windows-PC update + Neustart, Gerätetest; terminal-create.test „restoring and rebuilding cards“ hängt (älter, nicht Fernzugriff).
 
 **Stand 2026-11-09:** Release v1.129.10: Fernzugriff-Gerätewechsel mischte Bilder (später onclose der alten Bild-ws warf neue weg, Verwaiste liefen weiter) → Socket-Identität + Geräte-ID an setRemoteTarget. Windows: lokaler Zeiger (cursor-helper.ps1, draw_mouse=0), exaktes rel statt Beschleunigung, C#-Leseschleife. **Offen:** Windows-PC `tms-terminal update` + Neustart; Windows kein Vollbild auf Anfrage (GOP 2 s); Bubble-Feedback v1.129.9.
 
@@ -63,7 +65,7 @@ _Zuletzt aktualisiert: 2026-11-09 — Windows-Fernzugriff Standbild; Release v1.
 ## Historischer Stand vom 2026-04-26
 Die folgenden älteren Arbeitsnotizen wurden bewahrt und in dieser Sitzung nicht erneut verifiziert.
 
-_Zuletzt aktualisiert: 2026-11-09 — Windows-Fernzugriff Standbild; Release v1.129.11_
+_Zuletzt aktualisiert: 2026-11-09 — Fernzugriff Ton aufs Handy + Verdunkeln; Release v1.130.0_
 
 ## Aktuelle Version
 - **App:** v1.21.3 — Voice Prompt Enhancer (Llama 3.2 3B Instruct via MLX rewritet Sprach-Eingabe in polierte AI-Prompts; Toggle in Settings → Sprache → "KI-Prompt-Modus"; default off)

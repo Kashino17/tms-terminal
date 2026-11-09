@@ -264,3 +264,7 @@
 
 ## 2026-11-09 — Fernzugriff v1.129.11
 - Windows-Standbild: Verwerfen + kein Vollbild auf Anfrage + keine Live-Bitrate. Fix: größeres Budget/keine Vollbild-Verwürfe/App-Rückstand 8, Bitrate via zweitem ffmpeg (nahtlose Übergabe, Fake-ffmpeg-Prozesstest), Statuszeile zeigt Verwürfe.
+
+## 2026-11-09 — Fernzugriff v1.130.0
+- Mac-Sperrhinweis/Touch ID blieben auf WIN (Sperrzustand nie zurückgesetzt) → pro Verbindung, `unlock` in remote:started.
+- Neu: Ton aufs Handy + Verdunkeln (Details Commit bb93c7d). Mac live geprüft (Ton-Pakete, Helligkeit 0/zurück), Windows nur kompiliert + Fake-Prozess-Tests; ffmpeg-Prüfphase-Falle (5 s ohne Ton) gefunden und behoben.
