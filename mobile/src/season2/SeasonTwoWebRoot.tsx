@@ -50,7 +50,7 @@ import { useServerStore } from '../store/serverStore';
 import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
 import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flushScrollback } from './web/scrollbackStore';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
-import { activeDeviceId } from './bund/devices.core.mjs';
+import { activeDeviceId, dictationDeviceId } from './bund/devices.core.mjs';
 import type { BundDevice } from './bund/devices.core.mjs';
 import { clipStore, toLegacyItems } from './bund/clipboardStore';
 
@@ -901,14 +901,23 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     return owner ? getConnection(owner) : null;
   }, []);
 
-  // ── Android dictation bubble: give it the main server so it can stream on
-  // its own (it runs in a separate accessibility service), and keep the
-  // settings row in the page up to date.
-  const voiceEnhance = useSettingsStore((st) => st.voicePromptEnhanceEnabled);
+  // ── Diktat läuft über das Gerät, das es kann (caps.dictation — mlx-whisper,
+  // also der Mac). Ist es offline, gibt es kein Diktat: das Mikro wird
+  // ausgeblendet. Der Text geht trotzdem ins Terminal vorne, egal auf welchem Gerät.
+  const dictDev = dictationDeviceId(devices);
+  const dictInfo = devInfo(dictDev);
+  const dictWs = useMemo(() => (dictDev ? getConnection(dictDev) : null), [dictDev]);
   useEffect(() => {
-    if (!server || !token || !dictationBubble.available) return;
-    dictationBubble.configure(server.host, Number(server.port), token, voiceEnhance);
-  }, [server, token, voiceEnhance]);
+    if (ready) call('setDictationAvailable', !!dictDev);
+  }, [ready, dictDev, call]);
+  // Android-Diktat-Bubble: streamt selbst (eigener Bedienungshilfe-Dienst) —
+  // an genau dieses Gerät.
+  const voiceEnhance = useSettingsStore((st) => st.voicePromptEnhanceEnabled);
+  const dictHost = dictInfo?.server.host, dictPort = dictInfo?.server.port, dictToken = dictInfo?.token;
+  useEffect(() => {
+    if (!dictHost || !dictToken || !dictationBubble.available) return;
+    dictationBubble.configure(dictHost, Number(dictPort), dictToken, voiceEnhance);
+  }, [dictHost, dictPort, dictToken, voiceEnhance]);
   const pushBubbleStatus = useCallback(() => {
     if (!ready || !dictationBubble.available) return;
     dictationBubble.status().then((st) => { if (st) call('bubbleStatus', st); });
@@ -947,7 +956,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
   // ── Dictation: the page shows the mic states, the recorder lives here.
   const { micState, toggle: toggleMic, cancel: cancelMic } = useDictation({
-    wsService: wsService ?? null,
+    wsService: dictWs,
     // Without this the hook returns immediately and nothing is ever recorded.
     sessionId: activeSessionId,
     onText: (text: string) => {

@@ -3110,6 +3110,17 @@
   window.__tmsOpenRemote = function (id) { remoteWantId = id || null; post('remote:open', { id: id }); };
 
   // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
+  /** Bund: Diktat gibt es nur, solange ein Gerät mit caps.dictation (der Mac)
+   *  online ist — sonst ist der Mikro-Knopf weg (und kommt zurück). */
+  window.TMSBridge.setDictationAvailable = function (on) {
+    if (!document.getElementById('bundNoDictCss')) {
+      var st = document.createElement('style');
+      st.id = 'bundNoDictCss';
+      st.textContent = 'body.no-dictation #dockMicBtn, body.no-dictation .term-mic-btn { display: none !important; }';
+      document.head.appendChild(st);
+    }
+    document.body.classList.toggle('no-dictation', !on);
+  };
   /** Bund: Tipp auf ein Gerät — es gibt nichts umzuschalten, nur zu den Terminals. */
   window.TMSBridge.goToTerminals = function () { if (typeof window.goToTerminals === 'function') window.goToTerminals(); };
   window.TMSBridge.setServers = function (servers) {
