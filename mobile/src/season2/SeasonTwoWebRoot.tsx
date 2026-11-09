@@ -1225,6 +1225,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
     if (!wsService || !server) return;
     if (sheets.handle(type, payload)) return;
+    // Fernzugriff → Dateien: der Explorer folgt dann dem Fernzugriff-Gerät.
+    if (type === 'files:openOn' && payload?.id) setFilesSrvId(String(payload.id));
     if (fileExplorer.handle(type, payload)) return;
 
     switch (type) {

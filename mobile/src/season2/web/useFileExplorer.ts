@@ -26,6 +26,11 @@ const mimeFor = (name: string) =>
 export function useFileExplorer({ ready, call, server, token }: Args) {
   const cwd = useRef('~');
   const base = server ? `http://${server.host}:${server.port}` : '';
+  // Fernzugriff "Dateien": Explorer auf DEM Gerät an DIESEM Ordner öffnen.
+  // Wechselt dabei das Gerät, merkt sich der Ordner bis nach dem Wechsel.
+  const serverIdRef = useRef<string | null>(server?.id ?? null);
+  serverIdRef.current = server?.id ?? null;
+  const pending = useRef<string | null>(null);
 
   useEffect(() => {
     if (ready && server && token) call('setFilesBase', base, token);
@@ -63,9 +68,16 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
   useEffect(() => {
     if (!ready || lastServerKey.current === serverKey) return;
     lastServerKey.current = serverKey;
+    if (pending.current) {
+      const p = pending.current;
+      pending.current = null;
+      cwd.current = p;
+      listRaw(p);
+      return;
+    }
     cwd.current = '~';
     call('resetFilesDir');
-  }, [ready, serverKey, call]);
+  }, [ready, serverKey, call, listRaw]);
 
   const download = useCallback(async (paths: string[], zip: boolean) => {
     if (!server || !token || !paths.length) return;
@@ -109,6 +121,19 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
       case 'files:listRaw':
         listRaw(String(payload.path ?? '~'));
         return true;
+
+      // Aus dem Fernzugriff: Gerät (payload.id) + Startordner. Root stellt das
+      // Gerät um; ist es schon dran, sofort listen, sonst nach dem Wechsel.
+      case 'files:openOn': {
+        const path = String(payload?.path ?? '~');
+        if (!payload?.id || payload.id === serverIdRef.current) { listRaw(path); return true; }
+        pending.current = path;
+        // Fällt der Wechsel aus (Gerät unbekannt), nicht ewig warten.
+        setTimeout(() => {
+          if (pending.current === path) { pending.current = null; listRaw(path); }
+        }, 1500);
+        return true;
+      }
 
       case 'files:readRaw': {
         if (!server || !token) return true;

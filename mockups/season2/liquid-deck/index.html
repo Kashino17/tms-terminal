@@ -2209,6 +2209,16 @@
   .rx-file button svg { width: 17px; height: 17px; }
   .rx-file.is-sel .rx-file__ic { background: var(--accent); color: var(--accent-ink, #fff); }
   .rx-prog { height: 3px; border-radius: 2px; background: #2c313a; overflow: hidden; margin-top: 4px; }
+  .rx-fcard .rx-prog { margin-top: 10px; }
+  .rx-fstat { font-size: 11.5px; color: var(--rx-dim); margin-top: 6px; min-height: 0; }
+  .rx-fstat:empty { display: none; }
+  .rx-fdirs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+  .rx-fdirs button { border: 0; border-radius: 10px; padding: 10px 8px; background: #2c313a; color: #e8ebf0; text-align: left;
+    display: flex; align-items: center; gap: 8px; font: 600 12.5px var(--font-ui); min-width: 0; }
+  .rx-fdirs button svg { width: 18px; height: 18px; color: #f59e0b; flex: none; }
+  .rx-fdirs button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rx-fdirs button:active { background: #363c46; }
+  .fs-back-remote { color: var(--accent); }
   .rx-prog i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s linear; }
 
   /* Gesten-Hilfe (beim ersten Oeffnen) */
@@ -4363,8 +4373,8 @@
       // Admin-Abfragen). bridge.js blendet #remoteTouchId aus, wo es nicht geht (Windows).
       +   '<button class="rx-tile rx-tile--accent" id="remoteTouchId" data-act="unlock">' + RX_SVG.lock + 'Entsperren<br>Touch ID</button>'
       +   '<button class="rx-tile" data-act="clip">' + RX_SVG.clip + 'Zwischen-<br>ablage</button>'
-      // Dateien erst, wenn die App den Weg dafuer liefert (rxFiles*-Hooks).
-      +   (typeof window.rxFilesSend === 'function' ? '<button class="rx-tile" data-act="files">' + RX_SVG.files + 'Dateien<br>senden/holen</button>' : '')
+      // Dateien, sobald die App den Weg dafuer liefert (bridge.js: rxUpload/rxOpenFilesOn).
+      +   (typeof window.rxOpenFilesOn === 'function' ? '<button class="rx-tile" data-act="files">' + RX_SVG.files + 'Dateien<br>senden/holen</button>' : '')
       +   '<button class="rx-tile" data-act="game">' + RX_SVG.game + 'Spiel-<br>modus</button>'
       + '</div>'
       + '<div class="rx-label">Am ' + escapeHtml(short) + '</div>'
@@ -4474,30 +4484,53 @@
   }
 
   // ── Dateien senden/holen ────────────────────────────────────────────────
-  // Hooks wie beim Datei-Explorer: das Mockup hat Demo-Werte, die App
-  // ueberschreibt window.rxFiles* (Upload nach ~/Downloads, Liste, Abholen).
+  // Senden: Handy-Dateiwaehler → POST /files/upload am Fernzugriff-Geraet
+  // (Downloads › TMS, danach im Finder/Explorer markiert — man sieht es sofort).
+  // Holen: der volle Datei-Explorer DES Geraets, an einem Schnellzugriff
+  // geoeffnet (Schreibtisch, Downloads, Dokumente, iCloud Drive, Home). Dort:
+  // alle Ordner, Auswahl, aufs Handy laden, Ordner als ZIP.
+  var RX_FOLDERS_MAC = [
+    { l: 'Schreibtisch', p: '~/Desktop' }, { l: 'Downloads', p: '~/Downloads' }, { l: 'Dokumente', p: '~/Documents' },
+    { l: 'iCloud Drive', p: '~/Library/Mobile Documents/com~apple~CloudDocs' }, { l: 'Persönlich', p: '~' },
+  ];
+  var RX_FOLDERS_WIN = [
+    { l: 'Desktop', p: '~/Desktop' }, { l: 'Downloads', p: '~/Downloads' }, { l: 'Dokumente', p: '~/Documents' },
+    { l: 'OneDrive', p: '~/OneDrive' }, { l: 'Persönlich', p: '~' },
+  ];
   function openRxFiles() {
     var srv = (TMS_DATA.servers || []).find(function (s) { return s.id === window.__remoteSrv; }) || {};
     var short = window.__devShort ? window.__devShort(srv) : 'MAC';
-    var list = (typeof window.rxFilesRecent === 'function' ? window.rxFilesRecent() : []) || [];
+    var folders = short === 'WIN' ? RX_FOLDERS_WIN : RX_FOLDERS_MAC;
     var html = '<div class="rx-head"><span class="rx-head__txt"><strong>Dateien</strong><small>Handy ⇄ ' + escapeHtml(short) + '</small></span><button class="rx-x" data-act="close" aria-label="Schließen">' + RX_SVG.x + '</button></div>'
-      + '<div class="rx-fcard"><h4>' + RX_SVG.send + 'An ' + escapeHtml(short) + ' senden</h4><p>Landet in Downloads › TMS und wird am ' + escapeHtml(short) + ' markiert.</p>'
-      +   '<div class="rx-fbtns"><button data-send="photo">' + RX_SVG.photo + 'Foto/Video</button><button data-send="file">' + RX_SVG.doc + 'Datei</button><button data-send="clip">' + RX_SVG.clip + 'Kopiertes</button></div>'
-      +   '<div class="rx-prog" id="rxSendProg" hidden><i></i></div></div>'
-      + '<div class="rx-fcard"><h4>' + RX_SVG.get + 'Vom ' + escapeHtml(short) + ' holen</h4><p>Was im Finder markiert ist, oder das Neueste aus Downloads & Schreibtisch.</p>'
-      +   list.map(function (f, i) {
-            return '<div class="rx-file' + (f.selected ? ' is-sel' : '') + '"><span class="rx-file__ic">' + escapeHtml(f.ext || '') + '</span>'
-              + '<span class="rx-file__txt"><b>' + escapeHtml(f.name) + '</b><small>' + escapeHtml(f.meta || '') + '</small><span class="rx-prog" hidden><i></i></span></span>'
-              + '<button data-get="' + i + '" aria-label="Aufs Handy holen">' + RX_SVG.get + '</button></div>';
-          }).join('')
-      + '</div>';
+      + '<div class="rx-fcard"><h4>' + RX_SVG.send + 'An ' + escapeHtml(short) + ' senden</h4><p>Landet in Downloads › TMS und wird dort markiert. Einen anderen Ordner: unten öffnen, dann „Hierher hochladen“.</p>'
+      +   '<div class="rx-fbtns"><button data-send="image/*,video/*">' + RX_SVG.photo + 'Foto/Video</button><button data-send="">' + RX_SVG.doc + 'Datei</button></div>'
+      +   '<div class="rx-prog" id="rxSendProg" hidden><i></i></div><div class="rx-fstat" id="rxSendStat"></div></div>'
+      + '<div class="rx-fcard"><h4>' + RX_SVG.get + 'Vom ' + escapeHtml(short) + ' holen</h4><p>Öffnet den Datei-Explorer des ' + escapeHtml(short) + ' — alle Ordner, auswählen und aufs Handy laden.</p>'
+      +   '<div class="rx-fdirs">' + folders.map(function (f) {
+            return '<button data-dir="' + escapeHtml(f.p) + '">' + RX_SVG.folder + '<span>' + escapeHtml(f.l) + '</span></button>';
+          }).join('') + '</div></div>';
     rxOpenSheet(html, function (body) {
       body.addEventListener('click', function (e) {
         if (e.target.closest('[data-act="close"]')) { rxCloseSheet(); return; }
+        var d = e.target.closest('[data-dir]');
+        if (d) { rxCloseSheet(); window.rxOpenFilesOn(window.__remoteSrv, d.dataset.dir); return; }
         var s = e.target.closest('[data-send]');
-        if (s && typeof window.rxFilesSend === 'function') { window.rxFilesSend(s.dataset.send, body.querySelector('#rxSendProg')); return; }
-        var g = e.target.closest('[data-get]');
-        if (g && typeof window.rxFilesGet === 'function') window.rxFilesGet(list[+g.dataset.get], g.closest('.rx-file').querySelector('.rx-prog'));
+        if (!s) return;
+        window.pickPhoneFiles(s.dataset.send, function (files) {
+          var bar = body.querySelector('#rxSendProg'), st = body.querySelector('#rxSendStat');
+          var label = files.length > 1 ? files.length + ' Dateien' : files[0].name;
+          bar.hidden = false; bar.querySelector('i').style.width = '0';
+          st.textContent = 'Sende ' + label + ' …';
+          window.rxUpload(files, '~/Downloads/TMS', function (pct) {
+            bar.querySelector('i').style.width = Math.round(pct * 100) + '%';
+          }, function (error, saved) {
+            bar.hidden = true;
+            if (error) { st.textContent = 'Fehler: ' + error + (saved.length ? ' (' + saved.length + ' angekommen)' : ''); return; }
+            st.textContent = '';
+            rxCloseSheet();
+            rxSurfaceToast(saved.length > 1 ? saved.length + ' Dateien in Downloads › TMS' : saved[0].name + ' → Downloads › TMS');
+          });
+        });
       });
     });
   }
@@ -7038,6 +7071,7 @@
     cwd: '~', entries: [], sort: 'name', asc: true, filter: '', showSearch: false,
     selectMode: false, sel: new Set(), renaming: null, newFolder: false,
     downloads: [],  // {id, name, pct, state}
+    loading: false, fromRemote: false,
   };
 
   // ── Demo data layer (bridge.js replaces these) ──
@@ -7080,6 +7114,7 @@
   window.fsSetDir = function (path, entries) {
     fsState.cwd = path;
     fsState.entries = entries;
+    fsState.loading = false;
     fsState.sel.clear(); fsState.selectMode = false;
     renderFilesScreen();
   };
@@ -7088,7 +7123,17 @@
     fsState.cwd = '~'; fsState.entries = []; fsState.sel.clear(); fsState.selectMode = false;
     if (currentScreen === 'files') window.fsListDir('~');
   };
+  /** Fernzugriff: Explorer schon zeigen, waehrend die App auf das Geraet umstellt
+   *  und den Ordner liefert (darum hier NICHT listen — das ginge ans alte Geraet). */
+  window.fsShowAt = function (path, fromRemote) {
+    fsState.cwd = path || '~'; fsState.entries = []; fsState.loading = true;
+    fsState.sel.clear(); fsState.selectMode = false; fsState.filter = '';
+    fsState.fromRemote = !!fromRemote;
+    show('files');
+    renderFilesScreen();
+  };
   window.openFilesScreen = function (path) {
+    fsState.fromRemote = false;
     if (path) fsState.cwd = path;
     show('files');
     window.fsListDir(fsState.cwd);
@@ -7147,7 +7192,11 @@
   }
   // ── /TMS-TEST-EXPORT ──
   function fsCrumbsHtml() {
-    return fsCrumbs(fsState.cwd).map((c, i) =>
+    // iCloud Drive liegt tief in ~/Library — als ein Krumen "iCloud Drive" zeigen.
+    let cs = fsCrumbs(fsState.cwd);
+    const ic = cs.findIndex(c => /Library\/Mobile Documents\/com~apple~CloudDocs$/.test(c.target));
+    if (ic >= 0) cs = [{ label: '☁ iCloud Drive', target: cs[ic].target }].concat(cs.slice(ic + 1));
+    return cs.map((c, i) =>
       (i ? '<span class="fs-crumb-sep">›</span>' : '') +
       '<button class="fs-crumb" data-crumb="' + escapeHtml(c.target) + '">' + escapeHtml(c.label) + '</button>'
     ).join('');
@@ -7180,6 +7229,7 @@
     const sortLabel = { name: 'Name', date: 'Datum', size: 'Größe' }[fsState.sort];
     host.innerHTML =
       '<div class="fs-head">' +
+        (fsState.fromRemote ? '<button class="btn-chip fs-back-remote" data-fsremote>‹ Fernzugriff</button>' : '') +
         '<button class="btn-chip" data-fsup>▴</button>' +
         '<div class="fs-crumbs">' + fsCrumbsHtml() + '</div>' +
       '</div>' +
@@ -7189,6 +7239,7 @@
         '<button class="btn-chip" data-fsselect>' + (fsState.selectMode ? '✕ Auswahl' : '☑ Auswählen') + '</button>' +
         (fsState.selectMode ? '<button class="btn-chip" data-fsselectall>Alle</button>' : '') +
         '<button class="btn-chip" data-fsnewfolder>+ Ordner</button>' +
+        (typeof window.fsUpload === 'function' ? '<button class="btn-chip" data-fsupload>⇧ Hierher hochladen</button>' : '') +
       '</div>' +
       (fsState.showSearch ? '<div class="fs-searchrow"><input class="term-input" id="fsSearchInput" placeholder="Filtern…" value="' + escapeHtml(fsState.filter) + '"></div>' : '') +
       (fsState.newFolder ? '<div class="fs-searchrow" style="display:flex;gap:6px"><input class="term-input" id="fsNewFolderInput" placeholder="Ordnername…" style="flex:1">' +
@@ -7198,7 +7249,7 @@
         '<button class="btn-chip" data-fsrenameok>Umbenennen</button><button class="btn-chip" data-fscancelrename>✕</button></div>' : '') +
       (favs.length ? '<div class="fs-tools">' + favs.map(p =>
         '<button class="btn-chip" data-fsgofav="' + escapeHtml(p) + '">★ ' + escapeHtml(p.split('/').pop() || p) + '</button>').join('') + '</div>' : '') +
-      '<div class="fs-list">' + (list.length ? list.map(fsRowHtml).join('') : '<div class="fs-empty">Leer.</div>') + '</div>' +
+      '<div class="fs-list">' + (list.length ? list.map(fsRowHtml).join('') : '<div class="fs-empty">' + (fsState.loading ? 'Lädt …' : 'Leer.') + '</div>') + '</div>' +
       fsBulkbarHtml() + fsDlbarHtml();
     wireFilesScreen(host);
   }
@@ -7226,9 +7277,36 @@
     if (state === 'error') { fsState.downloads = fsState.downloads.filter(d => d.id !== id); }
     window.fsRerender();
   };
+  /** Handy-Dateien waehlen (Android-Dateiwaehler) — muss im Tipp selbst passieren. */
+  window.pickPhoneFiles = function (accept, cb) {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.multiple = true;
+    if (accept) inp.accept = accept;
+    inp.style.cssText = 'position:fixed;left:-9999px;opacity:0';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', () => { const f = inp.files; inp.remove(); if (f && f.length) cb(f); });
+    inp.click();
+  };
   function wireFilesScreen(host) {
     host.querySelectorAll('[data-crumb]').forEach(b => b.addEventListener('click', () => {
       window.fsListDir(b.dataset.crumb);
+    }));
+    const back = host.querySelector('[data-fsremote]');
+    if (back) back.addEventListener('click', () => {
+      if (typeof window.__openRemoteFor === 'function' && window.__remoteSrv) window.__openRemoteFor(window.__remoteSrv);
+      else show('remote');
+    });
+    const upl = host.querySelector('[data-fsupload]');
+    if (upl) upl.addEventListener('click', () => window.pickPhoneFiles('', (files) => {
+      const id = 'up-' + Date.now(), dir = fsState.cwd;
+      const label = files.length > 1 ? files.length + ' Dateien' : files[0].name;
+      window.fsDownloadProgress(id, '⇧ ' + label, 0, 'running');
+      window.fsUpload(files, dir, (pct) => window.fsDownloadProgress(id, '⇧ ' + label, pct, 'running'), (error, saved) => {
+        fsState.downloads = fsState.downloads.filter(d => d.id !== id);
+        if (error) toast('Hochladen: ' + error + (saved.length ? ' (' + saved.length + ' angekommen)' : ''));
+        else toast(saved.length > 1 ? saved.length + ' Dateien hochgeladen' : 'Hochgeladen: ' + saved[0].name);
+        if (fsState.cwd === dir) window.fsListDir(dir); else window.fsRerender();
+      });
     }));
     const up = host.querySelector('[data-fsup]');
     if (up) up.addEventListener('click', () => {

@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-10 — Fernzugriff neu gestaltet (Bild = Trackpad); Release v1.132.0_
+_Zuletzt aktualisiert: 2026-11-10 — Fernzugriff: Dateien senden/holen; Release v1.133.0_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-10 nachts (neueste):** Release v1.133.0: Fernzugriff → Dateien. Senden: Android-Dateiwähler (`<input type=file>` in der WebView, kein neues natives Modul) → XHR POST `/files/upload?dir&name&reveal&token` (roh gestreamt, Home-Grenze + gesperrte Pfade, nie überschreiben „(2)“, Finder/Explorer markiert, CORS + Private-Network-Kopf, OPTIONS vor Token-Prüfung). Holen: `files:openOn {id,path}` stellt den Explorer aufs Fernzugriff-Gerät um (pending path bis nach dem Wechsel), Schnellzugriffe Schreibtisch/Downloads/Dokumente/iCloud Drive (Live-Server liest iCloud, geprüft)/Home, Krumen „☁ iCloud Drive“, „‹ Fernzugriff“, „Hierher hochladen“. Tests: Server 578 grün, WebView 14 grün. **Offen:** `tms-terminal update` auf Mac + Windows (Upload braucht neuen Server; alter → „Server zu alt“), Gerätetest Dateiwähler/iCloud-Dateien, die nur in der Cloud liegen (Download beim Lesen).
 
 **Stand 2026-11-10 abends (neueste):** Release v1.132.0: Fernzugriff-Redesign. Bild = Trackpad (kein Pad-Bereich, keine Klick-Knöpfe), Tipp/2-Finger-Tipp/Halten/2-Finger-Scroll mit Schwung/Spreizen-Zoom; Bild Füllen|Ganz (zugeklappt Füllen, aufgeklappt Ganz, gemerkt), Tastatur auf = nie kleiner, Ausschnitt folgt Zeiger; EINE matte Leiste (Gerät=Menü, ⌨, ⤢, Lieblingskürzel, Kürzel-Fach); Menü mit Gerätewechsel, Touch ID, Zwischenablage, Spielmodus, 🔊/🌑, Trackpad|Direkt, Minimieren/Schließen. Kein Glas (Nutzerwunsch). bridge.js gibt Layout/Gesten/Zeigerzeichnen ans Mockup ab (cursorPos/rxCursorChanged/rxLayout). Bausteine + Demo: `mockups/season2/fernzugriff-v2/` (untracked), Demo über Tailscale :8531. **Offen:** Gerätetest am Fold (echte Handy-Tastatur, Scroll-Gefühl), Dateien senden/holen braucht Server-Teil (Kachel erscheint erst mit rxFiles*-Hooks).
 

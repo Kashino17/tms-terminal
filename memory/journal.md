@@ -282,3 +282,4 @@
 ## 2026-11-10 — Fernzugriff-Redesign (v1.132.0)
 - Mockup mit Nutzer: Bild = Trackpad, eine Leiste, Menü am Geräte-Chip; Runde 2: Pad-Fläche raus, Füllen/Ganz statt Leerraum, alles matt statt Glas.
 - Live: bridge.js entschlackt (−233 Zeilen alter Zoom/Layout/Zeiger), neuer WebView-Test v2 (Fläche gefüllt, Gesten → Eingaben, Tastatur verkleinert nicht); Test fand „Füllen schrumpft bei Tastatur“ → behoben. Alle Mobile-Tests grün.
+- Nachgelegt v1.133.0: Dateien senden/holen im Fernzugriff (Upload-Endpunkt, Explorer aufs Fernzugriff-Gerät inkl. iCloud Drive). Test fand Private-Network-Vorabfrage → Kopf + OPTIONS vor Auth.

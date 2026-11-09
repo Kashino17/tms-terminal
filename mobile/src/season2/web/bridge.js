@@ -3221,6 +3221,55 @@
     if (typeof window.__tmsRemoteTargetReady === 'function') window.__tmsRemoteTargetReady();
   };
 
+  // ── Dateien Handy ⇄ Rechner ─────────────────────────────────────────────
+  // Senden: die Seite laedt die gewaehlten Dateien selbst hoch (XHR, mit
+  // Fortschritt) — POST /files/upload, rohe Datei als Rumpf. Ohne
+  // Content-Type und mit ?token=, damit keine CORS-Vorabfrage noetig ist.
+  // Nacheinander, damit ein grosses Video nicht alle anderen ausbremst.
+  function uploadFiles(base, token, files, dir, reveal, onProgress, onDone) {
+    var list = Array.prototype.slice.call(files || []);
+    var total = list.reduce(function (n, f) { return n + (f.size || 0); }, 0) || 1;
+    var sent = 0, saved = [], i = 0;
+    function next() {
+      if (i >= list.length) { onDone(null, saved); return; }
+      var f = list[i++];
+      var url = base + '/files/upload?dir=' + encodeURIComponent(dir) + '&name=' + encodeURIComponent(f.name || 'datei')
+        + (reveal && i === list.length ? '&reveal=1' : '') + '&token=' + encodeURIComponent(token);
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.upload.onprogress = function (e) { if (onProgress) onProgress(Math.min(1, (sent + (e.loaded || 0)) / total), f.name); };
+      xhr.onload = function () {
+        var d = {};
+        try { d = JSON.parse(xhr.responseText || '{}'); } catch (e) {}
+        if (xhr.status === 404) { onDone('Server zu alt — am Rechner „tms-terminal update“ ausführen', saved); return; }
+        if (xhr.status !== 200) { onDone(d.error || ('HTTP ' + xhr.status), saved); return; }
+        sent += f.size || 0;
+        saved.push(d);
+        next();
+      };
+      xhr.onerror = function () { onDone('Verbindung abgebrochen', saved); };
+      // Leerer Typ: sonst setzt der Browser den MIME-Typ als Content-Type (→ Vorabfrage).
+      xhr.send(f.slice(0, f.size, ''));
+    }
+    next();
+  }
+  /** Fernzugriff → an das gerade gezeigte Geraet (Standard: Downloads › TMS, im Finder zeigen). */
+  window.rxUpload = function (files, dir, onProgress, onDone) {
+    if (!remoteTarget || !remoteTarget.host) { onDone('Kein Gerät verbunden', []); return; }
+    uploadFiles('http://' + remoteTarget.host + ':' + remoteTarget.port, remoteTarget.token, files, dir || '~/Downloads/TMS', true, onProgress, onDone);
+  };
+  /** Explorer → in den gerade offenen Ordner. */
+  window.fsUpload = function (files, dir, onProgress, onDone) {
+    if (!fsBase) { onDone('Kein Gerät verbunden', []); return; }
+    uploadFiles(fsBase, fsToken, files, dir, false, onProgress, onDone);
+  };
+  // Holen: Explorer auf DEM Geraet an DIESEM Ordner — RN stellt das Geraet um
+  // und listet, die Seite zeigt den Explorer schon mal (ohne beim alten Geraet zu listen).
+  window.rxOpenFilesOn = function (id, path) {
+    if (typeof window.fsShowAt === 'function') window.fsShowAt(path || '~', true);
+    post('files:openOn', { id: id, path: path || '~' });
+  };
+
   document.addEventListener('pointerdown', function (e) {
     if (e.target.closest && e.target.closest('.term-card')) {
       setTimeout(function () {

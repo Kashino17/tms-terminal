@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const WEB = join(here, '../src/season2/web');
@@ -437,5 +438,77 @@ if (!PW) {
       assert.equal(r.imeNotSmaller, true, 'Tastatur auf: Bild wird nicht kleiner');
       assert.equal(r.modsRow, true, 'Tastatur auf: Sondertasten-Reihe da');
     } finally { await browser.close(); }
+  });
+  // Dateien Handy ⇄ Rechner aus dem Fernzugriff: Senden laedt per POST
+  // /files/upload ans Fernzugriff-Geraet (ohne CORS-Vorabfrage), Holen oeffnet
+  // den Explorer DES Geraets am gewaehlten Ordner (iCloud Drive als Krumen).
+  test('Dateien: Senden lädt ans Fernzugriff-Gerät, Holen öffnet dessen Explorer (iCloud)', async () => {
+    const got = [];
+    const srv = createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        got.push({ method: req.method, url: req.url, ctype: req.headers['content-type'] || null, body });
+        res.writeHead(req.method === 'OPTIONS' ? 204 : 200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
+        const name = new URL(req.url, 'http://x').searchParams.get('name');
+        res.end(req.method === 'OPTIONS' ? '' : JSON.stringify({ name, path: '/Users/x/Downloads/TMS/' + name, size: body.length }));
+      });
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+    const { browser, page, errors } = await boot();
+    try {
+      const r = await page.evaluate(async ({ port }) => {
+        const MACT = { id: 'mac', host: '127.0.0.1', port, token: 'tok' };
+        window.TMS_DATA.servers = [{ id: 'mac', name: 'MacBook', host: '127.0.0.1', port, status: 'online', primary: true, active: true }];
+        window.__remoteSrv = 'mac';
+        show('remote');
+        window.TMSRemote.switchTo('mac');
+        window.TMSBridge.setRemoteTarget(MACT);
+        window.__open(0); window.__startedWith(0, {});
+        document.getElementById('rxMenuBtn').click();
+        const tile = !!document.querySelector('[data-act="files"]');
+        document.querySelector('[data-act="files"]').click();
+        const dirs = Array.from(document.querySelectorAll('[data-dir]')).map((b) => b.textContent);
+        // Senden (der Dateiwaehler selbst ist Android — hier direkt mit File-Objekten)
+        const up = await new Promise((res) => window.rxUpload(
+          [new File(['hallo welt'], 'notiz.txt', { type: 'text/plain' }), new File(['xy'], 'b.png', { type: 'image/png' })],
+          '~/Downloads/TMS', null, (error, saved) => res({ error, saved: saved.map((s) => s.name) })));
+        // Holen: iCloud Drive
+        window.__posts.length = 0;
+        document.querySelector('[data-dir="~/Library/Mobile Documents/com~apple~CloudDocs"]').click();
+        const post = window.__posts.find((m) => m.type === 'files:openOn');
+        const filesShown = !document.querySelector('[data-screen="files"]').hidden;
+        const backBtn = !!document.querySelector('[data-fsremote]');
+        const loadingText = (document.querySelector('[data-screen="files"] .fs-empty') || {}).textContent;
+        const listedBeforeSwitch = window.__posts.some((m) => m.type === 'files:listRaw');
+        window.fsSetDir('/Users/x/Library/Mobile Documents/com~apple~CloudDocs/Projekte', []);
+        const crumbs = Array.from(document.querySelectorAll('.fs-crumb')).map((b) => b.textContent);
+        const uploadChip = !!document.querySelector('[data-fsupload]');
+        return { tile, dirs, up, post: post && post.payload, filesShown, backBtn, loadingText, listedBeforeSwitch, crumbs, uploadChip };
+      }, { port });
+      assert.deepEqual(errors, []);
+      assert.equal(r.tile, true, 'Dateien-Kachel im Menue');
+      assert.ok(r.dirs.some((d) => d.includes('iCloud Drive')) && r.dirs.some((d) => d.includes('Schreibtisch')), 'Schnellzugriffe');
+      assert.equal(r.up.error, null);
+      assert.deepEqual(r.up.saved, ['notiz.txt', 'b.png']);
+      const posts = got.filter((g) => g.method === 'POST');
+      // Vorabfragen (Private Network Access) sind erlaubt — der Server beantwortet sie vor der Token-Pruefung.
+      for (const o of got.filter((g) => g.method === 'OPTIONS')) assert.equal(new URL(o.url, 'http://x').searchParams.get('token'), 'tok');
+      assert.equal(posts[0].body, 'hallo welt');
+      assert.equal(posts[0].ctype, null, 'ohne Content-Type');
+      const q0 = new URL(posts[0].url, 'http://x').searchParams, q1 = new URL(posts[1].url, 'http://x').searchParams;
+      assert.equal(q0.get('dir'), '~/Downloads/TMS');
+      assert.equal(q0.get('token'), 'tok');
+      assert.equal(q0.get('reveal'), null, 'nur die letzte Datei wird gezeigt');
+      assert.equal(q1.get('reveal'), '1');
+      assert.deepEqual(r.post, { id: 'mac', path: '~/Library/Mobile Documents/com~apple~CloudDocs' });
+      assert.equal(r.filesShown, true);
+      assert.equal(r.backBtn, true, 'Rueckweg zum Fernzugriff');
+      assert.equal(r.loadingText, 'Lädt …');
+      assert.equal(r.listedBeforeSwitch, false, 'nicht beim alten Geraet listen');
+      assert.deepEqual(r.crumbs, ['☁ iCloud Drive', 'Projekte']);
+      assert.equal(r.uploadChip, true, 'Hierher hochladen im Explorer');
+    } finally { await browser.close(); srv.close(); }
   });
 }

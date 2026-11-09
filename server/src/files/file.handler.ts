@@ -16,7 +16,7 @@ export interface FileEntry {
   isSymlink: boolean;
 }
 
-function resolvePath(raw: string): string {
+export function resolvePath(raw: string): string {
   if (raw === '~' || raw.startsWith('~/')) {
     return path.join(os.homedir(), raw.slice(1));
   }
@@ -24,7 +24,7 @@ function resolvePath(raw: string): string {
 }
 
 /** Verify resolved path is within the user's home directory. */
-function isWithinHome(resolved: string): boolean {
+export function isWithinHome(resolved: string): boolean {
   const home = os.homedir();
   const normalized = path.resolve(resolved);
   return normalized === home || normalized.startsWith(home + path.sep);
@@ -41,7 +41,7 @@ const DENIED_PATHS = [
   '.npmrc',
 ];
 
-function isDeniedPath(resolved: string): boolean {
+export function isDeniedPath(resolved: string): boolean {
   const home = os.homedir();
   const rel = path.relative(home, resolved);
   return DENIED_PATHS.some(denied => rel === denied || rel.startsWith(denied + path.sep));

@@ -8,6 +8,7 @@ import { handleAuthRequest } from './auth/auth.controller';
 import { handleOpenUrl } from './browserbridge/open-url.handler';
 import { handleFileList, handleFileRead, handleFileDownload, handleMkdir, handleMove, handleTrash, handleRename } from './files/file.handler';
 import { handleFileZip } from './files/zip.handler';
+import { handleFileUpload } from './files/upload.handler';
 import { handlePdfjsAsset } from './files/pdfjs.handler';
 import { handleUploadRequest, handleDrawingUpload } from './upload/upload.handler';
 import { validateToken } from './auth/jwt.service';
@@ -278,6 +279,8 @@ async function main(): Promise<void> {
       // pdf.js viewer assets are public statics — the PDF itself still needs
       // the token via /files/download.
       if (req.url.startsWith('/files/pdfjs/')) { handlePdfjsAsset(req, res); return; }
+      // CORS-Vorabfrage fuer den Upload kommt ohne Token — vor der Pruefung beantworten.
+      if (req.method === 'OPTIONS' && req.url.startsWith('/files/upload')) { handleFileUpload(req, res); return; }
       // JWT-protected file browser endpoints
       // Accept token from Authorization header OR ?token= query param (for Image/download URLs)
       const authHeader = req.headers['authorization'] ?? '';
@@ -301,6 +304,7 @@ async function main(): Promise<void> {
       else if (req.url.startsWith('/files/trash') && req.method === 'POST')  handleTrash(req, res);
       else if (req.url.startsWith('/files/rename') && req.method === 'POST') handleRename(req, res);
       else if (req.url.startsWith('/files/zip'))      handleFileZip(req, res);
+      else if (req.url.startsWith('/files/upload') && req.method === 'POST') handleFileUpload(req, res);
       else { res.writeHead(404); res.end('Not found'); }
     } else if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
