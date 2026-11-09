@@ -3110,6 +3110,8 @@
   window.__tmsOpenRemote = function (id) { remoteWantId = id || null; post('remote:open', { id: id }); };
 
   // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
+  /** Bund: Tipp auf ein Gerät — es gibt nichts umzuschalten, nur zu den Terminals. */
+  window.TMSBridge.goToTerminals = function () { if (typeof window.goToTerminals === 'function') window.goToTerminals(); };
   window.TMSBridge.setServers = function (servers) {
     // Die Latenz pflegt die Seite (setStatus / setServerLatency) — eine frische
     // Liste ohne Wert darf den letzten Ping nicht wegwischen.

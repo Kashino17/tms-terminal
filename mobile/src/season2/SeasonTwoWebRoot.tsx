@@ -8,7 +8,7 @@
  *
  * The classic UI is untouched — Season 2 is still just a settings toggle.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert, Modal, TextInput } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
@@ -52,6 +52,8 @@ import { useServerStore } from '../store/serverStore';
 import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
 import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flushScrollback } from './web/scrollbackStore';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
+import { activeDeviceId } from './bund/devices.core.mjs';
+import type { BundDevice } from './bund/devices.core.mjs';
 
 // Direktlinks zu den API-Key-/Token-Seiten der Cloud-Anbieter. Getippt in der
 // Verbinden-Karte (nur solange nicht verbunden) und geöffnet im geteilten
@@ -160,6 +162,22 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   /** Gerät dieses Terminals — Dateien-Leiste und -Explorer folgen ihm. */
   const [filesSrvId, setFilesSrvId] = useState<string | null>(null);
   const peerPrevState = useRef<Record<string, string>>({});
+  // ── Bund: alle Geräte gleichberechtigt. Gerätebezogenes (Dateien, Upload,
+  // Ports, Prozesse) folgt dem Gerät des Terminals vorne — es gibt keinen
+  // Hauptserver. `server` aus dem Store ist nur noch der technische Anker für
+  // den Verbindungsaufbau (erstes gespeichertes Gerät).
+  const [devices, setDevices] = useState<BundDevice[]>([]);
+  const devicesRef = useRef<BundDevice[]>([]);
+  const [activeDev, setActiveDev] = useState<string | null>(null);
+  const activeDevRef = useRef<string | null>(null);
+  const [activeSid, setActiveSid] = useState<string | null>(null);
+  const recomputeActive = useCallback(() => {
+    const id = activeDeviceId(activeSidRef.current, sessionServer.current, devicesRef.current)
+      ?? useS2ConnStore.getState().server?.id ?? null;
+    if (id !== activeDevRef.current) { activeDevRef.current = id; setActiveDev(id); }
+  }, []);
+  /** Browser-Bridge: Gerät, dessen Terminal den Login geöffnet hat. */
+  const pendingLoginSrv = useRef<string | null>(null);
   /** cardId whose mic is currently recording. */
   const micCard = useRef<string | null>(null);
   /** Set when the user cancels: the recording still stops, its text is dropped. */
@@ -260,27 +278,40 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // a server switch, which re-connects). See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
   const browserBridgeEnabled = useSettingsStore((s) => s.browserBridgeEnabled);
   useEffect(() => {
-    if (!wsService || state !== 'connected') return;
-    wsService.send({ type: 'browserbridge:toggle', payload: { enabled: browserBridgeEnabled } });
-  }, [wsService, state, browserBridgeEnabled]);
+    // Jedes Gerät im Bund: der Login kann aus jedem Terminal kommen.
+    for (const d of devices) {
+      if (!d.online) continue;
+      const c = getConnection(d.id);
+      if (c.state === 'connected') c.send({ type: 'browserbridge:toggle', payload: { enabled: browserBridgeEnabled } } as never);
+    }
+  }, [devices, state, browserBridgeEnabled]);
   const {
     loadProjects: loadCloud, loadDetail: loadCloudDetail,
     connect: cloudConnect, disconnect: cloudDisconnect, reveal: cloudReveal, pushAccounts: pushCloudAccounts, pushOrg: pushCloudOrg,
   } = useCloudBridge(ready, call);
-  const activeSessionId = useTerminalStore((s) =>
+  const storeSessionId = useTerminalStore((s) =>
     server ? (s.tabs[server.id] ?? []).find((t) => t.active)?.sessionId ?? (s.tabs[server.id] ?? [])[0]?.sessionId : undefined,
   );
+  const activeSessionId = activeSid ?? storeSessionId;
+  /** Server + Token eines Geräts im Bund (Anker oder mitverbundenes Gerät). */
+  const devInfo = (id: string | null | undefined): { server: S2Server; token: string | null } | null => {
+    if (!id) return null;
+    if (server && id === server.id) return { server, token };
+    const p = peers.find((x) => x.id === id);
+    return p ? { server: p, token: p.token ?? null } : null;
+  };
+  const activeInfo = devInfo(activeDev) ?? (server ? { server, token } : null);
+  const activeWs = useMemo(() => (activeDev ? getConnection(activeDev) : wsService), [activeDev, wsService]);
   const sheets = useSheetBridges({
-    ready, call, wsService, server, token, activeSessionId, prayerTimesRef,
+    ready, call, wsService: activeWs ?? null, server: activeInfo?.server ?? null, token: activeInfo?.token ?? null, activeSessionId, prayerTimesRef,
   });
   // Die Empfänger der Server-Nachrichten leben länger als ein Render — über eine
   // Ref sehen sie trotzdem immer die aktuellen Sheet-Funktionen.
   const sheetsRef = useRef(sheets);
   sheetsRef.current = sheets;
   // Dateien zeigen das Gerät des Terminals, das vorne ist — nicht stur den Hauptserver.
-  const filesServer = (filesSrvId && server && filesSrvId !== server.id && peers.find((p) => p.id === filesSrvId)) || server;
-  const filesToken = filesServer && server && filesServer.id !== server.id ? (filesServer.token ?? null) : token;
-  const fileExplorer = useFileExplorer({ ready, call, server: filesServer, token: filesToken });
+  const filesInfo = devInfo(filesSrvId) ?? activeInfo;
+  const fileExplorer = useFileExplorer({ ready, call, server: filesInfo?.server ?? null, token: filesInfo?.token ?? null });
 
   // ── Pick up the saved server (the WebView has no server picker of its own).
   // `checkedServers` gates the native onboarding overlay so it only appears once
@@ -384,8 +415,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     };
 
     return (m: any) => {
-      if (!primary && !(typeof m?.type === 'string'
-        && (m.type.startsWith('terminal:') || m.type === 'mac:unlock_status' || m.type === 'mac:biometric_unlock_result'))) return;
+      if (!primary && typeof m?.type === 'string' && (m.type.startsWith('clipboard:') || m.type.startsWith('manager:'))) return;
       // ── Gemeinsame Zwischenablage (server/src/clipboard) ──
       if (m?.type === 'clipboard:history') { call('clipboardSet', m.payload?.items ?? []); return; }
       if (m?.type === 'clipboard:removed') { call('clipboardRemoved', m.payload?.ids ?? []); return; }
@@ -607,6 +637,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // Browser-Bridge: a terminal opened a browser and the server routed it here.
       if (m?.type === 'browserbridge:open') {
         pendingLoginSessionId.current = m.payload.sessionId;
+        pendingLoginSrv.current = srvId;
         // Foreground: open the in-app browser immediately. Backgrounded: the FCM
         // push surfaces it and the pending-URL consumer opens it on return.
         if (AppState.currentState === 'active') call('openBrowser', m.payload.url);
@@ -715,24 +746,24 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const pushServers = useCallback(async () => {
     const servers = await storageService.getServers().catch(() => []);
     const checked = await Promise.all(servers.map(async (s) => {
-      // Der aktive, verbundene Server ist per Definition online — den WS-Zustand
-      // kennen wir schon, kein zweiter Roundtrip nötig.
-      if (s.id === server?.id && state === 'connected') {
-        return { s, online: true };
-      }
-      // /health mit 4s-Deckel: ein offline-Server hängt sonst am fetch-Default.
+      // /health liefert Erreichbarkeit UND Fähigkeiten (caps) + Plattform.
+      // 4s-Deckel: ein offline-Gerät hängt sonst am fetch-Default.
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 4000);
       try {
         const res = await fetch(`http://${s.host}:${s.port}/health`, { signal: ctrl.signal });
-        return { s, online: res.ok };
+        const h: any = res.ok ? await res.json().catch(() => ({})) : {};
+        return { s, online: res.ok, caps: Array.isArray(h.caps) ? (h.caps as string[]) : [], platform: String(h.platform ?? '') };
       } catch {
-        return { s, online: false };
+        // Die offene Verbindung zählt auch dann, wenn /health kurz hakt.
+        const live = getConnection(s.id).state === 'connected';
+        const prev = devicesRef.current.find((d) => d.id === s.id);
+        return { s, online: live, caps: live ? (prev?.caps ?? []) : [], platform: '' };
       } finally {
         clearTimeout(timer);
       }
     }));
-    // Jedes weitere erreichbare Gerät mit Anmeldung wird mitverbunden. Einmal
+    // Jedes erreichbare Gerät mit Anmeldung wird mitverbunden. Einmal
     // aufgenommen bleibt es — ein kurzer Aussetzer der /health-Prüfung soll seine
     // Karten nicht abhängen; nur gelöschte Server fallen wieder raus.
     const known = new Set(servers.map((s) => s.id));
@@ -746,17 +777,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       && nextPeers.every((p, i) => p.id === peersRef.current[i]?.id);
     if (!samePeers) { peersRef.current = nextPeers; setPeers(nextPeers); }
     const peerIds = new Set(nextPeers.map((p) => p.id));
-    call('setServers', checked.map(({ s, online }) => ({
+    const nextDevices: BundDevice[] = checked.map(({ s, online, caps }) => ({ id: s.id, online, caps }));
+    const sameDevices = JSON.stringify(nextDevices) === JSON.stringify(devicesRef.current);
+    if (!sameDevices) { devicesRef.current = nextDevices; setDevices(nextDevices); }
+    recomputeActive();
+    call('setServers', checked.map(({ s, online, caps, platform }) => ({
       id: s.id, name: s.name, host: s.host, port: s.port,
       status: online ? 'online' : 'offline',
-      // verbunden: der Hauptserver und jedes mitverbundene Gerät — Tippen bleibt hier
+      // verbunden = im Bund mitverbunden (alle Geräte gleichberechtigt)
       active: s.id === server?.id || peerIds.has(s.id),
-      primary: s.id === server?.id,
+      caps,
       sessions: useTerminalStore.getState().getTabs(s.id).length,
-      os: '',
-      latency: null, // die Seite pflegt die Latenz selbst (setStatus-Ticker)
+      os: platform === 'darwin' ? 'macOS' : platform === 'win32' ? 'Windows' : platform === 'linux' ? 'Linux' : '',
+      latency: null, // die Seite pflegt die Latenz selbst (setStatus / setServerLatency)
     })));
-  }, [server, state, call]);
+  }, [server, state, call, recomputeActive]);
 
   // Server-Profil löschen (aus dem Long-Press-Aktions-Sheet). Ist es der gerade
   // verbundene Server, wird erst getrennt: Karten abräumen, Restore-/Status-Refs
@@ -936,10 +971,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
   /** Verbindung des Servers, zu dem diese Sitzung gehört (sonst der Hauptserver). */
   const connFor = useCallback((sessionId?: string) => {
-    const primary = useS2ConnStore.getState().server;
-    const owner = sessionId ? sessionServer.current[sessionId] : undefined;
-    if (owner && (!primary || owner !== primary.id)) return getConnection(owner);
-    return primary ? getConnection(primary.id) : null;
+    // Jede Sitzung über IHR Gerät; ohne Zuordnung das Gerät des Terminals vorne.
+    const owner = (sessionId ? sessionServer.current[sessionId] : undefined)
+      ?? activeDevRef.current ?? useS2ConnStore.getState().server?.id;
+    return owner ? getConnection(owner) : null;
   }, []);
 
   // ── Android dictation bubble: give it the main server so it can stream on
@@ -1223,7 +1258,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       }
     }
 
-    if (!wsService || !server) return;
+    // Kein Hauptserver: Standard-Gerät ist das des Terminals vorne.
+    const anchorId = activeDevRef.current ?? server?.id ?? '';
+    const ws = anchorId ? getConnection(anchorId) : wsService;
+    if (!ws || !anchorId) return;
     if (sheets.handle(type, payload)) return;
     // Fernzugriff → Dateien: der Explorer folgt dann dem Fernzugriff-Gerät.
     if (type === 'files:openOn' && payload?.id) setFilesSrvId(String(payload.id));
@@ -1233,7 +1271,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       case 'terminal:create': {
         // Neues Terminal auf dem gewählten Gerät (Insel "+"), sonst auf dem Hauptserver.
         const wanted = payload.serverId as string | undefined;
-        const createOn = wanted && wanted !== server.id && peersRef.current.some((p) => p.id === wanted) ? wanted : server.id;
+        const createOn = wanted && devicesRef.current.some((d) => d.id === wanted) ? wanted : anchorId;
         pendingFor(createOn).push({ cardId: payload.cardId, name: payload.name });
         // Mit den echten Maßen der Karte, nicht mit 80x24: sonst muss die Shell
         // beim ersten Resize alles neu zeichnen — und genau das erzeugt die
@@ -1249,8 +1287,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       case 'term:active': {
         const sid = (payload?.sessionId as string | null) || null;
         activeSidRef.current = sid;
-        const owner = (sid && sessionServer.current[sid]) || server.id;
-        setFilesSrvId((prev) => (prev === owner ? prev : owner));
+        setActiveSid(sid);
+        recomputeActive();
+        setFilesSrvId(null); // Dateien folgen wieder dem Terminal vorne
         break;
       }
 
@@ -1392,7 +1431,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // In der App kopiert: aufs Handy UND in den gemeinsamen Verlauf (→ Mac).
         clipSynced.current = payload.text ?? '';
         Clipboard.setStringAsync(payload.text ?? '').then(() => call('toast', 'Kopiert'));
-        if (payload.text) wsService.send({ type: 'clipboard:push', payload: { text: payload.text } } as never);
+        if (payload.text) ws.send({ type: 'clipboard:push', payload: { text: payload.text } } as never);
         break;
 
       case 'clipboard:open':
@@ -1402,24 +1441,24 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         Clipboard.getStringAsync().then((t) => {
           if (t && t.trim() && t !== clipSynced.current) {
             clipSynced.current = t;
-            wsService.send({ type: 'clipboard:push', payload: { text: t } } as never);
+            ws.send({ type: 'clipboard:push', payload: { text: t } } as never);
           }
-        }).catch(() => {}).finally(() => wsService.send({ type: 'clipboard:list' } as never));
+        }).catch(() => {}).finally(() => ws.send({ type: 'clipboard:list' } as never));
         break;
 
       case 'clipboard:use':
         // Ein Eintrag gewählt: auf beide Geräte legen (Server setzt den Mac).
         clipSynced.current = payload.text ?? '';
         Clipboard.setStringAsync(payload.text ?? '').catch(() => {});
-        if (payload.id) wsService.send({ type: 'clipboard:use', payload: { id: payload.id } } as never);
+        if (payload.id) ws.send({ type: 'clipboard:use', payload: { id: payload.id } } as never);
         break;
 
       case 'clipboard:delete':
-        if (payload.id) wsService.send({ type: 'clipboard:delete', payload: { id: payload.id } } as never);
+        if (payload.id) ws.send({ type: 'clipboard:delete', payload: { id: payload.id } } as never);
         break;
 
       case 'clipboard:clear':
-        wsService.send({ type: 'clipboard:clear' } as never);
+        ws.send({ type: 'clipboard:clear' } as never);
         break;
 
       case 'manager:send': {
@@ -1438,21 +1477,21 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       }
 
       case 'manager:outboxRead':
-        wsService?.send({ type: 'manager:outbox_read' });
+        ws.send({ type: 'manager:outbox_read' });
         break;
 
       case 'manager:agendaList':
-        wsService?.send({ type: 'manager:agenda', payload: { action: 'list' } });
+        ws.send({ type: 'manager:agenda', payload: { action: 'list' } });
         break;
 
       case 'manager:entriesList':
-        wsService?.send({ type: 'manager:entries', payload: { action: 'list' } });
+        ws.send({ type: 'manager:entries', payload: { action: 'list' } });
         break;
 
       case 'manager:entryToggle':
         // Die Seite hat schon optimistisch umgeschaltet; der Server antwortet
         // mit der vollständigen Liste und korrigiert notfalls.
-        wsService?.send({
+        ws.send({
           type: 'manager:entries',
           payload: { action: payload.done ? 'complete' : 'reopen', args: { id: payload.id } },
         });
@@ -1472,7 +1511,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         const st = useManagerStore.getState();
         st.setActiveProvider(payload.providerId);
         if (typeof payload.contextLength === 'number') st.setModelLoading(payload.providerId);
-        wsService?.send({
+        ws.send({
           type: 'manager:set_provider',
           payload: {
             providerId: payload.providerId,
@@ -1535,18 +1574,18 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         if (payload.screen === 'manager') {
           // Memory frisch vom Server; Artefakte aus den Manager-Nachrichten
           // (Bilder/Präsentationen), antippbar über den In-App-Browser.
-          wsService.send({ type: 'manager:memory_read' });
+          ws.send({ type: 'manager:memory_read' } as never);
           const msgs = useManagerStore.getState().messages ?? [];
           const arts: Array<{ id: string; title: string; kind: string; time: string; url: string }> = [];
           for (const msg of msgs) {
             const when = new Date(msg.timestamp).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
             for (const f of msg.images ?? []) {
               arts.push({ id: `img-${f}`, title: f, kind: 'Bild', time: when,
-                url: `http://${server.host}:${server.port}/generated-images/${encodeURIComponent(f)}?token=${token}` });
+                url: `http://${server?.host}:${server?.port}/generated-images/${encodeURIComponent(f)}?token=${token}` });
             }
             for (const f of msg.presentations ?? []) {
               arts.push({ id: `prs-${f}`, title: f, kind: 'Präsentation', time: when,
-                url: `http://${server.host}:${server.port}/generated-presentations/${encodeURIComponent(f)}?token=${token}` });
+                url: `http://${server?.host}:${server?.port}/generated-presentations/${encodeURIComponent(f)}?token=${token}` });
             }
           }
           call('setManagerArtifacts', arts.reverse());
@@ -1601,7 +1640,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // dem falschen. Die Karten-ID bleibt nur als Rückfall für eine noch
         // nicht gebundene, brandneue Karte.
         if (payload.field !== 'name' || !payload.value) break;
-        const renameSrv = (payload.sessionId && sessionServer.current[payload.sessionId]) || server.id;
+        const renameSrv = (payload.sessionId && sessionServer.current[payload.sessionId]) || anchorId;
         const tabs = useTerminalStore.getState().getTabs(renameSrv);
         const tab = payload.sessionId ? tabs.find((t) => t.sessionId === payload.sessionId) : undefined;
         if (tab) {
@@ -1633,30 +1672,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // umschalten. Season 2 verband sich bisher fest mit dem ersten gespeicherten
       // Server; ein zweiter (z. B. Windows) war nie erreichbar.
       case 'server:switch': {
-        const targetId = payload.id as string;
-        if (!targetId || targetId === server.id) break; // schon der aktive Server
-        (async () => {
-          const servers = await storageService.getServers().catch(() => []);
-          const target = servers.find((x) => x.id === targetId);
-          if (!target) return;
-          const tok = target.token ?? (await getToken(target.id)) ?? null;
-          if (!tok) {
-            call('toast', `Für „${target.name}" fehlt die Anmeldung — bitte einmal in der klassischen Ansicht verbinden`);
-            return;
-          }
-          // Die Terminals des alten Servers laufen dort weiter (der Store behält
-          // sie, beim Zurückwechseln kommen sie zurück) — aber ihre Karten gehören
-          // nicht zum neuen Server, also von der Seite abräumen.
-          call('clearAllTerminals');
-          restored.current = false;         // Restore läuft für den neuen Server neu
-          restoredPeers.current.clear();    // … und für die mitverbundenen Geräte
-          peerPrevState.current = {};
-          sessionStatus.current = {};       // Status-Dedupe gehört zur alten Verbindung
-          Object.values(idleTimers.current).forEach(clearTimeout);
-          idleTimers.current = {};
-          call('toast', `Verbinde mit ${target.name} …`);
-          setServer({ id: target.id, name: target.name, host: target.host, port: target.port, token: tok }, tok);
-        })();
+        // Bund: es gibt nichts umzuschalten — alle Geräte sind verbunden.
+        call('goToTerminals');
         break;
       }
 
@@ -1667,7 +1684,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         const targetId = payload.id as string;
         (async () => {
           let host: string, port: number, name: string, tok: string | null;
-          if (targetId === server.id) {
+          if (server && targetId === server.id) {
             ({ host, port, name } = server);
             tok = token;
           } else {
@@ -1691,8 +1708,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         const targetSid = (payload?.sessionId as string | undefined) || activeSidRef.current || activeSessionId;
         // sudo gehört zum Gerät des Terminals, Entsperren zum Gerät im Fernzugriff.
         const unlockOn = mode === 'sudo'
-          ? ((targetSid && sessionServer.current[targetSid]) || server.id)
-          : ((payload?.serverId as string | undefined) || server.id);
+          ? ((targetSid && sessionServer.current[targetSid]) || anchorId)
+          : ((payload?.serverId as string | undefined) || anchorId);
         if (macUnlock.current[unlockOn]?.supported === false) {
           call('toast', 'Fingerabdruck-Bestätigung gibt es nur auf dem Mac');
           break;
@@ -1797,7 +1814,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         onNav={(tabId, title, url, canGoBack, canGoForward) =>
           call('browserTitle', tabId, title, url, canGoBack, canGoForward)}
         onLoopbackCallback={(loopbackUrl) =>
-          wsService?.send({ type: 'browserbridge:callback', payload: { url: loopbackUrl, sessionId: pendingLoginSessionId.current ?? '' } })}
+          getConnection(pendingLoginSrv.current ?? activeDevRef.current ?? server?.id ?? '').send({ type: 'browserbridge:callback', payload: { url: loopbackUrl, sessionId: pendingLoginSessionId.current ?? '' } } as never)}
       />
       {/* Onboarding / rescue: the Liquid page has no server picker, so with no
           saved server there was NO way to add one — the app looked dead. This

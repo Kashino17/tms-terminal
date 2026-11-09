@@ -4,7 +4,7 @@
  * In onMessage() steckt ein Guard, der alles Server-abhaengige ohne Verbindung
  * stillschweigend verwirft:
  *
- *   if (!wsService || !server) return;
+ *   if (!ws || !anchorId) return;   (Bund: Gerät des Terminals vorne, kein Hauptserver)
  *
  * Gebetszeiten brauchen keinen Server — und genau deshalb sind sie im neuen
  * Layout bisher eine Attrappe: jede `adhan:`-Nachricht waere hinter diesem Guard
@@ -25,7 +25,7 @@ const source = readFileSync(SRC, 'utf8');
 
 /** Position der Guard-Zeile im Quelltext. */
 function guardIndex() {
-  const i = source.indexOf('if (!wsService || !server) return;');
+  const i = source.indexOf('if (!ws || !anchorId) return;');
   assert.notEqual(i, -1, 'der Verbindungs-Guard fehlt — wenn er weg ist, muss auch dieser Test weg');
   return i;
 }
