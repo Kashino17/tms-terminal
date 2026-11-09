@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fernzugriff: Zwei neue Schalter im Menue. Ton aufs Handy (🔊): alles, was der Computer abspielt, hoerst du auf dem Handy, am Computer bleibt es still. Verdunkeln (🌑): der Bildschirm am Computer wird schwarz und dunkel, auf dem Handy siehst du alles normal. Ausserdem: der Mac-Entsperr-Hinweis und Touch ID erscheinen nicht mehr bei Windows. Dafuer auf jedem Computer einmal tms-terminal update ausfuehren und den Server neu starten. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Fernzugriff: Wer den Fernzugriff verlaesst, pausiert die Sitzung - der Computer bekommt Bildschirm und Ton zurueck, im Hintergrund laeuft nichts mehr; zurueck im Fernzugriff verbindet er sich von selbst. Hinweise wie Server zu alt kommen nur noch einmal pro Geraet und nur im Fernzugriff. Meldungen werden nicht mehr abgeschnitten, sie brechen um und passen sich zu- und aufgeklappt an. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
