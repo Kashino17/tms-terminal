@@ -205,6 +205,149 @@ async function versionReport() {
   return false;
 }
 
+// ── Virtueller Bildschirm (Windows) ─────────────────────────────────────────
+// „Bildschirm aus“ im Fernzugriff: Windows zeichnet auf einen unsichtbaren
+// Monitor, das Laptop-Display ist wirklich aus. Der Treiber braucht EINMAL
+// Administratorrechte (display-setup.ps1); im Betrieb schaltet der Server ihn
+// als normaler Nutzer über eine Windows-Aufgabe (display-helper.ps1).
+const WIN_HELPERS = path.join(ROOT, 'src', 'remote', 'helpers', 'win');
+const DISPLAY_MARKER = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'TMS Terminal', 'display-installed.txt');
+const DISPLAY_DECLINED = path.join(CONFIG_DIR, 'display-declined');
+const DISPLAY_SETUP_LOG = path.join(CONFIG_DIR, 'display-setup.log');
+
+function displayInstalled() { return fs.existsSync(DISPLAY_MARKER); }
+
+/** PowerShell, die genau diesen Text ausführt (EncodedCommand: keine Anführungszeichen-Fallen). */
+function psEncoded(script, timeout) {
+  return require('child_process').spawnSync('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { encoding: 'utf8', windowsHide: true, timeout });
+}
+
+/** Führt display-setup.ps1 mit Administratorrechten aus (ein UAC-Klick). */
+function displaySetup(mode, fromUpdate) {
+  ensureConfigDir();
+  try { fs.writeFileSync(DISPLAY_SETUP_LOG, ''); } catch {}
+  const script = path.join(WIN_HELPERS, 'display-setup.ps1');
+  const args = `-NoProfile -ExecutionPolicy Bypass -File "${script}" ${mode === 'install' ? '-Install' : '-Uninstall'} -Log "${DISPLAY_SETUP_LOG}"`;
+  info(mode === 'install' ? 'Richte den virtuellen Bildschirm ein.' : 'Entferne den virtuellen Bildschirm.');
+  hint('Windows fragt gleich EINMAL nach Administratorrechten — bitte „Ja“ klicken.');
+  const r = psEncoded(
+    `try { $p = Start-Process -FilePath powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList '${args.replace(/'/g, "''")}'; exit $p.ExitCode } catch { exit 1223 }`,
+    10 * 60_000);
+  let text = '';
+  try { text = fs.readFileSync(DISPLAY_SETUP_LOG, 'utf8'); } catch {}
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\[[^\]]+\]\s*(.*)$/.exec(line);
+    if (m && !m[1].startsWith('ERGEBNIS')) console.log(`   ${m[1]}`);
+  }
+  if (r.status === 1223) {
+    warn('Abgebrochen — keine Administratorrechte erteilt. Nichts wurde verändert.');
+    if (fromUpdate) { try { fs.writeFileSync(DISPLAY_DECLINED, new Date().toISOString()); } catch {} }
+    hint('Später jederzeit: tms-terminal display install');
+    return false;
+  }
+  if (r.status === 0 && /ERGEBNIS: OK/.test(text)) {
+    try { fs.rmSync(DISPLAY_DECLINED, { force: true }); } catch {}
+    ok(mode === 'install' ? 'Virtueller Bildschirm eingerichtet.' : 'Virtueller Bildschirm entfernt.');
+    if (mode === 'install') hint('Probelauf: tms-terminal display test');
+    return true;
+  }
+  const m = /ERGEBNIS: FEHLER (.*)/.exec(text);
+  bad(m ? m[1] : `Einrichtung fehlgeschlagen (Code ${r.status}${r.error ? `, ${r.error.message}` : ''})`);
+  hint(`Protokoll: ${DISPLAY_SETUP_LOG}`);
+  return false;
+}
+
+function displayHelperArgs(extra) {
+  return ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(WIN_HELPERS, 'display-helper.ps1'), ...extra];
+}
+
+/** Alle Anzeigegeräte (für die Diagnose), als Textzeilen. */
+function displayDevices() {
+  const r = require('child_process').spawnSync('powershell.exe', displayHelperArgs(['-List']), { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+  const out = [];
+  for (const line of String(r.stdout || '').split(/\r?\n/)) {
+    try {
+      const o = JSON.parse(line.trim());
+      if (o.device) out.push(`${o.device.virtual ? '★' : '·'} ${o.device.name}  ${o.device.string}  [${o.device.flags & 1 ? 'aktiv' : 'aus'}${o.device.flags & 4 ? ', Haupt' : ''}]  ${o.device.mode}  ${o.device.id}`);
+      else if (o.monitor) out.push(`     Monitor: ${o.monitor.string}  ${o.monitor.id}`);
+    } catch {}
+  }
+  return out;
+}
+
+/**
+ * Probelauf: Laptop-Display ~10 s aus, virtueller Bildschirm an, ein Bild mit
+ * ffmpeg greifen, dann alles zurück. Die Ausgabe ist die Diagnose, die zeigt,
+ * ob der Fernzugriff damit funktionieren wird.
+ */
+async function displayTest() {
+  if (!displayInstalled()) { bad('Der virtuelle Bildschirm ist nicht eingerichtet.'); hint('tms-terminal display install'); return false; }
+  info('Probelauf: Das Laptop-Display geht gleich für etwa 10 Sekunden AUS');
+  hint('und kommt danach von selbst zurück. Nichts anfassen.');
+  pause(1500);
+  const child = spawn('powershell.exe', displayHelperArgs(['-Width', '1920', '-Height', '1200', '-MaxSeconds', '45']),
+    { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  let errText = '';
+  child.stderr.on('data', (b) => { errText += b; });
+  const result = await new Promise((resolve) => {
+    let buf = '';
+    const timer = setTimeout(() => resolve(null), 40_000);
+    child.stdout.on('data', (b) => {
+      buf += b;
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop();
+      for (const l of lines) {
+        try { const o = JSON.parse(l.trim()); if (o.ready || o.error) { clearTimeout(timer); resolve(o); return; } } catch {}
+      }
+    });
+    child.on('exit', () => { clearTimeout(timer); resolve(null); });
+  });
+  const report = [];
+  let good = false;
+  if (result && result.ready) {
+    report.push(`Umschalten: OK — ${result.ready.width}x${result.ready.height}${result.ready.sized ? '' : ' (Wunschgröße 1920x1200 NICHT gesetzt)'} auf ${result.ready.name}`);
+    report.push('Anzeigegeräte währenddessen:', ...displayDevices().map((l) => '  ' + l));
+    for (const idx of [0, 1]) {
+      const r = require('child_process').spawnSync('ffmpeg',
+        ['-hide_banner', '-loglevel', 'verbose', '-f', 'lavfi', '-i', `ddagrab=output_idx=${idx}:framerate=5`, '-frames:v', '1', '-f', 'null', '-'],
+        { encoding: 'utf8', windowsHide: true, timeout: 15_000 });
+      const lines = String(r.stderr || '').split(/\r?\n/).filter((l) => /ddagrab|Stream #0|Output|rror|fail/i.test(l)).slice(0, 8);
+      const size = /,\s(\d{3,5})x(\d{3,5})[,\s]/.exec(String(r.stderr || ''));
+      if (idx === 0 && r.status === 0 && size) good = true;
+      report.push(`ffmpeg Ausgang ${idx}: ${r.status === 0 ? 'Bild bekommen' : `Fehler (Code ${r.status})`}${size ? ` ${size[1]}x${size[2]}` : ''}`);
+      for (const l of lines) report.push('  ' + l.trim().slice(0, 160));
+    }
+  } else {
+    report.push(`Umschalten: FEHLGESCHLAGEN — ${result && result.error ? result.error.message : 'keine Antwort vom Helfer'}`);
+    if (errText.trim()) report.push(...errText.trim().split(/\r?\n/).slice(0, 12).map((l) => '  ' + l));
+  }
+  try { child.stdin.end(); } catch {}
+  await new Promise((resolve) => { const t = setTimeout(resolve, 20_000); child.on('exit', () => { clearTimeout(t); resolve(); }); if (child.exitCode !== null) { clearTimeout(t); resolve(); } });
+  pause(1500);
+  report.push('Anzeigegeräte danach:', ...displayDevices().map((l) => '  ' + l));
+  console.log('');
+  for (const l of report) console.log(`   ${l}`);
+  console.log('');
+  if (good) ok('Probelauf erfolgreich — das Laptop-Display war aus, das Bild kam vom virtuellen Bildschirm.');
+  else bad('Probelauf nicht erfolgreich — bitte die ganze Ausgabe oben kopieren und schicken.');
+  return good;
+}
+
+function displayStatus() {
+  if (!displayInstalled()) {
+    warn('Virtueller Bildschirm: nicht eingerichtet');
+    hint('Einrichten (einmal Admin-Klick): tms-terminal display install');
+    return;
+  }
+  let version = '';
+  try { version = fs.readFileSync(DISPLAY_MARKER, 'utf8').trim(); } catch {}
+  ok(`Virtueller Bildschirm: eingerichtet (Treiber ${version})`);
+  for (const l of displayDevices()) hint(l);
+  hint('Probelauf: tms-terminal display test · Entfernen: tms-terminal display uninstall');
+}
+
 function ensureConfigDir() {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
@@ -815,6 +958,14 @@ async function main() {
       if (/ERGEBNIS: Update fertig/.test(finalLog)) {
         ok('Update fertig.');
         await versionReport();
+        // Neu seit dem virtuellen Bildschirm: einmal einrichten (ein UAC-Klick).
+        // Der NEUE Stand führt das aus — diese Datei hier ist noch die alte.
+        if (!displayInstalled() && !fs.existsSync(DISPLAY_DECLINED)) {
+          console.log('');
+          info('Neu: „Bildschirm aus“ im Fernzugriff schaltet das Display wirklich ab');
+          hint('und das Handy bekommt ein schärferes Bild (virtueller Bildschirm).');
+          require('child_process').spawnSync(process.execPath, [CLI_PATH, 'display', 'install', '--from-update'], { stdio: 'inherit' });
+        }
         process.exit(0);
       }
       bad(/ERGEBNIS:/.test(finalLog) ? 'Update NICHT übernommen — Grund siehe oben.' : 'Update-Ablauf ohne Ergebnis beendet.');
@@ -932,6 +1083,20 @@ fi
   }
 
   // ── help ────────────────────────────────────────────────────────────────
+  // ── tms-terminal display ── virtueller Bildschirm (Windows) ────────────
+  case 'display':
+  case 'bildschirm': {
+    if (os.platform() !== 'win32') {
+      warn('Der virtuelle Bildschirm gibt es bisher nur für Windows.');
+      break;
+    }
+    const sub = rest[0] || 'status';
+    if (sub === 'install' || sub === 'uninstall') process.exit(displaySetup(sub, has('--from-update')) ? 0 : 1);
+    if (sub === 'test') process.exit((await displayTest()) ? 0 : 1);
+    displayStatus();
+    break;
+  }
+
   case 'help': {
     printHelp();
     break;
@@ -978,6 +1143,8 @@ ${b('Einrichtung & Pflege')}
                                (bei Fehlern läuft der alte Server weiter)
   tms-terminal rebuild         TypeScript neu übersetzen
   tms-terminal version         Version und Git-Stand
+  tms-terminal display         Windows: virtueller Bildschirm für „Bildschirm aus“
+      install | test | uninstall einrichten (einmal Admin-Klick), Probelauf, entfernen
   tms-terminal uninstall       Alles entfernen (Konfiguration, globaler Befehl)
 
 ${g('Rückfragen überspringen: --yes · Dateien: ~/.tms-terminal/')}
