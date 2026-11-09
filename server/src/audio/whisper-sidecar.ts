@@ -35,6 +35,18 @@ const SIDECAR_DIR = path.join(SERVER_ROOT, 'audio');
 const SIDECAR_SCRIPT = path.join(SIDECAR_DIR, 'whisper_sidecar_mlx.py');
 const VENV_PYTHON = path.join(SIDECAR_DIR, '.venv-mlx', 'bin', 'python3');
 
+/** Kann dieses Gerät diktieren? mlx-whisper gibt es nur auf dem Mac, und nur mit
+ *  eingerichteter .venv-mlx. Die App blendet das Mikro aus, wenn kein Gerät im
+ *  Bund das meldet (`/health` → caps). */
+export function dictationAvailable(
+  script: string = SIDECAR_SCRIPT,
+  python: string = VENV_PYTHON,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const fs = require('fs');
+  return platform === 'darwin' && fs.existsSync(script) && fs.existsSync(python);
+}
+
 let sidecar: ChildProcess | null = null;
 let lineBuffer = '';
 let requestId = 0;

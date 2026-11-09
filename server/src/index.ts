@@ -27,7 +27,7 @@ import { PtyDaemonClient } from './terminal/ptyd/client';
 import { usePtyKeeper } from './terminal/terminal.factory';
 import { titleStore } from './terminal/titles';
 import { clipboardHub } from './clipboard';
-import { shutdown as shutdownWhisper, prewarm as prewarmWhisper } from './audio/whisper-sidecar';
+import { shutdown as shutdownWhisper, prewarm as prewarmWhisper, dictationAvailable } from './audio/whisper-sidecar';
 import { shutdown as shutdownRewriter, prewarm as prewarmRewriter } from './audio/prompt-rewriter-sidecar';
 import { managerService } from './websocket/ws.handler';
 import { isAutoApprove, setAutoApprove } from './websocket/auto.approve.state';
@@ -311,7 +311,7 @@ async function main(): Promise<void> {
       // build/startedAt: which code this server really runs — `tms-terminal
       // version` (and a look from another machine) can tell a finished update
       // from one that stopped halfway.
-      res.end(JSON.stringify({ status: 'ok', platform: getPlatform(), build: RUNNING_BUILD, startedAt: STARTED_AT }));
+      res.end(JSON.stringify({ status: 'ok', platform: getPlatform(), build: RUNNING_BUILD, startedAt: STARTED_AT, caps: dictationAvailable() ? ['dictation'] : [] }));
     } else {
       res.writeHead(404);
       res.end('Not found');
