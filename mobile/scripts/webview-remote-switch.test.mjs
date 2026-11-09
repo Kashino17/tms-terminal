@@ -177,4 +177,33 @@ if (!PW) {
       } finally { await browser.close(); }
     });
   }
+
+  // Nutzer-Screenshot: auf WIN stand "Mac per Fingerabdruck entsperren" und der
+  // Touch-ID-Knopf. Der Sperrzustand des Macs darf den Wechsel nicht überleben,
+  // und ein Gerät ohne Entsperren zeigt den Knopf gar nicht.
+  test('Mac-Sperrhinweis und Touch ID verschwinden auf WIN', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      const r = await page.evaluate(({ MAC, WIN }) => {
+        show('remote');
+        const vis = (sel) => { const el = document.querySelector(sel); return !!el && !el.hidden && getComputedStyle(el).display !== 'none'; };
+        window.TMSRemote.switchTo('mac');
+        window.TMSBridge.setRemoteTarget(MAC);
+        window.__open(0); window.__startedWith(0, { unlock: true });
+        window.__socks[0].onmessage({ data: JSON.stringify({ type: 'remote:locked', payload: { locked: true } }) });
+        const onMac = { banner: vis('#remoteLockBanner'), touch: vis('[data-btn="touchid"]') };
+        window.TMSRemote.switchTo('win');
+        window.TMSBridge.setRemoteTarget(WIN);
+        window.__open(1);
+        const connecting = { banner: vis('#remoteLockBanner') };
+        window.__startedWith(1, { unlock: false });
+        const onWin = { banner: vis('#remoteLockBanner'), touch: vis('[data-btn="touchid"]') };
+        return { onMac, connecting, onWin };
+      }, { MAC, WIN });
+      assert.deepEqual(errors, []);
+      assert.deepEqual(r.onMac, { banner: true, touch: true }, 'am gesperrten Mac: Hinweis + Knopf');
+      assert.equal(r.connecting.banner, false, 'schon beim Verbinden ist der Mac-Hinweis weg');
+      assert.deepEqual(r.onWin, { banner: false, touch: false }, 'auf WIN weder Hinweis noch Touch ID');
+    } finally { await browser.close(); }
+  });
 }

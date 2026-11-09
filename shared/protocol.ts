@@ -876,7 +876,7 @@ export interface RemoteStartedMessage {
   type: 'remote:started';
   /** localCursor: true = the pointer is NOT in the video; draw it from remote:cursor. */
   /** keyframeOnDemand: false = remote:keyframe can't be honoured (Windows) — the app should drop less. */
-  payload: { width: number; height: number; scale: number; fps: number; codec: 'avc1'; localCursor?: boolean; keyframeOnDemand?: boolean };
+  payload: { width: number; height: number; scale: number; fps: number; codec: 'avc1'; localCursor?: boolean; keyframeOnDemand?: boolean; unlock?: boolean };
 }
 /** Pointer position on the Mac, normalized 0..1 — only after a localCursor start. */
 export interface RemoteCursorMessage { type: 'remote:cursor'; payload: { x: number; y: number } }

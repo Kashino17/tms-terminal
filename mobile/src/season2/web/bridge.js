@@ -3756,12 +3756,45 @@
     // — er wird einfach weiterbedient, sein Zustand (SPS/PPS, letztes
     // Vollbild) bleibt gueltig, nur das Ziel seiner naechsten drawImage()-
     // Aufrufe aendert sich.
+    // ── Entsperren per Fingerabdruck gibt es nur am Mac ─────────────────────
+    // Der Sperrhinweis blieb vom Mac stehen: der Mac meldete "gesperrt", nach
+    // dem Wechsel zu WIN setzte nichts das zurück (Windows meldet keinen
+    // Sperrzustand). Und der Touch-ID-Knopf stand bei jedem Gerät da. Jetzt:
+    // Zustand pro Verbindung, und der Server sagt im remote:started, ob das
+    // Gerät entsperrt werden kann (aeltere Server: am Geraetenamen erkannt).
+    var unlockKnown = null;
+    (function () {
+      var st = document.createElement('style');
+      st.textContent = 'body.remote-no-unlock [data-btn="touchid"],'
+        + 'body.remote-no-unlock [data-code="__touchid"],'
+        + 'body.remote-no-unlock #remoteLockBanner{display:none!important}';
+      document.head.appendChild(st);
+    })();
+    function remoteUnlockable() {
+      if (unlockKnown !== null) return unlockKnown;
+      var id = window.__remoteSrv;
+      var srv = (window.TMS_DATA.servers || []).filter(function (x) { return x.id === id; })[0];
+      return !(srv && typeof window.__devShort === 'function' && window.__devShort(srv) === 'WIN');
+    }
+    function renderLockUi() {
+      var can = remoteUnlockable();
+      document.body.classList.toggle('remote-no-unlock', !can);
+      var banner = document.getElementById('remoteLockBanner');
+      if (banner) banner.hidden = !(can && window.remoteState.locked);
+    }
+    function resetLock() {
+      window.remoteState.locked = false;
+      unlockKnown = null;
+      renderLockUi();
+    }
+
     var realBuildRemoteScreen = window.buildRemoteScreen;
     window.buildRemoteScreen = function () {
       if (typeof realBuildRemoteScreen === 'function') realBuildRemoteScreen();
       canvas = document.getElementById('remoteCanvas');
       ctx = canvas ? canvas.getContext('2d') : null;
       layoutStage();
+      renderLockUi();
       if (lastVeil) veil(lastVeil);
       if (lastStat) stat(lastStat);
     };
@@ -3850,6 +3883,8 @@
           window.remoteState.running = true;
           window.remoteState.localCursor = !!msg.payload.localCursor;
           window.remoteState.keyframeOnDemand = msg.payload.keyframeOnDemand !== false;
+          if (typeof msg.payload.unlock === 'boolean') unlockKnown = msg.payload.unlock;
+          renderLockUi();
           window.remoteState.w = msg.payload.width;
           window.remoteState.h = msg.payload.height;
           window.remoteState.scale = msg.payload.scale;
@@ -3890,8 +3925,7 @@
           break;
         case 'remote:locked':
           window.remoteState.locked = !!(msg.payload && msg.payload.locked);
-          var lockBanner = document.getElementById('remoteLockBanner');
-          if (lockBanner) lockBanner.hidden = !window.remoteState.locked;
+          renderLockUi();
           break;
         case 'remote:stopped':
           window.remoteState.running = false;
@@ -3930,6 +3964,8 @@
         cursor.known = false;
         cursor.srv = null;
         if (cursor.settleTimer) { clearTimeout(cursor.settleTimer); cursor.settleTimer = null; }
+        // Der Mac meldet seinen Sperrzustand gleich zu Beginn neu.
+        resetLock();
         ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
         veil('Verbinde …');
       };
@@ -4039,6 +4075,7 @@
         if (ws) { try { ws.close(); } catch (e) {} ws = null; }
         if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
         window.remoteState.running = false;
+        resetLock();
       },
       /**
        * I7: der Hintergrundwechsel (SeasonTwoWebRoot.tsx, ueber AppState)

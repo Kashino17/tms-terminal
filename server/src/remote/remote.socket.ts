@@ -313,7 +313,9 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
 
       reply({
         type: 'remote:started',
-        payload: { ...info, fps: opts.fps, codec: 'avc1', localCursor, keyframeOnDemand: c.keyframeOnDemand !== false },
+        payload: { ...info, fps: opts.fps, codec: 'avc1', localCursor, keyframeOnDemand: c.keyframeOnDemand !== false,
+          // Fingerabdruck-Entsperren gibt es nur, wo der Sperrbildschirm gemeldet wird (Mac).
+          unlock: typeof c.onLockChange === 'function' },
       });
       // Section 9 of the spec requires logging time + source IP for every
       // session start — `logger.info` timestamps its own lines, `ip` comes
