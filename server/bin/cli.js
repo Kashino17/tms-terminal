@@ -133,7 +133,76 @@ function ensureBuilt() {
       bad('Build hat keine Ausgabe erzeugt (' + DIST_INDEX + ').');
       process.exit(1);
     }
+    stampBuild();
   }
+}
+
+/** Stand des gebauten Codes neben den Build legen (siehe update-runner.js). */
+function stampBuild(dir = DIST_DIR) {
+  try { require('./update-runner.js').writeBuildInfo(ROOT, dir); } catch { /* ohne Stempel geht es auch */ }
+}
+
+function readStamp(dir = DIST_DIR) {
+  try { return JSON.parse(fs.readFileSync(path.join(dir, 'build-info.json'), 'utf8')); } catch { return null; }
+}
+
+/** /health des laufenden Servers — sagt, welchen Code er WIRKLICH ausführt. */
+function fetchHealth(port, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    const req = require('http').get({ host: '127.0.0.1', port, path: '/health', timeout: timeoutMs }, (res) => {
+      let body = '';
+      res.on('data', (d) => { body += d; });
+      res.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } });
+    });
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+  });
+}
+
+function gitOut(args, timeout = 4000) {
+  try { return execSync(`git ${args}`, { cwd: ROOT, encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); }
+  catch { return ''; }
+}
+
+/**
+ * Quelltext, Build, laufender Server und GitHub nebeneinander — und ein
+ * klares Urteil. Gibt true zurück, wenn alles auf dem neuesten Stand läuft.
+ */
+async function versionReport() {
+  const branch = gitOut('rev-parse --abbrev-ref HEAD');
+  const src = gitOut('rev-parse --short HEAD');
+  const srcSubject = gitOut('log -1 --format=%s');
+  const srcDate = gitOut('log -1 --format=%cd --date=format:%d.%m.%Y\ %H:%M');
+  const built = readStamp();
+  const port = getPort();
+  const health = serverPid() || listenerPids(port).length ? await fetchHealth(port) : null;
+  const remoteLine = branch ? gitOut(`ls-remote origin refs/heads/${branch}`, 10000) : '';
+  const remote = remoteLine ? remoteLine.split(/\s+/)[0].slice(0, src.length || 7) : '';
+
+  console.log(`\n${c.bold('TMS Terminal')} ${c.gray(`· ${os.platform()}`)}\n`);
+  console.log(`   Quelltext:  ${src ? `${branch} @ ${src}` : '?'} ${c.gray(srcSubject ? `— ${srcSubject}${srcDate ? ` (${srcDate})` : ''}` : '')}`);
+  console.log(`   Gebaut:     ${built ? `${built.short} ${c.gray(`am ${new Date(built.builtAt).toLocaleString('de-DE')}`)}` : c.gray('ohne Stand-Stempel (vor dieser Version gebaut)')}`);
+  let running = '';
+  if (health && health.build && health.build.short) {
+    running = health.build.short;
+    console.log(`   Läuft:      ${running} ${c.gray(`seit ${new Date(health.startedAt).toLocaleString('de-DE')}`)}`);
+  } else if (health) {
+    console.log(`   Läuft:      ${c.yellow('alter Server — meldet seinen Stand noch nicht')}`);
+  } else {
+    console.log(`   Läuft:      ${c.gray('Server läuft nicht')}`);
+  }
+  console.log(`   GitHub:     ${remote ? remote : c.gray('nicht erreichbar')}`);
+  console.log('');
+
+  const problems = [];
+  if (remote && src && remote !== src) problems.push(`Der Quelltext ist nicht der neueste (GitHub: ${remote}) — tms-terminal update`);
+  if (src && built && built.short !== src) problems.push('Der Build ist älter als der Quelltext — das letzte Update hat nicht fertig gebaut (tms-terminal logs update)');
+  if (health && !running) problems.push('Der laufende Server ist von vor dieser Version — tms-terminal restart (oder update)');
+  else if (running && src && running !== src) problems.push(`Der Server läuft noch mit ${running} — tms-terminal restart`);
+  if (!problems.length && running) { ok('Alles auf dem neuesten Stand — der Server läuft mit dem aktuellen Code.'); return true; }
+  if (!problems.length) { ok('Quelltext und Build sind aktuell.'); return true; }
+  for (const p of problems) bad(p);
+  return false;
 }
 
 function ensureConfigDir() {
@@ -632,8 +701,8 @@ async function main() {
 
   // ── tms-terminal version ────────────────────────────────────────────────
   case 'version': {
-    const { v, git } = version();
-    console.log(`tms-terminal v${v}${git ? ` (${git})` : ''}`);
+    const good = await versionReport();
+    if (!good) process.exit(1);
     break;
   }
 
@@ -673,6 +742,7 @@ async function main() {
     info('Baue TMS Terminal neu...');
     try {
       execSync('npm run build', { cwd: ROOT, stdio: 'inherit' });
+      stampBuild();
       ok('Build fertig.');
       if (serverPid()) hint('Aktiv wird er nach einem Neustart: tms-terminal restart');
     } catch {
@@ -709,18 +779,47 @@ async function main() {
         warn(`Trockenlauf — nichts ausgeführt. Pfade: ${PATHS_FILE}`);
         break;
       }
-      info('Update läuft im Hintergrund...');
+      info('Update läuft...');
       hint('Der Server bleibt an, bis der neue Stand fertig gebaut ist —');
       hint('dann kurzer Neustart. Scheitert etwas, läuft er unverändert weiter.');
-      hint('Unter Windows enden dabei die offenen Terminals (kein Wächter).');
-      hint(`Verlauf: ${UPDATE_LOG}`);
+      hint('Unter Windows enden dabei die offenen Terminals (kein Wächter) — läuft');
+      hint('dieser Befehl in einem TMS-Terminal, bricht die Anzeige dort ab; danach: tms-terminal version');
       const child = spawn(process.execPath, [path.join(ROOT, 'bin', 'update-runner.js'), PATHS_FILE], {
         detached: true, stdio: 'ignore', cwd: ROOT, windowsHide: true,
       });
       child.on('error', (e) => bad(`Update konnte nicht starten: ${e.message}`));
       child.unref();
-      setTimeout(() => process.exit(0), 500);
-      break;
+      // Früher endete der Befehl hier nach einer halben Sekunde, und ob das
+      // Update klappte, stand nur in einer Datei — ein Abbruch blieb unbemerkt.
+      // Jetzt: mitlesen, bis der Ablauf fertig ist, und das Ergebnis sagen.
+      const runnerAlive = () => { try { process.kill(child.pid, 0); return true; } catch { return false; } };
+      let shown = 0;
+      const deadline = Date.now() + 15 * 60_000;
+      pause(400);
+      for (;;) {
+        let text = '';
+        try { text = fs.readFileSync(UPDATE_LOG, 'utf8'); } catch {}
+        if (text.length > shown) {
+          for (const line of text.slice(shown).split(/\r?\n/)) {
+            const m = /^\[[^\]]+\]\s*(.*)$/.exec(line);
+            if (m) console.log(`   ${m[1]}`);
+          }
+          shown = text.length;
+        }
+        if (!runnerAlive() || Date.now() > deadline) break;
+        pause(500);
+      }
+      let finalLog = '';
+      try { finalLog = fs.readFileSync(UPDATE_LOG, 'utf8'); } catch {}
+      console.log('');
+      if (/ERGEBNIS: Update fertig/.test(finalLog)) {
+        ok('Update fertig.');
+        await versionReport();
+        process.exit(0);
+      }
+      bad(/ERGEBNIS:/.test(finalLog) ? 'Update NICHT übernommen — Grund siehe oben.' : 'Update-Ablauf ohne Ergebnis beendet.');
+      hint(`Ganzes Protokoll: tms-terminal logs update   (${UPDATE_LOG})`);
+      process.exit(1);
     }
 
     // Der Server laeuft weiter, solange noch irgendetwas schiefgehen kann.
@@ -765,6 +864,7 @@ if [ ! -f "${NEW_INDEX}" ]; then
   exit 1
 fi
 
+node -e "require('${path.join(ROOT, 'bin', 'update-runner.js').replace(/\\/g, '/')}').writeBuildInfo('${ROOT.replace(/\\/g, '/')}', '${NEW_DIST.replace(/\\/g, '/')}')" || true
 VERSION=$(node -e "console.log(require('./package.json').version)" 2>/dev/null || echo "?")
 echo "[$(date)] v$VERSION ist fertig gebaut. Erst JETZT wird der Server angefasst."
 

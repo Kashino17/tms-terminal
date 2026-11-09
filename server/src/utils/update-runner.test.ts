@@ -11,7 +11,7 @@ const P = {
 };
 
 /** Fake world: records every action; `fail` names the step that should fail. */
-function world({ fail = '', serverComesUp = true } = {}) {
+function world({ fail = '', serverComesUp = true, dirty = '' } = {}) {
   const log: string[] = [];
   const files = new Set<string>([P.dist]);
   return {
@@ -32,6 +32,8 @@ function world({ fail = '', serverComesUp = true } = {}) {
       remove(p: string) { log.push(`rm ${p}`); files.delete(p); },
       rename(a: string, b: string) { log.push(`mv ${a} -> ${b}`); if (files.has(a)) { files.delete(a); files.add(b); } },
       say(_msg: string) { /* log line */ },
+      output(cmd: string) { return cmd.startsWith('git status') ? dirty : 'x'; },
+      writeBuildInfo(dir: string) { log.push(`stamp ${dir}`); },
       sleep() { /* no wait in tests */ },
     },
   };
@@ -71,4 +73,23 @@ test('Windows-Update: neuer Server kommt nicht hoch → zurück auf das alte dis
   const tail = w.log.slice(w.log.findIndex((l) => l.startsWith('node status')));
   assert.ok(tail.some((l) => l === `mv ${P.oldDist} -> ${P.dist}`), 'altes dist zurück');
   assert.ok(tail.some((l) => l.startsWith('node start')), 'alter Server wieder gestartet');
+});
+
+// Unter Windows schreibt npm install die package-lock.json um — beim nächsten
+// Update brach `git pull` daran ab, still, und der Server blieb alt.
+test('Windows-Update: lokale Änderungen werden vor git pull beiseitegelegt, nicht verworfen', () => {
+  const w = world({ dirty: ' M package-lock.json' });
+  assert.equal(runUpdate(P, w.deps), true);
+  const stash = w.log.findIndex((l) => l.startsWith('run git stash push'));
+  const pull = w.log.indexOf('run git pull');
+  assert.ok(stash >= 0 && stash < pull, 'stash vor pull');
+  assert.ok(!w.log.some((l) => /reset --hard|checkout -- /.test(l)), 'nichts wird verworfen');
+});
+
+test('Windows-Update: sauberer Baum — kein stash; der Build bekommt seinen Stand-Stempel', () => {
+  const w = world();
+  assert.equal(runUpdate(P, w.deps), true);
+  assert.ok(!w.log.some((l) => l.startsWith('run git stash')));
+  const stamp = w.log.indexOf(`stamp ${P.newDist}`);
+  assert.ok(stamp >= 0 && stamp < w.log.indexOf('node stop'), 'Stempel im neuen Build, bevor getauscht wird');
 });

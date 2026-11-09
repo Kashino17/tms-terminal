@@ -1,4 +1,5 @@
 import * as http from 'http';
+import { RUNNING_BUILD, STARTED_AT } from './utils/build-info';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -303,7 +304,10 @@ async function main(): Promise<void> {
       else { res.writeHead(404); res.end('Not found'); }
     } else if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', platform: getPlatform() }));
+      // build/startedAt: which code this server really runs — `tms-terminal
+      // version` (and a look from another machine) can tell a finished update
+      // from one that stopped halfway.
+      res.end(JSON.stringify({ status: 'ok', platform: getPlatform(), build: RUNNING_BUILD, startedAt: STARTED_AT }));
     } else {
       res.writeHead(404);
       res.end('Not found');
