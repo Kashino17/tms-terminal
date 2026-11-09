@@ -439,8 +439,9 @@
   /* ============================================================
      Toasts
      ============================================================ */
-  #toasts { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 96px); transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
-  .toast { background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); color: var(--text); padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 500; opacity: 0; transform: translateY(8px) scale(.96); transition: opacity 260ms var(--spring), transform 260ms var(--spring); white-space: nowrap; }
+  #toasts { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 96px); transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none;
+    width: calc(100vw - 32px); max-width: 560px; }
+  .toast { background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); color: var(--text); padding: 10px 18px; border-radius: 20px; font-size: 13px; line-height: 1.35; font-weight: 500; opacity: 0; transform: translateY(8px) scale(.96); transition: opacity 260ms var(--spring), transform 260ms var(--spring); white-space: normal; text-align: center; max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
   .toast.show { opacity: 1; transform: translateY(0) scale(1); }
   .toast--undo { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
   .toast__dash { opacity: .6; }
@@ -3133,6 +3134,10 @@
       // jeder Weg, es ueber ein echtes pointerup noch zu bemerken) gerade
       // komplett neu aufgebaut wird (siehe buildRemoteScreen-Einklinkung).
       if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+      // Weg vom Fernzugriff = Sitzung am Rechner ruht: kein Bildstrom im
+      // Hintergrund, Vorhang weg, Ton wieder am Rechner. Zurueck auf dem
+      // Bildschirm verbindet sie sich wieder (bridge.js, buildRemoteScreen).
+      if (window.TMSRemote && typeof window.TMSRemote.suspend === 'function') window.TMSRemote.suspend();
     }
     // Terminals, Browser UND Manager haben ihre eigene Bar-Seite (Eingabezeile,
     // Adressleiste bzw. Chat-Eingabe) — überall sonst ist die Navigation die

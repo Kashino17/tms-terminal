@@ -253,4 +253,58 @@ if (!PW) {
       } finally { await browser.close(); }
     });
   }
+
+  // Nutzer: "Wenn ich zurück zum Terminal gehe, sollte der Fernzugriff aus sein" —
+  // vorher lief die Sitzung im Hintergrund weiter (Vorhang/Ton am Rechner blieben
+  // an), und jede Wiederverbindung meldete erneut "Server zu alt".
+  test('Fernzugriff verlassen pausiert die Sitzung, zurück verbindet neu', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      const r = await page.evaluate(async ({ MAC }) => {
+        document.body.classList.remove('is-locked');
+        show('remote');
+        window.TMSRemote.switchTo('mac');
+        window.TMSBridge.setRemoteTarget(MAC);
+        window.__open(0); window.__startedWith(0, {});
+        show('terminals');
+        const s0 = window.__socks[0];
+        const left = { stopSent: s0.sent.some((d) => d.indexOf('remote:stop') >= 0), closed: s0.readyState >= 2, socks: window.__socks.length };
+        window.TMSRemote.resume();               // App aus dem Hintergrund, Terminal offen
+        await new Promise((res) => setTimeout(res, 50));
+        const resumedOnTerminals = window.__socks.length;
+        show('remote');
+        await new Promise((res) => setTimeout(res, 50));
+        return { left, resumedOnTerminals, back: window.__socks.length };
+      }, { MAC });
+      assert.deepEqual(errors, []);
+      assert.deepEqual(r.left, { stopSent: true, closed: true, socks: 1 }, 'beim Verlassen beendet');
+      assert.equal(r.resumedOnTerminals, 1, 'im Terminal verbindet nichts neu');
+      assert.equal(r.back, 2, 'zurück im Fernzugriff: neue Verbindung');
+    } finally { await browser.close(); }
+  });
+
+  test('Hinweis "Server zu alt" nur einmal und nur im Fernzugriff; passt auf den Bildschirm', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      const r = await page.evaluate(async ({ MAC }) => {
+        document.body.classList.remove('is-locked');
+        show('remote');
+        window.TMSRemote.toggleOption('audio');
+        await new Promise((res) => setTimeout(res, 2800)); // Schalter-Hinweis abwarten
+        const count = () => [...document.querySelectorAll('#toasts .toast')].filter((t) => /zu alt/.test(t.textContent)).length;
+        window.TMSRemote.switchTo('mac');
+        window.TMSBridge.setRemoteTarget(MAC);
+        window.__open(0); window.__startedWith(0, {});   // alter Server: meldet nichts
+        window.__startedWith(0, {});                     // Wiederverbindung
+        window.__startedWith(0, {});
+        const n = count();
+        const t = [...document.querySelectorAll('#toasts .toast')].find((x) => /zu alt/.test(x.textContent));
+        const box = t.getBoundingClientRect();
+        return { n, left: box.left, right: box.right, vw: window.innerWidth, lines: Math.round(box.height / 17) };
+      }, { MAC });
+      assert.deepEqual(errors, []);
+      assert.equal(r.n, 1, 'nur einmal');
+      assert.ok(r.left >= 0 && r.right <= r.vw, `ganz sichtbar (${r.left}..${r.right} von ${r.vw})`);
+    } finally { await browser.close(); }
+  });
 }

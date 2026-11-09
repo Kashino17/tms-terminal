@@ -3496,13 +3496,23 @@
       } catch (e) { soundReset(); }
     }
 
-    /** Was der Rechner wirklich macht, nach dem Start sagen — ein Wunsch ist kein Versprechen. */
+    function remoteVisible() {
+      return !!document.querySelector('section[data-screen="remote"]:not([hidden])');
+    }
+    /** Was der Rechner wirklich macht, nach dem Start sagen — ein Wunsch ist
+     *  kein Versprechen. Einmal pro Geraet und Inhalt, und nur im Fernzugriff:
+     *  jede Wiederverbindung wiederholte die Meldung, auch im Terminal. */
+    var optsReported = {};
     function reportRemoteOpts(p) {
+      if (!remoteVisible()) return;
       var miss = [];
       if (remoteOpts.audio && p.audio !== true) miss.push('Ton');
       if (remoteOpts.curtain && p.curtain !== true) miss.push('Verdunkeln');
       if (!miss.length || typeof window.toast !== 'function') return;
       var old = p.audio === undefined && p.curtain === undefined;
+      var key = (remoteTarget ? remoteTarget.host + ':' + remoteTarget.port : '?') + '|' + miss.join('+') + '|' + old;
+      if (optsReported[key]) return;
+      optsReported[key] = true;
       window.toast(miss.join(' + ') + (old
         ? ': Server auf dem Gerät zu alt — dort einmal tms-terminal update'
         : ' auf diesem Gerät nicht verfügbar'));
@@ -3891,6 +3901,8 @@
     var realBuildRemoteScreen = window.buildRemoteScreen;
     window.buildRemoteScreen = function () {
       if (typeof realBuildRemoteScreen === 'function') realBuildRemoteScreen();
+      // Zurueck im Fernzugriff: eine beim Verlassen pausierte Sitzung geht weiter.
+      if (wantRunning && suspended) setTimeout(function () { window.TMSRemote.resume(); }, 0);
       canvas = document.getElementById('remoteCanvas');
       ctx = canvas ? canvas.getContext('2d') : null;
       layoutStage();
@@ -4206,6 +4218,7 @@
         // ein spaeteres resume() haette zusammen mit diesem Zeitgeber zwei
         // parallele Verbindungen aufgemacht.
         suspended = true;
+        soundReset();
         if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
         if (ws) { try { ws.close(); } catch (e) {} ws = null; }
@@ -4214,7 +4227,13 @@
       },
       /** Setzt nur fort, was vorher lief (wantRunning) — nach einem
        *  expliziten "Trennen" bleibt das ein No-op, siehe suspend() oben. */
-      resume: function () { suspended = false; maybeConnect(); },
+      resume: function () {
+        // Nur im Fernzugriff selbst: kommt die App aus dem Hintergrund zurueck,
+        // waehrend das Terminal offen ist, bleibt die Sitzung pausiert.
+        if (!remoteVisible()) return;
+        suspended = false;
+        maybeConnect();
+      },
       /** Stufenwechsel = neu starten: ffmpeg auf Windows kann die Bitrate nicht im Lauf aendern. */
       /** Ton aufs Handy / Verdunkeln umschalten — neu starten wie bei der Qualitaet. */
       toggleOption: function (name) {
