@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Fernzugriff: Wer den Fernzugriff verlaesst, pausiert die Sitzung - der Computer bekommt Bildschirm und Ton zurueck, im Hintergrund laeuft nichts mehr; zurueck im Fernzugriff verbindet er sich von selbst. Hinweise wie Server zu alt kommen nur noch einmal pro Geraet und nur im Fernzugriff. Meldungen werden nicht mehr abgeschnitten, sie brechen um und passen sich zu- und aufgeklappt an. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Fernzugriff laeuft weiter, bis du ihn selbst schliesst: Bildschirmwechsel, App im Hintergrund oder Geraetewechsel beenden ihn nicht mehr - am Computer bleiben Bildschirm aus und Ton am Handy. Ein gruener Punkt in der Insel zeigt das an, oben in der geoeffneten Insel: Oeffnen oder Schliessen. Beenden mit dem X im Fernzugriff oder Schliessen in der Insel. Windows: Bildschirm aus schaltet das Display wirklich ab (virtueller Bildschirm, schaerferes Bild). MacBook: Auto ist schaerfer. Dafuer auf jedem Computer tms-terminal update ausfuehren und den Server neu starten. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
