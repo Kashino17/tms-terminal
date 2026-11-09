@@ -1773,6 +1773,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         textZoom={100}
         onMessage={onMessage}
         keyboardDisplayRequiresUserAction={false}
+        // Fernzugriff "Ton aufs Handy": Web Audio darf ohne vorherige
+        // Berührung spielen — sonst blieb der Ton bis zum ersten Tipp stumm.
+        mediaPlaybackRequiresUserAction={false}
         hideKeyboardAccessoryView
         // The page brings its own scrolling, gestures and pull-to-spotlight.
         scrollEnabled={false}

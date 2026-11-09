@@ -2,7 +2,8 @@ import { spawn, ChildProcess, execFileSync } from 'node:child_process';
 import type { RemoteErrorCode } from '../../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types';
 import { splitLines } from '../lines';
-import { winCursorScriptPath } from '../paths';
+import { winCursorScriptPath, winAudioScriptPath, winCurtainScriptPath } from '../paths';
+import { createOggReader, buildOpusEncoderArgs } from '../ogg';
 
 /** GPU encoders first — ddagrab already hands us frames on the graphics card. */
 export const ENCODER_PREFERENCE = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'libx264'] as const;
@@ -169,6 +170,64 @@ const START_TIMEOUT_MS = 10_000;
 const POINTER_GIVE_UP = 2;
 let pointerFailures = 0;
 
+/** Sound/curtain helpers compile C# on start — give them this long to report. */
+const EXTRA_READY_MS = 8_000;
+
+function powershell(script: string, extra: string[] = []): ChildProcess {
+  return spawn('powershell.exe',
+    ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...extra],
+    { stdio: ['pipe', 'pipe', 'pipe'] });
+}
+
+/** Puts back mute state / brightness a killed helper left behind. */
+function restoreAfterKill(script: string) {
+  try { powershell(script, ['-Restore']).on('error', () => {}); } catch { /* best effort */ }
+}
+
+/** First JSON line that says ready (→ its payload) or error (→ null), on the given stream. */
+function waitReady(proc: ChildProcess, stream: NodeJS.ReadableStream | null, key: string): Promise<Record<string, unknown> | null> {
+  return new Promise((resolve) => {
+    let rest = '';
+    let done = false;
+    const finish = (v: Record<string, unknown> | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
+    const timer = setTimeout(() => finish(null), EXTRA_READY_MS);
+    stream?.on('data', (b: Buffer) => {
+      if (done) return;
+      const split = splitLines(rest, b.toString());
+      rest = split.rest;
+      for (const line of split.lines) {
+        const t = line.trim();
+        if (!t.startsWith('{')) continue;
+        try {
+          const obj = JSON.parse(t) as { ready?: Record<string, unknown>; error?: unknown };
+          if (obj.ready && obj.ready[key] === true) return finish(obj.ready);
+          if (obj.error) return finish(null);
+        } catch { /* noise */ }
+      }
+    });
+    proc.on('exit', () => finish(null));
+    proc.on('error', () => finish(null));
+  });
+}
+
+/** Ends a helper that restores on stdin EOF; a kill instead triggers -Restore. */
+function endHelper(proc: ChildProcess | null, script: string) {
+  if (!proc) return;
+  let exited = proc.exitCode !== null;
+  proc.on('exit', () => { exited = true; });
+  try { proc.stdin?.end(); } catch { /* already gone */ }
+  setTimeout(() => {
+    if (exited) return;
+    try { proc.kill(); } catch { /* already gone */ }
+    restoreAfterKill(script);
+  }, 2_000).unref();
+}
+
 export function createWin32Capture(): ScreenCapture {
   /** The ffmpeg whose picture goes out. */
   let child: ChildProcess | null = null;
@@ -183,6 +242,10 @@ export function createWin32Capture(): ScreenCapture {
   let onError: (c: RemoteErrorCode, m: string) => void = () => {};
   let onCursor: ((x: number, y: number) => void) | null = null;
   let pointer: ChildProcess | null = null;
+  let onAudio: (packet: Buffer) => void = () => {};
+  let curtainProc: ChildProcess | null = null;
+  let soundProc: ChildProcess | null = null;
+  let opusProc: ChildProcess | null = null;
   // Same as on macOS: a planned shutdown must not be reported as a crash, or the
   // restart logic from Task 18 would start the just-stopped session again.
   let stopping = false;
@@ -225,6 +288,51 @@ export function createWin32Capture(): ScreenCapture {
     setTimeout(() => { try { p.kill(); } catch { /* already gone */ } }, 300).unref();
   }
 
+  /** Black curtain (curtain-helper.ps1): true once it is up and left out of the capture. */
+  async function startCurtain(): Promise<boolean> {
+    const p = powershell(winCurtainScriptPath());
+    curtainProc = p;
+    p.stdin?.on('error', () => {});
+    p.stderr?.on('data', () => {});
+    p.on('exit', (code) => {
+      // Died by itself (not our stdin EOF): put the brightness back.
+      if (curtainProc === p && code !== 0 && !stopping) restoreAfterKill(winCurtainScriptPath());
+    });
+    const ok = (await waitReady(p, p.stdout, 'curtain')) !== null;
+    if (!ok) { endHelper(p, winCurtainScriptPath()); if (curtainProc === p) curtainProc = null; }
+    return ok;
+  }
+
+  /** Sound: audio-helper.ps1 (PCM) → ffmpeg (Opus in Ogg) → packets. */
+  async function startSound(): Promise<boolean> {
+    const p = powershell(winAudioScriptPath());
+    soundProc = p;
+    p.stdin?.on('error', () => {});
+    const ready = await waitReady(p, p.stderr, 'audio');
+    if (!ready || stopping) { endHelper(p, winAudioScriptPath()); if (soundProc === p) soundProc = null; return false; }
+    const rate = Number(ready.rate) > 0 ? Number(ready.rate) : 48000;
+    const enc = spawn('ffmpeg', buildOpusEncoderArgs(rate, 2), { stdio: ['pipe', 'pipe', 'ignore'] });
+    opusProc = enc;
+    enc.stdin?.on('error', () => {});
+    enc.on('error', () => {});
+    p.stdout?.on('data', (b: Buffer) => { if (enc.stdin?.writable) enc.stdin.write(b); });
+    const reader = createOggReader();
+    enc.stdout?.on('data', (b: Buffer) => { for (const packet of reader.push(b)) onAudio(packet); });
+    p.on('exit', (code) => {
+      try { enc.stdin?.end(); } catch { /* gone */ }
+      if (soundProc === p && code !== 0 && !stopping) restoreAfterKill(winAudioScriptPath());
+    });
+    return true;
+  }
+
+  function stopExtras() {
+    const c = curtainProc, a = soundProc, o = opusProc;
+    curtainProc = null; soundProc = null; opusProc = null;
+    endHelper(c, winCurtainScriptPath());
+    endHelper(a, winAudioScriptPath());
+    if (o) setTimeout(() => { try { o.kill(); } catch { /* gone */ } }, 2_500).unref();
+  }
+
   function launch(opts: CaptureOptions, enc: string): ChildProcess {
     lastSpawnAt = Date.now();
     return spawn('ffmpeg', buildFfmpegArgs(opts, enc), { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -235,6 +343,7 @@ export function createWin32Capture(): ScreenCapture {
     if (child !== proc) return;
     child = null;
     stopPointer();
+    stopExtras();
     if (!stopping) onError('helper_crashed', `ffmpeg beendet (${code})`);
   }
 
@@ -282,7 +391,58 @@ export function createWin32Capture(): ScreenCapture {
   const api: ScreenCapture = {
     keyframeOnDemand: false,
 
-    start(opts) {
+    async start(opts) {
+      // Curtain and sound start alongside ffmpeg; the session waits for their
+      // answer (bounded) so remote:started can say what actually runs.
+      const extras = Promise.all([
+        opts.curtain ? startCurtain().catch(() => false) : Promise.resolve(false),
+        opts.audio ? startSound().catch(() => false) : Promise.resolve(false),
+      ]);
+      let info: CaptureInfo;
+      try {
+        info = await startVideo(opts);
+      } catch (e) {
+        stopExtras();
+        throw e;
+      }
+      const [curtain, audio] = await extras;
+      return {
+        ...info,
+        ...(opts.curtain ? { curtain } : {}),
+        ...(opts.audio ? { audio } : {}),
+      };
+    },
+
+    onData(cb) { onData = cb; },
+    onError(cb) { onError = cb; },
+    onAudio(cb) { onAudio = cb; },
+
+    // ffmpeg cannot cut a keyframe on request (keyframeOnDemand: false tells
+    // the flow control to drop less and never drop a keyframe); a bitrate
+    // change goes through a replacement ffmpeg, see respawn().
+    requestKeyframe() { /* not possible with ffmpeg: see keyframeOnDemand */ },
+    setBitrate(kbps) { wantKbps = kbps; evaluateBitrate(); },
+
+    async stop() {
+      const proc = child;
+      const next = pending;
+      stopping = true;
+      child = null;
+      pending = null;
+      if (respawnTimer) { clearTimeout(respawnTimer); respawnTimer = null; }
+      stopPointer();
+      stopExtras();
+      if (next) { try { next.kill('SIGTERM'); } catch { /* already gone */ } }
+      if (!proc) return;
+      proc.kill('SIGTERM');
+      await new Promise<void>((resolve) => {
+        const kill = setTimeout(() => { proc.kill('SIGKILL'); resolve(); }, 500);
+        proc.on('exit', () => { clearTimeout(kill); resolve(); });
+      });
+    },
+  };
+
+  function startVideo(opts: CaptureOptions): Promise<CaptureInfo> {
       return new Promise<CaptureInfo>((resolve, reject) => {
         const enc = pickEncoder(availableEncoders());
         if (!enc) {
@@ -357,34 +517,8 @@ export function createWin32Capture(): ScreenCapture {
           }
         });
       });
-    },
+  }
 
-    onData(cb) { onData = cb; },
-    onError(cb) { onError = cb; },
-
-    // ffmpeg cannot cut a keyframe on request (keyframeOnDemand: false tells
-    // the flow control to drop less and never drop a keyframe); a bitrate
-    // change goes through a replacement ffmpeg, see respawn().
-    requestKeyframe() { /* not possible with ffmpeg: see keyframeOnDemand */ },
-    setBitrate(kbps) { wantKbps = kbps; evaluateBitrate(); },
-
-    async stop() {
-      const proc = child;
-      const next = pending;
-      stopping = true;
-      child = null;
-      pending = null;
-      if (respawnTimer) { clearTimeout(respawnTimer); respawnTimer = null; }
-      stopPointer();
-      if (next) { try { next.kill('SIGTERM'); } catch { /* already gone */ } }
-      if (!proc) return;
-      proc.kill('SIGTERM');
-      await new Promise<void>((resolve) => {
-        const kill = setTimeout(() => { proc.kill('SIGKILL'); resolve(); }, 500);
-        proc.on('exit', () => { clearTimeout(kill); resolve(); });
-      });
-    },
-  };
   if (pointerFailures < POINTER_GIVE_UP) api.onCursor = (cb) => { onCursor = cb; };
   return api;
 }

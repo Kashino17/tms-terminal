@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import {
-  isRemotePath, handleRemoteConnection, QUALITY_PRESETS, packAccessUnit, computeRttMs,
+  isRemotePath, handleRemoteConnection, QUALITY_PRESETS, packAccessUnit, computeRttMs, packAudio,
 } from './remote.socket';
 import { logger } from '../utils/logger';
 import { RemoteCaptureError } from './capture/capture.types';
@@ -88,7 +88,7 @@ test('remote:start meldet die Bildschirmmasse zurueck', async () => {
   const started = ws.typed('remote:started');
   assert.equal(started.length, 1);
   assert.deepEqual(started[0].payload,
-    { width: 3024, height: 1964, scale: 2, fps: 30, codec: 'avc1', localCursor: false, keyframeOnDemand: true, unlock: false });
+    { width: 3024, height: 1964, scale: 2, fps: 30, codec: 'avc1', localCursor: false, keyframeOnDemand: true, unlock: false, audio: false, curtain: false });
   assert.deepEqual(capture.started, { maxWidth: 1600, fps: 30, bitrateKbps: 1500, localCursor: false });
 });
 
@@ -535,4 +535,31 @@ test('remote:started wird mit der Quell-IP protokolliert', async (t) => {
 
   assert.ok(calls.some((m) => m.includes('203.0.113.7')),
     'Abschnitt 9 der Spezifikation verlangt Zeit und Quell-IP im Protokoll');
+});
+
+// Ton aufs Handy: der Helfer liefert Opus-Pakete, die gehen als eigener
+// Binärtyp (0x02) an die App — am Rahmen-Fluss vorbei, aber nie in eine
+// völlig verstopfte Leitung, und erst wenn die Sitzung wirklich läuft.
+test('Ton-Pakete gehen als 0x02 an die App, Wunsch und Ist werden gemeldet', async () => {
+  const ws = new FakeWs();
+  const capture: any = fakeCapture();
+  let audioCb: (p: Buffer) => void = () => {};
+  capture.onAudio = (cb: (p: Buffer) => void) => { audioCb = cb; };
+  capture.start = async (o: CaptureOptions) => { capture.started = o; return { width: 100, height: 60, scale: 1, audio: true, curtain: true }; };
+  handleRemoteConnection(ws as any, { makeCapture: () => capture, makeInput: () => fakeInput(), isEnabled: () => true });
+  audioCb(Buffer.from([9, 9]));                       // vor dem Start: verworfen
+  send(ws, { type: 'remote:start', payload: { maxWidth: 1600, fps: 30, bitrateKbps: 1500, audio: true, curtain: true } });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(capture.started.audio, true);
+  assert.equal(capture.started.curtain, true);
+  const started = ws.typed('remote:started')[0].payload;
+  assert.equal(started.audio, true);
+  assert.equal(started.curtain, true);
+  audioCb(Buffer.from([1, 2, 3]));
+  ws.bufferedAmount = 5_000_000;
+  audioCb(Buffer.from([4, 5, 6]));                    // Leitung verstopft: übersprungen
+  const bins = ws.sent.filter((m) => Buffer.isBuffer(m) && m[0] === 0x02);
+  assert.equal(bins.length, 1);
+  assert.deepEqual([...bins[0].subarray(5)], [1, 2, 3]);
+  assert.equal(packAudio(Buffer.from([7]), 258).readUInt32BE(1), 258);
 });

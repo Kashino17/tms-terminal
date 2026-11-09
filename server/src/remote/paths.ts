@@ -53,3 +53,13 @@ export function winInputScriptPath(): string {
 export function winCursorScriptPath(): string {
   return path.join(serverRoot(), 'src', 'remote', 'helpers', 'win', 'cursor-helper.ps1');
 }
+
+/** `<root>/src/remote/helpers/win/audio-helper.ps1` — Windows sound capture (WASAPI loopback). */
+export function winAudioScriptPath(): string {
+  return path.join(serverRoot(), 'src', 'remote', 'helpers', 'win', 'audio-helper.ps1');
+}
+
+/** `<root>/src/remote/helpers/win/curtain-helper.ps1` — black screen + dimmed backlight on Windows. */
+export function winCurtainScriptPath(): string {
+  return path.join(serverRoot(), 'src', 'remote', 'helpers', 'win', 'curtain-helper.ps1');
+}

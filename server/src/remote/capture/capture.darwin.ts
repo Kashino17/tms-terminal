@@ -1,5 +1,6 @@
 import { spawn, ChildProcess, execFile } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { RemoteErrorCode } from '../../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types';
 import { RemoteCaptureError, KNOWN_REMOTE_ERROR_CODES } from './capture.types';
@@ -21,7 +22,25 @@ export function buildHelperArgs(opts: CaptureOptions): string[] {
     '--fps', String(opts.fps),
     '--bitrate', String(opts.bitrateKbps),
     ...(opts.localCursor ? ['--local-cursor'] : []),
+    ...(opts.audio ? ['--audio'] : []),
+    ...(opts.curtain ? ['--curtain'] : []),
   ];
+}
+
+/**
+ * The helper's fd 3 carries Opus packets, each prefixed by its length
+ * (u16 big-endian). Returns the complete packets and what's left over.
+ */
+export function splitAudioPackets(rest: Buffer, chunk: Buffer): { packets: Buffer[]; rest: Buffer } {
+  let buf = rest.length ? Buffer.concat([rest, chunk]) : chunk;
+  const packets: Buffer[] = [];
+  while (buf.length >= 2) {
+    const n = buf.readUInt16BE(0);
+    if (buf.length < 2 + n) break;
+    if (n > 0) packets.push(Buffer.from(buf.subarray(2, 2 + n)));
+    buf = buf.subarray(2 + n);
+  }
+  return { packets, rest: Buffer.from(buf) };
 }
 
 export type HelperLine =
@@ -32,7 +51,7 @@ export type HelperLine =
 
 /** Shape of a helper stderr line, loosely — fields are re-checked before use. */
 interface HelperLinePayload {
-  ready?: { width: number; height: number; scale: number };
+  ready?: { width: number; height: number; scale: number; audio?: boolean; curtain?: boolean };
   error?: { code: string; message?: string };
   cursor?: { x: number; y: number };
   locked?: boolean;
@@ -52,6 +71,9 @@ export function parseHelperLine(line: string): HelperLine | null {
         width: obj.ready.width,
         height: obj.ready.height,
         scale: obj.ready.scale > 0 ? obj.ready.scale : 1,
+        // Only when the helper said so — an older helper reports neither.
+        ...(typeof obj.ready.audio === 'boolean' ? { audio: obj.ready.audio } : {}),
+        ...(typeof obj.ready.curtain === 'boolean' ? { curtain: obj.ready.curtain } : {}),
       },
     };
   }
@@ -93,10 +115,25 @@ const START_TIMEOUT_MS = 10_000;
  * below, not by this function throwing.
  */
 function ensureHelperBuilt(): Promise<void> {
-  if (fs.existsSync(helperBinaryPath())) return Promise.resolve();
+  // Also rebuilt when the source is newer than the binary: an update (git
+  // pull) brings new helper features, and the old binary would silently
+  // ignore the new switches (sound, curtain).
+  if (fs.existsSync(helperBinaryPath()) && !helperSourceIsNewer()) return Promise.resolve();
   return new Promise<void>((resolve) => {
     execFile('bash', [macBuildScriptPath()], () => resolve());
   });
+}
+
+function helperSourceIsNewer(): boolean {
+  try {
+    const src = path.join(path.dirname(macBuildScriptPath()), 'TmsRemoteHelper.swift');
+    return fs.statSync(src).mtimeMs > fs.statSync(helperBinaryPath()).mtimeMs;
+  } catch { return false; }
+}
+
+/** A curtain session killed outright leaves the backlight at zero — put it back. */
+function restoreDisplay() {
+  try { execFile(helperBinaryPath(), ['--restore-display'], () => {}); } catch { /* best effort */ }
 }
 
 export function createDarwinCapture(): ScreenCapture {
@@ -105,6 +142,7 @@ export function createDarwinCapture(): ScreenCapture {
   let onError: (c: RemoteErrorCode, m: string) => void = () => {};
   let onCursor: (x: number, y: number) => void = () => {};
   let onLockChange: (locked: boolean) => void = () => {};
+  let onAudio: (packet: Buffer) => void = () => {};
   // Without this flag, a planned shutdown reports itself as a crash — and the
   // restart logic from Task 18 would start the just-stopped session again.
   let stopping = false;
@@ -118,7 +156,16 @@ export function createDarwinCapture(): ScreenCapture {
           + `Einmalig einrichten mit:  bash ${macBuildScriptPath()}`);
       }
       return new Promise<CaptureInfo>((resolve, reject) => {
-        const proc = spawn(helperBinaryPath(), buildHelperArgs(opts), { stdio: ['pipe', 'pipe', 'pipe'] });
+        // fd 3 = the sound channel (only read with `audio`, harmless otherwise).
+        const proc = spawn(helperBinaryPath(), buildHelperArgs(opts), { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+        let audioRest: Buffer = Buffer.alloc(0);
+        const audioPipe = proc.stdio[3] as NodeJS.ReadableStream | null;
+        audioPipe?.on('data', (b: Buffer) => {
+          const split = splitAudioPackets(audioRest, b);
+          audioRest = split.rest;
+          for (const p of split.packets) onAudio(p);
+        });
+        audioPipe?.on('error', () => {});
         child = proc;
         // Task 18: `stop()` (and requestKeyframe/setBitrate, which can be
         // invoked right up to the moment a crash is detected) write to this
@@ -171,8 +218,10 @@ export function createDarwinCapture(): ScreenCapture {
           }
         });
 
-        proc.on('exit', (code) => {
+        proc.on('exit', (code, signal) => {
           child = null;
+          // A planned `quit` restores the display itself; a kill doesn't.
+          if (opts.curtain && (signal || code !== 0)) restoreDisplay();
           if (stopping) return;                      // planned shutdown
           if (!settled) {
             settle();
@@ -192,6 +241,7 @@ export function createDarwinCapture(): ScreenCapture {
     onError(cb) { onError = cb; },
     onCursor(cb) { onCursor = cb; },
     onLockChange(cb) { onLockChange = cb; },
+    onAudio(cb) { onAudio = cb; },
     requestKeyframe() { child?.stdin?.write('keyframe\n'); },
     setBitrate(kbps) { child?.stdin?.write(`bitrate ${Math.round(kbps)}\n`); },
 

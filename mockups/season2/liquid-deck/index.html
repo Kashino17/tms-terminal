@@ -1607,6 +1607,8 @@
   .remote-dot[data-state="off"] { background: #8a8a8e; }
   .remote-name { font-weight: 600; font-size: 13px; }
   .remote-stat { margin-left: auto; font-size: 10px; opacity: .6; font-variant-numeric: tabular-nums; }
+  .remote-opt { opacity: .55; }
+  .remote-opt.on { opacity: 1; background: rgba(10,132,255,.38); box-shadow: inset 0 0 0 1px rgba(120,180,255,.55); }
   .remote-stage { position: relative; background: #05080d; border-radius: 14px; overflow: hidden; flex: none; }
   .remote-stage canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
   .remote-veil { position: absolute; inset: 0; display: grid; place-items: center;
@@ -3305,6 +3307,8 @@
       +   '<span class="remote-stat" id="remoteStat">verbinde …</span>'
       +   '<button class="icon-btn glass" id="remoteTouchId" aria-label="Per Fingerabdruck entsperren" title="Mac mit Fingerabdruck entsperren">🔓</button>'
       +   '<button class="icon-btn glass" id="remoteClip" aria-label="Zwischenablage">📋</button>'
+      +   '<button class="icon-btn glass remote-opt" id="remoteAudio" data-opt="audio" aria-label="Ton aufs Handy" title="Ton des Computers auf dem Handy abspielen (am Computer stumm)">🔊</button>'
+      +   '<button class="icon-btn glass remote-opt" id="remoteCurtain" data-opt="curtain" aria-label="Bildschirm am Gerät verdunkeln" title="Bildschirm am Computer schwarz und dunkel, solange du verbunden bist">🌑</button>'
       +   '<button class="icon-btn glass" id="remoteFull" aria-label="Vollbild">⤢</button>'
       +   '<button class="icon-btn glass" id="remoteQuit" aria-label="Trennen">✕</button>'
       +   '<div class="remote-nav">' + navHtml + '</div>'
@@ -3339,6 +3343,14 @@
     host.querySelector('#remoteLockBanner').addEventListener('click', function (e) {
       e.stopPropagation();
       if (window.TMSRemote && window.TMSRemote.biometricUnlock) window.TMSRemote.biometricUnlock();
+    });
+    // Ton aufs Handy / Bildschirm verdunkeln: Schalter, die bridge.js
+    // speichert und in den Sitzungsstart mitgibt (TMSRemote.toggleOption).
+    Array.prototype.forEach.call(host.querySelectorAll('.remote-opt'), function (b) {
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (window.TMSRemote && window.TMSRemote.toggleOption) window.TMSRemote.toggleOption(b.dataset.opt);
+      });
     });
     host.querySelector('#remoteClip').addEventListener('click', function () {
       setOrbMenu(false);

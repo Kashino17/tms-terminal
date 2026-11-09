@@ -3404,9 +3404,108 @@
     /** Die App zeichnet den Zeiger selbst (siehe "Lokaler Zeiger" unten) —
      *  der Server laesst ihn dafuer aus dem Video weg, wo er das kann. */
     function startPayload() {
-      var p = { localCursor: true };
+      var p = { localCursor: true, audio: !!remoteOpts.audio, curtain: !!remoteOpts.curtain };
       for (var k in PRESETS[preset]) p[k] = PRESETS[preset][k];
       return p;
+    }
+
+    // ── Ton aufs Handy / Bildschirm verdunkeln ─────────────────────────────
+    // Zwei Schalter im Fernzugriff-Menue, pro Handy gemerkt, fuer jedes Geraet
+    // gleich. Sie wirken beim Sitzungsstart — Umschalten startet die Sitzung
+    // neu (wie die Qualitaetsstufe).
+    var remoteOpts = (function () {
+      try { return JSON.parse(localStorage.getItem('tms-remote-opts') || '{}') || {}; } catch (e) { return {}; }
+    })();
+    function saveRemoteOpts() {
+      try { localStorage.setItem('tms-remote-opts', JSON.stringify(remoteOpts)); } catch (e) {}
+    }
+    function renderRemoteOpts() {
+      ['audio', 'curtain'].forEach(function (k) {
+        var b = document.querySelector('.remote-opt[data-opt="' + k + '"]');
+        if (b) b.classList.toggle('on', !!remoteOpts[k]);
+      });
+    }
+
+    // Wiedergabe: Opus-Pakete (0x02) → WebCodecs-AudioDecoder → Web Audio,
+    // mit kleinem Polster gegen Netz-Zacken. Wird das Polster zu gross
+    // (Rueckstau), wird neu angesetzt statt den Ton immer spaeter zu spielen.
+    var sound = { ctx: null, dec: null, next: 0 };
+    function soundCtx() {
+      if (!sound.ctx) {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        try { sound.ctx = new AC({ latencyHint: 'interactive', sampleRate: 48000 }); }
+        catch (e) { try { sound.ctx = new AC(); } catch (e2) { return null; } }
+      }
+      if (sound.ctx.state === 'suspended') { try { sound.ctx.resume(); } catch (e) {} }
+      return sound.ctx;
+    }
+    // Android gibt Ton erst nach einer Beruehrung frei — jede Beruehrung im
+    // Fernzugriff weckt den Ton-Ausgang, falls er noch schlaeft.
+    document.addEventListener('pointerdown', function () {
+      if (remoteOpts.audio && wantRunning) soundCtx();
+    }, true);
+    function soundReset() {
+      if (sound.dec) { try { sound.dec.close(); } catch (e) {} }
+      sound.dec = null;
+      sound.next = 0;
+    }
+    function playSound(data) {
+      var ctx = sound.ctx;
+      if (!ctx || !remoteOpts.audio) { data.close(); return; }
+      var n = data.numberOfFrames, ch = Math.min(2, data.numberOfChannels);
+      var buf = ctx.createBuffer(ch, n, data.sampleRate);
+      try {
+        for (var c = 0; c < ch; c++) {
+          var plane = new Float32Array(n);
+          data.copyTo(plane, { planeIndex: c, format: 'f32-planar' });
+          buf.copyToChannel(plane, c);
+        }
+      } catch (e) {
+        // Aeltere WebViews: nur das eigene Format kopierbar (verschachtelt).
+        var all = new Float32Array(n * data.numberOfChannels);
+        try { data.copyTo(all, { planeIndex: 0 }); } catch (e2) { data.close(); return; }
+        for (var c2 = 0; c2 < ch; c2++) {
+          var p2 = new Float32Array(n);
+          for (var i = 0; i < n; i++) p2[i] = all[i * data.numberOfChannels + c2];
+          buf.copyToChannel(p2, c2);
+        }
+      }
+      data.close();
+      var now = ctx.currentTime;
+      if (sound.next < now + 0.02 || sound.next > now + 0.35) sound.next = now + 0.08;
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(sound.next);
+      sound.next += buf.duration;
+    }
+    function onSoundPacket(view) {
+      if (!remoteOpts.audio || !soundCtx()) return;
+      if (!sound.dec || sound.dec.state === 'closed') {
+        if (typeof AudioDecoder === 'undefined') return;
+        sound.dec = new AudioDecoder({
+          output: playSound,
+          error: function () { soundReset(); },
+        });
+        sound.dec.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 });
+      }
+      var ts = (view[1] << 24 | view[2] << 16 | view[3] << 8 | view[4]) >>> 0;
+      try {
+        sound.dec.decode(new EncodedAudioChunk({ type: 'key', timestamp: ts * 1000, data: view.subarray(5) }));
+      } catch (e) { soundReset(); }
+    }
+
+    /** Was der Rechner wirklich macht, nach dem Start sagen — ein Wunsch ist kein Versprechen. */
+    function reportRemoteOpts(p) {
+      var miss = [];
+      if (remoteOpts.audio && p.audio !== true) miss.push('Ton');
+      if (remoteOpts.curtain && p.curtain !== true) miss.push('Verdunkeln');
+      if (!miss.length || typeof window.toast !== 'function') return;
+      var old = p.audio === undefined && p.curtain === undefined;
+      window.toast(miss.join(' + ') + (old
+        ? ': Server auf dem Gerät zu alt — dort einmal tms-terminal update'
+        : ' auf diesem Gerät nicht verfügbar'));
     }
 
     function veil(text) {
@@ -3767,6 +3866,7 @@
       var st = document.createElement('style');
       st.textContent = 'body.remote-no-unlock [data-btn="touchid"],'
         + 'body.remote-no-unlock [data-code="__touchid"],'
+        + 'body.remote-no-unlock #remoteTouchId,'
         + 'body.remote-no-unlock #remoteLockBanner{display:none!important}';
       document.head.appendChild(st);
     })();
@@ -3795,6 +3895,7 @@
       ctx = canvas ? canvas.getContext('2d') : null;
       layoutStage();
       renderLockUi();
+      renderRemoteOpts();
       if (lastVeil) veil(lastVeil);
       if (lastStat) stat(lastStat);
     };
@@ -3828,6 +3929,7 @@
 
     function onBinary(buf) {
       var view = new Uint8Array(buf);
+      if (view.length >= 6 && view[0] === 0x02) { onSoundPacket(view); return; }
       if (view.length < 6 || (view[0] & 0x7f) !== 0x01) return;
       var keyframe = (view[0] & 0x80) !== 0;
       var ts = (view[1] << 24 | view[2] << 16 | view[3] << 8 | view[4]) >>> 0;
@@ -3885,6 +3987,7 @@
           window.remoteState.keyframeOnDemand = msg.payload.keyframeOnDemand !== false;
           if (typeof msg.payload.unlock === 'boolean') unlockKnown = msg.payload.unlock;
           renderLockUi();
+          reportRemoteOpts(msg.payload);
           window.remoteState.w = msg.payload.width;
           window.remoteState.h = msg.payload.height;
           window.remoteState.scale = msg.payload.scale;
@@ -3984,6 +4087,7 @@
         // entstehen — wantRunning bleibt bei suspend() absichtlich `true`
         // (siehe suspended-Deklaration oben), also reicht dessen Pruefung
         // allein nicht mehr.
+        soundReset();
         if (!wantRunning || suspended) return;
         // Nie aufgeben: die Verbindung faellt unterwegs staendig kurz weg.
         retry = Math.min(retry + 1, 6);
@@ -4076,6 +4180,7 @@
         if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
         window.remoteState.running = false;
         resetLock();
+        soundReset();
       },
       /**
        * I7: der Hintergrundwechsel (SeasonTwoWebRoot.tsx, ueber AppState)
@@ -4111,6 +4216,24 @@
        *  expliziten "Trennen" bleibt das ein No-op, siehe suspend() oben. */
       resume: function () { suspended = false; maybeConnect(); },
       /** Stufenwechsel = neu starten: ffmpeg auf Windows kann die Bitrate nicht im Lauf aendern. */
+      /** Ton aufs Handy / Verdunkeln umschalten — neu starten wie bei der Qualitaet. */
+      toggleOption: function (name) {
+        if (name !== 'audio' && name !== 'curtain') return;
+        remoteOpts[name] = !remoteOpts[name];
+        saveRemoteOpts();
+        renderRemoteOpts();
+        if (name === 'audio') { if (remoteOpts.audio) soundCtx(); else soundReset(); }
+        if (typeof window.toast === 'function') {
+          window.toast(name === 'audio'
+            ? (remoteOpts.audio ? 'Ton kommt aufs Handy (am Computer stumm)' : 'Ton bleibt am Computer')
+            : (remoteOpts.curtain ? 'Bildschirm am Computer wird verdunkelt' : 'Bildschirm am Computer bleibt an'));
+        }
+        if (wantRunning && ws && ws.readyState === 1) {
+          soundReset();
+          ws.send(JSON.stringify({ type: 'remote:stop' }));
+          ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
+        }
+      },
       setQuality: function (which) {
         preset = which;
         if (!wantRunning) return;

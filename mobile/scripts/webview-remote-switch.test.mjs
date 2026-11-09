@@ -69,6 +69,19 @@ if (!PW) {
         const b = new Uint8Array(12); b[0] = 0x01 | (key ? 0x80 : 0);
         window.__socks[i].onmessage({ data: b.buffer });
       };
+      // Ton: jede geplante Wiedergabe mitzählen (Dauer in Sekunden).
+      window.__played = 0;
+      window.__playedSec = 0;
+      const origStart = AudioBufferSourceNode.prototype.start;
+      AudioBufferSourceNode.prototype.start = function (...a) {
+        window.__played++; window.__playedSec += this.buffer ? this.buffer.duration : 0;
+        return origStart.apply(this, a);
+      };
+      window.__sound = (i, b64) => {
+        const raw = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const b = new Uint8Array(5 + raw.length); b[0] = 0x02; b.set(raw, 5);
+        window.__socks[i].onmessage({ data: b.buffer });
+      };
       window.__startedWith = (i, extra) => {
         const s = window.__socks[i];
         s.onmessage({ data: JSON.stringify({ type: 'remote:started', payload: Object.assign({ width: 100, height: 60, scale: 1 }, extra) }) });
@@ -206,4 +219,38 @@ if (!PW) {
       assert.deepEqual(r.onWin, { banner: false, touch: false }, 'auf WIN weder Hinweis noch Touch ID');
     } finally { await browser.close(); }
   });
+
+  // Ton aufs Handy: echte Opus-Pakete vom Mac-Helfer (aufgenommen mit
+  // --audio, 48 kHz Stereo, 20 ms) laufen durch den echten WebCodecs-Dekoder
+  // in die Wiedergabe — und nur, wenn der Schalter an ist.
+  const OPUS = JSON.parse(readFileSync(join(here, 'fixtures/remote-opus-sample.json'), 'utf8'));
+  for (const on of [true, false]) {
+    test(on ? 'Ton an: Mac-Ton wird auf dem Handy abgespielt' : 'Ton aus: nichts wird abgespielt', async () => {
+      const { browser, page, errors } = await boot();
+      try {
+        const r = await page.evaluate(async ({ MAC, OPUS, on }) => {
+          if (on) window.TMSRemote.toggleOption('audio');
+          window.TMSRemote.switchTo('mac');
+          window.TMSBridge.setRemoteTarget(MAC);
+          window.__open(0); window.__startedWith(0, { audio: on });
+          const start = JSON.parse(window.__socks[0].sent.find((d) => d.indexOf('remote:start') >= 0)).payload;
+          for (const p of OPUS) window.__sound(0, p);
+          await new Promise((res) => setTimeout(res, 800));
+          return {
+            asked: start.audio, played: window.__played, sec: window.__playedSec,
+            acks: window.__socks[0].sent.filter((d) => d.indexOf('remote:ack') >= 0).length,
+          };
+        }, { MAC, OPUS, on });
+        assert.deepEqual(errors, []);
+        assert.equal(r.asked, on, 'der Wunsch geht im Sitzungsstart mit');
+        assert.equal(r.acks, 0, 'Ton-Pakete werden nicht als Bilder quittiert');
+        if (on) {
+          assert.ok(r.played >= OPUS.length * 0.9, `abgespielt ${r.played} von ${OPUS.length}`);
+          assert.ok(Math.abs(r.sec - OPUS.length * 0.02) < 0.1, `Dauer ${r.sec.toFixed(2)} s`);
+        } else {
+          assert.equal(r.played, 0);
+        }
+      } finally { await browser.close(); }
+    });
+  }
 }

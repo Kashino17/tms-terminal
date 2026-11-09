@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 OUT="$(cd ../../../.. && pwd)/bin/tms-remote-helper"
 mkdir -p "$(dirname "$OUT")"
-swiftc -O -framework ScreenCaptureKit -framework VideoToolbox -framework CoreGraphics \
+swiftc -O -framework ScreenCaptureKit -framework VideoToolbox -framework CoreGraphics -framework CoreAudio -framework AudioToolbox \
        -framework IOKit -framework AppKit \
        -o "$OUT" TmsRemoteHelper.swift
 echo "Helfer gebaut: $OUT"

@@ -57,6 +57,22 @@ export function packAccessUnit(au: AccessUnit, tsMs: number): Buffer {
   return Buffer.concat([head, au.data]);
 }
 
+/**
+ * Wire format for one sound packet (the computer's audio on the phone):
+ *   byte 0    0x02 = Opus packet (48 kHz stereo, 20 ms)
+ *   byte 1-4  milliseconds since session start (uint32 BE)
+ *   byte 5..  the Opus packet
+ */
+export function packAudio(packet: Buffer, tsMs: number): Buffer {
+  const head = Buffer.alloc(5);
+  head[0] = 0x02;
+  head.writeUInt32BE(Math.max(0, Math.floor(tsMs)) >>> 0, 1);
+  return Buffer.concat([head, packet]);
+}
+
+/** Sound is tiny next to the picture; only a link that is truly stuck skips it. */
+export const AUDIO_SKIP_BUFFERED = 1_000_000;
+
 function applyInput(input: InputInjector, ev: RemoteInputEvent): void {
   switch (ev.t) {
     case 'd': input.moveRelative(ev.dx, ev.dy); break;
@@ -225,6 +241,16 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
           reply({ type: 'remote:cursor', payload: { x, y } });
         });
       }
+      if (typeof c.onAudio === 'function') {
+        // Not through the frame flow control: 20 ms packets of a few hundred
+        // bytes — dropping them only makes crackle, and they never cause the
+        // congestion the flow control reacts to.
+        c.onAudio((packet) => {
+          if (capture !== c || ws.readyState !== 1) return;
+          if (ws.bufferedAmount > AUDIO_SKIP_BUFFERED) return;
+          ws.send(packAudio(packet, Date.now() - startedAt), { compress: false });
+        });
+      }
       if (typeof c.onLockChange === 'function') {
         c.onLockChange((locked) => {
           if (capture !== null && capture !== c) return;
@@ -315,7 +341,8 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
         type: 'remote:started',
         payload: { ...info, fps: opts.fps, codec: 'avc1', localCursor, keyframeOnDemand: c.keyframeOnDemand !== false,
           // Fingerabdruck-Entsperren gibt es nur, wo der Sperrbildschirm gemeldet wird (Mac).
-          unlock: typeof c.onLockChange === 'function' },
+          unlock: typeof c.onLockChange === 'function',
+          audio: info.audio === true, curtain: info.curtain === true },
       });
       // Section 9 of the spec requires logging time + source IP for every
       // session start — `logger.info` timestamps its own lines, `ip` comes

@@ -5,8 +5,16 @@ export interface CaptureOptions {
   /** Leave the pointer out of the video and report its position instead
    *  (onCursor) — the app draws it locally. Backends without onCursor ignore it. */
   localCursor?: boolean;
+  /** The computer's sound goes to the phone (onAudio), muted locally. */
+  audio?: boolean;
+  /** Black curtain over the local screen(s), left out of the capture; backlight down. */
+  curtain?: boolean;
 }
-export interface CaptureInfo { width: number; height: number; scale: number }
+export interface CaptureInfo {
+  width: number; height: number; scale: number;
+  /** Whether sound / curtain actually started (asked for ≠ running). */
+  audio?: boolean; curtain?: boolean;
+}
 
 /**
  * Carries a known `RemoteErrorCode` through a rejected `start()` (capture or
@@ -49,6 +57,8 @@ export interface ScreenCapture {
   /** Pointer position (normalized 0..1 to the captured display), only with
    *  `localCursor`. macOS: from the capture helper; Windows: cursor-helper.ps1. */
   onCursor?(cb: (x: number, y: number) => void): void;
+  /** One Opus packet (48 kHz stereo, 20 ms) of the computer's sound, with `audio`. */
+  onAudio?(cb: (packet: Buffer) => void): void;
   /** Screen lock state changes on macOS (true = lock screen active). */
   onLockChange?(cb: (locked: boolean) => void): void;
   stop(): Promise<void>;

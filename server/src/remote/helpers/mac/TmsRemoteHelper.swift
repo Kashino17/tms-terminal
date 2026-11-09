@@ -4,9 +4,12 @@
 // splitting capture and input into separate programs would mean two separate
 // grants for the user to hunt down.
 //
-//   --capture --max-width 1600 --fps 30 --bitrate 1500
+//   --capture --max-width 1600 --fps 30 --bitrate 1500 [--audio] [--curtain]
 //        stdout: raw H.264 Annex-B
 //        stderr: one JSON object per line ({"ready":…} / {"error":…})
+//        fd 3 (with --audio): Opus packets, each prefixed by its length (u16 BE)
+//   --restore-display
+//        puts back a brightness a killed --curtain session left at zero
 //   --input
 //        stdin:  one JSON command per line
 import Foundation
@@ -15,6 +18,8 @@ import ScreenCaptureKit
 import VideoToolbox
 import CoreMedia
 import IOKit.pwr_mgt
+import CoreAudio
+import AudioToolbox
 
 func emit(_ json: String) {
   FileHandle.standardError.write((json + "\n").data(using: .utf8)!)
@@ -23,6 +28,267 @@ func emit(_ json: String) {
 func fail(_ code: String, _ message: String) -> Never {
   emit("{\"error\":{\"code\":\"\(code)\",\"message\":\"\(message)\"}}")
   exit(1)
+}
+
+// ── Curtain (--curtain) ─────────────────────────────────────────────────
+// Privacy + power while the Mac is used from the phone: a black window over
+// every screen that ScreenCaptureKit is told to leave out (the phone sees the
+// desktop, the room sees black — Apple Remote Desktop calls this curtain
+// mode), and the built-in display's backlight turned all the way down.
+// Everything goes back when the helper ends: the windows die with the
+// process, the brightness is restored by atexit — and if the helper was
+// killed outright, the saved value is put back by the next helper start or
+// by `--restore-display` (capture.darwin.ts runs it after an unplanned exit).
+
+private typealias GetBrightnessFn = @convention(c) (UInt32, UnsafeMutablePointer<Float>) -> Int32
+private typealias SetBrightnessFn = @convention(c) (UInt32, Float) -> Int32
+private let displayServices = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_LAZY)
+private let dsGet: GetBrightnessFn? = displayServices.flatMap { dlsym($0, "DisplayServicesGetBrightness") }
+  .map { unsafeBitCast($0, to: GetBrightnessFn.self) }
+private let dsSet: SetBrightnessFn? = displayServices.flatMap { dlsym($0, "DisplayServicesSetBrightness") }
+  .map { unsafeBitCast($0, to: SetBrightnessFn.self) }
+
+private let brightnessFile: URL = {
+  let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".tms-terminal")
+  try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  return dir.appendingPathComponent("curtain-brightness.json")
+}()
+
+/// Displays whose brightness this process turned down, with the value to restore.
+private var dimmed: [UInt32: Float] = [:]
+
+func onlineDisplays() -> [CGDirectDisplayID] {
+  var n: UInt32 = 0
+  CGGetOnlineDisplayList(0, nil, &n)
+  var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
+  CGGetOnlineDisplayList(n, &ids, &n)
+  return Array(ids.prefix(Int(n)))
+}
+
+/// Backlight down on every display that supports it (built-in panels, some
+/// Apple displays). The original values are written to disk first.
+func dimDisplays() {
+  guard let get = dsGet, let set = dsSet else { return }
+  for id in onlineDisplays() {
+    var v: Float = 0
+    guard get(id, &v) == 0 else { continue }
+    if dimmed[id] == nil { dimmed[id] = v }
+  }
+  saveDimmed()
+  for id in dimmed.keys { _ = set(id, 0) }
+}
+
+/// Auto-brightness may raise it again — called from the heartbeat.
+func keepDimmed() {
+  guard let get = dsGet, let set = dsSet else { return }
+  for id in dimmed.keys {
+    var v: Float = 0
+    if get(id, &v) == 0, v > 0.005 { _ = set(id, 0) }
+  }
+}
+
+private func saveDimmed() {
+  let obj = Dictionary(uniqueKeysWithValues: dimmed.map { (String($0.key), Double($0.value)) })
+  if let data = try? JSONSerialization.data(withJSONObject: obj) { try? data.write(to: brightnessFile) }
+}
+
+func restoreDisplays() {
+  if let set = dsSet {
+    var saved = dimmed
+    if saved.isEmpty, let data = try? Data(contentsOf: brightnessFile),
+       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Double] {
+      for (k, v) in obj { if let id = UInt32(k) { saved[id] = Float(v) } }
+    }
+    for (id, v) in saved { _ = set(id, v) }
+  }
+  dimmed = [:]
+  try? FileManager.default.removeItem(at: brightnessFile)
+}
+
+final class Curtain {
+  private var windows: [NSWindow] = []
+
+  /// Must run on the main thread. Returns the window numbers to exclude.
+  func show() -> [CGWindowID] {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.prohibited)
+    for screen in NSScreen.screens {
+      let w = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+      w.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
+      w.backgroundColor = .black
+      w.isOpaque = true
+      w.hasShadow = false
+      w.ignoresMouseEvents = true
+      w.isReleasedWhenClosed = false
+      w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+      w.setFrame(screen.frame, display: true)
+      w.orderFrontRegardless()
+      windows.append(w)
+    }
+    return windows.map { CGWindowID($0.windowNumber) }
+  }
+}
+
+// ── Audio (--audio) ─────────────────────────────────────────────────────
+// Everything the Mac plays goes to the phone instead: a Core Audio process
+// tap (macOS 14.2+) on all output, muted locally while it runs (the system
+// unmutes by itself when the tap goes away — also if the helper is killed),
+// encoded as Opus and written to fd 3. Failure here never stops the picture.
+
+private let audioOut: Int32 = 3
+
+final class AudioTap {
+  private var tap = AudioObjectID(kAudioObjectUnknown)
+  private var agg = AudioObjectID(kAudioObjectUnknown)
+  private var proc: AudioDeviceIOProcID?
+  private var conv: AudioConverterRef?
+  private let queue = DispatchQueue(label: "tms.audio")
+  private var pending: [Float] = []   // interleaved stereo, waiting for a full Opus frame
+  private var feed: [Float] = []      // the frame currently handed to the converter
+  private var maxPacket = 1500
+  private static let frame = 960      // 20 ms at 48 kHz
+
+  private func stringProp(_ id: AudioObjectID, _ sel: AudioObjectPropertySelector) -> String? {
+    var addr = AudioObjectPropertyAddress(mSelector: sel, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var value: CFString = "" as CFString
+    var size = UInt32(MemoryLayout<CFString>.size)
+    let err = withUnsafeMutablePointer(to: &value) { AudioObjectGetPropertyData(id, &addr, 0, nil, &size, $0) }
+    return err == noErr ? value as String : nil
+  }
+
+  /// nil = running; otherwise why not.
+  func start(bitrate: Int) -> String? {
+    guard #available(macOS 14.2, *) else { return "macOS 14.2 noetig" }
+    var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+                                          mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var outDev = AudioObjectID(0)
+    var size = UInt32(MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &outDev) == noErr,
+          let outUID = stringProp(outDev, kAudioDevicePropertyDeviceUID) else { return "kein Ausgabegeraet" }
+
+    let desc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+    desc.muteBehavior = .muted
+    desc.isPrivate = true
+    desc.name = "TMS Fernzugriff"
+    guard AudioHardwareCreateProcessTap(desc, &tap) == noErr,
+          let tapUID = stringProp(tap, kAudioTapPropertyUID) else { return "Ton-Abgriff nicht erlaubt" }
+
+    let aggDesc: [String: Any] = [
+      kAudioAggregateDeviceNameKey: "TMS Fernzugriff",
+      kAudioAggregateDeviceUIDKey: UUID().uuidString,
+      kAudioAggregateDeviceMainSubDeviceKey: outUID,
+      kAudioAggregateDeviceIsPrivateKey: true,
+      kAudioAggregateDeviceIsStackedKey: false,
+      kAudioAggregateDeviceTapAutoStartKey: true,
+      kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: outUID]],
+      kAudioAggregateDeviceTapListKey: [[kAudioSubTapDriftCompensationKey: true, kAudioSubTapUIDKey: tapUID]],
+    ]
+    guard AudioHardwareCreateAggregateDevice(aggDesc as CFDictionary, &agg) == noErr else { stop(); return "Ton-Geraet nicht anlegbar" }
+
+    var fmtAddr = AudioObjectPropertyAddress(mSelector: kAudioTapPropertyFormat, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var tapFmt = AudioStreamBasicDescription()
+    var fmtSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+    guard AudioObjectGetPropertyData(tap, &fmtAddr, 0, nil, &fmtSize, &tapFmt) == noErr else { stop(); return "Tonformat unbekannt" }
+
+    // The converter gets interleaved float stereo at the tap's rate and
+    // resamples to Opus' 48 kHz itself.
+    var inFmt = AudioStreamBasicDescription(
+      mSampleRate: tapFmt.mSampleRate, mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+      mBytesPerPacket: 8, mFramesPerPacket: 1, mBytesPerFrame: 8, mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
+    var opus = AudioStreamBasicDescription(
+      mSampleRate: 48000, mFormatID: kAudioFormatOpus, mFormatFlags: 0, mBytesPerPacket: 0,
+      mFramesPerPacket: UInt32(AudioTap.frame), mBytesPerFrame: 0, mChannelsPerFrame: 2, mBitsPerChannel: 0, mReserved: 0)
+    guard AudioConverterNew(&inFmt, &opus, &conv) == noErr, let c = conv else { stop(); return "Opus nicht verfuegbar" }
+    var br = UInt32(bitrate)
+    AudioConverterSetProperty(c, kAudioConverterEncodeBitRate, UInt32(MemoryLayout<UInt32>.size), &br)
+    var mp: UInt32 = 0
+    var mpSize = UInt32(MemoryLayout<UInt32>.size)
+    if AudioConverterGetProperty(c, kAudioConverterPropertyMaximumOutputPacketSize, &mpSize, &mp) == noErr, mp > 0 { maxPacket = Int(mp) }
+
+    let inFrames = Int((Double(AudioTap.frame) * tapFmt.mSampleRate / 48000).rounded())
+    let ok = AudioDeviceCreateIOProcIDWithBlock(&proc, agg, queue) { [weak self] _, inData, _, _, _ in
+      guard let self else { return }
+      let abl = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inData))
+      self.append(abl)
+      while self.pending.count >= inFrames * 2 {
+        self.feed = Array(self.pending.prefix(inFrames * 2))
+        self.pending.removeFirst(inFrames * 2)
+        self.encodeFeed()
+      }
+    }
+    guard ok == noErr, AudioDeviceStart(agg, proc) == noErr else { stop(); return "Ton-Abgriff startet nicht" }
+    return nil
+  }
+
+  /// Any layout the tap hands out → interleaved stereo floats.
+  private func append(_ abl: UnsafeMutableAudioBufferListPointer) {
+    if abl.count == 1, let p = abl[0].mData?.assumingMemoryBound(to: Float.self) {
+      let ch = Int(max(1, abl[0].mNumberChannels))
+      let n = Int(abl[0].mDataByteSize) / 4 / ch
+      for i in 0..<n {
+        let l = p[i * ch]
+        pending.append(l)
+        pending.append(ch > 1 ? p[i * ch + 1] : l)
+      }
+    } else if abl.count >= 1 {
+      let ptrs = abl.compactMap { $0.mData?.assumingMemoryBound(to: Float.self) }
+      guard let first = ptrs.first else { return }
+      let n = Int(abl[0].mDataByteSize) / 4
+      let second = ptrs.count > 1 ? ptrs[1] : first
+      for i in 0..<n { pending.append(first[i]); pending.append(second[i]) }
+    }
+    // Never pile up more than ~0.5 s if encoding falls behind.
+    if pending.count > 48000 { pending.removeFirst(pending.count - 48000) }
+  }
+
+  private func encodeFeed() {
+    guard let c = conv else { return }
+    var outBuf = [UInt8](repeating: 0, count: maxPacket)
+    var packets: UInt32 = 1
+    var packetDesc = AudioStreamPacketDescription()
+    let status: OSStatus = outBuf.withUnsafeMutableBytes { raw in
+      var abl = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
+        mNumberChannels: 2, mDataByteSize: UInt32(raw.count), mData: raw.baseAddress))
+      return AudioConverterFillComplexBuffer(c, { _, ioPackets, ioData, _, user in
+        let me = Unmanaged<AudioTap>.fromOpaque(user!).takeUnretainedValue()
+        if me.feed.isEmpty { ioPackets.pointee = 0; return 1 } // "no more for now"
+        let frames = me.feed.count / 2
+        ioPackets.pointee = UInt32(frames)
+        me.feed.withUnsafeMutableBytes { b in
+          ioData.pointee.mNumberBuffers = 1
+          ioData.pointee.mBuffers.mNumberChannels = 2
+          ioData.pointee.mBuffers.mDataByteSize = UInt32(b.count)
+          ioData.pointee.mBuffers.mData = b.baseAddress
+        }
+        me.handedOut = me.feed
+        me.feed = []
+        return noErr
+      }, Unmanaged.passUnretained(self).toOpaque(), &packets, &abl, &packetDesc)
+    }
+    guard status == noErr || status == 1, packets == 1 else { return }
+    let len = Int(packetDesc.mDataByteSize)
+    guard len > 0, len < 65536 else { return }
+    var frame = Data([UInt8(len >> 8), UInt8(len & 0xff)])
+    frame.append(contentsOf: outBuf.prefix(len))
+    frame.withUnsafeBytes { b in
+      var off = 0
+      while off < b.count {
+        let w = write(audioOut, b.baseAddress! + off, b.count - off)
+        if w <= 0 { return }
+        off += w
+      }
+    }
+  }
+  /// Keeps the samples handed to the converter alive until it has read them.
+  private var handedOut: [Float] = []
+
+  func stop() {
+    if let p = proc { AudioDeviceStop(agg, p); AudioDeviceDestroyIOProcID(agg, p); proc = nil }
+    if agg != kAudioObjectUnknown { AudioHardwareDestroyAggregateDevice(agg); agg = AudioObjectID(kAudioObjectUnknown) }
+    if tap != kAudioObjectUnknown, #available(macOS 14.2, *) { AudioHardwareDestroyProcessTap(tap); tap = AudioObjectID(kAudioObjectUnknown) }
+    if let c = conv { AudioConverterDispose(c); conv = nil }
+  }
 }
 
 // ── Capture ─────────────────────────────────────────────────────────────
@@ -50,7 +316,12 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   // can schedule its timer on the exact same queue.
   private let captureQueue = DispatchQueue(label: "tms.capture")
 
-  func start(maxWidth: Int, fps: Int, bitrateKbps: Int, localCursor: Bool = false) async {
+  private var audio: AudioTap?
+  private var curtainWindows: [CGWindowID] = []
+  private var curtainOn = false
+
+  func start(maxWidth: Int, fps: Int, bitrateKbps: Int, localCursor: Bool = false,
+             withAudio: Bool = false, withCurtain: Bool = false) async {
     // I17: wake a sleeping display before anything else. The no-sleep
     // assertion below only prevents FUTURE sleep — it cannot wake a display
     // that is already asleep, which is exactly why the very first session
@@ -79,6 +350,14 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       "TMS Terminal Fernzugriff" as CFString,
       &sleepAssertion)
     self.assertion = sleepAssertion
+
+    // The curtain goes up BEFORE the window list is read: its windows must
+    // be in that list to be left out of the capture.
+    if withCurtain {
+      curtainWindows = await MainActor.run { Curtain().show() }
+      curtainOn = !curtainWindows.isEmpty
+      try? await Task.sleep(nanoseconds: 300_000_000)
+    }
 
     var content: SCShareableContent
     do {
@@ -161,7 +440,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
                          value: NSNumber(value: bitrateKbps * 1000))
     VTCompressionSessionPrepareToEncodeFrames(s)
 
-    let filter = SCContentFilter(display: display, excludingWindows: [])
+    let hidden = content.windows.filter { curtainWindows.contains($0.windowID) }
+    let filter = SCContentFilter(display: display, excludingWindows: hidden)
     // `delegate: self`, not nil — see `stream(_:didStopWithError:)` below.
     let stream = SCStream(filter: filter, configuration: cfg, delegate: self)
     do {
@@ -172,7 +452,19 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
     self.stream = stream
 
-    emit("{\"ready\":{\"width\":\(width),\"height\":\(height),\"scale\":\(scale)}}")
+    if curtainOn { dimDisplays() }
+    var audioOn = false
+    if withAudio {
+      let tap = AudioTap()
+      if let why = tap.start(bitrate: 96000) {
+        emit("{\"audio\":{\"error\":\"\(why)\"}}")
+      } else {
+        audio = tap
+        audioOn = true
+      }
+    }
+
+    emit("{\"ready\":{\"width\":\(width),\"height\":\(height),\"scale\":\(scale),\"audio\":\(audioOn),\"curtain\":\(curtainOn)}}")
     startHeartbeat(on: captureQueue)
     if localCursor { startCursorReports(on: captureQueue) }
     listenForCommands(session: s)
@@ -261,6 +553,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       guard let self else { return }
       if Date().timeIntervalSince(self.lastLockCheckAt) >= 0.8 {
         self.lastLockCheckAt = Date()
+        if self.curtainOn { keepDimmed() }
         let dict = CGSessionCopyCurrentDictionary() as? [String: Any]
         let locked = (dict?["CGSSessionScreenIsLocked"] as? Bool)
           ?? ((dict?["CGSSessionScreenIsLocked"] as? Int ?? 0) != 0)
@@ -903,13 +1196,29 @@ func intArg(_ name: String, _ fallback: Int) -> Int {
   return Int(args[i + 1]) ?? fallback
 }
 
-if args.contains("--capture") {
+// A brightness left at zero by a killed curtain session comes back with the
+// next capture start (only one capture runs at a time) or --restore-display.
+// NOT in the other modes: the input helper runs alongside a curtained capture.
+if args.contains("--restore-display") {
+  restoreDisplays()
+  exit(0)
+} else if args.contains("--capture") {
+  restoreDisplays()
+  signal(SIGPIPE, SIG_IGN)
+  atexit { restoreDisplays() }
+  // A planned stop sends `quit` (exit → atexit); SIGTERM must take the same way out.
+  let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+  signal(SIGTERM, SIG_IGN)
+  term.setEventHandler { exit(0) }
+  term.resume()
   let c = Capture()
   Task {
     await c.start(maxWidth: intArg("--max-width", 1600),
                   fps: intArg("--fps", 30),
                   bitrateKbps: intArg("--bitrate", 1500),
-                  localCursor: args.contains("--local-cursor"))
+                  localCursor: args.contains("--local-cursor"),
+                  withAudio: args.contains("--audio"),
+                  withCurtain: args.contains("--curtain"))
   }
   RunLoop.main.run()
 } else if args.contains("--input") {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import { buildHelperArgs, parseHelperLine, helperBinaryPath, splitLines } from './capture.darwin';
+import { buildHelperArgs, parseHelperLine, helperBinaryPath, splitLines, splitAudioPackets } from './capture.darwin';
 
 test('buildHelperArgs uebersetzt die Stufe in Helfer-Argumente', () => {
   assert.deepEqual(
@@ -69,4 +69,26 @@ test('localCursor wird zum Helfer-Schalter --local-cursor', () => {
 test('parseHelperLine liest Zeigerpositionen, verwirft kaputte', () => {
   assert.deepEqual(parseHelperLine('{"cursor":{"x":0.49207,"y":0.15572}}'), { kind: 'cursor', x: 0.49207, y: 0.15572 });
   assert.equal(parseHelperLine('{"cursor":{"x":"a","y":1}}'), null);
+});
+
+test('Ton und Vorhang werden als Helfer-Schalter weitergegeben', () => {
+  const args = buildHelperArgs({ maxWidth: 1600, fps: 30, bitrateKbps: 1500, audio: true, curtain: true });
+  assert.ok(args.includes('--audio') && args.includes('--curtain'));
+  assert.ok(!buildHelperArgs({ maxWidth: 1600, fps: 30, bitrateKbps: 1500 }).includes('--audio'));
+});
+
+test('ready meldet, ob Ton und Vorhang wirklich laufen', () => {
+  const r = parseHelperLine('{"ready":{"width":1280,"height":826,"scale":0.74,"audio":true,"curtain":false}}');
+  assert.ok(r && r.kind === 'ready');
+  if (r && r.kind === 'ready') { assert.equal(r.info.audio, true); assert.equal(r.info.curtain, false); }
+});
+
+// fd 3: Opus-Pakete mit 2-Byte-Länge davor — auch quer über mehrere Lesehäppchen.
+test('Ton-Pakete werden über Lesegrenzen hinweg zusammengesetzt', () => {
+  const stream = Buffer.from([0, 3, 1, 2, 3, 0, 2, 4, 5, 0, 1]);
+  const a = splitAudioPackets(Buffer.alloc(0), stream.subarray(0, 4));
+  assert.equal(a.packets.length, 0);
+  const b = splitAudioPackets(a.rest, stream.subarray(4));
+  assert.deepEqual(b.packets.map((p) => [...p]), [[1, 2, 3], [4, 5]]);
+  assert.deepEqual([...b.rest], [0, 1], 'angefangenes drittes Paket bleibt liegen');
 });
