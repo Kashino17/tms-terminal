@@ -17,8 +17,10 @@ export interface FileEntry {
 }
 
 export function resolvePath(raw: string): string {
-  if (raw === '~' || raw.startsWith('~/')) {
-    return path.join(os.homedir(), raw.slice(1));
+  if (raw === '~') return os.homedir();
+  // '~/x' und (Windows-App-Schreibweise) '~\\x' → Home des Nutzers
+  if (raw.startsWith('~/') || raw.startsWith('~\\')) {
+    return path.join(os.homedir(), ...raw.slice(2).split(/[\\/]+/).filter(Boolean));
   }
   return path.resolve(raw);
 }
@@ -104,9 +106,15 @@ export async function handleFileRead(req: http.IncomingMessage, res: http.Server
     const stat = await fsp.stat(filePath);
 
     if (stat.isDirectory()) return err(res, 400, 'Is a directory');
-    if (stat.size > 5 * 1024 * 1024) return err(res, 400, 'File too large to preview (>5 MB)');
-
-    const buf = await fsp.readFile(filePath);
+    // Vorschau großer Dateien: die ersten `max` Bytes statt Ablehnung
+    // (Default 512 KB, höchstens 4 MB).
+    const maxParam = Number(url.searchParams.get('max'));
+    const max = Math.min(Number.isFinite(maxParam) && maxParam > 0 ? maxParam : 512 * 1024, 4 * 1024 * 1024);
+    const want = Math.min(stat.size, max);
+    const fh = await fsp.open(filePath, 'r');
+    const buf = Buffer.alloc(want);
+    try { await fh.read(buf, 0, want, 0); } finally { await fh.close(); }
+    const truncated = stat.size > want;
 
     // Detect binary: if >30% of first 512 bytes are non-printable, reject
     const sample = buf.slice(0, 512);
@@ -118,7 +126,7 @@ export async function handleFileRead(req: http.IncomingMessage, res: http.Server
 
     const content = buf.toString('utf8');
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ content, size: stat.size, lines: content.split('\n').length }));
+    res.end(JSON.stringify({ content, size: stat.size, truncated, lines: content.split('\n').length }));
   } catch (e: unknown) {
     err(res, 400, e instanceof Error ? e.message : String(e));
   }
