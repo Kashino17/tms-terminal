@@ -206,6 +206,15 @@ public class TmsDisplay {
         throw new Exception("Umschalten auf den virtuellen Bildschirm hat nicht geklappt");
       bool sized = SetSize(name, w, h);
       DEVMODE now = NewMode();
+      // Let the new mode settle before reporting ready: the capture opens the
+      // screen right after this line, and a screen still changing its mode
+      // can make that fail.
+      string settled = name;
+      Wait(delegate () {
+        DEVMODE m = NewMode();
+        return EnumDisplaySettings(settled, -1, ref m) && (!sized || (m.dmPelsWidth == w && m.dmPelsHeight == h));
+      }, 3000);
+      Thread.Sleep(1000);
       EnumDisplaySettings(name, -1, ref now);
       Out("{\"ready\":{\"display\":true,\"width\":" + now.dmPelsWidth + ",\"height\":" + now.dmPelsHeight
         + ",\"sized\":" + (sized ? "true" : "false") + ",\"name\":\"" + Esc(name) + "\"}}");

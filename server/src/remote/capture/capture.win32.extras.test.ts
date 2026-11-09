@@ -21,6 +21,7 @@ function fakeBin(curtainOk: boolean, displayOk = true) {
 case "$*" in *libopus*) exec "${realFfmpeg}" "$@";; esac
 case "$*" in *-encoders*) echo " V..... h264_nvenc"; exit 0;; esac
 [ -f "${dir}/display-on" ] && touch "${dir}/video-saw-display"
+if [ -f "${dir}/video-fail-once" ]; then rm -f "${dir}/video-fail-once"; echo "Failed to enumerate DXGI output 0" >&2; exit 1; fi
 echo "Stream #0:0: Video: wrapped_avframe, bgra, 1920x1080, 30 fps" >&2
 trap 'exit 0' TERM
 while :; do printf "V"; sleep 0.05; done
@@ -130,3 +131,25 @@ for (const displayOk of [true, false]) {
     }
   });
 }
+
+test('Windows: scheitert das Bild direkt nach dem Umschalten einmal, klappt der zweite Versuch', { skip: process.platform === 'win32' && 'nur mit sh' }, async () => {
+  const dir = fakeBin(true, true);
+  writeFileSync(join(dir, 'video-fail-once'), '');
+  const pf = mkdtempSync(join(tmpdir(), 'fakepf-'));
+  mkdirSync(join(pf, 'TMS Terminal'));
+  writeFileSync(join(pf, 'TMS Terminal', 'display-installed.txt'), '25.7.23');
+  const oldPath = process.env.PATH, oldPf = process.env.ProgramFiles;
+  process.env.PATH = `${dir}:${oldPath}`;
+  process.env.ProgramFiles = pf;
+  const cap = createWin32Capture();
+  try {
+    const info = await cap.start({ maxWidth: 1920, fps: 30, bitrateKbps: 3000, curtain: true });
+    assert.equal(info.curtain, true);
+    assert.ok(!existsSync(join(dir, 'video-fail-once')), 'der erste Versuch ist wirklich gescheitert');
+    assert.ok(existsSync(join(dir, 'video-saw-display')));
+  } finally {
+    await cap.stop();
+    process.env.PATH = oldPath;
+    if (oldPf === undefined) delete process.env.ProgramFiles; else process.env.ProgramFiles = oldPf;
+  }
+});

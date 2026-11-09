@@ -134,7 +134,7 @@ test('scheitert die Eingabe-Bereitschaft, bekommt der Client remote:error statt 
 
   assert.equal(ws.typed('remote:started').length, 0, 'keine stumme Verbindung');
   const err = ws.typed('remote:error')[0];
-  assert.equal(err.payload.code, 'capture_unavailable');
+  assert.equal(err.payload.code, 'capture_failed');
   assert.match(err.payload.message, /Bedienungshilfen/);
 });
 
@@ -234,7 +234,7 @@ test('C1: ein RemoteCaptureError aus der Aufnahme traegt seinen Code bis zum Cli
   assert.match(err.payload.message, /Bildschirmaufnahme/);
 });
 
-test('C1: ein Fehler OHNE bekannten Code landet weiterhin sinnvoll als capture_unavailable', async () => {
+test('C1: ein Fehler OHNE bekannten Code kommt als capture_failed MIT seiner Meldung an (nicht als „ffmpeg fehlt“)', async () => {
   const ws = new FakeWs();
   handleRemoteConnection(ws as any, {
     makeCapture: () => ({
@@ -248,10 +248,11 @@ test('C1: ein Fehler OHNE bekannten Code landet weiterhin sinnvoll als capture_u
   send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
   await new Promise((r) => setImmediate(r));
 
-  assert.equal(ws.typed('remote:error')[0].payload.code, 'capture_unavailable');
+  assert.equal(ws.typed('remote:error')[0].payload.code, 'capture_failed');
+  assert.match(ws.typed('remote:error')[0].payload.message, /Zeitlimit/);
 });
 
-test('wirft die Aufnahme-Fabrik synchron, bekommt der Client capture_unavailable statt Schweigen', async () => {
+test('wirft die Aufnahme-Fabrik synchron, bekommt der Client capture_failed statt Schweigen', async () => {
   const ws = new FakeWs();
   handleRemoteConnection(ws as any, {
     makeCapture: () => { throw new Error('kein Bildschirmzugriff'); },
@@ -264,7 +265,8 @@ test('wirft die Aufnahme-Fabrik synchron, bekommt der Client capture_unavailable
 
   assert.equal(ws.typed('remote:started').length, 0, 'keine stumme Verbindung');
   const err = ws.typed('remote:error')[0];
-  assert.equal(err.payload.code, 'capture_unavailable');
+  assert.equal(err.payload.code, 'capture_failed');
+  assert.match(err.payload.message, /Bildschirmzugriff/);
 });
 
 test('zwei remote:start unmittelbar nacheinander hinterlassen keine unbeendete Aufnahme', async () => {

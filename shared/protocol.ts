@@ -845,7 +845,12 @@ export type RemoteErrorCode =
   /** The display went to sleep — ScreenCaptureKit then reports no display at
    *  all. Its own code because that otherwise looks like a permission problem,
    *  sending the user hunting in System Settings for a checkbox that's already set. */
-  | 'display_asleep';
+  | 'display_asleep'
+  /** Starting the capture failed for a reason without its own code — the
+   *  message says why. (capture_unavailable used to cover this too, and the
+   *  app shows a fixed "ffmpeg missing" sentence for that one, hiding the
+   *  real reason; unknown codes make every app version show the message.) */
+  | 'capture_failed';
 
 export type RemoteQualityPreset = 'sparsam' | 'auto' | 'scharf';
 

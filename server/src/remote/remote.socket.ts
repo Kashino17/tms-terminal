@@ -354,8 +354,12 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
       // to the client. Anything else — a timeout, an unexpected exit — has
       // no known code and falls back to the generic capture_unavailable,
       // same as before.
-      const code = e instanceof RemoteCaptureError ? e.code : 'capture_unavailable';
-      fail(code, e instanceof Error ? e.message : String(e));
+      const code = e instanceof RemoteCaptureError ? e.code : 'capture_failed';
+      const message = e instanceof Error ? e.message : String(e);
+      // Logged too: the phone only shows it briefly, and a failed start
+      // otherwise left no trace at all in the server log.
+      logger.warn(`Remote: Start fehlgeschlagen (${code}) fuer ${ip}: ${message}`);
+      fail(code, message);
     }
   }
 

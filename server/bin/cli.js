@@ -1093,6 +1093,13 @@ fi
     const sub = rest[0] || 'status';
     if (sub === 'install' || sub === 'uninstall') process.exit(displaySetup(sub, has('--from-update')) ? 0 : 1);
     if (sub === 'test') process.exit((await displayTest()) ? 0 : 1);
+    if (sub === 'restore') {
+      // Notweg: Laptop-Display zurück, virtueller Bildschirm aus.
+      const r = require('child_process').spawnSync('powershell.exe', displayHelperArgs(['-Restore']), { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+      if (r.status === 0) ok('Bildschirme zurückgestellt.'); else bad(`Zurückstellen fehlgeschlagen (Code ${r.status})`);
+      for (const l of displayDevices()) hint(l);
+      process.exit(r.status === 0 ? 0 : 1);
+    }
     displayStatus();
     break;
   }
@@ -1144,7 +1151,8 @@ ${b('Einrichtung & Pflege')}
   tms-terminal rebuild         TypeScript neu übersetzen
   tms-terminal version         Version und Git-Stand
   tms-terminal display         Windows: virtueller Bildschirm für „Bildschirm aus“
-      install | test | uninstall einrichten (einmal Admin-Klick), Probelauf, entfernen
+      install | test | restore   einrichten (einmal Admin-Klick), Probelauf,
+      uninstall                  Notweg: Laptop-Display zurück · entfernen
   tms-terminal uninstall       Alles entfernen (Konfiguration, globaler Befehl)
 
 ${g('Rückfragen überspringen: --yes · Dateien: ~/.tms-terminal/')}

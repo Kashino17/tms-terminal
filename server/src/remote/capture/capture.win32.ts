@@ -2,6 +2,7 @@ import { spawn, ChildProcess, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RemoteErrorCode } from '../../../../shared/protocol';
+import { RemoteCaptureError } from './capture.types';
 import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types';
 import { splitLines } from '../lines';
 import { winCursorScriptPath, winAudioScriptPath, winCurtainScriptPath, winDisplayScriptPath } from '../paths';
@@ -179,6 +180,8 @@ const EXTRA_READY_MS = 8_000;
  *  layout takes a few seconds — measured on the PC, the helper itself allows
  *  15 s for the device and 8 s for the switch. */
 const DISPLAY_READY_MS = 30_000;
+/** Pause before another capture start on a just-switched virtual display. */
+const VIRTUAL_RETRY_MS = 1_500;
 /** Putting the layout back (and the device off) also takes a moment. */
 const DISPLAY_END_GRACE_MS = 10_000;
 
@@ -472,7 +475,7 @@ export function createWin32Capture(): ScreenCapture {
       ]);
       let info: CaptureInfo;
       try {
-        info = await startVideo(opts);
+        info = await startVideoSettled(opts, virtual);
       } catch (e) {
         stopExtras();
         throw e;
@@ -514,11 +517,29 @@ export function createWin32Capture(): ScreenCapture {
     },
   };
 
+  /** Right after the switch to the virtual display Windows may still be
+   *  settling the new screen, and ddagrab can fail to open it — so there,
+   *  a failed start gets two more tries. A missing ffmpeg never does. */
+  async function startVideoSettled(opts: CaptureOptions, virtual: boolean): Promise<CaptureInfo> {
+    const tries = virtual ? 3 : 1;
+    for (let i = 1; ; i++) {
+      try {
+        return await startVideo(opts);
+      } catch (e) {
+        if (i >= tries || stopping || e instanceof RemoteCaptureError) {
+          if (i > 1 && e instanceof Error) e.message = `${e.message} (nach ${i} Versuchen)`;
+          throw e;
+        }
+        await new Promise((r) => setTimeout(r, VIRTUAL_RETRY_MS));
+      }
+    }
+  }
+
   function startVideo(opts: CaptureOptions): Promise<CaptureInfo> {
       return new Promise<CaptureInfo>((resolve, reject) => {
         const enc = pickEncoder(availableEncoders());
         if (!enc) {
-          reject(new Error(
+          reject(new RemoteCaptureError('capture_unavailable',
             'ffmpeg mit H.264-Encoder nicht gefunden. Einmalig einrichten mit:  winget install ffmpeg'));
           return;
         }
@@ -585,7 +606,7 @@ export function createWin32Capture(): ScreenCapture {
         proc.on('error', () => {
           if (!settled) {
             settle();
-            reject(new Error('ffmpeg nicht gefunden. Einmalig einrichten mit:  winget install ffmpeg'));
+            reject(new RemoteCaptureError('capture_unavailable', 'ffmpeg nicht gefunden. Einmalig einrichten mit:  winget install ffmpeg'));
           }
         });
       });
