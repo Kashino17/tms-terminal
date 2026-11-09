@@ -272,3 +272,10 @@
 ## 2026-11-09 — v1.130.1 + Update-Prüfung
 - Windows-Features gingen nicht: Server dort alt; Update lief unsichtbar → afd5b60 (Vordergrund, stash, Stempel, /health build, version-Befehl).
 - Hinweis-Spam: Sitzung lief nach Verlassen weiter → suspend beim Verlassen, Hinweis einmalig, Toast-Umbruch. Tests (alt rot, neu grün).
+
+## 2026-11-10 — Windows virtueller Bildschirm + Fernzugriff bleibt (v1.131.0)
+- Maus auf Windows tot: Backtick `r im Add-Type-Here-String → CR → C#-Compile-Fehler; Fix + Lint-Test; windowsHide überall (Konsolenfenster).
+- Windows „Bildschirm aus“ = Virtual Display Driver (SYSTEM-Task schaltet, User darf nur auslösen), Probelauf auf PC ok, eingebaut; 2. Start scheiterte → „ffmpeg fehlt“ war Fehltext (capture_unavailable) → capture_failed + Log + Wiederholungen + `display restore`.
+- Mac-Umbau abgeraten (bereits exakt 2:1 Retina), stattdessen Auto 1728.
+- Fernzugriff bleibt bis zum Schließen (Server-Ruhe/Übernahme, remote:view, Insel-Punkt). Tests: Server 572, WebView 12 grün.
+

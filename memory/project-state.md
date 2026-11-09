@@ -1,10 +1,12 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-09 — Fernzugriff pausiert beim Verlassen, Update-Prüfung; Release v1.130.1_
+_Zuletzt aktualisiert: 2026-11-10 — Fernzugriff läuft bis zum Schließen, Windows virtueller Bildschirm; Release v1.131.0_
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-09 spätnachts (neueste):** Release v1.130.1: Fernzugriff verlassen = suspend (vorher lief Sitzung im Hintergrund, Vorhang/Ton blieben), Hinweise einmalig + Toasts umbrechend. Server afd5b60: Windows-Update sichtbar + git stash vor pull, Build-Stempel, /health meldet build, `tms-terminal version`. Windows-Server lief noch ALT (App meldete „Server zu alt“) — Windows-TMS auf Port 8770. **Offen:** Windows update/version-Ausgabe vom Nutzer, dann 🔊/🌑 auf WIN testen.
+**Stand 2026-11-10 (neueste):** Release v1.131.0: Fernzugriff läuft, bis der Nutzer schließt (✕ oder Insel → Schließen) — Server lässt Sitzung ohne remote:stop ruhen (6 h Sicherung), gleiche Wünsche übernehmen sie; remote:view versteckt nur das Bild; grüner Punkt + Öffnen/Schließen oben in der Insel. Windows: 🌑 = virtueller Bildschirm (VDD 25.7.23, `tms-terminal display install|test|restore|uninstall`), Display wirklich aus, Bild 1:1. Mac „Auto“ 1728 statt 1600. Startfehler jetzt capture_failed + Log. **Offen:** PC `tms-terminal update`, Mac-Server-Neustart durch Nutzer (dist a119e89 gebaut), Gerätetest Hintergrund/Android; Mac-Umbau auf virtuellen Bildschirm bewusst NICHT gemacht (kein Gewinn, s. decisions).
+
+**Stand 2026-11-09 spätnachts:** Release v1.130.1: Fernzugriff verlassen = suspend (vorher lief Sitzung im Hintergrund, Vorhang/Ton blieben), Hinweise einmalig + Toasts umbrechend. Server afd5b60: Windows-Update sichtbar + git stash vor pull, Build-Stempel, /health meldet build, `tms-terminal version`. Windows-Server lief noch ALT (App meldete „Server zu alt“) — Windows-TMS auf Port 8770. **Offen:** Windows update/version-Ausgabe vom Nutzer, dann 🔊/🌑 auf WIN testen.
 
 **Stand 2026-11-09 nachts:** Release v1.130.0: Fernzugriff-Schalter 🔊 Ton aufs Handy (Mac Core-Audio-Tap stumm + Opus, Windows WASAPI-Loopback + ffmpeg Opus) und 🌑 Verdunkeln (Mac Vorhang aus SCK ausgenommen + Helligkeit 0; Windows WDA_EXCLUDEFROMCAPTURE + DDC/WMI); Mac-Sperrhinweis/Touch ID nicht mehr auf WIN. Server-dist gebaut. **Offen:** Mac-Server-Neustart durch Nutzer, Windows update+Neustart, Gerätetests (Mac entsperrt mit Vorhang; Windows: Loopback trotz Stumm? Vorhang aus ddagrab?).
 
@@ -67,7 +69,7 @@ _Zuletzt aktualisiert: 2026-11-09 — Fernzugriff pausiert beim Verlassen, Updat
 ## Historischer Stand vom 2026-04-26
 Die folgenden älteren Arbeitsnotizen wurden bewahrt und in dieser Sitzung nicht erneut verifiziert.
 
-_Zuletzt aktualisiert: 2026-11-09 — Fernzugriff pausiert beim Verlassen, Update-Prüfung; Release v1.130.1_
+_Zuletzt aktualisiert: 2026-11-10 — Fernzugriff läuft bis zum Schließen, Windows virtueller Bildschirm; Release v1.131.0_
 
 ## Aktuelle Version
 - **App:** v1.21.3 — Voice Prompt Enhancer (Llama 3.2 3B Instruct via MLX rewritet Sprach-Eingabe in polierte AI-Prompts; Toggle in Settings → Sprache → "KI-Prompt-Modus"; default off)

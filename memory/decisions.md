@@ -57,3 +57,7 @@
 - Lokaler Build nach expliziter Mockup-Freigabe; Veröffentlichung und automatische Geräteinstallation waren nicht Teil dieses Auftrags.
 
 - Nachtrag 2026-10-26: Der Nutzer hat Commit, Push und Release explizit beauftragt. APK über den bereits existierenden GitHub-Workflow bauen und veröffentlichen; die lokale Build-Blockade erfordert dafür keine Änderung der globalen Node-Installation.
+
+## 2026-11-10 — Mac bekommt keinen virtuellen Bildschirm (Mac-virtueller-Bildschirm)
+- Gemessen: MacBook 3456x2234 @2x, 1728 Punkte; „Scharf“ nimmt schon exakt die Hälfte auf, Helligkeit 0 = Display aus. Virtueller Bildschirm bräuchte private API und wäre bei 1x eher gröber. Nur „Auto“ auf 1728 gerastet. Option „Deckel zu“ offen gelassen.
+- Fernzugriff endet nur noch durch den Nutzer (Wunsch 2026-11-10), Sicherung: 6 h ohne Handy-Verbindung.
