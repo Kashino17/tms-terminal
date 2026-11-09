@@ -6,27 +6,34 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, chmodSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createWin32Capture } from './capture.win32';
+import { createWin32Capture, virtualDisplaySize } from './capture.win32';
 
 const realFfmpeg = spawnSync('sh', ['-c', 'command -v ffmpeg'], { encoding: 'utf8' }).stdout.trim();
 const hasOpus = !!realFfmpeg && spawnSync(realFfmpeg, ['-hide_banner', '-encoders'], { encoding: 'utf8' }).stdout.includes('libopus');
 
-function fakeBin(curtainOk: boolean) {
+function fakeBin(curtainOk: boolean, displayOk = true) {
   const dir = mkdtempSync(join(tmpdir(), 'fakewin-'));
   writeFileSync(join(dir, 'ffmpeg'), `#!/bin/sh
 case "$*" in *libopus*) exec "${realFfmpeg}" "$@";; esac
 case "$*" in *-encoders*) echo " V..... h264_nvenc"; exit 0;; esac
+[ -f "${dir}/display-on" ] && touch "${dir}/video-saw-display"
 echo "Stream #0:0: Video: wrapped_avframe, bgra, 1920x1080, 30 fps" >&2
 trap 'exit 0' TERM
 while :; do printf "V"; sleep 0.05; done
 `);
   writeFileSync(join(dir, 'powershell.exe'), `#!/bin/sh
 case "$*" in
+  *display-helper*)
+    echo "$*" > "${dir}/display-args"
+    ${displayOk ? `touch "${dir}/display-on"; echo '{"ready":{"display":true,"width":1600,"height":1000,"sized":true,"name":"x"}}'`
+                : `echo '{"error":{"code":"capture_unavailable","message":"nein"}}'; exit 0`}
+    cat > /dev/null; rm -f "${dir}/display-on"; touch "${dir}/display-ended"; exit 0;;
   *curtain-helper*)
+    touch "${dir}/curtain-started"
     ${curtainOk ? `echo '{"ready":{"curtain":true}}'` : `echo '{"error":{"code":"capture_unavailable","message":"alt"}}'; exit 0`}
     cat > /dev/null; touch "${dir}/curtain-ended"; exit 0;;
   *audio-helper*)
@@ -82,3 +89,44 @@ test('ohne Wunsch keine Helfer und keine Angaben', { skip: process.platform === 
   } finally { await cap.stop(); process.env.PATH = oldPath; }
   void readFileSync;
 });
+
+test('virtuelle Bildschirmgröße passt zur Qualitätsstufe, nie breiter als der Strom', () => {
+  assert.deepEqual(virtualDisplaySize(1920), { width: 1920, height: 1200 });
+  assert.deepEqual(virtualDisplaySize(1600), { width: 1600, height: 1000 });
+  assert.deepEqual(virtualDisplaySize(1280), { width: 1280, height: 800 });
+  assert.deepEqual(virtualDisplaySize(1000), { width: 1280, height: 800 });
+});
+
+for (const displayOk of [true, false]) {
+  test(displayOk ? 'Windows: Bildschirm aus über den virtuellen Bildschirm — vor dem Bild, am Ende zurück'
+                 : 'Windows: klappt der virtuelle Bildschirm nicht, übernimmt der schwarze Vorhang',
+    { skip: process.platform === 'win32' && 'nur mit sh' }, async () => {
+    const dir = fakeBin(true, displayOk);
+    const pf = mkdtempSync(join(tmpdir(), 'fakepf-'));
+    mkdirSync(join(pf, 'TMS Terminal'));
+    writeFileSync(join(pf, 'TMS Terminal', 'display-installed.txt'), '25.7.23');
+    const oldPath = process.env.PATH, oldPf = process.env.ProgramFiles;
+    process.env.PATH = `${dir}:${oldPath}`;
+    process.env.ProgramFiles = pf;
+    const cap = createWin32Capture();
+    try {
+      const info = await cap.start({ maxWidth: 1600, fps: 30, bitrateKbps: 1500, curtain: true });
+      assert.equal(info.curtain, true);
+      assert.match(readFileSync(join(dir, 'display-args'), 'utf8'), /-Width 1600 -Height 1000/);
+      if (displayOk) {
+        assert.ok(existsSync(join(dir, 'video-saw-display')), 'ffmpeg startet erst, wenn der virtuelle Bildschirm aktiv ist');
+        assert.ok(!existsSync(join(dir, 'curtain-started')), 'kein Vorhang nötig');
+      } else {
+        assert.ok(existsSync(join(dir, 'curtain-started')), 'Vorhang als Rückfall');
+      }
+      await cap.stop();
+      await new Promise((r) => setTimeout(r, 400));
+      // Im Fehlerfall hat der echte Helfer schon VOR seiner Meldung zurückgestellt.
+      if (displayOk) assert.ok(existsSync(join(dir, 'display-ended')), 'Anzeige-Helfer endet über stdin (stellt die Bildschirme zurück)');
+    } finally {
+      await cap.stop();
+      process.env.PATH = oldPath;
+      if (oldPf === undefined) delete process.env.ProgramFiles; else process.env.ProgramFiles = oldPf;
+    }
+  });
+}

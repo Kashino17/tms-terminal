@@ -63,3 +63,8 @@ export function winAudioScriptPath(): string {
 export function winCurtainScriptPath(): string {
   return path.join(serverRoot(), 'src', 'remote', 'helpers', 'win', 'curtain-helper.ps1');
 }
+
+/** `<root>/src/remote/helpers/win/display-helper.ps1` — "Bildschirm aus" via the virtual display on Windows. */
+export function winDisplayScriptPath(): string {
+  return path.join(serverRoot(), 'src', 'remote', 'helpers', 'win', 'display-helper.ps1');
+}

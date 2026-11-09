@@ -1,8 +1,10 @@
 import { spawn, ChildProcess, execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { RemoteErrorCode } from '../../../../shared/protocol';
 import type { ScreenCapture, CaptureOptions, CaptureInfo } from './capture.types';
 import { splitLines } from '../lines';
-import { winCursorScriptPath, winAudioScriptPath, winCurtainScriptPath } from '../paths';
+import { winCursorScriptPath, winAudioScriptPath, winCurtainScriptPath, winDisplayScriptPath } from '../paths';
 import { createOggReader, buildOpusEncoderArgs } from '../ogg';
 
 /** GPU encoders first — ddagrab already hands us frames on the graphics card. */
@@ -173,6 +175,37 @@ let pointerFailures = 0;
 /** Sound/curtain helpers compile C# on start — give them this long to report. */
 const EXTRA_READY_MS = 8_000;
 
+/** The virtual display: switching the device on (SYSTEM task) and the screen
+ *  layout takes a few seconds — measured on the PC, the helper itself allows
+ *  15 s for the device and 8 s for the switch. */
+const DISPLAY_READY_MS = 30_000;
+/** Putting the layout back (and the device off) also takes a moment. */
+const DISPLAY_END_GRACE_MS = 10_000;
+
+/** Set up once by display-setup.ps1 (`tms-terminal display install`). */
+export function virtualDisplayInstalled(): boolean {
+  return existsSync(join(process.env.ProgramFiles || 'C:\\Program Files', 'TMS Terminal', 'display-installed.txt'));
+}
+
+/** Sizes the virtual display offers (display-setup.ps1) — the app's three
+ *  quality steps in 16:10, so the picture goes out 1:1, nothing scaled. */
+const VIRTUAL_SIZES = [
+  { width: 1920, height: 1200 },
+  { width: 1600, height: 1000 },
+  { width: 1280, height: 800 },
+];
+
+/** The largest virtual size that fits the stream width (never wider: the
+ *  scale filter would shrink it again and the sharpness is gone). */
+export function virtualDisplaySize(maxWidth: number): { width: number; height: number } {
+  return VIRTUAL_SIZES.find((s) => s.width <= maxWidth) ?? VIRTUAL_SIZES[VIRTUAL_SIZES.length - 1];
+}
+
+/** The previous session's display helper, until it has put the screens back.
+ *  Module-wide: a quick stop/start (switching a toggle) must not let the new
+ *  helper switch the device on while the old one is still switching it off. */
+let displayRestoring: Promise<void> = Promise.resolve();
+
 function powershell(script: string, extra: string[] = []): ChildProcess {
   return spawn('powershell.exe',
     ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...extra],
@@ -185,7 +218,7 @@ function restoreAfterKill(script: string) {
 }
 
 /** First JSON line that says ready (→ its payload) or error (→ null), on the given stream. */
-function waitReady(proc: ChildProcess, stream: NodeJS.ReadableStream | null, key: string): Promise<Record<string, unknown> | null> {
+function waitReady(proc: ChildProcess, stream: NodeJS.ReadableStream | null, key: string, timeoutMs = EXTRA_READY_MS): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     let rest = '';
     let done = false;
@@ -195,7 +228,7 @@ function waitReady(proc: ChildProcess, stream: NodeJS.ReadableStream | null, key
       clearTimeout(timer);
       resolve(v);
     };
-    const timer = setTimeout(() => finish(null), EXTRA_READY_MS);
+    const timer = setTimeout(() => finish(null), timeoutMs);
     stream?.on('data', (b: Buffer) => {
       if (done) return;
       const split = splitLines(rest, b.toString());
@@ -215,17 +248,22 @@ function waitReady(proc: ChildProcess, stream: NodeJS.ReadableStream | null, key
   });
 }
 
-/** Ends a helper that restores on stdin EOF; a kill instead triggers -Restore. */
-function endHelper(proc: ChildProcess | null, script: string) {
-  if (!proc) return;
-  let exited = proc.exitCode !== null;
-  proc.on('exit', () => { exited = true; });
-  try { proc.stdin?.end(); } catch { /* already gone */ }
-  setTimeout(() => {
-    if (exited) return;
-    try { proc.kill(); } catch { /* already gone */ }
-    restoreAfterKill(script);
-  }, 2_000).unref();
+/** Ends a helper that restores on stdin EOF; a kill instead triggers -Restore.
+ *  Resolves once it is gone (or killed after `graceMs`). */
+function endHelper(proc: ChildProcess | null, script: string, graceMs = 2_000): Promise<void> {
+  if (!proc) return Promise.resolve();
+  return new Promise((resolve) => {
+    let exited = proc.exitCode !== null;
+    if (exited) resolve();
+    proc.on('exit', () => { exited = true; resolve(); });
+    try { proc.stdin?.end(); } catch { /* already gone */ }
+    setTimeout(() => {
+      if (exited) return;
+      try { proc.kill(); } catch { /* already gone */ }
+      restoreAfterKill(script);
+      resolve();
+    }, graceMs).unref();
+  });
 }
 
 export function createWin32Capture(): ScreenCapture {
@@ -246,6 +284,7 @@ export function createWin32Capture(): ScreenCapture {
   let curtainProc: ChildProcess | null = null;
   let soundProc: ChildProcess | null = null;
   let opusProc: ChildProcess | null = null;
+  let displayProc: ChildProcess | null = null;
   // Same as on macOS: a planned shutdown must not be reported as a crash, or the
   // restart logic from Task 18 would start the just-stopped session again.
   let stopping = false;
@@ -303,6 +342,30 @@ export function createWin32Capture(): ScreenCapture {
     return ok;
   }
 
+  /** "Bildschirm aus" the real way (display-helper.ps1): the virtual display
+   *  becomes the only screen — the laptop panel is OFF, not just black — at
+   *  exactly the stream size. Must be up BEFORE ffmpeg starts: ddagrab opens
+   *  output 0, which is then the virtual display (checked on the PC). */
+  async function startDisplay(size: { width: number; height: number }): Promise<boolean> {
+    await Promise.race([displayRestoring, new Promise((r) => setTimeout(r, DISPLAY_END_GRACE_MS))]);
+    if (stopping) return false;
+    const p = powershell(winDisplayScriptPath(), ['-Width', String(size.width), '-Height', String(size.height)]);
+    displayProc = p;
+    p.stdin?.on('error', () => {});
+    p.stderr?.on('data', () => {});
+    p.on('exit', (code) => {
+      // Died by itself mid-session (not our stdin EOF): put the screens back.
+      if (displayProc === p && code !== 0 && !stopping) restoreAfterKill(winDisplayScriptPath());
+    });
+    const ready = await waitReady(p, p.stdout, 'display', DISPLAY_READY_MS);
+    if (!ready) {
+      if (displayProc === p) displayProc = null;
+      displayRestoring = endHelper(p, winDisplayScriptPath(), DISPLAY_END_GRACE_MS);
+      return false;
+    }
+    return true;
+  }
+
   /** Sound: audio-helper.ps1 (PCM) → ffmpeg (Opus in Ogg) → packets. */
   async function startSound(): Promise<boolean> {
     const p = powershell(winAudioScriptPath());
@@ -326,10 +389,11 @@ export function createWin32Capture(): ScreenCapture {
   }
 
   function stopExtras() {
-    const c = curtainProc, a = soundProc, o = opusProc;
-    curtainProc = null; soundProc = null; opusProc = null;
-    endHelper(c, winCurtainScriptPath());
-    endHelper(a, winAudioScriptPath());
+    const c = curtainProc, a = soundProc, o = opusProc, d = displayProc;
+    curtainProc = null; soundProc = null; opusProc = null; displayProc = null;
+    void endHelper(c, winCurtainScriptPath());
+    void endHelper(a, winAudioScriptPath());
+    if (d) displayRestoring = endHelper(d, winDisplayScriptPath(), DISPLAY_END_GRACE_MS);
     if (o) setTimeout(() => { try { o.kill(); } catch { /* gone */ } }, 2_500).unref();
   }
 
@@ -392,11 +456,19 @@ export function createWin32Capture(): ScreenCapture {
     keyframeOnDemand: false,
 
     async start(opts) {
-      // Curtain and sound start alongside ffmpeg; the session waits for their
-      // answer (bounded) so remote:started can say what actually runs.
+      // Sound starts alongside ffmpeg; the session waits for the answers
+      // (bounded) so remote:started can say what actually runs.
+      const sound = opts.audio ? startSound().catch(() => false) : Promise.resolve(false);
+      // "Bildschirm aus": the virtual display if it is set up — it has to be
+      // the active screen before ffmpeg opens one. Otherwise, or if it fails,
+      // the black curtain over the panel as before.
+      let virtual = false;
+      if (opts.curtain && virtualDisplayInstalled()) {
+        virtual = await startDisplay(virtualDisplaySize(opts.maxWidth)).catch(() => false);
+      }
       const extras = Promise.all([
-        opts.curtain ? startCurtain().catch(() => false) : Promise.resolve(false),
-        opts.audio ? startSound().catch(() => false) : Promise.resolve(false),
+        opts.curtain && !virtual ? startCurtain().catch(() => false) : Promise.resolve(virtual),
+        sound,
       ]);
       let info: CaptureInfo;
       try {
