@@ -257,3 +257,7 @@
 
 ## 2026-11-08 — Bubble v1.129.9
 - Protokoll + Screenshots: Bubble-Fenster da, aber Einblend-Animation (alpha 0→1) lief am Samsung nicht an → durchsichtig. Jetzt sofort sichtbar, Animation nur Deko, Ausblenden per Timer. Emulator ok auch ohne Animationen.
+
+## 2026-11-09 — Fernzugriff v1.129.10
+- Flackern MAC/WIN beim Wechsel: Handler hingen an globaler `ws`; später onclose der alten Verbindung nullte die neue, Neuversuch + verwaiste Ströme in einem Dekoder. Fix Socket-Identität, remoteWantId, RN schickt id. Test webview-remote-switch.test.mjs (vorher 3/3 rot, jetzt grün).
+- Windows-Delay: Zeiger nur im Video, relative SendInput mit Beschleunigung, PowerShell-Schleife → cursor-helper.ps1 + draw_mouse=0, exaktes rel, C#-Run-Loop, scale korrekt. C# per dotnet LangVersion 5 geprüft. Windows-PC offline, nicht live getestet.
