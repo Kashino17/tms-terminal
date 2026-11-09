@@ -2252,6 +2252,87 @@
   }
 </style>
 <link rel="stylesheet" href="compact-terminal.css">
+<link rel="stylesheet" href="bund.css">
+<style>
+  /* ===== Bund (Mockup) ===== */
+  .dock-btn[data-nav="manager"] { display: none !important; }
+  .bund-card { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .bund-card__head { display: flex; align-items: center; gap: 10px; padding: 0 2px; }
+  .bund-card__head svg { width: 20px; height: 20px; color: var(--accent); flex: none; }
+  .bund-card__name { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; flex: 1; }
+  .bund-card__count { font-size: 12px; font-weight: 600; color: var(--text-dim); }
+  .bund-devs { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  .bund-dev { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: var(--radius-md);
+    background: rgba(var(--overlay-rgb), .05); border: 1px solid rgba(var(--overlay-rgb), .10);
+    transition: transform 300ms var(--spring), opacity 300ms ease; cursor: pointer; }
+  .bund-dev:active { transform: scale(.98); }
+  .bund-dev .server-orb { color: var(--dc); box-shadow: 0 0 0 1px color-mix(in srgb, var(--dc) 45%, transparent), 0 0 26px 4px color-mix(in srgb, var(--dc) 28%, transparent); }
+  .bund-dev.is-off { opacity: .5; }
+  .bund-dev.is-off .server-orb { color: var(--text-dim); box-shadow: none; }
+  .bund-dev .server-chip.cap { color: var(--text); }
+  .bund-add { height: 46px; border-radius: var(--radius-md); border: 1.5px dashed rgba(var(--overlay-rgb), .22);
+    color: var(--text-dim); font: 600 13px var(--font-ui); background: none; }
+  .bund-demo { display: block; margin: 18px auto 0; padding: 8px 14px; border-radius: 999px; font: 600 11.5px var(--font-ui);
+    color: var(--warn); border: 1px dashed rgba(var(--warn-rgb), .5); background: rgba(var(--warn-rgb), .08); }
+  @media (min-width: 700px) { .bund-devs { grid-template-columns: 1fr 1fr; } .bund-dev { flex-direction: column; align-items: flex-start; } .bund-dev .server-actions { width: 100%; } .bund-dev .server-action { width: 100%; } }
+  body.mac-off #dockMicBtn { display: none !important; }
+  body.mac-off .ts-group[data-srv="srv-mac"] { opacity: .35; pointer-events: none; }
+  .sheet-dev { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; vertical-align: 2px;
+    padding: 3px 9px 3px 7px; border-radius: 999px; font: 600 11px var(--font-ui); color: var(--text-dim);
+    background: rgba(var(--overlay-rgb), .07); white-space: nowrap; }
+  .sheet-dev .card-dev { margin-right: 0; }
+  .shot-target { margin: 10px 2px 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.45; }
+  .shot-target b { color: var(--text); font-weight: 600; }
+  .fx-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .fx-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-size: 11.5px; color: var(--text-dim); }
+  .fx-search { width: 100%; padding: 9px 11px; margin-bottom: 8px; border-radius: 10px; background: rgba(var(--well-rgb),var(--well-a)); border: 1px solid var(--glass-border); color: var(--text); font: 13px var(--font-ui); }
+</style>
+<style>
+  /* ===== Bund v3 ===== */
+  /* Breitere Tasten (Höhe bleibt): weniger Vertipper */
+  .keys-panel .tt-key { min-width: 46px; padding: 0 13px; }
+  .keys-panel .tt-key--icon { width: 46px; padding: 0; }
+  .keys-panel__arrows button { width: 46px; }
+  .keys-panel__arrows { gap: 6px; }
+  .keys-panel__row--tools { gap: 6px; }
+  .keys-panel .tt-key--enter { flex: 0 0 auto; min-width: 64px; }
+  .keys-panel__keys { overflow-x: auto; scrollbar-width: none; }
+  /* weiche Kante rechts = hier geht es weiter */
+  .keys-panel__keys, .keys-panel__row--tools { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 22px; }
+
+  /* Punkte-Leiste wie früher — Gerät nur als leiser Hinweis:
+     ein feiner Strich in Gerätefarbe unter den Punkten, etwas Luft zwischen den Gruppen. */
+  .ts-sep { display: none !important; }
+  .term-switcher__track { height: 32px; }
+  .ts-group.has-dev { position: relative; margin: 0 5px; padding-bottom: 5px; box-sizing: border-box; }
+  .ts-group.has-dev::after { content: ""; position: absolute; left: 9px; right: 9px; bottom: 0; height: 2px; border-radius: 2px;
+    background: var(--dc); opacity: .35; transition: opacity 200ms ease-out; pointer-events: none; }
+  .ts-group.has-dev.is-current::after { opacity: .85; }
+</style>
+<style>
+  /* ===== Bund v4: aufgeklappt ===== */
+  @media (min-width: 700px) {
+    /* Die rechte Spalte IST die Navigation — die Punkte-Leiste darunter entfällt
+       (sie lag bisher über der Spalte). */
+    body:not(.compact-terminal) #termSwitcher { display: none !important; }
+    .rail { padding-top: 2px; }
+    .rail-dev { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; margin: 4px 0 8px;
+      border-radius: 999px; color: var(--dc); font: 800 11px var(--font-ui); letter-spacing: .06em;
+      background: color-mix(in srgb, var(--dc) 9%, rgba(var(--overlay-rgb), .03));
+      border: 1px solid color-mix(in srgb, var(--dc) 22%, transparent); }
+    .rail-dev + .rail-item { margin-top: 0; }
+    .rail-item + .rail-dev { margin-top: 18px; }
+    .rail-dev svg { width: 15px; height: 15px; flex: none; }
+    .rail-dev__name { flex: 1; text-transform: uppercase; }
+    .rail-dev__meta { font: 600 11px var(--font-mono); color: var(--text-dim); letter-spacing: 0; }
+    .rail-dev__n { min-width: 20px; height: 20px; border-radius: 999px; display: grid; place-items: center;
+      font: 700 10.5px var(--font-ui); color: var(--text); background: rgba(var(--overlay-rgb), .10); }
+    .rail-dev.is-current { background: color-mix(in srgb, var(--dc) 17%, rgba(var(--overlay-rgb), .04)); border-color: color-mix(in srgb, var(--dc) 48%, transparent); }
+    .rail-dev.is-off { opacity: .45; }
+    .rail-item { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--dc) 70%, transparent); }
+    .rail-item.is-active { border-color: color-mix(in srgb, var(--dc) 55%, transparent); background: color-mix(in srgb, var(--dc) 9%, transparent); }
+  }
+</style>
 </head>
 <body class="is-locked">
 <div class="atmosphere" aria-hidden="true">
@@ -2356,7 +2437,7 @@
   <span id="dockPill" aria-hidden="true"></span>
   <button class="dock-btn" data-nav="servers">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
-    <span>Server</span>
+    <span>Bund</span>
   </button>
   <button class="dock-btn" data-nav="terminals">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>
@@ -3185,7 +3266,7 @@
   // nur über die fünf Dock-Einträge statt über Terminal-Tabs. Vom Browser
   // aus führt jede Zugrichtung zurück zu Terminals ("swipe back").
   // ============================================================
-  const DOCK_SWIPE_ORDER = ['servers', 'terminals', 'manager', 'cloud', 'browser'];
+  const DOCK_SWIPE_ORDER = ['servers', 'terminals', 'cloud', 'browser'];
   const DOCK_SWIPE_LABEL = { servers: 'Server', terminals: 'Terminals', manager: 'Manager', cloud: 'Cloud', browser: 'Browser' };
   const islandCompactEl = document.getElementById('islandCompact');
   const islandSwipeHintEl = document.getElementById('islandSwipeHint');
@@ -3386,7 +3467,7 @@
   const SCREEN_HOOKS = {};
   // Dock indicator pill — a glass highlight that SLIDES to the active item
   // (FLIP over transform/width; the buttons themselves stay put).
-  const NAV_ORDER = ['servers', 'terminals', 'manager', 'cloud', 'browser', 'tools', 'settings', 'prayer'];
+  const NAV_ORDER = ['servers', 'terminals', 'cloud', 'browser', 'tools', 'settings', 'prayer'];
   let currentScreen = null;
   const dockPillEl = document.getElementById('dockPill');
   function positionDockPill() {
@@ -3534,57 +3615,67 @@
     renderUpdateBanner(host);
     const titleRow = document.createElement('div');
     titleRow.className = 'screen-title-row';
-    titleRow.innerHTML = `<h1 class="screen-title">Server</h1><button class="icon-btn glass" id="settingsBtn" aria-label="Einstellungen öffnen">${icon('gear')}</button>`;
+    titleRow.innerHTML = `<h1 class="screen-title">Bund</h1><button class="icon-btn glass" id="settingsBtn" aria-label="Einstellungen öffnen">${icon('gear')}</button>`;
     host.appendChild(titleRow);
     titleRow.querySelector('#settingsBtn').addEventListener('click', () => show('settings'));
-    const grid = document.createElement('div');
-    grid.className = 'server-grid';
-    TMS_DATA.servers.forEach(srv => {
-      const online = srv.status === 'online';
-      const card = document.createElement('div');
-      card.className = 'glass server-card';
-      card.dataset.status = srv.status;
-      // Auch ein online-Server, der nicht der aktive ist, ist antippbar (Wechsel).
-      if (online) card.dataset.status = 'online';
-      card.innerHTML = `
-        <div class="server-orb">${SERVER_ICON}</div>
-        <div class="server-info">
-          <div class="server-name">${escapeHtml(srv.name)}</div>
-          <div class="server-host">${escapeHtml(srv.host)}:${srv.port}</div>
-          <div class="server-meta">
-            <span class="server-chip ${online ? 'ok' : ''}">${online ? '● online' : '○ offline'}</span>
-            <span class="server-chip" data-latency-chip="${srv.id}">${srv.latency != null ? srv.latency + ' ms' : '—'}</span>
-            <span class="server-chip">${srv.sessions} Terminals</span>
-            <span class="server-chip">${escapeHtml(srv.os)}</span>
+    const devs = TMS_DATA.servers;
+    const on = devs.filter(d => d.status === 'online').length;
+    const card = document.createElement('div');
+    card.className = 'glass bund-card';
+    card.innerHTML = `
+      <div class="bund-card__head">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+        <span class="bund-card__name">Mein Bund</span>
+        <span class="bund-card__count">${on} von ${devs.length} online</span>
+      </div>
+      <div class="bund-devs">${devs.map(d => {
+        const online = d.status === 'online';
+        const n = TMS_DATA.sessions.filter(x => (x.server || devs[0].id) === d.id).length;
+        const col = ['#9b8cff', '#3bc9db', '#f59f00'][devs.indexOf(d) % 3];
+        const devIco = /win/i.test(d.os) ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M2 19h20"/></svg>';
+        return `<div class="bund-dev${online ? '' : ' is-off'}" data-dev="${d.id}" style="--dc:${col}">
+          <div class="server-orb">${devIco}</div>
+          <div class="server-info">
+            <div class="server-name">${escapeHtml(d.name)}</div>
+            <div class="server-meta">
+              <span class="server-chip ${online ? 'ok' : ''}">${online ? '● ' + d.latency + ' ms' : '○ offline'}</span>
+              <span class="server-chip">${n} Terminals</span>
+              <span class="server-chip">${escapeHtml(d.os)}</span>
+              ${(d.caps || []).map(c => `<span class="server-chip cap">${escapeHtml(c)}</span>`).join('')}
+            </div>
           </div>
-        </div>
-        <div class="server-actions">
-          <button class="server-action" data-remote="${srv.id}" ${online ? '' : 'disabled'}>
-            Fernzugriff
-          </button>
-        </div>
-      `;
-      card.addEventListener('click', (e) => {
-        const remoteBtn = e.target.closest('[data-remote]');
-        if (remoteBtn) {
-          e.stopPropagation();
-          if (!online) { toast(`${srv.name} ist offline`); return; }
-          // Die Seite oeffnet ihre eigene Verbindung — React Native liefert nur die Zugangsdaten.
-          if (window.__openRemoteFor) { window.__openRemoteFor(srv.id); return; }
-          if (window.__tmsOpenRemote) window.__tmsOpenRemote(srv.id);
-          show('remote');
-          if (window.TMSRemote) window.TMSRemote.start('auto');
-          return;
-        }
-        if (srv.active) { goToTerminals(); return; }          // schon verbunden
-        if (!online) { toast(`${srv.name} ist offline`); return; }
-        // Anderer, laufender Server: die App schaltet die Verbindung um.
-        if (window.__tmsSwitchServer) { window.__tmsSwitchServer(srv.id); goToTerminals(); }
-        else goToTerminals();
-      });
-      grid.appendChild(card);
+          <div class="server-actions"><button class="server-action" data-remote="${d.id}" ${online ? '' : 'disabled'}>Fernzugriff</button></div>
+        </div>`;
+      }).join('')}</div>
+      <button class="bund-add">+ Gerät zum Bund hinzufügen</button>`;
+    host.appendChild(card);
+    card.querySelectorAll('.bund-dev').forEach(row => row.addEventListener('click', (e) => {
+      const d = devs.find(x => x.id === row.dataset.dev);
+      if (d.status !== 'online') { toast(`${d.name} ist offline`); return; }
+      if (e.target.closest('[data-remote]')) {
+        e.stopPropagation();
+        if (window.__openRemoteFor) { window.__openRemoteFor(d.id); return; }
+        show('remote'); if (window.TMSRemote) window.TMSRemote.start('auto');
+        return;
+      }
+      // Tipp aufs Gerät: zu seinem ersten Terminal
+      const i = state.order.findIndex(id => { const s2 = TMS_DATA.sessions.find(x => x.id === id); return s2 && s2.server === d.id; });
+      goToTerminals();
+      if (i >= 0) setTimeout(() => { const b = document.querySelector(`.ts-seg[data-ts="${i}"]`); if (b) b.click(); }, 380);
+    }));
+    card.querySelector('.bund-add').addEventListener('click', () => toast('Mockup: Gerät hinzufügen'));
+    const demo = document.createElement('button');
+    demo.className = 'bund-demo';
+    const mac = devs.find(x => x.id === 'srv-mac');
+    demo.textContent = mac.status === 'online' ? 'Demo: MacBook ausschalten' : 'Demo: MacBook wieder einschalten';
+    demo.addEventListener('click', () => {
+      const off = mac.status === 'online';
+      mac.status = off ? 'offline' : 'online'; mac.active = !off;
+      document.body.classList.toggle('mac-off', off);
+      toast(off ? 'MacBook offline — Diktat ausgeblendet' : 'MacBook wieder da — Diktat ist zurück');
+      renderServers();
     });
-    host.appendChild(grid);
+    host.appendChild(demo);
   }
 
   // ============================================================
@@ -5153,12 +5244,13 @@
               <button data-tt-cursor="→" aria-label="Rechts">${arrow(-90)}</button>
             </div>
             <button class="tt-key tt-key--enter" data-tt-key="enter" aria-label="Enter senden" title="Enter">${icon('enter', 18)}</button>
-            <button class="tt-key tt-key--icon" data-tt-key="touchid" aria-label="Passwort per Fingerabdruck" title="Passwort per Fingerabdruck (sudo)">🔓</button>
             <button class="tt-key tt-key--icon" data-tt-tool="screenshots" aria-label="Screenshots" title="Screenshots">${icon('camera', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="files" aria-label="Dateien" title="Dateien">${icon('folder', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="notes" aria-label="Notizen" title="Notizen">${icon('note', 17)}</button>
             <button class="tt-key tt-key--icon" data-tt-tool="clipboard" aria-label="Zwischenablage" title="Zwischenablage">${icon('clipboard', 17)}</button>
-            <button class="tt-key tt-key--icon" data-tt-key="werkzeuge" aria-label="Alle Werkzeuge" title="Alle Werkzeuge">${icon('tools', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-tool="snippets" aria-label="Snippets" title="Snippets">${icon('snippet', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-tool="ports" aria-label="Ports" title="Ports">${icon('ports', 17)}</button>
+            <button class="tt-key tt-key--icon" data-tt-tool="processes" aria-label="Prozesse" title="Prozesse">${icon('processes', 17)}</button>
           </div>
         </div>`;
   }
@@ -6080,12 +6172,28 @@
     if (!rail.offsetParent) { railStale = true; return; }
     railStale = false;
     rail.innerHTML = '';
+    const DEVC = (sid) => ['#9b8cff', '#3bc9db', '#f59f00'][Math.max(0, TMS_DATA.servers.findIndex(x => x.id === sid)) % 3];
+    let lastDev = null;
     state.order.forEach((id, i) => {
       const session = TMS_DATA.sessions.find(s => s.id === id);
+      const sid = session.server || (TMS_DATA.servers[0] && TMS_DATA.servers[0].id);
+      if (sid !== lastDev) {
+        lastDev = sid;
+        const srv = TMS_DATA.servers.find(x => x.id === sid) || {};
+        const curSid = (TMS_DATA.sessions.find(x => x.id === state.order[state.activeIndex]) || {}).server;
+        const n = state.order.filter(x => (TMS_DATA.sessions.find(y => y.id === x) || {}).server === sid).length;
+        const ico = /win/i.test(srv.os || '') ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M2 19h20"/></svg>';
+        const head = document.createElement('div');
+        head.className = 'rail-dev' + (sid === curSid ? ' is-current' : '') + (srv.status === 'online' ? '' : ' is-off');
+        head.style.setProperty('--dc', DEVC(sid));
+        head.innerHTML = `${ico}<span class="rail-dev__name">${escapeHtml(srv.name || '')}</span><span class="rail-dev__meta">${srv.status === 'online' ? (srv.latency != null ? srv.latency + ' ms' : '') : 'offline'}</span><span class="rail-dev__n">${n}</span>`;
+        rail.appendChild(head);
+      }
       const cs = cardState[id];
       const isActive = i === state.activeIndex;
       const item = document.createElement('div');
       item.className = 'rail-item glass' + (isActive ? ' is-active' : '');
+      item.style.setProperty('--dc', DEVC(sid));
       item.dataset.id = id; item.dataset.index = i;
       const preview = window.__tmsPreview ? window.__tmsPreview(id, 2) : cs.lines.slice(-2).map(l => ansiToHtml(l)).join('<br>');
       item.innerHTML = `
@@ -6979,7 +7087,6 @@
   // ============================================================
   const TOOL_DEFS = [
     { id: 'files', code: 'FS', icon: 'folder', label: 'Dateien' },
-    { id: 'sql', code: 'DB', icon: 'db', label: 'SQL' },
     { id: 'ports', code: 'PT', icon: 'ports', label: 'Ports' },
     { id: 'processes', code: 'PS', icon: 'processes', label: 'Prozesse' },
     { id: 'snippets', code: 'SN', icon: 'snippet', label: 'Snippets' },
@@ -6987,7 +7094,6 @@
     { id: 'clipboard', code: 'CB', icon: 'clipboard', label: 'Zwischenablage' },
     { id: 'screenshots', code: 'SC', icon: 'camera', label: 'Screenshots' },
     { id: 'browser', code: 'BR', icon: 'browser', label: 'Browser' },
-    { id: 'watchers', code: 'WA', icon: 'eye', label: 'Watchers' },
   ];
 
   function renderTools() {
@@ -7013,7 +7119,27 @@
     });
   }
 
+  // Bund: Werkzeuge, die zu einem Gerät gehören, folgen dem Terminal vorne.
+  const DEVICE_TOOLS = ['files', 'screenshots', 'ports', 'processes', 'watchers', 'sql'];
+  function activeSess() { const id = state.order[state.activeIndex]; return TMS_DATA.sessions.find(x => x.id === id); }
+  function sheetDevChip(id) {
+    if (!DEVICE_TOOLS.includes(id)) return id === 'notes' || id === 'clipboard' ? '<span class="sheet-dev">auf dem Handy</span>' : '';
+    const s = activeSess(); const sid = (s && s.server) || 'srv-mac';
+    const srv = TMS_DATA.servers.find(x => x.id === sid);
+    const col = window.__devColor ? window.__devColor(sid) : 'var(--accent)';
+    return `<span class="sheet-dev"><span class="card-dev" style="--dc:${col}"><i></i>${window.__devShort ? window.__devShort(srv) : 'MAC'}</span>${escapeHtml(s ? s.name : '')}</span>`;
+  }
+  window.__refreshOpenTool = function () {
+    const wrap = document.getElementById('toolSheetWrap');
+    if (!window.__openTool || !wrap || !wrap.classList.contains('is-open')) return;
+    const builders = { files: buildFilesSheet, screenshots: buildScreenshotsSheet };
+    const b = builders[window.__openTool]; if (!b) return;
+    const { html, wire } = b();
+    document.getElementById('toolSheetTitle').innerHTML = escapeHtml(TOOL_DEFS.find(t => t.id === window.__openTool).label) + sheetDevChip(window.__openTool);
+    document.getElementById('toolSheetBody').innerHTML = html; if (wire) wire();
+  };
   function openToolSheet(id) {
+    if (window.__bundTool && window.__bundTool(id)) return;
     const def = TOOL_DEFS.find(t => t.id === id);
     const builders = {
       files: buildFilesSheet, sql: buildSqlSheet, ports: buildPortsSheet, processes: buildProcessesSheet,
@@ -7023,7 +7149,8 @@
     };
     if (!def || !builders[id]) return;
     const { html, wire } = builders[id]();
-    document.getElementById('toolSheetTitle').textContent = def.label;
+    document.getElementById('toolSheetTitle').innerHTML = escapeHtml(def.label) + sheetDevChip(id);
+    window.__openTool = id;
     document.getElementById('toolSheetBody').innerHTML = html;
     openSheet(document.getElementById('toolSheetWrap'));
     if (wire) wire();
@@ -7621,21 +7748,29 @@
   }
   SCREEN_HOOKS.files = function () { if (!document.querySelector('[data-screen="files"] .fs-list')) renderFilesScreen(); };
 
+  const FILES_BY_DEV = {
+    'srv-mac': { cwd: '/Users/ayysir/Desktop/TMS Terminal', list: ['.claude/', '.git/', '.github/', 'docs/', 'memory/', 'mobile/', 'mockups/', 'server/', 'shared/', 'CLAUDE.md|4 KB', 'package.json|1 KB'] },
+    'srv-win': { cwd: 'C:\\Users\\ayysir', list: ['Desktop/', 'Documents/', 'Downloads/', 'Pictures/', '.ssh/', 'projects.txt|2 KB'] },
+  };
   function buildFilesSheet() {
-    const html = `<div class="fx-head" style="margin-bottom:8px">
-        <button class="btn-chip" data-fx-fullscreen>⛶ Vollbild-Explorer</button>
-      </div><div class="tool-list">${TMS_DATA.files.map(f => `
-      <div class="tool-row">
-        <span class="tool-row__icon">${f.type === 'dir' ? '▸' : '·'}</span>
-        <span class="tool-row__name">${escapeHtml(f.name)}</span>
-        <span class="tool-row__meta">${f.size ? escapeHtml(f.size) : ''}</span>
-      </div>`).join('')}</div>`;
+    const s = activeSess(); const f = FILES_BY_DEV[(s && s.server) || 'srv-mac'];
+    const rows = f.list.map(x => { const [n, sz] = x.split('|'); const dir = n.endsWith('/');
+      return `<div class="fx-row"><button class="tool-row is-tap"><span class="tool-row__icon">${dir ? '▸' : '·'}</span><span class="tool-row__name">${escapeHtml(n)}</span><span class="tool-row__meta">${dir ? 'öffnen' : sz}</span></button></div>`; }).join('');
+    const html = `<style>#toolSheetBody .fx-row + .fx-row { margin-top: 6px; } #toolSheetBody .fx-row .tool-row { border-top: none; background: rgba(var(--overlay-rgb), .04); border-radius: 12px; padding: 11px 12px; width: 100%; }</style>
+      <div class="fx-head">
+        <button class="btn-chip">▴ Aufwärts</button>
+        <span class="fx-path mono-text">${escapeHtml(f.cwd)}</span>
+        <button class="btn-chip" data-fx="cdhere">cd hier</button>
+        <button class="btn-chip">+ Ordner</button>
+        <button class="btn-chip" data-fx-fullscreen>⛶</button>
+      </div>
+      <input class="term-input fx-search" placeholder="Filtern…">
+      <div class="tool-list">${rows}</div>`;
     return { html, wire() {
       const btn = document.querySelector('#toolSheetBody [data-fx-fullscreen]');
-      if (btn) btn.addEventListener('click', () => {
-        closeSheet(document.getElementById('toolSheetWrap'));
-        window.openFilesScreen();
-      });
+      if (btn) btn.addEventListener('click', () => { closeSheet(document.getElementById('toolSheetWrap')); window.openFilesScreen(); });
+      const cd = document.querySelector('#toolSheetBody [data-fx="cdhere"]');
+      if (cd) cd.addEventListener('click', () => { closeSheet(document.getElementById('toolSheetWrap')); toast(`cd ${f.cwd} → ${s.name}`); });
     } };
   }
 
@@ -7834,7 +7969,9 @@
   function buildScreenshotsSheet() {
     const html = `
       <div class="shot-grid" id="shotGrid">${[1, 2, 3].map(() => '<div class="shot-tile"></div>').join('')}</div>
-      <button class="btn-chip" id="shotCaptureBtn" style="width:100%;">Aufnehmen</button>`;
+      <button class="btn-chip" id="shotCaptureBtn" style="width:100%;">Aufnehmen</button>
+      <div class="shot-target">${(() => { const s = activeSess(); const srv = TMS_DATA.servers.find(x => x.id === ((s && s.server) || 'srv-mac'));
+        return `Bild landet auf <b>${escapeHtml(srv.name)}</b>, der Pfad kommt in <b>${escapeHtml(s ? s.name : '')}</b> — auch wenn du zwischendurch wechselst.`; })()}</div>`;
     const wire = () => {
       document.getElementById('shotCaptureBtn').addEventListener('click', () => {
         const flash = document.getElementById('shotFlash');
@@ -7842,7 +7979,7 @@
         setTimeout(() => flash.classList.remove('is-flashing'), 160);
         const grid = document.getElementById('shotGrid');
         if (grid) grid.insertAdjacentHTML('afterbegin', '<div class="shot-tile"></div>');
-        toast('Screenshot aufgenommen');
+        { const s = activeSess(); toast(`Bild → ${(s && s.server) === 'srv-win' ? 'WIN' : 'MAC'} · Pfad in „${s ? s.name : ''}“`); }
       });
     };
     return { html, wire };
@@ -10147,7 +10284,6 @@
       type: 'Cloud', label: p.name, sub: `${p.provider} · ${p.folder}`,
       action: () => { show('cloud'); openCloudDetail(p.id, 'env'); },
     }));
-    idx.push({ type: 'Screen', label: 'Manager', sub: 'Manager-Chat öffnen', action: () => show('manager') });
     idx.push({ type: 'Screen', label: 'Cloud', sub: 'Cloud-Projekte öffnen', action: () => show('cloud') });
     idx.push({ type: 'Screen', label: 'Browser', sub: 'Inkognito-Browser öffnen', action: () => show('browser') });
     idx.push({ type: 'Screen', label: 'Werkzeuge', sub: 'Tool-Panels öffnen', action: () => show('tools') });
@@ -10790,7 +10926,7 @@
       const srv = TMS_DATA.servers.find(x => x.id === g.sid);
       const col = window.__devColor ? window.__devColor(g.sid) : 'var(--accent)';
       const label = showDev && window.__devShort ? `<span class="ts-dev" style="--dc:${col}"><i></i>${escapeHtml(window.__devShort(srv))}</span>` : '';
-      return `<div class="ts-group${g.sid === curSrv ? ' is-current' : ''}" data-srv="${escapeHtml(g.sid || '')}">${label}${g.items.join('')}</div>`;
+      return `<div class="ts-group${g.sid === curSrv ? ' is-current' : ''}${showDev ? ' has-dev' : ''}" data-srv="${escapeHtml(g.sid || '')}" style="--dc:${col}">${g.items.join('')}</div>`;
     }).join('<span class="ts-sep" aria-hidden="true"></span>');
     tsDots = [...tsTrack.querySelectorAll('.ts-dot')];
     tsRest(state.activeIndex);
@@ -10924,6 +11060,7 @@
     /** Nach jedem Terminalwechsel: Ping-Anzeige + aktuelle Gerätegruppe. */
     window.multiSync = function () {
       if (typeof updateLatencyDisplay === 'function') updateLatencyDisplay();
+      if (typeof window.__refreshOpenTool === 'function') window.__refreshOpenTool();
       // Die App erfährt, welches Terminal vorne ist: Dateien und Fingerabdruck
       // gehören zu DESSEN Gerät.
       if (typeof window.__tmsReportActive === 'function') window.__tmsReportActive();
@@ -11014,5 +11151,6 @@
   })();
 </script>
 <script src="compact-terminal.js"></script>
+<script src="bund.js"></script>
 </body>
 </html>

@@ -250,7 +250,8 @@ function viewport() {
   const modal = () => ({ open: false, close() { this.open = false; } });
   const context = vm.createContext({
     frame: 0, reading: false, signature: '', fontSize: 15, currentScreen: 'terminals',
-    window: { innerHeight: 800, innerWidth: 700, visualViewport: { height: 800, offsetTop: 0, scale: 1 }, dispatchEvent: e => events.push(e.type) },
+    // Phone width: from 700 px on the Bund desk view uses the compact layout on purpose.
+    window: { innerHeight: 800, innerWidth: 412, visualViewport: { height: 800, offsetTop: 0, scale: 1 }, dispatchEvent: e => events.push(e.type) },
     root: { style: { setProperty: (key, value) => properties.set(key, value) } },
     body, dock: { offsetHeight: 54 }, keys: { offsetHeight: 45, hidden: true },
     input: {}, sessions: modal(), settings: modal(), header: { querySelector: () => label },
@@ -312,4 +313,12 @@ test('pinch zoom, other screens and the lock screen do not enable a terminal lay
   assert.ok(!t.classes.has('compact-terminal'));
   t.context.currentScreen = 'terminals'; t.classes.add('is-locked'); t.context.sync();
   assert.ok(!t.classes.has('compact-terminal'));
+});
+
+test('Bund: unfolded (>= 700 px) uses the compact terminal at full height — bund.js adds the sidebar', () => {
+  const t = viewport();
+  t.context.window.innerWidth = 875;
+  t.context.window.innerHeight = t.context.window.visualViewport.height = 970;
+  t.context.sync();
+  assert.ok(t.classes.has('compact-terminal'));
 });

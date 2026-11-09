@@ -57,12 +57,10 @@ ${dataJs}
 window.TMS_DATA.sessions = [];
 window.TMS_DATA.files = [];
 window.TMS_DATA.processes = [];
-window.TMS_DATA.watchers = [];
 window.TMS_DATA.ports = [];
 window.TMS_DATA.snippets = [];
 window.TMS_DATA.notes = [];
 window.TMS_DATA.screenshots = [];
-window.TMS_DATA.sql = { statements: [] };
 window.TMS_DATA.cloudProjects = [];
 window.TMS_DATA.cloudAccounts = { vercel: { connected: false, maskedKey: null }, render: { connected: false, maskedKey: null } };
 window.TMS_DATA.cloudOrg = { folders: [], assignments: {}, favorites: {}, startFolderId: null, defaultFilters: { provider: 'all', status: 'all' } };
@@ -135,6 +133,11 @@ patch('compact stylesheet', '<link rel="stylesheet" href="compact-terminal.css">
   '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/compact-terminal.css'), 'utf8') + '</style>');
 patch('compact controller', '<script src="compact-terminal.js"></script>',
   '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/compact-terminal.js'), 'utf8') + '</script>');
+// Bund: Desk-Ansicht, Karten mit Griff, Explorer, Zwischenablage, Snippets.
+patch('bund stylesheet', '<link rel="stylesheet" href="bund.css">',
+  '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/bund.css'), 'utf8') + '</style>');
+patch('bund controller', '<script src="bund.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/bund.js'), 'utf8') + '</script>');
 
 // ── 5) xterm.js + the bridge, after the mockup's own script.
 function stringExports(file) {

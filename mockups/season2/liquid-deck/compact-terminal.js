@@ -59,7 +59,7 @@
       const tag = document.createElement('span'); tag.className = 'compact-session-tag'; tag.style.background = session.colorTag;
       const text = document.createElement('span');
       const name = document.createElement('strong'); name.textContent = session.name;
-      const status = document.createElement('small'); status.textContent = [folderLabel(session.cwd || ''), STATUS_LABELS[session.status] || session.status].filter(Boolean).join(' · ');
+      const status = document.createElement('small'); status.textContent = [(window.__devShort ? window.__devShort((TMS_DATA.servers || []).find(x => x.id === session.server)) : ''), folderLabel(session.cwd || ''), STATUS_LABELS[session.status] || session.status].filter(Boolean).join(' · ');
       text.append(name, status); button.append(tag, text);
       button.addEventListener('click', () => {
         const index = state.order.indexOf(session.id);
@@ -129,7 +129,7 @@
     const zoomed = vp && Math.abs(vp.scale - 1) > .05;
     const height = Math.round(vp && !zoomed ? vp.height : window.innerHeight);
     const top = vp && !zoomed ? vp.offsetTop : 0;
-    const enabled = currentScreen === 'terminals' && height <= 480 && !body.classList.contains('is-locked');
+    const enabled = currentScreen === 'terminals' && (height <= 480 || window.innerWidth >= 700) && !body.classList.contains('is-locked');
     const changed = body.classList.contains('compact-terminal') !== enabled;
     const tight = enabled && height <= 280;
     const tightChanged = body.classList.contains('compact-tight') !== tight;
@@ -158,7 +158,7 @@
     root.style.setProperty('--compact-keys-h', keysHeight + 'px');
     const session = TMS_DATA.sessions.find(item => item.id === target());
     header.querySelector('strong').textContent = session?.name || 'Keine Sitzung';
-    header.querySelector('small').textContent = session ? [folderLabel(session.cwd || ''), STATUS_LABELS[session.status] || session.status].filter(Boolean).join(' · ') : 'Sitzung hinzufügen';
+    header.querySelector('small').textContent = session ? [(window.__devShort ? window.__devShort((TMS_DATA.servers || []).find(x => x.id === session.server)) : ''), folderLabel(session.cwd || ''), STATUS_LABELS[session.status] || session.status].filter(Boolean).join(' · ') : 'Sitzung hinzufügen';
     header.querySelector('.compact-session-tag').style.background = session?.colorTag || 'var(--text-dim)';
     const next = [height, window.innerWidth, dockHeight, keysHeight, reading, target(), fontSize].join(':');
     if (changed || signature !== next) {

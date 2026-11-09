@@ -114,12 +114,18 @@
     if (b.dataset.ds === 'remote' && document.getElementById('remoteIslandBtn')) document.getElementById('remoteIslandBtn').click();
   });
   // Desk-Status folgt der kompakten Ansicht (siehe compact-terminal.js) — und jedem Wechsel.
+  /** Desk (Seitenleiste + ein Terminal) nur aufgeklappt: breit UND die volle
+   *  Fensterhöhe (Grundhöhe je Breite) ist hoch. Die Tastatur ändert nur die
+   *  aktuelle Höhe — die Leiste bleibt; geteilter Bildschirm ist von Anfang an
+   *  niedrig — dort gibt es keine Leiste. */
+  function deskWanted(width, baseHeight) { return width >= 700 && baseHeight > 600; }
+  window.__bundDeskWanted = deskWanted;
   try { if (localStorage.getItem('tms-bund-side-mini') === '1') document.body.classList.add('side-mini'); } catch (_) {}
   const baseH = {};
   const mo = new MutationObserver(() => {
     const w = window.innerWidth;
     baseH[w] = Math.max(baseH[w] || 0, window.innerHeight);
-    const wide = w >= 700 && baseH[w] > 600;
+    const wide = deskWanted(w, baseH[w]);
     const on = document.body.classList.contains('compact-terminal') && wide;
     if (document.body.classList.contains('desk') !== on) { document.body.classList.toggle('desk', on); }
     if (on) renderDesk();
