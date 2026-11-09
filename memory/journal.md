@@ -268,3 +268,7 @@
 ## 2026-11-09 — Fernzugriff v1.130.0
 - Mac-Sperrhinweis/Touch ID blieben auf WIN (Sperrzustand nie zurückgesetzt) → pro Verbindung, `unlock` in remote:started.
 - Neu: Ton aufs Handy + Verdunkeln (Details Commit bb93c7d). Mac live geprüft (Ton-Pakete, Helligkeit 0/zurück), Windows nur kompiliert + Fake-Prozess-Tests; ffmpeg-Prüfphase-Falle (5 s ohne Ton) gefunden und behoben.
+
+## 2026-11-09 — v1.130.1 + Update-Prüfung
+- Windows-Features gingen nicht: Server dort alt; Update lief unsichtbar → afd5b60 (Vordergrund, stash, Stempel, /health build, version-Befehl).
+- Hinweis-Spam: Sitzung lief nach Verlassen weiter → suspend beim Verlassen, Hinweis einmalig, Toast-Umbruch. Tests (alt rot, neu grün).

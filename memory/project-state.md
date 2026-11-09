@@ -1,10 +1,12 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-09 — Fernzugriff Ton aufs Handy + Verdunkeln; Release v1.130.0_
+_Zuletzt aktualisiert: 2026-11-09 — Fernzugriff pausiert beim Verlassen, Update-Prüfung; Release v1.130.1_
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-09 nachts (neueste):** Release v1.130.0: Fernzugriff-Schalter 🔊 Ton aufs Handy (Mac Core-Audio-Tap stumm + Opus, Windows WASAPI-Loopback + ffmpeg Opus) und 🌑 Verdunkeln (Mac Vorhang aus SCK ausgenommen + Helligkeit 0; Windows WDA_EXCLUDEFROMCAPTURE + DDC/WMI); Mac-Sperrhinweis/Touch ID nicht mehr auf WIN. Server-dist gebaut. **Offen:** Mac-Server-Neustart durch Nutzer, Windows update+Neustart, Gerätetests (Mac entsperrt mit Vorhang; Windows: Loopback trotz Stumm? Vorhang aus ddagrab?).
+**Stand 2026-11-09 spätnachts (neueste):** Release v1.130.1: Fernzugriff verlassen = suspend (vorher lief Sitzung im Hintergrund, Vorhang/Ton blieben), Hinweise einmalig + Toasts umbrechend. Server afd5b60: Windows-Update sichtbar + git stash vor pull, Build-Stempel, /health meldet build, `tms-terminal version`. Windows-Server lief noch ALT (App meldete „Server zu alt“) — Windows-TMS auf Port 8770. **Offen:** Windows update/version-Ausgabe vom Nutzer, dann 🔊/🌑 auf WIN testen.
+
+**Stand 2026-11-09 nachts:** Release v1.130.0: Fernzugriff-Schalter 🔊 Ton aufs Handy (Mac Core-Audio-Tap stumm + Opus, Windows WASAPI-Loopback + ffmpeg Opus) und 🌑 Verdunkeln (Mac Vorhang aus SCK ausgenommen + Helligkeit 0; Windows WDA_EXCLUDEFROMCAPTURE + DDC/WMI); Mac-Sperrhinweis/Touch ID nicht mehr auf WIN. Server-dist gebaut. **Offen:** Mac-Server-Neustart durch Nutzer, Windows update+Neustart, Gerätetests (Mac entsperrt mit Vorhang; Windows: Loopback trotz Stumm? Vorhang aus ddagrab?).
 
 **Stand 2026-11-09 spät:** Release v1.129.11: Windows-Standbild — Fluss kennt keyframeOnDemand=false (350 ms Budget, Vollbilder nie verwerfen), App holt Dekoder-Rückstand bis 8 auf, Bitrate per zweitem ffmpeg mit nahtloser Übergabe, Statuszeile „N verworfen“. **Offen:** Windows-PC update + Neustart, Gerätetest; terminal-create.test „restoring and rebuilding cards“ hängt (älter, nicht Fernzugriff).
 
@@ -65,7 +67,7 @@ _Zuletzt aktualisiert: 2026-11-09 — Fernzugriff Ton aufs Handy + Verdunkeln; R
 ## Historischer Stand vom 2026-04-26
 Die folgenden älteren Arbeitsnotizen wurden bewahrt und in dieser Sitzung nicht erneut verifiziert.
 
-_Zuletzt aktualisiert: 2026-11-09 — Fernzugriff Ton aufs Handy + Verdunkeln; Release v1.130.0_
+_Zuletzt aktualisiert: 2026-11-09 — Fernzugriff pausiert beim Verlassen, Update-Prüfung; Release v1.130.1_
 
 ## Aktuelle Version
 - **App:** v1.21.3 — Voice Prompt Enhancer (Llama 3.2 3B Instruct via MLX rewritet Sprach-Eingabe in polierte AI-Prompts; Toggle in Settings → Sprache → "KI-Prompt-Modus"; default off)
