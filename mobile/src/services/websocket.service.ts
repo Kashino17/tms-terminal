@@ -1,3 +1,4 @@
+import { RttWindow } from './rtt.core.mjs';
 import NetInfo, { NetInfoState, NetInfoStateType } from '@react-native-community/netinfo';
 import { WebSocketConfig, ConnectionState } from '../types/websocket.types';
 
@@ -6,8 +7,10 @@ type StateHandler = (state: ConnectionState) => void;
 
 const RECONNECT_BASE = 500;   // 500ms initial delay (faster recovery on mobile)
 const RECONNECT_MAX = 5000;   // cap at 5s (was 30s) — backoff: 500ms, 1s, 2s, 4s, 5s
-const PING_INTERVAL_NORMAL = 12000;  // 12s — inside server's 15s heartbeat window
-const PING_INTERVAL_FAST = 6000;     // 6s — adaptive: used when RTT is unstable
+// Ehrlicher Ping: alle 3 s messen (früher 12 s) — die Anzeige soll den echten
+// Pfad zeigen (Heimnetz direkt ≈10 ms, Tailscale-Relais 80–450 ms).
+const PING_INTERVAL_NORMAL = 3000;
+const PING_INTERVAL_FAST = 3000;
 const WATCHDOG_TIMEOUT = 30000; // 30s — 15s margin over server's 15s heartbeat
 const RTT_REPORT_INTERVAL = 5; // send RTT to server every 5 pings
 // No max reconnect cap: a server restart can take arbitrarily long, and the
@@ -50,7 +53,9 @@ export class WebSocketService {
   // RTT tracking
   private pingSentAt: number | null = null;
   private _rawRtt: number | undefined = undefined;     // last raw sample
-  private _smoothedRtt: number | undefined = undefined; // EMA-smoothed RTT
+  private _smoothedRtt: number | undefined = undefined; // EMA-smoothed RTT (Qualität/Jitter)
+  /** Anzeige-Ping: Median der letzten 5 Rohwerte. */
+  private rttWindow = new RttWindow(5);
   private _jitter: number = 0;                          // EMA-smoothed jitter
   private _quality: ConnectionQuality = 'good';
   private pingCount = 0;
@@ -62,9 +67,9 @@ export class WebSocketService {
     return this._state;
   }
 
-  /** Smoothed round-trip time in ms (EMA-filtered, undefined if not yet measured) */
+  /** Ping für die Anzeige: Median der letzten 5 Messungen (undefined vor der ersten). */
   getRtt(): number | undefined {
-    return this._smoothedRtt !== undefined ? Math.round(this._smoothedRtt) : undefined;
+    return this.rttWindow.median();
   }
 
   /** Raw (unsmoothed) last RTT sample */
@@ -258,6 +263,7 @@ export class WebSocketService {
 
   private updateRttMetrics(rawRtt: number): void {
     this._rawRtt = rawRtt;
+    this.rttWindow.push(rawRtt);
 
     // EMA-smoothed RTT: smooth out spikes while staying responsive
     if (this._smoothedRtt === undefined) {
