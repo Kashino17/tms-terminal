@@ -234,6 +234,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       if (c.state === 'connected') c.send({ type: 'browserbridge:toggle', payload: { enabled: browserBridgeEnabled } } as never);
     }
   }, [devices, state, browserBridgeEnabled]);
+  // Die Seite kennt das Gerät vorne nur über das Terminal vorne — ohne eins
+  // (oder ohne Zuordnung) gilt, was wir hier entscheiden.
+  useEffect(() => { if (ready) call('setActiveDevice', activeDev); }, [ready, pageEpoch, activeDev, call]);
   const {
     loadProjects: loadCloud, loadDetail: loadCloudDetail,
     connect: cloudConnect, disconnect: cloudDisconnect, reveal: cloudReveal, pushAccounts: pushCloudAccounts, pushOrg: pushCloudOrg,
@@ -885,6 +888,11 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         } else if (prev && prev !== 'connected') {
           // Der Server hängt beim Abriss ab und puffert — ohne Reattach froren die Karten ein.
           call('reattachAll');
+        }
+        if (prev !== 'connected') {
+          // Frisch verbunden (auch nach Server-Neustart): Browser-Bridge neu setzen —
+          // der Server startet mit "aus", der Login aus diesem Terminal käme sonst nicht aufs Handy.
+          conn.send({ type: 'browserbridge:toggle', payload: { enabled: useSettingsStore.getState().browserBridgeEnabled } } as never);
         }
       }
       if (n % 3 === 1 && Object.keys(lat).length) call('setServerLatency', lat);

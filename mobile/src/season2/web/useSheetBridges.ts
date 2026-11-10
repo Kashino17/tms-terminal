@@ -156,7 +156,7 @@ export function useSheetBridges({
 
       const uploaded: Array<{ path: string; url: string; isVideo?: boolean }> = [];
       const total = result.assets.length;
-      call('uploadProgress', 0, total);
+      call('uploadProgress', 0, total, server.id);
       for (const asset of result.assets) {
         const isVideo = asset.type === 'video';
         if (isVideo && (asset.fileSize ?? 0) > 500 * 1024 * 1024) {
@@ -196,7 +196,7 @@ export function useSheetBridges({
           if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
         }
         uploaded.push({ path: json.path, url: isVideo ? '' : downloadUrl(json.path), isVideo });
-        call('uploadProgress', uploaded.length, total); // 3 von 12 …
+        call('uploadProgress', uploaded.length, total, server.id); // 3 von 12 …
       }
       const next = [...uploaded.reverse(), ...shots];
       setShots(next);

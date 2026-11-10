@@ -20,13 +20,13 @@ if (!PW) {
   const require = createRequire(join(PW, 'index.js'));
   const { chromium } = require('playwright');
 
-  async function boot() {
-    const src = readFileSync(join(here, '../src/season2/web/liquidDeckHtml.ts'), 'utf8');
+  async function boot(vp = { width: 412, height: 915 }) {
+    const src = readFileSync(process.env.TMS_DECK_TS || join(here, '../src/season2/web/liquidDeckHtml.ts'), 'utf8');
     const html = JSON.parse(src.match(/export const LIQUID_DECK_HTML = (".*");\s*$/s)[1]);
     const file = join(tmpdir(), `tms-webview-bund-${process.pid}.html`);
     writeFileSync(file, html);
     const browser = await chromium.launch();
-    const page = await browser.newPage({ viewport: { width: 412, height: 915 } });
+    const page = await browser.newPage({ viewport: vp });
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
     await page.addInitScript(() => {
@@ -148,6 +148,91 @@ if (!PW) {
       await page.evaluate(() => document.querySelector('.bund-add').click());
       assert.equal((await posts('server:add')).length, 1);
       assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Fernzugriff → holen: Explorer bleibt auf dem gewählten Gerät', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await page.evaluate(() => window.rxOpenFilesOn('B', 'C:\\Users\\x\\Downloads'));
+      await page.waitForTimeout(300);
+      assert.equal((await posts('files:openOn'))[0].payload.id, 'B');
+      await page.evaluate(() => window.TMSBridge.setFilesDir('C:\\Users\\x\\Downloads', [{ name: 'setup.exe', path: 'C:\\Users\\x\\Downloads\\setup.exe', isDir: false, size: 9, modified: 0 }], 'B'));
+      await page.waitForTimeout(300);
+      assert.match(await page.textContent('.fx2-list'), /setup\.exe/);
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Ohne Terminal vorne gilt das Gerät der App (MacBook offline)', async () => {
+    const { browser, page, posts } = await boot();
+    try {
+      await page.evaluate(() => {
+        window.TMS_DATA.sessions.length = 0;
+        window.TMSBridge.setActiveDevice('B');
+        window.__bundTool('files');
+      });
+      await page.waitForTimeout(300);
+      await page.evaluate(() => window.TMSBridge.setFilesDir('C:\\Users\\x\\Desktop', [{ name: 'win.txt', path: 'C:\\Users\\x\\Desktop\\win.txt', isDir: false, size: 1, modified: 0 }], 'B'));
+      await page.waitForTimeout(300);
+      assert.match(await page.textContent('.fx2-list'), /win\.txt/);
+    } finally { await browser.close(); }
+  });
+
+  test('Zwischenablage: Gerätefilter aus echten Geräten, Leeren erst nach Bestätigung', async () => {
+    const { browser, page, posts } = await boot();
+    try {
+      await page.evaluate(() => window.__bundTool('clipboard'));
+      await page.evaluate(() => window.TMSBridge.setClips([
+        { id: 'c1', text: 'vom mac', src: 'A', at: Date.now(), pinned: false },
+        { id: 'c2', text: 'vom pc', src: 'B', at: Date.now(), pinned: false },
+      ]));
+      await page.click('.cb2-f[data-f="B"]');
+      const txt = await page.textContent('.cb2-list');
+      assert.match(txt, /vom pc/); assert.doesNotMatch(txt, /vom mac/);
+      await page.click('[data-cb="clear"]');
+      await page.waitForTimeout(250);
+      assert.match(await page.textContent('.fx2-confirm'), /Verlauf leeren/);
+      assert.equal((await posts('clipboard:clear')).length, 0, 'erst nach Bestätigung');
+      await page.click('.fx2-confirm [data-c="yes"]');
+      assert.equal((await posts('clipboard:clear')).length, 1);
+    } finally { await browser.close(); }
+  });
+
+  test('Upload-Pille nennt das Zielgerät, nicht das Gerät vorne', async () => {
+    const { browser, page } = await boot();
+    try {
+      await page.evaluate(() => window.TMSBridge.uploadProgress(1, 3, 'B'));
+      assert.match(await page.textContent('.up2'), /Windows PC/);
+    } finally { await browser.close(); }
+  });
+
+  test('Desk: Diktat-Status aus caps, „+“ legt ein Terminal auf dem Gerät an', async () => {
+    const { browser, page, errors, posts } = await boot({ width: 750, height: 800 });
+    try {
+      await page.evaluate(() => { window.dispatchEvent(new Event('resize')); });
+      await page.waitForTimeout(500);
+      assert.ok(await page.evaluate(() => document.body.classList.contains('desk')), 'Desk an');
+      assert.match(await page.textContent('#deskSide .ds-foot'), /Diktat bereit/);
+      await page.click('#deskSide [data-add="B"]');
+      await page.waitForTimeout(300);
+      const c = (await posts('terminal:create')).pop();
+      assert.ok(c, 'terminal:create gesendet');
+      assert.equal(c.payload.serverId, 'B');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Desk: Status-Wechsel erscheint in der Seitenleiste ohne Terminalwechsel', async () => {
+    const { browser, page } = await boot({ width: 750, height: 800 });
+    try {
+      await page.evaluate(() => { window.dispatchEvent(new Event('resize')); });
+      await page.waitForTimeout(500);
+      const id = await page.evaluate(() => { window.__newTermServer = 'A'; window.addTerminal(); window.__newTermServer = null; const s = window.TMS_DATA.sessions[window.TMS_DATA.sessions.length - 1]; s.status = 'running'; window.TMSBridge.setServers(window.TMS_DATA.servers); return s.id; });
+      await page.waitForTimeout(300);
+      await page.evaluate((i) => window.updateStatusChip(i, 'waiting'), id);
+      await page.waitForTimeout(400);
+      assert.match(await page.textContent('#deskSide'), /FRAGE/);
     } finally { await browser.close(); }
   });
 }

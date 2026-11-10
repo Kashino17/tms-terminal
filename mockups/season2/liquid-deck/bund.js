@@ -56,7 +56,10 @@
   const devIcon = (srv) => (srv && /win/i.test(srv.os || srv.name || '') ? 'win' : 'mac');
   const devShort = (srv) => (srv ? (/win/i.test(srv.os || '') ? 'WIN' : 'MAC') : '');
   const activeSess = () => (typeof state !== 'undefined' ? TMS_DATA.sessions.find((x) => x.id === state.order[state.activeIndex]) : null);
-  const activeSrv = () => { const s = activeSess(); return servers().find((x) => x.id === (s && s.server)) || servers()[0]; };
+  // Gerät vorne: das des Terminals vorne, sonst das, was die App meldet
+  // (TMSBridge.setActiveDevice — z. B. erstes Gerät online), zuletzt das erste.
+  const activeSrv = () => { const s = activeSess(); return servers().find((x) => x.id === (s && s.server)) || servers().find((x) => x.id === window.__bundActiveDev) || servers()[0]; };
+  const hasDictation = (srv) => (srv.caps || []).some((c) => c === 'dictation' || c === 'Diktat');
   const devChip = (srv) => srv ? `<span class="fp-chip" style="--dc:${devColor(srv.id)}">${ic(devIcon(srv), 2)}${devShort(srv)}</span>` : '';
   const STATUS = { running: 'LÄUFT', waiting: 'FRAGE', idle: 'BEREIT', done: 'FERTIG' };
 
@@ -96,7 +99,7 @@
           <span class="ds-st ${s.status}">${STATUS[s.status] || ''}</span></button>`;
       });
     });
-    const mac = servers().find((x) => (x.caps || []).includes('Diktat'));
+    const mac = servers().find(hasDictation);
     const dictOn = mac && mac.status === 'online';
     html += `</div><div class="ds-foot${dictOn ? '' : ' is-off'}" title="${dictOn ? 'Diktat bereit' : 'Diktat aus'}"><i></i><span class="ds-label">${dictOn ? 'Diktat bereit · ' + esc(mac.name) : 'Diktat aus · MacBook offline'}</span></div>`;
     side.innerHTML = html;
@@ -105,7 +108,14 @@
     const row = e.target.closest('.ds-row');
     if (row) { const i = +row.dataset.i; if (typeof setActive === 'function') setActive(i); setTimeout(renderDesk, 30); return; }
     const add = e.target.closest('[data-add]');
-    if (add) { say(`Neues Terminal auf ${esc((servers().find((x) => x.id === add.dataset.add) || {}).name || '')}`); return; }
+    if (add) {
+      if (typeof window.addTerminal === 'function') {
+        window.__newTermServer = add.dataset.add;
+        try { window.addTerminal(); } finally { window.__newTermServer = null; }
+        setTimeout(renderDesk, 60);
+      } else say(`Neues Terminal auf ${esc((servers().find((x) => x.id === add.dataset.add) || {}).name || '')}`);
+      return;
+    }
     const b = e.target.closest('[data-ds]');
     if (!b) return;
     if (b.dataset.ds === 'toggle') {
@@ -138,7 +148,11 @@
   window.addEventListener('resize', () => { document.body.classList.toggle('desk-probe'); });
   const prevSync = window.multiSync;
   window.multiSync = function () { if (prevSync) prevSync.apply(this, arguments); renderDesk(); if (fx.open) fxDeviceCheck(); };
-  window.__deskRender = renderDesk;
+  let deskT = 0;
+  window.__deskRender = function () {
+    if (deskT || !document.body.classList.contains('desk')) return;
+    deskT = setTimeout(() => { deskT = 0; renderDesk(); }, 200);
+  };
 
   // ── Karten mit Griff ────────────────────────────────────────────────
   // Öffnen auf der zuletzt gewählten Höhe (Start: gut die Hälfte) — Suche und
@@ -271,6 +285,7 @@
     return [['src', 'd'], ['assets', 'd'], [`${base.toLowerCase().replace(/\s+/g, '-')}-notes.md`, 'f', 5 * KB, 2], ['cover.png', 'f', 2.1 * MB, 4], ['index.ts', 'f', 9 * KB, 1]];
   }
   function fxOpen() {
+    fx.pinDev = null;
     fx.dev = activeSrv().id;
     // startet auf dem Schreibtisch, merkt sich den Ort pro Gerät
     if (!fx.cwd[fx.dev]) fx.cwd[fx.dev] = LIVE() ? '~/Desktop' : tree().start;
@@ -280,8 +295,16 @@
     showSheet(panel);
     fx.open = true; fxRender();
   }
-  function fxClose() { fx.open = false; hideSheet(panel); }
+  function fxClose() { fx.open = false; fx.pinDev = null; hideSheet(panel); }
+  /** Fernzugriff → „Vom Gerät holen“: Explorer auf DIESEM Gerät an DIESEM Ordner.
+   *  Die App stellt das Gerät um und listet selbst (files:openOn). */
+  window.__bundOpenFilesOn = function (id, path) {
+    fx.pinDev = id; fx.dev = id; fx.cwd[id] = path || '~'; fx.loading = true;
+    fx.q = ''; panel.querySelector('.fx2-search input').value = '';
+    fxSelect(false); showSheet(panel); fx.open = true; fxRender();
+  };
   function fxDeviceCheck() {
+    if (fx.pinDev) return; // aus dem Fernzugriff: bleibt auf genau diesem Gerät
     const d = activeSrv().id;
     if (d === fx.dev) return;
     // Gerätewechsel: gemerkten Ordner + letzte Liste SOFORT zeigen, frisch nachladen.
@@ -544,8 +567,7 @@
       <button class="fp-icon" data-cb="sort" title="Sortierung">${ic('sort')}</button>
     </div>
     <label class="fx2-search">${ic('search')}<input type="search" placeholder="Verlauf durchsuchen…"></label>
-    <div class="cb2-filters">${[['all', 'Alle'], ['pin', 'Angeheftet'], ['today', 'Heute'], ['yday', 'Gestern'], ['7', 'Letzte 7 Tage'], ['30', 'Letzte 30 Tage'], ['phone', 'Vom Handy'], ['srv-mac', 'Vom MacBook'], ['srv-win', 'Vom Windows PC']]
-      .map(([k, l]) => `<button class="cb2-f${k === 'all' ? ' is-on' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
+    <div class="cb2-filters"></div>
     <div class="cb2-list"></div>
     <div class="cb2-foot"><span class="cb2-n"></span><button data-cb="clear">Verlauf leeren</button></div>`;
   document.body.appendChild(cbP);
@@ -554,7 +576,14 @@
   const bucket = (at) => { const now = Date.now(); const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0); return at >= +dayStart ? 'Heute' : at >= +dayStart - D ? 'Gestern' : at >= now - 7 * D ? 'Letzte 7 Tage' : at >= now - 30 * D ? 'Letzte 30 Tage' : 'Älter'; };
   const ago = (at) => { const m = Math.max(0, Math.round((Date.now() - at) / 60e3)); return m < 60 ? `vor ${m} Min` : m < 24 * 60 ? `vor ${Math.round(m / 60)} Std` : new Date(at).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' }); };
   const srcInfo = (src) => src === 'phone' ? ['phone', 'Handy', '#94a3b8'] : [devIcon(servers().find((x) => x.id === src)), devShort(servers().find((x) => x.id === src)), devColor(src)];
+  function cbFilters() {
+    const fs = [['all', 'Alle'], ['pin', 'Angeheftet'], ['today', 'Heute'], ['yday', 'Gestern'], ['7', 'Letzte 7 Tage'], ['30', 'Letzte 30 Tage'], ['phone', 'Vom Handy']]
+      .concat(servers().map((x) => [x.id, 'Vom ' + x.name]));
+    if (!fs.some(([k]) => k === cb.f)) cb.f = 'all';
+    cbP.querySelector('.cb2-filters').innerHTML = fs.map(([k, l]) => `<button class="cb2-f${k === cb.f ? ' is-on' : ''}" data-f="${esc(k)}">${esc(l)}</button>`).join('');
+  }
   function cbRender() {
+    cbFilters();
     let items = CLIP.slice();
     const f = cb.f;
     if (f === 'pin') items = items.filter((c) => c.pin);
@@ -562,7 +591,7 @@
     if (f === 'yday') items = items.filter((c) => bucket(c.at) === 'Gestern');
     if (f === '7') items = items.filter((c) => c.at >= Date.now() - 7 * D);
     if (f === '30') items = items.filter((c) => c.at >= Date.now() - 30 * D);
-    if (['phone', 'srv-mac', 'srv-win'].includes(f)) items = items.filter((c) => c.src === f);
+    if (f === 'phone' || servers().some((x) => x.id === f)) items = items.filter((c) => c.src === f);
     if (cb.q) items = items.filter((c) => c.t.toLowerCase().includes(cb.q.toLowerCase()));
     items.sort((a, b) => cb.newest ? b.at - a.at : a.at - b.at);
     const pins = f === 'all' && !cb.q ? items.filter((c) => c.pin) : [];
@@ -581,14 +610,29 @@
   }
   cbP.addEventListener('click', (e) => {
     const fb = e.target.closest('[data-f]');
-    if (fb) { cb.f = fb.dataset.f; cbP.querySelectorAll('.cb2-f').forEach((x) => x.classList.toggle('is-on', x === fb)); cbRender(); return; }
+    if (fb) { cb.f = fb.dataset.f; cbRender(); return; }
     const ins = e.target.closest('[data-ins]');
     if (ins) { insertText(CLIP[+ins.dataset.ins].t); cbClose(); return; }
     const b = e.target.closest('[data-cb]'); if (!b) return;
     if (b.dataset.cb === 'close') cbClose();
     if (b.dataset.cb === 'sort') { cb.newest = !cb.newest; say(cb.newest ? 'Neueste zuerst' : 'Älteste zuerst'); cbRender(); }
-    if (b.dataset.cb === 'clear') { if (LIVE()) post('clipboard:clear'); else say('Verlauf leeren? Angeheftete bleiben.'); }
+    if (b.dataset.cb === 'clear') cbConfirmClear();
   });
+  function cbConfirmClear() {
+    const n = CLIP.filter((c) => !c.pin).length;
+    if (!n) { say('Nur Angeheftete im Verlauf'); return; }
+    confirmEl.innerHTML = `<div class="ic-wrap">${ic('trash')}</div>
+      <h3>Verlauf leeren?</h3>
+      <p>${n === 1 ? '1 Eintrag wird' : `${n} Einträge werden`} gelöscht. Angeheftete bleiben.</p>
+      <div class="btns"><button data-c="no">Abbrechen</button><button class="danger" data-c="yes">Leeren</button></div>`;
+    confirmEl.onclick = (e) => {
+      const b = e.target.closest('[data-c]'); if (!b) return; closeOverlays();
+      if (b.dataset.c !== 'yes') return;
+      if (LIVE()) post('clipboard:clear');
+      else { for (let i = CLIP.length - 1; i >= 0; i--) if (!CLIP[i].pin) CLIP.splice(i, 1); cbRender(); say('Verlauf geleert'); }
+    };
+    menu.classList.remove('is-on'); scrim.classList.add('is-on'); confirmEl.classList.add('is-on');
+  }
   cbP.querySelector('input').addEventListener('input', (e) => { cb.q = e.target.value; cbRender(); });
   // Langes Drücken auf einen Eintrag: Menü
   let cbPress = null;
@@ -697,8 +741,8 @@
   // ════════════════════════════════════════════════════════════════════
   const up = document.createElement('div'); up.className = 'up2'; document.body.appendChild(up);
   /** Upload-Fortschritt von der App (RN → TMSBridge.uploadProgress). */
-  window.__bundUpload = function (done, total) {
-    const srv = activeSrv();
+  window.__bundUpload = function (done, total, srvId) {
+    const srv = servers().find((x) => x.id === srvId) || activeSrv();
     if (done >= total) { up.classList.remove('is-on'); return; }
     up.innerHTML = `${devChip(srv)}<span>${done}/${total} → ${esc(srv ? srv.name : '')}</span><i></i>`;
     up.querySelector('i').style.setProperty('--p', Math.round((done / Math.max(1, total)) * 100) + '%');

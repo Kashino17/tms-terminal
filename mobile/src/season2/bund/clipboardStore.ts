@@ -29,10 +29,12 @@ export const clipStore = {
   },
   get(): Clip[] { return list; },
   subscribe(fn: (l: Clip[]) => void): () => void { subs.add(fn); return () => { subs.delete(fn); }; },
-  add(entry: { text: string; src: string; at: number }): void { commit(addClip(list, entry)); },
-  pin(id: string): void { commit(togglePin(list, id)); },
-  remove(id: string): void { commit(removeClip(list, id)); },
-  clear(): void { commit(clearUnpinned(list)); },
+  // Änderungen erst nach dem Laden: sonst überschreibt ein früher Eintrag den
+  // gespeicherten Verlauf und das Laden danach verwirft den Eintrag.
+  add(entry: { text: string; src: string; at: number }): Promise<void> { return clipStore.load().then(() => commit(addClip(list, entry))); },
+  pin(id: string): Promise<void> { return clipStore.load().then(() => commit(togglePin(list, id))); },
+  remove(id: string): Promise<void> { return clipStore.load().then(() => commit(removeClip(list, id))); },
+  clear(): Promise<void> { return clipStore.load().then(() => commit(clearUnpinned(list))); },
   /** Einmalig: den bisherigen Server-Verlauf (vom ersten Gerät) übernehmen. */
   async importOnce(srvId: string, items: Array<{ text?: string; source?: string; at?: number }>): Promise<void> {
     await clipStore.load();

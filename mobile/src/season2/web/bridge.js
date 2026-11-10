@@ -2837,8 +2837,8 @@
   };
 
   /** Ladefortschritt: wie viele von wie vielen Bildern schon durch sind. */
-  window.TMSBridge.uploadProgress = function (done, total) {
-    if (window.__bundUpload) window.__bundUpload(done, total);
+  window.TMSBridge.uploadProgress = function (done, total, srvId) {
+    if (window.__bundUpload) window.__bundUpload(done, total, srvId);
     uploadState = (done >= total) ? null : { done: done, total: total };
     // NUR während des Uploads das offene Sheet mit Fortschritt neu bauen. Beim
     // Abschluss NICHT: setTool→openSheet würde das Sheet erneut öffnen und dabei
@@ -3148,6 +3148,7 @@
     // Gerätenamen in Leiste/Kopfzeile erscheinen, sobald ein zweites Gerät da ist.
     if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
     if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
+    if (window.__deskRender) window.__deskRender();
   };
   /** Ping der weiteren Geräte (der Hauptserver kommt über setStatus). */
   window.TMSBridge.setServerLatency = function (map) {
@@ -3155,6 +3156,12 @@
       if (map && Object.prototype.hasOwnProperty.call(map, s.id)) s.latency = map[s.id];
     });
     if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
+    if (window.__deskRender) window.__deskRender();
+  };
+  /** Bund: Gerät vorne laut App (gilt, wenn kein Terminal vorne einem Gerät gehört). */
+  window.TMSBridge.setActiveDevice = function (id) {
+    window.__bundActiveDev = id || null;
+    if (window.__deskRender) window.__deskRender();
   };
   window.TMSBridge.setUpdate = function (update) {
     window.TMS_DATA.update = update;
@@ -3292,7 +3299,8 @@
   // Holen: Explorer auf DEM Geraet an DIESEM Ordner — RN stellt das Geraet um
   // und listet, die Seite zeigt den Explorer schon mal (ohne beim alten Geraet zu listen).
   window.rxOpenFilesOn = function (id, path) {
-    if (typeof window.fsShowAt === 'function') window.fsShowAt(path || '~', true);
+    if (typeof window.__bundOpenFilesOn === 'function') window.__bundOpenFilesOn(id, path || '~');
+    else if (typeof window.fsShowAt === 'function') window.fsShowAt(path || '~', true);
     post('files:openOn', { id: id, path: path || '~' });
   };
 
@@ -3413,6 +3421,7 @@
       var prev = item.querySelector('.rail-item__preview');
       if (prev && window.__tmsPreview) prev.innerHTML = window.__tmsPreview(item.getAttribute('data-id'), 2);
     });
+    if (window.__deskRender) window.__deskRender(); // Bund-Seitenleiste: LÄUFT/FRAGE/…
   };
 
   // ── Multiple-Choice-Rückfragen: die Antwort erreicht die PTY wirklich ─────

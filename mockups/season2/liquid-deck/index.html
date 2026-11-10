@@ -3645,7 +3645,7 @@
               <span class="server-chip ${online ? 'ok' : ''}" data-dev-lat="${d.id}">${online ? '● ' + (d.latency != null ? d.latency : '—') + ' ms' : '○ offline'}</span>
               <span class="server-chip">${n} Terminals</span>
               <span class="server-chip">${escapeHtml(d.os)}</span>
-              ${(d.caps || []).map(c => `<span class="server-chip cap">${escapeHtml(c)}</span>`).join('')}
+              ${(d.caps || []).map(c => `<span class="server-chip cap">${escapeHtml(c === 'dictation' ? 'Diktat' : c)}</span>`).join('')}
             </div>
           </div>
           <div class="server-actions"><button class="server-action" data-remote="${d.id}" ${online ? '' : 'disabled'}>Fernzugriff</button></div>
@@ -6016,6 +6016,7 @@
 
   function refreshPreviews() {
     if (window.TMSCompact) window.TMSCompact.sync();
+    if (window.__deskRender) window.__deskRender(); // Seitenleiste: LÄUFT/FRAGE/…
     renderRail();
     if (state.overviewOpen) renderOverview();
   }
