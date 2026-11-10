@@ -649,4 +649,31 @@ if (!PW) {
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });
+
+  // Dauerflackern/Stromfresser: der pulsierende „LÄUFT“-Punkt lief endlos. Eine
+  // endlose Animation hält das Zeichnen wach — gemessen 99 statt 0 Bilder in
+  // 6 s, solange ein Terminal arbeitet; jedes Bild rechnet alles Milchglas neu.
+  test('Arbeitendes Terminal: nach drei Pulsen läuft keine Animation mehr; Punktleiste wird nicht grundlos neu gebaut', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      await page.evaluate(() => { for (let i = 0; i < 3; i++) window.addTerminal(); show('terminals'); });
+      await page.waitForTimeout(300);
+      await page.evaluate(() => document.querySelectorAll('.status-chip').forEach((c) => { c.dataset.status = 'running'; }));
+      await page.waitForTimeout(300);
+      const running = () => page.evaluate(() => document.getAnimations().filter((a) => a.playState === 'running' && a.effect && a.effect.target && a.effect.target.closest('#stack')).length);
+      assert.ok(await running() > 0, 'der Punkt pulsiert beim Zustandswechsel');
+      await page.waitForTimeout(4500);
+      assert.equal(await running(), 0, 'danach Ruhe — nichts hält das Zeichnen wach');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.status-chip[data-status="running"] .dot')).opacity), '1', 'Punkt bleibt sichtbar stehen');
+      // Punktleiste: dieselbe Geräteliste nochmal → kein Neuaufbau
+      const dot = await page.evaluateHandle(() => document.querySelector('.ts-seg'));
+      await page.evaluate(() => window.TMSBridge.setServers(JSON.parse(JSON.stringify(window.TMS_DATA.servers))));
+      assert.equal(await page.evaluate((d) => d.isConnected, dot), true, 'Punkte bleiben dieselben Elemente');
+      // … aber ein neues Terminal erscheint weiterhin
+      const before = await page.locator('.ts-seg').count();
+      await page.evaluate(() => { window.addTerminal(); window.renderTermSwitcher(); });
+      assert.equal(await page.locator('.ts-seg').count(), before + 1);
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
 }
