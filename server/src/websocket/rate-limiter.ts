@@ -41,7 +41,7 @@ const MESSAGE_CATEGORIES: Record<string, string> = {
   'client:rtt':       'typing',
   'client:app_state': 'typing',
   'client:active_tab':'typing',
-  // Streamed dictation: one small message every ~0.5s while recording; the
+  // Streamed dictation: one small message every ~2s while recording; the
   // expensive work is batched by the server itself, so these are cheap.
   'dictation:start':  'typing',
   'dictation:chunk':  'typing',

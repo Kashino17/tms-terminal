@@ -26,8 +26,7 @@ import { DictationUpload, type DictationIO } from './dictationClient';
 export type MicState = 'idle' | 'recording' | 'processing';
 
 const KEEP_AWAKE_TAG = 'tms-dictation';
-// Short, so the server sees a speech pause right away and can transcribe ahead of the stop.
-const PUMP_INTERVAL_MS = 500;
+const PUMP_INTERVAL_MS = 2000;
 const ACK_WAIT_MS = 5000;
 const SILENCE_RESUME_MS = 60_000;
 const SILENCE_CHECK_MS = 15_000;
