@@ -45,14 +45,15 @@ function sink() {
 const bytes = (n: number, fill = 1) => Buffer.alloc(n, fill);
 
 // Fake of the incremental decoder the server uses for streamed recordings:
-// byte value 1 = 0.1s of speech, 0 = 0.1s of silence.
+// byte value 1 = 0.1s of speech, 2 = speech at a tenth of that level, 3 = the
+// fading end of a word (a thirtieth), 0 = silence.
 function fakePcm(counter = { pushed: 0 }): PcmStream {
   let raw = Buffer.alloc(0);
   return {
     push(b: Buffer) { raw = Buffer.concat([raw, b]); counter.pushed += b.length; },
     async samples() {
       const out = new Float32Array(raw.length * SAMPLES_PER_BYTE);
-      for (let i = 0; i < raw.length; i++) if (raw[i]) out.fill(0.3, i * SAMPLES_PER_BYTE, (i + 1) * SAMPLES_PER_BYTE);
+      for (let i = 0; i < raw.length; i++) if (raw[i]) out.fill(raw[i] === 2 ? 0.03 : raw[i] === 3 ? 0.01 : 0.3, i * SAMPLES_PER_BYTE, (i + 1) * SAMPLES_PER_BYTE);
       return out;
     },
     get bytes() { return raw.length; },
@@ -265,6 +266,125 @@ test('a failed transcription ahead does not fail the dictation', async () => {
   await h.mgr.idle('d1');
   assert.strictEqual(s.last('dictation:result').text, 'ok');
   assert.strictEqual(s.last('dictation:error'), undefined);
+});
+
+// ── Review findings (final review of feat/diktat-tempo) ───────────────
+// Streams `audio` in 0.5s uploads like the app, waiting for the manager after each.
+async function stream(h: Harness, id: string, audio: Buffer, fn: (ev: DictationEvent) => void): Promise<void> {
+  for (let off = 0; off < audio.length; off += 5) { h.mgr.chunk(id, off, audio.subarray(off, off + 5), fn); await h.mgr.idle(id); }
+}
+
+// C1: a short remark, a long think, a short add-on, stop — the add-on was dropped.
+test('speech after a long silence is not lost when a piece was transcribed ahead', async () => {
+  const stats: DictationStat[] = [];
+  const h = streamed({ onDone: (x) => stats.push(x) }); const s = sink();
+  const audio = Buffer.concat([bytes(10), bytes(220, 0), bytes(10)]);    // 1s speech, 22s silence, 1s speech
+  h.mgr.start('d1', 'adts', false, s.fn);
+  await stream(h, 'd1', audio, s.fn);
+  h.mgr.end('d1', audio.length, s.fn);
+  await h.mgr.idle('d1');
+  // The opener's text made ahead is dropped; what replaces it covers all 24 seconds.
+  assert.strictEqual(h.calls.slice(1).reduce((a, b) => a + b, 0), 24, `calls ${h.calls}`);
+  assert.strictEqual(s.last('dictation:result').text.split(' ').length, h.calls.length - 1);
+  assert.strictEqual(stats[0].specHit, false);
+});
+
+// C1, second way in: the add-on is much quieter than what came before.
+test('much quieter speech after a pause is not lost', async () => {
+  const h = streamed(); const s = sink();
+  const audio = Buffer.concat([bytes(50), bytes(6, 0), bytes(20, 2)]);    // 5s, 0.6s pause, 2s at 10% level
+  h.mgr.start('d1', 'adts', false, s.fn);
+  await stream(h, 'd1', audio, s.fn);
+  h.mgr.end('d1', audio.length, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(h.calls[h.calls.length - 1], 8, `calls ${h.calls}`);
+});
+
+// Found when re-measuring after the C1 fix: a word does not end abruptly. Its
+// fading tail is louder than the room but is not new speech.
+test('the fading end of the last word does not prevent transcribing ahead', async () => {
+  const stats: DictationStat[] = [];
+  const h = streamed({ onDone: (x) => stats.push(x) }); const s = sink();
+  const audio = Buffer.concat([bytes(50), bytes(2, 3), bytes(6, 0)]);     // 5s, 0.2s fading, 0.6s silence
+  h.mgr.start('d1', 'adts', false, s.fn);
+  await stream(h, 'd1', audio, s.fn);
+  h.mgr.end('d1', audio.length, s.fn);
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [5]);
+  assert.strictEqual(stats[0].specHit, true);
+});
+
+// C1 once more: quiet speech that goes on for long must not turn into "the room".
+test('long quiet speech after a pause is not lost', async () => {
+  const h = streamed(); const s = sink();
+  const audio = Buffer.concat([bytes(50), bytes(6, 0), bytes(60, 2)]);    // 5s, 0.6s pause, 6s at 10% level
+  h.mgr.start('d1', 'adts', false, s.fn);
+  await stream(h, 'd1', audio, s.fn);
+  h.mgr.end('d1', audio.length, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(h.calls[h.calls.length - 1], 12, `calls ${h.calls}`);
+});
+
+// I1: while the speaker is quiet, audio that already has a text is not cut up again.
+test('a thinking pause does not re-cut what was transcribed ahead', async () => {
+  const stats: DictationStat[] = [];
+  const h = streamed({ onDone: (x) => stats.push(x) }); const s = sink();
+  const audio = Buffer.concat([bytes(90), bytes(3, 0), bytes(30), bytes(60, 0)]);  // 9s, breath, 3s, 6s silence
+  h.mgr.start('d1', 'adts', false, s.fn);
+  await stream(h, 'd1', audio, s.fn);
+  h.mgr.end('d1', audio.length, s.fn);
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [12]);
+  assert.strictEqual(stats[0].specHit, true);
+});
+
+test('a long silence after speech is not transcribed as pieces of its own', async () => {
+  const h = streamed(); const s = sink();
+  const audio = Buffer.concat([bytes(100), bytes(200, 0)]);               // 10s speech, 20s silence
+  h.mgr.start('d1', 'adts', false, s.fn);
+  await stream(h, 'd1', audio, s.fn);
+  h.mgr.end('d1', audio.length, s.fn);
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [10]);
+});
+
+// I2: the tap on the stop button (or a breath) after the last sentence.
+test('a short noise after the last sentence does not undo the piece transcribed ahead', async () => {
+  const stats: DictationStat[] = [];
+  const h = streamed({ onDone: (x) => stats.push(x) }); const s = sink();
+  const audio = Buffer.concat([bytes(100), bytes(6, 0), bytes(1), bytes(3, 0)]);   // 10s, 0.6s pause, 0.1s blip, 0.3s quiet
+  h.mgr.start('d1', 'adts', false, s.fn);
+  await stream(h, 'd1', audio, s.fn);
+  h.mgr.end('d1', audio.length, s.fn);
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [10]);
+  assert.strictEqual(stats[0].specHit, true);
+});
+
+// I3: the numbers must not look better than the wait was.
+test('the rest reported for a stop during a running piece includes that piece', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const stats: DictationStat[] = [];
+  const h = streamed({ onDone: (x) => stats.push(x), transcribeWav: async () => { await gate; return 'x'; } }); const s = sink();
+  const audio = Buffer.concat([bytes(200), bytes(5, 0), bytes(20)]);      // 20s, pause, 2s
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, audio, s.fn);
+  await new Promise((r) => setImmediate(r));                              // the 20s piece is being transcribed
+  h.mgr.end('d1', audio.length, s.fn);
+  release();
+  await h.mgr.idle('d1');
+  assert.ok(stats[0].restSecs > 22, `rest ${stats[0].restSecs}`);
+});
+
+test('a tap without any audio is not counted in the timings', async () => {
+  const stats: DictationStat[] = [];
+  const h = streamed({ onDone: (x) => stats.push(x) }); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.end('d1', 0, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, '');
+  assert.strictEqual(stats.length, 0);
 });
 
 test('the legacy cut can be injected', async () => {

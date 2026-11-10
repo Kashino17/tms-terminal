@@ -14,9 +14,9 @@ export interface DictationStat {
   audioSecs: number;
   /** Stop -> finished text, as measured on the server. */
   waitMs: number;
-  /** Audio that was still untranscribed when the stop arrived. */
+  /** Audio without a finished text when the stop arrived — including a piece that was being transcribed at that moment. */
   restSecs: number;
-  /** The text was ready before the stop: nothing had to be transcribed after it. */
+  /** No transcription had to be started after the stop (one already running ahead may still have been awaited). */
   specHit: boolean;
 }
 

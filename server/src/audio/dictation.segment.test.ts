@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { findPauseSplit, findPauses, nextCut, nextCutLegacy, edgePause, hasSpeech, encodeWav, CHUNK_SECS } from './dictation.segment';
+import { findPauseSplit, findPauses, nextCut, nextCutLegacy, edgePause, hasSpeech, speechAbove, quietFrom, encodeWav, CHUNK_SECS } from './dictation.segment';
 
 const RATE = 16000;
 
@@ -169,8 +169,66 @@ test('edgePause looks only at audio after the cursor', () => {
 
 test('hasSpeech tells speech from silence', () => {
   const s = concat(tone(2, 0.3), tone(2, 0), tone(1, 0.3));
-  assert.strictEqual(hasSpeech(s, 2 * RATE, 4 * RATE, RATE), false);
-  assert.strictEqual(hasSpeech(s, 2 * RATE, s.length, RATE), true);
+  assert.strictEqual(hasSpeech(s, 2 * RATE, 4 * RATE, RATE, 0.003), false);
+  assert.strictEqual(hasSpeech(s, 2 * RATE, s.length, RATE, 0.003), true);
+});
+
+test('hasSpeech ignores a single loud 100ms frame', () => {
+  const s = concat(tone(1, 0), tone(0.1, 0.3), tone(1, 0));
+  assert.strictEqual(hasSpeech(s, 0, s.length, RATE, 0.003), false);
+});
+
+// What counts as speech after a pause is fixed by the noise heard IN that pause —
+// not by how loud the speaker was before, and not by how long the silence lasts.
+test('speechAbove is the floor in a silent room and rises with the room noise', () => {
+  assert.strictEqual(speechAbove(tone(1, 0), 0, RATE, RATE), 0.003);
+  const noisy = speechAbove(tone(1, 0.005), 0, RATE, RATE);
+  assert.ok(noisy > 0.005 && noisy < 0.03, `above ${noisy}`);
+});
+
+// Measured: with 100ms frames a 0.45s sentence pause counted as 0.3s or 0.4s
+// depending on where the frames happened to start — and the cut rule flipped.
+test('a 0.45s pause measures at least 0.4s whatever the frame alignment', () => {
+  for (let off = 0; off < 0.1; off += 0.01) {
+    const s = concat(tone(1 + off, 0.3), tone(0.45, 0), tone(1, 0.3));
+    const p = findPauses(s, 0, s.length, RATE);
+    assert.strictEqual(p.length, 1, `offset ${off}`);
+    assert.ok(p[0].end - p[0].start >= 0.4 * RATE, `offset ${off.toFixed(2)}: ${(p[0].end - p[0].start) / RATE}s`);
+  }
+});
+
+test('quietFrom skips the fading end of a word', () => {
+  const s = concat(tone(1, 0.3), tone(0.2, 0.01), tone(0.6, 0));
+  const at = quietFrom(s, RATE, s.length, RATE, 0.003);
+  assert.ok(at !== null && Math.abs(at / RATE - 1.2) < 0.05, `at ${at}`);
+  assert.strictEqual(quietFrom(tone(1, 0.01), 0, RATE, RATE, 0.003), null);
+});
+
+// A tap or a breath is not speech. It must not turn the pause before it into
+// a place to cut — but inside running speech nothing may be smoothed away:
+// treating short loud bursts as quiet made "pauses" out of syllables (measured:
+// 18 word errors of 114 instead of 1).
+test('a short noise after a pause does not make that pause a place to cut', () => {
+  const s = concat(tone(10, 0.3), tone(0.6, 0), tone(0.1, 0.3), tone(0.3, 0));
+  assert.strictEqual(nextCut(s, 0, RATE, false), null);
+});
+
+test('findPauses leaves short syllables between short gaps alone', () => {
+  const syllables: Float32Array[] = [];
+  for (let i = 0; i < 20; i++) syllables.push(tone(0.12, 0.3), tone(0.1, 0));
+  const s = concat(tone(2, 0.3), ...syllables, tone(2, 0.3));
+  assert.deepStrictEqual(findPauses(s, 0, s.length, RATE), []);
+});
+
+test('edgePause does not take a short word for a noise', () => {
+  const s = concat(tone(3, 0.3), tone(0.6, 0), tone(0.2, 0.3), tone(0.3, 0));
+  assert.strictEqual(edgePause(s, 0, RATE), null);                  // 0.2s of sound is speech; only 0.3s quiet after it
+});
+
+test('edgePause sees through a single loud frame in the trailing silence', () => {
+  const s = concat(tone(3, 0.3), tone(0.6, 0), tone(0.1, 0.3), tone(0.3, 0));
+  const at = edgePause(s, 0, RATE);
+  assert.ok(at !== null && Math.abs(at / RATE - 3) < 0.15, `at ${at}`);
 });
 
 test('encodeWav writes a 16-bit mono RIFF file', () => {

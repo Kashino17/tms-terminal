@@ -53,6 +53,7 @@ export class AdtsPcm implements PcmStream {
   /** Set when full mode starts: samples kept from before, and how many of each full decode they cover. */
   private fullBase: { length: number; skip: number } | null = null;
   private dirty = false;
+  private failures = 0;
 
   constructor(private readonly decode: (bytes: Buffer) => Promise<Float32Array>) {}
 
@@ -67,9 +68,13 @@ export class AdtsPcm implements PcmStream {
 
   async samples(): Promise<Float32Array> {
     if (!this.dirty) return this.view();
-    this.dirty = false;
+    // `dirty` is only cleared after a decode that worked: a failed one (ffmpeg
+    // could not start, was killed) throws and is tried again on the next call —
+    // otherwise the audio would silently stop at its old length.
     if (!this.fullMode) await this.decodeNew();
     if (this.fullMode) await this.decodeAll();
+    this.dirty = false;
+    this.failures = 0;
     return this.view();
   }
 
@@ -94,7 +99,10 @@ export class AdtsPcm implements PcmStream {
     let out: Float32Array;
     try {
       out = await this.decode(this.raw.subarray(from, end));
-    } catch {
+    } catch (err) {
+      // Once is a hiccup: report it and try again next time. Twice in a row:
+      // this stream cannot be decoded in slices — decode it whole from now on.
+      if (++this.failures < 2) throw err;
       this.fullMode = true;
       return;
     }

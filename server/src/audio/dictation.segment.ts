@@ -21,13 +21,20 @@ export const SETTLE_SECS = 16;
 /** The recording ending in this much quiet is worth transcribing ahead: the stop may be next. */
 export const SPEC_PAUSE_SECS = 0.4;
 const SPEC_MIN_SPEECH_SECS = 0.5;
-const SPEECH_MIN_SECS = 0.2;
+/** Less than this is a tap, a click or a breath — not speech. (A spoken syllable is longer.) */
+const SPEECH_MIN_SECS = 0.15;
+/** Audio this many times louder than the noise heard in a pause counts as speech after it. */
+const SPEECH_OVER_NOISE = 3;
 // Absolute floor (same as trim_silence in the sidecar) and the share of the
-// speaking level below which a 100ms frame counts as quiet. Relative, so quiet
+// speaking level below which a frame counts as quiet. Relative, so quiet
 // speakers are not mistaken for silence and a noisy room still has pauses.
 const QUIET_FLOOR_RMS = 0.003;
 const QUIET_RATIO = 0.12;
 const FORCED_SEARCH_SECS = 3;
+// Frame length for pause detection. Fine enough that a pause measures within
+// 50ms of its real length wherever the frames happen to start (with 100ms a
+// 0.45s sentence pause counted as 0.3s or 0.4s by chance).
+const FRAME_SECS = 0.05;
 
 /** Sample indices, [start, end). */
 export interface Pause { start: number; end: number }
@@ -63,7 +70,7 @@ export function findPauseSplit(samples: Float32Array, targetIdx: number, rate: n
   return lo + best * frame + Math.floor(frame / 2);
 }
 
-/** RMS of each complete 100ms frame in [from, to). */
+/** RMS of each complete frame (50ms) in [from, to). */
 function frameRms(samples: Float32Array, from: number, to: number, frame: number): Float32Array {
   const n = Math.max(0, Math.floor((to - from) / frame));
   const out = new Float32Array(n);
@@ -83,21 +90,48 @@ function quietBelow(rms: Float32Array): number {
   return level < QUIET_FLOOR_RMS ? Infinity : Math.max(QUIET_FLOOR_RMS, QUIET_RATIO * level);
 }
 
-/** Seconds of non-quiet audio in [from, to); "quiet" is judged against the level of [ref, to). */
-function speechSecs(samples: Float32Array, from: number, to: number, rate: number, ref: number): number {
-  const frame = Math.max(1, Math.floor(rate * PAUSE_WINDOW_SECS));
-  const end = Math.min(to, samples.length);
-  const all = frameRms(samples, ref, end, frame);
-  if (all.length === 0) return 0;
-  const threshold = quietBelow(all);
+/** Seconds of non-quiet audio in [from, to), judged against the speaking level of that range. */
+function speechSecs(samples: Float32Array, from: number, to: number, rate: number): number {
+  const frame = Math.max(1, Math.floor(rate * FRAME_SECS));
+  const rms = frameRms(samples, from, Math.min(to, samples.length), frame);
+  if (rms.length === 0) return 0;
+  const threshold = quietBelow(rms);
   let loud = 0;
-  for (let f = Math.max(0, Math.ceil((from - ref) / frame)); f < all.length; f++) if (all[f] >= threshold) loud++;
-  return loud * PAUSE_WINDOW_SECS;
+  for (let f = 0; f < rms.length; f++) if (rms[f] >= threshold) loud++;
+  return loud * FRAME_SECS;
 }
 
-/** True if [from, to) holds speech (at least 0.2s that is not quiet, judged against the level since `ref`). */
-export function hasSpeech(samples: Float32Array, from: number, to: number, rate: number, ref = from): boolean {
-  return speechSecs(samples, from, to, rate, ref) >= SPEECH_MIN_SECS;
+/**
+ * Level above which audio counts as speech, taken from the pause [from, to)
+ * itself: a few times the quietest tenth of its frames, never below the
+ * absolute floor. It is measured once, when the pause is found, and must not
+ * be re-derived later: a threshold relative to "how loud the speaker was" or
+ * to a range that has meanwhile filled with silence calls quiet speech
+ * silence — and the words after a thinking pause would be dropped.
+ */
+export function speechAbove(samples: Float32Array, from: number, to: number, rate: number): number {
+  const frame = Math.max(1, Math.floor(rate * FRAME_SECS));
+  const rms = frameRms(samples, from, Math.min(to, samples.length), frame);
+  if (rms.length === 0) return QUIET_FLOOR_RMS;
+  const noise = Float32Array.from(rms).sort()[Math.floor(rms.length * 0.1)];
+  return Math.max(QUIET_FLOOR_RMS, SPEECH_OVER_NOISE * noise);
+}
+
+/** Start of the first frame in [from, to) that is below `above`, or null. Skips the fading end of a word. */
+export function quietFrom(samples: Float32Array, from: number, to: number, rate: number, above: number): number | null {
+  const frame = Math.max(1, Math.floor(rate * FRAME_SECS));
+  const rms = frameRms(samples, from, Math.min(to, samples.length), frame);
+  for (let f = 0; f < rms.length; f++) if (rms[f] < above) return from + f * frame;
+  return null;
+}
+
+/** True if [from, to) holds speech: at least 0.15s of audio at or above `above` (see speechAbove). */
+export function hasSpeech(samples: Float32Array, from: number, to: number, rate: number, above: number): boolean {
+  const frame = Math.max(1, Math.floor(rate * FRAME_SECS));
+  const rms = frameRms(samples, from, Math.min(to, samples.length), frame);
+  let loud = 0;
+  for (let f = 0; f < rms.length; f++) if (rms[f] >= above) loud++;
+  return loud * FRAME_SECS >= SPEECH_MIN_SECS - 1e-9;
 }
 
 /**
@@ -106,26 +140,43 @@ export function hasSpeech(samples: Float32Array, from: number, to: number, rate:
  * else null. That spot is where the speaker may be about to stop.
  */
 export function edgePause(samples: Float32Array, cursor: number, rate: number, minSecs = SPEC_PAUSE_SECS): number | null {
-  const pauses = findPauses(samples, cursor, samples.length, rate, minSecs);
-  const last = pauses[pauses.length - 1];
-  if (!last) return null;
-  const frame = Math.max(1, Math.floor(rate * PAUSE_WINDOW_SECS));
-  if (last.end + frame <= samples.length) return null;   // speech has resumed after it
-  if (speechSecs(samples, cursor, last.start, rate, cursor) < SPEC_MIN_SPEECH_SECS) return null;
-  return last.start;
+  const frame = Math.max(1, Math.floor(rate * FRAME_SECS));
+  const rms = frameRms(samples, cursor, samples.length, frame);
+  if (rms.length === 0) return null;
+  const threshold = quietBelow(rms);
+  const blipMax = Math.round(SPEECH_MIN_SECS / FRAME_SECS) - 1;
+  // Walk back from the end over quiet frames. A loud blip shorter than a
+  // syllable with quiet on both sides (a tap on the screen, a breath) belongs
+  // to the silence; anything longer is where the speech ended.
+  let start = rms.length;
+  for (let f = rms.length;;) {
+    let q = f;
+    while (q > 0 && rms[q - 1] < threshold) q--;
+    if (q === f) break;                                   // no quiet here (at the very end: still speaking)
+    start = q;
+    let l = q;
+    while (l > 0 && rms[l - 1] >= threshold) l--;
+    if (q - l > blipMax || l === 0) break;                // real speech before the quiet
+    f = l;
+  }
+  if ((rms.length - start) * FRAME_SECS < minSecs - 1e-9) return null;
+  const to = cursor + start * frame;
+  if (speechSecs(samples, cursor, to, rate) < SPEC_MIN_SPEECH_SECS) return null;
+  return to;
 }
 
 /**
- * Speech pauses in [from, to): runs of quiet 100ms frames lasting at least
+ * Speech pauses in [from, to): runs of quiet frames lasting at least
  * `minSecs`. "Quiet" is relative to the speaking level of that range (its
- * 90th percentile), with an absolute floor.
+ * 90th percentile), with an absolute floor. Nothing is smoothed here: short
+ * loud bursts are syllables as often as they are noise.
  */
 export function findPauses(samples: Float32Array, from: number, to: number, rate: number, minSecs = PAUSE_MIN_SECS): Pause[] {
-  const frame = Math.max(1, Math.floor(rate * PAUSE_WINDOW_SECS));
+  const frame = Math.max(1, Math.floor(rate * FRAME_SECS));
   const rms = frameRms(samples, from, Math.min(to, samples.length), frame);
   if (rms.length === 0) return [];
   const threshold = quietBelow(rms);
-  const minFrames = Math.max(1, Math.round(minSecs / PAUSE_WINDOW_SECS));
+  const minFrames = Math.max(1, Math.round(minSecs / FRAME_SECS));
   const pauses: Pause[] = [];
   let run = -1;
   for (let f = 0; f <= rms.length; f++) {
@@ -154,12 +205,14 @@ export function nextCut(samples: Float32Array, cursor: number, rate: number, fin
   const max = Math.floor(rate * MAX_SEGMENT_SECS);
   if (final && rest <= max) return samples.length;
   if (!final && rest < min) return null;
-  const frame = Math.max(1, Math.floor(rate * PAUSE_WINDOW_SECS));
+  const frame = Math.max(1, Math.floor(rate * FRAME_SECS));
   const sentence = Math.floor(rate * SENTENCE_PAUSE_SECS);
   let atSentence: number | null = null;
   let atShort: number | null = null;
+  const loud = quietBelow(frameRms(samples, cursor, samples.length, frame));
   for (const p of findPauses(samples, cursor, samples.length, rate)) {
-    if (p.end + frame > samples.length) continue;       // still open at the live edge
+    // Still open: nothing but quiet (or a tap, a breath) has followed so far.
+    if (!hasSpeech(samples, p.end, samples.length, rate, loud)) continue;
     const mid = Math.floor((p.start + p.end) / 2);
     if (mid < cursor + min || mid > cursor + max) continue;
     if (p.end - p.start >= sentence) atSentence = mid; else atShort = mid;

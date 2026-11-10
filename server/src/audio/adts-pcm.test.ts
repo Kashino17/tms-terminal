@@ -79,6 +79,21 @@ test('a stream that turns to garbage keeps what was already decoded', { skip: !f
   assert.ok(after >= before, `${after} < ${before}`);
 });
 
+// Review C2: a decoder hiccup (ffmpeg could not start) must not freeze the audio at its old length.
+test('a failed decode is tried again on the next call', { skip: !ffmpeg }, async () => {
+  const f = adtsFixture();
+  const full = await decode(f);
+  let fail = false;
+  const pcm = new AdtsPcm((b) => (fail ? Promise.reject(new Error('spawn EAGAIN')) : decode(b)));
+  await feed(pcm, f.subarray(0, 90000));
+  pcm.push(f.subarray(90000));
+  fail = true;
+  await assert.rejects(pcm.samples());
+  fail = false;
+  assert.strictEqual((await pcm.samples()).length, full.length);
+  assert.strictEqual(pcm.mode, 'incremental');
+});
+
 test('samples() without new frames does not decode', async () => {
   let n = 0;
   const pcm = new AdtsPcm(async () => { n++; return new Float32Array(0); });

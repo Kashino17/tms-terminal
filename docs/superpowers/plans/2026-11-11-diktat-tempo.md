@@ -511,3 +511,19 @@ Echtzeit in den letzten 20 s, Upload-Takt 0,5 s (wie die App nach Task 7), Load 
 Bei 0 ms Verzug wartet der Stopp auf den gerade laufenden Vorab-Auftrag (bis 457 ms). Wer mitten im Wort auf ✓ drückt, bekommt den Weg ohne Vorauseilen (rund 0,4–0,6 s, obere Tabelle).
 
 **Offen:** Kurze Diktate (unter etwa 15 s) bleiben bei rund 0,67 s — sie bestehen aus einem einzigen Stück. Das behebt erst das Vorauseilen (Task 6) zusammen mit dem schnelleren Upload (Task 7). Die Aufnahmen sind Sprachausgabe mit sehr regelmäßigen Pausen; echte Sprache wird in Task 8 am Gerät gemessen.
+
+### Nach dem Abschluss-Review (Stand des Branches)
+
+Der Review fand zwei Wege, auf denen das Ende eines Diktats still verloren ging, und drei wichtige Schwächen; alle sind mit Tests nachgestellt und behoben (siehe Ledger). Danach neu gemessen, Load 10–50 durch fremde Jobs — die Zeiten schwanken deshalb stärker als oben:
+
+| Aufnahme | nur Server (Takt 2 s) | Vorauseilen, 600 ms Verzug | Vorauseilen, 0 ms Verzug | Wortfehler |
+|---|---|---|---|---|
+| 12 s | 657 ms | 0 ms | 169 ms | 0 von 27 |
+| 47 s | 563 ms | 0 ms | 167 ms | 1 von 114 |
+| 183 s | 643 ms | 0 ms | 570 ms | 2–3 von 434 |
+| 366 s | 830 ms | 1 ms (ein Lauf unter Last: 1033 ms, nicht vorab) | 663 ms | 5–6 von 875 |
+
+Die Wortfehler bei 366 s sind fünfmal dasselbe Wort („Stopp“ → „Stock“, eine Eigenheit der Sprachausgabe; die alte Regel traf es in zwei von fünf Fällen richtig). Keine Fehler an Schnittstellen.
+
+**Zwei Irrwege im Fix-Durchgang, von der Messung gefangen:** (1) „Stille nach dem Stück“ gegen das Rauschen der Pause zu prüfen, ohne das Ausklingen des letzten Worts zu überspringen, schaltete das Vorauseilen praktisch ab. (2) Kurze laute Stellen in der Pausen-Erkennung zu glätten, machte mit 50-ms-Rahmen aus Silben „Pausen“: 18 Wortfehler von 114. Beides zurückgenommen; kurze Geräusche werden nur noch am Ende der Aufnahme toleriert.
+
