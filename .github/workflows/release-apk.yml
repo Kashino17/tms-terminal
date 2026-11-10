@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Updates direkt in der App: Ein neues Update erscheint ohne Neustart oben als schlichte Leiste. Laden laedt es in der App mit Fortschritt, danach oeffnet sich gleich der Installer - kein Browser mehr. Antippen zeigt, was neu ist. Ausserdem: Der gruene Ring um die drei Punkte zeigt einen laufenden Fernzugriff ruhig an und pulsiert nur einmal beim Zurueckkommen; im Drei-Punkte-Menue laesst sich ein laufender Fernzugriff direkt beenden. Hinweis: Beim ersten Mal fragt Android, ob TMS Apps installieren darf - einmal erlauben. Vor dem Update Play Protect kurz pausieren." \
+            --notes "Fernzugriff beenden aus dem Drei-Punkte-Menue funktioniert jetzt wirklich: Die Sitzung am Mac oder Windows-PC wird geschlossen, und die App zeigt erst beendet, wenn der Rechner es bestaetigt hat. Ist er nicht erreichbar, sagt die App das ehrlich. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
