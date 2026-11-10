@@ -3599,6 +3599,8 @@
   // Servers screen
   // ============================================================
   function renderUpdateBanner(host) {
+    // Bund: schlichte Update-Karte (bund.js) statt der Glas-Pille
+    if (window.__bundUpdateCard) { window.__bundUpdateCard(host); return; }
     const u = TMS_DATA.update;
     const pill = document.createElement('div');
     pill.className = 'update-pill glass';

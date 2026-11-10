@@ -3,6 +3,9 @@ import * as Application from 'expo-application';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
+import * as FileSystem from 'expo-file-system';
+import * as IntentLauncher from 'expo-intent-launcher';
+import { apkFileName, shouldReport } from './update.core.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const GITHUB_REPO = 'Kashino17/tms-terminal';
@@ -135,6 +138,55 @@ export async function checkForPreviousVersion(): Promise<{
 export async function downloadAndInstall(downloadUrl: string): Promise<void> {
   if (Platform.OS === 'ios') return;
   await Linking.openURL(downloadUrl);
+}
+
+/**
+ * In der App laden: APK in den Cache, mit Fortschritt. Liegt dieselbe Version
+ * schon vollständig da, wird nicht erneut geladen.
+ */
+export async function downloadApk(
+  url: string, version: string, expectedSize: number,
+  onProgress: (received: number, total: number) => void,
+): Promise<string> {
+  const dest = `${FileSystem.cacheDirectory}${apkFileName(version)}`;
+  const have = await FileSystem.getInfoAsync(dest).catch(() => null);
+  if (have?.exists && expectedSize > 0 && (have as { size?: number }).size === expectedSize) {
+    onProgress(expectedSize, expectedSize);
+    return dest;
+  }
+  let last = 0;
+  const dl = FileSystem.createDownloadResumable(url, dest, {}, (p) => {
+    const now = Date.now();
+    const total = p.totalBytesExpectedToWrite > 0 ? p.totalBytesExpectedToWrite : expectedSize;
+    if (shouldReport(now, last, p.totalBytesWritten, total)) { last = now; onProgress(p.totalBytesWritten, total); }
+  });
+  const res = await dl.downloadAsync();
+  if (!res || res.status < 200 || res.status >= 300) {
+    await FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
+    throw new Error(`Download fehlgeschlagen${res ? ` (HTTP ${res.status})` : ''}`);
+  }
+  return res.uri;
+}
+
+/** Android-Installer direkt öffnen (kein Browser, kein App-Wechsel zum Laden). */
+export async function installApk(fileUri: string): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  const contentUri = await FileSystem.getContentUriAsync(fileUri);
+  await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+    data: contentUri,
+    type: 'application/vnd.android.package-archive',
+    flags: 1 | 0x10000000, // FLAG_GRANT_READ_URI_PERMISSION | FLAG_ACTIVITY_NEW_TASK
+  });
+}
+
+/** Alte APKs aus dem Cache räumen (nach erfolgreichem Update). */
+export async function cleanupApks(keep?: string): Promise<void> {
+  try {
+    const dir = FileSystem.cacheDirectory ?? '';
+    const files = await FileSystem.readDirectoryAsync(dir);
+    await Promise.all(files.filter((f) => /^TMS-Terminal-.*\.apk$/.test(f) && f !== keep)
+      .map((f) => FileSystem.deleteAsync(dir + f, { idempotent: true }).catch(() => {})));
+  } catch { /* egal */ }
 }
 
 export function formatSize(bytes: number): string {

@@ -3105,6 +3105,7 @@
   // ══ Update-Banner ═════════════════════════════════════════════════════════
   var origRenderUpdateBanner = window.renderUpdateBanner;
   window.renderUpdateBanner = function (host) {
+    if (window.__bundUpdateCard) { window.__bundUpdateCard(host); return; } // schlichte Karte (bund.js)
     var u = window.TMS_DATA.update || {};
     if (!u.latest || u.latest === u.current) return; // nothing to offer
     origRenderUpdateBanner(host);
@@ -3165,6 +3166,16 @@
   window.TMSBridge.setActiveDevice = function (id) {
     window.__bundActiveDev = id || null;
     if (window.__deskRender) window.__deskRender();
+  };
+  /** Update-Stand von der App: none | available | downloading | ready | error. */
+  window.TMSBridge.setUpdateState = function (st) {
+    st = st || {};
+    window.TMS_DATA.update = { current: st.current || '', latest: st.latest || st.current || '', notes: st.notes || '' };
+    var wasNone = !window.__bundUpdateStateSeen || window.__bundUpdateStateSeen === 'none';
+    window.__bundUpdateStateSeen = st.status;
+    if (window.__bundUpdateState) window.__bundUpdateState(st);
+    // Bund-Seite nur neu bauen, wenn die Karte erscheint/verschwindet (nicht bei jedem Fortschritt)
+    if ((wasNone !== (st.status === 'none')) && typeof window.renderServers === 'function') window.renderServers();
   };
   window.TMSBridge.setUpdate = function (update) {
     window.TMS_DATA.update = update;

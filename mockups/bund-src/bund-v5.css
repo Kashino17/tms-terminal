@@ -356,3 +356,29 @@ body.remote-alive.remote-pulse.desk .term-card .card-menu-btn::after {
 .card-menu .bm-confirm__btns button { flex: 1; height: 36px; border-radius: 10px; border: 1px solid rgba(var(--overlay-rgb, 255,255,255), .12);
   background: rgba(var(--overlay-rgb, 255,255,255), .06); color: var(--text); font: 600 13.5px var(--font-ui); }
 .card-menu .bm-confirm__btns .danger { background: color-mix(in srgb, var(--err, #ff6b6b) 18%, transparent); border-color: color-mix(in srgb, var(--err, #ff6b6b) 40%, transparent); color: var(--err, #ff6b6b); }
+
+/* ── Update: schlicht, matt (statt Glas-Pille) ───────────────────────── */
+.upd { background: var(--flat-bg, #17191e); color: var(--text); border: 1px solid var(--flat-line, rgba(255,255,255,.1)); border-radius: 16px; font-family: var(--font-ui); overflow: hidden; position: relative; }
+.upd--bar { position: fixed; z-index: 250; top: calc(var(--safe-top, 0px) + 8px); left: 12px; right: 60px; max-width: 420px; box-shadow: 0 12px 34px rgba(0,0,0,.42);
+  animation: updIn .32s cubic-bezier(.34,1.3,.5,1); }
+.upd--bar[hidden] { display: none; }
+body.desk .upd--bar { left: calc(var(--desk-side-w) + 12px); }
+body.remote-focus .upd--bar, body.is-locked .upd--bar { display: none; }
+/* Auf der Bund-Seite steht die Karte — dort keine zweite Leiste */
+body:has(section[data-screen="servers"]:not([hidden])) .upd--bar { display: none; }
+@keyframes updIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.upd--card { margin: 0 0 14px; }
+.upd-main { display: flex; align-items: center; gap: 10px; padding: 9px 8px 9px 10px; }
+.upd-ic { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; flex: none; color: var(--accent, #8ab4ff); background: color-mix(in srgb, var(--accent, #8ab4ff) 15%, transparent); }
+.upd-ic svg { width: 17px; height: 17px; }
+.upd-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 0; border: 0; background: none; color: inherit; text-align: left; }
+.upd-txt b { font-weight: 600; font-size: 14.5px; }
+.upd-txt small { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.upd-btn { flex: none; height: 32px; padding: 0 14px; border-radius: 999px; border: 0; background: var(--accent, #8ab4ff); color: var(--on-accent, #071021); font: 700 13px var(--font-ui); }
+.upd-btn:active { transform: scale(.96); }
+.upd-pct { flex: none; min-width: 44px; text-align: right; font: 700 13px var(--font-ui); color: var(--accent, #8ab4ff); padding-right: 4px; font-variant-numeric: tabular-nums; }
+.upd-x { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; padding: 0; border: 0; background: none; color: var(--text-dim); }
+.upd-x svg { width: 15px; height: 15px; }
+.upd-prog { position: absolute; left: 0; bottom: 0; height: 2px; width: var(--p, 0%); background: var(--accent, #8ab4ff); transition: width .25s; }
+.upd-notes { padding: 10px 14px 12px; border-top: 1px solid var(--flat-line, rgba(255,255,255,.08)); font-size: 13px; line-height: 1.5; color: var(--text); max-height: 38vh; overflow-y: auto; white-space: pre-wrap; }
+.upd-notes small { display: block; margin-bottom: 4px; font: 700 10.5px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim); }

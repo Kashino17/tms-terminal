@@ -25,7 +25,8 @@ import { isUserTitle } from '../store/tabIdentity';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
 import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '../services/notifications.service';
-import { checkForUpdate, downloadAndInstall, getCurrentVersion } from '../services/updater.service';
+import { checkForUpdate, getCurrentVersion, downloadApk, installApk, cleanupApks } from '../services/updater.service';
+import { CHECK_EVERY_MS, RESUME_GAP_MS, shouldCheck } from '../services/update.core.mjs';
 import { getConnection, type WebSocketService } from '../services/websocket.service';
 import { useS2ConnStore, useS2Connection, type S2Server } from './s2conn/connection';
 import {
@@ -190,7 +191,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   /** Per-session "is it still producing output" timers — the server has no
    *  status event, so the state has to be derived from the stream itself. */
   const idleTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const updateUrl = useRef<string | null>(null);
   /** Zeitpunkt des letzten Zurück auf dem Startbildschirm — für „nochmal zum Beenden". */
   const lastBackAt = useRef(0);
   const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, onScreen: false, tabId: null, url: '', rect: null });
@@ -767,31 +767,56 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   //    die frühere Bedingung `state === 'connected'` verhinderte dann jeden
   //    Update-Check. Und die Seite startete mit Mockup-Daten (1.4.2/2.0.0),
   //    wodurch "Über" eine falsche Version und ein Fake-Update zeigte.
-  const updateChecked = useRef(0);
-  const updateInit = useRef(false);
+  // In-App-Updater: sucht beim Start, alle 15 min und beim Zurückholen der App
+  // (kein Neustart nötig), lädt die APK in der App und öffnet den Installer.
+  const upd = useRef({ status: 'none' as 'none' | 'available' | 'downloading' | 'ready' | 'error',
+    current: '', latest: '', notes: '', size: 0, received: 0, error: '', url: '', file: '' });
+  const pushUpd = useCallback((patch: Partial<typeof upd.current>) => {
+    Object.assign(upd.current, patch);
+    const u = upd.current;
+    call('setUpdateState', { status: u.status, current: u.current, latest: u.latest, notes: u.notes, size: u.size, received: u.received, error: u.error });
+  }, [call]);
+  const lastUpdCheck = useRef(0);
+  const runUpdCheck = useCallback(async (manual: boolean) => {
+    lastUpdCheck.current = Date.now();
+    const up = await checkForUpdate().catch(() => null);
+    if (!up) {
+      if (manual) call('toast', `Du bist auf dem neuesten Stand (v${getCurrentVersion()})`);
+      return;
+    }
+    const u = upd.current;
+    // Läuft schon ein Download / liegt die Datei bereit für DIESE Version: nichts zurücksetzen
+    const sameBusy = u.latest === up.version && (u.status === 'downloading' || u.status === 'ready');
+    if (!sameBusy) pushUpd({ status: 'available', latest: up.version, notes: up.changelog, size: up.size, received: 0, error: '', url: up.downloadUrl, file: '' });
+    if (manual) call('toast', `Update ${up.version.replace(/^v/, '')} verfügbar`);
+  }, [call, pushUpd]);
   useEffect(() => {
     if (!ready) return;
-    let cancelled = false;
-    (async () => {
-      const current = getCurrentVersion();
-      if (!updateInit.current) {
-        updateInit.current = true;
-        call('setUpdate', { current, latest: current, notes: '' });
-      }
-      // Höchstens alle 30 Minuten: vorher hing `rtt` in den Abhängigkeiten,
-      // der Effekt lief bei JEDEM RTT-Tick (alle 3s) und hämmerte die
-      // GitHub-API — nach ~3 Minuten griff deren Rate-Limit (60/h) und das
-      // Update-Banner erschien NIE wieder. Genau so blieb der Nutzer auf
-      // alten Versionen hängen.
-      if (Date.now() - updateChecked.current < 30 * 60_000) return;
-      updateChecked.current = Date.now();
-      const up = await checkForUpdate().catch(() => null);
-      if (cancelled || !up) return; // null heißt auch: schon aktuell
-      updateUrl.current = up.downloadUrl;
-      call('setUpdate', { current, latest: up.version, notes: up.changelog });
-    })();
-    return () => { cancelled = true; };
-  }, [ready, call]);
+    if (!upd.current.current) {
+      upd.current.current = getCurrentVersion();
+      void cleanupApks(); // alte, schon installierte APKs weg
+    }
+    pushUpd({}); // Seite (auch nach Neuladen) auf den Stand bringen
+    if (shouldCheck(Date.now(), lastUpdCheck.current, RESUME_GAP_MS)) void runUpdCheck(false);
+    const t = setInterval(() => { void runUpdCheck(false); }, CHECK_EVERY_MS);
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active' && shouldCheck(Date.now(), lastUpdCheck.current, RESUME_GAP_MS)) void runUpdCheck(false);
+    });
+    return () => { clearInterval(t); sub.remove(); };
+  }, [ready, pageEpoch, pushUpd, runUpdCheck]);
+  const startUpdDownload = useCallback(async () => {
+    if (!upd.current.url) { await runUpdCheck(true); if (!upd.current.url) return; }
+    const u = upd.current;
+    if (u.status === 'downloading') return;
+    pushUpd({ status: 'downloading', received: 0, error: '' });
+    try {
+      const file = await downloadApk(u.url, u.latest, u.size, (received, total) => pushUpd({ received, size: total || u.size }));
+      pushUpd({ status: 'ready', file, received: upd.current.size });
+      await installApk(file); // Installer gleich öffnen
+    } catch (e: any) {
+      pushUpd({ status: 'error', error: e?.message ? String(e.message) : 'Laden fehlgeschlagen' });
+    }
+  }, [pushUpd, runUpdCheck]);
 
   // ── Nach jedem RECONNECT neu anhängen. Der Server hängt Sessions beim
   //    Verbindungsabriss ab und puffert ihren Output — ohne Reattach bliebe
@@ -1057,39 +1082,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     // ── Updates. Brauchen keinen Server: GitHub ist auch erreichbar, wenn die
     //    TMS-Verbindung gerade weg ist. Vor dem Guard, sonst wäre der Knopf
     //    ausgerechnet dann tot, wenn man ihn braucht.
+    if (type === 'update:download') { void startUpdDownload(); return; }
     if (type === 'update:install') {
-      if (updateUrl.current) {
-        call('toast', 'Update wird geladen …');
-        downloadAndInstall(updateUrl.current).catch(() => call('toast', 'Update fehlgeschlagen'));
-        return;
-      }
-      // Kein Check gelaufen: jetzt nachholen.
-      call('toast', 'Suche nach Updates …');
-      void (async () => {
-        const up = await checkForUpdate().catch(() => null);
-        if (!up) {
-          call('toast', `Du bist auf dem neuesten Stand (v${getCurrentVersion()})`);
-          return;
-        }
-        updateUrl.current = up.downloadUrl;
-        call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
-        call('toast', `Update v${up.version} wird geladen …`);
-        downloadAndInstall(up.downloadUrl).catch(() => call('toast', 'Update fehlgeschlagen'));
-      })();
+      const f = upd.current.file;
+      if (f) installApk(f).catch(() => call('toast', 'Installer ließ sich nicht öffnen'));
+      else void startUpdDownload();
       return;
     }
     if (type === 'update:check') {
       call('toast', 'Suche nach Updates …');
-      void (async () => {
-        const up = await checkForUpdate().catch(() => null);
-        if (!up) {
-          call('toast', `Du bist auf dem neuesten Stand (v${getCurrentVersion()})`);
-          return;
-        }
-        updateUrl.current = up.downloadUrl;
-        call('setUpdate', { current: getCurrentVersion(), latest: up.version, notes: up.changelog });
-        call('toast', `v${up.version} verfügbar`);
-      })();
+      void runUpdCheck(true);
       return;
     }
 

@@ -387,4 +387,35 @@ if (!PW) {
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });
+
+  test('Update: schlichte Leiste — Laden in der App, Fortschritt, Installieren, ✕, Karte auf der Bund-Seite', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      const MB = 1048576;
+      await page.evaluate(() => { document.body.classList.remove('is-locked'); });
+      await page.evaluate((mb) => window.TMSBridge.setUpdateState({ status: 'available', current: '1.138.0', latest: 'v1.139.0', notes: 'Neu: Updates in der App', size: 31 * mb }), MB);
+      await page.waitForTimeout(200);
+      assert.equal(await page.evaluate(() => document.getElementById('updBar').hidden), false, 'Leiste sichtbar ohne Neustart');
+      assert.match(await page.textContent('#updBar'), /Update 1\.139\.0/);
+      assert.equal(await page.locator('.update-pill').count(), 0, 'keine Glas-Pille mehr');
+      await page.evaluate(() => document.querySelector('#updBar [data-up="notes"]').click());
+      assert.match(await page.textContent('#updBar'), /Updates in der App/, 'Was ist neu');
+      await page.evaluate(() => document.querySelector('#updBar [data-up="download"]').click());
+      assert.equal((await posts('update:download')).length, 1, 'Laden in der App (kein Browser)');
+      await page.evaluate((mb) => window.TMSBridge.setUpdateState({ status: 'downloading', current: '1.138.0', latest: 'v1.139.0', notes: '', size: 31 * mb, received: 15.5 * mb }), MB);
+      assert.match(await page.textContent('#updBar'), /50 %/);
+      await page.evaluate((mb) => window.TMSBridge.setUpdateState({ status: 'ready', current: '1.138.0', latest: 'v1.139.0', notes: '', size: 31 * mb, received: 31 * mb }), MB);
+      await page.evaluate(() => document.querySelector('#updBar [data-up="install"]').click());
+      assert.equal((await posts('update:install')).length, 1);
+      // Wegtippen (bei einer neuen, noch nicht geladenen Version)
+      await page.evaluate((mb) => window.TMSBridge.setUpdateState({ status: 'available', current: '1.138.0', latest: 'v1.140.0', notes: '', size: 31 * mb }), MB);
+      await page.evaluate(() => document.querySelector('#updBar [data-up="dismiss"]').click());
+      assert.equal(await page.evaluate(() => document.getElementById('updBar').hidden), true, 'ausgeblendet');
+      // Bund-Seite: ruhige Karte statt Leiste
+      await page.evaluate(() => { show('servers'); });
+      await page.waitForTimeout(300);
+      assert.equal(await page.locator('[data-screen="servers"] .upd--card').count(), 1, 'Karte auf der Bund-Seite');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
 }

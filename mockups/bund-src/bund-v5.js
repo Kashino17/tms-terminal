@@ -916,4 +916,76 @@
       try { if (typeof window.addTerminal === 'function') window.addTerminal(); } finally { window.__newTermServer = null; }
     } else if (typeof window.__openRemoteFor === 'function') window.__openRemoteFor(id);
   }, true);
+
+  // ════════════════════════════════════════════════════════════════════
+  // 8) UPDATE — schlicht, in der App laden + installieren, ohne Neustart.
+  //    Die App prüft regelmäßig und meldet den Stand (setUpdateState):
+  //    none | available | downloading | ready | error.
+  // ════════════════════════════════════════════════════════════════════
+  const UP = { status: 'none', current: '', latest: '', notes: '', size: 0, received: 0, error: '' };
+  const upBar = document.createElement('div'); upBar.id = 'updBar'; upBar.className = 'upd upd--bar'; upBar.hidden = true;
+  document.body.appendChild(upBar);
+  let upNotesOpen = false;
+  const mb = (b) => { const v = b / 1048576; return (v >= 10 ? Math.round(v) : v.toFixed(1).replace('.', ',')) + ' MB'; };
+  const upDismissed = () => { try { return localStorage.getItem('tms-upd-dismissed') === UP.latest; } catch (_) { return false; } };
+  function upHtml(withClose) {
+    const pct = UP.size ? Math.min(100, Math.round((UP.received / UP.size) * 100)) : 0;
+    const sub = UP.status === 'downloading' ? `Lädt … ${UP.size ? `${mb(UP.received)} von ${mb(UP.size)}` : ''}`
+      : UP.status === 'ready' ? 'Geladen'
+      : UP.status === 'error' ? esc(UP.error || 'Laden fehlgeschlagen')
+      : `Neue Version${UP.size ? ' · ' + mb(UP.size) : ''}`;
+    const act = UP.status === 'downloading' ? `<span class="upd-pct">${pct} %</span>`
+      : UP.status === 'ready' ? '<button class="upd-btn" data-up="install">Installieren</button>'
+      : UP.status === 'error' ? '<button class="upd-btn" data-up="download">Nochmal</button>'
+      : '<button class="upd-btn" data-up="download">Laden</button>';
+    const notes = (UP.notes || '').trim();
+    return `<div class="upd-main">
+        <span class="upd-ic">${ic('download', 2)}</span>
+        <button class="upd-txt" data-up="notes" aria-expanded="${upNotesOpen}"><b>Update ${esc(UP.latest.replace(/^v/, ''))}</b><small>${sub}</small></button>
+        ${act}${withClose ? `<button class="upd-x" data-up="dismiss" aria-label="Ausblenden">${ic('x', 2)}</button>` : ''}
+      </div>
+      ${UP.status === 'downloading' ? `<i class="upd-prog" style="--p:${pct}%"></i>` : ''}
+      ${upNotesOpen && notes ? `<div class="upd-notes"><small>Was ist neu · aktuell ${esc(UP.current)}</small>${esc(notes)}</div>` : ''}`;
+  }
+  function upRender() {
+    const has = UP.status !== 'none' && UP.latest;
+    // Die schwebende Leiste: bis man sie wegtippt (Laden/Installieren zeigt sie wieder)
+    const busy = UP.status === 'downloading' || UP.status === 'ready';
+    upBar.hidden = !has || (upDismissed() && !busy);
+    if (!upBar.hidden) upBar.innerHTML = upHtml(true);
+    document.querySelectorAll('.upd--card').forEach((c) => { if (has) c.innerHTML = upHtml(false); else c.remove(); });
+  }
+  /** Bund-Seite: dieselbe Anzeige als ruhige Karte (statt der Glas-Pille). */
+  window.__bundUpdateCard = function (host) {
+    if (UP.status === 'none' || !UP.latest) return;
+    const c = document.createElement('div'); c.className = 'upd upd--card'; c.innerHTML = upHtml(false);
+    host.appendChild(c);
+  };
+  window.__bundUpdateState = function (st) {
+    const prevLatest = UP.latest;
+    Object.assign(UP, st || {});
+    if (UP.latest !== prevLatest) upNotesOpen = false;
+    upRender();
+  };
+  // Mockup: Demo-Update aus den Beispieldaten zeigen
+  if (!LIVE() && window.TMS_DATA && TMS_DATA.update && TMS_DATA.update.latest && TMS_DATA.update.latest !== TMS_DATA.update.current) {
+    const u = TMS_DATA.update;
+    setTimeout(() => { window.__bundUpdateState({ status: 'available', current: u.current, latest: u.latest, notes: u.notes, size: 31 * 1048576 });
+      if (typeof window.renderServers === 'function') window.renderServers(); }, 0);
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.upd [data-up]');
+    if (!b) return;
+    e.stopPropagation();
+    const a = b.dataset.up;
+    if (a === 'notes') { upNotesOpen = !upNotesOpen; upRender(); return; }
+    if (a === 'dismiss') { try { localStorage.setItem('tms-upd-dismissed', UP.latest); } catch (_) {} upRender(); return; }
+    if (a === 'download') { Object.assign(UP, { status: 'downloading', received: 0, error: '' }); upRender(); }
+    if (LIVE()) post('update:' + a);
+    else if (a === 'download') {
+      // Mockup: Download simulieren
+      UP.size = UP.size || 31 * 1048576;
+      const t = setInterval(() => { UP.received += UP.size / 12; if (UP.received >= UP.size) { clearInterval(t); UP.status = 'ready'; } upRender(); }, 250);
+    } else if (a === 'install') say('Mockup: Android-Installer öffnet sich');
+  }, true);
 })();
