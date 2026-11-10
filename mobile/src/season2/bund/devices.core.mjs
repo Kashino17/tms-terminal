@@ -29,3 +29,9 @@ export function dictationDeviceId(devices) {
   const d = devices.find((x) => x.online && (x.caps || []).includes('dictation'));
   return d ? d.id : null;
 }
+
+/** Erstes online-Gerät, das in der geklonten Stimme vorlesen kann (caps.speech); sonst null. */
+export function speechDeviceId(devices) {
+  const d = devices.find((x) => x.online && (x.caps || []).includes('speech'));
+  return d ? d.id : null;
+}

@@ -57,7 +57,8 @@ import { useServerStore } from '../store/serverStore';
 import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
 import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flushScrollback } from './web/scrollbackStore';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
-import { activeDeviceId, dictationDeviceId } from './bund/devices.core.mjs';
+import { activeDeviceId, dictationDeviceId, speechDeviceId } from './bund/devices.core.mjs';
+import { startRemVoice, type RemVoiceRun } from './speech/remVoice';
 import type { BundDevice } from './bund/devices.core.mjs';
 import { clipStore } from './bund/clipboardStore';
 
@@ -260,6 +261,39 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       (NativeModules.TmsSpeech as { stop?: () => void } | undefined)?.stop?.();
     };
   }, [call]);
+
+  // Vorlesen in der geklonten Stimme: der Mac erzeugt Satz für Satz und schickt
+  // jedes Stück sofort (speech:audio) — hier wird es der Reihe nach gespielt.
+  // Kann es kein Gerät (oder antwortet es nicht), spricht das Handy selbst.
+  const speechDevRef = useRef<string | null>(null);
+  const rem = useRef<{ run: RemVoiceRun; dev: string; parts: string[]; german: boolean; heard: boolean; watchdog: ReturnType<typeof setTimeout> | null } | null>(null);
+  const speakOnPhone = useCallback((parts: string[], german: boolean) => {
+    const speech = NativeModules.TmsSpeech as { speak?: (parts: string[], german: boolean) => Promise<boolean> } | undefined;
+    if (!speech?.speak) { call('readerSpeech', { error: 'Vorlesen ist auf diesem Gerät nicht verfügbar' }); return; }
+    speech.speak(parts, german).catch((e: { code?: string }) => {
+      call('readerSpeech', { error: e?.code === 'no_voice'
+        ? 'Dem Handy fehlt die Stimme für diese Sprache (Einstellungen › Sprachausgabe)'
+        : 'Die Sprachausgabe des Handys ließ sich nicht starten' });
+    });
+  }, [call]);
+  const stopRem = useCallback((tellServer: boolean) => {
+    const r = rem.current;
+    if (!r) return;
+    rem.current = null;
+    if (r.watchdog) clearTimeout(r.watchdog);
+    r.run.stop();
+    if (tellServer) getConnection(r.dev)?.send({ type: 'speech:stop', payload: { reqId: r.run.reqId } } as never);
+  }, []);
+  /** Die Stimme vom Mac kommt nicht (mehr): war noch nichts zu hören, übernimmt das Handy. */
+  const remFailed = useCallback((reqId: string) => {
+    const r = rem.current;
+    if (!r || r.run.reqId !== reqId) return;
+    const { parts, german, heard } = r;
+    stopRem(true);
+    if (heard) call('readerSpeech', { error: 'Die Stimme vom Mac ist abgebrochen' });
+    else speakOnPhone(parts, german);
+  }, [call, stopRem, speakOnPhone]);
+  useEffect(() => () => stopRem(true), [stopRem]);
 
   // Browser-Bridge: tell the server whether terminal browser-opens should be
   // routed here. Fires on connect and whenever the toggle changes (incl. after
@@ -478,6 +512,18 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           }
         }
         call('setActivities', activities);
+        return;
+      }
+      if (m?.type === 'speech:audio') {
+        const r = rem.current;
+        if (r && r.run.reqId === m.payload?.reqId) {
+          if (r.watchdog) { clearTimeout(r.watchdog); r.watchdog = null; }
+          r.run.push(m.payload);
+        }
+        return;
+      }
+      if (m?.type === 'speech:error') {
+        if (m.payload?.reqId) remFailed(m.payload.reqId);
         return;
       }
       if (m?.type === 'reader:answers' && m.sessionId) {
@@ -1065,6 +1111,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // also der Mac). Ist es offline, gibt es kein Diktat: das Mikro wird
   // ausgeblendet. Der Text geht trotzdem ins Terminal vorne, egal auf welchem Gerät.
   const dictDev = dictationDeviceId(devices);
+  speechDevRef.current = speechDeviceId(devices);
   const dictInfo = devInfo(dictDev);
   const dictWs = useMemo(() => (dictDev ? getConnection(dictDev) : null), [dictDev]);
   useEffect(() => {
@@ -1456,18 +1503,32 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // Ein anderes Terminal ist nach vorne gekommen (Tipp in der Leiste, Wischen …).
       // Was die Seite gerade zeigt — der Server taktet die Ausgabe danach.
       case 'reader:speak': {
-        // Vorlesen mit der Sprachausgabe des Handys (SpeechModule.kt) — ohne Netz.
         const parts = Array.isArray(payload?.parts) ? (payload.parts as unknown[]).filter((x): x is string => typeof x === 'string') : [];
-        const speech = NativeModules.TmsSpeech as { speak?: (parts: string[], german: boolean) => Promise<boolean> } | undefined;
-        if (!speech?.speak || !parts.length) { call('readerSpeech', { error: 'Vorlesen ist auf diesem Gerät nicht verfügbar' }); break; }
-        speech.speak(parts, !!payload?.german).catch((e: { code?: string }) => {
-          call('readerSpeech', { error: e?.code === 'no_voice'
-            ? 'Dem Handy fehlt die Stimme für diese Sprache (Einstellungen › Sprachausgabe)'
-            : 'Die Sprachausgabe des Handys ließ sich nicht starten' });
+        const german = !!payload?.german;
+        stopRem(true);
+        (NativeModules.TmsSpeech as { stop?: () => void } | undefined)?.stop?.();
+        if (!parts.length) { call('readerSpeech', { done: true }); break; }
+        const dev = speechDevRef.current;
+        const conn = dev ? getConnection(dev) : null;
+        if (!dev || !conn) { speakOnPhone(parts, german); break; } // kein Gerät mit der Stimme: das Handy spricht
+        const reqId = `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        const run = startRemVoice({
+          reqId,
+          onPart: (index) => call('readerSpeech', { index }),
+          onPlayed: (seq) => {
+            if (rem.current?.run.reqId === reqId) rem.current.heard = true;
+            conn.send({ type: 'speech:played', payload: { reqId, seq } } as never);
+          },
+          onDone: () => { if (rem.current?.run.reqId === reqId) rem.current = null; call('readerSpeech', { done: true }); },
+          onError: () => remFailed(reqId),
         });
+        // Kommt das erste Stück nicht (Modell lädt sonst in ~3 s), übernimmt das Handy.
+        rem.current = { run, dev, parts, german, heard: false, watchdog: setTimeout(() => remFailed(reqId), 20_000) };
+        conn.send({ type: 'speech:speak', payload: { reqId, parts } } as never);
         break;
       }
       case 'reader:speakStop':
+        stopRem(true);
         (NativeModules.TmsSpeech as { stop?: () => void } | undefined)?.stop?.();
         break;
 

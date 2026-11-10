@@ -1,7 +1,7 @@
 // Bund: kein Hauptserver. Welches Gerät bedient Dateien, Upload, Diktat?
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activeDeviceId, deviceForSession, dictationDeviceId, deviceColor } from '../src/season2/bund/devices.core.mjs';
+import { activeDeviceId, deviceForSession, dictationDeviceId, speechDeviceId, deviceColor } from '../src/season2/bund/devices.core.mjs';
 
 const mac = { id: 'srv-mac', online: true, caps: ['dictation'] };
 const win = { id: 'srv-win', online: true, caps: [] };
@@ -40,4 +40,12 @@ test('Gerätefarben nach Position', () => {
   assert.equal(deviceColor(1), '#3bc9db');
   assert.equal(deviceColor(2), '#f59f00');
   assert.equal(deviceColor(3), '#9b8cff');
+});
+
+test('Vorlesen in der geklonten Stimme: das Gerät, das sie hat — sonst keins (dann spricht das Handy selbst)', () => {
+  const mac = { id: 'mac', online: true, caps: ['dictation', 'speech'] };
+  const win = { id: 'win', online: true, caps: [] };
+  assert.equal(speechDeviceId([win, mac]), 'mac');
+  assert.equal(speechDeviceId([win, { ...mac, online: false }]), null, 'Mac nicht erreichbar');
+  assert.equal(speechDeviceId([win, { id: 'alt', online: true, caps: ['dictation'] }]), null, 'älterer Server ohne Stimme');
 });

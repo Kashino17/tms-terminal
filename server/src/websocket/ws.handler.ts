@@ -29,6 +29,8 @@ import { ConnectionRateLimiter } from './rate-limiter';
 import { createOutputPacer } from './output.pacer';
 import { createActivityFeed } from './activity.feed';
 import { readAnswers, forgetReader } from '../reader';
+import { startSpeechRun, type SpeechRun } from '../voice/run';
+import { synthesize, voiceAvailable } from '../voice/engine';
 import { browserBridge } from '../browserbridge/browserbridge.manager';
 import { asPaste } from '../terminal/paste.policy';
 import { titleStore } from '../terminal/titles';
@@ -317,6 +319,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   );
   const stopActivity = globalManager.onActivity((sid, activity) => activityFeed.note(sid, activity));
   activityFeed.start();
+  // Vorlesen in der geklonten Stimme: höchstens ein Lauf je Verbindung.
+  let speech: { reqId: string; run: SpeechRun } | null = null;
+  const stopSpeech = (): void => { speech?.run.stop(); speech = null; };
   void hasMacUnlockPassword().then((configured) => {
     send(ws, { type: 'mac:unlock_status', payload: { configured, supported: process.platform === 'darwin' } });
   });
@@ -826,6 +831,30 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
     if (msg.type === 'clipboard:clear') {
       clipboardHub.clear();
+      return;
+    }
+
+    if (msg.type === 'speech:speak') {
+      // Satz für Satz erzeugen und sofort schicken — die App spielt schon,
+      // während der nächste Satz entsteht (voice/run.ts).
+      const reqId = String(msg.payload?.reqId ?? '').slice(0, 64);
+      const parts = Array.isArray(msg.payload?.parts) ? msg.payload.parts.filter((x): x is string => typeof x === 'string').slice(0, 400) : [];
+      stopSpeech();
+      if (!reqId) return;
+      if (!voiceAvailable()) { send(ws, { type: 'speech:error', payload: { reqId, message: 'unavailable' } }); return; }
+      const run = startSpeechRun(parts, synthesize,
+        (c) => send(ws, { type: 'speech:audio', payload: { reqId, seq: c.seq, index: c.index, first: c.first, last: c.last, format: 'mp3', audio: c.audio.toString('base64'), ms: c.ms } }),
+        (message) => { logger.warn(`[voice] ${message}`); send(ws, { type: 'speech:error', payload: { reqId, message } }); });
+      speech = { reqId, run };
+      void run.done.then(() => { if (speech?.run === run) speech = null; });
+      return;
+    }
+    if (msg.type === 'speech:played') {
+      if (speech && speech.reqId === msg.payload?.reqId && typeof msg.payload?.seq === 'number') speech.run.played(msg.payload.seq);
+      return;
+    }
+    if (msg.type === 'speech:stop') {
+      stopSpeech();
       return;
     }
 
@@ -1339,6 +1368,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   ws.on('close', () => {
     liveSockets.delete(ws);
     stopActivity();
+    stopSpeech();
     logger.info(`Client disconnected: ${ip} — detaching ${ownedSessions.size} sessions (kept alive)`);
 
     // This was the browser-bridge target: no app connected → shim opens locally
@@ -1360,6 +1390,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   ws.on('error', (err) => {
     logger.error(`WebSocket error from ${ip}: ${err.message}`);
     stopActivity();
+    stopSpeech();
     if (currentWs === ws) currentWs = null;
     for (const sessionId of ownedSessions) {
       // Do NOT unwatch promptDetector — same rationale as ws.on('close')

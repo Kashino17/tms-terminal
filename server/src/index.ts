@@ -18,6 +18,7 @@ import { logger } from './utils/logger';
 import { getPlatform, getDefaultShell } from './utils/platform';
 import { fcmService } from './notifications/fcm.service';
 import { globalManager } from './terminal/terminal.manager';
+import { voiceAvailable, shutdownVoice } from './voice/engine';
 import { saveMirrorStates, takeMirrorStates } from './terminal/mirror.store';
 import { Snapshotter, setActiveSnapshotter } from './terminal/restore/snapshotter';
 import { restoreTerminals } from './terminal/restore/restore';
@@ -241,7 +242,7 @@ async function main(): Promise<void> {
       // build/startedAt: which code this server really runs — `tms-terminal
       // version` (and a look from another machine) can tell a finished update
       // from one that stopped halfway.
-      res.end(JSON.stringify({ status: 'ok', platform: getPlatform(), build: RUNNING_BUILD, startedAt: STARTED_AT, caps: dictationAvailable() ? ['dictation'] : [] }));
+      res.end(JSON.stringify({ status: 'ok', platform: getPlatform(), build: RUNNING_BUILD, startedAt: STARTED_AT, caps: [...(dictationAvailable() ? ['dictation'] : []), ...(voiceAvailable() ? ['speech'] : [])] }));
     } else {
       res.writeHead(404);
       res.end('Not found');
@@ -275,6 +276,7 @@ async function main(): Promise<void> {
     clipboardHub.stop();
     shutdownWhisper();
     shutdownRewriter();
+    shutdownVoice();
 
     // Letzte, exakte Aufnahme — fuer den Fall, dass auch der Waechter nicht
     // ueberlebt (Neustart des Macs).

@@ -1,0 +1,145 @@
+/* ════════════════════════════════════════════════════════════════════
+   Mockup: (1) „Woran wird gearbeitet" neben dem Ordner, (2) Antwort lesen.
+   Matt und deckend — Arbeitsfläche, kein Glas.
+   ════════════════════════════════════════════════════════════════════ */
+:root, [data-theme="dark"] { --rd-bg: #1b1e23; --rd-surface: #262a31; --rd-line: rgba(255,255,255,.09); --rd-code: #15171b; --rd-mark: rgba(138,184,255,.14); }
+[data-theme="light"] { --rd-bg: #f7f8fb; --rd-surface: #ffffff; --rd-line: rgba(15,23,42,.10); --rd-code: #eef1f6; --rd-mark: rgba(30,79,163,.10); }
+
+/* ── (1) Aufgaben-Zeile ───────────────────────────────────────────── */
+.card-cwd { display: flex !important; align-items: center; gap: 0; min-width: 0; }
+.card-cwd > .card-dev, .card-cwd > .card-folder { flex: none; }
+.card-folder { color: var(--text-dim); }
+.card-task { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; overflow: hidden; white-space: nowrap; color: rgba(var(--text-rgb), .9); }
+.card-task__sep { flex: none; margin: 0 6px; color: var(--text-dim); opacity: .7; }
+.card-task__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.card-task b { flex: none; font-weight: 700; color: var(--warn); }
+.card-task__dot { flex: none; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--accent); }
+.card-task[data-state="working"] .card-task__dot { animation: dotBreathe 1.3s ease-in-out 3; }
+.card-task[data-state="waiting"] .card-task__dot { background: var(--warn); }
+.card-task[data-state="done"] { color: var(--text-dim); }
+.card-task[data-state="done"] .card-task__dot { width: 11px; height: 11px; margin-right: 5px; border-radius: 0; background: none;
+  -webkit-mask: none; position: relative; }
+.card-task[data-state="done"] .card-task__dot::before { content: ''; position: absolute; left: 1px; top: 0; width: 4px; height: 8px; border: solid var(--ok); border-width: 0 2px 2px 0; transform: rotate(42deg); }
+/* Seitenleiste (aufgeklappt) und Kopfzeile dort */
+.ds-row__cwd { display: flex; align-items: center; min-width: 0; }
+.ds-row__cwd .card-task { font-size: inherit; }
+#compactTerminalHeader small { display: flex; align-items: center; min-width: 0; }
+#compactTerminalHeader small .card-task { font-size: inherit; }
+/* Beim Wechseln: Name + darunter, woran dort gearbeitet wird */
+.term-switcher__label span { white-space: pre-line; text-align: center; max-width: min(82vw, 420px); line-height: 1.35; font-weight: 500 !important; border-radius: 16px !important; }
+.term-switcher__label span::first-line { font-weight: 700; }
+
+/* ── „Lesen"-Knopf am Terminal (wo früher LÄUFT/BEREIT stand) ─────── */
+.read-btn { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; padding: 0; border-radius: 50%;
+  color: var(--text-dim); background: rgba(var(--overlay-rgb), .06); border: 1px solid var(--glass-border); }
+.read-btn span { display: none; }
+.read-btn svg { width: 19px; height: 19px; }
+.read-btn:active { transform: scale(.95); }
+.read-btn.has-new { color: var(--accent-ink, var(--text)); background: rgba(var(--accent-rgb), .16); border-color: rgba(var(--accent-rgb), .42); }
+.read-btn.has-new::after { content: ''; position: absolute; top: 0; right: 0; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--card-matte, #3b3f46); }
+.read-btn[hidden] { display: none; }
+#compactRead { position: relative; }
+#compactRead.has-new { color: var(--accent); }
+#compactRead.has-new::after { content: ''; position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+/* ── (2) Lesemodus ────────────────────────────────────────────────── */
+#reader { position: fixed; inset: 0; z-index: 120; display: flex; flex-direction: column; background: var(--rd-bg); color: var(--text);
+  transform: translateY(100%); transition: transform 280ms cubic-bezier(.2,.8,.2,1); --rd-fs: 16.5px; }
+#reader.is-open { transform: none; }
+#reader[hidden] { display: none; }
+.rd-top { flex: none; display: flex; align-items: center; gap: 4px; padding: calc(env(safe-area-inset-top, 0px) + 8px) 8px 8px; border-bottom: 1px solid var(--rd-line); background: var(--rd-bg); }
+.rd-ic { flex: none; width: 42px; height: 42px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: var(--text-dim); }
+.rd-ic svg { width: 22px; height: 22px; }
+.rd-ic:active, .rd-ic.is-on { background: rgba(var(--overlay-rgb), .09); color: var(--text); }
+.rd-title { flex: 1; min-width: 0; padding: 0 4px; }
+.rd-title strong { display: flex; align-items: center; gap: 8px; font: 700 15.5px var(--font-ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd-title strong i { flex: none; width: 10px; height: 10px; border-radius: 4px; }
+.rd-title small { display: block; margin-top: 1px; font: 500 12px var(--font-ui); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.rd-scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.rd-col { max-width: 700px; margin: 0 auto; padding: 14px 18px 28px; }
+
+.rd-note { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; padding: 9px 12px; border-radius: 12px; font: 600 12.5px var(--font-ui); color: var(--accent-ink, var(--text)); background: rgba(var(--accent-rgb), .12); }
+.rd-note i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.rd-note[data-state="waiting"] { color: var(--warn); background: rgba(var(--warn-rgb), .12); }
+.rd-note[data-state="waiting"] i { background: var(--warn); }
+
+.rd-prompt { margin: 0 0 18px; border-radius: 14px; background: var(--rd-surface); border: 1px solid var(--rd-line); overflow: hidden; }
+.rd-prompt summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 11px 13px; font: 600 12px var(--font-ui); color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; }
+.rd-prompt summary::-webkit-details-marker { display: none; }
+.rd-prompt summary span { flex: 1; min-width: 0; text-transform: none; letter-spacing: 0; font: 500 13.5px var(--font-ui); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd-prompt summary svg { flex: none; width: 16px; height: 16px; transition: transform .2s; }
+.rd-prompt[open] summary svg { transform: rotate(90deg); }
+.rd-prompt[open] summary span { display: none; }
+.rd-prompt p { margin: 0; padding: 0 13px 13px; font: 400 14.5px/1.5 var(--font-ui); color: var(--text); white-space: pre-wrap; }
+
+.rd-body { font: 400 var(--rd-fs)/1.62 var(--font-ui); letter-spacing: .003em; }
+.rd-body > * { scroll-margin-top: 12px; }
+.rd-body p { margin: 0 0 .95em; }
+.rd-body h2 { margin: 1.6em 0 .55em; font: 750 1.28em/1.25 var(--font-ui); letter-spacing: -.01em; }
+.rd-body h3 { margin: 1.3em 0 .45em; font: 700 1.08em/1.3 var(--font-ui); }
+.rd-body > h2:first-child, .rd-body > h3:first-child { margin-top: .2em; }
+.rd-body strong { font-weight: 700; }
+.rd-body ul, .rd-body ol { margin: 0 0 1em; padding-left: 1.35em; }
+.rd-body li { margin: .32em 0; padding-left: .15em; }
+.rd-body li::marker { color: var(--accent); }
+.rd-body code { font: 500 .88em var(--font-mono); padding: .12em .38em; border-radius: 6px; background: var(--rd-code); border: 1px solid var(--rd-line); white-space: nowrap; }
+.rd-code { position: relative; margin: 0 0 1.1em; border-radius: 12px; background: var(--rd-code); border: 1px solid var(--rd-line); }
+.rd-code pre { margin: 0; padding: 13px 14px; overflow-x: auto; font: 500 13.5px/1.55 var(--font-mono); white-space: pre; }
+.rd-code button { position: absolute; top: 6px; right: 6px; height: 28px; padding: 0 10px; border-radius: 8px; font: 700 11.5px var(--font-ui); color: var(--text-dim); background: var(--rd-surface); border: 1px solid var(--rd-line); }
+.rd-body .is-speaking { background: var(--rd-mark); box-shadow: -10px 0 0 var(--rd-mark), 10px 0 0 var(--rd-mark); border-radius: 4px; }
+
+/* Tabellen: echte Tabelle; breite Tabellen auf schmalem Schirm als Karten */
+.rd-table { margin: 0 0 1.2em; border-radius: 12px; border: 1px solid var(--rd-line); background: var(--rd-surface); overflow-x: auto; }
+.rd-table table { width: 100%; border-collapse: collapse; font-size: .9em; line-height: 1.42; }
+.rd-table th { text-align: left; font: 700 .78em var(--font-ui); letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); padding: 10px 12px; border-bottom: 1px solid var(--rd-line); white-space: nowrap; }
+.rd-table td { padding: 10px 12px; vertical-align: top; border-bottom: 1px solid var(--rd-line); }
+.rd-table tr:last-child td { border-bottom: 0; }
+.rd-table td:first-child { font-weight: 600; }
+.rd-table.is-cards { border: 0; background: none; overflow: visible; }
+.rd-table.is-cards table, .rd-table.is-cards tbody, .rd-table.is-cards tr, .rd-table.is-cards td { display: block; width: auto; }
+.rd-table.is-cards thead { display: none; }
+.rd-table.is-cards tr { margin: 0 0 10px; padding: 4px 0; border-radius: 12px; border: 1px solid var(--rd-line); background: var(--rd-surface); }
+.rd-table.is-cards td { border: 0; padding: 8px 13px; }
+.rd-table.is-cards td:first-child { font-size: 1.02em; padding-bottom: 4px; }
+.rd-table.is-cards td:not(:first-child)::before { content: attr(data-label); display: block; margin-bottom: 1px; font: 700 .74em var(--font-ui); letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); }
+
+/* Leiste unten */
+.rd-bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 10px calc(env(safe-area-inset-bottom, 0px) + 10px); border-top: 1px solid var(--rd-line); background: var(--rd-bg); }
+.rd-nav { flex: none; width: 46px; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center; color: var(--text); background: var(--rd-surface); border: 1px solid var(--rd-line); }
+.rd-nav svg { width: 20px; height: 20px; }
+.rd-nav:disabled { opacity: .3; }
+.rd-count { flex: none; min-width: 56px; text-align: center; font: 700 12.5px var(--font-mono); color: var(--text-dim); }
+.rd-main { flex: 1; min-width: 0; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; font: 700 14px var(--font-ui); color: var(--text); background: var(--rd-surface); border: 1px solid var(--rd-line); }
+.rd-main svg { width: 18px; height: 18px; }
+.rd-main--go { color: var(--on-accent, #071021); background: var(--accent); border-color: transparent; }
+.rd-main.is-on { color: var(--accent); border-color: rgba(var(--accent-rgb), .5); }
+.rd-main:active, .rd-nav:active { transform: scale(.97); }
+
+/* Inhalt (Sprungmarken) + Schriftgröße */
+.rd-pop { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 58px); right: 8px; z-index: 5; width: min(86vw, 340px); max-height: 60vh; overflow-y: auto; padding: 6px; border-radius: 16px; background: var(--rd-surface); border: 1px solid var(--rd-line); box-shadow: 0 18px 44px rgba(0,0,0,.42); }
+.rd-pop[hidden] { display: none; }
+.rd-pop h4 { margin: 6px 10px 4px; font: 700 11px var(--font-ui); letter-spacing: .07em; text-transform: uppercase; color: var(--text-dim); }
+.rd-pop button { display: block; width: 100%; text-align: left; padding: 11px 10px; border-radius: 10px; font: 600 14px/1.3 var(--font-ui); color: var(--text); }
+.rd-pop button[data-level="3"] { padding-left: 24px; font-weight: 500; color: var(--text-dim); }
+.rd-pop button:active { background: rgba(var(--overlay-rgb), .08); }
+.rd-sizes { display: flex; gap: 6px; padding: 4px; }
+.rd-sizes button { flex: 1; text-align: center; padding: 12px 0; border: 1px solid var(--rd-line); }
+.rd-sizes button.is-on { border-color: rgba(var(--accent-rgb), .6); color: var(--accent); }
+
+/* Aufgeklappt: der Lesemodus liegt über dem Terminal, die Seitenleiste bleibt */
+@media (min-width: 700px) {
+  body.desk #reader { left: var(--rd-left, 0px); border-left: 1px solid var(--rd-line); }
+  #reader { --rd-fs: 17px; }
+  .rd-col { padding: 22px 28px 40px; }
+}
+/* Der Lesemodus deckt Eingabezeile und Punkte ab — er hat seine eigene Leiste */
+body.reader-open #dock, body.reader-open #termSwitcher, body.reader-open #globalKeys { visibility: hidden; }
+
+/* Nur im Mockup: die Demo-Updateleiste würde die Kopfzeile verdecken. */
+.upd--bar { display: none !important; }
+
+.rd-note[hidden] { display: none; }
+
+/* Seitenleiste: dort zählt, woran gearbeitet wird — der Ordner steht oben in der Kopfzeile. */
+.ds-row__cwd .card-task > .card-task__sep:first-child { display: none; }

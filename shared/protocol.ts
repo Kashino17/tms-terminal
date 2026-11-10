@@ -190,6 +190,22 @@ export interface TerminalTitlesGetMessage {
   type: 'terminal:titles_get';
 }
 
+// ── Voice: read aloud in the cloned voice (Client → Server) ────
+/** Speak these parts (heading, paragraph, list item …), sentence by sentence. */
+export interface SpeechSpeakMessage {
+  type: 'speech:speak';
+  payload: { reqId: string; parts: string[] };
+}
+/** The phone started playing piece `seq` — the server stays only a few pieces ahead. */
+export interface SpeechPlayedMessage {
+  type: 'speech:played';
+  payload: { reqId: string; seq: number };
+}
+export interface SpeechStopMessage {
+  type: 'speech:stop';
+  payload: { reqId?: string };
+}
+
 // ── Reader (Client → Server) ───────────────────────────────────
 /** Ask for the last answers of the AI session running in a terminal. */
 export interface ReaderGetMessage {
@@ -254,6 +270,9 @@ export type ClientMessage =
   | AppStateMessage
   | AttentionMessage
   | ReaderGetMessage
+  | SpeechSpeakMessage
+  | SpeechPlayedMessage
+  | SpeechStopMessage
   | ActiveTabMessage
   | BrowserBridgeToggleMessage
   | BrowserBridgeCallbackMessage
@@ -360,6 +379,30 @@ export interface PongMessage {
 export interface TerminalTitlesMessage {
   type: 'terminal:titles';
   payload: { titles: Record<string, string> };
+}
+
+// ── Voice (Server → Client) ────────────────────────────────────
+/** One spoken piece (about a sentence), sent the moment it exists. */
+export interface SpeechAudioMessage {
+  type: 'speech:audio';
+  payload: {
+    reqId: string;
+    seq: number;
+    /** Which part of the request this belongs to. */
+    index: number;
+    /** First piece of that part. */
+    first: boolean;
+    /** Nothing follows. */
+    last: boolean;
+    format: 'mp3';
+    /** base64; empty when there was nothing to speak. */
+    audio: string;
+    ms: number;
+  };
+}
+export interface SpeechErrorMessage {
+  type: 'speech:error';
+  payload: { reqId: string; message: string };
 }
 
 // ── Activity + reader (Server → Client) ────────────────────────
@@ -580,6 +623,8 @@ export type ServerMessage =
   | TerminalTitlesMessage
   | TerminalActivityMessage
   | ReaderAnswersMessage
+  | SpeechAudioMessage
+  | SpeechErrorMessage
   | TerminalTitleMessage
   | ClipboardHistoryMessage
   | ClipboardAddedMessage
