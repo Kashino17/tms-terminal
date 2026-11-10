@@ -22,6 +22,7 @@ import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../aud
 import { DictationManager, acceptRewrite } from '../audio/dictation';
 import { handleDictationMessage, createDictationConnectionHandler } from '../audio/dictation.connection';
 import { decodeToFloat32 } from '../audio/ffmpeg-decode';
+import { AdtsPcm } from '../audio/adts-pcm';
 import { captureSoon } from '../terminal/restore/snapshotter';
 import { ConnectionRateLimiter } from './rate-limiter';
 import { createOutputPacer } from './output.pacer';
@@ -89,6 +90,7 @@ function send(ws: WebSocket, msg: ServerMessage): void {
 // a reconnecting app resumes its dictation instead of losing it.
 const dictations = new DictationManager({
   decode: (bytes, format) => decodeToFloat32(bytes, format),
+  openPcm: () => new AdtsPcm((bytes) => decodeToFloat32(bytes, 'adts')),
   transcribeWav: (wavBase64) => whisperTranscribe(wavBase64),
   rewrite: (text) => rewritePrompt(text),
   now: () => Date.now(),

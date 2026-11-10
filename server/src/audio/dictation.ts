@@ -1,15 +1,18 @@
 // Streamed dictation sessions.
 //
 // The app uploads the growing recording in byte-offset chunks WHILE the user
-// speaks; this manager decodes what has arrived, cuts ~60s segments at speech
-// pauses and transcribes them in the background. After the stop only the rest
-// (<= 72s) is left, so the result arrives seconds later regardless of length.
+// speaks; this manager decodes what has arrived, cuts pieces of 8-28s at speech
+// pauses and transcribes them in the background. After the stop only the last
+// few seconds are left, so the result arrives right away regardless of length.
+// (Without an incremental decoder — whole-file uploads — the earlier rule
+// applies: ~60s pieces, the rest after the stop.)
 //
 // Sessions live independently of any socket: every call rebinds the sink, so a
 // reconnect (`resume`) picks up a dictation that is still uploading or still
 // being transcribed, and a finished result is kept for a while to be fetched.
 
-import { nextCutLegacy as nextCut, encodeWav } from './dictation.segment'; // switched to the pause rule together with the pcm stream
+import { nextCut, nextCutLegacy, encodeWav } from './dictation.segment';
+import type { PcmStream } from './adts-pcm';
 
 export type DictationFormat = 'adts' | 'file';
 export type DictationStatus = 'receiving' | 'processing' | 'done' | 'error';
@@ -19,6 +22,8 @@ export interface DictationDeps {
   decode(bytes: Buffer, format: DictationFormat): Promise<Float32Array>;
   transcribeWav(wavBase64: string): Promise<string>;
   rewrite(text: string): Promise<string>;
+  /** Incremental decoder for a streamed ('adts') recording. Without it the whole upload is decoded on each pass. */
+  openPcm?: () => PcmStream;
   now(): number;
   log(msg: string): void;
 }
@@ -37,6 +42,8 @@ export interface DictationOptions {
   heartbeatMs?: number;
   doneTtlMs?: number;
   idleTtlMs?: number;
+  /** Where streamed recordings are cut (default: the pause rule). The A/B script injects the earlier rule. */
+  cut?: typeof nextCut;
 }
 
 const RATE = 16000;
@@ -51,6 +58,7 @@ interface Session {
   enhance: boolean;
   sink: Sink;
   parts: Buffer[];
+  pcm: PcmStream | null;      // streamed recordings: decoded incrementally, `parts` stays empty
   received: number;
   status: DictationStatus;
   endTotal: number | null;
@@ -71,6 +79,8 @@ interface Session {
   computeMs: number;
   audioSecs: number;
   bytesPerSec: number;        // measured on the last decode; 0 = unknown
+  restSecs: number;           // audio left to transcribe when the stop arrived
+  restMeasured: boolean;
 }
 
 /** Use the rewrite unless it lost more than half of the words (truncation/hallucination guard). */
@@ -87,12 +97,14 @@ export class DictationManager {
   private readonly heartbeatMs: number;
   private readonly doneTtlMs: number;
   private readonly idleTtlMs: number;
+  private readonly cut: typeof nextCut;
 
   constructor(private deps: DictationDeps, opts: DictationOptions = {}) {
-    this.throttleMs = opts.decodeThrottleMs ?? 3000;
+    this.throttleMs = opts.decodeThrottleMs ?? 500;
     this.heartbeatMs = opts.heartbeatMs ?? 5000;
     this.doneTtlMs = opts.doneTtlMs ?? 15 * 60_000;
     this.idleTtlMs = opts.idleTtlMs ?? 10 * 60_000;
+    this.cut = opts.cut ?? nextCut;
   }
 
   start(id: string, format: DictationFormat, enhance: boolean, sink: Sink): void {
@@ -100,10 +112,11 @@ export class DictationManager {
     if (!s) {
       const now = this.deps.now();
       s = {
-        id, format, enhance, sink, parts: [], received: 0, status: 'receiving', endTotal: null,
+        id, format, enhance, sink, parts: [], pcm: format === 'adts' && this.deps.openPcm ? this.deps.openPcm() : null,
+        received: 0, status: 'receiving', endTotal: null,
         cursor: 0, texts: [], work: Promise.resolve(), passQueued: false, lastPassAt: 0,
         throttleTimer: null, heartbeat: null, cancelled: false, lastActivity: now, startedAt: now,
-        endedAt: 0, finishedAt: 0, text: '', error: '', computeMs: 0, audioSecs: 0, bytesPerSec: 0,
+        endedAt: 0, finishedAt: 0, text: '', error: '', computeMs: 0, audioSecs: 0, bytesPerSec: 0, restSecs: 0, restMeasured: false,
       };
       this.sessions.set(id, s);
       this.deps.log(`[dictation] ${id}: start (${format}${enhance ? ', enhance' : ''})`);
@@ -119,7 +132,7 @@ export class DictationManager {
     s.lastActivity = this.deps.now();
     if (s.status === 'receiving' && offset <= s.received && offset + data.length > s.received) {
       const tail = data.subarray(s.received - offset);
-      s.parts.push(tail);
+      if (s.pcm) s.pcm.push(tail); else s.parts.push(tail);
       s.received += tail.length;
     }
     sink({ type: 'dictation:ack', id, bytes: s.received });
@@ -147,6 +160,7 @@ export class DictationManager {
     const s = this.sessions.get(id);
     if (!s) return;
     s.cancelled = true;
+    s.pcm?.release();
     this.clearTimers(s);
     this.sessions.delete(id);
     this.deps.log(`[dictation] ${id}: cancelled`);
@@ -175,7 +189,7 @@ export class DictationManager {
   /** Audio bytes still held in memory for a session (tests / diagnostics). */
   bufferedBytes(id: string): number {
     const s = this.sessions.get(id);
-    return s ? s.parts.reduce((n, p) => n + p.length, 0) : 0;
+    return s ? s.parts.reduce((n, p) => n + p.length, 0) + (s.pcm?.bytes ?? 0) : 0;
   }
 
   /** Resolves once all queued work for the session has run (tests, E2E). */
@@ -220,9 +234,10 @@ export class DictationManager {
       s.passQueued = false;
       s.lastPassAt = this.deps.now();
       if (s.cancelled || s.status !== 'receiving') return;
-      // Skip the (full) decode while no segment can be cut yet: estimate the
-      // buffered audio from the byte rate measured on the last decode.
-      if (s.bytesPerSec > 0 && s.received / s.bytesPerSec - s.cursor / RATE <= SEGMENT_READY_SECS) return;
+      // Without an incremental decoder every pass decodes the whole upload:
+      // skip it while no segment can be cut yet (buffered audio estimated from
+      // the byte rate measured on the last decode).
+      if (!s.pcm && s.bytesPerSec > 0 && s.received / s.bytesPerSec - s.cursor / RATE <= SEGMENT_READY_SECS) return;
       try {
         await this.transcribeReady(s, false);
       } catch (err) {
@@ -236,7 +251,7 @@ export class DictationManager {
     if (s.received === 0) return; // nothing recorded
     let samples: Float32Array;
     try {
-      samples = await this.deps.decode(Buffer.concat(s.parts), s.format);
+      samples = s.pcm ? await s.pcm.samples() : await this.deps.decode(Buffer.concat(s.parts), s.format);
     } catch (err) {
       // A tap too short to hold one audio frame is "nothing said", not an error.
       if (final && s.received < TINY_RECORDING_BYTES) return;
@@ -244,9 +259,12 @@ export class DictationManager {
     }
     s.audioSecs = samples.length / RATE;
     if (s.audioSecs > 0) s.bytesPerSec = s.received / s.audioSecs;
+    if (final && !s.restMeasured) { s.restMeasured = true; s.restSecs = Math.max(0, samples.length - s.cursor) / RATE; }
+    // Pause rule for streamed recordings; whole-file uploads keep the 60s pieces.
+    const cutAt = s.pcm ? this.cut : nextCutLegacy;
     for (;;) {
       if (s.cancelled) return;
-      const cut = nextCut(samples, s.cursor, RATE, final);
+      const cut = cutAt(samples, s.cursor, RATE, final);
       if (cut === null) return;
       const seg = samples.subarray(s.cursor, cut);
       const t0 = Date.now();
@@ -285,7 +303,7 @@ export class DictationManager {
         }
         s.text = text;
         s.status = 'done';
-        this.deps.log(`[dictation] ${s.id}: done — ${s.audioSecs.toFixed(1)}s audio, ${this.deps.now() - s.endedAt}ms stop->result, compute ${s.computeMs}ms, ${text.length} chars`);
+        this.deps.log(`[dictation] ${s.id}: done — ${s.audioSecs.toFixed(1)}s audio, ${this.deps.now() - s.endedAt}ms stop->result, rest ${s.restSecs.toFixed(1)}s, compute ${s.computeMs}ms, ${text.length} chars`);
         this.emit(s, { type: 'dictation:result', id: s.id, text });
       } catch (err) {
         s.error = (err as Error).message || 'Transkription fehlgeschlagen';
@@ -295,6 +313,7 @@ export class DictationManager {
       } finally {
         s.finishedAt = this.deps.now();
         s.parts = []; // keep only the result for `resume`, not the audio
+        s.pcm?.release();
         this.clearTimers(s);
       }
     });

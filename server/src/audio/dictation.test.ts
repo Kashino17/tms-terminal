@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { DictationManager, DictationDeps, DictationEvent, acceptRewrite } from './dictation';
+import { DictationManager, DictationDeps, DictationEvent, DictationOptions, acceptRewrite } from './dictation';
+import { nextCutLegacy } from './dictation.segment';
+import type { PcmStream } from './adts-pcm';
 
 const RATE = 16000;
 // Fake codec: every byte is 0.1s of constant-level audio, so 750 bytes = 75s.
@@ -13,7 +15,7 @@ interface Harness {
   clock: { t: number };
 }
 
-function harness(over: Partial<DictationDeps> = {}): Harness {
+function harness(over: Partial<DictationDeps> = {}, opts: DictationOptions = {}): Harness {
   const calls: number[] = [];
   const rewrites: string[] = [];
   const clock = { t: 0 };
@@ -29,7 +31,7 @@ function harness(over: Partial<DictationDeps> = {}): Harness {
     log: () => {},
     ...over,
   };
-  const mgr = new DictationManager(deps, { decodeThrottleMs: 0, heartbeatMs: 60_000 });
+  const mgr = new DictationManager(deps, { decodeThrottleMs: 0, heartbeatMs: 60_000, ...opts });
   return { mgr, calls, rewrites, clock };
 }
 
@@ -40,6 +42,23 @@ function sink() {
 }
 
 const bytes = (n: number, fill = 1) => Buffer.alloc(n, fill);
+
+// Fake of the incremental decoder the server uses for streamed recordings:
+// byte value 1 = 0.1s of speech, 0 = 0.1s of silence.
+function fakePcm(counter = { pushed: 0 }): PcmStream {
+  let raw = Buffer.alloc(0);
+  return {
+    push(b: Buffer) { raw = Buffer.concat([raw, b]); counter.pushed += b.length; },
+    async samples() {
+      const out = new Float32Array(raw.length * SAMPLES_PER_BYTE);
+      for (let i = 0; i < raw.length; i++) if (raw[i]) out.fill(0.3, i * SAMPLES_PER_BYTE, (i + 1) * SAMPLES_PER_BYTE);
+      return out;
+    },
+    get bytes() { return raw.length; },
+    release() { raw = Buffer.alloc(0); },
+  };
+}
+const streamed = (over: Partial<DictationDeps> = {}, opts: DictationOptions = {}) => harness({ openPcm: () => fakePcm(), ...over }, opts);
 
 test('duplicate chunk at the same offset is appended once', async () => {
   const h = harness(); const s = sink();
@@ -84,6 +103,72 @@ test('adts segments are transcribed before end; only the rest after end', async 
   await h.mgr.idle('d1');
   assert.deepStrictEqual(h.calls, [60, 40]);
   assert.strictEqual(s.last('dictation:result').text, 'seg1 seg2');
+});
+
+// The point of the whole exercise: after the stop only a few seconds are left.
+test('pieces are transcribed while recording; only a short rest after stop', async () => {
+  const h = streamed(); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  const audio = Buffer.concat([bytes(200), bytes(4, 0), bytes(100), bytes(4, 0), bytes(40)]); // 20s, 0.4s pause, 10s, 0.4s pause, 4s
+  h.mgr.chunk('d1', 0, audio.subarray(0, 328), s.fn);   // up to 2s into the last part
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [20, 10]);            // 20.2s and 10.4s, rounded
+  h.mgr.chunk('d1', 328, audio.subarray(328), s.fn);
+  h.mgr.end('d1', audio.length, s.fn);
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [20, 10, 4]);
+  assert.strictEqual(s.last('dictation:result').text, 'seg1 seg2 seg3');
+});
+
+// A reconnect resends bytes: none of them may end up in the audio twice.
+test('with a pcm stream every byte is pushed exactly once, also on overlap and duplicates', async () => {
+  const counter = { pushed: 0 };
+  const h = harness({ openPcm: () => fakePcm(counter) }); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(50), s.fn);
+  h.mgr.chunk('d1', 0, bytes(50), s.fn);      // duplicate
+  h.mgr.chunk('d1', 30, bytes(50), s.fn);     // overlap
+  h.mgr.chunk('d1', 200, bytes(10), s.fn);    // gap: ignored
+  assert.strictEqual(counter.pushed, 80);
+  assert.strictEqual(h.mgr.bufferedBytes('d1'), 80);
+});
+
+test('a pcm stream is released when the dictation finishes', async () => {
+  const h = streamed(); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(50), s.fn);
+  h.mgr.end('d1', 50, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, 'seg1');
+  assert.strictEqual(h.mgr.bufferedBytes('d1'), 0);
+});
+
+test('a tap too short to hold audio ends with an empty result (pcm stream)', async () => {
+  const h = harness({ openPcm: () => ({ push() {}, async samples() { return new Float32Array(0); }, bytes: 0, release() {} }) }); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(3), s.fn);
+  h.mgr.end('d1', 3, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, '');
+  assert.strictEqual(s.last('dictation:error'), undefined);
+});
+
+test('the legacy cut can be injected', async () => {
+  const h = streamed({}, { cut: nextCutLegacy }); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(750), s.fn);               // 75s of speech
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [60]);                // as before
+});
+
+// Whole-file uploads keep the 60s rule.
+test('file format keeps the 60s pieces', async () => {
+  const h = streamed(); const s = sink();
+  h.mgr.start('d1', 'file', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(1000), s.fn);
+  h.mgr.end('d1', 1000, s.fn);
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [60, 40]);
 });
 
 test('file format is only transcribed after end', async () => {
