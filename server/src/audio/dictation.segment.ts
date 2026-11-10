@@ -1,6 +1,24 @@
-// Segmentation for streamed dictation. Mirrors split_audio/_find_pause_split in
-// audio/whisper_sidecar_mlx.py so streamed audio is cut at exactly the same
-// kind of boundary as a whole-file upload (no accuracy change), just earlier.
+// Segmentation for streamed dictation: the audio is cut at speech pauses into
+// pieces of 8-28s while the user is still talking, so that after the stop only
+// a few seconds are left to transcribe. `nextCutLegacy` is the earlier 60s rule
+// (mirrors split_audio/_find_pause_split in audio/whisper_sidecar_mlx.py); it
+// stays for the A/B measurement in scripts/dictation-e2e.ts.
+
+/** A piece is never cut shorter than this: Whisper needs some context. */
+export const MIN_SEGMENT_SECS = 8;
+/** ...and never longer: one Whisper window is 30s. */
+export const MAX_SEGMENT_SECS = 28;
+/** Quiet for at least this long counts as a speech pause. */
+export const PAUSE_MIN_SECS = 0.3;
+// Absolute floor (same as trim_silence in the sidecar) and the share of the
+// speaking level below which a 100ms frame counts as quiet. Relative, so quiet
+// speakers are not mistaken for silence and a noisy room still has pauses.
+const QUIET_FLOOR_RMS = 0.003;
+const QUIET_RATIO = 0.12;
+const FORCED_SEARCH_SECS = 3;
+
+/** Sample indices, [start, end). */
+export interface Pause { start: number; end: number }
 
 export const CHUNK_SECS = 60;
 // A rest up to 1.2x the chunk length stays one segment (same as the sidecar).
@@ -33,13 +51,77 @@ export function findPauseSplit(samples: Float32Array, targetIdx: number, rate: n
   return lo + best * frame + Math.floor(frame / 2);
 }
 
+/** RMS of each complete 100ms frame in [from, to). */
+function frameRms(samples: Float32Array, from: number, to: number, frame: number): Float32Array {
+  const n = Math.max(0, Math.floor((to - from) / frame));
+  const out = new Float32Array(n);
+  for (let f = 0; f < n; f++) {
+    let e = 0;
+    const base = from + f * frame;
+    for (let i = 0; i < frame; i++) { const v = samples[base + i]; e += v * v; }
+    out[f] = Math.sqrt(e / frame);
+  }
+  return out;
+}
+
 /**
- * End index of the next complete segment starting at `cursor`, or null when
- * there is nothing to cut yet. While recording (final=false) a segment is only
- * cut once more than 1.2x CHUNK_SECS are buffered, so the cut always has a
- * full search window of real audio after it.
+ * Speech pauses in [from, to): runs of quiet 100ms frames lasting at least
+ * `minSecs`. "Quiet" is relative to the speaking level of that range (its
+ * 90th percentile), with an absolute floor.
+ */
+export function findPauses(samples: Float32Array, from: number, to: number, rate: number, minSecs = PAUSE_MIN_SECS): Pause[] {
+  const frame = Math.max(1, Math.floor(rate * PAUSE_WINDOW_SECS));
+  const rms = frameRms(samples, from, Math.min(to, samples.length), frame);
+  if (rms.length === 0) return [];
+  const level = Float32Array.from(rms).sort()[Math.min(rms.length - 1, Math.floor(rms.length * 0.9))];
+  // No speech at all in the range: it is one long pause.
+  const threshold = level < QUIET_FLOOR_RMS ? Infinity : Math.max(QUIET_FLOOR_RMS, QUIET_RATIO * level);
+  const minFrames = Math.max(1, Math.round(minSecs / PAUSE_WINDOW_SECS));
+  const pauses: Pause[] = [];
+  let run = -1;
+  for (let f = 0; f <= rms.length; f++) {
+    const quiet = f < rms.length && rms[f] < threshold;
+    if (quiet && run < 0) run = f;
+    if (!quiet && run >= 0) {
+      if (f - run >= minFrames) pauses.push({ start: from + run * frame, end: from + f * frame });
+      run = -1;
+    }
+  }
+  return pauses;
+}
+
+/**
+ * End index of the next piece starting at `cursor`, or null when there is
+ * nothing to cut yet. A piece ends in the middle of the last speech pause that
+ * lies 8-28s after the cursor and after which speech has resumed; without any
+ * pause it is cut by force before 28s (lowest-energy spot). On `final` a rest
+ * of up to 28s is taken whole.
  */
 export function nextCut(samples: Float32Array, cursor: number, rate: number, final: boolean): number | null {
+  const rest = samples.length - cursor;
+  if (rest <= 0) return null;
+  const min = Math.floor(rate * MIN_SEGMENT_SECS);
+  const max = Math.floor(rate * MAX_SEGMENT_SECS);
+  if (final && rest <= max) return samples.length;
+  if (!final && rest < min) return null;
+  const frame = Math.max(1, Math.floor(rate * PAUSE_WINDOW_SECS));
+  let cut: number | null = null;
+  for (const p of findPauses(samples, cursor, samples.length, rate)) {
+    if (p.end + frame > samples.length) continue;       // still open at the live edge
+    const mid = Math.floor((p.start + p.end) / 2);
+    if (mid >= cursor + min && mid <= cursor + max) cut = mid;
+  }
+  if (cut !== null) return cut;
+  if (rest <= max) return null;
+  return findPauseSplit(samples, cursor + Math.floor(rate * (MAX_SEGMENT_SECS - FORCED_SEARCH_SECS)), rate, FORCED_SEARCH_SECS);
+}
+
+/**
+ * The earlier rule: ~60s pieces. While recording (final=false) a segment is
+ * only cut once more than 1.2x CHUNK_SECS are buffered, so the cut always has
+ * a full search window of real audio after it.
+ */
+export function nextCutLegacy(samples: Float32Array, cursor: number, rate: number, final: boolean): number | null {
   const remaining = samples.length - cursor;
   if (remaining <= 0) return null;
   const chunk = Math.floor(rate * CHUNK_SECS);

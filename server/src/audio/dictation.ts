@@ -9,7 +9,7 @@
 // reconnect (`resume`) picks up a dictation that is still uploading or still
 // being transcribed, and a finished result is kept for a while to be fetched.
 
-import { nextCut, encodeWav } from './dictation.segment';
+import { nextCutLegacy as nextCut, encodeWav } from './dictation.segment'; // switched to the pause rule together with the pcm stream
 
 export type DictationFormat = 'adts' | 'file';
 export type DictationStatus = 'receiving' | 'processing' | 'done' | 'error';
