@@ -1,25 +1,10 @@
 import React from 'react';
-import { TouchableOpacity } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Feather } from '@expo/vector-icons';
-import { HomeScreen } from '../screens/HomeScreen';
-import { ServerListScreen } from '../screens/ServerListScreen';
-import { PrayerTimesScreen } from '../screens/PrayerTimesScreen';
-import { HydraScreen } from '../screens/HydraScreen';
 import { AddServerScreen } from '../screens/AddServerScreen';
-import { TerminalScreen } from '../screens/TerminalScreen';
-import { SettingsScreen } from '../screens/SettingsScreen';
-import { DrawingScreen } from '../screens/DrawingScreen';
-import { DashboardScreen } from '../screens/DashboardScreen';
 import { PinSetupScreen } from '../screens/PinSetupScreen';
-import { BrowserScreen } from '../screens/BrowserScreen';
-import { ProcessMonitorScreen } from '../screens/ProcessMonitorScreen';
 import { SeasonTwoWebRoot } from '../season2/SeasonTwoWebRoot';
 import { colors } from '../theme';
-import { useSettingsStore } from '../store/settingsStore';
 import type { RootStackParamList } from '../types/navigation.types';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RouteProp } from '@react-navigation/native';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -30,70 +15,20 @@ const screenOptions = {
   contentStyle: { backgroundColor: colors.bg },
 };
 
+/**
+ * The app is the Liquid-Deck page (SeasonTwoWebRoot). The two native forms
+ * below are opened from it and return with goBack().
+ */
 export function AppNavigator() {
-  // Season-2 (Liquid Glass) UI: same stack, different initial route — classic
-  // screens stay registered so the new UI can bridge into them. The remount
-  // on toggle happens at the NavigationContainer level (src/App.tsx `key`);
-  // this component only decides where a fresh container starts.
-  const seasonTwoEnabled = useSettingsStore((s) => s.seasonTwoEnabled);
   return (
-    <Stack.Navigator
-      initialRouteName={seasonTwoEnabled ? 'SeasonTwo' : 'Home'}
-      screenOptions={screenOptions}
-    >
-      {/* ── Season 2 (Liquid Glass) ──────────────────────────── */}
+    <Stack.Navigator initialRouteName="SeasonTwo" screenOptions={screenOptions}>
       <Stack.Screen
         name="SeasonTwo"
         component={SeasonTwoWebRoot}
         options={{ headerShown: false, animation: 'fade' }}
       />
-      {/* ── Home (new start screen) ──────────────────────────── */}
-      <Stack.Screen
-        name="Home"
-        component={HomeScreen}
-        options={{ headerShown: false }}
-      />
 
-      {/* ── Connections ──────────────────────────────────────── */}
-      <Stack.Screen
-        name="ServerList"
-        component={ServerListScreen}
-        options={{
-          title: 'Connections',
-          animation: 'fade_from_bottom',
-          animationDuration: 250,
-          headerStyle: { backgroundColor: colors.bg },
-          headerTintColor: colors.primary,
-        }}
-      />
-
-      {/* ── Hydra (Hydration Tracker) ────────────────────────── */}
-      <Stack.Screen
-        name="Hydra"
-        component={HydraScreen}
-        options={{
-          title: 'Hydra',
-          animation: 'fade_from_bottom',
-          animationDuration: 250,
-          headerStyle: { backgroundColor: colors.bg },
-          headerTintColor: '#3B82F6',
-        }}
-      />
-
-      {/* ── Prayer Times ─────────────────────────────────────── */}
-      <Stack.Screen
-        name="PrayerTimes"
-        component={PrayerTimesScreen}
-        options={{
-          title: 'Gebetszeiten',
-          animation: 'fade_from_bottom',
-          animationDuration: 250,
-          headerStyle: { backgroundColor: colors.bg },
-          headerTintColor: '#10B981',
-        }}
-      />
-
-      {/* ── Add Server — slide up from bottom (modal feel) ─────── */}
+      {/* ── Add / edit a server — slide up from bottom (modal feel) ─────── */}
       <Stack.Screen
         name="AddServer"
         component={AddServerScreen}
@@ -104,50 +39,6 @@ export function AppNavigator() {
           animationDuration: 300,
           headerStyle: { backgroundColor: colors.surface },
           contentStyle: { backgroundColor: colors.surface },
-        }}
-      />
-
-      {/* ── Terminal — fade when direct, instant when openManager pass-through ── */}
-      <Stack.Screen
-        name="Terminal"
-        component={TerminalScreen}
-        options={({ route }) => ({
-          headerShown: false,
-          animation: (route.params as any)?.openManager ? 'none' : 'fade_from_bottom',
-          animationDuration: (route.params as any)?.openManager ? 0 : 250,
-        })}
-      />
-
-      {/* ── Drawing — slide from right ────────────────────────── */}
-      <Stack.Screen
-        name="Drawing"
-        component={DrawingScreen}
-        options={{
-          headerShown: false,
-          animation: 'slide_from_right',
-          animationDuration: 250,
-        }}
-      />
-
-      {/* ── Settings — iOS-style slide from right ─────────────── */}
-      <Stack.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{
-          title: 'Einstellungen',
-          animation: 'slide_from_right',
-          animationDuration: 280,
-        }}
-      />
-
-      {/* ── Dashboard — fade in (overview feel) ───────────────── */}
-      <Stack.Screen
-        name="Dashboard"
-        component={DashboardScreen}
-        options={{
-          title: 'Dashboard',
-          animation: 'fade',
-          animationDuration: 200,
         }}
       />
 
@@ -165,32 +56,6 @@ export function AppNavigator() {
           animationDuration: 300,
         })}
       />
-
-      {/* ── Browser — slide from right ────────────────────────── */}
-      <Stack.Screen
-        name="Browser"
-        component={BrowserScreen}
-        options={{
-          headerShown: false,
-          animation: 'slide_from_right',
-          animationDuration: 220,
-        }}
-      />
-
-      {/* ── Processes — slide from right ──────────────────────── */}
-      <Stack.Screen
-        name="Processes"
-        component={ProcessMonitorScreen}
-        options={{
-          title: 'Prozesse',
-          animation: 'slide_from_right',
-          animationDuration: 250,
-          headerStyle: { backgroundColor: colors.bg },
-          headerTintColor: colors.text,
-          headerTitleStyle: { fontWeight: '700' as const, fontSize: 16 },
-        }}
-      />
-
     </Stack.Navigator>
   );
 }

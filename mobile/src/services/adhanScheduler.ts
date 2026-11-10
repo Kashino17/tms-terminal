@@ -1,12 +1,7 @@
 /**
  * Adhan-Planung fuer den ganzen Tag.
  *
- * Vorher stand das hier im useEffect des HomeScreen — und damit war der
- * klassische Startbildschirm die einzige Stelle, an der ueberhaupt Alarme
- * entstehen konnten. In Layout V2 wird HomeScreen nie gerendert, also klang
- * dort nie ein Adhan, obwohl der Bildschirm die richtigen Zeiten anzeigte.
- *
- * Der Dienst haengt stattdessen in App.tsx und plant bei:
+ * Der Dienst haengt in App.tsx — nicht an einem Bildschirm — und plant bei:
  *   - App-Start
  *   - AppState -> active (die App war davor im Hintergrund oder zu)
  *

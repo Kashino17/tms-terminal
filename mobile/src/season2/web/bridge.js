@@ -3045,7 +3045,7 @@
     });
   };
 
-  // ══ Einstellungen: settings.js (eine Seite für alles, inkl. „Klassische Oberfläche“) ══
+  // ══ Einstellungen: settings.js (eine Seite für alles) ══
 
   // ══ Update-Banner ═════════════════════════════════════════════════════════
   var origRenderUpdateBanner = window.renderUpdateBanner;

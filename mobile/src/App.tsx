@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { AppState, View, Linking } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -13,13 +12,12 @@ import { useSettingsStore, settingsHydration } from './store/settingsStore';
 import { colors } from './theme';
 import { ResponsiveProvider } from './hooks/useResponsive';
 import { registerBackgroundHandler, registerForegroundHandler, registerNotificationResponseHandler } from './services/notifications.service';
-import { keywordAlertService } from './services/keywordAlert.service';
-import { useAutopilotStore } from './store/autopilotStore';
 import { registerBackgroundUpdateCheck } from './services/updater.service';
 import {
   setupAdhanNotificationChannel, playAdhan, stopAdhan, getSelectedAdhan,
 } from './services/adhan.service';
 import { startAdhanScheduler } from './services/adhanScheduler';
+import { cleanupLegacyData } from './services/legacyCleanup';
 
 // Background FCM handler must be registered before any component mounts.
 try {
@@ -42,14 +40,8 @@ const darkTheme = {
 
 export default function App() {
   const { ready, isEnabled, isUnlocked, lock, loadLockConfig } = useLockStore();
-  // UI-version switch: remount the WHOLE NavigationContainer on toggle — a key
-  // on the inner Stack.Navigator alone does not reliably reset navigation
-  // state, so initialRouteName was ignored when flipping the Design switch.
-  const seasonTwoEnabled = useSettingsStore((s) => s.seasonTwoEnabled);
-  // Do not mount NavigationContainer with the default `false` while the stored
-  // value is still on its way. On a cold start that used to init the classic
-  // navigator first; the remount after hydration is not always visible to
-  // React Navigation, so the app could stay in the old UI.
+  // The page gets its settings pushed on mount — wait until the stored values
+  // have been read, so it never starts from the defaults.
   const [settingsHydrated, setSettingsHydrated] = useState(settingsHydration.isDone);
   useEffect(() => settingsHydration.subscribe(() => setSettingsHydrated(true)), []);
   const [appReady, setAppReady] = useState(false);
@@ -60,10 +52,11 @@ export default function App() {
     { name: string; time: string; arabic: string; wecker: boolean } | null
   >(null);
 
-  // Load lock config before showing anything + cleanup old autopilot items
+  // Load lock config before showing anything
   useEffect(() => {
     loadLockConfig().then(() => setAppReady(true)).catch(() => setAppReady(true));
-    useAutopilotStore.getState().cleanupOldDone();
+    // Once per install: what the removed classic UI left behind (legacyCleanup.core.mjs).
+    cleanupLegacyData().catch(() => {});
   }, []);
 
   // Lock when app moves to background (respects grace period)
@@ -82,7 +75,6 @@ export default function App() {
   }, [isEnabled, lock]);
 
   useEffect(() => {
-    keywordAlertService.init().catch(() => {});
     const cleanups: (() => void)[] = [];
     try {
       cleanups.push(registerForegroundHandler());
@@ -102,10 +94,9 @@ export default function App() {
     setupAdhanNotificationChannel();
 
     // Adhan-Alarme fuer den ganzen Tag planen. Laeuft hier und nicht in einem
-    // Bildschirm: der klassische HomeScreen ist die einzige Stelle gewesen, an der
-    // Alarme entstanden sind, und den rendert das neue Layout nicht — dort klang
-    // deshalb nie ein Adhan, obwohl die Zeiten stimmten. Der Dienst plant auch
-    // neu, sobald die App wieder in den Vordergrund kommt.
+    // Bildschirm, damit Alarme unabhaengig davon entstehen, was gerade zu sehen
+    // ist. Der Dienst plant auch neu, sobald die App wieder in den Vordergrund
+    // kommt.
     //
     // Damit ist auch der Neustart des Handys abgedeckt: AlarmManager-Alarme
     // ueberleben keinen Reboot, aber der Dienst plant beim naechsten Start neu.
@@ -148,10 +139,9 @@ export default function App() {
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <ResponsiveProvider>
+    <ResponsiveProvider>
         <SafeAreaProvider>
-          <NavigationContainer key={seasonTwoEnabled ? 's2' : 'classic'} theme={darkTheme}>
+          <NavigationContainer theme={darkTheme}>
             <StatusBar style="light" backgroundColor={colors.bg} translucent={false} />
             <AppNavigator />
           </NavigationContainer>
@@ -179,7 +169,6 @@ export default function App() {
             }}
           />
         </SafeAreaProvider>
-      </ResponsiveProvider>
-    </GestureHandlerRootView>
+    </ResponsiveProvider>
   );
 }

@@ -5,8 +5,6 @@
  * scripts/build-season2-html.js); this component is the other half of the
  * bridge: it owns the WebSocket, the PTY sessions, the microphone and the
  * clipboard, and speaks to the page through window.TMSBridge.
- *
- * The classic UI is untouched — Season 2 is still just a settings toggle.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert, Modal, TextInput, NativeModules, DeviceEventEmitter } from 'react-native';
@@ -54,7 +52,6 @@ import { useFileExplorer } from './web/useFileExplorer';
 import { NativeBrowserLayer, type BrowserRect, type BrowserHandle } from './web/NativeBrowserLayer';
 import { ActionSheet, ActionSheetOption } from '../components/ActionSheet';
 import { useServerStore } from '../store/serverStore';
-import { getViewBuffer, recordViewBuffer } from '../components/TerminalView';
 import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flushScrollback } from './web/scrollbackStore';
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
 import { activeDeviceId, dictationDeviceId, speechDeviceId } from './bund/devices.core.mjs';
@@ -148,7 +145,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const prayerTimesRef = useRef<PrayerTimes | null>(null);
   const { server, token, wsService, state, rtt } = useS2Connection();
   const setServer = useS2ConnStore((s) => s.setServer);
-  const setSeasonTwoEnabled = useSettingsStore((s) => s.setSeasonTwoEnabled);
 
   /** FIFO der terminal:create-Anfragen — der Server antwortet in Reihenfolge.
    *  Ein Einzelwert ordnete bei mehreren gleichzeitigen Creates falsch zu. */
@@ -225,7 +221,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const lastBackAt = useRef(0);
   const [browser, setBrowser] = useState<BrowserOverlay>({ visible: false, onScreen: false, tabId: null, url: '', rect: null });
   // Long-Press auf eine Server-Karte öffnet dieses native Aktions-Sheet
-  // (Bearbeiten + Löschen) — dieselbe Komponente wie im klassischen Layout.
+  // (Bearbeiten + Löschen).
   const [serverSheet, setServerSheet] = useState<{ title: string; subtitle: string; options: ActionSheetOption[] } | null>(null);
   /** Fingerabdruck-Relay pro Gerät: eingerichtet? und kann der Server das überhaupt (nur macOS)? */
   const macUnlock = useRef<Record<string, { configured: boolean; supported: boolean }>>({});
@@ -359,8 +355,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     return () => { cancelled = true; };
   }, [server, loadServer]);
 
-  // Adding a server happens on the classic Add-Server screen (navigated to from
-  // the onboarding overlay / settings); its goBack() lands here. Re-read on focus
+  // Adding a server happens on the native Add-Server screen (navigated to from
+  // the onboarding overlay / the server page); its goBack() lands here. Re-read on focus
   // so a freshly added server is picked up and connects without a manual reload.
   useEffect(() => {
     const unsub = navigation.addListener('focus', () => {
@@ -460,7 +456,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         return;
       }
       if (m?.type === 'terminal:output' && m.sessionId && m.payload?.data) {
-        recordViewBuffer(m.sessionId, m.payload.data);
         appendScrollback(m.sessionId, m.payload.data);
         call('output', m.sessionId, m.payload.data);
         markBusy(m.sessionId);
@@ -825,8 +820,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // Server-Profil löschen (aus dem Long-Press-Aktions-Sheet). Ist es der gerade
   // verbundene Server, wird erst getrennt: Karten abräumen, Restore-/Status-Refs
   // zurücksetzen und setServer(null) baut den wsService ab. Danach das Profil
-  // entfernen (hält auch das klassische Layout via Store synchron) und die Liste
-  // neu prüfen/reinschieben.
+  // entfernen und die Liste neu prüfen/reinschieben.
   const deleteServerNow = useCallback(async (id: string) => {
     if (peersRef.current.some((p) => p.id === id)) {
       // Ein mitverbundenes Gerät: seine Karten gehen, alle anderen kommen neu.
@@ -1159,13 +1153,13 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   useEffect(() => {
     if (!ready) return;
     pushSettings();
-    // Ändert sich etwas (auch über PinSetup oder die klassische Seite): Seite nachziehen.
+    // Ändert sich etwas (auch über PinSetup): Seite nachziehen.
     const a = useSettingsStore.subscribe(pushSettings);
     const b = useLockStore.subscribe(pushSettings);
     checkForPreviousVersion().then((pv) => { prevVer.current = pv; pushSettings(); }).catch(() => {});
     return () => { a(); b(); };
   }, [ready, pageEpoch, pushSettings]);
-  // „Verbindung im Hintergrund“ gilt auch in Season 2 (wie im klassischen Terminal).
+  // „Verbindung im Hintergrund“: der Dienst läuft, solange der Schalter an ist.
   useEffect(() => {
     if (useSettingsStore.getState().persistentConnection) { try { NativeModules.ConnectionService?.start(); } catch {} }
   }, []);
@@ -1180,7 +1174,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
       case 'lockGrace': st.setLockGrace(Number(value) || 0); break;
       case 'appLock': {
-        // Ein/Aus nur mit PIN (Einrichten bzw. alte PIN) — wie in den klassischen Einstellungen.
+        // Ein/Aus nur mit PIN (Einrichten bzw. alte PIN).
         const on = useLockStore.getState().isEnabled;
         if (!!value !== on) navigation.navigate('PinSetup', { mode: value ? 'setup' : 'disable' });
         pushSettings();
@@ -1272,10 +1266,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     }
 
     // Server-Verwaltung muss IMMER gehen — auch ohne aktive Verbindung (der Guard
-    // unten würde sie sonst verschlucken). Bearbeiten nutzt den bestehenden
-    // klassischen Add-/Bearbeiten-Screen; der Focus-Listener liest danach neu ein.
+    // unten würde sie sonst verschlucken). Bearbeiten nutzt den nativen
+    // Add-/Bearbeiten-Screen; der Focus-Listener liest danach neu ein.
     if (type === 'server:add') { navigation.navigate('AddServer'); return; }
-    if (type === 'server:manage') { navigation.navigate('ServerList'); return; }
     if (type === 'server:menu') {
       const menuId = payload?.id;
       (async () => {
@@ -1842,11 +1835,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         break;
       }
 
-      case 'nav:classic':
-        if (payload.screen === 'settings') navigation.navigate('Settings');
-        else setSeasonTwoEnabled(false);
-        break;
-
       // Auf eine Server-Karte getippt: die WebSocket-Verbindung auf DIESEN Server
       // umschalten. Season 2 verband sich bisher fest mit dem ersten gespeicherten
       // Server; ein zweiter (z. B. Windows) war nie erreichbar.
@@ -1880,7 +1868,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
             tok = target.token ?? (await getToken(target.id)) ?? null;
           }
           if (!tok) {
-            call('toast', `Für „${name}" fehlt die Anmeldung — bitte einmal in der klassischen Ansicht verbinden`);
+            call('toast', `Für „${name}" fehlt die Anmeldung — Gerät lange drücken, „Bearbeiten“, Passwort neu eingeben`);
             return;
           }
           call('setRemoteTarget', { id: targetId, host, port, token: tok });
@@ -1940,7 +1928,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, pushBubbleStatus, call, navigation, setSeasonTwoEnabled, setServer, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, deleteServerNow, connFor, startUpdDownload, openInstaller, runUpdCheck, pushSettings, applySetting, pushAdhanStatus]);
+  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, pushBubbleStatus, call, navigation, setServer, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, deleteServerNow, connFor, startUpdDownload, openInstaller, runUpdCheck, pushSettings, applySetting, pushAdhanStatus]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"
@@ -2020,13 +2008,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
             accessibilityRole="button"
           >
             <Text style={styles.onboardBtnText}>+ Server hinzufügen</Text>
-          </Pressable>
-          <Pressable
-            style={styles.onboardLinkBtn}
-            onPress={() => navigation.navigate('ServerList')}
-            accessibilityRole="button"
-          >
-            <Text style={styles.onboardLink}>Gespeicherte Server verwalten</Text>
           </Pressable>
         </View>
       )}
@@ -2190,8 +2171,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   onboardBtnText: { color: '#0B1220', fontSize: 15, fontWeight: '700' },
-  onboardLinkBtn: { marginTop: 6, paddingVertical: 8, paddingHorizontal: 12 },
-  onboardLink: { color: '#60A5FA', fontSize: 13, fontWeight: '600' },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.68)',
