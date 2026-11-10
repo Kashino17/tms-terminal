@@ -378,3 +378,8 @@
 - E2E am Testserver mit echter Claude-Sitzung: 21 Titel → 2 Meldungen, Hintergrund 0, Antwort wortgleich gelesen.
 - Offen: Server-Update Mac + Windows (enthält auch den Diktat-Tempo-Serverteil der Parallel-Sitzung), Prüfung am Fold, Windows mit echter Claude-Sitzung ungetestet. Vorbestehend rot (nur mit Playwright): terminal-create, webview-bubble, webview-prayer hängt.
 - Nutzerwunsch: Vorlesen mit Rems Stimme, Satz für Satz gestreamt. Referenz noch da; alter F5-Weg kaputt; Qwen3-TTS 1.7B klont ~3× Echtzeit. Hörprobe :8546/rem/. Noch nicht gebaut.
+
+## 2026-11-11 — v1.151.0 Vorlesen mit Rems Stimme
+- Nutzer: Hörprobe „identisch, perfekt“. Mac erzeugt Satz für Satz (voice_sidecar.py, Qwen3-TTS-Klon aus voice_24k_15s.wav), schickt MP3-Stücke sofort; App spielt der Reihe nach, 3 Sätze Vorlauf, Rückfall Handy-Stimme.
+- Emulator + Testserver geprüft: erstes Stück 2,3 s kalt, sechs Absätze nacheinander mit Markierung, „fertig“ nach 25 s; Anhalten stoppt sofort; Mac weg → Handy-Stimme übernimmt. v1.150.0 ebenfalls im Emulator geprüft.
+- Offen: Server-Update Mac + Windows; am Fold hören (Lautstärke, Übergänge zwischen Sätzen) — nur der Nutzer kann das beurteilen.

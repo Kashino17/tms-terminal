@@ -4,6 +4,8 @@ _Zuletzt aktualisiert: 2026-11-10 — v1.135.0 ohne Insel; v1.134.0 Bund release
 
 ## Aktueller geprüfter Stand
 
+**Stand 2026-11-11 (Rems Stimme):** v1.151.0 released — Vorlesen im Lesemodus in Rems Stimme, Satz für Satz vom Mac gestreamt (`server/src/voice/`, `audio/voice_sidecar.py`, cap `speech`), Rückfall Handy-Stimme. Im Emulator gegen Testserver geprüft. **Offen:** Server-Update, Hörprobe am Fold.
+
 **Stand 2026-11-11 (Lesemodus):** v1.150.0 released — Antwort lesen (Buch-Knopf, Verlauf aus Claudes JSONL, Vorlesen über Handy-Stimme) + Aufgabe statt LÄUFT/BEREIT. **Offen:** `tms-terminal update` Mac + Windows (Server-Commits 8fce356, 27c9c2f, 85a540e; zieht den Diktat-Tempo-Serverteil mit); Lesen geht nur in Terminals, die danach neu geöffnet werden; Prüfung am Fold; Windows mit echter Claude-Sitzung ungetestet. Nächster Wunsch: Vorlesen mit Rems Stimme (Qwen3-TTS, Satz für Satz gestreamt), Hörprobe wartet auf Rückmeldung.
 
 **Stand 2026-11-11 (Diktat-Tempo):** Diktat-Bubble 2.0, Teil A. Server-Teil in feat/fernzugriff (fc12d74, lokal, ungepusht): Pausen-Schnitt 8–28 s an Satzpausen, inkrementelles ADTS-Dekodieren, Vorauseilen, `~/.tms-terminal/dictation-stats.json`. **Offen:** `tms-terminal update` (Mac) durch Nutzer; danach echte Diktate im Log prüfen; dann App-Release mit Upload-Takt 500 ms (Commit 2b44aa6 auf Branch feat/diktat-tempo, Worktree ~/Developer/tms-terminal-diktat) + Akku-Gegenprobe Bubble; danach Plan Wörterbuch. Spec/Plan: docs/superpowers/{specs,plans}/2026-11-11-diktat-*.
