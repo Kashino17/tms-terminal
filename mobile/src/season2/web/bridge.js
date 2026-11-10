@@ -2291,6 +2291,10 @@
   var origOpenTool = window.openToolSheet;
   var openTool = null;
   window.openToolSheet = function (id) {
+    // Bund-Karten (Explorer, Zwischenablage, Snippets) holen ihre Daten selbst.
+    // Hier NICHT als offen merken: sonst baut jedes setTool der App sie neu auf —
+    // Snippets sprangen in einer Endlosschleife immer wieder auf.
+    if (window.__bundTool && window.__bundTool(id)) return;
     openTool = id;
     origOpenTool(id);
     post('tool:open', { tool: id });
@@ -2838,7 +2842,6 @@
 
   /** Ladefortschritt: wie viele von wie vielen Bildern schon durch sind. */
   window.TMSBridge.uploadProgress = function (done, total, srvId) {
-    if (window.__bundUpload) window.__bundUpload(done, total, srvId);
     uploadState = (done >= total) ? null : { done: done, total: total };
     // NUR während des Uploads das offene Sheet mit Fortschritt neu bauen. Beim
     // Abschluss NICHT: setTool→openSheet würde das Sheet erneut öffnen und dabei

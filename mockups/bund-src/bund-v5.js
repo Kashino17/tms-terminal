@@ -772,7 +772,7 @@
     if (id === 'files') { fxOpen(); return true; }
     if (id === 'clipboard') { cbOpen(); return true; }
     if (id === 'snippets') { snOpen(); return true; }
-    if (id === 'screenshots') { shots(); return true; }
+    // Bilder: bewusst die alte Karte (Kamera + Galerie, Fortschritt darin).
     return false;
   };
   window.openFilesScreen = function () { fxOpen(); };
@@ -794,20 +794,24 @@
     document.querySelectorAll('.card-menu').forEach((m) => m.remove());
     document.querySelectorAll('.card-menu-btn[aria-expanded="true"]').forEach((x) => x.setAttribute('aria-expanded', 'false'));
   }
-  function bmChips(kind) {
+  /** Zweite Stufe: die Geräte untereinander (Name, Ping/offline, läuft). */
+  function bmList(kind) {
     const alive = typeof window.__remoteAliveIds === 'function' ? window.__remoteAliveIds() : [];
     return servers().map((d) => {
       const on = d.status === 'online';
       const live = kind === 'remote' && alive.indexOf(d.id) >= 0;
-      return `<button class="bm-dev${live ? ' is-alive' : ''}" data-bm="${kind}" data-srv="${esc(d.id)}" style="--dc:${devColor(d.id)}" ${on ? '' : 'disabled'}
-        title="${esc(d.name)}${live ? ' · läuft' : ''}">${live ? '<i></i>' : ''}${devShort(d)}</button>`;
-    }).join('');
+      const meta = !on ? 'offline' : live ? '<i></i>läuft' : (d.latency != null ? d.latency + ' ms' : '');
+      return `<button class="bm-dev${live ? ' is-alive' : ''}" data-bm="${kind}" data-srv="${esc(d.id)}" style="--dc:${devColor(d.id)}" ${on ? '' : 'disabled'}>
+        <span class="bm-dev__ic">${ic(devIcon(d), 1.8)}</span><span class="bm-dev__name">${esc(d.name)}</span><small>${meta}</small></button>`;
+    }).join('') || '<div class="bm-empty">Kein Gerät verbunden</div>';
   }
   function bmAugment(menu) {
     if (menu.querySelector('.bm-sec')) return;
     menu.insertAdjacentHTML('afterbegin', `<div class="bm-sec">
-      <div class="bm-row">${ic('plus', 2)}<span>Neues Terminal</span>${bmChips('term')}</div>
-      <div class="bm-row">${ic('remote', 1.8)}<span>Fernzugriff</span>${bmChips('remote')}</div></div>`);
+      <button class="bm-row" data-bm-open="term" aria-expanded="false">${ic('plus', 2)}<span>Neues Terminal</span>${ic('chev', 2)}</button>
+      <div class="bm-list" data-bm-list="term" hidden>${bmList('term')}</div>
+      <button class="bm-row" data-bm-open="remote" aria-expanded="false">${ic('remote', 1.8)}<span>Fernzugriff</span>${ic('chev', 2)}</button>
+      <div class="bm-list" data-bm-list="remote" hidden>${bmList('remote')}</div></div>`);
     // Breiter geworden → wieder rechtsbündig am ⋮-Knopf ausrichten
     const btn = document.querySelector('.card-menu-btn[aria-expanded="true"]');
     if (btn) {
@@ -815,6 +819,23 @@
       menu.style.left = Math.max(8, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8)) + 'px';
     }
   }
+  // Erste Stufe: „Neues Terminal“ / „Fernzugriff“ klappt die Geräte darunter auf.
+  document.addEventListener('click', (e) => {
+    const o = e.target.closest && e.target.closest('.card-menu [data-bm-open]');
+    if (!o) return;
+    e.stopPropagation();
+    const menu = o.closest('.card-menu');
+    const k = o.dataset.bmOpen;
+    const list = menu.querySelector(`[data-bm-list="${k}"]`);
+    const open = list.hidden;
+    menu.querySelectorAll('[data-bm-list]').forEach((l) => { l.hidden = true; });
+    menu.querySelectorAll('[data-bm-open]').forEach((r) => r.setAttribute('aria-expanded', 'false'));
+    if (open) { list.innerHTML = bmList(k); list.hidden = false; o.setAttribute('aria-expanded', 'true'); }
+    // Unten kein Platz → Menü nach oben schieben
+    const r = menu.getBoundingClientRect();
+    const over = r.bottom - (window.innerHeight - 8);
+    if (over > 0) menu.style.top = Math.max(8, r.top - over) + 'px';
+  }, true);
   new MutationObserver((list) => {
     list.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType === 1 && n.classList.contains('card-menu')) bmAugment(n); }));
   }).observe(document.body, { childList: true });

@@ -200,10 +200,17 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
               headers: { 'Content-Type': 'application/json', ...auth },
               body: JSON.stringify({ paths }),
             });
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            call('toast', paths.length > 1 ? `${paths.length} in den Papierkorb gelegt` : 'In den Papierkorb gelegt');
+            const d = await r.json().catch(() => ({} as any));
+            if (!r.ok) throw new Error(d?.error ?? `HTTP ${r.status}`);
+            const n = Number(d?.trashed ?? paths.length);
+            const failed: Array<{ path: string; error: string }> = Array.isArray(d?.failed) ? d.failed : [];
+            const okMsg = n > 1 ? `${n} in den Papierkorb gelegt` : 'In den Papierkorb gelegt';
+            const name = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
+            call('toast', failed.length
+              ? `${okMsg} · ${failed.length === 1 ? `„${name(failed[0].path)}“ ging nicht: ${failed[0].error}` : `${failed.length} gingen nicht (z. B. „${name(failed[0].path)}“: ${failed[0].error})`}`
+              : okMsg);
             refresh();
-          } catch (e: any) { call('toast', `Löschen: ${e?.message ?? 'fehlgeschlagen'}`); }
+          } catch (e: any) { call('toast', `Löschen: ${e?.message ?? 'fehlgeschlagen'}`); refresh(); }
         })();
         return true;
       }

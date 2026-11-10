@@ -128,16 +128,6 @@ if (!PW) {
     } finally { await browser.close(); }
   });
 
-  test('Bilder: Galerie direkt, mit Zielkarte', async () => {
-    const { browser, page, posts } = await boot();
-    try {
-      await page.evaluate(() => window.__bundTool('screenshots'));
-      const p = (await posts('shot:capture'))[0];
-      assert.equal(p.payload.source, 'library');
-      assert.ok('cardId' in p.payload);
-    } finally { await browser.close(); }
-  });
-
   test('Bund-Karte: kein Demo-Knopf, Ping aktualisiert sich, Hinzufügen geht an die App', async () => {
     const { browser, page, errors, posts } = await boot();
     try {
@@ -199,14 +189,6 @@ if (!PW) {
     } finally { await browser.close(); }
   });
 
-  test('Upload-Pille nennt das Zielgerät, nicht das Gerät vorne', async () => {
-    const { browser, page } = await boot();
-    try {
-      await page.evaluate(() => window.TMSBridge.uploadProgress(1, 3, 'B'));
-      assert.match(await page.textContent('.up2'), /Windows PC/);
-    } finally { await browser.close(); }
-  });
-
   test('Desk: Diktat-Status aus caps, „+“ legt ein Terminal auf dem Gerät an', async () => {
     const { browser, page, errors, posts } = await boot({ width: 750, height: 800 });
     try {
@@ -246,6 +228,12 @@ if (!PW) {
       await page.waitForTimeout(300);
       const txt = await page.textContent('.card-menu');
       assert.match(txt, /Neues Terminal/); assert.match(txt, /Fernzugriff/);
+      assert.equal(await page.evaluate(() => document.querySelector('.card-menu [data-bm-list="term"]').hidden), true, 'Geräte erst nach dem Aufklappen');
+      await page.evaluate(() => document.querySelector('.card-menu [data-bm-open="term"]').click());
+      await page.waitForTimeout(150);
+      const devs = await page.evaluate(() => [...document.querySelectorAll('.card-menu [data-bm-list="term"] .bm-dev__name')].map((x) => x.textContent));
+      assert.deepEqual(devs, ['MacBook', 'Windows PC'], 'untereinander aufgelistet');
+      assert.ok(await page.locator('.card-menu').count(), 'Menü bleibt beim Aufklappen offen');
       const before = (await posts('terminal:create')).length;
       await page.evaluate(() => document.querySelector('.card-menu [data-bm="term"][data-srv="B"]').click());
       await page.waitForTimeout(300);
@@ -255,9 +243,79 @@ if (!PW) {
       await page.evaluate(() => { window.__remoteCalls = []; window.__openRemoteFor = (id) => window.__remoteCalls.push(id); });
       await page.evaluate(() => document.querySelector('.term-card .card-menu-btn').click());
       await page.waitForTimeout(300);
+      await page.evaluate(() => document.querySelector('.card-menu [data-bm-open="remote"]').click());
       await page.evaluate(() => document.querySelector('.card-menu [data-bm="remote"][data-srv="B"]').click());
       assert.deepEqual(await page.evaluate(() => window.__remoteCalls), ['B']);
       assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  // Antwortet wie die App: tool:open → setTool mit Daten (so lief die Schleife).
+  const fakeRN = (page) => page.evaluate(() => {
+    const rn = window.ReactNativeWebView, orig = rn.postMessage;
+    rn.postMessage = (m) => {
+      orig(m);
+      const { type, payload } = JSON.parse(m);
+      if (type === 'tool:open') setTimeout(() => {
+        if (payload.tool === 'snippets') window.TMSBridge.setTool('snippets', []);
+        if (payload.tool === 'files') window.TMSBridge.setTool('files', [], '~');
+        if (payload.tool === 'screenshots') window.TMSBridge.setTool('screenshots', []);
+      }, 30);
+    };
+  });
+
+  test('Snippets: öffnen, anlegen, mit ✕ schließen — kein Wieder-Aufspringen', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await fakeRN(page);
+      await page.evaluate(() => window.openToolSheet('snippets'));
+      await page.waitForTimeout(700);
+      assert.ok((await posts('tool:open')).length <= 1, 'keine Schleife: ' + (await posts('tool:open')).length);
+      await page.evaluate(() => document.querySelector('.sn2 [data-sn="new"]').click());
+      await page.waitForTimeout(200);
+      assert.equal(await page.locator('#snName').count(), 1, 'Formular zum Anlegen');
+      await page.evaluate(() => document.querySelector('.sn2 [data-sn="close"]').click());
+      await page.waitForTimeout(900);
+      assert.equal(await page.evaluate(() => document.querySelector('.sn2').hidden), true, 'zu und bleibt zu');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Explorer: Tipp aufs Terminal dahinter schließt die halbe Karte', async () => {
+    const { browser, page, posts } = await boot();
+    try {
+      await fakeRN(page);
+      await page.evaluate(() => window.openToolSheet('files'));
+      await page.waitForTimeout(500);
+      await page.mouse.click(200, 120); // oberhalb der halben Karte = Terminal-Bereich
+      await page.waitForTimeout(500);
+      await page.evaluate(() => window.TMSBridge.setTool('files', [], '~')); // spätere Antwort der App
+      await page.waitForTimeout(600);
+      assert.equal(await page.evaluate(() => document.querySelector('.fx2').classList.contains('is-open')), false, 'Explorer zu');
+      assert.ok((await posts('tool:open')).length <= 1);
+    } finally { await browser.close(); }
+  });
+
+  test('Bilder: alte Karte mit Kamera + Galerie, schließt nach dem Upload, keine zweite Galerie', async () => {
+    const { browser, page, posts } = await boot();
+    try {
+      await fakeRN(page);
+      await page.evaluate(() => window.openToolSheet('screenshots'));
+      await page.waitForTimeout(500);
+      assert.equal((await posts('shot:capture')).length, 0, 'Galerie nicht ungefragt');
+      assert.equal(await page.locator('#shotCaptureBtn').count(), 1, 'Kamera');
+      assert.equal(await page.locator('#shotPickBtn').count(), 1, 'Galerie');
+      await page.evaluate(() => document.getElementById('shotPickBtn').click());
+      await page.evaluate(() => { window.TMSBridge.uploadProgress(0, 2, 'A'); window.TMSBridge.uploadProgress(1, 2, 'A'); });
+      await page.waitForTimeout(300);
+      assert.match(await page.textContent('#toolSheetWrap'), /1 von 2/);
+      await page.evaluate(() => { window.TMSBridge.uploadProgress(2, 2, 'A'); window.TMSBridge.uploadFinished([], '2 Bilder hochgeladen'); });
+      await page.waitForTimeout(800);
+      assert.equal(await page.evaluate(() => { const w = document.getElementById('toolSheetWrap'); return w.hidden || !w.classList.contains('is-open') && getComputedStyle(w).visibility !== 'visible' || getComputedStyle(w).display === 'none' || getComputedStyle(w).opacity === '0'; }), true, 'Karte zu');
+      const caps = await posts('shot:capture');
+      assert.equal(caps.length, 1, 'genau eine Galerie');
+      assert.equal(caps[0].payload.source, 'library');
+      assert.ok('cardId' in caps[0].payload, 'Zielkarte steht fest');
     } finally { await browser.close(); }
   });
 }

@@ -295,13 +295,22 @@ body.side-mini .ds-foot span { display: none; }
 /* ── Ohne Insel (Variante „Menü“) ─────────────────────────────────── */
 body.no-island #statusHeader, body.no-island #islandScrim, body.no-island .island-swipe-hint, body.no-island #islandSwipeHint { display: none !important; }
 body.no-island { --top-space: calc(var(--safe-top, 0px) + 10px); }
-.card-menu .bm-sec { padding: 4px 4px 6px; border-bottom: 1px solid rgba(var(--overlay-rgb, 255,255,255), .1); margin-bottom: 4px; min-width: 276px; }
-.card-menu .bm-row { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; }
+.card-menu .bm-sec { padding: 2px 0 6px; border-bottom: 1px solid rgba(var(--overlay-rgb, 255,255,255), .1); margin-bottom: 4px; min-width: 250px; }
+.card-menu .bm-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 11px; border: 0; background: none; border-radius: 10px; color: var(--text); font-size: var(--fs-body, 15px); text-align: left; }
+.card-menu .bm-row:active { background: rgba(var(--overlay-rgb, 255,255,255), .10); }
 .card-menu .bm-row > svg { width: 17px; height: 17px; color: var(--text-dim); flex: none; }
-.card-menu .bm-row > span { flex: 1; font-size: var(--fs-body, 15px); color: var(--text); white-space: nowrap; }
-.card-menu .bm-dev { height: 32px; min-width: 50px; padding: 0 10px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  font: 700 11.5px var(--font-ui); letter-spacing: .04em; color: var(--dc); background: color-mix(in srgb, var(--dc) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--dc) 35%, transparent); }
-.card-menu .bm-dev:active { transform: scale(.95); }
-.card-menu .bm-dev:disabled { opacity: .35; }
-.card-menu .bm-dev i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok, #3ddc84); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #3ddc84) 25%, transparent); }
+.card-menu .bm-row > svg:last-child { width: 15px; height: 15px; margin-left: auto; transition: transform .2s; }
+.card-menu .bm-row[aria-expanded="true"] > svg:last-child { transform: rotate(90deg); }
+.card-menu .bm-row > span { flex: 1; white-space: nowrap; }
+.card-menu .bm-list { padding: 2px 4px 6px 22px; display: flex; flex-direction: column; gap: 2px; }
+.card-menu .bm-list[hidden] { display: none; }
+.card-menu .bm-dev { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 10px; background: none; color: var(--text); font-size: 14.5px; text-align: left; }
+.card-menu .bm-dev:active { background: rgba(var(--overlay-rgb, 255,255,255), .10); }
+.card-menu .bm-dev:disabled { opacity: .4; }
+.card-menu .bm-dev__ic { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; color: var(--dc); background: color-mix(in srgb, var(--dc) 15%, transparent); }
+.card-menu .bm-dev__ic svg { width: 16px; height: 16px; }
+.card-menu .bm-dev__name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-menu .bm-dev small { display: inline-flex; align-items: center; gap: 5px; color: var(--text-dim); font-size: 12px; }
+.card-menu .bm-dev.is-alive small { color: var(--ok, #3ddc84); }
+.card-menu .bm-dev small i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok, #3ddc84); }
+.card-menu .bm-empty { padding: 8px 10px; color: var(--text-dim); font-size: 13px; }
