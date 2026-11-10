@@ -302,3 +302,7 @@
 
 ## 2026-11-10 — v1.137.0 Puls-Ring
 - Läuft ein Fernzugriff (body.remote-alive), pulsiert ein sanfter grüner Ring um ⋮ (nicht Splitscreen); im Menü schimmert „Fernzugriff“, aufgeklappt das laufende Gerät.
+
+## 2026-11-10 — v1.139.0 In-App-Updater
+- v1.138.0-Build scheiterte: paralleler Job hatte index.html geändert (uncommittet beim Build, committet nach dem Tag) → liquidDeckHtml.ts passte nicht zum Tag. Lehre: vor dem Tag `node scripts/build-season2-html.js && git diff --exit-code liquidDeckHtml.ts`.
+- Updater: sucht Start/15 min/App-zurück, lädt APK in den Cache (expo-file-system), öffnet Installer (REQUEST_INSTALL_PACKAGES); matte Leiste statt Glas-Pille. Puls einmalig + Fernzugriff im Menü beenden mit drin.
