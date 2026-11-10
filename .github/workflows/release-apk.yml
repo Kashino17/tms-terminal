@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Flackern beim Terminalwechsel: Die Tastenleiste wurde bei jedem Wechsel geloescht und neu gebaut und war dabei kurz leer (am Fold aufgenommen). Sie bleibt jetzt stehen. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Schneller und sparsamer: Die Diktat-Bubble zeichnet nicht mehr dauernd, wenn sie nur dasteht. Die Arbeitsflaeche (Terminal, Tasten, Eingabezeile) ist jetzt matt - am Fold doppelt so schnell gezeichnet; Glas bleibt in Einstellungen > Darstellung waehlbar. Ist die App nicht zu sehen, ruht sie fast ganz: seltene Pings, kein Dauer-Wachhalten mehr. Mit dem naechsten Server-Update werden auch verdeckte Terminals gebuendelt uebertragen. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
