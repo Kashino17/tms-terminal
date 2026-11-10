@@ -65,8 +65,60 @@ function reveal(file: string) {
   }
 }
 
+/** Max. Groesse eines Stuecks im Stueck-Modus (Base64-Text). */
+const MAX_PART_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Stueck-Modus: ?up=<id>&part=<n>[&final=1]&enc=b64 — der Rumpf ist ein
+ * Base64-Stueck der Datei. Die App reicht so Dateien weiter, die die Seite
+ * selbst nicht senden darf (Chromium sperrt Anfragen von der App-Seite ins
+ * lokale Netz/Tailnet). Stueck 0 legt die Zwischendatei an, jedes weitere
+ * haengt an, final=1 benennt sie um wie beim Strom-Modus.
+ */
+function handlePartUpload(req: http.IncomingMessage, res: http.ServerResponse, url: URL, dir: string, name: string): void {
+  const up = url.searchParams.get('up') || '';
+  if (!/^[A-Za-z0-9-]{4,64}$/.test(up)) return reply(res, 400, { error: 'Ungültige Upload-Kennung' });
+  const part = Number(url.searchParams.get('part') || '0');
+  if (!Number.isInteger(part) || part < 0) return reply(res, 400, { error: 'Ungültiges Stück' });
+  const tmp = path.join(dir, `.${name}.${up}.tms-upload`);
+  const chunks: Buffer[] = [];
+  let size = 0;
+  let tooBig = false;
+  req.on('data', (c: Buffer) => {
+    size += c.length;
+    if (size > MAX_PART_BYTES) { tooBig = true; req.destroy(); return; }
+    chunks.push(c);
+  });
+  req.on('end', () => {
+    if (tooBig) return;
+    const raw = Buffer.concat(chunks);
+    const data = url.searchParams.get('enc') === 'b64' ? Buffer.from(raw.toString('ascii'), 'base64') : raw;
+    try {
+      if (part === 0) fs.writeFileSync(tmp, data);
+      else {
+        if (!fs.existsSync(tmp)) return reply(res, 409, { error: 'Upload-Anfang fehlt' });
+        fs.appendFileSync(tmp, data);
+      }
+      if (url.searchParams.get('final') !== '1') return reply(res, 200, { ok: true, size: fs.statSync(tmp).size });
+      const target = uniqueTarget(dir, name);
+      fs.renameSync(tmp, target);
+      const total = fs.statSync(target).size;
+      logger.info(`Upload vom Handy: ${target} (${total} B, ${part + 1} Stücke)`);
+      if (url.searchParams.get('reveal') === '1') reveal(target);
+      reply(res, 200, { path: target, name: path.basename(target), size: total });
+    } catch (e) {
+      try { fs.unlinkSync(tmp); } catch { /* schon weg */ }
+      reply(res, 500, { error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+  req.on('error', () => { try { fs.unlinkSync(tmp); } catch { /* schon weg */ } });
+}
+
 export function handleFileUpload(req: http.IncomingMessage, res: http.ServerResponse): void {
   if (req.method === 'OPTIONS') { cors(res); res.writeHead(204); res.end(); return; }
+  // Faehigkeits-Abfrage der App vor dem ersten Stueck: ein alter Server
+  // (404) wuerde den Base64-Text sonst als fertige Datei ablegen.
+  if (req.method === 'GET') return reply(res, 200, { parts: true });
   if (req.method !== 'POST') return reply(res, 405, { error: 'Method not allowed' });
 
   let url: URL;
@@ -80,6 +132,7 @@ export function handleFileUpload(req: http.IncomingMessage, res: http.ServerResp
   try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {
     return reply(res, 400, { error: e instanceof Error ? e.message : String(e) });
   }
+  if (url.searchParams.has('up')) return handlePartUpload(req, res, url, dir, safeUploadName(rawName));
   const target = uniqueTarget(dir, safeUploadName(rawName));
   // Versteckte Zwischendatei im selben Ordner: erst nach vollstaendigem
   // Empfang umbenannt — ein abgebrochener Upload hinterlaesst keine halbe Datei.

@@ -234,7 +234,7 @@ async function main(): Promise<void> {
       else if (req.url.startsWith('/files/trash') && req.method === 'POST')  handleTrash(req, res);
       else if (req.url.startsWith('/files/rename') && req.method === 'POST') handleRename(req, res);
       else if (req.url.startsWith('/files/zip'))      handleFileZip(req, res);
-      else if (req.url.startsWith('/files/upload') && req.method === 'POST') handleFileUpload(req, res);
+      else if (req.url.startsWith('/files/upload'))   handleFileUpload(req, res);
       else { res.writeHead(404); res.end('Not found'); }
     } else if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -66,6 +66,27 @@ test('ohne Namen: 400; OPTIONS: 204 mit CORS', async () => {
   assert.strictEqual(o.status, 204);
   assert.strictEqual(o.headers.get('access-control-allow-origin'), '*');
   assert.strictEqual(o.headers.get('access-control-allow-private-network'), 'true');
+  const caps = await fetch(`${base}/files/upload?caps=1`);
+  assert.deepStrictEqual(await caps.json(), { parts: true }, 'Faehigkeits-Abfrage');
+});
+
+test('Stueck-Modus (Base64 ueber die App): Teile werden angehaengt, final benennt um', async () => {
+  const content = Buffer.from('Hallo vom Handy — in drei Stücken!');
+  const parts = [content.subarray(0, 10), content.subarray(10, 20), content.subarray(20)];
+  const base = { dir, name: 'stueck.txt', up: 'abcd-1234', enc: 'b64' };
+  const r0 = await up({ ...base, part: '0' }, parts[0].toString('base64'));
+  assert.strictEqual(r0.status, 200);
+  assert.strictEqual(((await r0.json()) as any).size, 10);
+  assert.ok(!fs.existsSync(path.join(dir, 'stueck.txt')), 'vor final keine sichtbare Datei');
+  await up({ ...base, part: '1' }, parts[1].toString('base64'));
+  const r2 = await up({ ...base, part: '2', final: '1' }, parts[2].toString('base64'));
+  const d = await r2.json() as any;
+  assert.strictEqual(d.name, 'stueck.txt');
+  assert.deepStrictEqual(fs.readFileSync(path.join(dir, 'stueck.txt')), content);
+  assert.ok(!fs.readdirSync(dir).some((f) => f.endsWith('.tms-upload')), 'keine Zwischendatei uebrig');
+  // Fortsetzung ohne Anfang / kaputte Kennung
+  assert.strictEqual((await up({ ...base, up: 'zzzz-9999', part: '1' }, 'eA==')).status, 409);
+  assert.strictEqual((await up({ ...base, up: '../x', part: '0' }, 'eA==')).status, 400);
 });
 
 test('safeUploadName / uniqueTarget', () => {

@@ -455,7 +455,8 @@
   /* ============================================================
      Toasts
      ============================================================ */
-  #toasts { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 96px); transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none;
+  /* Ueber allen Panels/Vorschauen (bund: bis 340) — sonst verschwinden Meldungen wie „Gespeichert“ oder Fehler dahinter. */
+  #toasts { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom,0px) + 96px); transform: translateX(-50%); z-index: 400; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none;
     width: calc(100vw - 32px); max-width: 560px; }
   .toast { background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--glass-border); color: var(--text); padding: 10px 18px; border-radius: 20px; font-size: 13px; line-height: 1.35; font-weight: 500; opacity: 0; transform: translateY(8px) scale(.96); transition: opacity 260ms var(--spring), transform 260ms var(--spring); white-space: normal; text-align: center; max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
   .toast.show { opacity: 1; transform: translateY(0) scale(1); }
@@ -7408,7 +7409,11 @@
   }
   window.fsDownloadProgress = function (id, name, pct, state) {
     const i = fsState.downloads.findIndex(d => d.id === id);
-    if (i === -1) fsState.downloads.push({ id: id, name: name, pct: pct, state: state });
+    if (i === -1) {
+      fsState.downloads.push({ id: id, name: name, pct: pct, state: state });
+      // Der Explorer zeigt keine Download-Leiste — darum hier sichtbar starten.
+      if (state === 'running') toast('Lädt „' + name + '“ …');
+    }
     else fsState.downloads[i] = { id: id, name: name, pct: pct, state: state };
     if (state === 'done') { toast('Gespeichert: ' + name); fsState.downloads = fsState.downloads.filter(d => d.id !== id); }
     if (state === 'error') { fsState.downloads = fsState.downloads.filter(d => d.id !== id); }

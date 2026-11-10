@@ -31,18 +31,44 @@ if (!PW) {
   const require = createRequire(join(PW, 'index.js'));
   const { chromium } = require('playwright');
 
-  async function boot() {
+  /** Die Rolle von React Native fuer Datei-Inhalte (fileTransfer.ts) — in Node,
+   *  denn die Seite selbst darf nicht ins lokale Netz laden. */
+  async function nativeFiles(page, filesBase, m) {
+    const reply = (d) => page.evaluate(([id, d]) => window.TMSBridge.netReply(id, d), [m.payload.reqId, d]).catch(() => {});
+    const p = m.payload;
+    if (m.type === 'files:uploadPart') {
+      if (p.part === 0) {
+        const caps = await fetch(`${p.base}/files/upload?caps=1&token=${p.token}`).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+        if (!caps.parts) return reply({ error: 'Server zu alt — am Rechner „tms-terminal update“ ausführen' });
+      }
+      const q = new URLSearchParams({ dir: p.dir, name: p.name, up: p.up, part: String(p.part), enc: 'b64', token: p.token });
+      if (p.final) q.set('final', '1');
+      if (p.final && p.reveal) q.set('reveal', '1');
+      const r = await fetch(`${p.base}/files/upload?${q}`, { method: 'POST', body: p.b64 });
+      const d = await r.json().catch(() => ({}));
+      return reply(r.ok ? { ok: true, result: d } : { error: d.error || `HTTP ${r.status}` });
+    }
+    if (m.type === 'files:fetchPreview') {
+      const r = await fetch(`${filesBase}/files/download?path=${encodeURIComponent(p.path)}&token=tok`);
+      if (!r.ok) return reply({ error: `HTTP ${r.status}` });
+      const buf = Buffer.from(await r.arrayBuffer());
+      return reply(p.kind === 'img' ? { src: `data:${r.headers.get('content-type')};base64,${buf.toString('base64')}` } : { opened: true });
+    }
+  }
+
+  async function boot(viewport = { width: 412, height: 915 }, { filesBase = '' } = {}) {
     const src = readFileSync(SOURCE, 'utf8');
     const html = JSON.parse(src.match(/export const LIQUID_DECK_HTML = (".*");\s*$/s)[1]);
     const file = join(tmpdir(), `tms-webview-remote-${process.pid}.html`);
     writeFileSync(file, html);
     const browser = await chromium.launch();
-    const page = await browser.newPage({ viewport: { width: 412, height: 915 } });
+    const page = await browser.newPage({ viewport });
     const errors = [];
+    await page.exposeFunction('__rnNative', (raw) => nativeFiles(page, filesBase, JSON.parse(raw)));
     page.on('pageerror', (e) => errors.push(e.message));
     await page.addInitScript(() => {
       window.__posts = [];
-      window.ReactNativeWebView = { postMessage: (m) => window.__posts.push(JSON.parse(m)) };
+      window.ReactNativeWebView = { postMessage: (m) => { window.__posts.push(JSON.parse(m)); if (/"files:(uploadPart|fetchPreview)"/.test(m)) window.__rnNative(m); } };
       // Nachgebaute Bildverbindung: wir entscheiden, wann sie öffnet und
       // wann ihr onclose kommt — wie eine echte Netz-Runde später.
       window.__socks = [];
@@ -92,7 +118,10 @@ if (!PW) {
         s.onmessage && s.onmessage({ data: JSON.stringify({ type: 'remote:started', payload: { width: 100, height: 60, scale: 1 } }) });
       };
     });
-    await page.goto('file://' + file);
+    // Wie in der App (SeasonTwoWebRoot: baseUrl https://tms.local) — nur so
+    // greifen Chromiums Sperren fuer Anfragen ins lokale Netz auch hier.
+    await page.route('https://tms.local/', (r) => r.fulfill({ contentType: 'text/html; charset=utf-8', body: html }));
+    await page.goto('https://tms.local/');
     await page.waitForTimeout(1200);
     return { browser, page, errors };
   }
@@ -443,15 +472,18 @@ if (!PW) {
   // /files/upload ans Fernzugriff-Geraet (ohne CORS-Vorabfrage), Holen oeffnet
   // den Explorer DES Geraets am gewaehlten Ordner (iCloud Drive als Krumen).
   test('Dateien: Senden lädt ans Fernzugriff-Gerät, Holen öffnet dessen Explorer (iCloud)', async () => {
+    // Nachgebauter Server im Stueck-Modus (server/src/files/upload.handler.ts).
     const got = [];
     const srv = createServer((req, res) => {
       let body = '';
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
-        got.push({ method: req.method, url: req.url, ctype: req.headers['content-type'] || null, body });
-        res.writeHead(req.method === 'OPTIONS' ? 204 : 200, { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' });
-        const name = new URL(req.url, 'http://x').searchParams.get('name');
-        res.end(req.method === 'OPTIONS' ? '' : JSON.stringify({ name, path: '/Users/x/Downloads/TMS/' + name, size: body.length }));
+        const q = new URL(req.url, 'http://x').searchParams;
+        got.push({ method: req.method, url: req.url, q, body: q.get('enc') === 'b64' ? Buffer.from(body, 'base64').toString() : body });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        if (req.method === 'GET') return res.end(JSON.stringify({ parts: true }));
+        const name = q.get('name');
+        res.end(JSON.stringify(q.get('final') === '1' ? { name, path: '/Users/x/Downloads/TMS/' + name } : { ok: true }));
       });
     });
     await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -478,37 +510,89 @@ if (!PW) {
         window.__posts.length = 0;
         document.querySelector('[data-dir="~/Library/Mobile Documents/com~apple~CloudDocs"]').click();
         const post = window.__posts.find((m) => m.type === 'files:openOn');
-        const filesShown = !document.querySelector('[data-screen="files"]').hidden;
-        const backBtn = !!document.querySelector('[data-fsremote]');
-        const loadingText = (document.querySelector('[data-screen="files"] .fs-empty') || {}).textContent;
+        // Seit v1.134 ist der Explorer das fx2-Panel (bund.js) — es liegt über dem Fernzugriff.
+        const filesShown = !document.querySelector('.fx2').hidden;
+        const loadingText = (document.querySelector('.fx2 .fx2-empty') || {}).textContent;
         const listedBeforeSwitch = window.__posts.some((m) => m.type === 'files:listRaw');
-        window.fsSetDir('/Users/x/Library/Mobile Documents/com~apple~CloudDocs/Projekte', []);
-        const crumbs = Array.from(document.querySelectorAll('.fs-crumb')).map((b) => b.textContent);
-        const uploadChip = !!document.querySelector('[data-fsupload]');
-        return { tile, dirs, up, post: post && post.payload, filesShown, backBtn, loadingText, listedBeforeSwitch, crumbs, uploadChip };
+        window.fsSetDir('/Users/x/Library/Mobile Documents/com~apple~CloudDocs/Projekte', [], 'mac');
+        const crumbs = Array.from(document.querySelectorAll('.fx2-crumb')).map((b) => b.textContent);
+        return { tile, dirs, up, post: post && post.payload, filesShown, loadingText, listedBeforeSwitch, crumbs };
       }, { port });
       assert.deepEqual(errors, []);
       assert.equal(r.tile, true, 'Dateien-Kachel im Menue');
       assert.ok(r.dirs.some((d) => d.includes('iCloud Drive')) && r.dirs.some((d) => d.includes('Schreibtisch')), 'Schnellzugriffe');
       assert.equal(r.up.error, null);
       assert.deepEqual(r.up.saved, ['notiz.txt', 'b.png']);
+      // Die Seite schickt nichts selbst — die App fragt erst die Faehigkeit ab, dann Stuecke.
       const posts = got.filter((g) => g.method === 'POST');
-      // Vorabfragen (Private Network Access) sind erlaubt — der Server beantwortet sie vor der Token-Pruefung.
-      for (const o of got.filter((g) => g.method === 'OPTIONS')) assert.equal(new URL(o.url, 'http://x').searchParams.get('token'), 'tok');
+      assert.equal(got.filter((g) => g.method === 'GET').length, 2, 'je Datei eine Faehigkeits-Abfrage');
       assert.equal(posts[0].body, 'hallo welt');
-      assert.equal(posts[0].ctype, null, 'ohne Content-Type');
-      const q0 = new URL(posts[0].url, 'http://x').searchParams, q1 = new URL(posts[1].url, 'http://x').searchParams;
+      const q0 = posts[0].q, q1 = posts[1].q;
       assert.equal(q0.get('dir'), '~/Downloads/TMS');
       assert.equal(q0.get('token'), 'tok');
+      assert.equal(q0.get('final'), '1');
       assert.equal(q0.get('reveal'), null, 'nur die letzte Datei wird gezeigt');
       assert.equal(q1.get('reveal'), '1');
       assert.deepEqual(r.post, { id: 'mac', path: '~/Library/Mobile Documents/com~apple~CloudDocs' });
       assert.equal(r.filesShown, true);
-      assert.equal(r.backBtn, true, 'Rueckweg zum Fernzugriff');
       assert.equal(r.loadingText, 'Lädt …');
       assert.equal(r.listedBeforeSwitch, false, 'nicht beim alten Geraet listen');
       assert.deepEqual(r.crumbs, ['☁ iCloud Drive', 'Projekte']);
-      assert.equal(r.uploadChip, true, 'Hierher hochladen im Explorer');
+    } finally { await browser.close(); srv.close(); }
+  });
+
+  test('Holen: Vorschau-Inhalte holt die App — die Seite lädt nichts selbst aus dem Tailnet', async () => {
+    // Echter Fall: Chromium sperrt <img>/<video>/<iframe> von https://tms.local ins
+    // lokale Netz (Tailscale 100.x) — die Vorschau blieb leer.
+    const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    const hits = [];
+    const srv = createServer((req, res) => { hits.push(req.url); res.writeHead(200, { 'Content-Type': 'image/png' }); res.end(PNG); });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const filesBase = `http://127.0.0.1:${srv.address().port}`;
+    const { browser, page, errors } = await boot({ width: 768, height: 820 }, { filesBase });
+    try {
+      await page.evaluate((filesBase) => {
+        window.TMS_DATA.servers = [{ id: 'mac', name: 'MacBook', host: '127.0.0.1', port: 1, status: 'online', primary: true, active: true }];
+        window.__remoteSrv = 'mac';
+        show('remote');
+        window.TMSRemote.switchTo('mac');
+        window.TMSBridge.setRemoteTarget({ id: 'mac', host: '127.0.0.1', port: 1, token: 'tok' });
+        window.__open(0); window.__startedWith(0, {});
+        document.getElementById('rxMenuBtn').click();
+        document.querySelector('[data-act="files"]').click();
+        document.querySelector('[data-dir="~/Desktop"]').click();
+        window.TMSBridge.setFilesBase(filesBase, 'tok');
+        window.fsSetDir('/Users/x/Desktop', [
+          { name: 'foto.png', path: '/Users/x/Desktop/foto.png', isDir: false, size: 70, modified: 1 },
+          { name: 'clip.mp4', path: '/Users/x/Desktop/clip.mp4', isDir: false, size: 70, modified: 1 },
+        ], 'mac');
+      }, filesBase);
+      await page.waitForTimeout(700); // Panel fährt ein
+      const tap = async (sel) => { const b = await page.locator(sel).boundingBox(); await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2); };
+      await tap('.fx2-row[data-n="foto.png"]');
+      await page.waitForFunction(() => { const i = document.querySelector('.pv.is-on img'); return i && i.naturalWidth > 0; }, null, { timeout: 4000 });
+      const img = await page.evaluate(() => {
+        const pv = document.querySelector('.pv'), i = pv.querySelector('img'), sb = pv.querySelector('[data-pv="share"]').getBoundingClientRect();
+        const t = document.elementFromPoint(sb.x + sb.width / 2, sb.y + sb.height / 2);
+        return { src: i.getAttribute('src').slice(0, 22), shareOnTop: !!(t && t.closest('[data-pv="share"]')) };
+      });
+      await tap('.pv [data-pv="share"]');
+      await tap('.pv [data-pv="close"]');
+      await tap('.fx2-row[data-n="clip.mp4"]');
+      await page.waitForFunction(() => /Player geöffnet/.test((document.querySelector('.pv.is-on .pv-body') || {}).textContent || ''), null, { timeout: 4000 });
+      const r = await page.evaluate(() => ({
+        posts: window.__posts.filter((m) => /^files:/.test(m.type)).map((m) => m.type + (m.payload.kind ? ':' + m.payload.kind : '')),
+        toastZ: +getComputedStyle(document.getElementById('toasts')).zIndex,
+        pvZ: +getComputedStyle(document.querySelector('.pv')).zIndex,
+        hasVideoTag: !!document.querySelector('.pv video'),
+      }));
+      assert.deepEqual(errors, []);
+      assert.equal(img.src, 'data:image/png;base64,', 'Bild kommt als data:-URL von der App');
+      assert.equal(img.shareOnTop, true, 'Teilen-Knopf liegt oben');
+      assert.deepEqual(r.posts, ['files:openOn', 'files:fetchPreview:img', 'files:share', 'files:fetchPreview:vid']);
+      assert.equal(r.hasVideoTag, false, 'kein <video> mit Tailnet-Adresse');
+      assert.ok(r.toastZ > r.pvZ, 'Meldungen liegen über der Vorschau');
+      assert.ok(hits.every((u) => u.startsWith('/files/download')) && hits.length === 2, 'nur die App (Node) hat geladen');
     } finally { await browser.close(); srv.close(); }
   });
 }

@@ -3262,7 +3262,72 @@
   // Fortschritt) — POST /files/upload, rohe Datei als Rumpf. Ohne
   // Content-Type und mit ?token=, damit keine CORS-Vorabfrage noetig ist.
   // Nacheinander, damit ein grosses Video nicht alle anderen ausbremst.
+  // Chromium sperrt Anfragen der App-Seite (https://tms.local) ins lokale
+  // Netz — Tailscale 100.x zaehlt dazu. <img>/<video>/<iframe>/XHR an den
+  // Rechner scheitern deshalb in der App; nativ (React Native) geht alles.
+  // Darum laufen Upload und Vorschau-Inhalte ueber die App.
+  var netReqs = {}, netSeq = 0;
+  function viaApp(type, payload, cb) {
+    var id = 'n' + (++netSeq) + '-' + Date.now().toString(36);
+    netReqs[id] = cb;
+    payload.reqId = id;
+    post(type, payload);
+    return id;
+  }
+  /** Antwort der App auf viaApp (mehrfach moeglich, z. B. Fortschritt). */
+  window.TMSBridge.netReply = function (id, data) {
+    var cb = netReqs[id];
+    if (!cb) return;
+    if (!data || !data.progress) delete netReqs[id];
+    cb(data || {});
+  };
+  var UP_CHUNK = 3 * 1024 * 1024; // roh; als Base64 ≈ 4 MB pro Nachricht
+  function readChunkB64(blob, cb) {
+    var r = new FileReader();
+    r.onload = function () { var s = String(r.result || ''); cb(null, s.slice(s.indexOf(',') + 1)); };
+    r.onerror = function () { cb('Datei nicht lesbar'); };
+    r.readAsDataURL(blob);
+  }
   function uploadFiles(base, token, files, dir, reveal, onProgress, onDone) {
+    if (window.ReactNativeWebView) return uploadFilesViaApp(base, token, files, dir, reveal, onProgress, onDone);
+    return uploadFilesXhr(base, token, files, dir, reveal, onProgress, onDone);
+  }
+  function uploadFilesViaApp(base, token, files, dir, reveal, onProgress, onDone) {
+    var list = Array.prototype.slice.call(files || []);
+    var total = list.reduce(function (n, f) { return n + (f.size || 0); }, 0) || 1;
+    var sent = 0, saved = [], i = 0;
+    function nextFile() {
+      if (i >= list.length) { onDone(null, saved); return; }
+      var f = list[i++], last = i === list.length;
+      var up = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+      var parts = Math.max(1, Math.ceil((f.size || 0) / UP_CHUNK)), part = 0;
+      function nextPart() {
+        var start = part * UP_CHUNK, blob = f.slice(start, Math.min(f.size, start + UP_CHUNK));
+        readChunkB64(blob, function (err, b64) {
+          if (err) { onDone(err, saved); return; }
+          viaApp('files:uploadPart', {
+            base: base, token: token, dir: dir, name: f.name || 'datei', up: up, part: part,
+            final: part === parts - 1, reveal: !!(reveal && last), b64: b64,
+          }, function (res) {
+            if (res.error) { onDone(res.status === 404 ? 'Server zu alt — am Rechner „tms-terminal update“ ausführen' : res.error, saved); return; }
+            sent += blob.size;
+            if (onProgress) onProgress(Math.min(1, sent / total), f.name);
+            part++;
+            if (part < parts) nextPart();
+            else { saved.push(res.result || { name: f.name }); nextFile(); }
+          });
+        });
+      }
+      nextPart();
+    }
+    nextFile();
+  }
+  /** Vorschau-Inhalt ueber die App: Bild als data:-URL, Video/PDF im Android-Betrachter. */
+  window.fsLoadPreview = function (path, kind, cb) {
+    if (!window.ReactNativeWebView) { var u = window.fsFileUrl(path); setTimeout(function () { cb({ src: u }); }, 0); return; }
+    viaApp('files:fetchPreview', { path: path, kind: kind }, cb);
+  };
+  function uploadFilesXhr(base, token, files, dir, reveal, onProgress, onDone) {
     var list = Array.prototype.slice.call(files || []);
     var total = list.reduce(function (n, f) { return n + (f.size || 0); }, 0) || 1;
     var sent = 0, saved = [], i = 0;

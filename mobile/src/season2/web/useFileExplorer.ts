@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { saveToDownloads } from './downloads';
+import { baseName, cacheSafe, fetchPreview, uploadPart } from './fileTransfer';
 
 type Call = (fn: string, ...args: unknown[]) => void;
 
@@ -16,8 +17,8 @@ interface Args {
 
 const MIME_BY_EXT: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
-  svg: 'image/svg+xml', pdf: 'application/pdf', mp4: 'video/mp4', webm: 'video/webm',
-  mov: 'video/quicktime', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4',
+  svg: 'image/svg+xml', heic: 'image/heic', avif: 'image/avif', pdf: 'application/pdf',
+  mp4: 'video/mp4', webm: 'video/webm', mkv: 'video/x-matroska', mov: 'video/quicktime', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4',
   zip: 'application/zip', md: 'text/markdown', txt: 'text/plain', json: 'application/json',
 };
 const mimeFor = (name: string) =>
@@ -83,12 +84,12 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
     if (!server || !token || !paths.length) return;
     const id = `dl-${Date.now()}`;
     const filename = zip
-      ? `tms-${paths.length === 1 ? (paths[0].split('/').pop() ?? 'ordner') : 'auswahl'}.zip`
-      : (paths[0].split('/').pop() ?? 'datei');
+      ? `tms-${paths.length === 1 ? baseName(paths[0]) : 'auswahl'}.zip`
+      : baseName(paths[0]);
     const url = zip
       ? `${base}/files/zip?paths=${encodeURIComponent(JSON.stringify(paths))}&token=${token}`
       : `${base}/files/download?path=${encodeURIComponent(paths[0])}&token=${token}`;
-    const tmp = `${FileSystem.cacheDirectory}${id}-${filename}`;
+    const tmp = `${FileSystem.cacheDirectory}${id}-${cacheSafe(filename)}`;
     call('downloadProgress', id, filename, 0, 'running');
     try {
       const task = FileSystem.createDownloadResumable(url, tmp, {}, (p) => {
@@ -157,8 +158,11 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
       case 'files:share': {
         if (!server || !token) return true;
         (async () => {
-          const name = String(payload.path).split('/').pop() ?? 'datei';
-          const tmp = `${FileSystem.cacheDirectory}share-${name}`;
+          const name = baseName(String(payload.path));
+          const tmp = `${FileSystem.cacheDirectory}share-${cacheSafe(name)}`;
+          // Zeigen, dass etwas passiert: grosse Dateien (oder solche, die der
+          // Mac erst aus iCloud holt) brauchen Sekunden.
+          call('toast', `„${name}“ wird geladen …`);
           try {
             const { uri, status } = await FileSystem.downloadAsync(
               `${base}/files/download?path=${encodeURIComponent(payload.path)}&token=${token}`, tmp);
@@ -212,6 +216,29 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
             refresh();
           } catch (e: any) { call('toast', `Löschen: ${e?.message ?? 'fehlgeschlagen'}`); refresh(); }
         })();
+        return true;
+      }
+
+      // Vorschau-Inhalt nativ holen (die Seite darf es nicht, s. fileTransfer.ts).
+      case 'files:fetchPreview': {
+        const reqId = String(payload?.reqId ?? '');
+        const reply = (d: Record<string, unknown>) => call('netReply', reqId, d);
+        if (!server || !token) { reply({ error: 'Kein Gerät verbunden' }); return true; }
+        const p = String(payload.path);
+        fetchPreview(`${base}/files/download?path=${encodeURIComponent(p)}&token=${token}`,
+          p, String(payload.kind ?? ''), mimeFor(baseName(p)), reply);
+        return true;
+      }
+
+      // Handy → Rechner, ein Base64-Stück nach dem anderen (Ziel kommt von der Seite:
+      // Fernzugriff-Gerät oder Explorer-Gerät).
+      case 'files:uploadPart': {
+        const reqId = String(payload?.reqId ?? '');
+        uploadPart({
+          base: String(payload.base), token: String(payload.token), dir: String(payload.dir),
+          name: String(payload.name), up: String(payload.up), part: Number(payload.part) || 0,
+          final: !!payload.final, reveal: !!payload.reveal, b64: String(payload.b64 ?? ''),
+        }, (d: Record<string, unknown>) => call('netReply', reqId, d));
         return true;
       }
 
