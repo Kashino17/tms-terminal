@@ -13,6 +13,7 @@
 
 import { nextCut, nextCutLegacy, encodeWav } from './dictation.segment';
 import type { PcmStream } from './adts-pcm';
+import type { DictationStat } from './dictation.stats';
 
 export type DictationFormat = 'adts' | 'file';
 export type DictationStatus = 'receiving' | 'processing' | 'done' | 'error';
@@ -24,6 +25,8 @@ export interface DictationDeps {
   rewrite(text: string): Promise<string>;
   /** Incremental decoder for a streamed ('adts') recording. Without it the whole upload is decoded on each pass. */
   openPcm?: () => PcmStream;
+  /** Called once for every dictation that produced a result. */
+  onDone?: (stat: DictationStat) => void;
   now(): number;
   log(msg: string): void;
 }
@@ -305,6 +308,7 @@ export class DictationManager {
         s.status = 'done';
         this.deps.log(`[dictation] ${s.id}: done — ${s.audioSecs.toFixed(1)}s audio, ${this.deps.now() - s.endedAt}ms stop->result, rest ${s.restSecs.toFixed(1)}s, compute ${s.computeMs}ms, ${text.length} chars`);
         this.emit(s, { type: 'dictation:result', id: s.id, text });
+        if (!s.cancelled) this.deps.onDone?.({ at: s.endedAt, audioSecs: s.audioSecs, waitMs: this.deps.now() - s.endedAt, restSecs: s.restSecs, specHit: false });
       } catch (err) {
         s.error = (err as Error).message || 'Transkription fehlgeschlagen';
         s.status = 'error';

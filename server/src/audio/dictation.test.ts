@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import { DictationManager, DictationDeps, DictationEvent, DictationOptions, acceptRewrite } from './dictation';
 import { nextCutLegacy } from './dictation.segment';
 import type { PcmStream } from './adts-pcm';
+import type { DictationStat } from './dictation.stats';
 
 const RATE = 16000;
 // Fake codec: every byte is 0.1s of constant-level audio, so 750 bytes = 75s.
@@ -151,6 +152,34 @@ test('a tap too short to hold audio ends with an empty result (pcm stream)', asy
   await h.mgr.idle('d1');
   assert.strictEqual(s.last('dictation:result').text, '');
   assert.strictEqual(s.last('dictation:error'), undefined);
+});
+
+test('a finished dictation reports its timing', async () => {
+  const stats: DictationStat[] = [];
+  const h = streamed({ onDone: (x) => stats.push(x) }); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(50), s.fn);
+  h.clock.t = 1000;
+  h.mgr.end('d1', 50, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(stats.length, 1);
+  assert.strictEqual(stats[0].audioSecs, 5);
+  assert.strictEqual(stats[0].restSecs, 5);
+  assert.strictEqual(stats[0].specHit, false);
+  assert.strictEqual(stats[0].at, 1000);
+});
+
+test('a failed or cancelled dictation reports no timing', async () => {
+  const stats: DictationStat[] = [];
+  const h = streamed({ onDone: (x) => stats.push(x), transcribeWav: async () => { throw new Error('boom'); } }); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(50), s.fn);
+  h.mgr.end('d1', 50, s.fn);
+  await h.mgr.idle('d1');
+  h.mgr.start('d2', 'adts', false, s.fn);
+  h.mgr.chunk('d2', 0, bytes(50), s.fn);
+  h.mgr.cancel('d2');
+  assert.strictEqual(stats.length, 0);
 });
 
 test('the legacy cut can be injected', async () => {
