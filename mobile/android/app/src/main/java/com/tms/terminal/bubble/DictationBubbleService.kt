@@ -31,7 +31,7 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
 
     companion object {
         private const val TAG = "TmsBubble"
-        private const val PUMP_MS = 2000L
+        private const val PUMP_MS = 500L // short: the server transcribes ahead when it sees a pause
         private const val LEVEL_MS = 100L
         private const val SILENCE_WATCH_MS = 2500L
         private const val RESUME_AFTER_MS = 60_000L
