@@ -4,6 +4,8 @@ _Zuletzt aktualisiert: 2026-11-10 — v1.135.0 ohne Insel; v1.134.0 Bund release
 
 ## Aktueller geprüfter Stand
 
+**Stand 2026-11-10 spätabends:** v1.141.0 getaggt (Umlaut-400-Fix Server + HEIC im Betrachter). **Offen:** `tms-terminal update` Mac + Windows (Umlaute, Stück-Upload); Gerätetest Video/PDF/HEIC-Betrachter.
+
 **Stand 2026-11-10 abends (neueste):** v1.134.0 (Bund) released + v1.135.0 „ohne Insel“ getaggt: Insel (Ping/Gebetszeit/+/Fernzugriff) entfällt, Neues Terminal + Fernzugriff oben im ⋮-Menü mit Knopf je Gerät (Nutzerwahl Variante 3 aus Mockup `mockups/insel-v1/`). Windows-Zwischenablage: `clipboard-helper.ps1` (AddClipboardFormatListener, ASCII-JSON raus, Base64 rein), auf dem echten PC E2E geprüft (Kopie→Verlauf, Handy→PC, kein Echo). Windows-PC per SSH aktualisiert (`ssh -i ~/.ssh/tms_windows kashn@100.80.72.101`, Update über einmalige geplante Aufgabe, weil SSH-Kinder sonst sterben), läuft b5d0d7b. **Offen:** Mac-Server-Neustart (beendet meine Sitzung), Gerätetest am Fold; Einstellungen zeigen noch „Aktiver Server“ (Altlast).
 
 **Stand 2026-11-10 abends:** v1.140.0 (Fernzugriff im Menü wirklich beenden; beide Server 8496966). Davor v1.139.0 live (CI grün) inkl. Explorer-Fix 0a0f3d3: Vorschau/Upload laufen über RN, weil Chromium LNA der Seite (https://tms.local) Tailnet-Zugriffe sperrt. **Offen:** `tms-terminal update` auf Mac + Windows (Stück-Upload), Gerätetest Video/PDF-Betrachter + HEIC.

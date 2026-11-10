@@ -315,3 +315,7 @@
 ## 2026-11-10 — v1.140.0 Fernzugriff-Beenden echt
 - Bug: ⋮-Menü-✕ beendete nichts am Rechner, UI sagte „beendet“. Ursache: Stopp ging über frische 2. Verbindung; Server beendete darüber nur die *ruhende* Sitzung — die laufende gehörte der pausierten Bildverbindung (remote:view false, nicht geparkt). Client markierte nach 0,8 s blind als beendet. Alter E2E-Test hatte __closeRemoteDevice gestubbt → Fehler verdeckt.
 - Fix 1d5061f: Server `live`-Register (remote:stop von irgendwo beendet laufende/ruhende Sitzung, bestätigt immer); Menü → TMSRemote.closeDevice (Stopp über eigene ws, kein Reconnect, Bestätigung über frische ws, Ring erst mit remote:stopped weg, sonst ehrliche Meldung). Beide Server auf 8496966.
+
+## 2026-11-10 — v1.141.0 Dateien holen: Umlaute + HEIC
+- Gerätetest: Vorschau/Teilen/Laden → HTTP 400 bei „Görfidan Rückseite.PNG“. Ursache Server: Dateiname roh in Content-Disposition; macOS-NFD (o+U+0308) bzw. ı sind kein Latin-1 → Node wirft „Invalid character in header content“, catch → 400. Fix e88910d `disposition.util.ts` (RFC 6266 filename*=UTF-8''), auch ZIP. Braucht `tms-terminal update` Mac + Windows.
+- HEIC/HEIF öffnet im Android-Betrachter (Seite schickt kind 'heic' → nativer Intent-Pfad), ff0cc18.
