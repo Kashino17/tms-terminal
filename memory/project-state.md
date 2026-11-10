@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-10 — Fernzugriff: Dateien senden/holen; Release v1.133.0_
+_Zuletzt aktualisiert: 2026-11-10 — Bund (kein Hauptserver); v1.134.0 lokal fertig, Push offen_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-10 nachmittags (neueste):** v1.134.0 „Bund“ fertig und lokal committet (43bd83b, Branch feat/fernzugriff im Live-Tree), **Push + Tag v1.134.0 noch offen** (Freigabe durch Nutzer). Kein Hauptserver mehr: alles folgt dem Terminal vorne (`bund/devices.core.mjs`, `activeDev`, Seite bekommt `setActiveDevice`). Explorer neu (Start ~/Desktop, Vorschau, Mehrfachauswahl + Papierkorb mit Rückfrage), Zwischenablage/Snippets/Notizen auf dem Handy (durableStorage), Diktat nur über Gerät mit `caps:['dictation']` (/health), Ping alle 3 s Median, Desk-Layout aufgeklappt (Seitenleiste nach Gerät, ein-/ausfahrbar). Manager, SQL, Watcher entfernt. Spec `docs/superpowers/specs/2026-11-10-bund-design.md`. Tests: Server 443, Mockup 147, `webview-bund` 13 (Playwright, TMS_VIZ_PW) grün. Server-dist gebaut. **Offen:** Push/Tag → CI; MacBook-Server neu starten; Windows `tms-terminal update`; Gerätetest am Fold; aufgeschobene Minors im Ledger (Insel-Status folgt nur Anker, Windows-Zwischenablage, .webview-test.html eingecheckt).
 
 **Stand 2026-11-10 nachts (neueste):** Release v1.133.0: Fernzugriff → Dateien. Senden: Android-Dateiwähler (`<input type=file>` in der WebView, kein neues natives Modul) → XHR POST `/files/upload?dir&name&reveal&token` (roh gestreamt, Home-Grenze + gesperrte Pfade, nie überschreiben „(2)“, Finder/Explorer markiert, CORS + Private-Network-Kopf, OPTIONS vor Token-Prüfung). Holen: `files:openOn {id,path}` stellt den Explorer aufs Fernzugriff-Gerät um (pending path bis nach dem Wechsel), Schnellzugriffe Schreibtisch/Downloads/Dokumente/iCloud Drive (Live-Server liest iCloud, geprüft)/Home, Krumen „☁ iCloud Drive“, „‹ Fernzugriff“, „Hierher hochladen“. Tests: Server 578 grün, WebView 14 grün. **Offen:** `tms-terminal update` auf Mac + Windows (Upload braucht neuen Server; alter → „Server zu alt“), Gerätetest Dateiwähler/iCloud-Dateien, die nur in der Cloud liegen (Download beim Lesen).
 

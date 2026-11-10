@@ -283,3 +283,9 @@
 - Mockup mit Nutzer: Bild = Trackpad, eine Leiste, Menü am Geräte-Chip; Runde 2: Pad-Fläche raus, Füllen/Ganz statt Leerraum, alles matt statt Glas.
 - Live: bridge.js entschlackt (−233 Zeilen alter Zoom/Layout/Zeiger), neuer WebView-Test v2 (Fläche gefüllt, Gesten → Eingaben, Tastatur verkleinert nicht); Test fand „Füllen schrumpft bei Tastatur“ → behoben. Alle Mobile-Tests grün.
 - Nachgelegt v1.133.0: Dateien senden/holen im Fernzugriff (Upload-Endpunkt, Explorer aufs Fernzugriff-Gerät inkl. iCloud Drive). Test fand Private-Network-Vorabfrage → Kopf + OPTIONS vor Auth.
+
+## 2026-11-10 — Bund: kein Hauptserver (v1.134.0, Push offen)
+- Ursache Dateien/Upload aufs falsche Gerät: alles hing an servers[0]; Umbau auf Geräte-Routing nach Terminal vorne.
+- Mockup mit Nutzer über mehrere Runden (Leiste minimal, Desk-Layout, Karten mit Griff), dann Spec + Plan + 12 Tasks inline.
+- E2E der echten Seite fand: Bund-Demo-Knopf warf in der App (brach setServers ab). Review (Opus): 6 Important (Browser-Bridge 2. Gerät, Holen, Desk-+, Diktat-caps, Filter, Desk-Status) + 3 hochgestufte Minors — alle mit Test rot→grün behoben.
+- Push/Tag vom Auto-Modus blockiert → Nutzer muss freigeben.
