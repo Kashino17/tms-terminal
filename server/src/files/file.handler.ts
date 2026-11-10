@@ -1,3 +1,4 @@
+import { contentDisposition } from './disposition.util';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
@@ -169,7 +170,6 @@ export function handleFileDownload(req: http.IncomingMessage, res: http.ServerRe
     // triggers a download instead of playing.
     const isInline = mime.startsWith('image/') || mime.startsWith('video/')
       || mime.startsWith('audio/') || mime === 'application/pdf';
-    const safeFilename = filename.replace(/"/g, '\\"');
 
     const range = parseRange(req.headers.range as string | undefined, stat.size);
     if (range === 'unsatisfiable') {
@@ -180,7 +180,7 @@ export function handleFileDownload(req: http.IncomingMessage, res: http.ServerRe
 
     const headers: Record<string, string> = {
       'Content-Type': mime,
-      'Content-Disposition': `${isInline ? 'inline' : 'attachment'}; filename="${safeFilename}"`,
+      'Content-Disposition': contentDisposition(isInline ? 'inline' : 'attachment', filename),
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'max-age=300',
     };

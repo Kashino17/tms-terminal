@@ -131,3 +131,15 @@ test('/files/read: kleine Datei → nicht gekürzt', async () => {
   assert.strictEqual(d.content, '# Hallo\n');
   assert.strictEqual(d.truncated, false);
 });
+
+test('Download: Umlaute/NFD/ı im Namen → 200 + RFC-5987-Dateiname statt 400', async () => {
+  const name = 'Görfıdan Rückseite "x".PNG'.normalize('NFD');
+  fs.writeFileSync(path.join(dir, name), 'img');
+  const r = await fetch(`${base}/files/download?path=${encodeURIComponent(path.join(dir, name))}`);
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(await r.text(), 'img');
+  const cd = r.headers.get('content-disposition') ?? '';
+  assert.match(cd, /^inline; filename="[\x20-\x7e]+"; filename\*=UTF-8''/);
+  const star = decodeURIComponent(cd.split("filename*=UTF-8''")[1]);
+  assert.strictEqual(star, name.normalize('NFC'));
+});
