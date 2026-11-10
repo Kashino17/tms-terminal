@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Dateien holen repariert: Vorschau, Teilen und Laden funktionieren wieder - Bilder erscheinen direkt in der Vorschau, Videos und PDFs oeffnen im Android-Player bzw. -Betrachter, iPhone-Fotos (HEIC) im Foto-Betrachter. Meldungen liegen jetzt sichtbar ueber dem Explorer. Senden vom Handy laeuft stueckweise ueber die App. Wichtig: Fuer Dateien mit Umlauten und fuers Senden einmal tms-terminal update auf Mac und Windows-PC ausfuehren. Vor dem Update Play Protect kurz pausieren." \
+            --notes "Neue Einstellungen: eine Seite fuer alles, mit Suche, Diktat-Bubble oben und Kategorien mit Symbol und Zustand auf einen Blick. Die klassischen Einstellungen sind uebernommen, Attrappen sind raus. Installieren zeigt jetzt sofort, dass der Installer sich oeffnet - einmal tippen reicht. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
