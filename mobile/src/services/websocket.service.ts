@@ -1,4 +1,5 @@
 import { RttWindow } from './rtt.core.mjs';
+import { pingPlan } from '../season2/attention.core.mjs';
 import NetInfo, { NetInfoState, NetInfoStateType } from '@react-native-community/netinfo';
 import { WebSocketConfig, ConnectionState } from '../types/websocket.types';
 
@@ -62,6 +63,22 @@ export class WebSocketService {
   private currentPingInterval = PING_INTERVAL_NORMAL;
   private consecutivePoorCount = 0;                     // track sustained poor RTT
   private largeTransferUntil = 0;                       // watchdog grace window during big uploads
+  /** Sparmodus: die App ist nicht zu sehen → selten pingen, geduldiger Wächter. */
+  private quiet = false;
+
+  /**
+   * Sparmodus an/aus. Unsichtbar zeigt niemand einen Ping an; jeder Ping weckt
+   * aber das Funkmodul (bisher alle 3 s, auch im Hintergrund). Sichtbar wird
+   * sofort wieder gemessen — so fällt eine inzwischen tote Leitung gleich auf.
+   */
+  setQuiet(quiet: boolean): void {
+    if (quiet === this.quiet) return;
+    this.quiet = quiet;
+    if (!this.pingTimer) return; // nicht verbunden: gilt ab dem nächsten Aufbau
+    this.restartPingWithInterval(quiet ? pingPlan(true).pingMs : this.currentPingInterval);
+    this.resetWatchdog();
+    if (!quiet) this.doPing();
+  }
 
   get state(): ConnectionState {
     return this._state;
@@ -297,7 +314,7 @@ export class WebSocketService {
     const targetInterval = shouldBeFast ? PING_INTERVAL_FAST : PING_INTERVAL_NORMAL;
     if (targetInterval !== this.currentPingInterval) {
       this.currentPingInterval = targetInterval;
-      this.restartPingWithInterval(targetInterval);
+      if (!this.quiet) this.restartPingWithInterval(targetInterval);
     }
 
     // NOTE: There used to be a forced reconnect here when smoothed RTT stayed
@@ -313,7 +330,7 @@ export class WebSocketService {
     this.currentPingInterval = PING_INTERVAL_NORMAL;
     this.pingTimer = setInterval(() => {
       this.doPing();
-    }, this.currentPingInterval);
+    }, this.quiet ? pingPlan(true).pingMs : this.currentPingInterval);
   }
 
   private doPing(): void {
@@ -359,7 +376,7 @@ export class WebSocketService {
         this.reconnectAttempts = 0;
         this.doConnect();
       }
-    }, WATCHDOG_TIMEOUT);
+    }, this.quiet ? pingPlan(true).watchdogMs : WATCHDOG_TIMEOUT);
   }
 
   private stopWatchdog(): void {
@@ -424,8 +441,16 @@ export function getConnection(serverId: string): WebSocketService {
   if (existing) return existing;
 
   const ws = new WebSocketService();
+  ws.setQuiet(poolQuiet);
   connectionPool.set(serverId, ws);
   return ws;
+}
+
+/** Sparmodus für alle Verbindungen (App sichtbar / unsichtbar) — auch für später angelegte. */
+let poolQuiet = false;
+export function setConnectionsQuiet(quiet: boolean): void {
+  poolQuiet = quiet;
+  for (const ws of connectionPool.values()) ws.setQuiet(quiet);
 }
 
 /**

@@ -31,7 +31,8 @@ import { adhanNativeAvailable, adhanStatus, adhanPermsForPage, openAdhanPermissi
 import { clearDurableStorage } from '../services/durableStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CHECK_EVERY_MS, RESUME_GAP_MS, shouldCheck } from '../services/update.core.mjs';
-import { getConnection, type WebSocketService } from '../services/websocket.service';
+import { getConnection, setConnectionsQuiet, type WebSocketService } from '../services/websocket.service';
+import { planAttention } from './attention.core.mjs';
 import { useS2ConnStore, useS2Connection, type S2Server } from './s2conn/connection';
 import {
   setAdhanEnabled, setFajrWecker, setSelectedAdhan, readAdhanSettings,
@@ -181,6 +182,26 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     const id = activeDeviceId(activeSidRef.current, sessionServer.current, devicesRef.current)
       ?? useS2ConnStore.getState().server?.id ?? null;
     if (id !== activeDevRef.current) { activeDevRef.current = id; setActiveDev(id); }
+  }, []);
+  // ── Aufmerksamkeit → Server (Sparmodus). Jedes Gerät erfährt, ob die App zu
+  // sehen ist und welches Terminal vorne liegt; es bündelt danach die Ausgabe
+  // verdeckter Terminals und hält sie ganz zurück, solange niemand hinsieht.
+  // Am Fold gemessen liefen sonst ~13 Nachrichten/s durch — auch im Hintergrund.
+  const focusRef = useRef<string | null>(null);
+  const attentionSent = useRef<Record<string, string>>({});
+  const syncAttention = useCallback(() => {
+    const anchor = useS2ConnStore.getState().server?.id;
+    const ids = new Set<string>(peersRef.current.map((p) => p.id));
+    if (anchor) ids.add(anchor);
+    const foreground = AppState.currentState === 'active';
+    const plan = planAttention(
+      [...ids].map((id) => ({ id, connected: getConnection(id).state === 'connected' })),
+      attentionSent.current, foreground, focusRef.current,
+    );
+    attentionSent.current = plan.sent;
+    for (const id of plan.send) {
+      getConnection(id).send({ type: 'client:attention', payload: { foreground, focus: focusRef.current } } as never);
+    }
   }, []);
   /** Browser-Bridge: Gerät, dessen Terminal den Login geöffnet hat. */
   const pendingLoginSrv = useRef<string | null>(null);
@@ -761,10 +782,13 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
-    const run = () => { if (!cancelled) pushServers(); };
+    // SPARMODUS: die /health-Abfragen aller Geräte nur, solange die App zu sehen
+    // ist — jede davon weckt das Funkmodul. Bei der Rückkehr wird sofort nachgeholt.
+    const run = () => { if (!cancelled && AppState.currentState === 'active') pushServers(); };
     run();
     const t = setInterval(run, 20_000);
-    return () => { cancelled = true; clearInterval(t); };
+    const sub = AppState.addEventListener('change', (next) => { if (next === 'active') run(); });
+    return () => { cancelled = true; clearInterval(t); sub.remove(); };
   }, [ready, pushServers]);
 
   // ── Update-Banner, getrennt vom Server-Status.
@@ -911,6 +935,11 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // document.hidden allein reicht auf Android-WebViews nicht: es feuert nicht
       // zuverlässig, wenn die Activity nur pausiert (Bildschirm aus, App im Hintergrund).
       call('setAppActive', next === 'active');
+      // SPARMODUS: unsichtbar → der Server hält die Ausgabe zurück, die
+      // Verbindungen prüfen sich nur noch selten. Sichtbar → alles sofort.
+      setConnectionsQuiet(next !== 'active');
+      if (next === 'active') attentionSent.current = {}; // sicher neu melden (stiller Socket-Tausch)
+      syncAttention();
       // Die Historie wird jetzt erst geschrieben, wenn der Strom zur Ruhe kommt —
       // beim Verlassen der App darf sie nicht im Ruhe-Fenster hängen bleiben.
       if (next !== 'active') flushScrollback();
@@ -919,7 +948,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       setTimeout(() => call('reattachAll'), 350);
     });
     return () => sub.remove();
-  }, [ready, call]);
+  }, [ready, call, syncAttention]);
 
   // ── Once connected, hand the page the sessions that already exist.
   useEffect(() => {
@@ -956,6 +985,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     let n = 0;
     const tick = () => {
       if (!scrollbackReady.current) return;
+      // Auch nach einem Verbindungsaufbau (dort beginnt der Server bei „alles live").
+      syncAttention();
       n += 1;
       const lat: Record<string, number | null> = {};
       for (const p of peers) {
@@ -986,12 +1017,13 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           conn.send({ type: 'browserbridge:toggle', payload: { enabled: useSettingsStore.getState().browserBridgeEnabled } } as never);
         }
       }
-      if (n % 3 === 1 && Object.keys(lat).length) call('setServerLatency', lat);
+      // Niemand sieht den Ping, solange die App unsichtbar ist.
+      if (n % 3 === 1 && Object.keys(lat).length && AppState.currentState === 'active') call('setServerLatency', lat);
     };
     tick();
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
-  }, [ready, server, peers, tabsHydrated, call]);
+  }, [ready, server, peers, tabsHydrated, call, syncAttention]);
 
   /** Verbindung des Servers, zu dem diese Sitzung gehört (sonst der Hauptserver). */
   const connFor = useCallback((sessionId?: string) => {
@@ -1394,6 +1426,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       }
 
       // Ein anderes Terminal ist nach vorne gekommen (Tipp in der Leiste, Wischen …).
+      // Was die Seite gerade zeigt — der Server taktet die Ausgabe danach.
+      case 'term:focus': {
+        const f = payload?.focus;
+        focusRef.current = typeof f === 'string' ? f : null;
+        syncAttention();
+        break;
+      }
+
       case 'term:active': {
         const sid = (payload?.sessionId as string | null) || null;
         activeSidRef.current = sid;
@@ -1708,6 +1748,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       // Fernzugriff-Knopf auf einer Geraetekarte angetippt: die Seite baut ihre
       // eigene Bildverbindung zum Server auf (siehe window.TMSRemote in bridge.js)
       // — wir reichen nur Host/Port/Token durch, Bilddaten sieht React Native nie.
+      // Ton vom Rechner läuft (Fernzugriff mit Ton): nur dann das Handy wach halten.
+      case 'remote:sound': {
+        try { NativeModules.ConnectionService?.setKeepAwake?.(!!payload?.on); } catch {}
+        break;
+      }
+
       case 'remote:open': {
         const targetId = payload.id as string;
         (async () => {

@@ -81,6 +81,7 @@
     --glass: rgba(var(--glass-rgb),0.10);
     --glass-strong: rgba(var(--glass-rgb),0.15);
     --card-matte: #3b3f46;                 /* deckende Terminal-Karte (Darstellung › Matt) ≈ Glas über dem Grund */
+    --bar-matte: #33363e;                  /* deckende Eingabezeile + Tastenleiste */
     --overlay-rgb: 255,255,255;            /* hairlines / hover / press / dividers — inverts per theme */
     --glass-border: rgba(var(--overlay-rgb),0.26);
     --glass-shadow: 0 10px 30px rgba(0,0,0,.28);
@@ -111,6 +112,7 @@
     --glass: rgba(var(--glass-rgb),0.65);
     --glass-strong: rgba(var(--glass-rgb),0.82);
     --card-matte: #f4f6fa;
+    --bar-matte: #f1f4f9;
     --overlay-rgb: 15,23,42;                /* dark slate tint, inverted vs dark theme */
     --glass-border: rgba(var(--overlay-rgb),0.16);
     --glass-shadow: 0 14px 40px rgba(15,23,42,.14), 0 2px 10px rgba(15,23,42,.08);
@@ -557,8 +559,11 @@
 
   /* Aufnahme-Leiste: Spur, Timer, Abbrechen, Übernehmen. */
   .rec-wave { flex: 1; display: flex; align-items: center; justify-content: center; gap: 3px; height: 34px; min-width: 0; overflow: hidden; }
-  .rec-wave span { width: 3px; height: var(--h, 18px); border-radius: 2px; background: var(--accent); opacity: .85;
-    animation: rec-bounce 900ms ease-in-out infinite; }
+  .rec-wave span { width: 3px; height: var(--h, 18px); border-radius: 2px; background: var(--accent); opacity: .85; }
+  /* Nur während einer Aufnahme: die Balken liefen sonst unsichtbar endlos weiter
+     und hielten den Compositor wach (am Fold gemessen: 7 % statt 1 % Rechenzeit,
+     dauerhaft, auf jedem Bildschirm). */
+  #dock[data-page="rec"] .rec-wave span { animation: rec-bounce 900ms ease-in-out infinite; }
   /* scaleY statt height: die Balken hüpfen auf dem Compositor, nicht im Layout. */
   @keyframes rec-bounce { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
   .rec-timer { flex: none; min-width: 44px; text-align: center; font: 700 13px var(--font-mono); color: var(--text); font-variant-numeric: tabular-nums; }
@@ -568,7 +573,7 @@
   .rec-btn--confirm { color: var(--ok); background: rgba(var(--ok-rgb),.16); }
   .rec-btn:active { transform: scale(.92); }
   #dock[data-page="rec"] { border-color: rgba(var(--accent-rgb),.5); }
-  .dock-page--rec.is-transcribing .rec-wave span { animation: none; height: 5px; opacity: .35; }
+  #dock .dock-page--rec.is-transcribing .rec-wave span { animation: none; height: 5px; opacity: .35; }
   #dock::before { content: ''; position: absolute; left: 14%; right: 14%; top: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(var(--sheen-rgb),var(--sheen-a)), transparent); }
   .dock-btn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; width: 58px; padding: 7px 2px 6px; border-radius: var(--radius-pill); color: var(--text-dim); transition: color 250ms var(--spring), background 250ms var(--spring); }
   .dock-btn svg { width: var(--icon-md); height: var(--icon-md); }
@@ -768,15 +773,15 @@
      Karte einen bildschirmgroßen GPU-Layer am Leben (≥10 MB VRAM pro Karte,
      Compositing-Arbeit in jedem Frame). Transitionen promoten sich selbst. */
   .stack.is-dragging .stack-card { will-change: transform, opacity; }
-  /* FLACKERN — Varianten zum Vergleich am Gerät (Darstellung › Terminal-Karten).
-     Standard bleibt Glas auf jeder Karte (Stand v1.144). v1.145.0 nahm den
-     Karten dahinter das Glas: im Emulator weniger GPU-Last und keine Blöcke
-     mehr beim Wechsel — am Fold flackerte es danach aber DAUERND. Der Emulator
-     zeichnet anders als das Gerät; entschieden wird darum am Gerät.
-     front = Glas nur auf der vorderen Karte; matte = keine Unschärfe, deckend
-     (nichts scheint durch, kein backdrop-filter über wechselnden Inhalten). */
-  body.cards-front .stack-card:not(.is-active) { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  /* ARBEITSFLÄCHE MATT (Standard) oder GLAS — Darstellung › Terminal-Karten.
+     Matt = keine Unschärfe, deckende Flächen: nichts scheint durch, und kein
+     backdrop-filter muss bei jedem Bild neu gerechnet werden. „Glas nur vorne"
+     (v1.145.0) gibt es nicht mehr — am Fold flackerte das dauernd. */
   body.cards-matte .stack-card { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--card-matte); }
+  /* Matt gilt für die ganze Arbeitsfläche: auch Tastenleiste und Eingabezeile.
+     Am Fold gemessen (Bildzeit, Median): Glas überall 21–26 ms — über dem
+     16,6-ms-Fenster, also ruckelnd; Karten matt 15 ms; ganz ohne Unschärfe 12 ms. */
+  body.cards-matte #globalKeys, body.cards-matte #dock { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--bar-matte); }
   .card-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; cursor: grab; }
   .card-tag { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   /* Die Terminalfarbe ist der obere Rand der Karte: halbtransparent, folgt der

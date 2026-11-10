@@ -51,6 +51,7 @@
   // Wechsel werden gemeldet.
   var lastActiveSid = null;
   window.__tmsReportActive = function () {
+    if (typeof window.__tmsReportFocus === 'function') window.__tmsReportFocus();
     var st = window.__tmsState;
     var cardId = st && st.order ? st.order[st.activeIndex] : null;
     var sid = (cardId && byCard[cardId]) || null;
@@ -59,6 +60,37 @@
     lastActiveSid = sid;
     post('term:active', { sessionId: sid });
   };
+
+  // ── Aufmerksamkeit: welches Terminal ist wirklich zu sehen? ───────────────
+  // Der Server sendet danach: das Terminal vorne sofort, verdeckte gebündelt
+  // (server/src/websocket/output.pacer.ts). Gemeldet wird nur ein echter
+  // Wechsel. Die Regel selbst steht in attention.core.mjs (getestet).
+  var lastFocus;
+  window.__tmsReportFocus = function () {
+    var st = window.__tmsState;
+    if (!st || typeof window.__tmsFocusOf !== 'function') return;
+    var screen = document.querySelector('section[data-screen="terminals"]');
+    var compact = document.body.classList.contains('compact-terminal');
+    var cardId = compact && typeof window.dockTargetId === 'function' ? window.dockTargetId() : st.order[st.activeIndex];
+    var focus = window.__tmsFocusOf({
+      terminalsVisible: !!screen && !screen.hidden,
+      remote: document.body.classList.contains('remote-focus'),
+      overview: !!st.overviewOpen,
+      listView: st.terminalView === 'list',
+      compact: compact,
+      activeSession: (cardId && byCard[cardId]) || null,
+    });
+    if (focus === lastFocus) return;
+    lastFocus = focus;
+    post('term:focus', { focus: focus });
+  };
+  // Ansichtswechsel (Liste/Stapel, Übersicht, Sheets) laufen über viele kleine
+  // Funktionen der Seite — statt jede einzeln zu umwickeln, wird nach jeder
+  // Berührung einmal nachgesehen. Gesendet wird ohnehin nur bei Änderung.
+  var focusT = 0;
+  function focusSoon() { clearTimeout(focusT); focusT = setTimeout(window.__tmsReportFocus, 350); }
+  document.addEventListener('click', focusSoon, true);
+  document.addEventListener('pointerup', focusSoon, true);
 
   // ── The mockup asks for this while building cardState (see the builder's
   //    source patch). Every card therefore owns a "sim" that talks to the PTY,
@@ -1986,6 +2018,7 @@
     curScreen = name;
     origShow(name);
     post('nav:screen', { screen: name });
+    window.__tmsReportFocus();
     if (name === 'browser') setTimeout(syncNativeBrowser, 80);
     // Bildschirm verlassen: der native WebView wird nicht nur unsichtbar, er wird
     // ABGEBAUT (onBrowserScreen: false) — sonst liefe seine Seite im Hintergrund weiter.
@@ -3490,6 +3523,16 @@
     var retry = 0;
     var retryTimer = null;
     var wantRunning = false;
+    // Ton vom Rechner soll auch bei ausgeschaltetem Bildschirm weiterlaufen:
+    // nur DANN hält die App das Handy wach (ConnectionService.setKeepAwake) —
+    // früher hielt sie es immer wach, sobald „Hintergrund-Verbindung" an war.
+    var soundAwake = false;
+    function reportSound() {
+      var on = !!wantRunning && !!(remoteOpts && remoteOpts.audio);
+      if (on === soundAwake) return;
+      soundAwake = on;
+      post('remote:sound', { on: on });
+    }
     // N1 (Nachpruefung): waehrend einer Hintergrund-Unterbrechung (suspend())
     // muss der normale Wiederverbindungs-Weg in onclose() stillliegen — sonst
     // sieht der ohnehin noch anhaengende onclose nach dem Schliessen
@@ -4038,6 +4081,7 @@
       if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
       if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
       wantRunning = false;
+      reportSound();
       suspended = false;
       if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
       var old = ws;
@@ -4100,6 +4144,7 @@
       start: function (which) {
         preset = which || preset;
         wantRunning = true;
+        reportSound();
         suspended = false; // ein expliziter Start raeumt einen etwaigen Rest auf
         if (typeof window.buildRemoteScreen === 'function' && !document.getElementById('remoteStage')) {
           window.buildRemoteScreen();
@@ -4130,6 +4175,7 @@
         // der noch anhaengende onclose-Handler kurz "wantRunning === true"
         // und plant faelschlich einen Wiederverbindungs-Zeitgeber.
         wantRunning = false;
+        reportSound();
         suspended = false;
         // keepMark: closeDevice() nimmt den Ring erst mit der Bestaetigung weg.
         if (!(opts && opts.keepMark === true)) setRemoteAlive(curDev(), false);
@@ -4188,6 +4234,7 @@
         if (name !== 'audio' && name !== 'curtain') return;
         remoteOpts[name] = !remoteOpts[name];
         saveRemoteOpts();
+        reportSound();
         renderRemoteOpts();
         if (name === 'audio') { if (remoteOpts.audio) soundCtx(); else soundReset(); }
         if (typeof window.toast === 'function') {

@@ -129,4 +129,17 @@ class BubbleRulesTest {
         assertFalse(BubbleRules.isPasswordInput(n))
         assertFalse(BubbleRules.isPasswordInput(0))
     }
+
+    // Energie: die Zeichen-Uhr der Bubble lief endlos und malte mit voller
+    // Bildrate, auch wenn die Bubble nur dastand (am Fold gemessen: 7–8 %
+    // RenderThread + 3 % Hauptthread, solange eine Tastatur offen ist).
+    // Sie läuft nur, wenn sich wirklich etwas bewegt.
+    @Test fun frameClockRestsWhileIdle() = assertFalse(BubbleRules.needsFrameClock(recording = false, processing = false, spinAlpha = 0f))
+    @Test fun frameClockRunsWhileRecording() = assertTrue(BubbleRules.needsFrameClock(recording = true, processing = false, spinAlpha = 0f))
+    @Test fun frameClockRunsWhileProcessing() = assertTrue(BubbleRules.needsFrameClock(recording = false, processing = true, spinAlpha = 0f))
+    // Der Bogen blendet nach dem Verarbeiten noch aus — solange dreht er weiter.
+    @Test fun frameClockRunsUntilSpinnerFaded() {
+        assertTrue(BubbleRules.needsFrameClock(recording = false, processing = false, spinAlpha = 0.4f))
+        assertFalse(BubbleRules.needsFrameClock(recording = false, processing = false, spinAlpha = 0.005f))
+    }
 }

@@ -607,25 +607,24 @@ if (!PW) {
     } finally { await browser.close(); }
   });
 
-  // Flackern: v1.145.0 nahm den Karten dahinter das Glas — im Emulator besser,
-  // am Fold flackerte es danach DAUERND. Emulator ≠ Gerät. Darum: Standard wie
-  // bis v1.144 (Glas auf allen Karten), und in Darstellung › Terminal-Karten
-  // lassen sich die Varianten am Gerät live vergleichen (bleibt gespeichert).
-  test('Terminal-Karten: Standard Glas überall, umschaltbar auf „nur vorne“ und „Matt“', async () => {
+  // Arbeitsfläche matt als Standard: am Fold gemessen braucht ein Bild mit
+  // Milchglas 21–26 ms (über dem 16,6-ms-Fenster), matt 12–15 ms. Glas bleibt
+  // wählbar. „Glas nur vorne" (v1.145.0) flackerte am Gerät dauernd — entfernt.
+  test('Arbeitsfläche: Standard matt (Karten, Tastenleiste, Eingabezeile), Glas wählbar', async () => {
     const { browser, page, errors } = await boot();
     try {
-      await page.evaluate(() => { for (let i = 0; i < 4; i++) window.addTerminal(); show('terminals'); setActive(1); });
-      await page.waitForTimeout(450);
-      const cards = () => page.evaluate(() => [...document.querySelectorAll('.stack-card')].map((c) => {
-        const cs = getComputedStyle(c);
-        const m = cs.backgroundColor.match(/rgba?\(([^)]+)\)/);
-        const a = m && m[1].split(',').length === 4 ? Number(m[1].split(',')[3]) : 1;
-        return { active: c.classList.contains('is-active'), blur: cs.backdropFilter !== 'none', alpha: a };
-      }));
-      let c = await cards();
-      assert.ok(c.length >= 4, 'Karten da');
-      assert.equal(c.filter((x) => x.blur).length, c.length, 'Standard: jede Karte mit Glas (wie v1.144)');
-      // Umschalten über die Einstellungen
+      await page.evaluate(() => { for (let i = 0; i < 4; i++) window.addTerminal(); show('terminals'); setActive(1); toggleKeysPanel(); });
+      await page.waitForTimeout(700);
+      const look = () => page.evaluate(() => {
+        const one = (el) => { const cs = getComputedStyle(el); const m = cs.backgroundColor.match(/rgba?\(([^)]+)\)/);
+          return { blur: cs.backdropFilter !== 'none', alpha: m && m[1].split(',').length === 4 ? Number(m[1].split(',')[3]) : 1 }; };
+        return { cards: [...document.querySelectorAll('.stack-card')].map(one), keys: one(document.getElementById('globalKeys')), dock: one(document.getElementById('dock')) };
+      });
+      let l = await look();
+      assert.ok(l.cards.length >= 4, 'Karten da');
+      assert.equal(l.cards.filter((x) => x.blur).length, 0, 'Standard: keine Karte mit Unschärfe');
+      assert.ok(l.cards.every((x) => x.alpha === 1), 'Karten deckend — nichts scheint durch');
+      assert.deepEqual([l.keys.blur, l.keys.alpha, l.dock.blur, l.dock.alpha], [false, 1, false, 1], 'Tastenleiste + Eingabezeile matt und deckend');
       const pick = async (v) => {
         await page.evaluate(() => { show('settings'); window.__settingsOpen('darstellung'); });
         await page.waitForTimeout(200);
@@ -634,18 +633,18 @@ if (!PW) {
         await page.evaluate(() => show('terminals'));
         await page.waitForTimeout(200);
       };
-      await pick('front');
-      c = await cards();
-      assert.equal(c.filter((x) => x.blur).length, 1, 'nur vorne: genau eine Karte mit Glas');
-      assert.ok(c.find((x) => x.active).blur, 'nur vorne: die vordere Karte');
-      await pick('matte');
-      c = await cards();
-      assert.equal(c.filter((x) => x.blur).length, 0, 'Matt: keine Unschärfe');
-      assert.ok(c.every((x) => x.alpha === 1), 'Matt: deckend — nichts scheint durch');
-      assert.equal(await page.evaluate(() => localStorage.getItem('tms-card-look')), 'matte', 'bleibt gespeichert');
       await pick('glass');
-      c = await cards();
-      assert.equal(c.filter((x) => x.blur).length, c.length, 'zurück auf Glas');
+      l = await look();
+      assert.equal(l.cards.filter((x) => x.blur).length, l.cards.length, 'Glas: jede Karte');
+      assert.deepEqual([l.keys.blur, l.dock.blur], [true, true], 'Glas: auch die Leisten');
+      assert.equal(await page.evaluate(() => localStorage.getItem('tms-card-look')), 'glass', 'bleibt gespeichert');
+      await pick('matte');
+      l = await look();
+      assert.equal(l.cards.filter((x) => x.blur).length, 0, 'zurück auf matt');
+      // Alte Auswahl aus v1.145.1 („nur vorne") fällt auf den Standard zurück
+      await page.evaluate(() => localStorage.setItem('tms-card-look', 'front'));
+      await page.reload(); await page.waitForTimeout(600);
+      assert.equal(await page.evaluate(() => document.body.classList.contains('cards-matte')), true);
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });
@@ -714,6 +713,62 @@ if (!PW) {
       await page.evaluate(() => { toggleKeysPanel(); });
       await page.waitForTimeout(300);
       assert.equal(await page.locator('#globalKeys [data-tt-key="esc"]').count(), 1);
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  // Sparmodus: die Seite meldet, welches Terminal wirklich zu sehen ist — der
+  // Server bündelt danach die Ausgabe der verdeckten (am Fold: ~13 Nachrichten/s
+  // von KI-Spinnern, die meisten für Terminals, die niemand sah).
+  test('Aufmerksamkeit: die Seite meldet das Terminal vorne, „keins“ auf anderen Bildschirmen, „alle“ in der Übersicht', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await page.evaluate(() => {
+        window.TMSBridge.restoreSessions([
+          { sessionId: 'S-A', name: 'Eins', serverId: 'A' },
+          { sessionId: 'S-B', name: 'Zwei', serverId: 'A' },
+        ]);
+        show('terminals'); setActive(0);
+      });
+      await page.waitForTimeout(500);
+      const last = async () => { const p = await posts('term:focus'); return p.length ? p[p.length - 1].payload.focus : undefined; };
+      assert.equal(await last(), 'S-A', 'Terminal vorne');
+      await page.evaluate(() => setActive(1));
+      await page.waitForTimeout(100);
+      assert.equal(await last(), 'S-B', 'nach dem Wechsel das andere');
+      const n = (await posts('term:focus')).length;
+      await page.evaluate(() => setActive(1));
+      assert.equal((await posts('term:focus')).length, n, 'kein Wechsel → keine Meldung');
+      await page.evaluate(() => show('servers'));
+      assert.equal(await last(), '', 'anderer Bildschirm: kein Terminal zu sehen');
+      await page.evaluate(() => show('terminals'));
+      assert.equal(await last(), 'S-B', 'zurück bei den Terminals');
+      await page.evaluate(() => { toggleOverview(true); document.body.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+      await page.waitForTimeout(500);
+      assert.equal(await last(), null, 'Übersicht: mehrere sichtbar → alle live');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  // Am Fold gemessen: 22 Aufnahme-Balken liefen unsichtbar endlos weiter und
+  // hielten den Compositor der Seite bei 7 % Rechenzeit (angehalten: 1 %).
+  test('Aufnahme-Balken bewegen sich nur während einer Aufnahme', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      await page.evaluate(() => { for (let i = 0; i < 2; i++) window.addTerminal(); show('terminals'); });
+      await page.waitForTimeout(400);
+      const bars = () => page.evaluate(() => document.getAnimations().filter((a) => a.animationName === 'rec-bounce' && a.playState === 'running').length);
+      assert.equal(await bars(), 0, 'Ruhe: kein Balken animiert');
+      await page.evaluate(() => { window.dockRecordingStart(); });
+      await page.waitForTimeout(400);
+      assert.ok(await bars() > 0, 'Aufnahme läuft: Balken bewegen sich');
+      // Verarbeiten: Balken stehen still (flache Linie), obwohl die Seite noch „rec" ist
+      await page.evaluate(() => { window.dockRecordingTranscribing(); });
+      await page.waitForTimeout(300);
+      assert.equal(await bars(), 0, 'beim Verarbeiten stehen die Balken');
+      await page.evaluate(() => { window.dockRecordingEnd('', 'term'); });
+      await page.waitForTimeout(500);
+      assert.equal(await bars(), 0, 'Aufnahme vorbei: wieder Ruhe');
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });

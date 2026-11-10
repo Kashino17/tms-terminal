@@ -11,6 +11,7 @@
  */
 import { create } from 'zustand';
 import { useEffect, useMemo, useState } from 'react';
+import { AppState } from 'react-native';
 import { getConnection } from '../../services/websocket.service';
 import type { ConnectionState } from '../../types/websocket.types';
 
@@ -49,13 +50,17 @@ export function useS2Connection() {
   useEffect(() => {
     if (!wsService) { setState('disconnected'); setRtt(null); return; }
     const tick = () => {
+      // Unsichtbar zeigt niemand Zustand oder Ping an — dann auch nicht alle 3 s
+      // die ganze Oberfläche neu rechnen. Bei der Rückkehr sofort nachziehen.
+      if (AppState.currentState !== 'active') return;
       setState(wsService.state);
       const r = wsService.getRtt?.();
       setRtt(typeof r === 'number' && r > 0 ? Math.round(r) : null);
     };
     tick();
     const t = setInterval(tick, 3000);
-    return () => clearInterval(t);
+    const sub = AppState.addEventListener('change', (next) => { if (next === 'active') tick(); });
+    return () => { clearInterval(t); sub.remove(); };
   }, [wsService]);
 
   return { server, token, wsService, state, rtt, focusTabId, focusTab: setFocusTab };

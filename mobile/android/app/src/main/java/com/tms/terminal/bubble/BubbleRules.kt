@@ -17,6 +17,15 @@ object BubbleRules {
 
     fun snoozeUntil(now: Long): Long = now + SNOOZE_MS
 
+    /**
+     * Does the bubble need its per-frame clock? Only while something actually
+     * moves: the waveform (recording), the breathing bars and arc (processing),
+     * or the arc still fading out. An idle bubble is a still image — redrawing
+     * it every frame kept the display at full refresh rate for nothing.
+     */
+    fun needsFrameClock(recording: Boolean, processing: Boolean, spinAlpha: Float): Boolean =
+        recording || processing || spinAlpha > 0.01f
+
     /** Password fields (from the input type the system reports at input start): no bubble there. */
     fun isPasswordInput(inputType: Int): Boolean {
         val cls = inputType and android.text.InputType.TYPE_MASK_CLASS

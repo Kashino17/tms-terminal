@@ -244,13 +244,27 @@ class BubbleView(context: Context) : View(context) {
         }
     }
 
-    /** One frame clock for spin, breathing and the scrolling waveform. */
+    private fun needsFrames() =
+        BubbleRules.needsFrameClock(face == Face.RECORDING, face == Face.PROCESSING, spinAlpha)
+
+    /**
+     * One frame clock for spin, breathing and the scrolling waveform. It stops
+     * itself as soon as nothing moves any more (see BubbleRules.needsFrameClock):
+     * left running, an idle bubble redrew at the full display rate for as long
+     * as it was on screen.
+     */
     private fun ensureFrames() {
+        if (!needsFrames()) return
         if (frameAnim?.isRunning == true) return
         frameAnim = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 1000
             repeatCount = ValueAnimator.INFINITE
             addUpdateListener {
+                if (!needsFrames()) {
+                    // Not from inside the update callback: cancel on the next loop turn.
+                    post { if (!needsFrames()) { frameAnim?.cancel(); frameAnim = null } }
+                    return@addUpdateListener
+                }
                 spin = (spin + 6.5f) % 360f
                 phase += 0.06f
                 invalidate()

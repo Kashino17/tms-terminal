@@ -37,18 +37,20 @@
     play: '<path d="M8 5.5v13l11-6.5z"/>',
     pause: '<path d="M8 5v14M16 5v14"/>',
   };
-  // ── Terminal-Karten: Glas / nur vorne / matt ────────────────────────
+  // ── Arbeitsfläche: matt (Standard) oder Glas ────────────────────────
   // Nur Darstellung dieses Geräts — darum im Speicher der Seite, nicht in der App.
-  const CARD_LOOKS = [['glass', 'Glas (Standard)'], ['front', 'Glas nur vorne'], ['matte', 'Matt — ohne Unschärfe']];
+  // Matt ist Standard: am Fold gemessen braucht ein Bild mit Glas 21–26 ms
+  // (ruckelt), matt 12–15 ms. „Glas nur vorne" gibt es nicht mehr; wer das
+  // gespeichert hatte, bekommt den Standard.
+  const CARD_LOOKS = [['matte', 'Matt — flüssig und sparsam'], ['glass', 'Glas']];
   const CARD_LOOK_KEY = 'tms-card-look';
   function cardLook() {
     let v = null;
     try { v = localStorage.getItem(CARD_LOOK_KEY); } catch (_) {}
-    return CARD_LOOKS.some(([k]) => k === v) ? v : 'glass';
+    return CARD_LOOKS.some(([k]) => k === v) ? v : 'matte';
   }
   function applyCardLook(v) {
-    document.body.classList.toggle('cards-front', v === 'front');
-    document.body.classList.toggle('cards-matte', v === 'matte');
+    document.body.classList.toggle('cards-matte', v !== 'glass');
   }
   function setCardLook(v) {
     try { localStorage.setItem(CARD_LOOK_KEY, v); } catch (_) {}
@@ -180,8 +182,8 @@
       desc: 'App-Sperre, PIN',
       sum: () => (S().appLock ? `App-Sperre an · ${S().lockGrace ? 'entsperrt ' + label(GRACE, S().lockGrace) : 'immer sperren'}` : 'App-Sperre aus') },
     { id: 'darstellung', group: 'App & Alltag', name: 'Darstellung', icon: 'sun', hue: '#f472b6',
-      desc: 'Hell / Dunkel, Terminal-Karten, Oberfläche',
-      sum: () => `${isLight() ? 'Hell' : 'Dunkel'} · Karten ${cardLook() === 'glass' ? 'Glas' : cardLook() === 'front' ? 'Glas nur vorne' : 'matt'}` },
+      desc: 'Hell / Dunkel, Arbeitsfläche, Oberfläche',
+      sum: () => `${isLight() ? 'Hell' : 'Dunkel'} · Arbeitsfläche ${cardLook() === 'glass' ? 'Glas' : 'matt'}` },
     { id: 'app', group: 'App & Alltag', name: 'App & Updates', icon: 'info', hue: '#94a3b8',
       desc: 'Version, Updates, Daten',
       sum: () => { const u = updateInfo(); return u.has ? `Update ${u.latest} bereit` : `Version ${version() || '—'} · aktuell`; },
@@ -300,8 +302,8 @@
       const card = (v, name, on) => `<button type="button" class="st-look${on ? ' is-on' : ''}" data-st-look="${v}" role="radio" aria-checked="${on}">
         <span class="st-look__prev st-look__prev--${v}"><i></i><i></i><i></i></span><span class="st-look__name">${name}</span></button>`;
       return section('Erscheinungsbild', `<div class="st-looks" role="radiogroup">${card('dark', 'Dunkel', !light)}${card('light', 'Hell', light)}</div>`, 'Hell ist für direktes Sonnenlicht gemacht.')
-        + section('Terminal-Karten', choice('card-look', 'Karten im Stapel', 'Wirkt sofort — flackert eine Variante, die nächste probieren', 'cardLook', CARD_LOOKS, cardLook()),
-          'Glas wirkt edel, kostet aber Grafikleistung. Matt ist am sparsamsten.')
+        + section('Arbeitsfläche', choice('card-look', 'Terminal, Tasten und Eingabezeile', 'Wirkt sofort', 'cardLook', CARD_LOOKS, cardLook()),
+          'Matt zeichnet am Fold doppelt so schnell wie Glas und schont den Akku.')
         + section('Oberfläche', row('classic', 'Klassische Oberfläche', 'Season 2 verlassen — jederzeit wieder umschaltbar', pill('Wechseln', 'nav:classic')));
     },
     app() {

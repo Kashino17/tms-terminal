@@ -41,6 +41,18 @@ const prayerBridgeJs = prayerBridgeSource
   + '\nwindow.__tmsNormalizePrayer = normalizePrayerPayload;'
   + '\nwindow.__tmsNormalizePerms = normalizePerms;';
 
+// Aufmerksamkeits-Logik (welches Terminal ist zu sehen): dieselbe Datei, die
+// der Test und React Native importieren — in der Seite als klassisches Skript.
+const attentionSource = fs.readFileSync(
+  path.resolve(__dirname, '../src/season2/attention.core.mjs'),
+  'utf8',
+);
+if (!/export function focusOf/.test(attentionSource)) {
+  throw new Error('attention.core.mjs: focusOf fehlt oder wurde umbenannt — build-season2-html.js anpassen');
+}
+const attentionJs = '(function () {\n' + attentionSource.replace(/^export /gm, '')
+  + '\nwindow.__tmsFocusOf = focusOf;\n})();';
+
 /** Applies a required source patch and fails loudly if the mockup moved on. */
 function patch(label, find, replace) {
   if (!html.includes(find)) throw new Error(`patch "${label}" no longer matches the mockup — update build-season2-html.js`);
@@ -220,6 +232,7 @@ patch('body end', '</body>', `<style>${xterm.XTERM_CSS}
 <script>${xterm.XTERM_XTERM}</script>
 <script>${xterm.XTERM_FIT}</script>
 <script>${prayerBridgeJs}</script>
+<script>${attentionJs}</script>
 <script>${bridgeJs}</script>
 </body>`);
 
