@@ -291,3 +291,17 @@ body.side-mini .ds-foot span { display: none; }
 .pv-frame { width: 100%; height: 100%; border: 0; background: #fff; }
 .fx2-name-in { width: 100%; height: 46px; margin-top: 10px; padding: 0 12px; border-radius: 12px; background: var(--flat-bg); border: 1px solid var(--flat-line-2); color: var(--text); font: 15px var(--font-ui); outline: 0; }
 .fx2-confirm .btns button.ok { background: var(--accent); color: var(--on-accent, #071021); }
+
+/* ── Ohne Insel (Variante „Menü“) ─────────────────────────────────── */
+body.no-island #statusHeader, body.no-island #islandScrim, body.no-island .island-swipe-hint, body.no-island #islandSwipeHint { display: none !important; }
+body.no-island { --top-space: calc(var(--safe-top, 0px) + 10px); }
+.card-menu .bm-sec { padding: 4px 4px 6px; border-bottom: 1px solid rgba(var(--overlay-rgb, 255,255,255), .1); margin-bottom: 4px; min-width: 276px; }
+.card-menu .bm-row { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; }
+.card-menu .bm-row > svg { width: 17px; height: 17px; color: var(--text-dim); flex: none; }
+.card-menu .bm-row > span { flex: 1; font-size: var(--fs-body, 15px); color: var(--text); white-space: nowrap; }
+.card-menu .bm-dev { height: 32px; min-width: 50px; padding: 0 10px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font: 700 11.5px var(--font-ui); letter-spacing: .04em; color: var(--dc); background: color-mix(in srgb, var(--dc) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dc) 35%, transparent); }
+.card-menu .bm-dev:active { transform: scale(.95); }
+.card-menu .bm-dev:disabled { opacity: .35; }
+.card-menu .bm-dev i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok, #3ddc84); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #3ddc84) 25%, transparent); }

@@ -235,4 +235,29 @@ if (!PW) {
       assert.match(await page.textContent('#deskSide'), /FRAGE/);
     } finally { await browser.close(); }
   });
+
+  test('Ohne Insel: ⋮-Menü hat Neues Terminal + Fernzugriff je Gerät', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('statusHeader')).display), 'none', 'Insel weg');
+      await page.evaluate(() => { window.__newTermServer = 'A'; window.addTerminal(); window.__newTermServer = null; });
+      await page.waitForTimeout(400);
+      await page.evaluate(() => document.querySelector('.term-card .card-menu-btn').click());
+      await page.waitForTimeout(300);
+      const txt = await page.textContent('.card-menu');
+      assert.match(txt, /Neues Terminal/); assert.match(txt, /Fernzugriff/);
+      const before = (await posts('terminal:create')).length;
+      await page.evaluate(() => document.querySelector('.card-menu [data-bm="term"][data-srv="B"]').click());
+      await page.waitForTimeout(300);
+      const c = (await posts('terminal:create')).slice(before);
+      assert.equal(c.length, 1); assert.equal(c[0].payload.serverId, 'B');
+      assert.equal(await page.locator('.card-menu').count(), 0, 'Menü zu');
+      await page.evaluate(() => { window.__remoteCalls = []; window.__openRemoteFor = (id) => window.__remoteCalls.push(id); });
+      await page.evaluate(() => document.querySelector('.term-card .card-menu-btn').click());
+      await page.waitForTimeout(300);
+      await page.evaluate(() => document.querySelector('.card-menu [data-bm="remote"][data-srv="B"]').click());
+      assert.deepEqual(await page.evaluate(() => window.__remoteCalls), ['B']);
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
 }

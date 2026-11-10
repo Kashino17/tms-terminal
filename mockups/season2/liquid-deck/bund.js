@@ -783,4 +783,50 @@
     if (fx.open) return fxClose();
     if (cb.open) return cbClose();
   });
+
+  // ════════════════════════════════════════════════════════════════════
+  // 7) OHNE INSEL — Neues Terminal + Fernzugriff stecken oben im ⋮-Menü
+  //    jeder Karte, mit einem Knopf je Gerät (Nutzerwahl: Variante „Menü“).
+  // ════════════════════════════════════════════════════════════════════
+  document.body.classList.add('no-island');
+  function closeCardMenuNow() {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    document.querySelectorAll('.card-menu').forEach((m) => m.remove());
+    document.querySelectorAll('.card-menu-btn[aria-expanded="true"]').forEach((x) => x.setAttribute('aria-expanded', 'false'));
+  }
+  function bmChips(kind) {
+    const alive = typeof window.__remoteAliveIds === 'function' ? window.__remoteAliveIds() : [];
+    return servers().map((d) => {
+      const on = d.status === 'online';
+      const live = kind === 'remote' && alive.indexOf(d.id) >= 0;
+      return `<button class="bm-dev${live ? ' is-alive' : ''}" data-bm="${kind}" data-srv="${esc(d.id)}" style="--dc:${devColor(d.id)}" ${on ? '' : 'disabled'}
+        title="${esc(d.name)}${live ? ' · läuft' : ''}">${live ? '<i></i>' : ''}${devShort(d)}</button>`;
+    }).join('');
+  }
+  function bmAugment(menu) {
+    if (menu.querySelector('.bm-sec')) return;
+    menu.insertAdjacentHTML('afterbegin', `<div class="bm-sec">
+      <div class="bm-row">${ic('plus', 2)}<span>Neues Terminal</span>${bmChips('term')}</div>
+      <div class="bm-row">${ic('remote', 1.8)}<span>Fernzugriff</span>${bmChips('remote')}</div></div>`);
+    // Breiter geworden → wieder rechtsbündig am ⋮-Knopf ausrichten
+    const btn = document.querySelector('.card-menu-btn[aria-expanded="true"]');
+    if (btn) {
+      const r = btn.getBoundingClientRect();
+      menu.style.left = Math.max(8, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+    }
+  }
+  new MutationObserver((list) => {
+    list.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType === 1 && n.classList.contains('card-menu')) bmAugment(n); }));
+  }).observe(document.body, { childList: true });
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.card-menu [data-bm]');
+    if (!b) return;
+    e.stopPropagation();
+    const id = b.dataset.srv;
+    closeCardMenuNow();
+    if (b.dataset.bm === 'term') {
+      window.__newTermServer = id;
+      try { if (typeof window.addTerminal === 'function') window.addTerminal(); } finally { window.__newTermServer = null; }
+    } else if (typeof window.__openRemoteFor === 'function') window.__openRemoteFor(id);
+  }, true);
 })();
