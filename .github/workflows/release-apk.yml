@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Kein Flackern mehr beim Terminalwechsel: Eingabezeile, Punkte und die farbige Geraetelinie bleiben ruhig. Die Terminal-Karten dahinter rechnen kein eigenes Milchglas mehr - spuerbar fluessiger und sparsamer. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Dauerflackern aus v1.145.0 behoben: die Terminal-Karten haben wieder ihr Glas wie vorher. Neu in Einstellungen > Darstellung > Terminal-Karten: Glas, Glas nur vorne oder Matt - wirkt sofort. Flackert es bei dir noch, einfach die naechste Variante probieren. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
