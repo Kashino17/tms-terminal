@@ -8,6 +8,23 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 import { createSpeechQueue, type SpeechPiece, type SpeechPlayer } from './queue.core.mjs';
 
+const PIECE_PREFIX = 'tms-voice-';
+
+/**
+ * Pieces are deleted the moment they have been played. Only an app killed in
+ * the middle of reading leaves some behind — spoken sentences nobody would
+ * ever clean up. Runs once per app start, before any reading can be under way.
+ */
+async function sweepLeftovers(): Promise<void> {
+  const dir = FileSystem.cacheDirectory;
+  if (!dir) return;
+  const names = await FileSystem.readDirectoryAsync(dir);
+  await Promise.all(names
+    .filter((n) => n.startsWith(PIECE_PREFIX) && n.endsWith('.mp3'))
+    .map((n) => FileSystem.deleteAsync(dir + n, { idempotent: true }).catch(() => {})));
+}
+sweepLeftovers().catch(() => {});
+
 export interface RemVoiceRun {
   reqId: string;
   push(piece: SpeechPiece): void;
@@ -25,7 +42,7 @@ export function startRemVoice(opts: {
   Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: true, shouldDuckAndroid: true }).catch(() => {});
 
   const load = async (piece: SpeechPiece): Promise<SpeechPlayer> => {
-    const uri = `${FileSystem.cacheDirectory}tms-voice-${opts.reqId}-${piece.seq}.mp3`;
+    const uri = `${FileSystem.cacheDirectory}${PIECE_PREFIX}${opts.reqId}-${piece.seq}.mp3`;
     await FileSystem.writeAsStringAsync(uri, piece.audio, { encoding: FileSystem.EncodingType.Base64 });
     const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: false });
     let ended = false;
