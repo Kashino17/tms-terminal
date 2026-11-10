@@ -607,31 +607,45 @@ if (!PW) {
     } finally { await browser.close(); }
   });
 
-  // Flackern beim Terminalwechsel: jede Karte im Stapel trug eigenes Milchglas
-  // (backdrop-filter). Beim Wechsel federn alle Karten gleichzeitig — der
-  // Grafikprozessor musste pro Bild sechs bildschirmgroße Unschärfen rechnen
-  // und kam nicht nach; Eingabezeile, Punkte und Gerätelinie zeigten dann
-  // kurz eckige, flache Blöcke (Emulator-Video). Nur die vordere Karte braucht
-  // Glas — sie verwischt die Karten dahinter ohnehin.
-  test('Stapel: nur die vordere Terminal-Karte trägt Milchglas, auch nach dem Wechsel', async () => {
+  // Flackern: v1.145.0 nahm den Karten dahinter das Glas — im Emulator besser,
+  // am Fold flackerte es danach DAUERND. Emulator ≠ Gerät. Darum: Standard wie
+  // bis v1.144 (Glas auf allen Karten), und in Darstellung › Terminal-Karten
+  // lassen sich die Varianten am Gerät live vergleichen (bleibt gespeichert).
+  test('Terminal-Karten: Standard Glas überall, umschaltbar auf „nur vorne“ und „Matt“', async () => {
     const { browser, page, errors } = await boot();
     try {
-      await page.evaluate(() => { for (let i = 0; i < 4; i++) window.addTerminal(); show('terminals'); });
-      await page.waitForTimeout(300);
-      const blurs = () => page.evaluate(() => [...document.querySelectorAll('.stack-card')].map((c) => ({
-        active: c.classList.contains('is-active'),
-        blur: getComputedStyle(c).backdropFilter !== 'none',
-      })));
-      const check = async (when) => {
-        const b = await blurs();
-        assert.ok(b.length >= 4, `${when}: Karten da`);
-        assert.equal(b.filter((x) => x.blur).length, 1, `${when}: genau eine Karte mit Glas`);
-        assert.ok(b.find((x) => x.active).blur, `${when}: die vordere Karte behält ihr Glas`);
-      };
-      await check('vorher');
-      await page.evaluate(() => setActive(0));
+      await page.evaluate(() => { for (let i = 0; i < 4; i++) window.addTerminal(); show('terminals'); setActive(1); });
       await page.waitForTimeout(450);
-      await check('nach dem Wechsel');
+      const cards = () => page.evaluate(() => [...document.querySelectorAll('.stack-card')].map((c) => {
+        const cs = getComputedStyle(c);
+        const m = cs.backgroundColor.match(/rgba?\(([^)]+)\)/);
+        const a = m && m[1].split(',').length === 4 ? Number(m[1].split(',')[3]) : 1;
+        return { active: c.classList.contains('is-active'), blur: cs.backdropFilter !== 'none', alpha: a };
+      }));
+      let c = await cards();
+      assert.ok(c.length >= 4, 'Karten da');
+      assert.equal(c.filter((x) => x.blur).length, c.length, 'Standard: jede Karte mit Glas (wie v1.144)');
+      // Umschalten über die Einstellungen
+      const pick = async (v) => {
+        await page.evaluate(() => { show('settings'); window.__settingsOpen('darstellung'); });
+        await page.waitForTimeout(200);
+        await page.click('[data-st-row="card-look"]');
+        await page.click(`[data-st-pick="cardLook"][data-v="${v}"]`);
+        await page.evaluate(() => show('terminals'));
+        await page.waitForTimeout(200);
+      };
+      await pick('front');
+      c = await cards();
+      assert.equal(c.filter((x) => x.blur).length, 1, 'nur vorne: genau eine Karte mit Glas');
+      assert.ok(c.find((x) => x.active).blur, 'nur vorne: die vordere Karte');
+      await pick('matte');
+      c = await cards();
+      assert.equal(c.filter((x) => x.blur).length, 0, 'Matt: keine Unschärfe');
+      assert.ok(c.every((x) => x.alpha === 1), 'Matt: deckend — nichts scheint durch');
+      assert.equal(await page.evaluate(() => localStorage.getItem('tms-card-look')), 'matte', 'bleibt gespeichert');
+      await pick('glass');
+      c = await cards();
+      assert.equal(c.filter((x) => x.blur).length, c.length, 'zurück auf Glas');
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });
