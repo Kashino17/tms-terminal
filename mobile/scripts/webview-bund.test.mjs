@@ -676,4 +676,45 @@ if (!PW) {
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });
+
+  // Am Fold aufgenommen (screenrecord): bei JEDEM Terminalwechsel war die
+  // Tastenleiste 4–5 Bilder lang leer und die Gerätelinie weg — sie wurde pro
+  // Wechsel gelöscht und neu gebaut. Sie bleibt jetzt stehen; die Tasten
+  // wirken auf das Terminal, das beim Drücken vorne ist.
+  test('Tastenleiste: bleibt beim Terminalwechsel stehen und wirkt auf das Terminal vorne', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      await page.evaluate(() => { for (let i = 0; i < 3; i++) window.addTerminal(); show('terminals'); setActive(0); toggleKeysPanel(); });
+      await page.waitForTimeout(700);
+      const esc = await page.evaluateHandle(() => document.querySelector('#globalKeys [data-tt-key="esc"]'));
+      assert.ok(await page.evaluate((e) => !!e && e.isConnected, esc), 'Leiste offen');
+      await page.evaluate(() => { window.__keys = []; window.handleTermKey = (k, id) => window.__keys.push([k, id]); });
+      const target = () => page.evaluate(() => window.dockTargetId());
+      const first = await target();
+      await page.evaluate((e) => e.click(), esc);
+      // Wechsel: dieselben Tasten-Elemente, kein Neuaufbau
+      await page.evaluate(() => setActive(2));
+      await page.waitForTimeout(500);
+      assert.equal(await page.evaluate((e) => e.isConnected, esc), true, 'Tasten sind noch dieselben Elemente');
+      const second = await target();
+      assert.notEqual(second, first);
+      await page.evaluate((e) => e.click(), esc);
+      await page.evaluate(() => document.querySelector('#globalKeys [data-tt-cursor="↑"]').click());
+      assert.deepEqual(await page.evaluate(() => window.__keys), [['esc', first], ['esc', second], ['up', second]], 'Taste trifft das Terminal vorne');
+      // Auswahl-Taste zeigt den Zustand des Terminals vorne
+      await page.evaluate(() => document.querySelector('#globalKeys [data-tt-key="selectmode"]').click());
+      assert.equal(await page.evaluate(() => document.querySelector('#globalKeys [data-tt-key="selectmode"]').classList.contains('is-on')), true);
+      await page.evaluate(() => setActive(0));
+      await page.waitForTimeout(300);
+      assert.equal(await page.evaluate(() => document.querySelector('#globalKeys [data-tt-key="selectmode"]').classList.contains('is-on')), false, 'anderes Terminal: Auswahl aus');
+      // Schließen und wieder öffnen geht weiter
+      await page.evaluate(() => { toggleKeysPanel(); });
+      await page.waitForTimeout(400);
+      assert.equal(await page.evaluate(() => document.getElementById('globalKeys').hidden), true);
+      await page.evaluate(() => { toggleKeysPanel(); });
+      await page.waitForTimeout(300);
+      assert.equal(await page.locator('#globalKeys [data-tt-key="esc"]').count(), 1);
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
 }

@@ -5293,14 +5293,19 @@
       btn.addEventListener('click', e => { e.stopPropagation(); openToolSheet(btn.dataset.ttTool); });
     });
   }
-  function wireKeysPanel(card, id) {
+  function wireKeysPanel(card, boundId) {
     const panel = card.querySelector('.keys-panel');
     if (!panel) return;
-    wireKeysPanelTools(panel, id);
+    // Die eine Tastenleiste über der Eingabezeile bleibt beim Terminalwechsel
+    // stehen (siehe applyKeysPanelVisibility) — ihre Tasten fragen darum beim
+    // Drücken, welches Terminal vorne ist, statt eines beim Bauen zu merken.
+    const live = panel.id === 'globalKeys';
+    const tid = () => (live && typeof dockTargetId === 'function' && dockTargetId()) || boundId;
+    wireKeysPanelTools(panel, boundId);
     panel.querySelectorAll('[data-tt-key]').forEach(btn => {
       btn.addEventListener('click', e => {
         e.stopPropagation();
-        const k = btn.dataset.ttKey;
+        const k = btn.dataset.ttKey, id = tid();
         // Tab hat im Mockup nur geblinkt — die Taste muss das Terminal erreichen.
         if (k === 'tab' || k === 'shifttab') handleTermKey(k, id);
         // ^C und Esc wohnen jetzt hier statt links in der Eingabezeile.
@@ -5338,12 +5343,19 @@
     panel.querySelectorAll('[data-tt-cursor]').forEach(btn => {
       btn.addEventListener('click', e => {
         e.stopPropagation();
-        handleTermKey(CURSOR_KEYS[btn.dataset.ttCursor] || btn.dataset.ttCursor, id);
+        handleTermKey(CURSOR_KEYS[btn.dataset.ttCursor] || btn.dataset.ttCursor, tid());
       });
     });
   }
   // Single shared open/closed flag (kept intentionally simple per spec):
   // flipping it shows/hides every card's panel at once, in both views.
+  function syncKeysButtons() {
+    document.querySelectorAll('.term-keys-btn, #dockKeysBtn').forEach(btn => {
+      btn.classList.toggle('is-on', state.keysPanelOpen);
+      btn.setAttribute('aria-pressed', String(state.keysPanelOpen));
+    });
+    document.querySelectorAll('.list-swipe-btn[data-rail="keys"]').forEach(btn => btn.classList.toggle('is-on', state.keysPanelOpen));
+  }
   function applyKeysPanelVisibility() {
     // Eine einzige Tastenleiste, über der Bottom-Bar — nicht mehr eine pro Karte.
     // Sie gilt immer dem Terminal, das die Leiste gerade bedient.
@@ -5351,9 +5363,20 @@
     const id = typeof dockTargetId === 'function' ? dockTargetId() : state.activeCardId;
     if (host) {
       const show = !!state.keysPanelOpen && !!id && !!cardState[id];
+      // FLACKERN (am Fold aufgenommen): früher wurde die Leiste bei JEDEM Aufruf
+      // gelöscht und neu gebaut — also bei jedem Terminalwechsel. Das Gerät
+      // zeigte sie dann 4–5 Bilder lang leer. Die Tasten sind für jedes Terminal
+      // dieselben: steht die Leiste schon, bleibt sie stehen.
+      const standing = show && !host.hidden && !host.classList.contains('is-closing') && !!host.firstElementChild;
+      if (standing) {
+        const sel = host.querySelector('[data-tt-key="selectmode"]');
+        if (sel) sel.classList.toggle('is-on', !!cardState[id].selectionMode);
+        return syncKeysButtons();
+      }
       if (show) {
         host.hidden = false;
         host.classList.remove('is-closing');
+        clearTimeout(host._closeT);
         const tmp = document.createElement('div');
         tmp.innerHTML = keysPanelHtml(id);
         const inner = tmp.querySelector('.keys-panel');
@@ -5372,11 +5395,7 @@
       clearTimeout(host._fitT);
       host._fitT = setTimeout(() => window.dispatchEvent(new Event('resize')), 540);
     }
-    document.querySelectorAll('.term-keys-btn, #dockKeysBtn').forEach(btn => {
-      btn.classList.toggle('is-on', state.keysPanelOpen);
-      btn.setAttribute('aria-pressed', String(state.keysPanelOpen));
-    });
-    document.querySelectorAll('.list-swipe-btn[data-rail="keys"]').forEach(btn => btn.classList.toggle('is-on', state.keysPanelOpen));
+    syncKeysButtons();
   }
   function toggleKeysPanel() {
     state.keysPanelOpen = !state.keysPanelOpen;

@@ -1801,6 +1801,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <WebView
         ref={webRef}
+        // Fehlersuche am echten Gerät: nur über ein per Kopplungscode
+        // freigegebenes ADB erreichbar. Ohne das ließ sich das Flackern am Fold
+        // nicht untersuchen — der Emulator zeichnet anders als das Gerät.
+        webviewDebuggingEnabled
         // https, nicht http: WebCodecs (VideoDecoder) gibt es nur in einem
         // "sicheren Kontext". Unter http://tms.local fehlte er — der Fernzugriff
         // bekam Bilder, konnte sie aber nicht dekodieren ("Dieses Geraet kann den
