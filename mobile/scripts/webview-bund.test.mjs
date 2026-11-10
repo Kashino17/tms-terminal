@@ -606,4 +606,33 @@ if (!PW) {
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });
+
+  // Flackern beim Terminalwechsel: jede Karte im Stapel trug eigenes Milchglas
+  // (backdrop-filter). Beim Wechsel federn alle Karten gleichzeitig — der
+  // Grafikprozessor musste pro Bild sechs bildschirmgroße Unschärfen rechnen
+  // und kam nicht nach; Eingabezeile, Punkte und Gerätelinie zeigten dann
+  // kurz eckige, flache Blöcke (Emulator-Video). Nur die vordere Karte braucht
+  // Glas — sie verwischt die Karten dahinter ohnehin.
+  test('Stapel: nur die vordere Terminal-Karte trägt Milchglas, auch nach dem Wechsel', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      await page.evaluate(() => { for (let i = 0; i < 4; i++) window.addTerminal(); show('terminals'); });
+      await page.waitForTimeout(300);
+      const blurs = () => page.evaluate(() => [...document.querySelectorAll('.stack-card')].map((c) => ({
+        active: c.classList.contains('is-active'),
+        blur: getComputedStyle(c).backdropFilter !== 'none',
+      })));
+      const check = async (when) => {
+        const b = await blurs();
+        assert.ok(b.length >= 4, `${when}: Karten da`);
+        assert.equal(b.filter((x) => x.blur).length, 1, `${when}: genau eine Karte mit Glas`);
+        assert.ok(b.find((x) => x.active).blur, `${when}: die vordere Karte behält ihr Glas`);
+      };
+      await check('vorher');
+      await page.evaluate(() => setActive(0));
+      await page.waitForTimeout(450);
+      await check('nach dem Wechsel');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
 }

@@ -759,6 +759,13 @@
      Karte einen bildschirmgroßen GPU-Layer am Leben (≥10 MB VRAM pro Karte,
      Compositing-Arbeit in jedem Frame). Transitionen promoten sich selbst. */
   .stack.is-dragging .stack-card { will-change: transform, opacity; }
+  /* FLACKERN: Glas nur auf der vorderen Karte. Trug jede Karte ihre eigene
+     Unschärfe, federten beim Terminalwechsel sechs bildschirmgroße
+     backdrop-filter gleichzeitig — der Grafikprozessor kam nicht nach, und
+     Eingabezeile, Punkte und Gerätelinie zeigten kurz eckige, flache Blöcke
+     (im Emulator-Video belegt; 150 statt 280 Bilder je 5 Wechsel). Die vordere
+     Karte verwischt die Karten dahinter selbst — in Ruhe sieht alles gleich aus. */
+  .stack-card:not(.is-active) { -webkit-backdrop-filter: none; backdrop-filter: none; }
   .card-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; cursor: grab; }
   .card-tag { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   /* Die Terminalfarbe ist der obere Rand der Karte: halbtransparent, folgt der
