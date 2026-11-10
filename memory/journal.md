@@ -336,3 +336,7 @@
 - Gemessen statt geraten: Emulator + zwei isolierte Test-Server (8790/8795, eigenes HOME), 6 Terminals mit Dauerausgabe. Seiten-JS unauffällig (keine Long Tasks); Last auf RenderThread/GPU (50–57 % bei Wechseln). screenrecord-Montage zeigt eckige Blöcke auf Dock/Punkten/Gerätelinie.
 - Ursache: backdrop-filter auf ALLEN Stapelkarten, die beim Wechsel gleichzeitig federn. Fix: Glas nur auf `.stack-card.is-active` (Ruhebild identisch). 150→280 Bilder je 5 Wechsel, App-Antwort 201→139 ms, Artefakte weg. Aufgeklappte Desk-Ansicht hatte schon kein Glas.
 - Lokal mit Playwright schlagen terminal-create/webview-bubble schon vorher fehl, webview-prayer hängt — CI (ohne Playwright) grün.
+
+## 2026-11-10 — v1.145.1 Rückzug + Karten-Schalter
+- Nutzer: seit v1.145.0 flackert es am Fold DAUERND (auch ohne Bedienung) — schlimmer als vorher. Emulator zeigte das Gegenteil → Emulator-Grafik ist kein Beleg fürs Gerät.
+- v1.145.1: Standard wieder Glas auf allen Karten (v1.144). Neu Darstellung › Terminal-Karten: Glas / Glas nur vorne / Matt (deckend, kein backdrop-filter), sofort wirksam, localStorage. Offen: Nutzer wählt am Fold die ruhige Variante → wird Standard.
