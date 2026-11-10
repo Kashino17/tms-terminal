@@ -38,7 +38,8 @@ const prayerBridgeJs = prayerBridgeSource
   .replace(/^export /gm, '')
   // Am Dateiende an window haengen. normalizePrayerPayload ist die einzige
   // Funktion in der Datei; falls das kippt, greift die Pruefung oben.
-  + '\nwindow.__tmsNormalizePrayer = normalizePrayerPayload;';
+  + '\nwindow.__tmsNormalizePrayer = normalizePrayerPayload;'
+  + '\nwindow.__tmsNormalizePerms = normalizePerms;';
 
 /** Applies a required source patch and fails loudly if the mockup moved on. */
 function patch(label, find, replace) {

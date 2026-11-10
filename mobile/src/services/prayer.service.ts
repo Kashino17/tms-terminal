@@ -1,4 +1,5 @@
 import * as Location from 'expo-location';
+import { adhanTimesFor } from './adhanNative';
 import { usePrayerStore, type PrayerLocation } from '../store/prayerStore';
 // Die Rechenlogik liegt in prayer.core.mjs, damit mobile/scripts/prayer.test.mjs
 // sie ohne React Native pruefen kann. Hier nur re-exportiert — eine Quelle.
@@ -120,17 +121,44 @@ export async function getCurrentLocation(): Promise<LocationInfo | null> {
   }
 }
 
-/** Fetch prayer times from Aladhan API (free, no key needed) */
+/**
+ * Gebetszeiten für heute. Mit dem Rechenkern auf dem Handy (Android): exakt die
+ * Zeiten, nach denen auch die Alarme klingeln — Methode automatisch nach Land
+ * (Zeitzone), amtlich abgestimmt (z. B. JAKIM). `method` gilt dann nicht mehr.
+ * Das Hijri-Datum kommt, wenn das Netz da ist, weiter von Aladhan.
+ */
 export async function fetchPrayerTimes(
   latitude: number,
   longitude: number,
-  method = 3, // MWL (Muslim World League)
+  method = 3, // nur noch für ältere Builds ohne Rechenkern (MWL)
 ): Promise<PrayerData | null> {
+  const native = await adhanTimesFor(latitude, longitude).catch(() => null);
+  const aladhan = fetchAladhan(latitude, longitude, method, native ? 4000 : 15000);
+  if (native) {
+    const remote = await aladhan;
+    const now = new Date();
+    return {
+      timings: native.timings,
+      date: remote?.date ?? {
+        readable: now.toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }),
+        hijri: { day: '', month: { en: '', ar: '' }, year: '' },
+      },
+      meta: { method: { name: native.method } },
+    };
+  }
+  return aladhan;
+}
+
+async function fetchAladhan(latitude: number, longitude: number, method: number, timeoutMs: number): Promise<PrayerData | null> {
   try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
     const timestamp = Math.floor(Date.now() / 1000);
     const res = await fetch(
       `https://api.aladhan.com/v1/timings/${timestamp}?latitude=${latitude}&longitude=${longitude}&method=${method}`,
+      { signal: ctrl.signal },
     );
+    clearTimeout(t);
     if (!res.ok) return null;
     const json = await res.json();
     if (json.code !== 200) return null;

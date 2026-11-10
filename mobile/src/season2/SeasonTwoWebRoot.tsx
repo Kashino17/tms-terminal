@@ -27,6 +27,7 @@ import { storageService, getToken } from '../services/storage.service';
 import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '../services/notifications.service';
 import { checkForUpdate, getCurrentVersion, downloadApk, installApk, canInstallApk, cleanupApks, checkForPreviousVersion, downloadAndInstall, formatSize } from '../services/updater.service';
 import { useLockStore } from '../store/lockStore';
+import { adhanNativeAvailable, adhanStatus, adhanPermsForPage, openAdhanPermission } from '../services/adhanNative';
 import { clearDurableStorage } from '../services/durableStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CHECK_EVERY_MS, RESUME_GAP_MS, shouldCheck } from '../services/update.core.mjs';
@@ -41,6 +42,7 @@ import { refreshAdhanSchedule } from '../services/adhanScheduler';
 import { usePrayerStore, prayerMethodName } from '../store/prayerStore';
 import { PRAYER_NAMES, getNextPrayer, type PrayerTimes } from '../services/prayer.service';
 import * as Notifications from 'expo-notifications';
+import * as ExpoLocation from 'expo-location';
 import { useDictation } from './hooks/useDictation';
 import { dictationBubble } from '../services/dictationBubble.service';
 import { useCloudBridge } from './web/useSeasonTwoBackends';
@@ -1020,6 +1022,17 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (!ready || !dictationBubble.available) return;
     dictationBubble.status().then((st) => { if (st) call('bubbleStatus', st); });
   }, [ready, call]);
+  /** Gebetsruf: nächster Alarm, Methode, Erlaubnisse — vom Handy in die Seite. */
+  const pushAdhanStatus = useCallback(async () => {
+    if (!ready) return;
+    const st = await adhanStatus().catch(() => null);
+    if (st) call('setAdhanStatus', { ...st, perms: adhanPermsForPage(st) });
+  }, [ready, call]);
+  useEffect(() => {
+    if (!ready) return;
+    const sub = AppState.addEventListener('change', (s2) => { if (s2 === 'active') void pushAdhanStatus(); });
+    return () => sub.remove();
+  }, [ready, pushAdhanStatus]);
   // ── Einstellungen (settings.js): nur was in Season 2 wirklich wirkt ──
   const prevVer = useRef<{ version: string; downloadUrl: string; size: number } | null>(null);
   const pushSettings = useCallback(() => {
@@ -1223,6 +1236,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           // auf einen Alarm warten, der erst beim naechsten App-Start kaeme.
           await refreshAdhanSchedule('v2-toggle');
           call('setAdhanSettings', await readAdhanSettings());
+          void pushAdhanStatus();
         })();
         return;
       }
@@ -1231,12 +1245,14 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           await setFajrWecker(!!payload.enabled);
           await refreshAdhanSchedule('v2-wecker');
           call('setAdhanSettings', await readAdhanSettings());
+          void pushAdhanStatus();
         })();
         return;
       }
       case 'adhan:reciter': {
         void (async () => {
           await setSelectedAdhan(String(payload.id ?? 'mishary'));
+          await refreshAdhanSchedule('v2-reciter'); // das Handy spielt ihn selbst ab
           call('setAdhanSettings', await readAdhanSettings());
           call('toast', 'Rezitateur gespeichert');
         })();
@@ -1271,6 +1287,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
           }
           // Die Zeiten kommen ueber den Store zurueck; die Alarme sofort neu.
           await refreshAdhanSchedule('location-change');
+          void pushAdhanStatus();
         })();
         return;
       }
@@ -1297,24 +1314,32 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       }
       case 'adhan:perms': {
         void (async () => {
-          if (payload.which === 'exact') {
+          const which = String(payload.which ?? '');
+          if (which === 'backgroundLocation') {
+            // Erst Standort überhaupt, dann „Immer erlauben“ (Android öffnet dafür die Einstellung).
+            const fg = await ExpoLocation.requestForegroundPermissionsAsync().catch(() => null);
+            if (fg?.status === 'granted') await ExpoLocation.requestBackgroundPermissionsAsync().catch(() => null);
+          } else if (which === 'notifications') {
+            const cur = await Notifications.getPermissionsAsync();
+            if (!cur.granted && cur.canAskAgain) await Notifications.requestPermissionsAsync();
+            else await openAdhanPermission('notifications');
+          } else if (which === 'battery') {
+            await openAdhanPermission('battery');
+            call('toast', 'TMS suchen → „Nicht eingeschränkt“ / „Nicht optimieren“');
+          } else if (which === 'exact' && !adhanNativeAvailable) {
             await requestExactAlarmPermission();
-            // Der Nutzer entscheidet auf der Systemseite, und kann das auch dort
-            // wieder zuruecknehmen — darum fragen wir danach gleich noch einmal ab.
-            setTimeout(async () => {
-              call('setAdhanPerms', { exactAlarms: await canScheduleExactAdhan() });
-            }, 800);
-            return;
+          } else {
+            await openAdhanPermission(which);
           }
-          const { status } = await Notifications.requestPermissionsAsync();
-          call('setAdhanPerms', { notifications: status === 'granted', exactAlarms: await canScheduleExactAdhan() });
+          // Zurück in der App: AppState → active zieht den Stand nach (pushAdhanStatus).
+          setTimeout(() => { void pushAdhanStatus(); }, 800);
         })();
         return;
       }
     }
 
     // ── Einstellungen: brauchen keinen Server ──
-    if (type === 'nav:screen' && payload?.screen === 'settings') { pushSettings(); pushBubbleStatus(); pushCloudAccounts(); }
+    if (type === 'nav:screen' && payload?.screen === 'settings') { pushSettings(); pushBubbleStatus(); pushCloudAccounts(); void pushAdhanStatus(); }
     if (type === 'settings:set') { applySetting(String(payload?.key ?? ''), payload?.value); return; }
     if (type === 'bubble:snooze') { dictationBubble.snooze(); setTimeout(pushBubbleStatus, 300); return; }
     if (type === 'lock:pin') { navigation.navigate('PinSetup', { mode: 'change' }); return; }
@@ -1758,7 +1783,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, pushBubbleStatus, call, navigation, setSeasonTwoEnabled, setServer, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, deleteServerNow, connFor, startUpdDownload, openInstaller, runUpdCheck, pushSettings, applySetting]);
+  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, pushBubbleStatus, call, navigation, setSeasonTwoEnabled, setServer, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, deleteServerNow, connFor, startUpdDownload, openInstaller, runUpdCheck, pushSettings, applySetting, pushAdhanStatus]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"

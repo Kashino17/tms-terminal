@@ -19,11 +19,12 @@
  */
 import { AppState, type AppStateStatus } from 'react-native';
 import {
-  getCurrentLocation, fetchPrayerTimes, PRAYER_NAMES, type PrayerTimes,
+  getCurrentLocation, getChosenLocation, fetchPrayerTimes, PRAYER_NAMES, type PrayerTimes,
 } from './prayer.service';
 import {
-  getAdhanEnabled, getFajrWecker, scheduleTestAdhan, cancelAllAdhanNotifications,
+  getAdhanEnabled, getFajrWecker, getSelectedAdhan, scheduleTestAdhan, cancelAllAdhanNotifications,
 } from './adhan.service';
+import { adhanNativeAvailable, configureAdhan } from './adhanNative';
 import { usePrayerStore } from '../store/prayerStore';
 import { planAdhans } from './adhanSchedule.core.mjs';
 
@@ -85,6 +86,9 @@ export async function refreshAdhanSchedule(reason: string): Promise<void> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
+      // Neuer Weg: das Handy rechnet und plant selbst (auch ohne laufende App,
+      // nach Neustart, beim Reisen). Hier nur Einstellungen + Standort abgeben.
+      if (adhanNativeAvailable && deps === realDeps) { await syncNative(); return; }
       const timings = await deps.fetchTimes();
       // Ohne Standort oder ohne Netz die bestehenden Alarme stehen lassen. Der
       // Nutzer soll nicht durch ein leeres WLAN seine Wecker verlieren.
@@ -113,6 +117,21 @@ export async function refreshAdhanSchedule(reason: string): Promise<void> {
     }
   })();
   return inFlight;
+}
+
+async function syncNative(): Promise<void> {
+  const chosen = await getChosenLocation();
+  const loc = chosen
+    ? { latitude: chosen.latitude, longitude: chosen.longitude, city: chosen.label, country: undefined as string | undefined }
+    : await getCurrentLocation().catch(() => null);
+  const label = chosen ? chosen.label : [loc?.city, loc?.country].filter(Boolean).join(', ');
+  await configureAdhan({
+    enabled: await getAdhanEnabled(),
+    wecker: await getFajrWecker(),
+    reciter: await getSelectedAdhan(),
+    // Ohne frischen Standort behält das Handy seinen letzten (oder holt ihn selbst).
+    ...(loc ? { lat: loc.latitude, lon: loc.longitude, label, manual: !!chosen } : {}),
+  });
 }
 
 /** Idempotent. Mehrfaches Aufrufen richtet keinen zweiten Listener ein. */

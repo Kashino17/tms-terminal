@@ -32,6 +32,7 @@ import { useFavPathsStore } from '../../store/favPathsStore';
 import {
   fetchPrayerTimes, getCurrentLocation, getChosenLocation, PRAYER_NAMES, type PrayerTimes,
 } from '../../services/prayer.service';
+import { adhanStatus, adhanPermsForPage } from '../../services/adhanNative';
 import { usePrayerStore, prayerMethodName } from '../../store/prayerStore';
 import { readAdhanSettings, canScheduleExactAdhan } from '../../services/adhan.service';
 
@@ -317,6 +318,7 @@ export function useSheetBridges({
         }));
 
       const adhan = await readAdhanSettings();
+      const st = await adhanStatus().catch(() => null);
       if (cancelled) return;
       // Der Testknopf in der Seite braucht die naechste Uhrzeit, um daraus einen
       // Alarm zu stellen. Hier ablegen, damit onMessage() sie hat.
@@ -327,9 +329,11 @@ export function useSheetBridges({
           readable: data.date.readable,
           hijri: `${data.date.hijri.day}. ${data.date.hijri.month.en} ${data.date.hijri.year}`,
         },
-        method: { id: method, name: prayerMethodName(method) },
+        // Mit Rechenkern: Methode automatisch nach Land, Stand vom Handy.
+        method: st ? { id: 'auto', name: st.method, auto: true, country: st.country } : { id: method, name: prayerMethodName(method) },
         adhan: { enabled: adhan.enabled, wecker: adhan.wecker, selected: adhan.selected },
-        perms: { notifications: true, exactAlarms: adhan.exactAlarms },
+        perms: st ? adhanPermsForPage(st) : { notifications: true, exactAlarms: adhan.exactAlarms },
+        next: st && st.nextAt ? { name: st.nextName, at: st.nextAt, exact: st.nextExact } : null,
       });
     })();
     return () => { cancelled = true; };

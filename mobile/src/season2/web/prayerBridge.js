@@ -15,6 +15,16 @@
  * @param {object|null} meta
  * @returns {{times: Array, meta: object|null}}
  */
+/** Erlaubnisse für den Gebetsruf. Fehlende Felder bleiben weg (ältere App) —
+ *  die Seite zeigt dann nur, was sie sicher weiß. */
+export function normalizePerms(p) {
+  const out = { notifications: !!p.notifications, exactAlarms: !!p.exactAlarms };
+  for (const k of ['overlay', 'fullscreen', 'battery', 'location', 'backgroundLocation']) {
+    if (typeof p[k] === 'boolean') out[k] = p[k];
+  }
+  return out;
+}
+
 export function normalizePrayerPayload(times, meta) {
   const clean = [];
   if (Array.isArray(times)) {
@@ -46,7 +56,10 @@ export function normalizePrayerPayload(times, meta) {
       date: meta.date
         ? { readable: String(meta.date.readable ?? ''), hijri: String(meta.date.hijri ?? '') }
         : null,
-      method: meta.method ? { id: meta.method.id, name: String(meta.method.name ?? '') } : null,
+      method: meta.method
+        ? { id: meta.method.id, name: String(meta.method.name ?? ''), auto: !!meta.method.auto, country: meta.method.country ?? null }
+        : null,
+      next: meta.next && meta.next.at ? { name: String(meta.next.name ?? ''), at: Number(meta.next.at), exact: !!meta.next.exact } : null,
       adhan: meta.adhan
         ? {
             enabled: !!meta.adhan.enabled,
@@ -54,12 +67,7 @@ export function normalizePrayerPayload(times, meta) {
             selected: String(meta.adhan.selected ?? 'mishary'),
           }
         : null,
-      perms: meta.perms
-        ? {
-            notifications: !!meta.perms.notifications,
-            exactAlarms: !!meta.perms.exactAlarms,
-          }
-        : null,
+      perms: meta.perms ? normalizePerms(meta.perms) : null,
     },
   };
 }

@@ -516,33 +516,48 @@ if (!PW) {
     } finally { await browser.close(); }
   });
 
-  test('Einstellungen: Gebetsruf aus den echten Gebetsdaten, Update-Leiste verdeckt nichts', async () => {
+  test('Einstellungen: Gebetsruf automatisch (Methode nach Land), Erlaubnis-Liste, nächster Azān', async () => {
     const { browser, page, errors, posts } = await boot();
     try {
       await page.evaluate(() => {
         document.body.classList.remove('is-locked');
         window.TMSBridge.setPrayer([{ name: 'Fajr', time: '05:12' }, { name: 'Dhuhr', time: '13:10' }],
-          { location: { label: 'Kuala Lumpur' }, method: { id: 3, name: 'MWL' }, adhan: { enabled: true, wecker: false, selected: 'nafees' }, perms: { notifications: true, exactAlarms: false } });
+          { location: { label: 'Kuala Lumpur, Malaysia' }, method: { id: 'auto', name: 'JAKIM (Malaysia)', auto: true, country: 'MY' },
+            adhan: { enabled: true, wecker: false, selected: 'nafees' },
+            perms: { notifications: true, exactAlarms: true, overlay: false, fullscreen: true, battery: false, location: true, backgroundLocation: false },
+            next: { name: 'Asr', at: new Date(2026, 10, 10, 16, 48).getTime(), exact: true } });
         window.TMSBridge.setUpdateState({ status: 'available', current: '1.140.0', latest: 'v1.141.0', notes: '', size: 1000 });
         window.show('settings');
       });
       await page.waitForTimeout(300);
       assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('updBar')).display), 'none', 'Leiste weg auf den Einstellungen');
       assert.equal(await page.locator('.st-cat[data-st-go="app"] .st-badge').count(), 1, 'Update als Abzeichen');
-      assert.equal(await page.locator('.st-cat[data-st-go="gebet"] .st-dot--warn').count(), 1, 'ungenaue Alarme = Hinweis');
+      assert.equal(await page.locator('.st-cat[data-st-go="gebet"] .st-dot--warn').count(), 1, 'fehlende Erlaubnisse = Hinweis');
+      assert.match(await page.textContent('.st-cat[data-st-go="gebet"]'), /2 Erlaubnisse fehlen/);
       await page.click('.st-cat[data-st-go="gebet"]');
       await page.waitForTimeout(150);
+      assert.match(await page.textContent('[data-st-row="adhan-next"]'), /Nächster Azān: Asr · 16:48/);
+      assert.match(await page.textContent('[data-st-row="adhan-method"]'), /JAKIM \(Malaysia\)/, 'Methode automatisch angezeigt');
+      assert.equal(await page.locator('[data-st-pick="adhan.method"]').count(), 0, 'keine Methodenwahl mehr');
       assert.match(await page.textContent('[data-st-row="adhan-reciter"]'), /Ahmad al-Nafees/);
       assert.match(await page.textContent('[data-st-row="adhan-loc"]'), /Kuala Lumpur/);
       await page.click('[data-st-row="adhan-wecker"] .switch');
       assert.deepEqual((await posts('adhan:wecker')).pop().payload, { enabled: true });
-      await page.click('[data-st-row="adhan-method"]');
-      await page.click('[data-st-pick="adhan.method"][data-v="4"]');
-      assert.deepEqual((await posts('adhan:method')).pop().payload, { method: 4 });
-      await page.click('[data-st-act="adhan:exact"]');
-      assert.deepEqual((await posts('adhan:perms')).pop().payload, { which: 'exact' });
-      // Suche springt zur Zeile
+      // Fehlende Erlaubnis → richtige Android-Seite; erteilte stehen als „Erlaubt“
+      assert.match(await page.textContent('[data-st-row="perm-fullscreen"]'), /Erlaubt/);
+      await page.click('[data-st-row="perm-overlay"] [data-st-act]');
+      assert.deepEqual((await posts('adhan:perms')).pop().payload, { which: 'overlay' });
+      await page.click('[data-st-row="perm-backgroundLocation"] [data-st-act]');
+      assert.deepEqual((await posts('adhan:perms')).pop().payload, { which: 'backgroundLocation' });
+      // Zurück aus Android: neuer Stand vom Handy
+      await page.evaluate(() => window.TMSBridge.setAdhanStatus({ nextName: 'Asr', nextAt: new Date(2026, 10, 10, 16, 48).getTime(), nextExact: true, method: 'JAKIM (Malaysia)', country: 'MY',
+        perms: { notifications: true, exactAlarms: true, overlay: true, fullscreen: true, battery: true, location: true, backgroundLocation: true } }));
+      await page.waitForTimeout(100);
+      assert.match(await page.textContent('[data-st-row="perm-overlay"]'), /Erlaubt/);
       await page.evaluate(() => window.TMSBridge.handleBack());
+      await page.waitForTimeout(100);
+      assert.equal(await page.locator('.st-cat[data-st-go="gebet"] .st-dot--warn').count(), 0, 'alles erlaubt = kein Hinweis');
+      // Suche springt zur Zeile
       await page.fill('#stSearch', 'pin');
       await page.waitForTimeout(150);
       assert.match(await page.textContent('.st-results'), /PIN|App-Sperre/);

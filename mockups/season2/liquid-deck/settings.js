@@ -49,7 +49,10 @@
       lastExit: 'vom System beendet (Speicher)', lastExitAt: Date.now() - 26 * 3600_000 },
     voicePrompt: false, browserBridge: true, persistent: true, appLock: true, lockGrace: 300,
     version: '1.140.0', prevVersion: { version: '1.139.0', size: '31 MB' },
-    adhan: { enabled: true, wecker: true, reciter: 'mishary', location: 'Kuala Lumpur', method: 3, exact: false },
+    adhan: { enabled: true, wecker: true, reciter: 'mishary', location: 'Kuala Lumpur, Malaysia',
+      method: { name: 'JAKIM (Malaysia)', auto: true, country: 'MY' },
+      perms: { notifications: true, exactAlarms: true, overlay: false, fullscreen: true, battery: false, location: true, backgroundLocation: false },
+      next: { name: 'Asr', at: Date.now() + 2 * 3600_000 + 17 * 60_000, exact: true }, exact: true },
     cloud: { render: { connected: true, maskedKey: 'rnd_8f2k…' }, vercel: { connected: false } },
   };
   function S() {
@@ -61,12 +64,27 @@
   function A() {
     const m = window.TMS_DATA && window.TMS_DATA.prayerMeta;
     if (m) {
+      const perms = m.perms || {};
       return { has: true, enabled: !!(m.adhan && m.adhan.enabled), wecker: !!(m.adhan && m.adhan.wecker),
-        reciter: (m.adhan && m.adhan.selected) || 'mishary', location: (m.location && m.location.label) || 'GPS',
-        method: m.method && m.method.id != null ? Number(m.method.id) : 3, exact: !m.perms || m.perms.exactAlarms !== false };
+        reciter: (m.adhan && m.adhan.selected) || 'mishary', location: (m.location && m.location.label) || '',
+        method: m.method || null, perms, next: m.next || null, exact: perms.exactAlarms !== false };
     }
-    if (LIVE()) return { has: false, enabled: false, wecker: false, reciter: 'mishary', location: 'GPS', method: 3, exact: true };
+    if (LIVE()) return { has: false, enabled: false, wecker: false, reciter: 'mishary', location: '', method: null, perms: {}, next: null, exact: true };
     return Object.assign({ has: true }, S().adhan || DEMO.adhan);
+  }
+  /** Erlaubnisse, ohne die der Gebetsruf nicht zuverlässig wie ein Anruf kommt. */
+  const ADHAN_PERMS = [
+    ['overlay', 'Über anderen Apps einblenden', 'Erscheint entsperrt über jeder App — wie ein Anruf', true],
+    ['fullscreen', 'Vollbild auf dem Sperrbildschirm', 'Ohne das nur als Benachrichtigung', true],
+    ['exact', 'Auf die Minute genau', 'Sonst darf Android ein paar Minuten schieben', true],
+    ['battery', 'Akku: nicht einschränken', 'Damit Samsung TMS nicht schlafen legt', true],
+    ['notifications', 'Benachrichtigungen', 'Für den Gebetsruf über dem Sperrbildschirm', true],
+    ['backgroundLocation', 'Standort: immer erlauben', 'Folgt dir beim Reisen, auch wenn TMS nicht offen ist', false],
+  ];
+  const permOk = (perms, k) => (k === 'exact' ? perms.exactAlarms : perms[k]);
+  function adhanMissing(a) {
+    if (!a.enabled) return [];
+    return ADHAN_PERMS.filter(([k, , , req]) => req && typeof permOk(a.perms || {}, k) === 'boolean' && !permOk(a.perms || {}, k));
   }
   /** Cloud-Konto: { connected, maskedKey, invalid }. */
   function C(k) {
@@ -130,8 +148,15 @@
       alert: () => ['render', 'vercel'].some((k) => C(k).invalid) },
     { id: 'gebet', group: 'App & Alltag', name: 'Gebetsruf', icon: 'moon', hue: '#fbbf24',
       desc: 'Azān, Fajr-Wecker, Ort',
-      sum: () => { const a = A(); if (!a.has) return 'Gebetszeiten werden geladen …'; const nx = nextPrayerLine(); return a.enabled ? `Azān an${nx ? ' · nächstes ' + nx : ''}` : 'Azān aus'; },
-      alert: () => { const a = A(); return a.enabled && !a.exact; } },
+      sum: () => {
+        const a = A(); if (!a.has) return 'Gebetszeiten werden geladen …';
+        if (!a.enabled) return 'Azān aus';
+        const miss = adhanMissing(a).length;
+        if (miss) return `Azān an · ${miss === 1 ? '1 Erlaubnis fehlt' : miss + ' Erlaubnisse fehlen'}`;
+        const nx = a.next ? `${a.next.name} ${hhmm(a.next.at)}` : nextPrayerLine();
+        return `Azān an${nx ? ' · nächster ' + nx : ''}`;
+      },
+      alert: () => adhanMissing(A()).length > 0 },
     { id: 'sicherheit', group: 'App & Alltag', name: 'Sicherheit', icon: 'lock', hue: '#f59e0b',
       desc: 'App-Sperre, PIN',
       sum: () => (S().appLock ? `App-Sperre an · ${S().lockGrace ? 'entsperrt ' + label(GRACE, S().lockGrace) : 'immer sperren'}` : 'App-Sperre aus') },
@@ -214,20 +239,32 @@
     },
     gebet() {
       const a = A();
-      if (!a.has) return section('', row('adhan-wait', 'Gebetszeiten werden geladen …', 'Braucht einmal den Standort (oder einen Ort)', pill('Ort wählen', 'adhan:location')));
+      if (!a.has) return section('', row('adhan-wait', 'Gebetszeiten werden geladen …', 'Braucht einmal den Standort', pill('Ort wählen', 'adhan:location')));
       let body = row('adhan', 'Azān', 'Klingelt zur Gebetszeit wie ein Anruf — auch bei gesperrtem Bildschirm', sw('adhan.enabled', a.enabled));
       if (a.enabled) {
-        body += row('adhan-wecker', 'Fajr-Wecker', 'Morgengebet spielt automatisch laut', sw('adhan.wecker', a.wecker));
+        if (a.next) body += row('adhan-next', `Nächster Azān: ${esc(a.next.name)} · ${hhmm(a.next.at)}`,
+          a.next.exact ? 'Fest gestellt — klingelt auch, wenn TMS geschlossen ist' : 'Gestellt, kann sich aber um ein paar Minuten verschieben',
+          val(a.next.exact ? 'Pünktlich' : 'Ungenau', a.next.exact ? 'ok' : 'warn'));
+        body += row('adhan-wecker', 'Fajr-Wecker', 'Morgengebet spielt sofort laut, ohne Antippen', sw('adhan.wecker', a.wecker));
         body += choice('adhan-reciter', 'Rezitator', 'Wer den Azān ruft', 'adhan.reciter', RECITERS, a.reciter,
           (v) => `<span class="st-opt__play" data-st-act="adhan:listen:${v}" role="button" aria-label="Anhören">${ic('play', 2)}</span>`);
-        if (!a.exact) body += row('adhan-exact', 'Kann ein paar Minuten zu spät klingeln', 'Android erlaubt TMS keine genauen Alarme', pill('Erlauben', 'adhan:exact', 'warn'), { tone: 'warn' });
-        body += row('adhan-test', 'Testen', 'Azān in 10 Sekunden — derselbe Weg wie echt', pill('Test', 'adhan:test'));
+        body += row('adhan-test', 'Testen', 'Klingelt in 10 Sekunden — genau wie echt (gern mit gesperrtem Handy)', pill('Test', 'adhan:test'));
       }
+      let out = section('Azān', body);
+      const perms = a.perms || {};
+      const rows = ADHAN_PERMS.filter(([k]) => typeof permOk(perms, k) === 'boolean');
+      if (a.enabled && rows.length) {
+        out += section('Damit es zuverlässig klingelt', rows.map(([k, title, desc, req]) => {
+          const ok = permOk(perms, k);
+          return row('perm-' + k, title, desc, ok ? val('Erlaubt', 'ok') : pill('Erlauben', 'adhan:perm:' + k, req ? 'warn' : ''), ok || !req ? {} : { tone: 'warn' });
+        }).join(''), 'Einmal einrichten — danach kommt der Gebetsruf wie ein Anruf: über allem, nur mit „Stumm“, „Laut“, Sperr- oder Lautstärketaste zu beenden.');
+      }
+      const method = a.method && a.method.name ? a.method.name : 'Muslim World League';
       const nx = nextPrayerLine();
-      const where = row('adhan-loc', 'Ort', esc(a.location || 'GPS'), val('Ändern'), { tap: 'adhan:location' })
-        + choice('adhan-method', 'Berechnung', 'Wie die Uhrzeiten berechnet werden', 'adhan.method', METHODS, a.method)
+      const where = row('adhan-loc', 'Ort', esc(a.location || 'Aktueller Standort'), val('Automatisch'), { tap: 'adhan:location' })
+        + row('adhan-method', 'Berechnung', 'Automatisch die offizielle Methode des Landes, in dem du gerade bist', val(esc(method)))
         + row('prayer-times', 'Heutige Gebetszeiten', nx ? `Nächstes: ${esc(nx)}` : '', '', { tap: 'go:prayer' });
-      return section('Azān', body) + section('Zeiten', where);
+      return out + section('Zeiten', where);
     },
     sicherheit() {
       const s = S();
@@ -265,7 +302,7 @@
     persistent: 'hintergrund verbindung akku dienst', 'app-lock': 'sperre pin fingerabdruck biometrie',
     classic: 'season klassisch alt', 'update-check': 'update version', wipe: 'reset zurücksetzen löschen',
     'adhan-reciter': 'rezitator muezzin stimme', 'bubble-service': 'bubble mikrofon bedienungshilfe',
-    'adhan-loc': 'ort standort gps stadt', 'adhan-method': 'berechnung methode mwl', 'font-size': 'schrift größe zoom',
+    'adhan-loc': 'ort standort gps stadt reisen', 'adhan-method': 'berechnung methode jakim mwl land', 'perm-overlay': 'überlagerung anruf vollbild', 'perm-battery': 'akku energiesparen samsung', 'font-size': 'schrift größe zoom',
   };
   const DIAG = new Set(['bubble-check', 'bubble-exit']); // Diagnose-Text ist kein Suchbegriff
   function searchIndex() {
@@ -451,7 +488,13 @@
       return;
     }
     if (a.startsWith('adhan:listen:')) { const id = a.split(':')[2]; post('adhan:preview', { id }); say('Spielt ' + label(RECITERS, id) + ' …'); return; }
-    if (a === 'adhan:exact') { post('adhan:perms', { which: 'exact' }); if (!LIVE()) { s.adhan.exact = true; render(); } return; }
+    if (a === 'adhan:exact') a = 'adhan:perm:exact';
+    if (a.startsWith('adhan:perm:')) {
+      const which = a.slice(11);
+      post('adhan:perms', { which });
+      if (!LIVE()) { const p = (s.adhan.perms = s.adhan.perms || {}); p[which === 'exact' ? 'exactAlarms' : which] = true; render(true); }
+      return;
+    }
     if (a === 'adhan:test') { post('adhan:test'); if (!LIVE()) say('Azān klingelt in 10 Sekunden'); return; }
     if (a === 'adhan:location') { if (typeof window.openLocationPicker === 'function') window.openLocationPicker(); return; }
     if (a === 'lock:pin') { post('lock:pin'); if (!LIVE()) say('Öffnet „PIN ändern“'); return; }

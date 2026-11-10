@@ -2839,13 +2839,22 @@
 
   /** Nur die Berechtigungen — die kann der Nutzer jederzeit auf der Systemseite
    *  aendern, ohne dass wir neue Zeiten schicken muessen. */
+  var normalizePerms = window.__tmsNormalizePerms || function (p) {
+    return { notifications: !!p.notifications, exactAlarms: !!p.exactAlarms };
+  };
   window.TMSBridge.setAdhanPerms = function (perms) {
     var meta = window.TMS_DATA.prayerMeta;
     if (!meta) return;
-    meta.perms = {
-      notifications: !!(perms && perms.notifications),
-      exactAlarms: !!(perms && perms.exactAlarms),
-    };
+    meta.perms = Object.assign({}, meta.perms || {}, normalizePerms(perms || {}));
+    if (typeof window.renderAdhanSettings === 'function') window.renderAdhanSettings();
+  };
+  /** Stand vom Handy: nächster geplanter Azān, Methode (automatisch), Erlaubnisse. */
+  window.TMSBridge.setAdhanStatus = function (st) {
+    var meta = window.TMS_DATA.prayerMeta;
+    if (!meta || !st) return;
+    if (st.perms) meta.perms = Object.assign({}, meta.perms || {}, normalizePerms(st.perms));
+    if (st.method) meta.method = Object.assign({}, meta.method || {}, { name: String(st.method), auto: true, country: st.country || null });
+    meta.next = st.nextAt ? { name: String(st.nextName || ''), at: Number(st.nextAt), exact: !!st.nextExact } : null;
     if (typeof window.renderAdhanSettings === 'function') window.renderAdhanSettings();
   };
   /** Jump to the Browser screen and load a URL (used by the Ports sheet). */
