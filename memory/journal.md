@@ -319,3 +319,10 @@
 ## 2026-11-10 — v1.141.0 Dateien holen: Umlaute + HEIC
 - Gerätetest: Vorschau/Teilen/Laden → HTTP 400 bei „Görfidan Rückseite.PNG“. Ursache Server: Dateiname roh in Content-Disposition; macOS-NFD (o+U+0308) bzw. ı sind kein Latin-1 → Node wirft „Invalid character in header content“, catch → 400. Fix e88910d `disposition.util.ts` (RFC 6266 filename*=UTF-8''), auch ZIP. Braucht `tms-terminal update` Mac + Windows.
 - HEIC/HEIF öffnet im Android-Betrachter (Seite schickt kind 'heic' → nativer Intent-Pfad), ff0cc18.
+
+## 2026-11-10 — v1.142.0 Einstellungen neu + Installieren mit Rückmeldung
+- Einstellungen = settings.js/settings.css (liquid-deck, im Build eingebunden): Startseite mit Suche, Bubble-Schnellzugriff, Kategorien (Symbol + Zustand), Unterseiten, Fold zwei Spalten. Ersetzt Bridge-Einschübe (Bubble-Gruppe, „Oberfläche“). Daten: TMSBridge.setSettings/bubbleStatus, prayerMeta, cloudAccounts; Änderungen settings:set + bestehende adhan:/bubble:-Nachrichten.
+- Nur was in Season 2 wirkt. NICHT übernommen (wirken nur im klassischen Terminal): Terminal-Theme, Externe Tastatur, Inaktivitäts-Push, Deploy-Alerts/Polling. Hintergrund-Verbindung jetzt auch in S2 (ConnectionService beim Start).
+- Neu nativ: Bubble 15 Min. pausieren aus der App (BubbleConfig.snoozeReq in App-Prefs, effectiveSnooze wie wake).
+- Installieren: Zustand 'installing' + Ladekreis, Sperre gegen Mehrfach-Installer, Rückkehr ohne Install → Hinweis (AppState).
+- Paralleler Job hatte v1.141.0 (Dateien/HEIC) in derselben Arbeitskopie veröffentlicht → mein Bump lief ins Leere; vor Tag immer `git ls-remote --tags origin vX` + app.json-Version prüfen.
