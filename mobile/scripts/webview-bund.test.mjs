@@ -573,6 +573,9 @@ if (!PW) {
       assert.match(await page.textContent('#updBar'), /Installer öffnet sich/);
       assert.equal(await page.locator('#updBar .upd-spin').count(), 1, 'Ladekreis statt Knopf');
       assert.equal(await page.locator('#updBar [data-up="install"]').count(), 0, 'kein zweites Antippen möglich');
+      // Erst die Android-Erlaubnis: Hinweis statt allgemeinem Warten
+      await page.evaluate((mb) => window.TMSBridge.setUpdateState({ status: 'installing', note: 'Erlaube „Apps installieren“ für TMS — danach geht es von selbst weiter', current: '1.138.0', latest: 'v1.139.0', notes: '', size: 31 * mb, received: 31 * mb }), MB);
+      assert.match(await page.textContent('#updBar'), /Erlaube „Apps installieren“ für TMS/);
       // Zurück ohne Installation: ehrlicher Hinweis, Knopf wieder da
       await page.evaluate((mb) => window.TMSBridge.setUpdateState({ status: 'ready', note: 'Nicht installiert? Nochmal tippen', current: '1.138.0', latest: 'v1.139.0', notes: '', size: 31 * mb, received: 31 * mb }), MB);
       assert.match(await page.textContent('#updBar'), /Nicht installiert\? Nochmal tippen/);

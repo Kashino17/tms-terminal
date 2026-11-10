@@ -943,7 +943,7 @@
   function upHtml(withClose) {
     const pct = UP.size ? Math.min(100, Math.round((UP.received / UP.size) * 100)) : 0;
     const sub = UP.status === 'downloading' ? `Lädt … ${UP.size ? `${mb(UP.received)} von ${mb(UP.size)}` : ''}`
-      : UP.status === 'installing' ? 'Installer öffnet sich … Android prüft die App'
+      : UP.status === 'installing' ? esc(UP.note || 'Installer öffnet sich … Android prüft die App')
       : UP.status === 'ready' ? esc(UP.note || 'Geladen — bereit zum Installieren')
       : UP.status === 'error' ? esc(UP.error || 'Laden fehlgeschlagen')
       : `Neue Version${UP.size ? ' · ' + mb(UP.size) : ''}`;

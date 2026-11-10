@@ -1,4 +1,4 @@
-import { Linking, Platform } from 'react-native';
+import { Linking, NativeModules, Platform } from 'react-native';
 import * as Application from 'expo-application';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
@@ -169,14 +169,43 @@ export async function downloadApk(
 }
 
 /** Android-Installer direkt öffnen (kein Browser, kein App-Wechsel zum Laden). */
-export async function installApk(fileUri: string): Promise<void> {
-  if (Platform.OS !== 'android') return;
+/** Eigenes Modul (ApkInstallerModule.kt): einfaches startActivity statt
+ *  expo-intent-launcher — das sperrte nach einem Start ohne Rückmeldung jeden
+ *  weiteren („Installer ließ sich nicht öffnen“). */
+type ApkInstallerNative = {
+  canInstall(): Promise<boolean>;
+  openInstallPermission(): Promise<boolean>;
+  install(contentUri: string): Promise<boolean>;
+};
+const apkNative: ApkInstallerNative | undefined = NativeModules.ApkInstaller;
+
+/** Darf TMS Apps installieren? (Android 8+: „Unbekannte Apps installieren“ pro App.) */
+export async function canInstallApk(): Promise<boolean> {
+  if (Platform.OS !== 'android' || !apkNative) return true;
+  return apkNative.canInstall().catch(() => true);
+}
+
+/**
+ * Installer öffnen. 'permission' = TMS darf noch keine Apps installieren;
+ * die passende Android-Seite ist offen, danach erneut versuchen.
+ */
+export async function installApk(fileUri: string): Promise<'opened' | 'permission'> {
+  if (Platform.OS !== 'android') return 'opened';
   const contentUri = await FileSystem.getContentUriAsync(fileUri);
+  if (apkNative) {
+    if (!(await apkNative.canInstall())) {
+      await apkNative.openInstallPermission();
+      return 'permission';
+    }
+    await apkNative.install(contentUri);
+    return 'opened';
+  }
   await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
     data: contentUri,
     type: 'application/vnd.android.package-archive',
     flags: 1 | 0x10000000, // FLAG_GRANT_READ_URI_PERMISSION | FLAG_ACTIVITY_NEW_TASK
   });
+  return 'opened';
 }
 
 /** Alte APKs aus dem Cache räumen (nach erfolgreichem Update). */

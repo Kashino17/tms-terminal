@@ -25,7 +25,7 @@ import { isUserTitle } from '../store/tabIdentity';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
 import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '../services/notifications.service';
-import { checkForUpdate, getCurrentVersion, downloadApk, installApk, cleanupApks, checkForPreviousVersion, downloadAndInstall, formatSize } from '../services/updater.service';
+import { checkForUpdate, getCurrentVersion, downloadApk, installApk, canInstallApk, cleanupApks, checkForPreviousVersion, downloadAndInstall, formatSize } from '../services/updater.service';
 import { useLockStore } from '../store/lockStore';
 import { clearDurableStorage } from '../services/durableStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -815,25 +815,58 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const openInstaller = useCallback(async (file: string) => {
     if (installing.current) return;
     installing.current = true;
-    pushUpd({ status: 'installing', note: '' });
-    let left = false;
-    let done = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const sub = AppState.addEventListener('change', (st) => {
-      if (st !== 'active') { left = true; return; }
-      if (left) finish('Nicht installiert? Nochmal tippen');
-    });
-    function finish(note: string) {
-      if (done) return;
-      done = true;
-      installing.current = false;
-      sub.remove();
-      if (timer) clearTimeout(timer);
-      pushUpd({ status: 'ready', note });
-    }
-    timer = setTimeout(() => { if (!left) finish('Der Installer kam nicht — nochmal tippen'); }, 20_000);
-    try { await installApk(file); }
-    catch { finish('Installer ließ sich nicht öffnen — nochmal tippen'); }
+    const attempt = async (afterPermission: boolean): Promise<void> => {
+      pushUpd({ status: 'installing', note: '' });
+      let res: 'opened' | 'permission';
+      try {
+        res = await installApk(file);
+      } catch (e: any) {
+        installing.current = false;
+        pushUpd({ status: 'ready', note: `Installer ließ sich nicht öffnen (${e?.message ? String(e.message).slice(0, 80) : 'unbekannt'}) — nochmal tippen` });
+        return;
+      }
+      if (res === 'permission') {
+        if (afterPermission) {
+          installing.current = false;
+          pushUpd({ status: 'ready', note: 'Ohne „Apps installieren“ kann TMS nicht installieren — erlauben, dann nochmal tippen' });
+          return;
+        }
+        // Android-Seite „Unbekannte Apps installieren“ ist offen. Zurück in der
+        // App: erlaubt → gleich weiter zum Installer, ohne nochmal zu tippen.
+        pushUpd({ status: 'installing', note: 'Erlaube „Apps installieren“ für TMS — danach geht es von selbst weiter' });
+        let gone = false;
+        const sub = AppState.addEventListener('change', (st) => {
+          if (st !== 'active') { gone = true; return; }
+          if (!gone) return;
+          sub.remove();
+          clearTimeout(t);
+          void canInstallApk().then((ok) => {
+            if (ok) void attempt(true);
+            else { installing.current = false; pushUpd({ status: 'ready', note: 'Noch nicht erlaubt — „Apps installieren“ für TMS einschalten, dann nochmal tippen' }); }
+          });
+        });
+        const t = setTimeout(() => { if (!gone) { sub.remove(); installing.current = false; pushUpd({ status: 'ready', note: 'Die Android-Seite kam nicht — nochmal tippen' }); } }, 20_000);
+        return;
+      }
+      // Installer ist unterwegs. Kommt die App zurück, wurde nicht installiert
+      // (sonst startet sie neu).
+      let left = false;
+      let done = false;
+      const finish = (note: string) => {
+        if (done) return;
+        done = true;
+        installing.current = false;
+        sub.remove();
+        clearTimeout(timer);
+        pushUpd({ status: 'ready', note });
+      };
+      const sub = AppState.addEventListener('change', (st) => {
+        if (st !== 'active') { left = true; return; }
+        if (left) finish('Nicht installiert? Nochmal tippen');
+      });
+      const timer = setTimeout(() => { if (!left) finish('Der Installer kam nicht — nochmal tippen'); }, 20_000);
+    };
+    await attempt(false);
   }, [pushUpd]);
   const startUpdDownload = useCallback(async () => {
     if (!upd.current.url) { await runUpdCheck(true); if (!upd.current.url) return; }
