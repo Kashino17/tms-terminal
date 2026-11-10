@@ -289,3 +289,8 @@
 - Mockup mit Nutzer über mehrere Runden (Leiste minimal, Desk-Layout, Karten mit Griff), dann Spec + Plan + 12 Tasks inline.
 - E2E der echten Seite fand: Bund-Demo-Knopf warf in der App (brach setServers ab). Review (Opus): 6 Important (Browser-Bridge 2. Gerät, Holen, Desk-+, Diktat-caps, Filter, Desk-Status) + 3 hochgestufte Minors — alle mit Test rot→grün behoben.
 - Push/Tag vom Auto-Modus blockiert → Nutzer muss freigeben.
+
+## 2026-11-10 — Ohne Insel (v1.135.0) + Windows-Zwischenablage
+- v1.134.0 nach Freigabe gepusht, CI grün. Windows-Server per SSH + geplante Aufgabe aktualisiert (npm-Link über SSH kaputt → node cli.js direkt).
+- Windows-Zwischenablage gebaut, C# mit dotnet (LangVersion 5) auf dem Mac kompiliert, auf dem PC end-to-end getestet.
+- Mockup 5 Varianten ohne Insel; Fehler: unsichtbares V5-Menü fing Tipps auf ⋮ ab → Menü oben links; Mockup-Leiste → schwebender Knopf. Nutzer wählt V3 (⋮-Menü) → eingebaut, E2E 14/14.
