@@ -299,3 +299,6 @@
 - Ursache Snippets eingefroren / Explorer springt auf / Galerie startet erneut: bridge.openToolSheet merkte Bund-Karten als `openTool`, jedes setTool der App rief origOpenTool → __bundTool erneut (Snippets: Endlosschleife tool:open↔setTool). Fix: Bund-Karten vor dem Merken abfangen.
 - Bilder wieder alte Karte (Kamera + Galerie), ⋮-Menü zweistufig (Geräte untereinander).
 - Windows-Papierkorb: DeleteFile auch für Ordner → DeleteDirectory, Pfad per Env; Sammel-Löschen meldet Fehlschläge. Auf dem PC echt geprüft.
+
+## 2026-11-10 — v1.137.0 Puls-Ring
+- Läuft ein Fernzugriff (body.remote-alive), pulsiert ein sanfter grüner Ring um ⋮ (nicht Splitscreen); im Menü schimmert „Fernzugriff“, aufgeklappt das laufende Gerät.
