@@ -4,6 +4,7 @@ import { TerminalSession, CreateSessionOptions, PtyLike } from './terminal.types
 import { readProcessCwd, readForegroundProcess } from './cwd.utils';
 import { planReattach, wantsSnapshot, CLEAR_SEQUENCE } from './reattach.policy';
 import { SessionMirror, type ScreenView, type MirrorState } from './emulator.mirror';
+import { parseActivityTitle, sameActivity, type Activity } from './activity';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
@@ -44,6 +45,30 @@ export class TerminalManager {
    *  Vergangenheit nicht kennen (übernommen ohne gesicherten Zustand). Ihr
    *  Vollbild darf den Verlauf eines Clients mit Inhalt nie ersetzen. */
   private partialMirrors = new Set<string>();
+
+  /** Woran jedes Terminal arbeitet — aus dem Titel, den das KI-Werkzeug setzt (activity.ts). */
+  private activities = new Map<string, Activity>();
+  private activityListeners = new Set<(sessionId: string, activity: Activity | null) => void>();
+
+  /** Meldet jeden ECHTEN Wechsel (nicht das Drehzeichen). Rückgabe: abmelden. */
+  onActivity(listener: (sessionId: string, activity: Activity | null) => void): () => void {
+    this.activityListeners.add(listener);
+    return () => { this.activityListeners.delete(listener); };
+  }
+
+  getActivities(): Record<string, Activity> {
+    return Object.fromEntries(this.activities);
+  }
+
+  private noteTitle(sessionId: string, title: string): void {
+    const next = parseActivityTitle(title);
+    const prev = this.activities.get(sessionId) ?? null;
+    if (sameActivity(prev, next)) return;
+    if (next) this.activities.set(sessionId, next); else this.activities.delete(sessionId);
+    for (const l of this.activityListeners) {
+      try { l(sessionId, next); } catch { /* ein Zuhörer darf den Terminal-Strom nie stören */ }
+    }
+  }
 
   /** Optional callback invoked during detached buffering — allows prompt detector
    *  to keep receiving data for server-side auto-approve and FCM push notifications. */
@@ -136,6 +161,10 @@ export class TerminalManager {
   ): TerminalSession {
     const session = this.wireSession(id, pty, cols, rows, () => {}, () => {});
     const mirror = this.mirrors.get(id);
+    // Der Titel gilt unabhängig von der Größe — und eine ruhende Sitzung setzt
+    // ihn nicht noch einmal: ohne ihn wüsste die App nach dem Neustart nicht
+    // mehr, woran hier gearbeitet wurde.
+    if (seed?.title) { mirror?.seedTitle(seed.title); this.noteTitle(id, seed.title); }
     // Nur bei gleicher Größe: der gesicherte Strom gilt exakt für seine Maße,
     // und eine PTY ändert über einen Neustart hinweg ihre Größe nicht.
     let verlauf: string;
@@ -160,7 +189,7 @@ export class TerminalManager {
     const out: Record<string, MirrorState> = {};
     for (const [id, m] of entries) {
       try {
-        out[id] = { cols: m.cols, rows: m.rows, data: m.serializeNow(), partial: this.partialMirrors.has(id) || undefined };
+        out[id] = { cols: m.cols, rows: m.rows, data: m.serializeNow(), partial: this.partialMirrors.has(id) || undefined, title: m.title || undefined };
       } catch (e) {
         logger.warn(`Spiegel ${id.slice(0, 8)} nicht gesichert: ${(e as Error).message}`);
       }
@@ -191,7 +220,9 @@ export class TerminalManager {
     // Der Spiegel ist Komfort, kein Muss: schlägt er fehl, laufen Reattaches
     // über den alten Replay/Clear-Weg weiter.
     try {
-      this.mirrors.set(id, new SessionMirror(options.cols, options.rows));
+      const mirror = new SessionMirror(options.cols, options.rows);
+      mirror.onTitle((title) => this.noteTitle(id, title));
+      this.mirrors.set(id, mirror);
     } catch (e) {
       logger.error(`Session mirror creation failed for ${id}: ${(e as Error).message}`);
     }
@@ -612,6 +643,7 @@ export class TerminalManager {
     const r = this.resizeTimers.get(sessionId);
     if (r) { clearTimeout(r); this.resizeTimers.delete(sessionId); }
     this.appliedDims.delete(sessionId);
+    this.activities.delete(sessionId);
     this.mirrors.get(sessionId)?.dispose();
     this.mirrors.delete(sessionId);
     this.partialMirrors.delete(sessionId);
