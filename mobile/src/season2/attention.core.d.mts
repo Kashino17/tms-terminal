@@ -9,4 +9,7 @@ export declare function planAttention(
   foreground: boolean,
   focus: string | null,
 ): { send: string[]; sent: Record<string, string> };
-export declare function pingPlan(quiet: boolean): { pingMs: number; watchdogMs: number };
+export type PingMode = 'live' | 'calm' | 'quiet';
+export declare function pingPlan(mode: PingMode): { pingMs: number; watchdogMs: number; aligned: boolean };
+export declare function nextPingDelay(pingMs: number, aligned: boolean, now: number): number;
+export declare function pingMode(appVisible: boolean, latencyVisible: boolean): PingMode;

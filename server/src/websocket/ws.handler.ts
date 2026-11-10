@@ -278,8 +278,18 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
   // Output pacing (see output.pacer.ts): covered terminals in bundles, a
   // backgrounded app almost nothing — same bytes, same order, fewer wake-ups.
+  /** Sessions handed over while the app was not visible (see below). */
+  const heldDetached = new Set<string>();
   const pacer = createOutputPacer((sid, data) => {
     send(ws, { type: 'terminal:output', sessionId: sid, payload: { data } });
+  }, undefined, (sid, data) => {
+    // The app is not visible and this session keeps producing: stop queueing
+    // for it altogether. Detached, its output only feeds the mirror and the
+    // detectors (auto-approve, pushes keep working); `data` — what the app
+    // never saw — counts as missed, so the app gets one full picture when it
+    // comes back (client:attention below) instead of megabytes in the pocket.
+    globalManager.detachSession(sid, sessionGens.get(sid), data);
+    heldDetached.add(sid);
   });
   /** Send what the pacer still holds for a session (it is about to end). */
   const flushPaced = (sid: string): void => {
@@ -769,6 +779,15 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     if (msg.type === 'client:attention') {
       const p: { foreground?: unknown; focus?: unknown } = msg.payload ?? {};
       pacer.setAttention(p.foreground !== false, typeof p.focus === 'string' ? p.focus : null);
+      // Back on screen: sessions handed over meanwhile are attached again —
+      // the reattach sends their current picture (they have missed output).
+      if (p.foreground !== false && heldDetached.size > 0) {
+        const back = [...heldDetached];
+        heldDetached.clear();
+        for (const sid of back) {
+          if (ownedSessions.has(sid) && globalManager.isDetached(sid)) attachToThisClient(sid);
+        }
+      }
       return;
     }
 

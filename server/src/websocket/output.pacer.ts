@@ -12,8 +12,13 @@
  *
  *   live  the terminal in front (or the client said nothing): send at once
  *   slow  a covered terminal: one bundle per second
- *   hold  the app is not visible: one bundle per 30 s, everything at once the
- *         moment the app comes back
+ *   hold  the app is not visible: NOTHING is sent. What accumulates is kept
+ *         and goes out at once the moment the app comes back. A session that
+ *         produces more than HOLD_MAX_BYTES meanwhile is handed over instead
+ *         (onHoldOverflow → the caller detaches it; the app then gets one
+ *         full picture on return instead of megabytes nobody ever saw).
+ *         Measured on the phone with the earlier 30-s bundles: 118 KB per
+ *         30 s for three working sessions — 14 MB an hour in the pocket.
  *
  * Detectors (prompt, idle, auto-approve) are fed BEFORE the pacer, so their
  * timing is untouched. What is still unsent when a connection ends is handed
@@ -23,11 +28,10 @@
 export type Pace = 'live' | 'slow' | 'hold';
 
 export const SLOW_MS = 1000;
-export const HOLD_MS = 30_000;
 /** A covered terminal producing lots of output (a build log) is not held back for long. */
 export const SLOW_MAX_BYTES = 32 * 1024;
-/** Upper bound of what one held session may queue before it is sent anyway. */
-export const HOLD_MAX_BYTES = 256 * 1024;
+/** What one held session may queue; beyond that it is handed over (see `hold`). */
+export const HOLD_MAX_BYTES = 64 * 1024;
 /** After a keystroke the terminal answers immediately, whatever the client reported. */
 export const INPUT_LIVE_MS = 3000;
 
@@ -66,16 +70,19 @@ export interface OutputPacer {
 export function createOutputPacer(
   deliver: (sessionId: string, data: string) => void,
   clock: PacerClock = REAL_CLOCK,
+  /** A held session outgrew its buffer: take it over (detach) with everything unsent. */
+  onHoldOverflow?: (sessionId: string, data: string) => void,
 ): OutputPacer {
   let foreground = true;
   let focus: string | null = null;
-  const queued = new Map<string, { data: string; timer: unknown }>();
+  /** `timer` is null while held: nothing is scheduled to go out by itself. */
+  const queued = new Map<string, { data: string; timer: unknown | null }>();
   const lastInput = new Map<string, number>();
 
   const flush = (sessionId: string): void => {
     const q = queued.get(sessionId);
     if (!q) return;
-    clock.clearTimer(q.timer);
+    if (q.timer !== null) clock.clearTimer(q.timer);
     queued.delete(sessionId);
     if (q.data) deliver(sessionId, q.data);
   };
@@ -94,15 +101,22 @@ export function createOutputPacer(
         deliver(sessionId, data);
         return;
       }
-      const q = queued.get(sessionId);
+      let q = queued.get(sessionId);
       if (q) {
         q.data += data;
       } else {
-        const timer = clock.setTimer(() => flush(sessionId), pace === 'hold' ? HOLD_MS : SLOW_MS);
-        queued.set(sessionId, { data, timer });
+        q = { data, timer: pace === 'hold' ? null : clock.setTimer(() => flush(sessionId), SLOW_MS) };
+        queued.set(sessionId, q);
       }
-      const size = queued.get(sessionId)!.data.length;
-      if (size >= (pace === 'hold' ? HOLD_MAX_BYTES : SLOW_MAX_BYTES)) flush(sessionId);
+      if (pace === 'hold') {
+        if (q.data.length >= HOLD_MAX_BYTES) {
+          queued.delete(sessionId);
+          if (onHoldOverflow) onHoldOverflow(sessionId, q.data);
+          else deliver(sessionId, q.data);
+        }
+        return;
+      }
+      if (q.data.length >= SLOW_MAX_BYTES) flush(sessionId);
     },
 
     setAttention(nextForeground, nextFocus) {
@@ -123,13 +137,13 @@ export function createOutputPacer(
       const q = queued.get(sessionId);
       lastInput.delete(sessionId);
       if (!q) return '';
-      clock.clearTimer(q.timer);
+      if (q.timer !== null) clock.clearTimer(q.timer);
       queued.delete(sessionId);
       return q.data;
     },
 
     dispose() {
-      for (const q of queued.values()) clock.clearTimer(q.timer);
+      for (const q of queued.values()) if (q.timer !== null) clock.clearTimer(q.timer);
       queued.clear();
       lastInput.clear();
     },

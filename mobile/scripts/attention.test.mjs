@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { focusOf, planAttention, pingPlan } from '../src/season2/attention.core.mjs';
+import { focusOf, planAttention, pingPlan, nextPingDelay, pingMode } from '../src/season2/attention.core.mjs';
 
 test('focusOf: welches Terminal ist wirklich zu sehen?', () => {
   const base = { terminalsVisible: true, remote: false, overview: false, listView: false, compact: false, activeSession: 'S1' };
@@ -47,10 +47,27 @@ test('planAttention: null (alle live) und "" (keins) sind verschiedene Meldungen
   assert.deepEqual(r.send, ['mac']);
 });
 
-test('pingPlan: sichtbar alle 3 s messen, unsichtbar nur noch die Leitung halten', () => {
-  const on = pingPlan(false), off = pingPlan(true);
-  assert.equal(on.pingMs, 3000);
-  assert.equal(on.watchdogMs, 30000);
-  assert.ok(off.pingMs >= 25000, 'im Hintergrund höchstens zwei Pings pro Minute');
-  assert.ok(off.watchdogMs >= off.pingMs * 2.5, 'ein verlorener Ping darf die Verbindung nicht kosten');
+test('pingPlan: so oft wie nötig, so selten wie möglich', () => {
+  const live = pingPlan('live'), calm = pingPlan('calm'), quiet = pingPlan('quiet');
+  assert.deepEqual(live, { pingMs: 3000, watchdogMs: 30000, aligned: false }, 'Ping wird angezeigt: alle 3 s messen');
+  // Niemand sieht einen Ping-Wert (Handy zugeklappt, Terminal offen): jeder Ping
+  // weckt trotzdem das Funkmodul — beim bloßen Lesen blieb es so dauerhaft an.
+  assert.ok(calm.pingMs >= 10000 && calm.pingMs <= 15000, 'sichtbar ohne Ping-Anzeige: nur die Leitung prüfen');
+  assert.ok(quiet.pingMs >= 60000, 'unsichtbar: höchstens ein Ping pro Minute');
+  for (const p of [live, calm, quiet]) assert.ok(p.watchdogMs >= p.pingMs * 2.5, 'ein verlorener Ping kostet die Verbindung nicht');
+  assert.equal(calm.aligned && quiet.aligned, true, 'seltene Pings aller Geräte fallen zusammen (ein Aufwachen statt mehrerer)');
+});
+
+test('nextPingDelay: ausgerichtete Pings treffen dieselbe Sekunde', () => {
+  assert.equal(nextPingDelay(12000, false, 5000), 12000, 'nicht ausgerichtet: einfach das Intervall');
+  assert.equal(nextPingDelay(12000, true, 24000), 12000, 'genau auf der Marke: volle Runde');
+  assert.equal(nextPingDelay(12000, true, 25000), 11000, 'sonst bis zur nächsten gemeinsamen Marke');
+  assert.equal(nextPingDelay(60000, true, 60000 * 7 + 59000), 1000);
+});
+
+test('pingMode: unsichtbar ruhig, sichtbar je nachdem, ob ein Ping-Wert zu sehen ist', () => {
+  assert.equal(pingMode(false, true), 'quiet');
+  assert.equal(pingMode(false, false), 'quiet');
+  assert.equal(pingMode(true, true), 'live');
+  assert.equal(pingMode(true, false), 'calm');
 });

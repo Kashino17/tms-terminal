@@ -65,7 +65,15 @@
   // Der Server sendet danach: das Terminal vorne sofort, verdeckte gebündelt
   // (server/src/websocket/output.pacer.ts). Gemeldet wird nur ein echter
   // Wechsel. Die Regel selbst steht in attention.core.mjs (getestet).
-  var lastFocus;
+  var lastFocus, lastLatency;
+  /** Ist gerade irgendwo ein Ping-Wert zu sehen? Nur dann lohnt es, alle 3 s
+   *  zu messen — sonst prüft die App die Leitung nur noch selten. */
+  var LATENCY_SPOTS = '#statusLatencyLabel, .ds-dev__ms, .rail-dev__meta, #remotePill .rp-dev small, section[data-screen="servers"]:not([hidden])';
+  function latencyVisible() {
+    var els = document.querySelectorAll(LATENCY_SPOTS);
+    for (var i = 0; i < els.length; i++) if (els[i].offsetParent !== null) return true;
+    return false;
+  }
   window.__tmsReportFocus = function () {
     var st = window.__tmsState;
     if (!st || typeof window.__tmsFocusOf !== 'function') return;
@@ -80,9 +88,11 @@
       compact: compact,
       activeSession: (cardId && byCard[cardId]) || null,
     });
-    if (focus === lastFocus) return;
+    var latency = latencyVisible();
+    if (focus === lastFocus && latency === lastLatency) return;
     lastFocus = focus;
-    post('term:focus', { focus: focus });
+    lastLatency = latency;
+    post('term:focus', { focus: focus, latency: latency });
   };
   // Ansichtswechsel (Liste/Stapel, Übersicht, Sheets) laufen über viele kleine
   // Funktionen der Seite — statt jede einzeln zu umwickeln, wird nach jeder
@@ -392,6 +402,17 @@
         rsvc._isPaused = true;
       }
     }
+    // Dasselbe für xterms restliche Bildschirm-Verwaltung: Scrollfläche
+    // (Viewport) und Auswahl (SelectionService) forderten bei jeder Ausgabe
+    // je ein Bild an und schrieben Stile in das unsichtbare Kästchen —
+    // gemessen ~33 Anforderungen/s bei einem 10-Hz-Spinner. Gescrollt und
+    // ausgewählt wird in der Karte (renderTerm), nie hier.
+    try {
+      var vp = term._core && term._core.viewport;
+      if (vp && typeof vp._refresh === 'function') vp._refresh = function () {};
+      var selSvc = term._core && term._core._selectionService;
+      if (selSvc && typeof selSvc.refresh === 'function') selSvc.refresh = function () {};
+    } catch (e) { /* andere xterm-Version: dann eben wie bisher */ }
 
     // Der Emulator ist unsichtbar, aber sein Textfeld ist die Tastatur-Anbindung:
     // ein Tipp ins Terminal fokussiert es. Androids Wortvorschlag komponierte hier
@@ -846,14 +867,19 @@
     if (typeof window.updateJumpOrb === 'function') window.updateJumpOrb(cardId, !atBottom);
   }
 
-  // Gedrosselt: bei Dauerausgabe nicht öfter als alle 60ms neu zeichnen.
-  var renderTimers = {};
+  // Gedrosselt: bei Dauerausgabe nicht öfter als alle 60 ms neu zeichnen —
+  // aber die ERSTE Ausgabe nach einer Pause sofort. Vorher wartete jede Ausgabe
+  // pauschal 60 ms (gemessen: Tastendruck → sichtbar 85 ms bei 2 ms Netz).
+  var RENDER_GAP_MS = 60;
+  var renderTimers = {}, lastRenderAt = {};
   function scheduleRender(cardId) {
     if (renderTimers[cardId]) return;
+    var wait = Math.max(0, RENDER_GAP_MS - (Date.now() - (lastRenderAt[cardId] || 0)));
     renderTimers[cardId] = setTimeout(function () {
       renderTimers[cardId] = null;
+      lastRenderAt[cardId] = Date.now();
       renderTerm(cardId);
-    }, 60);
+    }, wait);
   }
   // Der Demo-Ticker des Mockups würfelt die Latenz — am echten Server aus.
   if (typeof window.__tmsStopLatencyDemo === 'function') window.__tmsStopLatencyDemo();

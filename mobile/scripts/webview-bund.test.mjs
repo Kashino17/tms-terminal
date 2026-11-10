@@ -772,4 +772,67 @@ if (!PW) {
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });
+
+  // Jeder Ping weckt das Funkmodul. Alle 3 s lohnt nur, wenn der Wert auch zu
+  // sehen ist — zugeklappt mit Terminal vorne steht er nirgends.
+  test('Ping-Anzeige: die Seite meldet, ob gerade ein Ping-Wert zu sehen ist', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await page.evaluate(() => {
+        window.TMSBridge.restoreSessions([{ sessionId: 'S-A', name: 'Eins', serverId: 'A' }]);
+        show('terminals'); setActive(0);
+      });
+      await page.waitForTimeout(500);
+      const last = async () => { const p = await posts('term:focus'); return p.length ? p[p.length - 1].payload : null; };
+      assert.deepEqual(await last(), { focus: 'S-A', latency: false }, 'Terminal vorne (schmal): kein Ping-Wert sichtbar');
+      await page.evaluate(() => show('servers'));
+      assert.deepEqual(await last(), { focus: '', latency: true }, 'Bund-Seite zeigt die Geräte mit Ping');
+      await page.evaluate(() => show('terminals'));
+      assert.deepEqual(await last(), { focus: 'S-A', latency: false });
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  // Am Emulator gemessen: Tastendruck → sichtbar 85 ms bei 2 ms Netz — 60 ms
+  // davon eine feste Wartezeit vor JEDEM Neuzeichnen. Die Drossel bleibt für
+  // Dauerausgabe, aber das erste Zeichen nach einer Pause kommt sofort.
+  test('Terminal zeichnet das erste Zeichen nach einer Pause sofort, Dauerausgabe bleibt gedrosselt', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      await page.evaluate(() => {
+        window.TMSBridge.restoreSessions([{ sessionId: 'S-A', name: 'Eins', serverId: 'A' }]);
+        show('terminals'); setActive(0);
+      });
+      await page.waitForTimeout(600);
+      const r = await page.evaluate(async () => {
+        const body = document.querySelector('.card-body[data-card-id]');
+        const until = (text, t0) => new Promise((resolve) => {
+          const done = () => { if (body.textContent.indexOf(text) >= 0) { mo.disconnect(); resolve(performance.now() - t0); return true; } return false; };
+          const mo = new MutationObserver(done);
+          mo.observe(body, { childList: true, subtree: true, characterData: true });
+          setTimeout(() => { mo.disconnect(); resolve(-1); }, 1500);
+        });
+        const lat = [];
+        for (const word of ['ERSTES', 'ZWEITES', 'DRITTES']) {
+          await new Promise((res) => setTimeout(res, 250)); // Pause → nächste Ausgabe ist „die erste"
+          const t0 = performance.now();
+          const seen = until(word, t0);
+          window.TMSBridge.output('S-A', word + '\r\n');
+          lat.push(Math.round(await seen));
+        }
+        // Dauerausgabe: 40 Häppchen in ~200 ms → höchstens eine Handvoll Neuzeichnungen
+        let renders = 0;
+        const mo = new MutationObserver(() => { renders++; });
+        mo.observe(body, { childList: true, subtree: true });
+        for (let i = 0; i < 40; i++) { window.TMSBridge.output('S-A', 'strom ' + i + '\r\n'); await new Promise((res) => setTimeout(res, 5)); }
+        await new Promise((res) => setTimeout(res, 200));
+        mo.disconnect();
+        return { lat, renders, hasLast: body.textContent.indexOf('strom 39') >= 0 };
+      });
+      assert.ok(r.lat.every((ms) => ms >= 0 && ms < 40), `erste Ausgabe nach Pause sofort sichtbar (gemessen: ${r.lat.join(', ')} ms)`);
+      assert.ok(r.renders <= 8, `Dauerausgabe bleibt gedrosselt (${r.renders} Neuzeichnungen für 40 Häppchen)`);
+      assert.equal(r.hasLast, true, 'nichts geht verloren');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
 }

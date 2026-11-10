@@ -40,10 +40,26 @@ export function planAttention(devices, sent, foreground, focus) {
 }
 
 /**
- * Wie oft die Verbindung geprüft wird. Sichtbar: alle 3 s (ehrliche
- * Ping-Anzeige). Unsichtbar zeigt niemand einen Ping an — dann reicht es, die
- * Leitung zu halten; jeder Ping weckt sonst das Funkmodul.
+ * Wie oft die Verbindung geprüft wird — jeder Ping weckt das Funkmodul.
+ *   live   ein Ping-Wert ist zu sehen (Seitenleiste, Bund, Fernzugriff): alle 3 s
+ *   calm   App sichtbar, aber nirgends ein Ping-Wert: nur die Leitung prüfen
+ *   quiet  App unsichtbar: die Leitung halten, mehr nicht
+ * `aligned`: seltene Pings aller Geräte fallen auf dieselbe Uhr-Marke — ein
+ * Aufwachen des Funkmoduls statt eines pro Gerät.
  */
-export function pingPlan(quiet) {
-  return quiet ? { pingMs: 30000, watchdogMs: 90000 } : { pingMs: 3000, watchdogMs: 30000 };
+export function pingPlan(mode) {
+  if (mode === 'quiet') return { pingMs: 60000, watchdogMs: 150000, aligned: true };
+  if (mode === 'calm') return { pingMs: 12000, watchdogMs: 40000, aligned: true };
+  return { pingMs: 3000, watchdogMs: 30000, aligned: false };
+}
+
+/** Zeit bis zum nächsten Ping; ausgerichtet = bis zur nächsten Uhr-Marke des Intervalls. */
+export function nextPingDelay(pingMs, aligned, now) {
+  if (!aligned) return pingMs;
+  return pingMs - (now % pingMs);
+}
+
+export function pingMode(appVisible, latencyVisible) {
+  if (!appVisible) return 'quiet';
+  return latencyVisible ? 'live' : 'calm';
 }

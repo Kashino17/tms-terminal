@@ -31,8 +31,8 @@ import { adhanNativeAvailable, adhanStatus, adhanPermsForPage, openAdhanPermissi
 import { clearDurableStorage } from '../services/durableStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CHECK_EVERY_MS, RESUME_GAP_MS, shouldCheck } from '../services/update.core.mjs';
-import { getConnection, setConnectionsQuiet, type WebSocketService } from '../services/websocket.service';
-import { planAttention } from './attention.core.mjs';
+import { getConnection, setConnectionsPingMode, type WebSocketService } from '../services/websocket.service';
+import { planAttention, pingMode } from './attention.core.mjs';
 import { useS2ConnStore, useS2Connection, type S2Server } from './s2conn/connection';
 import {
   setAdhanEnabled, setFajrWecker, setSelectedAdhan, readAdhanSettings,
@@ -188,12 +188,15 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // verdeckter Terminals und hält sie ganz zurück, solange niemand hinsieht.
   // Am Fold gemessen liefen sonst ~13 Nachrichten/s durch — auch im Hintergrund.
   const focusRef = useRef<string | null>(null);
+  /** Ist irgendwo ein Ping-Wert zu sehen? Sonst genügt ein seltener Ping. */
+  const latencyVisibleRef = useRef(false);
   const attentionSent = useRef<Record<string, string>>({});
   const syncAttention = useCallback(() => {
     const anchor = useS2ConnStore.getState().server?.id;
     const ids = new Set<string>(peersRef.current.map((p) => p.id));
     if (anchor) ids.add(anchor);
     const foreground = AppState.currentState === 'active';
+    setConnectionsPingMode(pingMode(foreground, latencyVisibleRef.current));
     const plan = planAttention(
       [...ids].map((id) => ({ id, connected: getConnection(id).state === 'connected' })),
       attentionSent.current, foreground, focusRef.current,
@@ -937,7 +940,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       call('setAppActive', next === 'active');
       // SPARMODUS: unsichtbar → der Server hält die Ausgabe zurück, die
       // Verbindungen prüfen sich nur noch selten. Sichtbar → alles sofort.
-      setConnectionsQuiet(next !== 'active');
       if (next === 'active') attentionSent.current = {}; // sicher neu melden (stiller Socket-Tausch)
       syncAttention();
       // Die Historie wird jetzt erst geschrieben, wenn der Strom zur Ruhe kommt —
@@ -1430,6 +1432,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       case 'term:focus': {
         const f = payload?.focus;
         focusRef.current = typeof f === 'string' ? f : null;
+        latencyVisibleRef.current = !!payload?.latency;
         syncAttention();
         break;
       }

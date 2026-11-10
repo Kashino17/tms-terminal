@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createOutputPacer, paceFor, SLOW_MS, HOLD_MS, HOLD_MAX_BYTES, SLOW_MAX_BYTES, INPUT_LIVE_MS,
+  createOutputPacer, paceFor, SLOW_MS, HOLD_MAX_BYTES, SLOW_MAX_BYTES, INPUT_LIVE_MS,
 } from './output.pacer';
 
 /** A pacer with a hand-driven clock: timers fire only when the test says so. */
@@ -10,11 +10,12 @@ function rig() {
   let now = 1_000_000;
   let seq = 0;
   const timers = new Map<number, { at: number; fn: () => void }>();
+  const overflowed: Array<[string, string]> = [];
   const pacer = createOutputPacer((sid, data) => { sent.push([sid, data]); }, {
     now: () => now,
     setTimer: (fn, ms) => { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
     clearTimer: (id) => { timers.delete(id as number); },
-  });
+  }, (sid, data) => { overflowed.push([sid, data]); });
   const advance = (ms: number) => {
     const end = now + ms;
     for (;;) {
@@ -24,7 +25,7 @@ function rig() {
     }
     now = end;
   };
-  return { pacer, sent, advance, pendingTimers: () => timers.size };
+  return { pacer, sent, overflowed, advance, pendingTimers: () => timers.size };
 }
 
 test('paceFor: was der Client meldet, bestimmt das Tempo', () => {
@@ -66,28 +67,33 @@ test('Terminalwechsel: das neue Terminal vorne bekommt seinen Rückstand sofort'
   assert.equal(pendingTimers(), 0);
 });
 
-test('App im Hintergrund: alles wird gehalten und kommt beim Zurückkehren sofort, vollständig', () => {
-  const { pacer, sent, advance } = rig();
+test('App im Hintergrund: NICHTS wird gesendet, egal wie lange — beim Zurückkehren kommt alles sofort', () => {
+  const { pacer, sent, advance, pendingTimers } = rig();
   pacer.setAttention(true, 'a');
   pacer.setAttention(false, 'a');
   pacer.push('a', 'A1'); pacer.push('b', 'B1');
-  advance(HOLD_MS - 1);
+  advance(10 * 60_000);
   pacer.push('a', 'A2');
-  assert.deepEqual(sent, [], 'nichts geht raus, solange niemand hinsieht');
+  assert.deepEqual(sent, [], 'auch nach zehn Minuten kein einziges Paket (am Fold gemessen: sonst 14 MB/h)');
+  assert.equal(pendingTimers(), 0, 'kein Zeitgeber wartet darauf, doch noch zu senden');
   pacer.setAttention(true, 'a');
-  assert.deepEqual(sent.sort(), [['a', 'A1A2'], ['b', 'B1']], 'zurück: beide Rückstände sofort');
+  assert.deepEqual(sent.sort(), [['a', 'A1A2'], ['b', 'B1']], 'zurück: beide Rückstände sofort, vollständig');
 });
 
-test('App im Hintergrund: spätestens nach HOLD_MS ein Bündel — und bei viel Ausgabe früher', () => {
-  const { pacer, sent, advance } = rig();
+test('App im Hintergrund, viel Ausgabe: statt zu senden wird die Sitzung abgegeben (Vollbild bei Rückkehr)', () => {
+  const { pacer, sent, overflowed } = rig();
   pacer.setAttention(false, null);
   pacer.push('a', 'x');
-  advance(HOLD_MS);
-  assert.deepEqual(sent, [['a', 'x']]);
   const big = 'y'.repeat(HOLD_MAX_BYTES);
-  pacer.push('a', 'z'); pacer.push('a', big);
-  assert.equal(sent.length, 2, 'Größengrenze erreicht → sofort raus, kein unbegrenzter Puffer');
-  assert.equal(sent[1][1].length, 1 + HOLD_MAX_BYTES);
+  pacer.push('a', big);
+  assert.deepEqual(sent, [], 'nichts geht über die Leitung');
+  assert.equal(overflowed.length, 1, 'die Sitzung wird übergeben …');
+  assert.deepEqual([overflowed[0][0], overflowed[0][1].length], ['a', 1 + HOLD_MAX_BYTES], '… mit allem, was die App nie sah');
+  assert.equal(pacer.take('a'), '', 'der Puffer ist danach leer');
+  // Eine andere Sitzung mit wenig Ausgabe bleibt einfach gehalten.
+  pacer.push('b', 'klein');
+  pacer.setAttention(true, null);
+  assert.deepEqual(sent, [['b', 'klein']]);
 });
 
 test('verdecktes Terminal mit viel Ausgabe: Größengrenze löst früher aus', () => {
@@ -116,7 +122,7 @@ test('take: was noch nicht gesendet wurde, geht beim Trennen nicht verloren', ()
   pacer.push('a', 'un'); pacer.push('a', 'gesendet');
   assert.equal(pacer.take('a'), 'ungesendet');
   assert.equal(pacer.take('a'), '', 'nur einmal');
-  advance(HOLD_MS * 2);
+  advance(120_000);
   assert.deepEqual(sent, [], 'und es wird nicht doch noch gesendet');
   assert.equal(pendingTimers(), 0);
 });
