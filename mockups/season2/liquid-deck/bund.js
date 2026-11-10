@@ -807,10 +807,12 @@
   }
   function bmAugment(menu) {
     if (menu.querySelector('.bm-sec')) return;
+    // Läuft irgendwo ein Fernzugriff? Dann schimmert die Zeile (aufgeklappt: das Gerät).
+    const live = typeof window.__remoteAliveIds === 'function' && window.__remoteAliveIds().length > 0;
     menu.insertAdjacentHTML('afterbegin', `<div class="bm-sec">
-      <button class="bm-row" data-bm-open="term" aria-expanded="false">${ic('plus', 2)}<span>Neues Terminal</span>${ic('chev', 2)}</button>
+      <button class="bm-row" data-bm-open="term" aria-expanded="false"><i class="bm-ic">${ic('plus', 2)}</i><span>Neues Terminal</span>${ic('chev', 2)}</button>
       <div class="bm-list" data-bm-list="term" hidden>${bmList('term')}</div>
-      <button class="bm-row" data-bm-open="remote" aria-expanded="false">${ic('remote', 1.8)}<span>Fernzugriff</span>${ic('chev', 2)}</button>
+      <button class="bm-row${live ? ' is-live' : ''}" data-bm-open="remote" aria-expanded="false"><i class="bm-ic">${ic('remote', 1.8)}</i><span>Fernzugriff</span>${ic('chev', 2)}</button>
       <div class="bm-list" data-bm-list="remote" hidden>${bmList('remote')}</div></div>`);
     // Breiter geworden → wieder rechtsbündig am ⋮-Knopf ausrichten
     const btn = document.querySelector('.card-menu-btn[aria-expanded="true"]');

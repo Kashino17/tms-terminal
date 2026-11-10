@@ -298,7 +298,8 @@ body.no-island { --top-space: calc(var(--safe-top, 0px) + 10px); }
 .card-menu .bm-sec { padding: 2px 0 6px; border-bottom: 1px solid rgba(var(--overlay-rgb, 255,255,255), .1); margin-bottom: 4px; min-width: 250px; }
 .card-menu .bm-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 11px; border: 0; background: none; border-radius: 10px; color: var(--text); font-size: var(--fs-body, 15px); text-align: left; }
 .card-menu .bm-row:active { background: rgba(var(--overlay-rgb, 255,255,255), .10); }
-.card-menu .bm-row > svg { width: 17px; height: 17px; color: var(--text-dim); flex: none; }
+.card-menu .bm-ic { position: relative; width: 17px; height: 17px; display: grid; place-items: center; flex: none; color: var(--text-dim); font-style: normal; }
+.card-menu .bm-ic svg { width: 17px; height: 17px; }
 .card-menu .bm-row > svg:last-child { width: 15px; height: 15px; margin-left: auto; transition: transform .2s; }
 .card-menu .bm-row[aria-expanded="true"] > svg:last-child { transform: rotate(90deg); }
 .card-menu .bm-row > span { flex: 1; white-space: nowrap; }
@@ -314,3 +315,30 @@ body.no-island { --top-space: calc(var(--safe-top, 0px) + 10px); }
 .card-menu .bm-dev.is-alive small { color: var(--ok, #3ddc84); }
 .card-menu .bm-dev small i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok, #3ddc84); }
 .card-menu .bm-empty { padding: 8px 10px; color: var(--text-dim); font-size: 13px; }
+
+/* ── Fernzugriff läuft: sanft pulsierender grüner Ring ────────────────
+   ⋮ (zugeklappt + aufgeklappt, nicht im Splitscreen), im Menü die Zeile
+   „Fernzugriff“, aufgeklappt das Symbol des Geräts mit laufender Sitzung. */
+@keyframes tmsLivePulse {
+  0% { transform: scale(1); opacity: .55; }
+  70%, 100% { transform: scale(1.5); opacity: 0; }
+}
+body.remote-alive:not(.compact-terminal) .term-card .card-menu-btn,
+body.remote-alive.desk .term-card .card-menu-btn {
+  position: relative; border-color: color-mix(in srgb, var(--ok, #3ddc84) 55%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--ok, #3ddc84) 22%, transparent);
+}
+body.remote-alive:not(.compact-terminal) .term-card .card-menu-btn::after,
+body.remote-alive.desk .term-card .card-menu-btn::after,
+.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic::after,
+.card-menu .bm-dev.is-alive .bm-dev__ic::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+  border: 1.5px solid var(--ok, #3ddc84); animation: tmsLivePulse 2.6s cubic-bezier(.2,.6,.3,1) infinite;
+}
+.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic { color: var(--ok, #3ddc84); border-radius: 50%; }
+.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic::after { inset: -5px; }
+.card-menu .bm-row.is-live[aria-expanded="false"] > span { color: color-mix(in srgb, var(--ok, #3ddc84) 70%, var(--text)); }
+.card-menu .bm-dev.is-alive .bm-dev__ic { position: relative; box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok, #3ddc84) 45%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  body.remote-alive .term-card .card-menu-btn::after, .card-menu .bm-ic::after, .card-menu .bm-dev__ic::after { animation: none; opacity: .5; }
+}

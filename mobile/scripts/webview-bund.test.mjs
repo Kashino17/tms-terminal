@@ -318,4 +318,29 @@ if (!PW) {
       assert.ok('cardId' in caps[0].payload, 'Zielkarte steht fest');
     } finally { await browser.close(); }
   });
+
+  test('Fernzugriff aktiv: grüner Ring um ⋮, Schimmer im Menü, aufgeklappt am Gerät — nicht im Splitscreen', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      await page.evaluate(() => { window.__newTermServer = 'A'; window.addTerminal(); window.__newTermServer = null; });
+      await page.waitForTimeout(400);
+      const ring = () => page.evaluate(() => getComputedStyle(document.querySelector('.term-card .card-menu-btn'), '::after').animationName);
+      assert.equal(await ring(), 'none', 'ohne Sitzung kein Ring');
+      await page.evaluate(() => window.__setRemoteAlive('B', true));
+      assert.equal(await ring(), 'tmsLivePulse', 'Ring um ⋮');
+      await page.evaluate(() => document.querySelector('.term-card .card-menu-btn').click());
+      await page.waitForTimeout(250);
+      const rowRing = () => page.evaluate(() => getComputedStyle(document.querySelector('.card-menu [data-bm-open="remote"] .bm-ic'), '::after').animationName);
+      assert.equal(await rowRing(), 'tmsLivePulse', 'Fernzugriff schimmert');
+      await page.evaluate(() => document.querySelector('.card-menu [data-bm-open="remote"]').click());
+      await page.waitForTimeout(150);
+      assert.equal(await rowRing(), 'none', 'aufgeklappt: nicht mehr an der Zeile');
+      const devRing = (id) => page.evaluate((i) => getComputedStyle(document.querySelector(`.card-menu [data-bm="remote"][data-srv="${i}"] .bm-dev__ic`), '::after').animationName, id);
+      assert.equal(await devRing('B'), 'tmsLivePulse', 'sondern am laufenden Gerät');
+      assert.equal(await devRing('A'), 'none');
+      await page.evaluate(() => { document.querySelectorAll('.card-menu').forEach((m) => m.remove()); document.body.classList.add('compact-terminal'); document.body.classList.remove('desk'); });
+      assert.equal(await ring(), 'none', 'Splitscreen: kein Ring');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
 }
