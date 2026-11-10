@@ -53,7 +53,7 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
       cwd.current = d.path;
       call('setFilesDir', d.path, (d.entries ?? []).map((e: any) => ({
         name: e.name, path: e.path, isDir: e.isDir, size: e.size, modified: e.modified,
-      })));
+      })), server.id);
     } catch (e: any) {
       call('toast', `Dateien: ${e?.message ?? 'Laden fehlgeschlagen'}`);
     }
@@ -139,10 +139,10 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
         if (!server || !token) return true;
         (async () => {
           try {
-            const r = await fetch(`${base}/files/read?path=${encodeURIComponent(payload.path)}`, { headers: auth });
+            const r = await fetch(`${base}/files/read?path=${encodeURIComponent(payload.path)}&max=524288`, { headers: auth });
             const d = await r.json();
             if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
-            call('fileContent', payload.path, d.content ?? '', null);
+            call('fileContent', payload.path, d.content ?? '', null, !!d.truncated);
           } catch (e: any) {
             call('fileContent', payload.path, '', e?.message ?? 'Lesen fehlgeschlagen');
           }

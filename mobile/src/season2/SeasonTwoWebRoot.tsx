@@ -52,7 +52,7 @@ import { hydrateScrollback, getScrollback, appendScrollback, dropScrollback, flu
 import { LIQUID_DECK_HTML } from './web/liquidDeckHtml';
 import { activeDeviceId, dictationDeviceId } from './bund/devices.core.mjs';
 import type { BundDevice } from './bund/devices.core.mjs';
-import { clipStore, toLegacyItems } from './bund/clipboardStore';
+import { clipStore } from './bund/clipboardStore';
 
 // Direktlinks zu den API-Key-/Token-Seiten der Cloud-Anbieter. Getippt in der
 // Verbinden-Karte (nur solange nicht verbunden) und geöffnet im geteilten
@@ -78,11 +78,11 @@ const SERVER_PAGE_MGMT_JS = `(function(){
   window.__tmsServerMgmt = true;
   var RN = window.ReactNativeWebView;
   function post(type, payload){ try { RN.postMessage(JSON.stringify({ type: type, payload: payload || {} })); } catch (e) {} }
-  function idOf(card){ var el = card.querySelector('[data-latency-chip]'); return el ? el.getAttribute('data-latency-chip') : null; }
+  function idOf(card){ if (card.dataset && card.dataset.dev) return card.dataset.dev; var el = card.querySelector('[data-latency-chip]'); return el ? el.getAttribute('data-latency-chip') : null; }
   var lpTimer = null, lpId = null, lpMoved = false;
   function cancelLp(){ if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } }
   document.addEventListener('touchstart', function(e){
-    var card = e.target && e.target.closest ? e.target.closest('.server-card') : null;
+    var card = e.target && e.target.closest ? e.target.closest('.server-card, .bund-dev') : null;
     if (!card) return;
     lpMoved = false; lpId = idOf(card); cancelLp();
     lpTimer = setTimeout(function(){ lpTimer = null; if (lpId && !lpMoved) post('server:menu', { id: lpId }); }, 500);
@@ -91,11 +91,12 @@ const SERVER_PAGE_MGMT_JS = `(function(){
   document.addEventListener('touchend', cancelLp, { passive: true });
   document.addEventListener('touchcancel', cancelLp, { passive: true });
   document.addEventListener('contextmenu', function(e){
-    var card = e.target && e.target.closest ? e.target.closest('.server-card') : null;
+    var card = e.target && e.target.closest ? e.target.closest('.server-card, .bund-dev') : null;
     if (!card) return; e.preventDefault(); var id = idOf(card); if (id) post('server:menu', { id: id });
   });
   function addPlus(){
     var host = document.querySelector('[data-screen="servers"]'); if (!host) return;
+    if (host.querySelector('.bund-add')) return; // Bund-Karte hat ihren eigenen Hinzufügen-Knopf
     var row = host.querySelector('.screen-title-row'); if (!row || row.querySelector('#tmsAddServerBtn')) return;
     var b = document.createElement('button');
     b.id = 'tmsAddServerBtn'; b.className = 'icon-btn glass'; b.type = 'button';
@@ -589,7 +590,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   useEffect(() => {
     if (!ready) return;
     void clipStore.load();
-    return clipStore.subscribe((l) => call('clipboardSet', toLegacyItems(l)));
+    return clipStore.subscribe((l) => call('setClips', l));
   }, [ready, call]);
 
   // Browser-Bridge: open the login URL stashed by a tapped "Login öffnen" push —
@@ -1375,7 +1376,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
             clipSynced.current = t;
             clipStore.add({ text: t, src: 'phone', at: Date.now() });
           }
-        }).catch(() => {}).finally(() => call('clipboardSet', toLegacyItems(clipStore.get())));
+        }).catch(() => {}).finally(() => call('setClips', clipStore.get()));
         break;
 
       case 'clipboard:use': {

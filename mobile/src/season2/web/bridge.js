@@ -2337,13 +2337,13 @@
     window.__tmsCwd = '~';
     if (window.fsResetDir) window.fsResetDir();
   };
-  window.TMSBridge.setFilesDir = function (path, entries) {
-    if (window.fsSetDir) window.fsSetDir(path, entries);
+  window.TMSBridge.setFilesDir = function (path, entries, srvId) {
+    if (window.fsSetDir) window.fsSetDir(path, entries, srvId);
     window.__tmsCwd = path; // Sheet und Screen teilen sich den Ort
   };
   window.fsReadFile = function (path) { post('files:readRaw', { path: path }); };
-  window.TMSBridge.fileContent = function (path, content, error) {
-    if (window.fsSetFileContent) window.fsSetFileContent(path, content, error);
+  window.TMSBridge.fileContent = function (path, content, error, truncated) {
+    if (window.fsSetFileContent) window.fsSetFileContent(path, content, error, truncated);
   };
   window.TMSBridge.downloadProgress = function (id, name, pct, state) {
     if (window.fsDownloadProgress) window.fsDownloadProgress(id, name, pct, state);
@@ -2838,6 +2838,7 @@
 
   /** Ladefortschritt: wie viele von wie vielen Bildern schon durch sind. */
   window.TMSBridge.uploadProgress = function (done, total) {
+    if (window.__bundUpload) window.__bundUpload(done, total);
     uploadState = (done >= total) ? null : { done: done, total: total };
     // NUR während des Uploads das offene Sheet mit Fortschritt neu bauen. Beim
     // Abschluss NICHT: setTool→openSheet würde das Sheet erneut öffnen und dabei
@@ -2886,11 +2887,15 @@
   // ══ React Native → WebView (Sheets) ═══════════════════════════════════════
   window.TMSBridge.setTool = function (key, data, cwd) {
     window.TMS_DATA[key] = data;
+    if (window.__bundOnTool) window.__bundOnTool(key, data);
     if (cwd) window.__tmsCwd = cwd;
     if (openTool === key) origOpenTool(key); // rebuild the open sheet in place
   };
   /** Nach einem Upload: den Serverpfad sofort ins Terminal schreiben. */
   window.TMSBridge.insertIntoTerminal = function (text, msg) { insertIntoTerminal(text, msg); };
+  /** Bund: Zwischenablage-Verlauf vom Handy (mit Quelle + Anheften). */
+  window.TMSBridge.setClips = function (list) { if (window.__bundSetClips) window.__bundSetClips(list || []); };
+  window.__tmsActiveCardId = function () { return activeCardId(); };
   /** Upload fertig: Pfade in GENAU die Karte, von der aus gestartet wurde. Ist
    *  sie nicht mehr vorne, gehen sie direkt an ihre Eingabe (ohne Enter). */
   window.TMSBridge.insertIntoCard = function (cardId, text, msg) {

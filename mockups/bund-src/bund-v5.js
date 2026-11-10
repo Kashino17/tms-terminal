@@ -5,6 +5,9 @@
   const esc = (s) => (typeof escapeHtml === 'function' ? escapeHtml(String(s)) : String(s));
   const say = (m) => (typeof toast === 'function' ? toast(m) : console.log(m));
   const $ = (s, r = document) => r.querySelector(s);
+  /** In der App läuft die Seite in einem ReactNativeWebView — dann echte Daten. */
+  const LIVE = () => !!window.ReactNativeWebView;
+  const post = (type, payload) => { try { window.ReactNativeWebView.postMessage(JSON.stringify({ type, payload: payload || {} })); } catch (_) {} };
 
   // ── Icons ────────────────────────────────────────────────────────────
   const P = {
@@ -58,6 +61,7 @@
   const STATUS = { running: 'LÄUFT', waiting: 'FRAGE', idle: 'BEREIT', done: 'FERTIG' };
 
   function insertText(text) {
+    if (LIVE() && typeof window.__tmsInsert === 'function') { window.__tmsInsert(text, 'Eingefügt'); return; }
     const inp = document.getElementById('dockInput');
     if (inp) { inp.value = (inp.value ? inp.value + ' ' : '') + text; inp.dispatchEvent(new Event('input', { bubbles: true })); }
     const s = activeSess();
@@ -238,9 +242,28 @@
   const pv = document.createElement('div'); pv.className = 'pv'; document.body.appendChild(pv);
 
   const tree = () => TREE[fx.dev] || TREE['srv-mac'];
-  const join = (a, b) => a.replace(/[\\/]$/, '') + tree().sep + b;
-  const parent = (p) => { const s = tree().sep; const i = p.lastIndexOf(s); return i > 2 ? p.slice(0, i) : p; };
+  const sepOf = (p) => (/^[A-Za-z]:/.test(p) || (p.includes('\\') && !p.includes('/')) ? '\\' : '/');
+  const join = (a, b) => a.replace(/[\\/]+$/, '') + sepOf(a) + b;
+  const parent = (p) => {
+    const sp = sepOf(p), t = p.replace(/[\\/]+$/, ''), i = t.lastIndexOf(sp);
+    if (i < 0) return p;
+    if (i === 0) return sp;
+    const head = t.slice(0, i);
+    return /^[A-Za-z]:$/.test(head) ? head + sp : head;
+  };
+  const cacheKey = (dev, path) => dev + '\n' + path;
+  /** Echte Ordnerliste anfordern (Antwort kommt über window.fsSetDir). */
+  function fxLoad(path) {
+    fx.loading = true;
+    if (typeof window.fsListDir === 'function') window.fsListDir(path); else post('files:listRaw', { path });
+  }
+  function goDir(path) {
+    fx.cwd[fx.dev] = path; fx.q = ''; panel.querySelector('.fx2-search input').value = '';
+    if (LIVE()) fxLoad(path);
+    fxRender(); list.scrollTop = 0;
+  }
   function entries(path) {
+    if (LIVE()) return fx.cache[cacheKey(fx.dev, path)] || null;
     const t = tree();
     if (t.dirs[path]) return t.dirs[path];
     // Unbekannter Ordner: plausible Füllung, damit man überall hinein kann
@@ -249,14 +272,40 @@
   }
   function fxOpen() {
     fx.dev = activeSrv().id;
-    if (!fx.cwd[fx.dev]) fx.cwd[fx.dev] = tree().start; // startet auf dem Schreibtisch, merkt sich den Ort pro Gerät
+    // startet auf dem Schreibtisch, merkt sich den Ort pro Gerät
+    if (!fx.cwd[fx.dev]) fx.cwd[fx.dev] = LIVE() ? '~/Desktop' : tree().start;
+    if (LIVE()) fxLoad(fx.cwd[fx.dev]);
     fx.q = ''; panel.querySelector('.fx2-search input').value = '';
     fxSelect(false);
     showSheet(panel);
     fx.open = true; fxRender();
   }
   function fxClose() { fx.open = false; hideSheet(panel); }
-  function fxDeviceCheck() { const d = activeSrv().id; if (d !== fx.dev) { fx.dev = d; if (!fx.cwd[d]) fx.cwd[d] = tree().start; fxSelect(false); fxRender(); } }
+  function fxDeviceCheck() {
+    const d = activeSrv().id;
+    if (d === fx.dev) return;
+    // Gerätewechsel: gemerkten Ordner + letzte Liste SOFORT zeigen, frisch nachladen.
+    fx.dev = d;
+    if (!fx.cwd[d]) fx.cwd[d] = LIVE() ? '~/Desktop' : tree().start;
+    fxSelect(false); fxRender();
+    if (LIVE()) fxLoad(fx.cwd[d]);
+  }
+  fx.cache = {}; fx.retry = 0;
+  /** Antwort der App: Liste eines Ordners (srvId = Gerät, das sie geliefert hat). */
+  window.fsSetDir = function (path, entriesIn, srvId) {
+    if (srvId && fx.dev && srvId !== fx.dev) {
+      // Noch die Liste des vorigen Geräts — kurz warten, neu anfragen.
+      if (++fx.retry <= 3) setTimeout(() => fxLoad(fx.cwd[fx.dev]), 200);
+      return;
+    }
+    fx.retry = 0;
+    const now = Date.now();
+    fx.cache[cacheKey(fx.dev, path)] = (entriesIn || []).map((e) => [e.name, e.isDir ? 'd' : 'f', e.size || 0,
+      e.modified ? Math.max(0, Math.floor((now - e.modified) / 864e5)) : 0]);
+    fx.cwd[fx.dev] = path; fx.loading = false;
+    if (fx.open) fxRender();
+  };
+  window.fsResetDir = function () { if (fx.open && LIVE()) fxLoad(fx.cwd[fx.dev]); };
   function fxSelect(on) { fx.selecting = on; fx.sel.clear(); panel.classList.toggle('is-selecting', on); panel.querySelector('[data-fx="select"]').classList.toggle('is-on', on); }
 
   function fxRender() {
@@ -264,16 +313,18 @@
     const s = activeSess();
     panel.querySelector('.fx2-dev').innerHTML = devChip(srv);
     panel.querySelector('.fx2-title').textContent = fx.selecting ? (fx.sel.size ? `${fx.sel.size} ausgewählt` : 'Auswählen') : 'Dateien';
-    const cwd = fx.cwd[fx.dev], t = tree();
-    // Brotkrumen ab dem Home-Ordner
-    const rel = cwd.startsWith(t.home) ? cwd.slice(t.home.length) : cwd;
-    const parts = rel.split(t.sep).filter(Boolean);
-    let acc = t.home;
-    let crumbs = `<button class="fx2-crumb" data-path="${esc(t.home)}">~</button>`;
-    parts.forEach((p) => { acc = join(acc, p); crumbs += `<span class="fx2-sep">›</span><button class="fx2-crumb" data-path="${esc(acc)}">${esc(p)}</button>`; });
+    const cwd = fx.cwd[fx.dev];
+    // Brotkrumen: jeder Teil des Pfads antippbar (Mac / und Windows C:\)
+    const sp = sepOf(cwd), segs = cwd.split(/[\\/]+/).filter(Boolean);
+    let acc = '', crumbs = '';
+    segs.forEach((seg, i) => {
+      acc = i === 0 ? (cwd.startsWith('/') ? '/' + seg : (seg === '~' ? '~' : seg + sp)) : acc.replace(/[\\/]+$/, '') + sp + seg;
+      crumbs += `${i ? '<span class="fx2-sep">›</span>' : ''}<button class="fx2-crumb" data-path="${esc(acc)}">${esc(seg)}</button>`;
+    });
     const cr = panel.querySelector('.fx2-crumbs'); cr.innerHTML = crumbs; cr.scrollLeft = 99999;
     panel.querySelector('.fx2-cd').title = `cd in „${s ? s.name : ''}“`;
-    let list = entries(cwd).slice();
+    const raw = entries(cwd);
+    let list = (raw || []).slice();
     if (fx.q) list = list.filter((e) => e[0].toLowerCase().includes(fx.q.toLowerCase()));
     const dirs = list.filter((e) => e[1] === 'd'), files = list.filter((e) => e[1] === 'f');
     const by = { name: (a, b) => a[0].localeCompare(b[0], 'de'), size: (a, b) => (b[2] || 0) - (a[2] || 0), date: (a, b) => (a[3] || 0) - (b[3] || 0) }[fx.sort];
@@ -291,7 +342,7 @@
         <span class="ft" style="--c:${k[1]}">${ic(k[0])}</span>
         <span class="fx2-name"><b>${esc(e[0])}</b><small>${meta}</small></span>
         ${isDir && !fx.selecting ? `<svg class="fx2-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${P.chev}</svg>` : ''}</div>`;
-    }).join('') : `<div class="fx2-empty">${fx.q ? 'Nichts gefunden.' : 'Dieser Ordner ist leer.'}</div>`;
+    }).join('') : `<div class="fx2-empty">${raw === null ? 'Lädt …' : fx.q ? 'Nichts gefunden.' : 'Dieser Ordner ist leer.'}</div>`;
     panel.querySelectorAll('.fx2-bulk button').forEach((b) => { b.disabled = !fx.sel.size; });
   }
 
@@ -310,31 +361,49 @@
     if (!press) return; endPress(); const { row, long } = press; press = null; if (long) return;
     const p = row.dataset.p;
     if (fx.selecting) { fx.sel.has(p) ? fx.sel.delete(p) : fx.sel.add(p); fxRender(); return; }
-    if (row.dataset.dir === '1') { fx.cwd[fx.dev] = p; fx.q = ''; panel.querySelector('.fx2-search input').value = ''; fxRender(); list.scrollTop = 0; }
+    if (row.dataset.dir === '1') goDir(p);
     else preview(row.dataset.n, p, row.dataset.meta);
   });
   panel.querySelector('.fx2-search input').addEventListener('input', (e) => { fx.q = e.target.value; fxRender(); });
   panel.addEventListener('click', (e) => {
-    const c = e.target.closest('.fx2-crumb'); if (c) { fx.cwd[fx.dev] = c.dataset.path; fxRender(); return; }
+    const c = e.target.closest('.fx2-crumb'); if (c) { goDir(c.dataset.path); return; }
     const b = e.target.closest('[data-fx]'); if (b) {
       const a = b.dataset.fx;
       if (a === 'close') fxClose();
-      if (a === 'up') { fx.cwd[fx.dev] = parent(fx.cwd[fx.dev]); fxRender(); }
-      if (a === 'cd') { const s = activeSess(); fxClose(); say(`cd ${fx.cwd[fx.dev]} → ${s ? s.name : ''}`); }
+      if (a === 'up') goDir(parent(fx.cwd[fx.dev]));
+      if (a === 'cd') { const s = activeSess(); fxClose(); act('cd', { path: fx.cwd[fx.dev] }, `cd ${fx.cwd[fx.dev]} → ${s ? s.name : ''}`); }
       if (a === 'select') { fxSelect(!fx.selecting); fxRender(); }
       if (a === 'sort') { fx.sort = { name: 'date', date: 'size', size: 'name' }[fx.sort]; fxRender(); }
-      if (a === 'mkdir') say('Neuer Ordner — Name eingeben');
+      if (a === 'mkdir') askName('Neuer Ordner', '', (name) => act('mkdir', { path: join(fx.cwd[fx.dev], name) }, 'Ordner angelegt'));
       return;
     }
     const bk = e.target.closest('[data-bulk]'); if (bk && !bk.disabled) {
       const paths = [...fx.sel];
       if (bk.dataset.bulk === 'trash') return askTrash(paths);
       if (bk.dataset.bulk === 'insert') { insertText(paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' ')); fxSelect(false); fxClose(); }
-      if (bk.dataset.bulk === 'download') { say(paths.length > 1 ? `${paths.length} Dateien als ZIP → Downloads` : 'Download gestartet'); fxSelect(false); fxRender(); }
-      if (bk.dataset.bulk === 'share') say('Teilen-Menü öffnet sich');
+      if (bk.dataset.bulk === 'download') { act('download', { paths, zip: paths.length > 1 }, paths.length > 1 ? `${paths.length} Dateien als ZIP → Downloads` : 'Download gestartet'); fxSelect(false); fxRender(); }
+      if (bk.dataset.bulk === 'share') act('share', { path: paths[0] }, 'Teilen-Menü öffnet sich');
     }
   });
 
+  /** Datei-Aktion: in der App echt (fsAction der Bridge), im Mockup nur Hinweis. */
+  function act(name, payload, demoMsg) {
+    if (LIVE() && typeof window.fsAction === 'function') { window.fsAction(name, payload); return; }
+    if (demoMsg) say(demoMsg);
+  }
+  /** Kleiner Eingabe-Dialog (neuer Ordner, Umbenennen) — ohne window.prompt. */
+  function askName(title, initial, done) {
+    confirmEl.innerHTML = `<h3>${esc(title)}</h3><input class="fx2-name-in" value="${esc(initial)}" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="btns" style="margin-top:14px"><button data-c="no">Abbrechen</button><button class="ok" data-c="yes">OK</button></div>`;
+    const inp = confirmEl.querySelector('input');
+    confirmEl.onclick = (e) => {
+      const b = e.target.closest('[data-c]'); if (!b) return;
+      const v = inp.value.trim(); closeOverlays();
+      if (b.dataset.c === 'yes' && v && v !== initial) done(v);
+    };
+    menu.classList.remove('is-on'); scrim.classList.add('is-on'); confirmEl.classList.add('is-on');
+    setTimeout(() => { inp.focus(); inp.select(); }, 60);
+  }
   function closeOverlays() { scrim.classList.remove('is-on'); menu.classList.remove('is-on'); confirmEl.classList.remove('is-on'); }
   scrim.addEventListener('click', closeOverlays);
   function fxMenu(row) {
@@ -348,22 +417,22 @@
     menu.onclick = (e) => {
       const b = e.target.closest('[data-mi]'); if (!b) return; closeOverlays();
       const a = b.dataset.mi;
-      if (a === 'open') { fx.cwd[fx.dev] = p; fxRender(); }
-      if (a === 'cdto') { const s = activeSess(); fxClose(); say(`cd ${p} → ${s ? s.name : ''}`); }
+      if (a === 'open') goDir(p);
+      if (a === 'cdto') { const s = activeSess(); fxClose(); act('cd', { path: p }, `cd ${p} → ${s ? s.name : ''}`); }
       if (a === 'preview') preview(n, p, row.dataset.meta);
       if (a === 'insert') { insertText(/\s/.test(p) ? `"${p}"` : p); fxClose(); }
-      if (a === 'copy') say('Pfad kopiert');
-      if (a === 'share') say('Teilen-Menü öffnet sich');
-      if (a === 'download') say(`${n} → Downloads`);
+      if (a === 'copy') act('copyPath', { paths: [p] }, 'Pfad kopiert');
+      if (a === 'share') act('share', { path: p }, 'Teilen-Menü öffnet sich');
+      if (a === 'download') act('download', { paths: [p], zip: false }, `${n} → Downloads`);
       if (a === 'select') { fxSelect(true); fx.sel.add(p); fxRender(); }
-      if (a === 'rename') say('Umbenennen — neuer Name');
+      if (a === 'rename') askName('Umbenennen', n, (name) => act('rename', { path: p, name }, 'Umbenannt'));
       if (a === 'trash') askTrash([p]);
     };
     scrim.classList.add('is-on'); menu.classList.add('is-on');
   }
   function askTrash(paths) {
     const n = paths.length, srv = servers().find((x) => x.id === fx.dev);
-    const name = (p) => p.split(tree().sep).pop();
+    const name = (p) => p.split(/[\\/]/).pop();
     confirmEl.innerHTML = `<div class="ic-wrap">${ic('trash')}</div>
       <h3>${n === 1 ? `„${esc(name(paths[0]))}“ in den Papierkorb?` : `${n} Elemente in den Papierkorb?`}</h3>
       <p>Sie landen im Papierkorb von ${esc(srv ? srv.name : 'diesem Gerät')} und lassen sich dort wiederherstellen.</p>
@@ -371,6 +440,7 @@
       <div class="btns"><button data-c="no">Abbrechen</button><button class="danger" data-c="yes">In den Papierkorb</button></div>`;
     confirmEl.onclick = (e) => {
       const b = e.target.closest('[data-c]'); if (!b) return; closeOverlays();
+      if (b.dataset.c === 'yes' && LIVE()) { act('trash', { paths }); fxSelect(false); fxRender(); return; }
       if (b.dataset.c === 'yes') {
         const t = tree(); const dir = t.dirs[fx.cwd[fx.dev]];
         if (dir) t.dirs[fx.cwd[fx.dev]] = dir.filter((e2) => !paths.includes(join(fx.cwd[fx.dev], e2[0])));
@@ -381,10 +451,46 @@
     menu.classList.remove('is-on'); scrim.classList.add('is-on'); confirmEl.classList.add('is-on');
   }
 
+  function previewLive(n, p, meta, kind) {
+    const url = typeof window.fsFileUrl === 'function' ? window.fsFileUrl(p) : '';
+    let body = '';
+    if (kind === 'img') body = `<img class="pv-real" src="${esc(url)}" alt="">`;
+    else if (kind === 'vid') body = `<video class="pv-real" src="${esc(url)}" controls playsinline preload="metadata"></video>`;
+    else if (kind === 'pdf') body = `<iframe class="pv-frame" src="${esc(typeof window.fsPdfUrl === 'function' ? window.fsPdfUrl(p) : url)}"></iframe>`;
+    else if (kind === 'zip') body = '<div class="fx2-empty">Keine Vorschau für Archive — laden oder teilen.</div>';
+    else { body = '<div class="fx2-empty">Lädt …</div>'; pv.dataset.want = p; if (typeof window.fsReadFile === 'function') window.fsReadFile(p); }
+    return body;
+  }
+  /** Antwort der App auf fsReadFile: Text/Markdown/Code anzeigen. */
+  window.fsSetFileContent = function (path, content, error, truncated) {
+    if (pv.dataset.want !== path || !pv.classList.contains('is-on')) return;
+    const box = pv.querySelector('.pv-body');
+    if (error) { box.innerHTML = `<div class="fx2-empty">${esc(error)}</div>`; return; }
+    const kind = KIND(path.split(/[\\/]/).pop())[2];
+    const note = truncated ? '<div class="pv-pages">Gekürzt — nur der Anfang (512 KB)</div>' : '';
+    if (kind === 'md') box.innerHTML = `<div class="pv-doc"><div class="pv-md">${mdToHtml(content)}</div>${note}</div>`;
+    else box.innerHTML = `<div class="pv-doc"><div class="pv-code">${String(content).split('\n').slice(0, 5000).map((l, i) => `<div><span class="n">${i + 1}</span>${esc(l)}</div>`).join('')}</div>${note}</div>`;
+  };
+  /** Kleines Markdown (Überschriften, Code, Listen, fett, inline-Code). */
+  function mdToHtml(md) {
+    const out = []; let code = null;
+    for (const line of String(md).split('\n')) {
+      if (/^```/.test(line)) { if (code) { out.push(`<pre>${esc(code.join('\n'))}</pre>`); code = null; } else code = []; continue; }
+      if (code) { code.push(line); continue; }
+      const inl = (t) => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+      const h = line.match(/^(#{1,3})\s+(.*)/);
+      if (h) out.push(`<h${h[1].length === 1 ? 1 : 2}>${inl(h[2])}</h${h[1].length === 1 ? 1 : 2}>`);
+      else if (/^\s*[-*]\s+/.test(line)) out.push(`<ul><li>${inl(line.replace(/^\s*[-*]\s+/, ''))}</li></ul>`);
+      else if (line.trim()) out.push(`<p>${inl(line)}</p>`);
+    }
+    if (code) out.push(`<pre>${esc(code.join('\n'))}</pre>`);
+    return out.join('');
+  }
   function preview(n, p, meta) {
     const kind = KIND(n)[2];
     let body = '';
-    if (kind === 'img') body = '<div class="pv-img"></div>';
+    if (LIVE()) body = previewLive(n, p, meta, kind);
+    else if (kind === 'img') body = '<div class="pv-img"></div>';
     else if (kind === 'vid') body = `<div class="pv-video"><span class="play">${ic('play')}</span><div class="scrub">4:12<i></i>13:05</div></div>`;
     else if (kind === 'pdf') body = `<div class="pv-doc">${[1, 2].map((i) => `<div class="pv-page"><h4>${i === 1 ? esc(n.replace(/\.pdf$/, '')) : 'Seite 2'}</h4>${'<div class="ln"></div>'.repeat(14)}</div>`).join('')}<div class="pv-pages">Seite 1 von 3</div></div>`;
     else if (kind === 'md') body = `<div class="pv-doc"><div class="pv-md"><h1>${esc(n.replace(/\.md$/, ''))}</h1><p>Projekt-Notizen für den <b>Bund</b> aus MacBook und Windows.</p><h2>Start</h2><pre>npm install\nnpm run dev</pre><h2>Offen</h2><ul><li>Ping ehrlich messen</li><li>Explorer startet auf dem <code>Desktop</code></li></ul></div></div>`;
@@ -396,10 +502,10 @@
     pv.onclick = (e) => {
       const b = e.target.closest('[data-pv]'); if (!b) return;
       const a = b.dataset.pv;
-      if (a === 'close') pv.classList.remove('is-on');
+      if (a === 'close') { pv.classList.remove('is-on'); pv.querySelectorAll('video').forEach((v) => v.pause()); }
       if (a === 'insert') { pv.classList.remove('is-on'); insertText(/\s/.test(p) ? `"${p}"` : p); fxClose(); }
-      if (a === 'share') say('Teilen-Menü öffnet sich');
-      if (a === 'download') say(`${n} → Downloads`);
+      if (a === 'share') act('share', { path: p }, 'Teilen-Menü öffnet sich');
+      if (a === 'download') act('download', { paths: [p], zip: false }, `${n} → Downloads`);
       if (a === 'more') { pv.classList.remove('is-on'); const row = list.querySelector(`[data-p="${CSS.escape(p)}"]`); if (row) fxMenu(row); }
     };
     pv.classList.add('is-on');
@@ -421,6 +527,13 @@
     { t: 'Treffen mit Kunde Do 14 Uhr — Moodboard mitbringen', src: 'phone', at: now - 12 * D },
     { t: 'ssh root@100.64.0.31', src: 'srv-mac', at: now - 24 * D },
   ];
+  if (LIVE()) CLIP.length = 0; // in der App: nur echte Einträge
+  /** Liste vom Handy-Speicher (RN → TMSBridge.setClips). */
+  window.__bundSetClips = function (l) {
+    CLIP.length = 0;
+    (l || []).forEach((c) => CLIP.push({ id: c.id, t: c.text, src: c.src, at: c.at, pin: !!c.pinned }));
+    if (cb.open) cbRender();
+  };
   const cb = { open: false, f: 'all', q: '', newest: true };
   const cbP = document.createElement('div');
   cbP.className = 'flat-panel cb2'; cbP.hidden = true;
@@ -438,8 +551,8 @@
   document.body.appendChild(cbP);
   sheetify(cbP, () => cbClose());
   const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-  const bucket = (at) => at >= +dayStart ? 'Heute' : at >= +dayStart - D ? 'Gestern' : at >= now - 7 * D ? 'Letzte 7 Tage' : at >= now - 30 * D ? 'Letzte 30 Tage' : 'Älter';
-  const ago = (at) => { const m = Math.round((now - at) / 60e3); return m < 60 ? `vor ${m} Min` : m < 24 * 60 ? `vor ${Math.round(m / 60)} Std` : new Date(at).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' }); };
+  const bucket = (at) => { const now = Date.now(); const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0); return at >= +dayStart ? 'Heute' : at >= +dayStart - D ? 'Gestern' : at >= now - 7 * D ? 'Letzte 7 Tage' : at >= now - 30 * D ? 'Letzte 30 Tage' : 'Älter'; };
+  const ago = (at) => { const m = Math.max(0, Math.round((Date.now() - at) / 60e3)); return m < 60 ? `vor ${m} Min` : m < 24 * 60 ? `vor ${Math.round(m / 60)} Std` : new Date(at).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' }); };
   const srcInfo = (src) => src === 'phone' ? ['phone', 'Handy', '#94a3b8'] : [devIcon(servers().find((x) => x.id === src)), devShort(servers().find((x) => x.id === src)), devColor(src)];
   function cbRender() {
     let items = CLIP.slice();
@@ -447,8 +560,8 @@
     if (f === 'pin') items = items.filter((c) => c.pin);
     if (f === 'today') items = items.filter((c) => bucket(c.at) === 'Heute');
     if (f === 'yday') items = items.filter((c) => bucket(c.at) === 'Gestern');
-    if (f === '7') items = items.filter((c) => c.at >= now - 7 * D);
-    if (f === '30') items = items.filter((c) => c.at >= now - 30 * D);
+    if (f === '7') items = items.filter((c) => c.at >= Date.now() - 7 * D);
+    if (f === '30') items = items.filter((c) => c.at >= Date.now() - 30 * D);
     if (['phone', 'srv-mac', 'srv-win'].includes(f)) items = items.filter((c) => c.src === f);
     if (cb.q) items = items.filter((c) => c.t.toLowerCase().includes(cb.q.toLowerCase()));
     items.sort((a, b) => cb.newest ? b.at - a.at : a.at - b.at);
@@ -474,7 +587,7 @@
     const b = e.target.closest('[data-cb]'); if (!b) return;
     if (b.dataset.cb === 'close') cbClose();
     if (b.dataset.cb === 'sort') { cb.newest = !cb.newest; say(cb.newest ? 'Neueste zuerst' : 'Älteste zuerst'); cbRender(); }
-    if (b.dataset.cb === 'clear') say('Verlauf leeren? Angeheftete bleiben.');
+    if (b.dataset.cb === 'clear') { if (LIVE()) post('clipboard:clear'); else say('Verlauf leeren? Angeheftete bleiben.'); }
   });
   cbP.querySelector('input').addEventListener('input', (e) => { cb.q = e.target.value; cbRender(); });
   // Langes Drücken auf einen Eintrag: Menü
@@ -490,30 +603,40 @@
       menu.onclick = (ev) => {
         const m = ev.target.closest('[data-m]'); if (!m) return; closeOverlays();
         if (m.dataset.m === 'ins') { insertText(c.t); cbClose(); }
-        if (m.dataset.m === 'copy') say(`Auf ${devShort(activeSrv())} kopiert`);
-        if (m.dataset.m === 'pin') { c.pin = !c.pin; cbRender(); }
-        if (m.dataset.m === 'snip') { SN.push({ name: c.t.slice(0, 24), cmd: c.t }); snSave(); say('Als Snippet gespeichert'); }
-        if (m.dataset.m === 'del') { CLIP.splice(CLIP.indexOf(c), 1); cbRender(); }
+        if (m.dataset.m === 'copy') { if (LIVE()) post('clipboard:use', { id: c.id, text: c.t }); say(`Aufs Handy + ${devShort(activeSrv())} kopiert`); }
+        if (m.dataset.m === 'pin') { if (LIVE()) post('clipboard:pin', { id: c.id }); else { c.pin = !c.pin; cbRender(); } }
+        if (m.dataset.m === 'snip') { snAdd(c.t.slice(0, 24), c.t); say('Als Snippet gespeichert'); }
+        if (m.dataset.m === 'del') { if (LIVE()) post('clipboard:delete', { id: c.id }); else { CLIP.splice(CLIP.indexOf(c), 1); cbRender(); } }
       };
       scrim.classList.add('is-on'); menu.classList.add('is-on');
     }, 450);
   });
   ['pointerup', 'pointercancel', 'pointermove'].forEach((t) => cbP.addEventListener(t, () => clearTimeout(cbPress)));
-  function cbOpen() { showSheet(cbP); cb.open = true; cbRender(); }
+  function cbOpen() { showSheet(cbP); cb.open = true; cbRender(); if (LIVE()) post('clipboard:open'); }
   function cbClose() { cb.open = false; hideSheet(cbP); }
 
   // ════════════════════════════════════════════════════════════════════
   // 4) SNIPPETS — leer, auf dem Handy, bleiben bei Updates
   // ════════════════════════════════════════════════════════════════════
   let SN = [];
-  try { SN = JSON.parse(localStorage.getItem('tms-bund-snippets') || '[]'); } catch (_) { SN = []; }
-  const snSave = () => { try { localStorage.setItem('tms-bund-snippets', JSON.stringify(SN)); } catch (_) {} };
+  if (!LIVE()) { try { SN = JSON.parse(localStorage.getItem('tms-bund-snippets') || '[]'); } catch (_) { SN = []; } }
+  const snSave = () => { if (LIVE()) return; try { localStorage.setItem('tms-bund-snippets', JSON.stringify(SN)); } catch (_) {} };
+  /** In der App liegen Snippets im durableStorage — RN schickt sie per setTool. */
+  window.__bundOnTool = function (key, data) {
+    if (key !== 'snippets' || !Array.isArray(data)) return;
+    SN = data.map((x) => ({ id: x.id, name: x.label || x.name || '', cmd: x.cmd || '' }));
+    if (!snP.hidden) snRender();
+  };
+  function snAdd(name, cmd) {
+    if (LIVE()) post('snippet:add', { name, cmd });
+    else { SN.push({ name, cmd }); snSave(); }
+  }
   const snP = document.createElement('div');
   snP.className = 'flat-panel sn2'; snP.hidden = true;
   document.body.appendChild(snP);
   sheetify(snP, () => snClose());
   const snBody = document.createElement('div'); snBody.style.cssText = 'flex:1;min-height:0;display:flex;flex-direction:column;'; snP.appendChild(snBody);
-  let snForm = false;
+  let snForm = false, snEdit = null;
   function snRender() {
     const form = snForm ? `<div class="sn2-form"><label>Name<input id="snName" placeholder="z. B. Server neu starten"></label>
       <label>Befehl<textarea id="snCmd" placeholder="tms-terminal restart"></textarea></label>
@@ -540,17 +663,53 @@
     if (a === 'save') {
       const n = document.getElementById('snName').value.trim(), c = document.getElementById('snCmd').value.trim();
       if (!c) return say('Befehl fehlt');
-      SN.push({ name: n || c.slice(0, 24), cmd: c }); snSave(); snForm = false; snRender(); say('Snippet gespeichert');
+      if (snEdit && LIVE()) post('snippet:edit', { id: snEdit, name: n || c.slice(0, 24), cmd: c });
+      else if (snEdit) { const it = SN.find((x) => x.id === snEdit); if (it) { it.name = n || c.slice(0, 24); it.cmd = c; } snSave(); }
+      else snAdd(n || c.slice(0, 24), c);
+      snEdit = null; snForm = false; snRender(); say('Snippet gespeichert');
     }
   });
-  function snOpen() { snForm = false; snRender(); showSheet(snP); }
+  function snOpen() { snForm = false; snEdit = null; snRender(); showSheet(snP); if (LIVE()) post('tool:open', { tool: 'snippets' }); }
+  // Langes Drücken auf ein Snippet: Bearbeiten / Löschen
+  let snPress = null;
+  snP.addEventListener('pointerdown', (e) => {
+    const it = e.target.closest('.sn2-item'); if (!it || e.target.closest('[data-run]')) return;
+    const i = +it.querySelector('[data-run]').dataset.run, sn = SN[i];
+    snPress = setTimeout(() => {
+      menu.innerHTML = `<div class="fx2-menu__head"><div><b>${esc(sn.name)}</b><small>${esc(sn.cmd.slice(0, 80))}</small></div></div>
+        <button class="mi" data-m="edit">${ic('rename')}Bearbeiten</button><button class="mi danger" data-m="del">${ic('trash')}Löschen</button>`;
+      menu.onclick = (ev) => {
+        const m = ev.target.closest('[data-m]'); if (!m) return; closeOverlays();
+        if (m.dataset.m === 'edit') {
+          snEdit = sn.id || null; snForm = true; snRender();
+          setTimeout(() => { document.getElementById('snName').value = sn.name; document.getElementById('snCmd').value = sn.cmd; }, 60);
+        }
+        if (m.dataset.m === 'del') { if (LIVE()) post('snippet:delete', { id: sn.id }); else { SN.splice(i, 1); snSave(); snRender(); } }
+      };
+      scrim.classList.add('is-on'); menu.classList.add('is-on');
+    }, 450);
+  });
+  ['pointerup', 'pointercancel', 'pointermove'].forEach((t) => snP.addEventListener(t, () => clearTimeout(snPress)));
   function snClose() { hideSheet(snP); }
 
   // ════════════════════════════════════════════════════════════════════
   // 5) BILDER — wie bisher: Galerie öffnet sich direkt, dann Upload
   // ════════════════════════════════════════════════════════════════════
   const up = document.createElement('div'); up.className = 'up2'; document.body.appendChild(up);
+  /** Upload-Fortschritt von der App (RN → TMSBridge.uploadProgress). */
+  window.__bundUpload = function (done, total) {
+    const srv = activeSrv();
+    if (done >= total) { up.classList.remove('is-on'); return; }
+    up.innerHTML = `${devChip(srv)}<span>${done}/${total} → ${esc(srv ? srv.name : '')}</span><i></i>`;
+    up.querySelector('i').style.setProperty('--p', Math.round((done / Math.max(1, total)) * 100) + '%');
+    up.classList.add('is-on');
+  };
   function shots() {
+    if (LIVE()) {
+      // Wie bisher: Galerie öffnet sich direkt. Gerät + Karte stehen jetzt fest.
+      post('shot:capture', { source: 'library', cardId: typeof window.__tmsActiveCardId === 'function' ? window.__tmsActiveCardId() : null });
+      return;
+    }
     const srv = activeSrv(), s = activeSess();
     say('Galerie öffnet sich …');
     setTimeout(() => {

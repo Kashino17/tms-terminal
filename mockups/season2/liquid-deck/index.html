@@ -3379,6 +3379,10 @@
     if (statusLatencyLabel) statusLatencyLabel.textContent = tag + (val != null ? val : '—') + ' ms';
     const chip = document.querySelector(`[data-latency-chip="${TMS_DATA.servers[0].id}"]`);
     if (chip) chip.textContent = (val != null ? val : '—') + ' ms';
+    document.querySelectorAll('[data-dev-lat]').forEach((el) => {
+      const s = TMS_DATA.servers.find(x => x.id === el.dataset.devLat);
+      if (s && s.status === 'online') el.textContent = '● ' + (s.latency != null ? s.latency : '—') + ' ms';
+    });
     const np = nextPrayer();
     if (statusPrayerLabel) statusPrayerLabel.textContent = `${np.name} · ${np.countdown}`;
     if (state.islandOpen) renderIslandExpanded();
@@ -3638,7 +3642,7 @@
           <div class="server-info">
             <div class="server-name">${escapeHtml(d.name)}</div>
             <div class="server-meta">
-              <span class="server-chip ${online ? 'ok' : ''}">${online ? '● ' + d.latency + ' ms' : '○ offline'}</span>
+              <span class="server-chip ${online ? 'ok' : ''}" data-dev-lat="${d.id}">${online ? '● ' + (d.latency != null ? d.latency : '—') + ' ms' : '○ offline'}</span>
               <span class="server-chip">${n} Terminals</span>
               <span class="server-chip">${escapeHtml(d.os)}</span>
               ${(d.caps || []).map(c => `<span class="server-chip cap">${escapeHtml(c)}</span>`).join('')}
@@ -3663,10 +3667,15 @@
       goToTerminals();
       if (i >= 0) setTimeout(() => { const b = document.querySelector(`.ts-seg[data-ts="${i}"]`); if (b) b.click(); }, 380);
     }));
-    card.querySelector('.bund-add').addEventListener('click', () => toast('Mockup: Gerät hinzufügen'));
+    card.querySelector('.bund-add').addEventListener('click', () => {
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'server:add', payload: {} }));
+      else toast('Mockup: Gerät hinzufügen');
+    });
+    // Demo-Schalter nur im Mockup (in der App gibt es kein srv-mac)
+    const mac = devs.find(x => x.id === 'srv-mac');
+    if (window.ReactNativeWebView || !mac) return;
     const demo = document.createElement('button');
     demo.className = 'bund-demo';
-    const mac = devs.find(x => x.id === 'srv-mac');
     demo.textContent = mac.status === 'online' ? 'Demo: MacBook ausschalten' : 'Demo: MacBook wieder einschalten';
     demo.addEventListener('click', () => {
       const off = mac.status === 'online';
