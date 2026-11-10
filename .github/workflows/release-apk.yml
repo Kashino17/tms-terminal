@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Updates installieren repariert: Der Installer oeffnet sich jetzt zuverlaessig beim ersten Tipp und versteckt sich nicht mehr hinter der App. Fehlt TMS noch die Erlaubnis Apps installieren, oeffnet sich direkt die richtige Android-Seite - danach geht es von selbst weiter. Dieses eine Update bitte noch per Browser installieren. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Gebetsruf neu: kommt jetzt wie ein Anruf - ueber dem Sperrbildschirm und ueber jeder App, nur mit Stumm, Laut, Sperr- oder Lautstaerketaste zu beenden. Klingelt zuverlaessig auch bei geschlossener App und nach Neustart. Die Zeiten folgen automatisch dem Land, in dem du bist (z. B. JAKIM in Malaysia, auf die amtlichen Zeiten abgestimmt). In Einstellungen > Gebetsruf einmal die fehlenden Erlaubnisse antippen. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
