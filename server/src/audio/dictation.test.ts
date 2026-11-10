@@ -268,6 +268,26 @@ test('a failed transcription ahead does not fail the dictation', async () => {
   assert.strictEqual(s.last('dictation:error'), undefined);
 });
 
+// ── Dictionary ─────────────────────────────────────────────────────────
+test('the dictionary fix is applied to every piece, also to one transcribed ahead', async () => {
+  const h = streamed({ fix: (t) => t.replace('seg', 'Stück ') }); const s = sink();
+  const audio = Buffer.concat([bytes(200), bytes(4, 0), bytes(50), bytes(6, 0)]);   // 20s, pause, 5s, 0.6s quiet
+  h.mgr.start('d1', 'adts', false, s.fn);
+  for (let off = 0; off < audio.length; off += 5) { h.mgr.chunk('d1', off, audio.subarray(off, off + 5), s.fn); await h.mgr.idle('d1'); }
+  h.mgr.end('d1', audio.length, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, 'Stück 1 Stück 2');
+});
+
+test('whole-file uploads get the dictionary fix too', async () => {
+  const h = harness({ fix: (t) => t.toUpperCase() }); const s = sink();
+  h.mgr.start('d1', 'file', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(50), s.fn);
+  h.mgr.end('d1', 50, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, 'SEG1');
+});
+
 // ── Review findings (final review of feat/diktat-tempo) ───────────────
 // Streams `audio` in 0.5s uploads like the app, waiting for the manager after each.
 async function stream(h: Harness, id: string, audio: Buffer, fn: (ev: DictationEvent) => void): Promise<void> {

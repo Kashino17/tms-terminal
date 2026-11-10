@@ -24,6 +24,7 @@ import { handleDictationMessage, createDictationConnectionHandler } from '../aud
 import { decodeToFloat32 } from '../audio/ffmpeg-decode';
 import { AdtsPcm } from '../audio/adts-pcm';
 import { DictationStatsStore } from '../audio/dictation.stats';
+import { DictionaryStore } from '../audio/dictionary';
 import { captureSoon } from '../terminal/restore/snapshotter';
 import { ConnectionRateLimiter } from './rate-limiter';
 import { createOutputPacer } from './output.pacer';
@@ -94,13 +95,16 @@ function send(ws: WebSocket, msg: ServerMessage): void {
 // ── Streamed dictation ──────────────────────────────────────────────
 // One process-wide manager: sessions outlive the socket that started them, so
 // a reconnecting app resumes its dictation instead of losing it.
+/** Terms and mishearings of the dictation (the user edits them in the app). */
+export const dictionary = new DictionaryStore(path.join(os.homedir(), '.tms-terminal', 'dictionary.json'));
 /** Stop -> text timings of the last 50 dictations (numbers only). */
 export const dictationStats = new DictationStatsStore(path.join(os.homedir(), '.tms-terminal', 'dictation-stats.json'));
 const dictations = new DictationManager({
   decode: (bytes, format) => decodeToFloat32(bytes, format),
   openPcm: () => new AdtsPcm((bytes) => decodeToFloat32(bytes, 'adts')),
   onDone: (stat) => dictationStats.record(stat),
-  transcribeWav: (wavBase64) => whisperTranscribe(wavBase64),
+  transcribeWav: (wavBase64) => whisperTranscribe(wavBase64, { prompt: dictionary.prompt() }),
+  fix: (text) => dictionary.fix(text),
   rewrite: (text) => rewritePrompt(text),
   now: () => Date.now(),
   log: (msg) => logger.info(msg),

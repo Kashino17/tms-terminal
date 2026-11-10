@@ -136,3 +136,47 @@ def test_prepare_chunk_keeps_quiet_speech_and_lifts_it():
 def test_prepare_chunk_keeps_normal_speech_as_before():
     loud = _quiet_speech(level=0.3, floor=0.002)
     assert sc.prepare_chunk(loud).shape[0] >= sc.trim_silence(loud, 16000).shape[0]
+
+
+# ── Dictionary prompt ──────────────────────────────────────────────────
+class _FakeWhisper:
+    def __init__(self):
+        self.prompts = []
+
+    def transcribe(self, samples, **kw):
+        self.prompts.append(kw.get("initial_prompt"))
+        return {"text": "ok"}
+
+
+def _speech_wav_b64(seconds=1.0):
+    import base64
+    n = int(16000 * seconds)
+    t = np.arange(n) / 16000.0
+    pcm = (np.sin(2 * np.pi * 220 * t) * 0.4 * 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(pcm.tobytes())
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def test_request_prompt_is_handed_to_whisper(monkeypatch):
+    out = []
+    monkeypatch.setattr(sc, "_emit", out.append)
+    fake = _FakeWhisper()
+    sc.handle_request(fake, {"id": "r1", "audio_base64": _speech_wav_b64(), "prompt": "Wispr Flow, Tailscale."})
+    assert fake.prompts == ["Wispr Flow, Tailscale."]
+    assert out[-1] == {"id": "r1", "text": "ok"}
+
+
+def test_request_without_prompt_uses_the_fixed_vocabulary(monkeypatch):
+    monkeypatch.setattr(sc, "_emit", lambda _o: None)
+    fake = _FakeWhisper()
+    sc.handle_request(fake, {"id": "r2", "audio_base64": _speech_wav_b64()})
+    assert fake.prompts == [sc.INITIAL_PROMPT]
+
+
+def test_an_empty_prompt_falls_back_to_the_fixed_vocabulary(monkeypatch):
+    monkeypatch.setattr(sc, "_emit", lambda _o: None)
+    fake = _FakeWhisper()
+    sc.handle_request(fake, {"id": "r3", "audio_base64": _speech_wav_b64(), "prompt": "  "})
+    assert fake.prompts == [sc.INITIAL_PROMPT]

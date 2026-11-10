@@ -179,6 +179,8 @@ function ensureRunning(): Promise<void> {
 export interface TranscribeOptions {
   language?: string;
   model?: string; // 'large-v3' | 'turbo' | 'medium'
+  /** Vocabulary to listen for (the dictation dictionary). Without it the sidecar's fixed prompt applies. */
+  prompt?: string;
   onProgress?: (info: { chunk: number; total: number; text: string }) => void;
 }
 
@@ -206,6 +208,7 @@ function writeRequest(id: string, req: PendingRequest): void {
     audio_base64: req.audioBase64,
     language: req.options.language ?? 'de',
     model: req.options.model,
+    prompt: req.options.prompt || undefined,
   }) + '\n';
   sidecar!.stdin!.write(payload);
 }

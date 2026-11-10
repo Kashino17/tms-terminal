@@ -262,8 +262,12 @@ def _emit(obj):
     print(json.dumps(obj))
 
 
-def transcribe_chunk(mlx_whisper, samples, language, model_path=None):
-    """Transcribe one chunk (numpy float32). One retry, then raise."""
+def transcribe_chunk(mlx_whisper, samples, language, model_path=None, prompt=None):
+    """Transcribe one chunk (numpy float32). One retry, then raise.
+
+    `prompt` is the vocabulary to listen for (the user's dictionary); without
+    it the fixed INITIAL_PROMPT applies.
+    """
     trimmed = prepare_chunk(samples)
     if trimmed.shape[0] == 0:
         return ""
@@ -275,7 +279,7 @@ def transcribe_chunk(mlx_whisper, samples, language, model_path=None):
                 trimmed,
                 path_or_hf_repo=repo_or_path,
                 language=language,
-                initial_prompt=INITIAL_PROMPT,
+                initial_prompt=prompt or INITIAL_PROMPT,
                 condition_on_previous_text=False,
                 no_speech_threshold=0.6,
                 compression_ratio_threshold=2.4,
@@ -299,6 +303,9 @@ def handle_request(mlx_whisper, req, model_path=None):
     req_id = req.get("id", "unknown")
     audio_b64 = req.get("audio_base64", "")
     language = req.get("language", "de")
+    prompt = req.get("prompt")
+    prompt = prompt.strip() if isinstance(prompt, str) else ""
+    prompt = prompt or None
 
     if not audio_b64:
         _emit({"id": req_id, "error": "No audio data provided"})
@@ -313,14 +320,14 @@ def handle_request(mlx_whisper, req, model_path=None):
     parts = []
 
     if total == 1:
-        text = transcribe_chunk(mlx_whisper, chunks[0], language, model_path=model_path)
+        text = transcribe_chunk(mlx_whisper, chunks[0], language, model_path=model_path, prompt=prompt)
         _emit({"id": req_id, "text": text})
         return
 
     _log(f"[whisper-mlx] {req_id}: split into {total} chunks")
     for i, chunk in enumerate(chunks):
         try:
-            text = transcribe_chunk(mlx_whisper, chunk, language, model_path=model_path)
+            text = transcribe_chunk(mlx_whisper, chunk, language, model_path=model_path, prompt=prompt)
         except Exception as e:  # noqa: BLE001
             _log(f"[whisper-mlx] {req_id}: chunk {i+1}/{total} failed: {e}")
             text = chunk_failure_placeholder(i, total, str(e))

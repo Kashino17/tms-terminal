@@ -23,6 +23,8 @@ export interface DictationDeps {
   decode(bytes: Buffer, format: DictationFormat): Promise<Float32Array>;
   transcribeWav(wavBase64: string): Promise<string>;
   rewrite(text: string): Promise<string>;
+  /** Corrects known mishearings in a transcribed piece (the dictionary). */
+  fix?: (text: string) => string;
   /** Incremental decoder for a streamed ('adts') recording. Without it the whole upload is decoded on each pass. */
   openPcm?: () => PcmStream;
   /** Called once for every dictation that produced a result. */
@@ -296,7 +298,7 @@ export class DictationManager {
       const ms = Date.now() - t0;
       s.computeMs += ms;
       this.deps.log(`[dictation] ${s.id}: segment ${s.texts.length + 1} ${(seg.length / RATE).toFixed(1)}s audio -> ${ms}ms${final ? ' (after stop)' : ''}`);
-      s.texts.push(text.trim());
+      s.texts.push(this.fixed(text));
       s.cursor = cut;
     }
   }
@@ -331,8 +333,13 @@ export class DictationManager {
     const ms = Date.now() - t0;
     s.computeMs += ms;
     if (s.cancelled) return;
-    s.spec = { from, to, text: text.trim(), above, checkFrom };
+    s.spec = { from, to, text: this.fixed(text), above, checkFrom };
     this.deps.log(`[dictation] ${s.id}: ahead ${((to - from) / RATE).toFixed(1)}s audio -> ${ms}ms`);
+  }
+
+  private fixed(text: string): string {
+    const t = text.trim();
+    return t && this.deps.fix ? this.deps.fix(t) : t;
   }
 
   /** Decide what the piece transcribed ahead is worth now that more audio (or the stop) has arrived. */
