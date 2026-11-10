@@ -294,3 +294,8 @@
 - v1.134.0 nach Freigabe gepusht, CI grün. Windows-Server per SSH + geplante Aufgabe aktualisiert (npm-Link über SSH kaputt → node cli.js direkt).
 - Windows-Zwischenablage gebaut, C# mit dotnet (LangVersion 5) auf dem Mac kompiliert, auf dem PC end-to-end getestet.
 - Mockup 5 Varianten ohne Insel; Fehler: unsichtbares V5-Menü fing Tipps auf ⋮ ab → Menü oben links; Mockup-Leiste → schwebender Knopf. Nutzer wählt V3 (⋮-Menü) → eingebaut, E2E 14/14.
+
+## 2026-11-10 — v1.136.0 Korrekturen
+- Ursache Snippets eingefroren / Explorer springt auf / Galerie startet erneut: bridge.openToolSheet merkte Bund-Karten als `openTool`, jedes setTool der App rief origOpenTool → __bundTool erneut (Snippets: Endlosschleife tool:open↔setTool). Fix: Bund-Karten vor dem Merken abfangen.
+- Bilder wieder alte Karte (Kamera + Galerie), ⋮-Menü zweistufig (Geräte untereinander).
+- Windows-Papierkorb: DeleteFile auch für Ordner → DeleteDirectory, Pfad per Env; Sammel-Löschen meldet Fehlschläge. Auf dem PC echt geprüft.
