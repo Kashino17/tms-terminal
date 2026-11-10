@@ -359,3 +359,11 @@
 ## 2026-11-11 — v1.148.0 gehaltener Fernzugriff ruht
 - Pacer-Deploy vom Nutzer (fbbcdaa); Fold: 266 → 37 Ausgabe-Nachrichten/20 s, Bildzeit 12 ms.
 - Fernzugriff: `setPaused` (Mac-Helfer pause/resume, Windows ffmpeg beenden/neu starten), unsichtbar kein Status/Zeiger, Ping 25 s; App gibt Dekoder frei. Mac E2E: 133 Bilder/6 s → 0, erstes Bild nach Rückkehr 43 ms. Update baut den Mac-Helfer künftig mit. Server-Deploy (e2b44a6) offen; Windows nur mit Fake-ffmpeg getestet.
+- Rückmeldung v1: kein Umformulieren (KI-Prompt, Gegliedert, Nachricht, E-Mail, App-Stile raus). Umfang jetzt: Tempo, Wörterbuch (lernt automatisch, UI zum Hineinarbeiten), Denkpausen „...“, Flüstermodus; Einstellungsseite v1 durchgefallen (Glas, keine Struktur).
+- Planseite v2 + neue Seite „Diktat & Sprache“ (matt, Reiter Wörterbuch · Diktat · Bubble). Aufräumen pro Stück gemessen: 0,62 s Median, kein Inhaltsverlust, aber „...“ wird teils verschluckt → Pausen mechanisch. Offen: Rückmeldung v2.
+- Rückmeldung v2: alles bestätigt; Aufräumen + „Letzte Diktate“ weg, alle Einstellungen matt. Spec `docs/superpowers/specs/2026-11-11-diktat-bubble-2-design.md` (uncommittet), Freigabe über `:8541/spec.html`. Nächster Schritt nach Freigabe: Bauplan, dann Tempo Server-Teil.
+
+## 2026-11-11 — v1.149.0 Tiefenanalyse Energie/Tempo
+- Fold im Hintergrund passiv gemessen: CPU ~0, aber 14 MB/h in 30-s-Bündeln → Pacer hält jetzt ohne Zeitgeber, >64 KB = Sitzung abgeben (Snapshot bei Rückkehr). E2E 40 s: 0 Nachrichten.
+- Ping nach Bedarf (live 3 s nur bei sichtbarem Ping-Wert, sonst 12 s, unsichtbar 60 s, ausgerichtet). Zeichnen mit führender Flanke: Echo 85 → 47 ms. xterm-Verwaltung der unsichtbaren Emulatoren aus: 33 rAF/s → 0.
+- Server-Deploy offen (Fernzugriff-Pause e2b44a6 + Hintergrund ohne Daten). Fold-ADB weg (Mobilfunk).
