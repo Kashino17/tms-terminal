@@ -306,3 +306,8 @@
 ## 2026-11-10 — v1.139.0 In-App-Updater
 - v1.138.0-Build scheiterte: paralleler Job hatte index.html geändert (uncommittet beim Build, committet nach dem Tag) → liquidDeckHtml.ts passte nicht zum Tag. Lehre: vor dem Tag `node scripts/build-season2-html.js && git diff --exit-code liquidDeckHtml.ts`.
 - Updater: sucht Start/15 min/App-zurück, lädt APK in den Cache (expo-file-system), öffnet Installer (REQUEST_INSTALL_PACKAGES); matte Leiste statt Glas-Pille. Puls einmalig + Fernzugriff im Menü beenden mit drin.
+
+## 2026-11-10 — Explorer: Vorschau/Senden/Teilen (in v1.139.0)
+- Ursache leere Vorschau: Seite läuft als https://tms.local, Chromium Local Network Access sperrt img/video/XHR an Tailscale 100.x. Liste ging, weil RN sie lädt. Toasts lagen hinter dem Explorer (z 100 < 300) → Knöpfe wirkten tot.
+- Fix 0a0f3d3: fileTransfer.ts — Vorschau nativ (Bild data:-URL, Video/PDF Android-Betrachter), Upload in Base64-Stücken über RN (`/files/upload?up&part&enc=b64`, GET `?caps=1`), #toasts z 400. Tests mit App-Ursprung (page.route https://tms.local).
+- Kam mit v1.139.0 (Tag vom parallelen Job) raus, CI grün. Server-Teil braucht `tms-terminal update` auf Mac + Windows.
