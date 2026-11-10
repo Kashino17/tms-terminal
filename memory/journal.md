@@ -326,3 +326,8 @@
 - Neu nativ: Bubble 15 Min. pausieren aus der App (BubbleConfig.snoozeReq in App-Prefs, effectiveSnooze wie wake).
 - Installieren: Zustand 'installing' + Ladekreis, Sperre gegen Mehrfach-Installer, Rückkehr ohne Install → Hinweis (AppState).
 - Paralleler Job hatte v1.141.0 (Dateien/HEIC) in derselben Arbeitskopie veröffentlicht → mein Bump lief ins Leere; vor Tag immer `git ls-remote --tags origin vX` + app.json-Version prüfen.
+
+## 2026-11-10 — v1.143.0 Installer + v1.144.0 Gebetsruf nativ
+- v1.143.0: Installer am Emulator belegt — NEW_TASK versteckte InstallStart hinter TMS, expo-intent-launcher blockierte Folgestarts (ActivityAlreadyStarted). Fix ApkInstallerModule (startActivity aus Activity, Erlaubnis „Apps installieren“ zuerst).
+- v1.144.0 Gebetsruf: Zeiten auf dem Handy (adhan-java 1.2.1), Land aus Zeitzone → Methode (assets/prayer_methods.json), JAKIM auf e-Solat kalibriert (Fajr/Isha 18° + 2 Min.; ±2 Min. ganzes Jahr), MUIS/Kemenag amtlich, Rest Aladhan ±1. Alarm-Kette nativ (setAlarmClock, Boot/TZ/Update). AdhanRingService: gesperrt Vollbild, entsperrt Overlay über allem; Stumm/Laut/Sperr-/Lautstärketaste. Einstellungen: Methode automatisch, nächster Azān, Erlaubnis-Checkliste.
+- Emulator-Probe 1.144.0: KL-Zeiten = amtlich ±1 Min., Alarm als Wecker (exakt), Overlay bleibt nach Home, Lautstärke/Sperrtaste = Stumm, Laut spielt USAGE_ALARM, Alarm übersteht Neustart. Nicht testbar im Emulator: echter Sperrbildschirm mit PIN, GPS-Einspeisung (Ort per Picker gesetzt).

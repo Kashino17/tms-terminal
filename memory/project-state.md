@@ -4,7 +4,9 @@ _Zuletzt aktualisiert: 2026-11-10 — v1.135.0 ohne Insel; v1.134.0 Bund release
 
 ## Aktueller geprüfter Stand
 
-**Stand 2026-11-10 nachts (neueste):** v1.142.0 getaggt — neue Einstellungsseite (settings.js, nur in S2 wirksame Einstellungen; Terminal-Theme/ext. Tastatur/Inaktivitäts-Push/Deploy-Alerts bewusst nicht, wirken nur klassisch) + Installieren mit Ladekreis/Sperre. Server unverändert.
+**Stand 2026-11-10 spät (neueste):** v1.144.0 — Gebetsruf nativ wie Anruf, Zeiten automatisch nach Land (JAKIM amtlich), am Emulator geprüft. v1.143.0 Installer-Fix. **Offen:** Gerätetest am Fold (echter Sperrbildschirm, Samsung-Akku, Reisen/Zeitzone), Installer-Test beim nächsten Update.
+
+**Stand 2026-11-10 nachts:** v1.142.0 getaggt — neue Einstellungsseite (settings.js, nur in S2 wirksame Einstellungen; Terminal-Theme/ext. Tastatur/Inaktivitäts-Push/Deploy-Alerts bewusst nicht, wirken nur klassisch) + Installieren mit Ladekreis/Sperre. Server unverändert.
 
 **Stand 2026-11-10 spätabends:** v1.141.0 getaggt (Umlaut-400-Fix Server + HEIC im Betrachter). **Offen:** `tms-terminal update` Mac + Windows (Umlaute, Stück-Upload); Gerätetest Video/PDF/HEIC-Betrachter.
 
