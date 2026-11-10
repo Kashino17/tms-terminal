@@ -3,7 +3,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import * as http from 'http';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { getPlatform } from '../utils/platform';
 import { parseRange } from './range.util';
 
@@ -340,6 +340,26 @@ export async function handleRename(req: http.IncomingMessage, res: http.ServerRe
 
 // ── POST /files/trash ─────────────────────────────────────────────────
 
+export interface TrashResult { trashed: number; failed: Array<{ path: string; error: string }> }
+
+/** Alles einzeln in den Papierkorb — ein Fehler stoppt nicht den Rest. */
+export function trashPaths(paths: string[], trashOne: (resolved: string) => void): TrashResult {
+  const out: TrashResult = { trashed: 0, failed: [] };
+  for (const raw of paths) {
+    try {
+      const resolved = resolvePath(String(raw));
+      if (!isWithinHome(resolved)) throw new Error('liegt außerhalb des Benutzerordners');
+      if (isDeniedPath(resolved)) throw new Error('geschützter Ordner (Schlüssel/Konfiguration)');
+      if (!fs.existsSync(resolved)) throw new Error('nicht gefunden');
+      trashOne(resolved);
+      out.trashed++;
+    } catch (e: unknown) {
+      out.failed.push({ path: String(raw), error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return out;
+}
+
 export async function handleTrash(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
     const body = await parseJsonBody(req);
@@ -348,26 +368,14 @@ export async function handleTrash(req: http.IncomingMessage, res: http.ServerRes
     if (!Array.isArray(paths) || paths.length === 0) return err(res, 400, 'paths array required');
 
     const platform = getPlatform();
-    let trashed = 0;
-
-    for (const raw of paths) {
-      const resolved = resolvePath(raw);
-      if (!isWithinHome(resolved)) return err(res, 403, `Access denied: path "${raw}" is outside home directory`);
-      if (isDeniedPath(resolved)) return err(res, 403, `Access denied: sensitive path "${raw}"`);
-      if (!fs.existsSync(resolved)) return err(res, 400, `Path not found: ${raw}`);
-
-      if (platform === 'darwin') {
-        trashMacOS(resolved);
-      } else if (platform === 'win32') {
-        trashWindows(resolved);
-      } else {
-        trashLinux(resolved);
-      }
-      trashed++;
+    const trashOne = platform === 'darwin' ? trashMacOS : platform === 'win32' ? trashWindows : trashLinux;
+    const r = trashPaths(paths, trashOne);
+    if (r.trashed === 0 && r.failed.length) {
+      const f = r.failed[0];
+      return err(res, 400, `${path.basename(f.path) || f.path}: ${f.error}`);
     }
-
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true, trashed }));
+    res.end(JSON.stringify({ success: true, trashed: r.trashed, failed: r.failed }));
   } catch (e: unknown) {
     err(res, 400, e instanceof Error ? e.message : String(e));
   }
@@ -386,15 +394,38 @@ function trashMacOS(filePath: string): void {
     target = path.join(trashDir, `${name} ${ts}${ext}`);
   }
 
-  fs.renameSync(filePath, target);
+  try {
+    fs.renameSync(filePath, target);
+  } catch {
+    // Anderes Volume / gesperrt: der Finder kann es trotzdem (und merkt sich „Zurücklegen“).
+    execFileSync('osascript', ['-e', 'on run argv', '-e', 'tell application "Finder" to delete (POSIX file (item 1 of argv) as alias)', '-e', 'end run', filePath],
+      { timeout: 20000 });
+  }
+}
+
+/** PowerShell-Aufruf für den Windows-Papierkorb. Der Pfad kommt über die
+ *  Umgebung, nie in den Befehlstext — kein Quoting-Problem mit ' $ ` usw. */
+export function winTrashCommand(filePath: string): { file: string; args: string[]; env: NodeJS.ProcessEnv } {
+  const script = [
+    'Add-Type -AssemblyName Microsoft.VisualBasic',
+    '$p = $env:TMS_TRASH_PATH',
+    'if (Test-Path -LiteralPath $p -PathType Container) {',
+    "  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($p, 'OnlyErrorDialogs', 'SendToRecycleBin')",
+    '} else {',
+    "  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, 'OnlyErrorDialogs', 'SendToRecycleBin')",
+    '}',
+  ].join('\n');
+  return { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', script], env: { ...process.env, TMS_TRASH_PATH: filePath } };
 }
 
 function trashWindows(filePath: string): void {
-  const escapedPath = filePath.replace(/'/g, "''");
-  execSync(
-    `powershell -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escapedPath}', 'OnlyErrorDialogs', 'SendToRecycleBin')"`,
-    { timeout: 10000, windowsHide: true }
-  );
+  const c = winTrashCommand(filePath);
+  try {
+    execFileSync(c.file, c.args, { env: c.env, timeout: 60000, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  } catch (e: unknown) {
+    const stderr = (e as { stderr?: Buffer }).stderr?.toString().trim();
+    throw new Error(stderr ? stderr.split(/\r?\n/)[0] : 'Papierkorb fehlgeschlagen');
+  }
 }
 
 function trashLinux(filePath: string): void {
