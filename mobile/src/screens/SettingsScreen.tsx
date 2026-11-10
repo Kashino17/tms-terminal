@@ -23,7 +23,7 @@ type Props = {
 export function SettingsScreen({ navigation }: Props) {
   const { isEnabled, isUnlocked } = useLockStore();
   const { rf, rs, ri, isExpanded } = useResponsive();
-  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, browserBridgeEnabled, setBrowserBridgeEnabled, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection, voicePromptEnhanceEnabled, setVoicePromptEnhanceEnabled, seasonTwoEnabled, setSeasonTwoEnabled } = useSettingsStore();
+  const { idleThresholdSeconds, setIdleThreshold, terminalTheme, setTerminalTheme, externalKeyboardMode, setExternalKeyboardMode, browserBridgeEnabled, setBrowserBridgeEnabled, lockGraceSeconds, setLockGrace, persistentConnection, setPersistentConnection, seasonTwoEnabled, setSeasonTwoEnabled } = useSettingsStore();
   const { tokens, notificationsEnabled, pollingIntervalMs, setNotificationsEnabled, setPollingIntervalMs, clearPlatform } = useCloudAuthStore();
   const { clearCache } = useCloudProjectsStore();
   const [idlePickerVisible, setIdlePickerVisible] = useState(false);
@@ -386,35 +386,6 @@ export function SettingsScreen({ navigation }: Props) {
             </View>
           </Pressable>
         </Modal>
-
-        {/* ── Sprache ── */}
-        <View style={[styles.section, { marginBottom: rs(28) }]}>
-          <Text style={[styles.sectionTitle, { fontSize: rf(11), marginBottom: rs(10) }]}>Sprache</Text>
-
-          <View style={styles.card}>
-            <TouchableOpacity
-              style={[styles.row, { paddingHorizontal: rs(16), paddingVertical: rs(14) }]}
-              onPress={() => setVoicePromptEnhanceEnabled(!voicePromptEnhanceEnabled)}
-              activeOpacity={0.7}
-              accessibilityRole="switch"
-              accessibilityState={{ checked: voicePromptEnhanceEnabled }}
-            >
-              <View style={styles.rowLeft}>
-                <Feather name="zap" size={ri(18)} color={voicePromptEnhanceEnabled ? colors.primary : colors.textMuted} style={{ marginRight: rs(12) }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.label, { fontSize: rf(16) }]}>KI-Prompt-Modus</Text>
-                  <Text style={[styles.rowSub, { fontSize: rf(11) }]}>Sprach-Eingabe wird in einen optimierten Prompt umgewandelt</Text>
-                </View>
-              </View>
-              <Switch
-                value={voicePromptEnhanceEnabled}
-                onValueChange={setVoicePromptEnhanceEnabled}
-                trackColor={{ false: colors.border, true: colors.primary + '88' }}
-                thumbColor={voicePromptEnhanceEnabled ? colors.primary : colors.textDim}
-              />
-            </TouchableOpacity>
-          </View>
-        </View>
 
         {/* ── Design ── */}
         <View style={[styles.section, { marginBottom: rs(28) }]}>

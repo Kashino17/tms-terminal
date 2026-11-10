@@ -482,23 +482,28 @@ if (!PW) {
       assert.match(await page.textContent('.st-quick'), /Wird geprüft/);
       assert.equal(await page.locator('#bubbleSettingsGroup, .settings-group, #s2ClassicSettings').count(), 0, 'alte Gruppen sind weg');
       await page.evaluate(() => {
-        window.TMSBridge.setSettings({ voicePrompt: true, browserBridge: false, persistent: true, appLock: true, lockGrace: 300, version: '1.141.0', prevVersion: { version: '1.140.0', size: '31 MB' } });
+        window.TMSBridge.setSettings({ browserBridge: false, persistent: true, appLock: true, lockGrace: 300, version: '1.141.0', prevVersion: { version: '1.140.0', size: '31 MB' } });
         window.TMSBridge.bubbleStatus({ serviceOn: true, bound: true, enabled: true, snoozedUntil: 0, keepAlive: true, notifications: true });
       });
       await page.waitForTimeout(150);
       assert.match(await page.textContent('.st-quick'), /Aktiv/);
       assert.match(await page.textContent('.st-cat[data-st-go="sicherheit"]'), /App-Sperre an · entsperrt 5 Min\./);
-      assert.match(await page.textContent('.st-cat[data-st-go="diktat"]'), /KI-Prompt an/);
+      // Der KI-Prompt-Schalter ist weg (2026-11-11); die Zeile nennt Bubble und — sobald der Diktat-Rechner antwortet — Wörterbuch und Tempo.
+      assert.match(await page.textContent('.st-cat[data-st-go="diktat"]'), /Bubble aktiv/);
+      assert.doesNotMatch(await page.textContent('.st-cat[data-st-go="diktat"]'), /KI-Prompt/);
       assert.match(await page.textContent('.st-cat[data-st-go="app"]'), /Version 1\.141\.0/);
       // Bubble-Schalter im Schnellzugriff → bestehende Bubble-Nachricht
       await page.click('.st-quick .switch');
       assert.deepEqual((await posts('bubble:toggle')).pop().payload, { enabled: false });
-      // Unterseite + Schalter → settings:set
+      // Unterseite „Diktat & Sprache“
       await page.click('.st-cat[data-st-go="diktat"]');
       await page.waitForTimeout(200);
       assert.ok((await posts('bubble:status')).length >= 1, 'frischer Bubble-Stand beim Öffnen');
-      await page.click('[data-st-row="voice-prompt"] .switch');
-      assert.deepEqual((await posts('settings:set')).pop().payload, { key: 'voicePrompt', value: false });
+      assert.ok((await posts('dict:get')).length >= 1, 'Wörterbuch wird beim Öffnen angefragt');
+      // Unterseite + Schalter → settings:set (hier: Login-Links unter „Terminal“)
+      await page.evaluate(() => window.__settingsOpen('terminal'));
+      await page.click('[data-st-row="browser-bridge"] .switch');
+      assert.deepEqual((await posts('settings:set')).pop().payload, { key: 'browserBridge', value: true });
       // Zurück-Geste: Unterseite → Übersicht, Bildschirm bleibt
       await page.evaluate(() => window.TMSBridge.handleBack());
       await page.waitForTimeout(150);

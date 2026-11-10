@@ -98,4 +98,13 @@ Seite → App: `post('dict:get'|'dict:add'|'dict:update'|'dict:remove', payload)
 
 ## Messung
 
-_(wird in Task 6 gefüllt)_
+2026-11-11, `scripts/dictation-e2e.ts`, Aufnahme 183 s (Sprachausgabe), Pausen-Regel, Upload-Takt 2 s, Load 15–18 durch fremde Jobs.
+
+| Lauf | Stopp → Text | Wortfehler | Wörterbuch |
+|---|---|---|---|
+| ohne Wörterbuch | 629 ms | 2 von 434 („Stopp“ zweimal als „Stock“ gehört) | — |
+| `--fix=Stock:Stopp` | 544 ms | 0 von 434 | Stock → Stopp, 2× ersetzt |
+
+Das Wörterbuch wirkt Ende zu Ende (Prompt an Whisper + Ersetzen je Stück) und kostet keine messbare Zeit.
+
+Seite: 9 neue Headless-Tests gegen die gebaute Seite (`mobile/scripts/webview-dictionary.test.mjs`), 34 bestehende (`webview-bund`) grün; Bilder bei 412×915 und 840 breit angesehen.

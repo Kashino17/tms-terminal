@@ -1863,10 +1863,16 @@
     window.TMS_DATA.settings.bubble = st || null;
     if (typeof window.renderSettings === 'function') window.renderSettings();
   };
-  /** Werte aus der App (Sperre, KI-Prompt, Login-Links, Hintergrund, Version …). */
+  /** Werte aus der App (Sperre, Login-Links, Hintergrund, Version …). */
   window.TMSBridge.setSettings = function (vals) {
     var cur = window.TMS_DATA.settings || {};
     window.TMS_DATA.settings = Object.assign({}, cur, vals || {}, { bubble: cur.bubble || null });
+    if (typeof window.renderSettings === 'function') window.renderSettings();
+  };
+
+  /** Wörterbuch + Tempo vom Diktat-Rechner: { entries, speed } · { offline } · { unsupported }. */
+  window.TMSBridge.setDictionary = function (data) {
+    window.TMS_DATA.dictionary = data || null;
     if (typeof window.renderSettings === 'function') window.renderSettings();
   };
 

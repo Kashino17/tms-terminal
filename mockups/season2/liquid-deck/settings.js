@@ -8,6 +8,7 @@
    - TMS_DATA.settings   ← App (TMSBridge.setSettings / bubbleStatus)
    - TMS_DATA.prayerMeta ← Gebetsruf (setPrayer / setAdhanSettings)
    - TMS_DATA.cloudAccounts ← Cloud-Konten (setCloudAccounts)
+   - TMS_DATA.dictionary ← Wörterbuch + Tempo vom Diktat-Rechner (setDictionary)
    Änderungen gehen als Nachricht an die App; im Mockup bleiben sie lokal.
    ════════════════════════════════════════════════════════════════════ */
 (function () {
@@ -33,6 +34,10 @@
     chev: '<path d="m9 6 6 6-6 6"/>',
     back: '<path d="m15 6-6 6 6 6"/>',
     check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    book: '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/>',
+    bolt: '<path d="M13 3 5 14h6l-1 7 8-11h-6z"/>',
+    trash: '<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/>',
     x: '<path d="M6 6l12 12M18 6 6 18"/>',
     play: '<path d="M8 5.5v13l11-6.5z"/>',
     pause: '<path d="M8 5v14M16 5v14"/>',
@@ -62,13 +67,13 @@
 
   // ── Zustand ────────────────────────────────────────────────────────
   // In der App: neutral, bis die App ihre Werte schickt (passiert beim Start).
-  const BLANK = { bubble: null, voicePrompt: false, browserBridge: false, persistent: false, appLock: false, lockGrace: 0, version: '', prevVersion: null };
+  const BLANK = { bubble: null, browserBridge: false, persistent: false, appLock: false, lockGrace: 0, version: '', prevVersion: null };
   // Nur Mockup: Beispielwerte, damit man alle Zustände sieht.
   const DEMO = {
     bubble: { serviceOn: true, bound: true, enabled: true, snoozedUntil: 0, keepAlive: true, notifications: true,
       lastCheck: 'sichtbar — Tastatur offen in WhatsApp', lastCheckAt: Date.now() - 4 * 60_000,
       lastExit: 'vom System beendet (Speicher)', lastExitAt: Date.now() - 26 * 3600_000 },
-    voicePrompt: false, browserBridge: true, persistent: true, appLock: true, lockGrace: 300,
+    browserBridge: true, persistent: true, appLock: true, lockGrace: 300,
     version: '1.140.0', prevVersion: { version: '1.139.0', size: '31 MB' },
     adhan: { enabled: true, wecker: true, reciter: 'mishary', location: 'Kuala Lumpur, Malaysia',
       method: { name: 'JAKIM (Malaysia)', auto: true, country: 'MY' },
@@ -154,8 +159,8 @@
   // ── Kategorien: Zustand in einer Zeile, Hinweis-Punkt wenn etwas zu tun ist ──
   const CATS = [
     { id: 'diktat', group: 'Arbeiten', name: 'Diktat & Sprache', icon: 'mic', hue: '#a78bfa',
-      desc: 'Bubble in allen Apps, KI-Prompt',
-      sum: () => `Bubble ${bubbleState().word.toLowerCase()} · KI-Prompt ${S().voicePrompt ? 'an' : 'aus'}`,
+      desc: 'Wörterbuch, Tempo, Bubble in allen Apps',
+      sum: () => { const d = Dict(); return `Bubble ${bubbleState().word.toLowerCase()}` + (d && d.entries ? ` · ${d.entries.length} Begriffe` + (d.speed && d.speed.count ? ` · Ø ${secs(d.speed.medianMs)}` : '') : ''); },
       alert: () => bubbleState().tone === 'warn' },
     { id: 'terminal', group: 'Arbeiten', name: 'Terminal', icon: 'term', hue: '#34d399',
       desc: 'Login-Links, Schrift',
@@ -215,6 +220,83 @@
   }
   const section = (title, body, note) => `<div class="st-sec">${title ? `<h3 class="st-sec__title">${title}</h3>` : ''}<div class="st-card glass">${body}</div>${note ? `<p class="st-sec__note">${note}</p>` : ''}</div>`;
 
+  // ── Diktat & Sprache: Wörterbuch · Diktat · Bubble ─────────────────
+  // Das Wörterbuch liegt auf dem Rechner, der transkribiert. Die Seite zeigt,
+  // was er meldet (TMS_DATA.dictionary), und schickt jede Änderung als
+  // Nachricht (dict:*) — er antwortet mit dem neuen Stand.
+  const DW = { tab: 'words', open: null, filter: 'all' };
+  const DEMO_DICT = {
+    entries: [
+      { id: 'd1', term: 'Wispr Flow', heard: ['Vispa Flow', 'Whisperflow'], source: 'manual', uses: 14, createdAt: 9 },
+      { id: 'd2', term: 'Liquid Deck', heard: [], source: 'manual', uses: 0, createdAt: 8 },
+      { id: 'd3', term: 'Claude Code', heard: ['Cloud Code'], source: 'seed', uses: 212, createdAt: 7 },
+      { id: 'd4', term: 'Tailscale', heard: ['Tail Scale'], source: 'seed', uses: 31, createdAt: 6 },
+      { id: 'd5', term: 'WebView', heard: ['Web View'], source: 'seed', uses: 58, createdAt: 5 },
+      { id: 'd6', term: 'ptyd', heard: ['P T Y D'], source: 'seed', uses: 9, createdAt: 4 },
+      { id: 'd7', term: 'Fernzugriff', heard: [], source: 'seed', uses: 0, createdAt: 3 },
+    ],
+    speed: { count: 24, medianMs: 460, under700: 0.92, waits: [420, 550, 380, 610, 470, 520, 830, 440, 390, 580, 490, 410, 630, 360, 510, 460, 570, 430, 790, 480, 400, 530, 450, 590] },
+  };
+  /** { entries, speed } vom Diktat-Rechner · { offline } · { unsupported } · null = noch keine Antwort. */
+  function Dict() {
+    const d = window.TMS_DATA = window.TMS_DATA || {};
+    if (d.dictionary) return d.dictionary;
+    if (LIVE()) return null;
+    return (d.dictionary = JSON.parse(JSON.stringify(DEMO_DICT)));
+  }
+  const secs = (ms) => (ms / 1000).toFixed(2).replace('.', ',') + ' s';
+  const SOURCES = { manual: 'Von dir angelegt', seed: 'Mitgeliefert', learned: 'Automatisch gelernt' };
+  const dwCard = (title, body, extra) => `<div class="dw-sec">${title ? `<div class="dw-sec__head"><h3>${title}</h3>${extra || ''}</div>` : ''}<div class="dw-card">${body}</div></div>`;
+  const dwNote = (title, text) => `<div class="dw-card dw-state"><b>${title}</b><span>${text}</span></div>`;
+  /** Im Mockup ohne App: Änderungen bleiben lokal, damit man alles ausprobieren kann. */
+  function dictSend(type, payload) {
+    if (LIVE()) return post(type, payload);
+    const d = Dict(), e = d.entries.find((x) => x.id === payload.id);
+    if (type === 'dict:add' && !d.entries.some((x) => x.term.toLowerCase() === payload.term.toLowerCase())) d.entries.unshift({ id: 'n' + Date.now(), term: payload.term, heard: [], source: 'manual', uses: 0, createdAt: Date.now() });
+    if (type === 'dict:update' && e) e.heard = payload.heard;
+    if (type === 'dict:remove') d.entries = d.entries.filter((x) => x.id !== payload.id);
+    render(true);
+  }
+
+  function dwWords() {
+    const d = Dict();
+    if (!d) return dwNote('Wörterbuch wird geladen …', 'Es liegt auf dem Rechner, über den du diktierst.');
+    if (d.offline) return dwNote('Der Diktat-Rechner ist nicht erreichbar', 'Das Wörterbuch liegt auf dem Rechner, über den du diktierst. Sobald er wieder online ist, erscheint es hier.');
+    if (d.unsupported || !d.entries) return dwNote('Der Diktat-Rechner braucht ein Update', 'Das Wörterbuch kommt mit der neuen Server-Version: am Rechner „tms-terminal update“ ausführen.');
+    const count = (v) => (v === 'all' ? d.entries.length : d.entries.filter((e) => e.source === v).length);
+    const shown = d.entries.filter((e) => DW.filter === 'all' || e.source === DW.filter);
+    const items = shown.map((e) => {
+      const open = DW.open === e.id;
+      return `<div class="dw-item${open ? ' is-open' : ''}" data-dw-term="${esc((e.term + ' ' + e.heard.join(' ')).toLowerCase())}">
+        <button type="button" class="dw-item__row" data-st-act="dw:open:${esc(e.id)}"><span class="dw-item__text"><b>${esc(e.term)}</b><small>${e.heard.length ? 'gehört als ' + e.heard.map(esc).join(', ') : 'wird beim Zuhören bevorzugt'}</small></span>
+          ${e.uses ? `<span class="dw-item__n">${e.uses}×</span>` : ''}<span class="st-chev st-chev--down">${ic('chev', 2)}</span></button>
+        ${open ? `<div class="dw-item__more"><div class="dw-lab">Wird so gehört</div>
+          <div class="dw-chips">${e.heard.map((h, i) => `<span class="dw-chip">${esc(h)}<button type="button" data-st-act="dw:unheard:${esc(e.id)}:${i}" aria-label="${esc(h)} entfernen">${ic('x', 2.4)}</button></span>`).join('') || '<span class="dw-none">Noch kein Hörfehler bekannt</span>'}</div>
+          <div class="dw-line"><input id="dwHeard" type="text" class="dw-input" placeholder="Hörfehler ergänzen" autocomplete="off" autocapitalize="off" enterkeyhint="done" data-dw-id="${esc(e.id)}">
+            <button type="button" class="st-btn" data-st-act="dw:heard:${esc(e.id)}">Merken</button></div>
+          <div class="dw-item__btns"><span class="dw-src">${SOURCES[e.source] || ''}${e.uses ? ` · ${e.uses}× ersetzt` : ''}</span><button type="button" class="st-btn st-btn--danger" data-st-act="dw:del:${esc(e.id)}">${ic('trash', 2)}Löschen</button></div></div>` : ''}</div>`;
+    }).join('');
+    return dwCard('', `<div class="dw-add"><span class="dw-add__ic">${ic('plus', 2.2)}</span><input id="dwAdd" type="text" class="dw-input dw-input--bare" placeholder="Suchen oder neu" autocomplete="off" autocapitalize="off" enterkeyhint="done">
+        <button type="button" class="st-btn st-btn--accent" data-st-act="dw:add">Hinzufügen</button></div>
+      <div class="dw-filter">${[['all', 'Alle'], ['manual', 'Von dir'], ['seed', 'Mitgeliefert']].map(([v, l]) => `<button type="button" class="${DW.filter === v ? 'is-on' : ''}" data-st-act="dw:filter:${v}">${l} <i>${count(v)}</i></button>`).join('')}</div>
+      <div id="dwList">${items || '<p class="dw-none dw-none--pad">Hier ist noch nichts.</p>'}</div>`)
+      + '<p class="st-sec__note">Begriffe werden beim Zuhören bevorzugt. Trägst du zu einem Begriff ein, wie er falsch gehört wird, ersetzt das Diktat es von selbst — nur ganze Wörter, nie mitten im Wort.</p>';
+  }
+  function dwDictation() {
+    const d = Dict(), sp = d && d.speed;
+    let tempo;
+    if (!sp || !sp.count) {
+      tempo = `<div class="dw-tempo"><div class="dw-tempo__num"><b class="is-empty">—</b><span>${!d ? 'Wird geladen …' : d.offline ? 'Der Diktat-Rechner ist nicht erreichbar' : d.unsupported ? 'Der Diktat-Rechner braucht ein Update' : 'Noch keine Diktate gemessen'}</span></div></div>`;
+    } else {
+      const top = Math.max(1400, ...sp.waits), ok = sp.medianMs <= 700;
+      tempo = `<div class="dw-tempo"><div class="dw-tempo__num"><b class="${ok ? '' : 'is-slow'}">${secs(sp.medianMs)}</b><span>Stopp bis Text · ${sp.count === 1 ? 'letztes Diktat' : 'letzte ' + sp.count + ' Diktate'}</span></div>
+        <div class="dw-tempo__bars" aria-hidden="true">${sp.waits.map((w) => `<i class="${w > 700 ? 'is-slow' : ''}" style="height:${Math.max(3, Math.round(w / top * 48))}px"></i>`).join('')}<em style="bottom:${Math.round(700 / top * 48)}px"></em></div>
+        <div class="dw-tempo__foot"><span><i class="st-dot st-dot--${sp.under700 >= 0.9 ? 'ok' : 'warn'}"></i>${Math.round(sp.under700 * 100)} % unter 0,7 s</span><span>Linie = 0,7 s</span></div></div>`;
+    }
+    return dwCard('Tempo', tempo)
+      + '<p class="st-sec__note">Diktiert wird über das MacBook, nichts verlässt deine Geräte. Ist es offline, fehlt der Mikrofon-Knopf.</p>';
+  }
+
   // ── Unterseiten ───────────────────────────────────────────────────
   const PAGES = {
     diktat() {
@@ -234,9 +316,9 @@
         ${b.lastExitAt ? row('bubble-exit', 'Letzter Abbruch', `${new Date(b.lastExitAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} ${hhmm(b.lastExitAt)} — ${esc(b.lastExit)}`) : ''}
         ${on ? row('bubble-trace', 'Protokoll kopieren', 'Für die Fehlersuche — danach im Chat einfügen', pill('Kopieren', 'bubble:trace')) : ''}
       </details>`;
-      return section('Diktat-Bubble', bub + diag)
-        + section('Sprache', row('voice-prompt', 'KI-Prompt-Modus', 'Diktat wird vor dem Einfügen in einen sauberen Prompt umformuliert', sw('voicePrompt', s.voicePrompt)),
-          'Diktiert wird über das MacBook — ist es offline, fehlt der Mikrofon-Knopf.');
+      const tabs = [['words', 'Wörterbuch', 'book'], ['dictation', 'Diktat', 'bolt'], ['bubble', 'Bubble', 'mic']];
+      const body = DW.tab === 'words' ? dwWords() : DW.tab === 'dictation' ? dwDictation() : dwCard('', bub + diag);
+      return `<div class="dw"><div class="dw-tabs" role="tablist">${tabs.map(([k, l, i]) => `<button type="button" role="tab" aria-selected="${DW.tab === k}" class="${DW.tab === k ? 'is-on' : ''}" data-st-act="dw:tab:${k}">${ic(i, 2)}<span>${l}</span>${k === 'bubble' && st.tone === 'warn' ? '<i class="st-dot st-dot--warn"></i>' : ''}</button>`).join('')}</div>${body}</div>`;
     },
     terminal() {
       const s = S();
@@ -321,7 +403,7 @@
 
   // ── Suche: jede Zeile jeder Unterseite, mit Pfad ────────────────────
   const EXTRA_WORDS = {
-    'voice-prompt': 'sprache diktat whisper prompt', 'browser-bridge': 'browser login vercel render link',
+    'browser-bridge': 'browser login vercel render link',
     persistent: 'hintergrund verbindung akku dienst', 'app-lock': 'sperre pin fingerabdruck biometrie',
     classic: 'season klassisch alt', 'update-check': 'update version', wipe: 'reset zurücksetzen löschen',
     'adhan-reciter': 'rezitator muezzin stimme', 'bubble-service': 'bubble mikrofon bedienungshilfe',
@@ -416,19 +498,29 @@
     lastHtml = html;
     const focused = document.activeElement && document.activeElement.id === 'stSearch';
     const caret = focused ? document.activeElement.selectionStart : null;
+    // Wörterbuch-Felder: Getipptes überlebt das Neuzeichnen (neuer Stand vom Rechner).
+    const typed = ['dwAdd', 'dwHeard'].map((id) => { const el = document.getElementById(id); return el ? { id, v: el.value, on: document.activeElement === el, key: el.dataset.dwId || '' } : null; }).filter(Boolean);
     host.innerHTML = html;
+    typed.forEach((t) => { const el = document.getElementById(t.id); if (!el || (el.dataset.dwId || '') !== t.key) return; el.value = t.v; if (t.on) { el.focus(); try { el.setSelectionRange(t.v.length, t.v.length); } catch (e) {} } });
+    dwFilterList();
     const up = document.getElementById('stUpdHost');
     if (up && window.__bundUpdateCard) window.__bundUpdateCard(up);
     if (focused) { const i = document.getElementById('stSearch'); i.focus(); try { i.setSelectionRange(caret, caret); } catch (e) {} }
   }
 
+  /** Tippen im Feld filtert die Liste — ohne neu zu zeichnen, der Fokus bleibt. */
+  function dwFilterList() {
+    const inp = document.getElementById('dwAdd');
+    const q = inp ? inp.value.trim().toLowerCase() : '';
+    document.querySelectorAll('#dwList .dw-item').forEach((el) => { el.hidden = !!q && !el.dataset.dwTerm.includes(q); });
+  }
   function openCat(id, focusRow) {
     cur = id; openChoice = null; confirmWipe = false; openMore = !!(focusRow && DIAG.has(focusRow));
     render(true);
     const host = hostEl();
     const root = host && host.querySelector('.st-root');
     if (root && !wide()) { root.classList.add('is-entering'); requestAnimationFrame(() => root.classList.remove('is-entering')); host.scrollTop = 0; }
-    if (id === 'diktat') post('bubble:status');
+    if (id === 'diktat') { post('bubble:status'); post('dict:get'); }
     if (focusRow && host) {
       const el = host.querySelector(`[data-st-row="${focusRow}"]`);
       if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('is-flash'); setTimeout(() => el.classList.remove('is-flash'), 1600); }
@@ -480,7 +572,6 @@
   }
   const MSG = {
     'bubble.enabled': (v) => (v ? 'Bubble wird angezeigt' : 'Bubble ausgeblendet'),
-    voicePrompt: (v) => (v ? 'KI-Prompt an' : 'KI-Prompt aus'),
     browserBridge: (v) => (v ? 'Login-Links öffnen auf dem Handy' : 'Login-Links bleiben am Rechner'),
     persistent: (v) => (v ? 'Verbindung bleibt im Hintergrund' : 'Verbindung endet mit der App'),
     'adhan.wecker': (v) => (v ? 'Fajr-Wecker an' : 'Fajr-Wecker aus'),
@@ -489,6 +580,32 @@
   function action(a) {
     const s = S();
     if (a === 'back') return back();
+    if (a.startsWith('dw:')) {
+      const p = a.split(':'), cmd = p[1], id = p[2];
+      const d = Dict(), e = d && d.entries ? d.entries.find((x) => x.id === id) : null;
+      if (cmd === 'tab') { DW.tab = id; DW.open = null; render(true); const h = hostEl(); if (h) h.scrollTop = 0; if (id !== 'bubble') post('dict:get'); else post('bubble:status'); return; }
+      if (cmd === 'filter') { DW.filter = id; return render(true); }
+      if (cmd === 'open') { DW.open = DW.open === id ? null : id; return render(true); }
+      if (cmd === 'add') {
+        const inp = document.getElementById('dwAdd'), v = inp ? inp.value.replace(/\s+/g, ' ').trim() : '';
+        if (!v) { if (inp) inp.focus(); return; }
+        if (d && d.entries && d.entries.some((x) => x.term.toLowerCase() === v.toLowerCase())) { say('Gibt es schon'); return; }
+        inp.value = ''; dwFilterList(); say(`${v} hinzugefügt`);
+        return dictSend('dict:add', { term: v });
+      }
+      if (!e) return;
+      if (cmd === 'heard') {
+        const inp = document.getElementById('dwHeard'), v = inp ? inp.value.replace(/\s+/g, ' ').trim() : '';
+        if (!v) { if (inp) inp.focus(); return; }
+        if (e.heard.some((h) => h.toLowerCase() === v.toLowerCase())) { say('Steht schon da'); return; }
+        if (d.entries.some((x) => x.term.toLowerCase() === v.toLowerCase())) { say('Das ist selbst ein Begriff im Wörterbuch'); return; }
+        inp.value = ''; say(`„${v}“ wird künftig zu ${e.term}`);
+        return dictSend('dict:update', { id: e.id, heard: e.heard.concat([v]) });
+      }
+      if (cmd === 'unheard') return dictSend('dict:update', { id: e.id, heard: e.heard.filter((_, i) => i !== Number(p[3])) });
+      if (cmd === 'del') { DW.open = null; say(`${e.term} gelöscht`); return dictSend('dict:remove', { id: e.id }); }
+      return;
+    }
     if (a === 'search:clear') { query = ''; render(true); const i = document.getElementById('stSearch'); if (i) i.focus(); return; }
     if (a.startsWith('cat:')) return openCat(a.slice(4));
     if (a.startsWith('choice:')) { const id = a.slice(7); openChoice = openChoice === id ? null : id; render(); return; }
@@ -565,6 +682,12 @@
   });
   document.addEventListener('input', (e) => {
     if (e.target && e.target.id === 'stSearch') { query = e.target.value; render(); }
+    if (e.target && e.target.id === 'dwAdd') dwFilterList();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !e.target) return;
+    if (e.target.id === 'dwAdd') action('dw:add');
+    else if (e.target.id === 'dwHeard') action('dw:heard:' + (e.target.dataset.dwId || ''));
   });
   try { window.matchMedia('(min-width: 700px)').addEventListener('change', () => render()); } catch (e) { /* alt */ }
 

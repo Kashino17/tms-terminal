@@ -9,6 +9,7 @@
 //       [--tail=20]          ... except the last N seconds, which run in real time (default 20)
 //       [--stop-delay=0]     ms between the last audio and the stop               (default 0)
 //       [--truth=file.txt]   expected text: prints the word errors
+//       [--fix=Heard:Term]   run with a dictionary holding this one entry (prompt + replacement)
 //       [--resume]           also run the "dropped piece + resume from a new socket" check
 //       [--text] [--verbose] print the transcript / the manager's log lines
 //
@@ -23,6 +24,9 @@ import { AdtsPcm } from '../src/audio/adts-pcm';
 import type { DictationStat } from '../src/audio/dictation.stats';
 import { decodeToFloat32, findFfmpeg } from '../src/audio/ffmpeg-decode';
 import { transcribe, prewarm, shutdown } from '../src/audio/whisper-sidecar';
+import { DictionaryStore } from '../src/audio/dictionary';
+import os from 'os';
+import path from 'path';
 
 const args = process.argv.slice(2);
 const file = args.find((a) => !a.startsWith('--'));
@@ -39,12 +43,17 @@ const withResume = args.includes('--resume');
 
 const adts = execFileSync(findFfmpeg()!, ['-nostdin', '-loglevel', 'error', '-i', file, '-ac', '1', '-ar', '16000', '-c:a', 'aac', '-b:a', '96k', '-f', 'adts', 'pipe:1'], { maxBuffer: 1 << 28 });
 
+// A throw-away dictionary with exactly one entry, to see it work end to end.
+const fixArg = opt('fix', '');
+const dict = fixArg ? new DictionaryStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tms-e2e-dict-')), 'dictionary.json'), [{ term: fixArg.split(':')[1], heard: [fixArg.split(':')[0]] }]) : null;
+
 let calls = 0;
 let lastStat: DictationStat | null = null;
 const mgr = new DictationManager({
   decode: decodeToFloat32,
   openPcm: () => new AdtsPcm((b) => decodeToFloat32(b, 'adts')),
-  transcribeWav: (b64) => { calls++; return transcribe(b64); },
+  transcribeWav: (b64) => { calls++; return transcribe(b64, dict ? { prompt: dict.prompt() } : {}); },
+  fix: dict ? (t) => dict.fix(t) : undefined,
   onDone: (s) => { lastStat = s; },
   now: () => Date.now(),
   log: (m) => { if (args.includes('--verbose')) console.log('   ', m); },
@@ -103,6 +112,7 @@ async function run(label: string, bytesPerSec: number, dropPieceAt: number | nul
     const truth = words(fs.readFileSync(truthFile, 'utf8'));
     errs = `, word errors ${wordErrors(truth, words(text))} of ${truth.length}`;
   }
+  if (dict) console.log(`dictionary: ${dict.list().map((e) => `${e.heard.join('/')} -> ${e.term} (${e.uses}x)`).join(', ')}`);
   console.log(`${label} [cut=${cutName} piece=${pieceSecs}s delay=${stopDelay}ms]: stop -> result ${doneAt - stopAt}ms, rest ${stat ? stat.restSecs.toFixed(1) : '?'}s, calls ${calls}${stat?.specHit ? ', ahead' : ''}${errs}`);
   return text;
 }

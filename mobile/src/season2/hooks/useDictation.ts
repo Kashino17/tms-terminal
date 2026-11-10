@@ -86,7 +86,6 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
   const pumpTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const legacyWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const legacySessionRef = useRef<string | null>(null);
-  const voicePromptEnhanceEnabled = useSettingsStore((s) => s.voicePromptEnhanceEnabled);
   const effectiveSessionId = sessionId || FALLBACK_DICTATION_SESSION_ID;
 
   // Callbacks change every render; the socket listeners read the latest ones.
@@ -227,11 +226,11 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
       sessionId: effectiveSessionId,
       // `format: 'wav'` is a legacy gate string the server requires — the
       // sidecar sniffs the real container (RIFF → WAV, else ffmpeg).
-      payload: { audio: base64, format: 'wav', enhance: voicePromptEnhanceEnabled },
+      payload: { audio: base64, format: 'wav' },
     });
     armLegacyWatchdog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsService, effectiveSessionId, voicePromptEnhanceEnabled]);
+  }, [wsService, effectiveSessionId]);
 
   const stop = useCallback(async () => {
     const recording = recordingRef.current;
@@ -283,7 +282,7 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
       recordingRef.current = recording;
       uriRef.current = uri;
       startedAtRef.current = Date.now();
-      const upload = new DictationUpload(newDictationId(), STREAM_FORMAT, voicePromptEnhanceEnabled, makeIO(uri));
+      const upload = new DictationUpload(newDictationId(), STREAM_FORMAT, false, makeIO(uri));
       uploadRef.current = upload;
       upload.begin();
       if (STREAM_FORMAT === 'adts') {
@@ -294,7 +293,7 @@ export function useDictation({ wsService, sessionId, onText, onError }: UseDicta
       reset();
       onErrorRef.current?.('Aufnahme konnte nicht gestartet werden');
     }
-  }, [wsService, voicePromptEnhanceEnabled, makeIO, reset]);
+  }, [wsService, makeIO, reset]);
 
   /** Start ↔ stop. Ignored while processing — use cancel() to abandon that. */
   const toggle = useCallback(async () => {

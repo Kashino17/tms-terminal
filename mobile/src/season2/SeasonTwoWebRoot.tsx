@@ -266,6 +266,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // jedes Stück sofort (speech:audio) — hier wird es der Reihe nach gespielt.
   // Kann es kein Gerät (oder antwortet es nicht), spricht das Handy selbst.
   const speechDevRef = useRef<string | null>(null);
+  // Wörterbuch + Tempo liegen auf dem Rechner, der diktiert (server/src/audio/dictionary.ts).
+  const dictDevRef = useRef<string | null>(null);
+  const dictAnsweredAt = useRef(0);
   const rem = useRef<{ run: RemVoiceRun; dev: string; parts: string[]; german: boolean; heard: boolean; watchdog: ReturnType<typeof setTimeout> | null } | null>(null);
   const speakOnPhone = useCallback((parts: string[], german: boolean) => {
     const speech = NativeModules.TmsSpeech as { speak?: (parts: string[], german: boolean) => Promise<boolean> } | undefined;
@@ -440,6 +443,11 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     };
 
     return (m: any) => {
+      // ── Wörterbuch + Tempo: nur vom Rechner, der diktiert ──
+      if (m?.type === 'dict:state') {
+        if (srvId === dictDevRef.current) { dictAnsweredAt.current = Date.now(); call('setDictionary', m.payload); }
+        return;
+      }
       // ── Gemeinsame Zwischenablage (server/src/clipboard) ──
       // Der Verlauf liegt auf dem Handy (bund/clipboardStore). Jedes Gerät meldet
       // seine Kopien; den alten Server-Verlauf übernehmen wir genau einmal.
@@ -1111,6 +1119,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   // also der Mac). Ist es offline, gibt es kein Diktat: das Mikro wird
   // ausgeblendet. Der Text geht trotzdem ins Terminal vorne, egal auf welchem Gerät.
   const dictDev = dictationDeviceId(devices);
+  dictDevRef.current = dictDev ?? null;
   speechDevRef.current = speechDeviceId(devices);
   const dictInfo = devInfo(dictDev);
   const dictWs = useMemo(() => (dictDev ? getConnection(dictDev) : null), [dictDev]);
@@ -1119,12 +1128,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   }, [ready, dictDev, call]);
   // Android-Diktat-Bubble: streamt selbst (eigener Bedienungshilfe-Dienst) —
   // an genau dieses Gerät.
-  const voiceEnhance = useSettingsStore((st) => st.voicePromptEnhanceEnabled);
   const dictHost = dictInfo?.server.host, dictPort = dictInfo?.server.port, dictToken = dictInfo?.token;
   useEffect(() => {
     if (!dictHost || !dictToken || !dictationBubble.available) return;
-    dictationBubble.configure(dictHost, Number(dictPort), dictToken, voiceEnhance);
-  }, [dictHost, dictPort, dictToken, voiceEnhance]);
+    // Letzter Wert: früher „KI-Prompt“ — der Server kennt das nicht mehr.
+    dictationBubble.configure(dictHost, Number(dictPort), dictToken, false);
+  }, [dictHost, dictPort, dictToken]);
   const pushBubbleStatus = useCallback(() => {
     if (!ready || !dictationBubble.available) return;
     dictationBubble.status().then((st) => { if (st) call('bubbleStatus', st); });
@@ -1147,7 +1156,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     const st = useSettingsStore.getState();
     const pv = prevVer.current;
     call('setSettings', {
-      voicePrompt: st.voicePromptEnhanceEnabled,
       browserBridge: st.browserBridgeEnabled,
       persistent: st.persistentConnection,
       appLock: useLockStore.getState().isEnabled,
@@ -1172,7 +1180,6 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const applySetting = useCallback((key: string, value: unknown) => {
     const st = useSettingsStore.getState();
     switch (key) {
-      case 'voicePrompt': st.setVoicePromptEnhanceEnabled(!!value); break;
       case 'browserBridge': st.setBrowserBridgeEnabled(!!value); break;
       case 'persistent':
         st.setPersistentConnection(!!value);
@@ -1448,6 +1455,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     // ── Einstellungen: brauchen keinen Server ──
     if (type === 'nav:screen' && payload?.screen === 'settings') { pushSettings(); pushBubbleStatus(); pushCloudAccounts(); void pushAdhanStatus(); }
     if (type === 'settings:set') { applySetting(String(payload?.key ?? ''), payload?.value); return; }
+    // ── Wörterbuch: die Seite spricht mit dem Rechner, der diktiert — wir reichen nur durch ──
+    if (type === 'dict:get' || type === 'dict:add' || type === 'dict:update' || type === 'dict:remove') {
+      const conn = dictDevRef.current ? getConnection(dictDevRef.current) : null;
+      if (!conn) { call('setDictionary', { offline: true }); return; }
+      const askedAt = Date.now();
+      conn.send({ type, payload: payload ?? {} } as never);
+      // Ein Server von vor dem Wörterbuch antwortet nie: das sagen, statt ewig zu laden.
+      if (type === 'dict:get') setTimeout(() => { if (dictAnsweredAt.current < askedAt) call('setDictionary', { unsupported: true }); }, 4000);
+      return;
+    }
     if (type === 'bubble:snooze') { dictationBubble.snooze(); setTimeout(pushBubbleStatus, 300); return; }
     if (type === 'lock:pin') { navigation.navigate('PinSetup', { mode: 'change' }); return; }
     if (type === 'lock:now') {
