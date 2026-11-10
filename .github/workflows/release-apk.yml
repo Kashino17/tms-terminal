@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Neue Einstellungen: eine Seite fuer alles, mit Suche, Diktat-Bubble oben und Kategorien mit Symbol und Zustand auf einen Blick. Die klassischen Einstellungen sind uebernommen, Attrappen sind raus. Installieren zeigt jetzt sofort, dass der Installer sich oeffnet - einmal tippen reicht. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Updates installieren repariert: Der Installer oeffnet sich jetzt zuverlaessig beim ersten Tipp und versteckt sich nicht mehr hinter der App. Fehlt TMS noch die Erlaubnis Apps installieren, oeffnet sich direkt die richtige Android-Seite - danach geht es von selbst weiter. Dieses eine Update bitte noch per Browser installieren. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
