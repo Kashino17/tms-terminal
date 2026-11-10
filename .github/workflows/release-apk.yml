@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Neu: Antwort lesen. Das Buch am Terminal zeigt Claudes letzte Antwort sauber gesetzt - mit echten Tabellen, Code zum Kopieren, Schriftgroesse, aelteren Antworten und Vorlesen. Und unter dem Titel steht jetzt, woran das Terminal gerade arbeitet, statt LAEUFT/BEREIT. Beides braucht das naechste Server-Update (tms-terminal update); Antworten lesen geht in Terminals, die danach neu geoeffnet wurden. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Vorlesen mit Rems Stimme: Im Lesemodus liest der Mac die Antwort Satz fuer Satz vor - der erste Satz kommt nach etwa einer Sekunde, der naechste entsteht, waehrend der aktuelle laeuft. Ist der Mac nicht erreichbar, spricht das Handy selbst. Dazu wie in 1.150: Antwort lesen (Buch am Terminal) und die Aufgabe unter dem Titel statt LAEUFT/BEREIT. Braucht das Server-Update (tms-terminal update). Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
