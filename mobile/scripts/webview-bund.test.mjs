@@ -319,27 +319,71 @@ if (!PW) {
     } finally { await browser.close(); }
   });
 
-  test('Fernzugriff aktiv: grüner Ring um ⋮, Schimmer im Menü, aufgeklappt am Gerät — nicht im Splitscreen', async () => {
+  test('Fernzugriff aktiv: ruhiger grüner Ring um ⋮, Puls nur einmal beim Zurückkehren, Menü ohne Bewegung', async () => {
     const { browser, page, errors } = await boot();
     try {
       await page.evaluate(() => { window.__newTermServer = 'A'; window.addTerminal(); window.__newTermServer = null; });
       await page.waitForTimeout(400);
-      const ring = () => page.evaluate(() => getComputedStyle(document.querySelector('.term-card .card-menu-btn'), '::after').animationName);
-      assert.equal(await ring(), 'none', 'ohne Sitzung kein Ring');
+      const btn = () => page.evaluate(() => { const b = document.querySelector('.term-card .card-menu-btn'); const a = getComputedStyle(b, '::after'); return { border: getComputedStyle(b).borderTopColor, anim: a.animationName, iter: a.animationIterationCount }; });
+      const plain = (await btn()).border;
       await page.evaluate(() => window.__setRemoteAlive('B', true));
-      assert.equal(await ring(), 'tmsLivePulse', 'Ring um ⋮');
+      let st = await btn();
+      assert.notEqual(st.border, plain, 'grüner Ring sichtbar');
+      assert.equal(st.anim, 'none', 'kein Dauer-Pulsieren');
+      // Vom Fernzugriff zurück zu den Terminals → genau ein Puls
+      await page.evaluate(() => { document.body.classList.add('remote-focus'); });
+      await page.waitForTimeout(100);
+      await page.evaluate(() => { document.body.classList.remove('remote-focus'); });
+      await page.waitForTimeout(150);
+      st = await btn();
+      assert.equal(st.anim, 'tmsLivePulse', 'Puls beim Zurückkehren');
+      assert.equal(st.iter, '1', 'genau einmal');
+      await page.waitForTimeout(3200);
+      st = await btn();
+      assert.equal(st.anim, 'none', 'danach Ruhe');
+      assert.notEqual(st.border, plain, 'Ring bleibt');
+      // Menü: Hinweis ohne Bewegung, aufgeklappt am laufenden Gerät
       await page.evaluate(() => document.querySelector('.term-card .card-menu-btn').click());
       await page.waitForTimeout(250);
-      const rowRing = () => page.evaluate(() => getComputedStyle(document.querySelector('.card-menu [data-bm-open="remote"] .bm-ic'), '::after').animationName);
-      assert.equal(await rowRing(), 'tmsLivePulse', 'Fernzugriff schimmert');
+      const rowAnim = await page.evaluate(() => getComputedStyle(document.querySelector('.card-menu [data-bm-open="remote"] .bm-ic'), '::after').animationName);
+      assert.equal(rowAnim, 'none');
+      assert.ok(await page.evaluate(() => document.querySelector('.card-menu [data-bm-open="remote"]').classList.contains('is-live')), 'Zeile markiert');
       await page.evaluate(() => document.querySelector('.card-menu [data-bm-open="remote"]').click());
       await page.waitForTimeout(150);
-      assert.equal(await rowRing(), 'none', 'aufgeklappt: nicht mehr an der Zeile');
-      const devRing = (id) => page.evaluate((i) => getComputedStyle(document.querySelector(`.card-menu [data-bm="remote"][data-srv="${i}"] .bm-dev__ic`), '::after').animationName, id);
-      assert.equal(await devRing('B'), 'tmsLivePulse', 'sondern am laufenden Gerät');
-      assert.equal(await devRing('A'), 'none');
+      assert.ok(await page.evaluate(() => document.querySelector('.card-menu [data-bm="remote"][data-srv="B"]').classList.contains('is-alive')), 'laufendes Gerät markiert');
       await page.evaluate(() => { document.querySelectorAll('.card-menu').forEach((m) => m.remove()); document.body.classList.add('compact-terminal'); document.body.classList.remove('desk'); });
-      assert.equal(await ring(), 'none', 'Splitscreen: kein Ring');
+      assert.equal((await btn()).border, plain, 'Splitscreen: kein Ring');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Fernzugriff beenden aus dem ⋮-Menü: ✕, Rückfrage, Abbrechen/Beenden', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      await page.evaluate(() => { window.__newTermServer = 'A'; window.addTerminal(); window.__newTermServer = null; });
+      await page.waitForTimeout(400);
+      await page.evaluate(() => { window.__setRemoteAlive('B', true); window.__closed = []; window.__closeRemoteDevice = (id) => window.__closed.push(id); });
+      const openList = async () => {
+        await page.evaluate(() => document.querySelector('.term-card .card-menu-btn').click());
+        await page.waitForTimeout(250);
+        await page.evaluate(() => document.querySelector('.card-menu [data-bm-open="remote"]').click());
+        await page.waitForTimeout(150);
+      };
+      await openList();
+      assert.equal(await page.locator('.card-menu [data-bm-stop="A"]').count(), 0, 'nur laufende Sitzungen haben ✕');
+      await page.evaluate(() => document.querySelector('.card-menu [data-bm-stop="B"]').click());
+      await page.waitForTimeout(150);
+      assert.match(await page.textContent('.card-menu'), /Fernzugriff auf Windows PC beenden\?/);
+      await page.evaluate(() => document.querySelector('.card-menu [data-bm-confirm="no"]').click());
+      await page.waitForTimeout(150);
+      assert.deepEqual(await page.evaluate(() => window.__closed), [], 'Abbrechen beendet nichts');
+      assert.equal(await page.locator('.card-menu [data-bm-stop="B"]').count(), 1, 'Liste wieder da');
+      await page.evaluate(() => document.querySelector('.card-menu [data-bm-stop="B"]').click());
+      await page.waitForTimeout(150);
+      await page.evaluate(() => document.querySelector('.card-menu [data-bm-confirm="yes"]').click());
+      await page.waitForTimeout(200);
+      assert.deepEqual(await page.evaluate(() => window.__closed), ['B']);
+      assert.equal(await page.locator('.card-menu').count(), 0, 'Menü zu');
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });

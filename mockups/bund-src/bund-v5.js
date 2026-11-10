@@ -339,10 +339,15 @@
     const cwd = fx.cwd[fx.dev];
     // Brotkrumen: jeder Teil des Pfads antippbar (Mac / und Windows C:\)
     const sp = sepOf(cwd), segs = cwd.split(/[\\/]+/).filter(Boolean);
-    let acc = '', crumbs = '';
+    let acc = '', crumbs = '', shown = 0;
+    // iCloud Drive (…/Library/Mobile Documents/com~apple~CloudDocs) als EIN Krümel.
+    const cloudAt = segs.indexOf('com~apple~CloudDocs');
+    const cloud = cloudAt >= 2 && segs[cloudAt - 1] === 'Mobile Documents' && segs[cloudAt - 2] === 'Library';
     segs.forEach((seg, i) => {
       acc = i === 0 ? (cwd.startsWith('/') ? '/' + seg : (seg === '~' ? '~' : seg + sp)) : acc.replace(/[\\/]+$/, '') + sp + seg;
-      crumbs += `${i ? '<span class="fx2-sep">›</span>' : ''}<button class="fx2-crumb" data-path="${esc(acc)}">${esc(seg)}</button>`;
+      if (cloud && i < cloudAt) return;
+      const label = cloud && i === cloudAt ? '☁ iCloud Drive' : seg;
+      crumbs += `${shown++ ? '<span class="fx2-sep">›</span>' : ''}<button class="fx2-crumb" data-path="${esc(acc)}">${esc(label)}</button>`;
     });
     const cr = panel.querySelector('.fx2-crumbs'); cr.innerHTML = crumbs; cr.scrollLeft = 99999;
     panel.querySelector('.fx2-cd').title = `cd in „${s ? s.name : ''}“`;
@@ -474,7 +479,29 @@
     menu.classList.remove('is-on'); scrim.classList.add('is-on'); confirmEl.classList.add('is-on');
   }
 
+  /** Bild/Video/PDF: Inhalt holt die App (die Seite darf nicht ins Tailnet laden).
+   *  Bilder erscheinen hier, Video/PDF öffnen im Android-Betrachter. */
+  function previewViaApp(n, p, kind) {
+    pv.dataset.want = p;
+    const box = () => (pv.dataset.want === p && pv.classList.contains('is-on') ? pv.querySelector('.pv-body') : null);
+    const status = (t, again) => {
+      const b = box(); if (!b) return;
+      b.innerHTML = `<div class="fx2-empty">${esc(t)}${again ? '<br><br><button class="pv-again" data-pv-again>Nochmal öffnen</button>' : ''}</div>`;
+      const btn = b.querySelector('[data-pv-again]');
+      if (btn) btn.addEventListener('click', () => { status('Lädt …'); previewViaApp(n, p, kind); });
+    };
+    window.fsLoadPreview(p, kind, (d) => {
+      if (d.progress) return status(`Lädt … ${d.pct} %`);
+      if (d.error) return status(d.error, true);
+      if (d.opened) return status(kind === 'pdf' ? 'PDF im Betrachter geöffnet.' : kind === 'vid' ? 'Video im Player geöffnet.' : 'Im Betrachter geöffnet.', true);
+      const b = box(); if (!b) return;
+      b.innerHTML = `<img class="pv-real" src="${esc(d.src || '')}" alt="">`;
+      b.querySelector('img').addEventListener('error', () => status(/\.heic$/i.test(n) ? 'HEIC kann die Vorschau nicht zeigen — laden oder teilen.' : 'Bild lässt sich nicht anzeigen.'));
+    });
+    return '<div class="fx2-empty">Lädt …</div>';
+  }
   function previewLive(n, p, meta, kind) {
+    if ((kind === 'img' || kind === 'vid' || kind === 'pdf') && typeof window.fsLoadPreview === 'function') return previewViaApp(n, p, kind);
     const url = typeof window.fsFileUrl === 'function' ? window.fsFileUrl(p) : '';
     let body = '';
     if (kind === 'img') body = `<img class="pv-real" src="${esc(url)}" alt="">`;
@@ -801,8 +828,10 @@
       const on = d.status === 'online';
       const live = kind === 'remote' && alive.indexOf(d.id) >= 0;
       const meta = !on ? 'offline' : live ? '<i></i>läuft' : (d.latency != null ? d.latency + ' ms' : '');
-      return `<button class="bm-dev${live ? ' is-alive' : ''}" data-bm="${kind}" data-srv="${esc(d.id)}" style="--dc:${devColor(d.id)}" ${on ? '' : 'disabled'}>
+      const row = `<button class="bm-dev${live ? ' is-alive' : ''}" data-bm="${kind}" data-srv="${esc(d.id)}" style="--dc:${devColor(d.id)}" ${on ? '' : 'disabled'}>
         <span class="bm-dev__ic">${ic(devIcon(d), 1.8)}</span><span class="bm-dev__name">${esc(d.name)}</span><small>${meta}</small></button>`;
+      // Laufende Sitzung: daneben ✕ zum Beenden (mit Rückfrage), ohne hineinzugehen
+      return live ? `<div class="bm-devwrap" data-bm-wrap="${esc(d.id)}">${row}<button class="bm-stop" data-bm-stop="${esc(d.id)}" aria-label="Fernzugriff auf ${esc(d.name)} beenden" title="Beenden">${ic('x', 2.2)}</button></div>` : row;
     }).join('') || '<div class="bm-empty">Kein Gerät verbunden</div>';
   }
   function bmAugment(menu) {
@@ -841,6 +870,41 @@
   new MutationObserver((list) => {
     list.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType === 1 && n.classList.contains('card-menu')) bmAugment(n); }));
   }).observe(document.body, { childList: true });
+  // Laufenden Fernzugriff beenden: ✕ → Rückfrage → Beenden / Abbrechen
+  document.addEventListener('click', (e) => {
+    const stop = e.target.closest && e.target.closest('.card-menu [data-bm-stop]');
+    const conf = e.target.closest && e.target.closest('.card-menu [data-bm-confirm]');
+    if (!stop && !conf) return;
+    e.stopPropagation();
+    const menu = (stop || conf).closest('.card-menu');
+    const list = menu.querySelector('[data-bm-list="remote"]');
+    if (stop) {
+      const id = stop.dataset.bmStop, d = servers().find((x) => x.id === id);
+      list.innerHTML = `<div class="bm-confirm"><b>Fernzugriff auf ${esc(d ? d.name : 'dem Gerät')} beenden?</b>
+        <small>Die Sitzung auf dem Rechner wird geschlossen.</small>
+        <div class="bm-confirm__btns"><button data-bm-confirm="no">Abbrechen</button><button class="danger" data-bm-confirm="yes" data-srv="${esc(id)}">Beenden</button></div></div>`;
+      return;
+    }
+    if (conf.dataset.bmConfirm === 'no') { list.innerHTML = bmList('remote'); return; }
+    const id = conf.dataset.srv, d = servers().find((x) => x.id === id);
+    closeCardMenuNow();
+    if (typeof window.__closeRemoteDevice === 'function') window.__closeRemoteDevice(id);
+    say(`Fernzugriff auf ${d ? d.name : 'dem Gerät'} beendet`);
+  }, true);
+
+  // Vom Fernzugriff zurück: der grüne Ring um ⋮ pulsiert EINMAL, danach Ruhe.
+  let wasRemote = document.body.classList.contains('remote-focus'), pulseT = 0;
+  new MutationObserver(() => {
+    const now = document.body.classList.contains('remote-focus');
+    if (wasRemote && !now && document.body.classList.contains('remote-alive')) {
+      document.body.classList.remove('remote-pulse');
+      void document.body.offsetWidth; // Animation neu starten
+      document.body.classList.add('remote-pulse');
+      clearTimeout(pulseT);
+      pulseT = setTimeout(() => document.body.classList.remove('remote-pulse'), 2600);
+    }
+    wasRemote = now;
+  }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   document.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest('.card-menu [data-bm]');
     if (!b) return;

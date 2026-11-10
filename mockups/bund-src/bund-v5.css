@@ -185,6 +185,7 @@ body.desk .pv { left: var(--desk-side-w); }
 .pv-title b { display: block; font: 650 14.5px var(--font-ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pv-title small { font-size: 11.5px; color: #8d94a1; }
 .pv-body { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: center; justify-content: center; }
+.pv-again { height: 40px; padding: 0 16px; border-radius: 12px; background: #1d2026; color: #eef1f5; font: 600 13px var(--font-ui); }
 .pv-bar { display: flex; gap: 6px; padding: 8px 10px calc(var(--safe-bottom) + 10px); flex: none; }
 .pv-bar button { flex: 1; height: 50px; border-radius: 12px; background: #1d2026; display: flex; align-items: center; justify-content: center; gap: 8px; font: 600 13px var(--font-ui); color: #eef1f5; }
 .pv-bar button svg { width: 18px; height: 18px; }
@@ -316,29 +317,42 @@ body.no-island { --top-space: calc(var(--safe-top, 0px) + 10px); }
 .card-menu .bm-dev small i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok, #3ddc84); }
 .card-menu .bm-empty { padding: 8px 10px; color: var(--text-dim); font-size: 13px; }
 
-/* ── Fernzugriff läuft: sanft pulsierender grüner Ring ────────────────
-   ⋮ (zugeklappt + aufgeklappt, nicht im Splitscreen), im Menü die Zeile
-   „Fernzugriff“, aufgeklappt das Symbol des Geräts mit laufender Sitzung. */
+/* ── Fernzugriff läuft: ruhiger grüner Ring um ⋮ (nicht im Splitscreen).
+   Gepulst wird nur EINMAL, wenn man vom Fernzugriff zurückkommt
+   (body.remote-pulse, setzt bund.js für ~3 s). Im Menü: ruhige Markierung. */
 @keyframes tmsLivePulse {
-  0% { transform: scale(1); opacity: .55; }
-  70%, 100% { transform: scale(1.5); opacity: 0; }
+  0% { transform: scale(1); opacity: .6; }
+  100% { transform: scale(1.6); opacity: 0; }
 }
 body.remote-alive:not(.compact-terminal) .term-card .card-menu-btn,
 body.remote-alive.desk .term-card .card-menu-btn {
-  position: relative; border-color: color-mix(in srgb, var(--ok, #3ddc84) 55%, transparent);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--ok, #3ddc84) 22%, transparent);
+  position: relative; color: var(--ok, #3ddc84);
+  border-color: color-mix(in srgb, var(--ok, #3ddc84) 60%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ok, #3ddc84) 20%, transparent);
 }
-body.remote-alive:not(.compact-terminal) .term-card .card-menu-btn::after,
-body.remote-alive.desk .term-card .card-menu-btn::after,
-.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic::after,
-.card-menu .bm-dev.is-alive .bm-dev__ic::after {
+body.remote-alive.remote-pulse:not(.compact-terminal) .term-card .card-menu-btn::after,
+body.remote-alive.remote-pulse.desk .term-card .card-menu-btn::after {
   content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
-  border: 1.5px solid var(--ok, #3ddc84); animation: tmsLivePulse 2.6s cubic-bezier(.2,.6,.3,1) infinite;
+  border: 1.5px solid var(--ok, #3ddc84); animation: tmsLivePulse 2.4s cubic-bezier(.2,.6,.3,1) 1 forwards;
 }
-.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic { color: var(--ok, #3ddc84); border-radius: 50%; }
-.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic::after { inset: -5px; }
+.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic { color: var(--ok, #3ddc84); }
 .card-menu .bm-row.is-live[aria-expanded="false"] > span { color: color-mix(in srgb, var(--ok, #3ddc84) 70%, var(--text)); }
-.card-menu .bm-dev.is-alive .bm-dev__ic { position: relative; box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok, #3ddc84) 45%, transparent); }
+.card-menu .bm-dev.is-alive .bm-dev__ic { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--ok, #3ddc84) 60%, transparent); }
 @media (prefers-reduced-motion: reduce) {
-  body.remote-alive .term-card .card-menu-btn::after, .card-menu .bm-ic::after, .card-menu .bm-dev__ic::after { animation: none; opacity: .5; }
+  body.remote-pulse .term-card .card-menu-btn::after { animation: none; opacity: 0; }
 }
+
+/* Laufende Sitzung beenden (⋮ → Fernzugriff → ✕) */
+.card-menu .bm-devwrap { display: flex; align-items: center; gap: 4px; }
+.card-menu .bm-devwrap .bm-dev { flex: 1; min-width: 0; }
+.card-menu .bm-stop { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; padding: 0; border: 0;
+  color: var(--text-dim); background: rgba(var(--overlay-rgb, 255,255,255), .06); }
+.card-menu .bm-stop:active { background: color-mix(in srgb, var(--err, #ff6b6b) 18%, transparent); color: var(--err, #ff6b6b); }
+.card-menu .bm-stop svg { width: 15px; height: 15px; }
+.card-menu .bm-confirm { padding: 8px 8px 4px; display: flex; flex-direction: column; gap: 4px; }
+.card-menu .bm-confirm b { font-weight: 600; font-size: 14.5px; color: var(--text); }
+.card-menu .bm-confirm small { color: var(--text-dim); font-size: 12.5px; }
+.card-menu .bm-confirm__btns { display: flex; gap: 8px; margin-top: 8px; }
+.card-menu .bm-confirm__btns button { flex: 1; height: 36px; border-radius: 10px; border: 1px solid rgba(var(--overlay-rgb, 255,255,255), .12);
+  background: rgba(var(--overlay-rgb, 255,255,255), .06); color: var(--text); font: 600 13.5px var(--font-ui); }
+.card-menu .bm-confirm__btns .danger { background: color-mix(in srgb, var(--err, #ff6b6b) 18%, transparent); border-color: color-mix(in srgb, var(--err, #ff6b6b) 40%, transparent); color: var(--err, #ff6b6b); }
