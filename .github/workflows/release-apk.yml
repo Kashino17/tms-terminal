@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Laeuft eine Fernzugriff-Sitzung, zeigt ein sanft pulsierender gruener Ring um die drei Punkte das an. Im Menue schimmert dann Fernzugriff, aufgeklappt das Geraet mit der laufenden Sitzung. Im geteilten Bildschirm bleibt es ruhig. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Der gruene Ring um die drei Punkte zeigt eine laufende Fernzugriff-Sitzung jetzt ruhig an und pulsiert nur einmal, wenn du vom Fernzugriff zurueckkommst. Neu: Im Drei-Punkte-Menue unter Fernzugriff laesst sich eine laufende Sitzung mit dem X direkt beenden (mit Rueckfrage). Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
