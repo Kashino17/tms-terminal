@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Flackern und Stromverbrauch: Solange ein Terminal arbeitete, liess ein endlos pulsierender Statuspunkt das Handy den ganzen Bildschirm ununterbrochen neu zeichnen. Der Punkt pulsiert jetzt nur noch dreimal und bleibt dann stehen. Die Punktleiste blinkt nicht mehr alle 20 Sekunden. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Flackern beim Terminalwechsel: Die Tastenleiste wurde bei jedem Wechsel geloescht und neu gebaut und war dabei kurz leer (am Fold aufgenommen). Sie bleibt jetzt stehen. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
