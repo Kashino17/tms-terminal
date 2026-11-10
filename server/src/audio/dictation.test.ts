@@ -182,6 +182,91 @@ test('a failed or cancelled dictation reports no timing', async () => {
   assert.strictEqual(stats.length, 0);
 });
 
+// ── Looking ahead ──────────────────────────────────────────────────────
+// People stop talking, then tap: the last piece is transcribed in that gap.
+test('a pause at the live edge is transcribed ahead; stop without new speech needs no further call', async () => {
+  const stats: DictationStat[] = [];
+  const h = streamed({ onDone: (x) => stats.push(x) }); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, Buffer.concat([bytes(50), bytes(5, 0)]), s.fn);   // 5s speech + 0.5s quiet
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [5]);
+  h.mgr.end('d1', 55, s.fn);
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [5]);
+  assert.strictEqual(s.last('dictation:result').text, 'seg1');
+  assert.strictEqual(stats[0].specHit, true);
+});
+
+test('the same trailing pause is not transcribed ahead twice', async () => {
+  const h = streamed(); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, Buffer.concat([bytes(50), bytes(5, 0)]), s.fn);
+  await h.mgr.idle('d1');
+  h.mgr.chunk('d1', 55, bytes(10, 0), s.fn);                              // still quiet
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [5]);
+});
+
+test('speech after a short piece transcribed ahead discards it — no duplicate text', async () => {
+  const h = streamed(); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, Buffer.concat([bytes(30), bytes(5, 0)]), s.fn);   // 3s + pause → ahead: seg1
+  await h.mgr.idle('d1');
+  h.mgr.chunk('d1', 35, bytes(31), s.fn);
+  h.mgr.end('d1', 66, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, 'seg2');           // one text for the whole 6.6s
+  assert.deepStrictEqual(h.calls, [3, 7]);
+});
+
+test('a piece of at least 8s transcribed ahead is kept when speech resumes', async () => {
+  const h = streamed(); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, Buffer.concat([bytes(100), bytes(5, 0)]), s.fn);  // 10s + pause
+  await h.mgr.idle('d1');
+  h.mgr.chunk('d1', 105, bytes(30), s.fn);
+  h.mgr.end('d1', 135, s.fn);
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, [10, 3]);
+  assert.strictEqual(s.last('dictation:result').text, 'seg1 seg2');
+});
+
+test('a stop during a transcription ahead waits for it instead of starting another', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  let n = 0;
+  const h = streamed({ transcribeWav: async () => { n++; await gate; return 'ahead'; } }); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, Buffer.concat([bytes(50), bytes(5, 0)]), s.fn);
+  await new Promise((r) => setImmediate(r));
+  h.mgr.end('d1', 55, s.fn);
+  release();
+  await h.mgr.idle('d1');
+  assert.strictEqual(n, 1);
+  assert.strictEqual(s.last('dictation:result').text, 'ahead');
+});
+
+test('nothing is transcribed ahead on silence only', async () => {
+  const h = streamed(); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, bytes(30, 0), s.fn);
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(h.calls, []);
+});
+
+test('a failed transcription ahead does not fail the dictation', async () => {
+  let n = 0;
+  const h = streamed({ transcribeWav: async () => { if (n++ === 0) throw new Error('sidecar busy'); return 'ok'; } }); const s = sink();
+  h.mgr.start('d1', 'adts', false, s.fn);
+  h.mgr.chunk('d1', 0, Buffer.concat([bytes(50), bytes(5, 0)]), s.fn);
+  await h.mgr.idle('d1');
+  h.mgr.end('d1', 55, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, 'ok');
+  assert.strictEqual(s.last('dictation:error'), undefined);
+});
+
 test('the legacy cut can be injected', async () => {
   const h = streamed({}, { cut: nextCutLegacy }); const s = sink();
   h.mgr.start('d1', 'adts', false, s.fn);

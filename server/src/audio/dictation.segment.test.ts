@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { findPauseSplit, findPauses, nextCut, nextCutLegacy, encodeWav, CHUNK_SECS } from './dictation.segment';
+import { findPauseSplit, findPauses, nextCut, nextCutLegacy, edgePause, hasSpeech, encodeWav, CHUNK_SECS } from './dictation.segment';
 
 const RATE = 16000;
 
@@ -141,6 +141,36 @@ test('nextCut on final still splits a rest longer than 28s', () => {
 test('nextCut on final with nothing left returns null', () => {
   const s = tone(5, 0.3);
   assert.strictEqual(nextCut(s, s.length, RATE, true), null);
+});
+
+// ── Looking ahead: the buffer ends in a pause ──────────────────────────
+test('edgePause finds trailing silence after speech', () => {
+  const s = concat(tone(3, 0.3), tone(0.5, 0));
+  const at = edgePause(s, 0, RATE);
+  assert.ok(at !== null && Math.abs(at / RATE - 3) < 0.15, `at ${at}`);
+});
+
+test('edgePause is null while speech is still running', () => {
+  assert.strictEqual(edgePause(concat(tone(3, 0.3), tone(0.2, 0)), 0, RATE), null);
+});
+
+test('edgePause is null for silence only', () => {
+  assert.strictEqual(edgePause(tone(3, 0), 0, RATE), null);
+});
+
+test('edgePause needs at least half a second of speech before the pause', () => {
+  assert.strictEqual(edgePause(concat(tone(0.2, 0.3), tone(0.6, 0)), 0, RATE), null);
+});
+
+test('edgePause looks only at audio after the cursor', () => {
+  const s = concat(tone(5, 0.3), tone(0.6, 0));
+  assert.strictEqual(edgePause(s, 5 * RATE, RATE), null);
+});
+
+test('hasSpeech tells speech from silence', () => {
+  const s = concat(tone(2, 0.3), tone(2, 0), tone(1, 0.3));
+  assert.strictEqual(hasSpeech(s, 2 * RATE, 4 * RATE, RATE), false);
+  assert.strictEqual(hasSpeech(s, 2 * RATE, s.length, RATE), true);
 });
 
 test('encodeWav writes a 16-bit mono RIFF file', () => {

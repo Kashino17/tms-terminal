@@ -11,7 +11,7 @@
 // reconnect (`resume`) picks up a dictation that is still uploading or still
 // being transcribed, and a finished result is kept for a while to be fetched.
 
-import { nextCut, nextCutLegacy, encodeWav } from './dictation.segment';
+import { nextCut, nextCutLegacy, edgePause, hasSpeech, findPauses, encodeWav, MIN_SEGMENT_SECS } from './dictation.segment';
 import type { PcmStream } from './adts-pcm';
 import type { DictationStat } from './dictation.stats';
 
@@ -54,6 +54,8 @@ const RATE = 16000;
 const SEGMENT_READY_SECS = 72;
 // Smaller than a couple of AAC frames: decoding may legitimately fail.
 const TINY_RECORDING_BYTES = 4096;
+// A piece transcribed ahead takes this much of the trailing quiet along, so the last word is not clipped.
+const AHEAD_PAD_SECS = 0.15;
 
 interface Session {
   id: string;
@@ -84,6 +86,9 @@ interface Session {
   bytesPerSec: number;        // measured on the last decode; 0 = unknown
   restSecs: number;           // audio left to transcribe when the stop arrived
   restMeasured: boolean;
+  /** A piece transcribed ahead at a trailing pause: samples [from, to) and their text. */
+  spec: { from: number; to: number; text: string } | null;
+  specHit: boolean;           // the whole result was ready before the stop
 }
 
 /** Use the rewrite unless it lost more than half of the words (truncation/hallucination guard). */
@@ -119,7 +124,7 @@ export class DictationManager {
         received: 0, status: 'receiving', endTotal: null,
         cursor: 0, texts: [], work: Promise.resolve(), passQueued: false, lastPassAt: 0,
         throttleTimer: null, heartbeat: null, cancelled: false, lastActivity: now, startedAt: now,
-        endedAt: 0, finishedAt: 0, text: '', error: '', computeMs: 0, audioSecs: 0, bytesPerSec: 0, restSecs: 0, restMeasured: false,
+        endedAt: 0, finishedAt: 0, text: '', error: '', computeMs: 0, audioSecs: 0, bytesPerSec: 0, restSecs: 0, restMeasured: false, spec: null, specHit: false,
       };
       this.sessions.set(id, s);
       this.deps.log(`[dictation] ${id}: start (${format}${enhance ? ', enhance' : ''})`);
@@ -242,7 +247,8 @@ export class DictationManager {
       // the byte rate measured on the last decode).
       if (!s.pcm && s.bytesPerSec > 0 && s.received / s.bytesPerSec - s.cursor / RATE <= SEGMENT_READY_SECS) return;
       try {
-        await this.transcribeReady(s, false);
+        const samples = await this.transcribeReady(s, false);
+        if (samples && s.pcm && !s.cancelled && s.status === 'receiving') await this.transcribeAhead(s, samples);
       } catch (err) {
         // A mid-stream hiccup is retried by the next pass / the final pass.
         this.deps.log(`[dictation] ${s.id}: stream pass failed (will retry): ${(err as Error).message}`);
@@ -250,25 +256,27 @@ export class DictationManager {
     });
   }
 
-  private async transcribeReady(s: Session, final: boolean): Promise<void> {
-    if (s.received === 0) return; // nothing recorded
+  /** Transcribes every piece that can be cut now; returns the decoded samples (null if there is nothing). */
+  private async transcribeReady(s: Session, final: boolean): Promise<Float32Array | null> {
+    if (s.received === 0) return null; // nothing recorded
     let samples: Float32Array;
     try {
       samples = s.pcm ? await s.pcm.samples() : await this.deps.decode(Buffer.concat(s.parts), s.format);
     } catch (err) {
       // A tap too short to hold one audio frame is "nothing said", not an error.
-      if (final && s.received < TINY_RECORDING_BYTES) return;
+      if (final && s.received < TINY_RECORDING_BYTES) return null;
       throw err;
     }
     s.audioSecs = samples.length / RATE;
     if (s.audioSecs > 0) s.bytesPerSec = s.received / s.audioSecs;
+    if (s.spec) this.settleAhead(s, samples, final);
     if (final && !s.restMeasured) { s.restMeasured = true; s.restSecs = Math.max(0, samples.length - s.cursor) / RATE; }
     // Pause rule for streamed recordings; whole-file uploads keep the 60s pieces.
     const cutAt = s.pcm ? this.cut : nextCutLegacy;
     for (;;) {
-      if (s.cancelled) return;
+      if (s.cancelled) return samples;
       const cut = cutAt(samples, s.cursor, RATE, final);
-      if (cut === null) return;
+      if (cut === null) return samples;
       const seg = samples.subarray(s.cursor, cut);
       const t0 = Date.now();
       const text = await this.deps.transcribeWav(encodeWav(seg, RATE).toString('base64'));
@@ -278,6 +286,55 @@ export class DictationManager {
       s.texts.push(text.trim());
       s.cursor = cut;
     }
+  }
+
+  /**
+   * The recording ends in a pause: transcribe what was said since the last cut
+   * now. If the stop comes next, the text is already there.
+   */
+  private async transcribeAhead(s: Session, samples: Float32Array): Promise<void> {
+    const from = s.cursor;
+    const to = edgePause(samples, from, RATE);
+    if (to === null) return;
+    if (s.spec && s.spec.from === from && s.spec.to === to) return;
+    const seg = samples.subarray(from, Math.min(samples.length, to + Math.floor(RATE * AHEAD_PAD_SECS)));
+    const t0 = Date.now();
+    let text: string;
+    try {
+      text = await this.deps.transcribeWav(encodeWav(seg, RATE).toString('base64'));
+    } catch (err) {
+      // Not needed yet: the normal pass after the stop transcribes it (with its retry).
+      this.deps.log(`[dictation] ${s.id}: ahead failed (ignored): ${(err as Error).message}`);
+      return;
+    }
+    const ms = Date.now() - t0;
+    s.computeMs += ms;
+    if (s.cancelled) return;
+    s.spec = { from, to, text: text.trim() };
+    this.deps.log(`[dictation] ${s.id}: ahead ${((to - from) / RATE).toFixed(1)}s audio -> ${ms}ms`);
+  }
+
+  /** Decide what the piece transcribed ahead is worth now that more audio (or the stop) has arrived. */
+  private settleAhead(s: Session, samples: Float32Array, final: boolean): void {
+    const spec = s.spec!;
+    if (spec.from !== s.cursor) { s.spec = null; return; }
+    if (!hasSpeech(samples, spec.to, samples.length, RATE, s.cursor)) {
+      if (!final) return;                               // still quiet: keep waiting
+      s.texts.push(spec.text);
+      s.cursor = samples.length;
+      s.specHit = true;
+      s.spec = null;
+      return;
+    }
+    // The speaker went on. A piece long enough to stand alone is kept and the
+    // cut placed in the pause after it; a short one is transcribed again
+    // together with what follows (more context, and no text twice).
+    if (spec.to - spec.from >= MIN_SEGMENT_SECS * RATE) {
+      const pause = findPauses(samples, spec.from, samples.length, RATE).find((p) => p.end > spec.to && p.start <= spec.to + RATE * 0.2);
+      s.texts.push(spec.text);
+      s.cursor = pause ? Math.floor((Math.max(pause.start, spec.to) + pause.end) / 2) : spec.to;
+    }
+    s.spec = null;
   }
 
   private maybeFinalize(s: Session): void {
@@ -306,9 +363,9 @@ export class DictationManager {
         }
         s.text = text;
         s.status = 'done';
-        this.deps.log(`[dictation] ${s.id}: done — ${s.audioSecs.toFixed(1)}s audio, ${this.deps.now() - s.endedAt}ms stop->result, rest ${s.restSecs.toFixed(1)}s, compute ${s.computeMs}ms, ${text.length} chars`);
+        this.deps.log(`[dictation] ${s.id}: done — ${s.audioSecs.toFixed(1)}s audio, ${this.deps.now() - s.endedAt}ms stop->result, rest ${s.restSecs.toFixed(1)}s${s.specHit ? ' (ready ahead)' : ''}, compute ${s.computeMs}ms, ${text.length} chars`);
         this.emit(s, { type: 'dictation:result', id: s.id, text });
-        if (!s.cancelled) this.deps.onDone?.({ at: s.endedAt, audioSecs: s.audioSecs, waitMs: this.deps.now() - s.endedAt, restSecs: s.restSecs, specHit: false });
+        if (!s.cancelled) this.deps.onDone?.({ at: s.endedAt, audioSecs: s.audioSecs, waitMs: this.deps.now() - s.endedAt, restSecs: s.restSecs, specHit: s.specHit });
       } catch (err) {
         s.error = (err as Error).message || 'Transkription fehlgeschlagen';
         s.status = 'error';

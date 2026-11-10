@@ -493,4 +493,21 @@ Task 5, 2026-11-11, MacBook M4 Max unter Fremdlast (Load 7–13), Aufnahmen aus 
 
 **Nachgestellt (Step 4):** Die erste Fassung der Regel („letzte Pause ab 0,3 s“) war gleich schnell, machte aber bei 366 s 7–15 statt 3 Wortfehler; einmal fehlte ein Halbsatz. Ursache: Schnitte an kurzen Atempausen mitten im Satz. Verglichen wurden Mindestlänge 12 s (7 Fehler), 15 s (4–5 Fehler) und „Satzpause ab 0,4 s bevorzugen“ (3 Fehler = wie alt). Gewählt: Satzpausen-Vorrang, kurze Pause erst nach 16 s ohne Satzpause (`SENTENCE_PAUSE_SECS`, `SETTLE_SECS`). `MIN_SEGMENT_SECS` bleibt 8.
 
+### Mit Vorauseilen (Task 6)
+
+Echtzeit in den letzten 20 s, Upload-Takt 0,5 s (wie die App nach Task 7), Load 2,5. „Verzug“ = Zeit zwischen letztem Ton und Stopp. Die Aufnahmen enden mit 0,45 s Stille.
+
+| Aufnahme | Verzug | Stopp → Text | vorab fertig | Aufrufe | Wortfehler |
+|---|---|---|---|---|---|
+| 12 s | 600 ms | 2 ms | ja | 2 | 0 von 27 |
+| 12 s | 0 ms | 176 ms | ja | 2 | 0 von 27 |
+| 47 s | 600 ms | 2 ms | ja | 6 | 1 von 114 |
+| 47 s | 0 ms | 169 ms | ja | 6 | 1 von 114 |
+| 183 s | 600 ms | 15 ms | ja | 18 | 2 von 434 |
+| 183 s | 0 ms | 457 ms | ja | 18 | 2 von 434 |
+| 366 s | 600 ms | 0 ms | ja | 36 | 3 von 875 |
+| 366 s | 0 ms | 1 ms | ja | 34 | 4 von 875 |
+
+Bei 0 ms Verzug wartet der Stopp auf den gerade laufenden Vorab-Auftrag (bis 457 ms). Wer mitten im Wort auf ✓ drückt, bekommt den Weg ohne Vorauseilen (rund 0,4–0,6 s, obere Tabelle).
+
 **Offen:** Kurze Diktate (unter etwa 15 s) bleiben bei rund 0,67 s — sie bestehen aus einem einzigen Stück. Das behebt erst das Vorauseilen (Task 6) zusammen mit dem schnelleren Upload (Task 7). Die Aufnahmen sind Sprachausgabe mit sehr regelmäßigen Pausen; echte Sprache wird in Task 8 am Gerät gemessen.
