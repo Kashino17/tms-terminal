@@ -1,6 +1,5 @@
 /* ════════════════════════════════════════════════════════════════════
-   Einstellungen — eine Seite für alles (statt Season-2-Seite + klassische
-   Einstellungen). Startseite: Suche, Diktat-Bubble als Schnellzugriff,
+   Einstellungen — eine Seite für alles. Startseite: Suche, Diktat-Bubble als Schnellzugriff,
    Kategorien mit Symbol + Zustand in einer Zeile. Tipp → Unterseite.
    Breiter Bildschirm (aufgeklappter Fold): zwei Spalten.
 
@@ -187,7 +186,7 @@
       desc: 'App-Sperre, PIN',
       sum: () => (S().appLock ? `App-Sperre an · ${S().lockGrace ? 'entsperrt ' + label(GRACE, S().lockGrace) : 'immer sperren'}` : 'App-Sperre aus') },
     { id: 'darstellung', group: 'App & Alltag', name: 'Darstellung', icon: 'sun', hue: '#f472b6',
-      desc: 'Hell / Dunkel, Arbeitsfläche, Oberfläche',
+      desc: 'Hell / Dunkel, Arbeitsfläche',
       sum: () => `${isLight() ? 'Hell' : 'Dunkel'} · Arbeitsfläche ${cardLook() === 'glass' ? 'Glas' : 'matt'}` },
     { id: 'app', group: 'App & Alltag', name: 'App & Updates', icon: 'info', hue: '#94a3b8',
       desc: 'Version, Updates, Daten',
@@ -393,8 +392,7 @@
         <span class="st-look__prev st-look__prev--${v}"><i></i><i></i><i></i></span><span class="st-look__name">${name}</span></button>`;
       return section('Erscheinungsbild', `<div class="st-looks" role="radiogroup">${card('dark', 'Dunkel', !light)}${card('light', 'Hell', light)}</div>`, 'Hell ist für direktes Sonnenlicht gemacht.')
         + section('Arbeitsfläche', choice('card-look', 'Terminal, Tasten und Eingabezeile', 'Wirkt sofort', 'cardLook', CARD_LOOKS, cardLook()),
-          'Matt zeichnet am Fold doppelt so schnell wie Glas und schont den Akku.')
-        + section('Oberfläche', row('classic', 'Klassische Oberfläche', 'Season 2 verlassen — jederzeit wieder umschaltbar', pill('Wechseln', 'nav:classic')));
+          'Matt zeichnet am Fold doppelt so schnell wie Glas und schont den Akku.');
     },
     app() {
       const s = S(), u = updateInfo();
@@ -413,7 +411,7 @@
   const EXTRA_WORDS = {
     'browser-bridge': 'browser login vercel render link',
     persistent: 'hintergrund verbindung akku dienst', 'app-lock': 'sperre pin fingerabdruck biometrie',
-    classic: 'season klassisch alt', 'update-check': 'update version', wipe: 'reset zurücksetzen löschen',
+    'update-check': 'update version', wipe: 'reset zurücksetzen löschen',
     'adhan-reciter': 'rezitator muezzin stimme', 'bubble-service': 'bubble mikrofon bedienungshilfe',
     'adhan-loc': 'ort standort gps stadt reisen', 'adhan-method': 'berechnung methode jakim mwl land', 'perm-overlay': 'überlagerung anruf vollbild', 'perm-battery': 'akku energiesparen samsung', 'font-size': 'schrift größe zoom', 'card-look': 'flackern flimmern glas matt karten stapel unschärfe akku',
   };
@@ -648,7 +646,6 @@
     if (a === 'adhan:location') { if (typeof window.openLocationPicker === 'function') window.openLocationPicker(); return; }
     if (a === 'lock:pin') { post('lock:pin'); if (!LIVE()) say('Öffnet „PIN ändern“'); return; }
     if (a === 'lock:now') { post('lock:now'); if (!LIVE()) say('Gesperrt'); return; }
-    if (a === 'nav:classic') { post('nav:classic', { screen: 'classic' }); if (!LIVE()) say('Wechselt zur klassischen Oberfläche'); return; }
     if (a === 'update:check') { post('update:check'); if (!LIVE()) say('Suche nach Updates …'); return; }
     if (a === 'app:prev') { post('update:previous'); if (!LIVE()) say(`Lädt ${s.prevVersion.version} …`); return; }
     if (a === 'wipe:ask') { confirmWipe = true; return render(); }

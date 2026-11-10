@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-10 — v1.135.0 ohne Insel; v1.134.0 Bund released; Windows-Server aktuell_
+_Zuletzt aktualisiert: 2026-11-11 — v1.152.0 Season 1 ausgebaut (Tag-Push offen)_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-11 (v1.152.0, Season 1 ausgebaut):** klassische Oberfläche komplett entfernt (Commits 16a1189, e117575, Release-Commit 3c0ea34, Tag v1.152.0 lokal) — 69 Dateien / ~25.400 Zeilen, Schalter „Klassische Oberfläche“ + `seasonTwoEnabled` weg, 6 Pakete raus. Geblieben, weil Season 2 sie nutzt: AddServerScreen, PinSetupScreen, LockScreen. Beim ersten Start einmaliges Löschen der Altdaten (`services/legacyCleanup.core.mjs`, Merker `tms:legacy-cleanup-v1`). Dazu Aufräumen liegengebliebener Vorlese-Stücke (remVoice.ts). Lokaler Release-Build auf Emulator-Kopie über v1.151.0 geprüft: 14 Alt-Einträge weg, Server/Einstellungen/Terminals bleiben, Terminal + Befehl gegen Testserver ok. APK 104,5 → 94,3 MB. **Offen:** Tag-Push `git push origin v1.152.0` (im Sitzungs-Modus gesperrt, Nutzer); Prüfung am Fold. Push-Meldungen in Season 2 bewusst zurückgestellt (Nutzer: „später, wenn wir es brauchen“). Remote-Branch steht noch auf v1.149.0 — seit v1.150.0 wurden nur Tags gepusht.
 
 **Stand 2026-11-11 (Rems Stimme):** v1.151.0 released — Vorlesen im Lesemodus in Rems Stimme, Satz für Satz vom Mac gestreamt (`server/src/voice/`, `audio/voice_sidecar.py`, cap `speech`), Rückfall Handy-Stimme. Im Emulator gegen Testserver geprüft. **Offen:** Server-Update, Hörprobe am Fold.
 

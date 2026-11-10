@@ -383,3 +383,13 @@
 - Nutzer: Hörprobe „identisch, perfekt“. Mac erzeugt Satz für Satz (voice_sidecar.py, Qwen3-TTS-Klon aus voice_24k_15s.wav), schickt MP3-Stücke sofort; App spielt der Reihe nach, 3 Sätze Vorlauf, Rückfall Handy-Stimme.
 - Emulator + Testserver geprüft: erstes Stück 2,3 s kalt, sechs Absätze nacheinander mit Markierung, „fertig“ nach 25 s; Anhalten stoppt sofort; Mac weg → Handy-Stimme übernimmt. v1.150.0 ebenfalls im Emulator geprüft.
 - Offen: Server-Update Mac + Windows; am Fold hören (Lautstärke, Übergänge zwischen Sätzen) — nur der Nutzer kann das beurteilen.
+
+## 2026-11-11 — v1.152.0 Season 1 ausgebaut
+- Frage des Nutzers zum Vorlesen: Mac speichert nichts (nur RAM), Handy löscht jedes Stück nach dem Abspielen; Text = Claudes eigener Verlauf (30 Tage). Neu: Aufräumen liegengebliebener Stücke beim App-Start.
+- Klassische Oberfläche entfernt: 69 Dateien / ~25.400 Zeilen, Navigator nur noch SeasonTwo + AddServer + PinSetup, Einstellungs-Schalter weg, 6 Pakete deinstalliert. Stores/Dienste nur der alten Ansicht mit entfernt (Autopilot, Keyword-Alerts, Orbs, Hydra, Supabase, Credentials …).
+- Lokaler Build geht wieder (Live-Tree außerhalb iCloud): Metro-Bündel + `assembleRelease` in 1 min 11 s. Geprüft auf geklonter Emulator-Kopie (Original-Emulatoren zeigten HIKARI, nicht angefasst) gegen Testserver :8793: Update über v1.151.0 behält Server, AddServer/PinSetup öffnen, Terminal + Befehl ok.
+- Befund: Push-Meldungen in Season 2 ohne Funktion — `client:register_token` schickte nur der alte TerminalScreen; Mac-Server hat zudem kein firebase-service-account.json. Nicht angefasst, Nutzer entscheidet.
+- Nutzer entschied: Altdaten löschen, Push später, committen + releasen. Einmaliges Löschen gebaut (`legacyCleanup.core.mjs`, ausdrückliche Schlüsselliste, Test hält jeden noch benutzten Schlüssel dagegen); auf Emulator-Kopie: 14 Alt-Einträge + Ton-Reste weg, 7 benutzte bleiben.
+- Commits 16a1189 (Vorlese-Reste), e117575 (Ausbau + Altdaten), 3c0ea34 (Release), Tag v1.152.0 lokal. Offen: `git push origin v1.152.0` — der Sitzungs-Modus hat den Push gesperrt; danach CI + Prüfung am Fold.
+- Tempo live gemessen nach Server-Update: 11 Diktate, Mitte 0,46 s (vorher 1,5 s), 73 % ≤ 0,7 s; Nutzer zufrieden → kein weiterer Tempo-Ausbau (App-Takt 500 ms entfällt).
+- Wörterbuch + neue Einstellungsseite gebaut im Worktree (Branch feat/diktat-woerterbuch, a483f47, ungemergt): dictionary.json auf dem Diktat-Rechner, dict:*-Nachrichten, Reiter Wörterbuch · Diktat · Bubble, alle Einstellungen matt, KI-Prompt/Rewriter entfernt. Review: 6 wichtige Befunde behoben. Wartet auf Freigabe für Merge + `tms-terminal update` + App-Release.

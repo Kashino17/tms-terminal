@@ -9954,9 +9954,8 @@
   // React Native fills in. Without meta there is no group: the old demo switch
   // is gone rather than left standing as a control that changes nothing.
   //
-  // Every row here is a real setting: they post to the app, the app writes the
-  // same AsyncStorage keys the classic screen reads, and switching layouts keeps
-  // the state. Turning this on is what actually makes the alarm ring.
+  // Every row here is a real setting: they post to the app, which stores them.
+  // Turning this on is what actually makes the alarm ring.
   // ============================================================
   const ADHAN_RECITERS = [
     { id: 'mishary', label: 'Mishary Rashid Alafasy' },

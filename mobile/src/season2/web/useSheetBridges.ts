@@ -38,8 +38,7 @@ import { readAdhanSettings, canScheduleExactAdhan } from '../../services/adhan.s
 
 type Call = (fn: string, ...args: unknown[]) => void;
 
-// Bund: eigene, leere Snippet-Liste auf dem Handy (durableStorage, überlebt
-// Updates) — nicht die alte, vorbefüllte 'tms:snippets' der klassischen Ansicht.
+// Bund: eigene Snippet-Liste auf dem Handy (durableStorage, überlebt Updates).
 const SNIPPETS_KEY = 'tms-bund-snippets';
 type BundSnippet = { id: string; name: string; cmd: string };
 const readSnippets = async (): Promise<BundSnippet[]> => {
