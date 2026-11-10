@@ -190,6 +190,13 @@ export interface TerminalTitlesGetMessage {
   type: 'terminal:titles_get';
 }
 
+// ── Reader (Client → Server) ───────────────────────────────────
+/** Ask for the last answers of the AI session running in a terminal. */
+export interface ReaderGetMessage {
+  type: 'reader:get';
+  sessionId: string;
+}
+
 export interface TerminalRenameMessage {
   type: 'terminal:rename';
   sessionId: string;
@@ -246,6 +253,7 @@ export type ClientMessage =
   | FileUploadMessage
   | AppStateMessage
   | AttentionMessage
+  | ReaderGetMessage
   | ActiveTabMessage
   | BrowserBridgeToggleMessage
   | BrowserBridgeCallbackMessage
@@ -352,6 +360,42 @@ export interface PongMessage {
 export interface TerminalTitlesMessage {
   type: 'terminal:titles';
   payload: { titles: Record<string, string> };
+}
+
+// ── Activity + reader (Server → Client) ────────────────────────
+/** What a terminal's AI tool is working on, read from the title it sets. */
+export interface TerminalActivity {
+  /** The topic in the tool's own words; '' when it names none. */
+  task: string;
+  state: 'working' | 'waiting' | 'done';
+}
+/**
+ * Changed activities (null = none any more). The full state on connect, then
+ * only real changes; nothing at all while the app is not on screen.
+ */
+export interface TerminalActivityMessage {
+  type: 'terminal:activity';
+  payload: { activities: Record<string, TerminalActivity | null> };
+}
+export interface ReaderAnswer {
+  /** What the user typed for this round; '' when it was not started by typing. */
+  prompt: string;
+  /** The answer as Markdown, exactly as written. */
+  md: string;
+  /** ms since epoch, 0 if unknown. */
+  at: number;
+}
+/** Answer to reader:get — newest answer last. */
+export interface ReaderAnswersMessage {
+  type: 'reader:answers';
+  sessionId: string;
+  payload: {
+    answers: ReaderAnswer[];
+    /** A round is running: its answer does not exist yet. */
+    open: boolean;
+    /** Why there is nothing to read. */
+    reason?: 'no-claude' | 'no-transcript' | 'empty' | 'error';
+  };
 }
 
 /** One title changed — broadcast to every connected app (title null = removed). */
@@ -530,6 +574,8 @@ export type ServerMessage =
   | BrowserBridgeOpenMessage
   | BrowserBridgeCallbackResultMessage
   | TerminalTitlesMessage
+  | TerminalActivityMessage
+  | ReaderAnswersMessage
   | TerminalTitleMessage
   | ClipboardHistoryMessage
   | ClipboardAddedMessage

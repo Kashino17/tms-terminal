@@ -27,6 +27,8 @@ import { DictationStatsStore } from '../audio/dictation.stats';
 import { captureSoon } from '../terminal/restore/snapshotter';
 import { ConnectionRateLimiter } from './rate-limiter';
 import { createOutputPacer } from './output.pacer';
+import { createActivityFeed } from './activity.feed';
+import { readAnswers, forgetReader } from '../reader';
 import { browserBridge } from '../browserbridge/browserbridge.manager';
 import { asPaste } from '../terminal/paste.policy';
 import { titleStore } from '../terminal/titles';
@@ -61,6 +63,7 @@ clipboardHub.onChange((ev) => {
 
 /** Ein Terminal ist endgueltig weg — sein Titel auch. */
 function forgetTitle(sessionId: string): void {
+  forgetReader(sessionId);
   if (titleStore.get(sessionId) === undefined) return;
   titleStore.remove(sessionId);
   broadcastTitle(sessionId, null);
@@ -306,6 +309,14 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   logger.success(`Client connected: ${ip}`);
   liveSockets.add(ws);
   send(ws, { type: 'terminal:titles', payload: { titles: titleStore.all() } });
+  // Woran jedes Terminal arbeitet: der ganze Stand jetzt, danach nur Wechsel —
+  // und gar nichts, solange die App nicht sichtbar ist (activity.feed.ts).
+  const activityFeed = createActivityFeed(
+    (activities) => send(ws, { type: 'terminal:activity', payload: { activities } }),
+    globalManager.getActivities(),
+  );
+  const stopActivity = globalManager.onActivity((sid, activity) => activityFeed.note(sid, activity));
+  activityFeed.start();
   void hasMacUnlockPassword().then((configured) => {
     send(ws, { type: 'mac:unlock_status', payload: { configured, supported: process.platform === 'darwin' } });
   });
@@ -785,6 +796,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     if (msg.type === 'client:attention') {
       const p: { foreground?: unknown; focus?: unknown } = msg.payload ?? {};
       pacer.setAttention(p.foreground !== false, typeof p.focus === 'string' ? p.focus : null);
+      activityFeed.setForeground(p.foreground !== false);
       // Back on screen: sessions handed over meanwhile are attached again —
       // the reattach sends their current picture (they have missed output).
       if (p.foreground !== false && heldDetached.size > 0) {
@@ -814,6 +826,19 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
     if (msg.type === 'clipboard:clear') {
       clipboardHub.clear();
+      return;
+    }
+
+    if (msg.type === 'reader:get') {
+      // Lesemodus: die letzten Antworten der KI-Sitzung in diesem Terminal —
+      // aus ihrem eigenen Verlauf, nicht vom Bildschirm abgelesen. Nur auf
+      // Wunsch (ein Tipp in der App), nie von selbst.
+      const sid = msg.sessionId;
+      const session = isValidSessionId(sid) ? globalManager.getSession(sid) : undefined;
+      if (!session) { send(ws, { type: 'reader:answers', sessionId: String(sid ?? ''), payload: { answers: [], open: false, reason: 'no-claude' } }); return; }
+      void readAnswers(sid, session.pty.pid).then((result) => {
+        send(ws, { type: 'reader:answers', sessionId: sid, payload: result });
+      });
       return;
     }
 
@@ -1313,6 +1338,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
   ws.on('close', () => {
     liveSockets.delete(ws);
+    stopActivity();
     logger.info(`Client disconnected: ${ip} — detaching ${ownedSessions.size} sessions (kept alive)`);
 
     // This was the browser-bridge target: no app connected → shim opens locally
@@ -1333,6 +1359,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
   ws.on('error', (err) => {
     logger.error(`WebSocket error from ${ip}: ${err.message}`);
+    stopActivity();
     if (currentWs === ws) currentWs = null;
     for (const sessionId of ownedSessions) {
       // Do NOT unwatch promptDetector — same rationale as ws.on('close')

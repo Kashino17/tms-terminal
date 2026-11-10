@@ -46,6 +46,8 @@ export interface MirrorState {
   data: string;
   /** Schon dieser Spiegel kannte nicht die ganze Vergangenheit. */
   partial?: boolean;
+  /** Der Fenstertitel, den das Programm zuletzt gesetzt hat (steckt nicht in `data`). */
+  title?: string;
 }
 
 export class SessionMirror {
@@ -61,7 +63,20 @@ export class SessionMirror {
     });
     this.serializer = new SerializeAddon();
     this.term.loadAddon(this.serializer);
+    this.term.onTitleChange((title) => {
+      this.lastTitle = title;
+      this.titleListener?.(title);
+    });
   }
+
+  private lastTitle = '';
+  private titleListener: ((title: string) => void) | null = null;
+  /** Der Fenstertitel (OSC 0/2), den das Programm im Terminal zuletzt gesetzt hat. */
+  get title(): string { return this.lastTitle; }
+  /** Titel aus einem gesicherten Zustand übernehmen (löst keine Meldung aus). */
+  seedTitle(title: string): void { this.lastTitle = title; }
+  /** Meldet jede Titeländerung — KI-Werkzeuge schreiben dort, woran sie arbeiten (activity.ts). */
+  onTitle(listener: (title: string) => void): void { this.titleListener = listener; }
 
   /** Denselben Byte-Strom füttern, der auch zum Client geht (Reihenfolge zählt). */
   feed(data: string): void {
