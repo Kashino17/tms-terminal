@@ -311,3 +311,7 @@
 - Ursache leere Vorschau: Seite läuft als https://tms.local, Chromium Local Network Access sperrt img/video/XHR an Tailscale 100.x. Liste ging, weil RN sie lädt. Toasts lagen hinter dem Explorer (z 100 < 300) → Knöpfe wirkten tot.
 - Fix 0a0f3d3: fileTransfer.ts — Vorschau nativ (Bild data:-URL, Video/PDF Android-Betrachter), Upload in Base64-Stücken über RN (`/files/upload?up&part&enc=b64`, GET `?caps=1`), #toasts z 400. Tests mit App-Ursprung (page.route https://tms.local).
 - Kam mit v1.139.0 (Tag vom parallelen Job) raus, CI grün. Server-Teil braucht `tms-terminal update` auf Mac + Windows.
+
+## 2026-11-10 — v1.140.0 Fernzugriff-Beenden echt
+- Bug: ⋮-Menü-✕ beendete nichts am Rechner, UI sagte „beendet“. Ursache: Stopp ging über frische 2. Verbindung; Server beendete darüber nur die *ruhende* Sitzung — die laufende gehörte der pausierten Bildverbindung (remote:view false, nicht geparkt). Client markierte nach 0,8 s blind als beendet. Alter E2E-Test hatte __closeRemoteDevice gestubbt → Fehler verdeckt.
+- Fix 1d5061f: Server `live`-Register (remote:stop von irgendwo beendet laufende/ruhende Sitzung, bestätigt immer); Menü → TMSRemote.closeDevice (Stopp über eigene ws, kein Reconnect, Bestätigung über frische ws, Ring erst mit remote:stopped weg, sonst ehrliche Meldung). Beide Server auf 8496966.
