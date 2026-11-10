@@ -97,3 +97,61 @@ while :; do printf "X\\n"; sleep 0.05; done
     process.env.PATH = oldPath;
   }
 });
+
+// Sparsam, solange niemand hinsieht: ffmpeg kann nicht pausieren — also läuft
+// gar keins, bis wieder jemand hinsieht. Ton, „Bildschirm aus" und Eingabe
+// bleiben; das Beenden ist kein Absturz (sonst baute die Neustart-Logik die
+// Sitzung sofort wieder auf).
+test('Pause: keine Aufnahme läuft, kein Fehler; Fortsetzen startet eine frische', { skip: !sh && 'nur mit sh' }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fakeff-'));
+  writeFileSync(join(dir, 'ffmpeg'), `#!/bin/sh
+case "$*" in *-encoders*) echo " V..... h264_nvenc"; exit 0;; esac
+echo "$$" >> "${dir}/pids"
+echo "Stream #0:0: Video: wrapped_avframe, bgra, 1920x1080, 30 fps" >&2
+trap 'exit 0' TERM
+while :; do printf "F%s\\n" "$$"; sleep 0.05; done
+`);
+  chmodSync(join(dir, 'ffmpeg'), 0o755);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${dir}:${oldPath}`;
+  const cap = createWin32Capture();
+  let frames = 0;
+  const errors: string[] = [];
+  cap.onData(() => { frames++; });
+  cap.onError((code) => { errors.push(code); });
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const pids = () => execFileSync('cat', [join(dir, 'pids')], { encoding: 'utf8' }).trim().split('\n').map(Number);
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  try {
+    await cap.start({ maxWidth: 1600, fps: 30, bitrateKbps: 1500 });
+    await wait(300);
+    assert.ok(frames > 0, 'läuft: Bilder kommen');
+    assert.equal(typeof cap.setPaused, 'function');
+
+    cap.setPaused!(true);
+    await wait(400);
+    const first = pids()[0];
+    assert.equal(alive(first), false, 'pausiert: der Aufnahme-Prozess ist beendet');
+    const atPause = frames;
+    cap.requestKeyframe();          // darf in der Pause nichts starten
+    cap.setBitrate(800);            // ebenso
+    await wait(500);
+    assert.equal(frames, atPause, 'pausiert: kein Bild');
+    assert.equal(pids().length, 1, 'pausiert: nichts Neues gestartet');
+    assert.deepEqual(errors, [], 'die Pause ist kein Absturz');
+
+    cap.setPaused!(false);
+    await wait(600);
+    assert.equal(pids().length, 2, 'fortgesetzt: eine frische Aufnahme');
+    assert.ok(frames > atPause, 'fortgesetzt: Bilder kommen wieder');
+    assert.deepEqual(errors, []);
+    cap.setPaused!(false);          // doppelt fortsetzen startet keine zweite
+    await wait(300);
+    assert.equal(pids().length, 2);
+  } finally {
+    await cap.stop();
+    process.env.PATH = oldPath;
+  }
+  await wait(200);
+  assert.ok(pids().every((p) => !alive(p)), 'nach dem Ende bleibt kein Prozess zurück');
+});

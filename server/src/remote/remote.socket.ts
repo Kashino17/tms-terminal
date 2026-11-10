@@ -152,6 +152,9 @@ export function computeRttMs(pingPayload: Buffer, now: number): number | null {
   return Math.max(0, now - sentAt);
 }
 
+/** Keep-alive ping while the picture is hidden (visible: once a second). */
+const HIDDEN_PING_MS = 25_000;
+
 export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unknown'): void {
   let capture: ScreenCapture | null = null;
   let input: InputInjector | null = null;
@@ -175,6 +178,69 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
   let lastInfo: CaptureInfo | null = null;
   /** The app shows the picture (remote:view). Hidden: no video is sent. */
   let visible = true;
+  /** What this connection last told its capture (see syncPause). */
+  let capturePaused = false;
+  /** Feeds finished frames to the app; set while a capture is running. */
+  let flushFrames: (() => void) | null = null;
+
+  /**
+   * The computer captures and encodes only while someone can see the picture.
+   * Before this, a hidden picture (working on in the terminal, app in the
+   * background) cost the computer a full screen capture + H.264 encode, frame
+   * after frame, just to throw every frame away.
+   */
+  function syncPause() {
+    const want = !visible;
+    if (!capture || want === capturePaused) return;
+    capturePaused = want;
+    capture.setPaused?.(want);
+  }
+
+  const sendPing = () => { if (ws.readyState === 1) ws.ping(Buffer.from(String(Date.now()))); };
+
+  /**
+   * Timers follow visibility too. Visible: frame flush every 4 ms, status and
+   * ping once a second (the header shows them). Hidden: nobody reads a status,
+   * so none is sent — and the connection is only kept alive. Each of those
+   * messages woke the phone's radio once a second for as long as a session
+   * was merely kept.
+   */
+  function armTimers() {
+    if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
+    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+    if (!visible) {
+      pingTimer = setInterval(sendPing, HIDDEN_PING_MS);
+      pingTimer.unref();
+      return;
+    }
+    // A frame only ends at the next start code; without this idle flush every
+    // frame hangs until the one after it (33 ms of extra latency at 30 fps).
+    idleTimer = setInterval(() => { flushFrames?.(); }, 4);
+    idleTimer.unref();
+    statusTimer = setInterval(() => {
+      reply({
+        type: 'remote:status',
+        payload: {
+          fps: framesSent,
+          kbps: Math.round((bytesSent * 8) / 1000),
+          rttMs,
+          dropped,
+        },
+      });
+      framesSent = 0; bytesSent = 0; dropped = 0;
+    }, 1000);
+    statusTimer.unref();
+    // Ping right away (not just on the first 1s tick) so the header's
+    // latency reading isn't stuck at 0 for the first second of a session,
+    // then once a second after — same cadence as remote:status. The send
+    // timestamp travels in the payload itself (see computeRttMs) so a
+    // stray pong from the server-wide heartbeat can't be misread as one
+    // of these.
+    sendPing();
+    pingTimer = setInterval(sendPing, 1000);
+    pingTimer.unref();
+  }
   /** The app said remote:stop — then a closing connection really ends it. */
   let userStopped = false;
 
@@ -201,6 +267,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
   async function stop(reason: string, tell = true) {
     const c = capture, i = input;
     capture = null; input = null;
+    flushFrames = null;
     if (live === me) live = null;
     if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
     if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
@@ -224,6 +291,9 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
     const c = capture, i = input;
     if (!c || !i || !lastOpts || !lastInfo) return false;
     capture = null; input = null;
+    flushFrames = null;
+    // Nobody is connected: the computer stops capturing until someone is.
+    if (!capturePaused) c.setPaused?.(true);
     if (live === me) live = null;
     if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
     if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
@@ -336,6 +406,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
         // pointer it would be the only one.
         c.onCursor!((x, y) => {
           if (capture !== null && capture !== c) return;
+          if (!visible) return; // nobody draws a pointer while the picture is hidden
           reply({ type: 'remote:cursor', payload: { x, y } });
         });
       }
@@ -395,35 +466,11 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
 
       c.onData((chunk) => { if (splitter) emit(splitter.push(chunk, Date.now())); });
 
-      // A frame only ends at the next start code; without this idle flush every
-      // frame hangs until the one after it (33 ms of extra latency at 30 fps).
-      idleTimer = setInterval(() => { if (splitter) emit(splitter.tick(Date.now())); }, 4);
-      idleTimer.unref();
-
-      statusTimer = setInterval(() => {
-        reply({
-          type: 'remote:status',
-          payload: {
-            fps: framesSent,
-            kbps: Math.round((bytesSent * 8) / 1000),
-            rttMs,
-            dropped,
-          },
-        });
-        framesSent = 0; bytesSent = 0; dropped = 0;
-      }, 1000);
-      statusTimer.unref();
-
-      // Ping right away (not just on the first 1s tick) so the header's
-      // latency reading isn't stuck at 0 for the first second of a session,
-      // then once a second after — same cadence as remote:status. The send
-      // timestamp travels in the payload itself (see computeRttMs) so a
-      // stray pong from the server-wide heartbeat can't be misread as one
-      // of these.
-      const sendPing = () => { if (ws.readyState === 1) ws.ping(Buffer.from(String(Date.now()))); };
-      sendPing();
-      pingTimer = setInterval(sendPing, 1000);
-      pingTimer.unref();
+      flushFrames = () => { if (splitter) emit(splitter.tick(Date.now())); };
+      // A picked-up session was paused while it rested (see park()).
+      capturePaused = resumed;
+      syncPause();
+      armTimers();
 
       // Wait for the input backend to actually confirm it is reading before
       // telling the client the session is live. Without this, the app's
@@ -522,8 +569,12 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
         const v = (clientMsg.payload as { visible?: unknown } | undefined)?.visible;
         const was = visible;
         visible = v !== false;
+        if (visible === was) break;
+        // Continue capturing BEFORE asking for the keyframe, then timers.
+        syncPause();
         // Shown again: the decoder needs a fresh keyframe to start from.
-        if (visible && !was) capture?.requestKeyframe();
+        if (visible) capture?.requestKeyframe();
+        if (capture) armTimers();
         break;
       }
       case 'remote:keyframe':

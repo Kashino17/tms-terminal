@@ -136,6 +136,11 @@ function restoreDisplay() {
   try { execFile(helperBinaryPath(), ['--restore-display'], () => {}); } catch { /* best effort */ }
 }
 
+/** stdin line that pauses / continues the helper's picture (see TmsRemoteHelper.swift). */
+export function pauseCommand(paused: boolean): string {
+  return paused ? 'pause\n' : 'resume\n';
+}
+
 export function createDarwinCapture(): ScreenCapture {
   let child: ChildProcess | null = null;
   let onData: (b: Buffer) => void = () => {};
@@ -244,6 +249,9 @@ export function createDarwinCapture(): ScreenCapture {
     onAudio(cb) { onAudio = cb; },
     requestKeyframe() { child?.stdin?.write('keyframe\n'); },
     setBitrate(kbps) { child?.stdin?.write(`bitrate ${Math.round(kbps)}\n`); },
+    // The helper stops encoding and throttles the capture to 1 fps; an older
+    // helper binary ignores the unknown line and simply keeps going.
+    setPaused(paused) { child?.stdin?.write(pauseCommand(paused)); },
 
     async stop() {
       const proc = child;

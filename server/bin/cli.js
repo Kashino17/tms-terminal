@@ -1015,6 +1015,15 @@ if [ ! -f "${NEW_INDEX}" ]; then
   exit 1
 fi
 
+# Der Fernzugriff-Helfer (macOS) ist ein eigenes Programm: ohne diesen Schritt
+# blieb er nach einem Update auf dem alten Stand, egal was sich an ihm geaendert
+# hat. Darf scheitern (dann bleibt der bisherige Helfer) und baut nur, wenn sich
+# sein Quelltext geaendert hat.
+if [ "$(uname)" = "Darwin" ]; then
+  echo "[$(date)] Pruefe Fernzugriff-Helfer..."
+  bash "${path.join(ROOT, 'src', 'remote', 'helpers', 'mac', 'build.sh')}" || echo "[$(date)] Helfer-Build fehlgeschlagen — der bisherige Helfer bleibt."
+fi
+
 node -e "require('${path.join(ROOT, 'bin', 'update-runner.js').replace(/\\/g, '/')}').writeBuildInfo('${ROOT.replace(/\\/g, '/')}', '${NEW_DIST.replace(/\\/g, '/')}')" || true
 VERSION=$(node -e "console.log(require('./package.json').version)" 2>/dev/null || echo "?")
 echo "[$(date)] v$VERSION ist fertig gebaut. Erst JETZT wird der Server angefasst."

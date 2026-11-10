@@ -293,6 +293,8 @@ export function createWin32Capture(): ScreenCapture {
   // Same as on macOS: a planned shutdown must not be reported as a crash, or the
   // restart logic from Task 18 would start the just-stopped session again.
   let stopping = false;
+  /** Nobody can see the picture (setPaused): no ffmpeg runs at all. */
+  let resting = false;
 
   /** The pointer reporter for a local pointer (cursor-helper.ps1). The video
    *  carries no pointer then — if the reporter dies, the session must restart
@@ -447,9 +449,42 @@ export function createWin32Capture(): ScreenCapture {
     proc.on('error', () => gone(null));
   }
 
+  /**
+   * ffmpeg cannot pause, so a hidden picture means: no ffmpeg. Before this it
+   * kept duplicating the desktop and encoding every frame for the server to
+   * drop. Sound, "screen off" and input stay exactly as they are. Clearing
+   * `child`/`pending` BEFORE the kill is what keeps the exit from counting as
+   * a crash (lostLive compares identities) — otherwise the restart logic in
+   * remote.socket.ts would rebuild the session at once.
+   */
+  function rest() {
+    if (respawnTimer) { clearTimeout(respawnTimer); respawnTimer = null; }
+    const proc = child, next = pending;
+    child = null;
+    pending = null;
+    for (const p of [proc, next]) {
+      if (p) { try { p.kill('SIGTERM'); } catch { /* already gone */ } }
+    }
+  }
+
+  /** Someone looks again: a fresh ffmpeg, which always opens with SPS/PPS + keyframe. */
+  function revive() {
+    if (stopping || !running || !encoder || child) return;
+    const opts = wantKbps !== null && bitrateRespawnWait(running.bitrateKbps, wantKbps, Number.MAX_SAFE_INTEGER) === 0
+      ? { ...running, bitrateKbps: wantKbps }
+      : running;
+    running = opts;
+    const proc = launch(opts, encoder);
+    child = proc;
+    proc.stderr?.on('data', () => { /* drained; nothing to parse after start */ });
+    proc.stdout?.on('data', (b: Buffer) => { if (child === proc) onData(b); });
+    proc.on('exit', (code) => lostLive(proc, code));
+    proc.on('error', () => lostLive(proc, null));
+  }
+
   function evaluateBitrate() {
     if (respawnTimer) { clearTimeout(respawnTimer); respawnTimer = null; }
-    if (stopping || !running || wantKbps === null) return;
+    if (stopping || resting || !running || wantKbps === null) return;
     const wait = bitrateRespawnWait(running.bitrateKbps, wantKbps, Date.now() - lastSpawnAt);
     if (wait === null) return;
     if (wait === 0) { if (!pending) respawn(wantKbps); return; }
@@ -506,6 +541,12 @@ export function createWin32Capture(): ScreenCapture {
       respawn(running.bitrateKbps);
     },
     setBitrate(kbps) { wantKbps = kbps; evaluateBitrate(); },
+
+    setPaused(paused) {
+      if (stopping || !running || paused === resting) return;
+      resting = paused;
+      if (paused) rest(); else revive();
+    },
 
     async stop() {
       const proc = child;

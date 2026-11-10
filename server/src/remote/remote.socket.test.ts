@@ -28,6 +28,8 @@ function fakeCapture() {
     stopped: false,
     keyframes: 0,
     bitrates: [] as number[],
+    paused: [] as boolean[],
+    setPaused(p: boolean) { c.paused.push(p); },
     dataCb: (_: Buffer) => {},
     errCb: (_c: string, _m: string) => {},
     async start(o: CaptureOptions) { c.started = o; return { width: 3024, height: 1964, scale: 2 }; },
@@ -703,4 +705,82 @@ test('Ton-Pakete gehen als 0x02 an die App, Wunsch und Ist werden gemeldet', asy
   assert.equal(bins.length, 1);
   assert.deepEqual([...bins[0].subarray(5)], [1, 2, 3]);
   assert.equal(packAudio(Buffer.from([7]), 258).readUInt32BE(1), 258);
+});
+
+// ── Sparsam, solange niemand hinsieht ───────────────────────────────────────
+// Bisher: Bild nicht zu sehen (im Terminal weitergearbeitet, App im Hintergrund)
+// oder Verbindung weg → der Rechner nahm weiter auf und komprimierte jedes Bild,
+// nur um es wegzuwerfen; dazu jede Sekunde ein Status und ein Ping ans Handy.
+test('remote:view false pausiert die Aufnahme am Rechner; true setzt sie fort und holt ein Vollbild', async () => {
+  const { ws, capture } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await tick();
+  assert.deepEqual(capture.paused, [], 'sichtbar gestartet: nichts zu pausieren');
+  send(ws, { type: 'remote:view', payload: { visible: false } });
+  assert.deepEqual(capture.paused, [true]);
+  send(ws, { type: 'remote:view', payload: { visible: false } });
+  assert.deepEqual(capture.paused, [true], 'kein doppeltes Pausieren');
+  const before = capture.keyframes;
+  send(ws, { type: 'remote:view', payload: { visible: true } });
+  assert.deepEqual(capture.paused, [true, false]);
+  assert.equal(capture.keyframes, before + 1, 'der Dekoder bekommt ein Vollbild');
+});
+
+test('Bild nicht zu sehen: kein Status mehr, Pings nur noch selten — sichtbar wieder im Sekundentakt', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'] });
+  const { ws } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  t.mock.timers.tick(3000);
+  const visibleStatus = ws.typed('remote:status').length;
+  assert.ok(visibleStatus >= 2, 'sichtbar: Status jede Sekunde');
+  send(ws, { type: 'remote:view', payload: { visible: false } });
+  const s0 = ws.typed('remote:status').length, p0 = ws.pings.length;
+  t.mock.timers.tick(60_000);
+  assert.equal(ws.typed('remote:status').length, s0, 'unsichtbar: kein einziger Status');
+  const hiddenPings = ws.pings.length - p0;
+  assert.ok(hiddenPings >= 1 && hiddenPings <= 4, `unsichtbar: die Leitung wird nur noch gehalten (${hiddenPings} Pings in 60 s)`);
+  send(ws, { type: 'remote:view', payload: { visible: true } });
+  const s1 = ws.typed('remote:status').length;
+  t.mock.timers.tick(3000);
+  assert.ok(ws.typed('remote:status').length - s1 >= 2, 'wieder sichtbar: wieder jede Sekunde');
+  t.mock.timers.reset();
+  await endParked();
+});
+
+test('ruhende Sitzung (Verbindung weg): Aufnahme pausiert; die naechste Verbindung setzt sie fort', async () => {
+  const capture = fakeCapture();
+  const input = fakeInput();
+  const deps = { makeCapture: () => capture, makeInput: () => input, isEnabled: () => true };
+  const ws1 = new FakeWs();
+  handleRemoteConnection(ws1 as any, deps);
+  send(ws1, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await tick();
+  ws1.close();
+  await tick();
+  assert.equal(hasParkedSession(), true);
+  assert.deepEqual(capture.paused, [true], 'niemand da → der Rechner nimmt nicht weiter auf');
+
+  const ws2 = new FakeWs();
+  handleRemoteConnection(ws2 as any, deps);
+  send(ws2, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await tick();
+  assert.deepEqual(capture.paused, [true, false], 'wieder jemand da → Aufnahme laeuft');
+  ws2.close(); await tick();
+  await endParked();
+});
+
+test('ein Aufnahme-Backend ohne Pause (alter Helfer) laeuft wie bisher weiter', async () => {
+  const ws = new FakeWs();
+  const capture = fakeCapture();
+  delete (capture as any).setPaused;
+  handleRemoteConnection(ws as any, { makeCapture: () => capture, makeInput: () => fakeInput(), isEnabled: () => true });
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await tick();
+  send(ws, { type: 'remote:view', payload: { visible: false } });
+  send(ws, { type: 'remote:view', payload: { visible: true } });
+  assert.equal(capture.keyframes, 1);
+  assert.equal(ws.typed('remote:error').length, 0);
+  ws.close(); await tick();
+  await endParked();
 });

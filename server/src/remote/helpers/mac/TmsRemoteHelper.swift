@@ -297,6 +297,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   private var stream: SCStream?
   private let out = FileHandle.standardOutput
   private var wantKeyframe = false
+  /// Nobody can see the picture (`pause` on stdin): no encoding at all, and
+  /// the capture itself throttled to one frame a second — just enough to have
+  /// a fresh picture ready the instant someone looks again. Before this, a
+  /// session that was only being kept (working on in the terminal, phone in
+  /// the pocket) captured and encoded every frame only for the server to
+  /// throw it away.
+  private var paused = false
+  private var streamConfig: SCStreamConfiguration?
+  private var captureFps = 30
   var assertion: IOPMAssertionID = 0
 
   // ScreenCaptureKit delivers change-driven: on a still screen only ~6 frames
@@ -403,6 +412,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     cfg.width = width
     cfg.height = height
     cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
+    captureFps = fps
+    streamConfig = cfg
     cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
     // With --local-cursor the app draws the pointer itself, instantly, from
     // its own prediction — the pointer in the video trailed every movement by
@@ -474,7 +485,25 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     listenForCommands(session: s)
   }
 
-  /// stdin carries live adjustments while capturing: `keyframe`, `bitrate <kbps>`.
+  /// Stop or continue producing pictures (see `paused`). Runs on the capture
+  /// queue like everything else that touches the frame state.
+  private func setPaused(_ p: Bool) {
+    captureQueue.async {
+      guard p != self.paused else { return }
+      self.paused = p
+      if let stream = self.stream, let cfg = self.streamConfig {
+        cfg.minimumFrameInterval = p
+          ? CMTime(value: 1, timescale: 1)
+          : CMTime(value: 1, timescale: CMTimeScale(self.captureFps))
+        stream.updateConfiguration(cfg) { _ in }
+      }
+      // Continuing: the decoder on the other side starts from scratch.
+      if !p { self.wantKeyframe = true }
+    }
+  }
+
+  /// stdin carries live adjustments while capturing: `keyframe`, `bitrate <kbps>`,
+  /// `pause`, `resume`.
   private func listenForCommands(session: VTCompressionSession) {
     DispatchQueue.global().async {
       while let line = readLine(strippingNewline: true) {
@@ -486,6 +515,10 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate,
                                  value: NSNumber(value: kbps * 1000))
           }
+        } else if line == "pause" {
+          self.setPaused(true)
+        } else if line == "resume" {
+          self.setPaused(false)
         } else if line == "quit" {
           exit(0)
         }
@@ -498,6 +531,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
           let px = CMSampleBufferGetImageBuffer(buf) else { return }
     lastPixelBuffer = px
     lastFrameAt = Date()
+    if paused { return } // kept for an instant resume, but not encoded
     encode(px, forceKey: consumeKeyframeWish())
   }
 
@@ -566,6 +600,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
           emit("{\"locked\":\(locked ? "true" : "false")}")
         }
       }
+      if self.paused { return } // lock state above still reported; no pictures
       guard let px = self.lastPixelBuffer else { return }
       let still = Date().timeIntervalSince(self.lastFrameAt)
       if self.wantKeyframe && still > 0.1 {
@@ -590,7 +625,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     var lastEmitAt = Date.distantPast
     let t = DispatchSource.makeTimerSource(queue: queue)
     t.schedule(deadline: .now(), repeating: 1.0 / 60.0)
-    t.setEventHandler {
+    t.setEventHandler { [weak self] in
+      if self?.paused == true { return } // nobody draws a pointer right now
       guard let loc = CGEvent(source: nil)?.location else { return }
       let b = CGDisplayBounds(CGMainDisplayID())
       guard b.width > 1, b.height > 1 else { return }

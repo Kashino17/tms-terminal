@@ -92,3 +92,19 @@ test('Ton-Pakete werden über Lesegrenzen hinweg zusammengesetzt', () => {
   assert.deepEqual(b.packets.map((p) => [...p]), [[1, 2, 3], [4, 5]]);
   assert.deepEqual([...b.rest], [0, 1], 'angefangenes drittes Paket bleibt liegen');
 });
+
+// Sparsam, solange niemand hinsieht: der Helfer bekommt `pause` / `resume`.
+test('pauseCommand: die Zeilen, die der Helfer versteht', async () => {
+  const { pauseCommand } = await import('./capture.darwin');
+  assert.equal(pauseCommand(true), 'pause\n');
+  assert.equal(pauseCommand(false), 'resume\n');
+});
+
+test('der Helfer-Quelltext kennt pause und resume (sonst liefe die Aufnahme einfach weiter)', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'helpers', 'mac', 'TmsRemoteHelper.swift'), 'utf8');
+  assert.match(src, /line == "pause"/);
+  assert.match(src, /line == "resume"/);
+  assert.match(src, /if paused \{ return \}/, 'pausiert wird nicht kodiert');
+});

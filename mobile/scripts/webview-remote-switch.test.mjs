@@ -85,7 +85,7 @@ if (!PW) {
       window.__decoded = 0;
       window.__queue = 0;
       window.VideoDecoder = class {
-        constructor() { this.state = 'unconfigured'; }
+        constructor() { this.state = 'unconfigured'; (window.__decoders = window.__decoders || []).push(this); }
         configure() { this.state = 'configured'; }
         get decodeQueueSize() { return window.__queue; }
         decode() { window.__decoded++; }
@@ -316,6 +316,41 @@ if (!PW) {
       assert.deepEqual(r.onTerminals, { socks: 1, shown: false }, 'im Terminal kommt kein Bild');
       assert.deepEqual(r.back, { socks: 1, shown: true, open: true }, 'zurück: dieselbe Verbindung, Bild wieder an');
       assert.equal(r.dot, true, 'grüner Punkt: Fernzugriff aktiv');
+    } finally { await browser.close(); }
+  });
+
+  // Sparsam, solange das Bild nicht zu sehen ist: der Hardware-Dekoder wird
+  // freigegeben (er hielt sonst einen Codec des Handys belegt, solange die
+  // Sitzung nur gehalten wurde), und nachzügelnde Bilder bauen keinen neuen.
+  test('Fernzugriff verlassen gibt den Dekoder frei; zurück baut ihn mit dem ersten Vollbild neu', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      const r = await page.evaluate(async ({ MAC }) => {
+        document.body.classList.remove('is-locked');
+        show('remote');
+        window.TMSRemote.switchTo('mac');
+        window.TMSBridge.setRemoteTarget(MAC);
+        window.__open(0); window.__startedWith(0, {});
+        window.__frame(0, true); window.__frame(0, false);
+        const open = () => (window.__decoders || []).filter((d) => d.state !== 'closed').length;
+        const watching = { decoded: window.__decoded, open: open() };
+        show('terminals');                       // im Terminal weiterarbeiten
+        const afterLeave = { open: open() };
+        window.__frame(0, false); window.__frame(0, true);   // Nachzügler von unterwegs
+        const late = { decoded: window.__decoded, open: open(), made: window.__decoders.length };
+        show('remote');
+        await new Promise((res) => setTimeout(res, 50));
+        window.__frame(0, false);                // vor dem Vollbild: nichts
+        const beforeKey = window.__decoded;
+        window.__frame(0, true); window.__frame(0, false);
+        return { watching, afterLeave, late, beforeKey, back: { decoded: window.__decoded, open: open() } };
+      }, { MAC });
+      assert.deepEqual(errors, []);
+      assert.deepEqual(r.watching, { decoded: 2, open: 1 });
+      assert.deepEqual(r.afterLeave, { open: 0 }, 'Bild weg → Dekoder freigegeben');
+      assert.deepEqual(r.late, { decoded: 2, open: 0, made: 1 }, 'Nachzügler: nichts dekodiert, kein neuer Dekoder');
+      assert.equal(r.beforeKey, 2, 'zurück: ohne Vollbild wird nichts gezeichnet');
+      assert.deepEqual(r.back, { decoded: 4, open: 1 }, 'mit dem Vollbild läuft das Bild wieder');
     } finally { await browser.close(); }
   });
 

@@ -54,6 +54,14 @@ export interface ScreenCapture {
    *  encoder's own schedule (Windows/ffmpeg). Absent = true. */
   keyframeOnDemand?: boolean;
   setBitrate(kbps: number): void;
+  /**
+   * Nobody can see the picture right now (the app shows another screen, is in
+   * the background, or the connection is gone and the session rests): stop
+   * capturing and encoding, keep everything else (sound, screen off, input)
+   * as it is. `false` continues — the next picture must be a keyframe.
+   * Absent = the backend cannot pause; its frames are simply not sent.
+   */
+  setPaused?(paused: boolean): void;
   /** Pointer position (normalized 0..1 to the captured display), only with
    *  `localCursor`. macOS: from the capture helper; Windows: cursor-helper.ps1. */
   onCursor?(cb: (x: number, y: number) => void): void;

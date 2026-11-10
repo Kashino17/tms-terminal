@@ -3895,6 +3895,9 @@
       // auf der Leitung staut, und verwirft lieber Bilder, als sekundenlang
       // hinterherzulaufen (server/src/remote/flow.ts).
       if (ws && ws.readyState === 1) ws.send('{"type":"remote:ack","payload":{"ts":' + ts + '}}');
+      // Bild nicht zu sehen (suspend): Nachzügler von unterwegs verwerfen —
+      // sie würden nur einen neuen Dekoder für nichts aufbauen.
+      if (suspended) return;
       if (!ensureDecoder()) return;
       // Vor dem ersten Vollbild ist jedes Zwischenbild sinnlos — der Dekoder
       // haette keinen Ausgangspunkt und zeichnete graue Kloetze.
@@ -4217,6 +4220,9 @@
         // schickt solange keine Bilder, der Ton laeuft weiter.
         suspended = true;
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:view', payload: { visible: false } }));
+        // Den Hardware-Dekoder freigeben, solange niemand hinsieht. Beim
+        // Zurückkommen schickt der Rechner ein Vollbild — damit entsteht er neu.
+        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
       },
       /** Setzt nur fort, was vorher lief (wantRunning) — nach einem
        *  expliziten "Trennen" bleibt das ein No-op, siehe suspend() oben. */
