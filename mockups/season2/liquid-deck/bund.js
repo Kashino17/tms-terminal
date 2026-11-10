@@ -213,7 +213,7 @@
   };
   const KIND = (n) => {
     const e = (n.split('.').pop() || '').toLowerCase();
-    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic'].includes(e)) return ['fImg', '#ec4899', 'img'];
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic', 'heif'].includes(e)) return ['fImg', '#ec4899', 'img'];
     if (['mp4', 'mov', 'webm', 'mkv'].includes(e)) return ['fVid', '#a855f7', 'vid'];
     if (e === 'pdf') return ['fPdf', '#ef4444', 'pdf'];
     if (['md', 'mdx'].includes(e)) return ['fMd', '#8b5cf6', 'md'];
@@ -493,7 +493,7 @@
     window.fsLoadPreview(p, kind, (d) => {
       if (d.progress) return status(`Lädt … ${d.pct} %`);
       if (d.error) return status(d.error, true);
-      if (d.opened) return status(kind === 'pdf' ? 'PDF im Betrachter geöffnet.' : kind === 'vid' ? 'Video im Player geöffnet.' : 'Im Betrachter geöffnet.', true);
+      if (d.opened) return status(kind === 'pdf' ? 'PDF im Betrachter geöffnet.' : kind === 'vid' ? 'Video im Player geöffnet.' : kind === 'heic' ? 'Foto im Betrachter geöffnet.' : 'Im Betrachter geöffnet.', true);
       const b = box(); if (!b) return;
       b.innerHTML = `<img class="pv-real" src="${esc(d.src || '')}" alt="">`;
       b.querySelector('img').addEventListener('error', () => status(/\.heic$/i.test(n) ? 'HEIC kann die Vorschau nicht zeigen — laden oder teilen.' : 'Bild lässt sich nicht anzeigen.'));
@@ -501,7 +501,11 @@
     return '<div class="fx2-empty">Lädt …</div>';
   }
   function previewLive(n, p, meta, kind) {
-    if ((kind === 'img' || kind === 'vid' || kind === 'pdf') && typeof window.fsLoadPreview === 'function') return previewViaApp(n, p, kind);
+    if (typeof window.fsLoadPreview === 'function') {
+      // HEIC/HEIF can't render in the WebView — any kind other than 'img' makes the app open Android's viewer.
+      if (kind === 'img' && /\.hei[cf]$/i.test(n)) return previewViaApp(n, p, 'heic');
+      if (kind === 'img' || kind === 'vid' || kind === 'pdf') return previewViaApp(n, p, kind);
+    }
     const url = typeof window.fsFileUrl === 'function' ? window.fsFileUrl(p) : '';
     let body = '';
     if (kind === 'img') body = `<img class="pv-real" src="${esc(url)}" alt="">`;

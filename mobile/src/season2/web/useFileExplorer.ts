@@ -17,7 +17,7 @@ interface Args {
 
 const MIME_BY_EXT: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
-  svg: 'image/svg+xml', heic: 'image/heic', avif: 'image/avif', pdf: 'application/pdf',
+  svg: 'image/svg+xml', heic: 'image/heic', heif: 'image/heif', avif: 'image/avif', pdf: 'application/pdf',
   mp4: 'video/mp4', webm: 'video/webm', mkv: 'video/x-matroska', mov: 'video/quicktime', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4',
   zip: 'application/zip', md: 'text/markdown', txt: 'text/plain', json: 'application/json',
 };

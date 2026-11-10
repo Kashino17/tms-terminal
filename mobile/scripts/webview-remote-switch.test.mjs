@@ -565,6 +565,7 @@ if (!PW) {
         window.fsSetDir('/Users/x/Desktop', [
           { name: 'foto.png', path: '/Users/x/Desktop/foto.png', isDir: false, size: 70, modified: 1 },
           { name: 'clip.mp4', path: '/Users/x/Desktop/clip.mp4', isDir: false, size: 70, modified: 1 },
+          { name: 'Augen.HEIC', path: '/Users/x/Desktop/Augen.HEIC', isDir: false, size: 70, modified: 1 },
         ], 'mac');
       }, filesBase);
       await page.waitForTimeout(700); // Panel fährt ein
@@ -580,6 +581,10 @@ if (!PW) {
       await tap('.pv [data-pv="close"]');
       await tap('.fx2-row[data-n="clip.mp4"]');
       await page.waitForFunction(() => /Player geöffnet/.test((document.querySelector('.pv.is-on .pv-body') || {}).textContent || ''), null, { timeout: 4000 });
+      // HEIC kann die WebView nicht zeigen → Android-Betrachter statt kaputtem <img>
+      await tap('.pv [data-pv="close"]');
+      await tap('.fx2-row[data-n="Augen.HEIC"]');
+      await page.waitForFunction(() => /Foto im Betrachter geöffnet/.test((document.querySelector('.pv.is-on .pv-body') || {}).textContent || ''), null, { timeout: 4000 });
       const r = await page.evaluate(() => ({
         posts: window.__posts.filter((m) => /^files:/.test(m.type)).map((m) => m.type + (m.payload.kind ? ':' + m.payload.kind : '')),
         toastZ: +getComputedStyle(document.getElementById('toasts')).zIndex,
@@ -589,10 +594,10 @@ if (!PW) {
       assert.deepEqual(errors, []);
       assert.equal(img.src, 'data:image/png;base64,', 'Bild kommt als data:-URL von der App');
       assert.equal(img.shareOnTop, true, 'Teilen-Knopf liegt oben');
-      assert.deepEqual(r.posts, ['files:openOn', 'files:fetchPreview:img', 'files:share', 'files:fetchPreview:vid']);
+      assert.deepEqual(r.posts, ['files:openOn', 'files:fetchPreview:img', 'files:share', 'files:fetchPreview:vid', 'files:fetchPreview:heic']);
       assert.equal(r.hasVideoTag, false, 'kein <video> mit Tailnet-Adresse');
       assert.ok(r.toastZ > r.pvZ, 'Meldungen liegen über der Vorschau');
-      assert.ok(hits.every((u) => u.startsWith('/files/download')) && hits.length === 2, 'nur die App (Node) hat geladen');
+      assert.ok(hits.every((u) => u.startsWith('/files/download')) && hits.length === 3, 'nur die App (Node) hat geladen');
     } finally { await browser.close(); srv.close(); }
   });
 }
