@@ -345,3 +345,8 @@
 - Nutzer nach v1.145.1: flackert weiter; Screenshot zeigt den Bereich: offene Tastenleiste + Punkte + Eingabezeile.
 - Belegt per gfxinfo: endlos pulsierender „LÄUFT“-Punkt hält das Zeichnen wach (99 statt 0 Bilder/6 s), solange ein Terminal arbeitet → alle Glasflächen werden mit Bildrate neu gerechnet. Fix: Zustandspunkte pulsieren 3×; Punktleiste nur bei Änderung neu. Falsche Fährte: Spinner-Titel im Server-Log gehen nicht an die App.
 - Offen: Bestätigung am Fold; Karten-Schalter (Glas/nur vorne/Matt) danach entscheiden oder entfernen.
+
+## 2026-11-11 — v1.146.1 Tastenleiste + v1.147.0 Sparmodus
+- v1.146.1: Fold per WLAN-Debugging gekoppelt; screenrecord zeigte: bei jedem Terminalwechsel Tastenleiste 4–5 Bilder leer (applyKeysPanelVisibility baute sie pro Wechsel neu). Leiste bleibt stehen, Tasten fragen das Terminal vorne ab. Nutzer: Flackern weg. WebView-Debugging an (CDP am Gerät).
+- v1.147.0 nach Messung am Fold (batterystats: TMS 903/2862 mAh, ~250 mAh im Hintergrund): Bubble-Zeichen-Uhr nur bei Bewegung; rec-bounce nur bei Aufnahme (Compositor 7→1 %); Arbeitsfläche matt Standard (Bildzeit 21–26 → 12–15 ms); client:attention + ruhige Pings/keine Health-Runden im Hintergrund; Dauer-Wake-Lock weg (nur noch bei Fernzugriff-Ton).
+- Server-Pacer (8fb580c) fertig + E2E gemessen, aber NICHT deployt (Mac/Windows Build + Neustart offen). Fernzugriff geparkt: Rechner nimmt weiter auf — offen.
