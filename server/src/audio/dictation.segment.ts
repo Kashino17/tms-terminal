@@ -10,6 +10,14 @@ export const MIN_SEGMENT_SECS = 8;
 export const MAX_SEGMENT_SECS = 28;
 /** Quiet for at least this long counts as a speech pause. */
 export const PAUSE_MIN_SECS = 0.3;
+/**
+ * A pause this long is taken for the end of a sentence. Pieces are cut there
+ * by preference: cutting at any short breath pause tripled the word errors on
+ * a 6-minute dictation, cutting at sentence pauses kept them where they were.
+ */
+export const SENTENCE_PAUSE_SECS = 0.4;
+/** Without a sentence pause for this long, a short pause has to do. */
+export const SETTLE_SECS = 16;
 // Absolute floor (same as trim_silence in the sidecar) and the share of the
 // speaking level below which a 100ms frame counts as quiet. Relative, so quiet
 // speakers are not mistaken for silence and a noisy room still has pauses.
@@ -92,10 +100,11 @@ export function findPauses(samples: Float32Array, from: number, to: number, rate
 
 /**
  * End index of the next piece starting at `cursor`, or null when there is
- * nothing to cut yet. A piece ends in the middle of the last speech pause that
- * lies 8-28s after the cursor and after which speech has resumed; without any
- * pause it is cut by force before 28s (lowest-energy spot). On `final` a rest
- * of up to 28s is taken whole.
+ * nothing to cut yet. A piece ends in the middle of a speech pause that lies
+ * 8-28s after the cursor and after which speech has resumed: the last
+ * sentence-length pause, or — once 16s are buffered without one — the last
+ * short pause. Without any pause it is cut by force before 28s (lowest-energy
+ * spot). On `final` a rest of up to 28s is taken whole.
  */
 export function nextCut(samples: Float32Array, cursor: number, rate: number, final: boolean): number | null {
   const rest = samples.length - cursor;
@@ -105,13 +114,17 @@ export function nextCut(samples: Float32Array, cursor: number, rate: number, fin
   if (final && rest <= max) return samples.length;
   if (!final && rest < min) return null;
   const frame = Math.max(1, Math.floor(rate * PAUSE_WINDOW_SECS));
-  let cut: number | null = null;
+  const sentence = Math.floor(rate * SENTENCE_PAUSE_SECS);
+  let atSentence: number | null = null;
+  let atShort: number | null = null;
   for (const p of findPauses(samples, cursor, samples.length, rate)) {
     if (p.end + frame > samples.length) continue;       // still open at the live edge
     const mid = Math.floor((p.start + p.end) / 2);
-    if (mid >= cursor + min && mid <= cursor + max) cut = mid;
+    if (mid < cursor + min || mid > cursor + max) continue;
+    if (p.end - p.start >= sentence) atSentence = mid; else atShort = mid;
   }
-  if (cut !== null) return cut;
+  if (atSentence !== null) return atSentence;
+  if (atShort !== null && (final || rest > Math.floor(rate * SETTLE_SECS))) return atShort;
   if (rest <= max) return null;
   return findPauseSplit(samples, cursor + Math.floor(rate * (MAX_SEGMENT_SECS - FORCED_SEARCH_SECS)), rate, FORCED_SEARCH_SECS);
 }

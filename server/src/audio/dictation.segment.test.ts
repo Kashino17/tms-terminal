@@ -92,6 +92,25 @@ test('nextCut cuts in the middle of the last closed pause between 8s and 28s', (
   assert.ok(cut !== null && Math.abs(cut / RATE - 14.75) < 0.15, `cut ${cut}`);
 });
 
+// Measured (scripts/dictation-e2e.ts, 6 min): cutting at any short breath pause
+// tripled the word errors; cutting at sentence pauses kept them as before.
+test('nextCut prefers a sentence-length pause over a later short one', () => {
+  const s = concat(tone(9, 0.3), tone(0.5, 0), tone(3, 0.3), tone(0.3, 0), tone(2, 0.3));
+  const cut = nextCut(s, 0, RATE, false);
+  assert.ok(cut !== null && Math.abs(cut / RATE - 9.25) < 0.15, `cut ${cut}`);
+});
+
+test('nextCut waits for a sentence pause while fewer than 16s are buffered', () => {
+  const s = concat(tone(9, 0.3), tone(0.3, 0), tone(3, 0.3));
+  assert.strictEqual(nextCut(s, 0, RATE, false), null);
+});
+
+test('nextCut settles for the last short pause after 16s without a sentence pause', () => {
+  const s = concat(tone(9, 0.3), tone(0.3, 0), tone(4, 0.3), tone(0.3, 0), tone(4, 0.3));
+  const cut = nextCut(s, 0, RATE, false);
+  assert.ok(cut !== null && Math.abs(cut / RATE - 13.45) < 0.15, `cut ${cut}`);
+});
+
 test('nextCut ignores a pause at the live edge', () => {
   assert.strictEqual(nextCut(concat(tone(10, 0.3), tone(0.6, 0)), 0, RATE, false), null);
 });

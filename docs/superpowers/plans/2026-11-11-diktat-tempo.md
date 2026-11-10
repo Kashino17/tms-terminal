@@ -478,7 +478,19 @@ test('no speculation on silence only', async () => { const h = harness(); const 
 
 ## Messung
 
-_(wird in Task 5 und Task 6 gefüllt)_
+Task 5, 2026-11-11, MacBook M4 Max unter Fremdlast (Load 7–13), Aufnahmen aus `scripts/dictation-fixtures.sh` (Stimme Anna), Upload-Takt 2 s wie die heutige App, 8-fache Geschwindigkeit. „alt“ = 60-s-Regel, „neu“ = Pausen-Regel mit Vorrang für Satzpausen.
 
-| Aufnahme | Regel | Stück | Stopp-Verzug | Stopp → Text | Rest | Aufrufe | Wortfehler |
-|---|---|---|---|---|---|---|---|
+| Aufnahme | Regel | Stopp → Text | Rest nach Stopp | Aufrufe | Wortfehler |
+|---|---|---|---|---|---|
+| 12 s | alt | 662 ms | 12,4 s | 1 | 0 von 27 |
+| 12 s | neu | 673 ms | 12,4 s | 1 | 0 von 27 |
+| 47 s | alt | 1930 ms | 47,5 s | 1 | 1 von 114 |
+| 47 s | neu | 597 ms | 13,1 s | 4 | 1 von 114 |
+| 183 s | alt | 2724–2753 ms | 68,4 s | 3 | 2 von 434 |
+| 183 s | neu | 514–631 ms | 6,2–12,1 s | 15–16 | 2 von 434 |
+| 366 s | alt | 2560–2857 ms | 60,2 s | 6 | 3 von 875 |
+| 366 s | neu | 578–593 ms | 11,1 s | 31 | 3 von 875 |
+
+**Nachgestellt (Step 4):** Die erste Fassung der Regel („letzte Pause ab 0,3 s“) war gleich schnell, machte aber bei 366 s 7–15 statt 3 Wortfehler; einmal fehlte ein Halbsatz. Ursache: Schnitte an kurzen Atempausen mitten im Satz. Verglichen wurden Mindestlänge 12 s (7 Fehler), 15 s (4–5 Fehler) und „Satzpause ab 0,4 s bevorzugen“ (3 Fehler = wie alt). Gewählt: Satzpausen-Vorrang, kurze Pause erst nach 16 s ohne Satzpause (`SENTENCE_PAUSE_SECS`, `SETTLE_SECS`). `MIN_SEGMENT_SECS` bleibt 8.
+
+**Offen:** Kurze Diktate (unter etwa 15 s) bleiben bei rund 0,67 s — sie bestehen aus einem einzigen Stück. Das behebt erst das Vorauseilen (Task 6) zusammen mit dem schnelleren Upload (Task 7). Die Aufnahmen sind Sprachausgabe mit sehr regelmäßigen Pausen; echte Sprache wird in Task 8 am Gerät gemessen.
