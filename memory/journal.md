@@ -340,3 +340,8 @@
 ## 2026-11-10 — v1.145.1 Rückzug + Karten-Schalter
 - Nutzer: seit v1.145.0 flackert es am Fold DAUERND (auch ohne Bedienung) — schlimmer als vorher. Emulator zeigte das Gegenteil → Emulator-Grafik ist kein Beleg fürs Gerät.
 - v1.145.1: Standard wieder Glas auf allen Karten (v1.144). Neu Darstellung › Terminal-Karten: Glas / Glas nur vorne / Matt (deckend, kein backdrop-filter), sofort wirksam, localStorage. Offen: Nutzer wählt am Fold die ruhige Variante → wird Standard.
+
+## 2026-11-10 — v1.146.0 Dauerzeichnen (endlose Statuspunkt-Animation)
+- Nutzer nach v1.145.1: flackert weiter; Screenshot zeigt den Bereich: offene Tastenleiste + Punkte + Eingabezeile.
+- Belegt per gfxinfo: endlos pulsierender „LÄUFT“-Punkt hält das Zeichnen wach (99 statt 0 Bilder/6 s), solange ein Terminal arbeitet → alle Glasflächen werden mit Bildrate neu gerechnet. Fix: Zustandspunkte pulsieren 3×; Punktleiste nur bei Änderung neu. Falsche Fährte: Spinner-Titel im Server-Log gehen nicht an die App.
+- Offen: Bestätigung am Fold; Karten-Schalter (Glas/nur vorne/Matt) danach entscheiden oder entfernen.
