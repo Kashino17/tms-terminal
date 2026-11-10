@@ -4,6 +4,8 @@ _Zuletzt aktualisiert: 2026-11-10 — v1.135.0 ohne Insel; v1.134.0 Bund release
 
 ## Aktueller geprüfter Stand
 
+**Stand 2026-11-11 (Planung):** Diktat-Bubble 2.0 (Aufbereitung wie Wispr) — nur Planseite `mockups/diktat-plan/` (Tailscale :8541), kein Code. Wartet auf Antworten des Nutzers in `feedback.json`; danach Spec. Messwerte im Journal.
+
 **Stand 2026-11-11 (neueste):** v1.147.0 Sparmodus (App live am Fold installiert; SERVER-DEPLOY des Pacers 8fb580c OFFEN auf Mac+Windows). v1.146.1 Tastenleiste = Flackern weg (bestätigt). Davor: v1.146.0 — endlose Statuspunkt-Animation hielt Zeichnen wach (belegt), jetzt 3 Pulse; OFFEN Bestätigung am Fold. Davor: v1.145.1 — v1.145.0 (Glas nur vorne) liess den Fold dauerflackern → zurück auf Glas + Schalter Darstellung › Terminal-Karten (Glas/nur vorne/Matt). OFFEN: Nutzer-Rückmeldung welche Variante ruhig ist. Davor v1.144.0 — Gebetsruf nativ wie Anruf, Zeiten automatisch nach Land (JAKIM amtlich), am Emulator geprüft. v1.143.0 Installer-Fix. **Offen:** Gerätetest am Fold (echter Sperrbildschirm, Samsung-Akku, Reisen/Zeitzone), Installer-Test beim nächsten Update.
 
 **Stand 2026-11-10 nachts:** v1.142.0 getaggt — neue Einstellungsseite (settings.js, nur in S2 wirksame Einstellungen; Terminal-Theme/ext. Tastatur/Inaktivitäts-Push/Deploy-Alerts bewusst nicht, wirken nur klassisch) + Installieren mit Ladekreis/Sperre. Server unverändert.

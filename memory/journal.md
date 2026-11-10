@@ -350,3 +350,12 @@
 - v1.146.1: Fold per WLAN-Debugging gekoppelt; screenrecord zeigte: bei jedem Terminalwechsel Tastenleiste 4–5 Bilder leer (applyKeysPanelVisibility baute sie pro Wechsel neu). Leiste bleibt stehen, Tasten fragen das Terminal vorne ab. Nutzer: Flackern weg. WebView-Debugging an (CDP am Gerät).
 - v1.147.0 nach Messung am Fold (batterystats: TMS 903/2862 mAh, ~250 mAh im Hintergrund): Bubble-Zeichen-Uhr nur bei Bewegung; rec-bounce nur bei Aufnahme (Compositor 7→1 %); Arbeitsfläche matt Standard (Bildzeit 21–26 → 12–15 ms); client:attention + ruhige Pings/keine Health-Runden im Hintergrund; Dauer-Wake-Lock weg (nur noch bei Fernzugriff-Ton).
 - Server-Pacer (8fb580c) fertig + E2E gemessen, aber NICHT deployt (Mac/Windows Build + Neustart offen). Fernzugriff geparkt: Rechner nimmt weiter auf — offen.
+
+## 2026-11-11 — Diktat-Bubble 2.0: Planseite (noch kein Code)
+- Wunsch: Aufbereitung wie Wispr Flow (Prompt, E-Mail, WhatsApp, Stil lernen), Ziel Stopp→Text < 0,7 s.
+- Gemessen: 508 Diktate in 4 Tagen, Median 32 s; nur 16 % ≤ 0,7 s (letztes 60-s-Stück wird erst nach Stopp transkribiert). „KI-Prompt“ nie benutzt; dessen Modell (Llama 3.2 3B) verliert bei 534 Wörtern 48 % und beantwortet kurze Aufträge. Qwen3.6-35B-A3B verlustfrei, aber 89 tok/s.
+- Planseite mit Rückmelde-UI: `mockups/diktat-plan/` (node serve.js 3096, Tailscale :8541, Antworten in feedback.json). Offen: Antworten des Nutzers, dann Spec.
+
+## 2026-11-11 — v1.148.0 gehaltener Fernzugriff ruht
+- Pacer-Deploy vom Nutzer (fbbcdaa); Fold: 266 → 37 Ausgabe-Nachrichten/20 s, Bildzeit 12 ms.
+- Fernzugriff: `setPaused` (Mac-Helfer pause/resume, Windows ffmpeg beenden/neu starten), unsichtbar kein Status/Zeiger, Ping 25 s; App gibt Dekoder frei. Mac E2E: 133 Bilder/6 s → 0, erstes Bild nach Rückkehr 43 ms. Update baut den Mac-Helfer künftig mit. Server-Deploy (e2b44a6) offen; Windows nur mit Fake-ffmpeg getestet.
