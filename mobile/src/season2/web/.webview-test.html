@@ -2705,32 +2705,71 @@ body.no-island { --top-space: calc(var(--safe-top, 0px) + 10px); }
 .card-menu .bm-dev small i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok, #3ddc84); }
 .card-menu .bm-empty { padding: 8px 10px; color: var(--text-dim); font-size: 13px; }
 
-/* ── Fernzugriff läuft: sanft pulsierender grüner Ring ────────────────
-   ⋮ (zugeklappt + aufgeklappt, nicht im Splitscreen), im Menü die Zeile
-   „Fernzugriff“, aufgeklappt das Symbol des Geräts mit laufender Sitzung. */
+/* ── Fernzugriff läuft: ruhiger grüner Ring um ⋮ (nicht im Splitscreen).
+   Gepulst wird nur EINMAL, wenn man vom Fernzugriff zurückkommt
+   (body.remote-pulse, setzt bund.js für ~3 s). Im Menü: ruhige Markierung. */
 @keyframes tmsLivePulse {
-  0% { transform: scale(1); opacity: .55; }
-  70%, 100% { transform: scale(1.5); opacity: 0; }
+  0% { transform: scale(1); opacity: .6; }
+  100% { transform: scale(1.6); opacity: 0; }
 }
 body.remote-alive:not(.compact-terminal) .term-card .card-menu-btn,
 body.remote-alive.desk .term-card .card-menu-btn {
-  position: relative; border-color: color-mix(in srgb, var(--ok, #3ddc84) 55%, transparent);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--ok, #3ddc84) 22%, transparent);
+  position: relative; color: var(--ok, #3ddc84);
+  border-color: color-mix(in srgb, var(--ok, #3ddc84) 60%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ok, #3ddc84) 20%, transparent);
 }
-body.remote-alive:not(.compact-terminal) .term-card .card-menu-btn::after,
-body.remote-alive.desk .term-card .card-menu-btn::after,
-.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic::after,
-.card-menu .bm-dev.is-alive .bm-dev__ic::after {
+body.remote-alive.remote-pulse:not(.compact-terminal) .term-card .card-menu-btn::after,
+body.remote-alive.remote-pulse.desk .term-card .card-menu-btn::after {
   content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
-  border: 1.5px solid var(--ok, #3ddc84); animation: tmsLivePulse 2.6s cubic-bezier(.2,.6,.3,1) infinite;
+  border: 1.5px solid var(--ok, #3ddc84); animation: tmsLivePulse 2.4s cubic-bezier(.2,.6,.3,1) 1 forwards;
 }
-.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic { color: var(--ok, #3ddc84); border-radius: 50%; }
-.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic::after { inset: -5px; }
+.card-menu .bm-row.is-live[aria-expanded="false"] .bm-ic { color: var(--ok, #3ddc84); }
 .card-menu .bm-row.is-live[aria-expanded="false"] > span { color: color-mix(in srgb, var(--ok, #3ddc84) 70%, var(--text)); }
-.card-menu .bm-dev.is-alive .bm-dev__ic { position: relative; box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok, #3ddc84) 45%, transparent); }
+.card-menu .bm-dev.is-alive .bm-dev__ic { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--ok, #3ddc84) 60%, transparent); }
 @media (prefers-reduced-motion: reduce) {
-  body.remote-alive .term-card .card-menu-btn::after, .card-menu .bm-ic::after, .card-menu .bm-dev__ic::after { animation: none; opacity: .5; }
+  body.remote-pulse .term-card .card-menu-btn::after { animation: none; opacity: 0; }
 }
+
+/* Laufende Sitzung beenden (⋮ → Fernzugriff → ✕) */
+.card-menu .bm-devwrap { display: flex; align-items: center; gap: 4px; }
+.card-menu .bm-devwrap .bm-dev { flex: 1; min-width: 0; }
+.card-menu .bm-stop { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; padding: 0; border: 0;
+  color: var(--text-dim); background: rgba(var(--overlay-rgb, 255,255,255), .06); }
+.card-menu .bm-stop:active { background: color-mix(in srgb, var(--err, #ff6b6b) 18%, transparent); color: var(--err, #ff6b6b); }
+.card-menu .bm-stop svg { width: 15px; height: 15px; }
+.card-menu .bm-confirm { padding: 8px 8px 4px; display: flex; flex-direction: column; gap: 4px; }
+.card-menu .bm-confirm b { font-weight: 600; font-size: 14.5px; color: var(--text); }
+.card-menu .bm-confirm small { color: var(--text-dim); font-size: 12.5px; }
+.card-menu .bm-confirm__btns { display: flex; gap: 8px; margin-top: 8px; }
+.card-menu .bm-confirm__btns button { flex: 1; height: 36px; border-radius: 10px; border: 1px solid rgba(var(--overlay-rgb, 255,255,255), .12);
+  background: rgba(var(--overlay-rgb, 255,255,255), .06); color: var(--text); font: 600 13.5px var(--font-ui); }
+.card-menu .bm-confirm__btns .danger { background: color-mix(in srgb, var(--err, #ff6b6b) 18%, transparent); border-color: color-mix(in srgb, var(--err, #ff6b6b) 40%, transparent); color: var(--err, #ff6b6b); }
+
+/* ── Update: schlicht, matt (statt Glas-Pille) ───────────────────────── */
+.upd { background: var(--flat-bg, #17191e); color: var(--text); border: 1px solid var(--flat-line, rgba(255,255,255,.1)); border-radius: 16px; font-family: var(--font-ui); overflow: hidden; position: relative; }
+.upd--bar { position: fixed; z-index: 250; top: calc(var(--safe-top, 0px) + 8px); left: 12px; right: 60px; max-width: 420px; box-shadow: 0 12px 34px rgba(0,0,0,.42);
+  animation: updIn .32s cubic-bezier(.34,1.3,.5,1); }
+.upd--bar[hidden] { display: none; }
+body.desk .upd--bar { left: calc(var(--desk-side-w) + 12px); }
+body.remote-focus .upd--bar, body.is-locked .upd--bar { display: none; }
+/* Auf der Bund-Seite steht die Karte — dort keine zweite Leiste */
+body:has(section[data-screen="servers"]:not([hidden])) .upd--bar { display: none; }
+@keyframes updIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.upd--card { margin: 0 0 14px; }
+.upd-main { display: flex; align-items: center; gap: 10px; padding: 9px 8px 9px 10px; }
+.upd-ic { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; flex: none; color: var(--accent, #8ab4ff); background: color-mix(in srgb, var(--accent, #8ab4ff) 15%, transparent); }
+.upd-ic svg { width: 17px; height: 17px; }
+.upd-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 0; border: 0; background: none; color: inherit; text-align: left; }
+.upd-txt b { font-weight: 600; font-size: 14.5px; }
+.upd-txt small { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.upd-btn { flex: none; height: 32px; padding: 0 14px; border-radius: 999px; border: 0; background: var(--accent, #8ab4ff); color: var(--on-accent, #071021); font: 700 13px var(--font-ui); }
+.upd-btn:active { transform: scale(.96); }
+.upd-pct { flex: none; min-width: 44px; text-align: right; font: 700 13px var(--font-ui); color: var(--accent, #8ab4ff); padding-right: 4px; font-variant-numeric: tabular-nums; }
+.upd-x { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; padding: 0; border: 0; background: none; color: var(--text-dim); }
+.upd-x svg { width: 15px; height: 15px; }
+.upd-prog { position: absolute; left: 0; bottom: 0; height: 2px; width: var(--p, 0%); background: var(--accent, #8ab4ff); transition: width .25s; }
+.upd-notes { padding: 10px 14px 12px; border-top: 1px solid var(--flat-line, rgba(255,255,255,.08)); font-size: 13px; line-height: 1.5; color: var(--text); max-height: 38vh; overflow-y: auto; white-space: pre-wrap; }
+.upd-notes small { display: block; margin-bottom: 4px; font: 700 10.5px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim); }
 </style>
 <style>
   /* ===== Bund (Mockup) ===== */
@@ -4310,6 +4349,8 @@ window.__tmsInput = function () {};
   // Servers screen
   // ============================================================
   function renderUpdateBanner(host) {
+    // Bund: schlichte Update-Karte (bund.js) statt der Glas-Pille
+    if (window.__bundUpdateCard) { window.__bundUpdateCard(host); return; }
     const u = TMS_DATA.update;
     const pill = document.createElement('div');
     pill.className = 'update-pill glass';
@@ -12279,7 +12320,7 @@ window.__tmsInput = function () {};
   };
   const KIND = (n) => {
     const e = (n.split('.').pop() || '').toLowerCase();
-    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic'].includes(e)) return ['fImg', '#ec4899', 'img'];
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic', 'heif'].includes(e)) return ['fImg', '#ec4899', 'img'];
     if (['mp4', 'mov', 'webm', 'mkv'].includes(e)) return ['fVid', '#a855f7', 'vid'];
     if (e === 'pdf') return ['fPdf', '#ef4444', 'pdf'];
     if (['md', 'mdx'].includes(e)) return ['fMd', '#8b5cf6', 'md'];
@@ -12559,7 +12600,7 @@ window.__tmsInput = function () {};
     window.fsLoadPreview(p, kind, (d) => {
       if (d.progress) return status(`Lädt … ${d.pct} %`);
       if (d.error) return status(d.error, true);
-      if (d.opened) return status(kind === 'pdf' ? 'PDF im Betrachter geöffnet.' : kind === 'vid' ? 'Video im Player geöffnet.' : 'Im Betrachter geöffnet.', true);
+      if (d.opened) return status(kind === 'pdf' ? 'PDF im Betrachter geöffnet.' : kind === 'vid' ? 'Video im Player geöffnet.' : kind === 'heic' ? 'Foto im Betrachter geöffnet.' : 'Im Betrachter geöffnet.', true);
       const b = box(); if (!b) return;
       b.innerHTML = `<img class="pv-real" src="${esc(d.src || '')}" alt="">`;
       b.querySelector('img').addEventListener('error', () => status(/\.heic$/i.test(n) ? 'HEIC kann die Vorschau nicht zeigen — laden oder teilen.' : 'Bild lässt sich nicht anzeigen.'));
@@ -12567,7 +12608,11 @@ window.__tmsInput = function () {};
     return '<div class="fx2-empty">Lädt …</div>';
   }
   function previewLive(n, p, meta, kind) {
-    if ((kind === 'img' || kind === 'vid' || kind === 'pdf') && typeof window.fsLoadPreview === 'function') return previewViaApp(n, p, kind);
+    if (typeof window.fsLoadPreview === 'function') {
+      // HEIC/HEIF can't render in the WebView — any kind other than 'img' makes the app open Android's viewer.
+      if (kind === 'img' && /\.hei[cf]$/i.test(n)) return previewViaApp(n, p, 'heic');
+      if (kind === 'img' || kind === 'vid' || kind === 'pdf') return previewViaApp(n, p, kind);
+    }
     const url = typeof window.fsFileUrl === 'function' ? window.fsFileUrl(p) : '';
     let body = '';
     if (kind === 'img') body = `<img class="pv-real" src="${esc(url)}" alt="">`;
@@ -12894,8 +12939,10 @@ window.__tmsInput = function () {};
       const on = d.status === 'online';
       const live = kind === 'remote' && alive.indexOf(d.id) >= 0;
       const meta = !on ? 'offline' : live ? '<i></i>läuft' : (d.latency != null ? d.latency + ' ms' : '');
-      return `<button class="bm-dev${live ? ' is-alive' : ''}" data-bm="${kind}" data-srv="${esc(d.id)}" style="--dc:${devColor(d.id)}" ${on ? '' : 'disabled'}>
+      const row = `<button class="bm-dev${live ? ' is-alive' : ''}" data-bm="${kind}" data-srv="${esc(d.id)}" style="--dc:${devColor(d.id)}" ${on ? '' : 'disabled'}>
         <span class="bm-dev__ic">${ic(devIcon(d), 1.8)}</span><span class="bm-dev__name">${esc(d.name)}</span><small>${meta}</small></button>`;
+      // Laufende Sitzung: daneben ✕ zum Beenden (mit Rückfrage), ohne hineinzugehen
+      return live ? `<div class="bm-devwrap" data-bm-wrap="${esc(d.id)}">${row}<button class="bm-stop" data-bm-stop="${esc(d.id)}" aria-label="Fernzugriff auf ${esc(d.name)} beenden" title="Beenden">${ic('x', 2.2)}</button></div>` : row;
     }).join('') || '<div class="bm-empty">Kein Gerät verbunden</div>';
   }
   function bmAugment(menu) {
@@ -12934,6 +12981,49 @@ window.__tmsInput = function () {};
   new MutationObserver((list) => {
     list.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType === 1 && n.classList.contains('card-menu')) bmAugment(n); }));
   }).observe(document.body, { childList: true });
+  // Laufenden Fernzugriff beenden: ✕ → Rückfrage → Beenden / Abbrechen
+  document.addEventListener('click', (e) => {
+    const stop = e.target.closest && e.target.closest('.card-menu [data-bm-stop]');
+    const conf = e.target.closest && e.target.closest('.card-menu [data-bm-confirm]');
+    if (!stop && !conf) return;
+    e.stopPropagation();
+    const menu = (stop || conf).closest('.card-menu');
+    const list = menu.querySelector('[data-bm-list="remote"]');
+    if (stop) {
+      const id = stop.dataset.bmStop, d = servers().find((x) => x.id === id);
+      list.innerHTML = `<div class="bm-confirm"><b>Fernzugriff auf ${esc(d ? d.name : 'dem Gerät')} beenden?</b>
+        <small>Die Sitzung auf dem Rechner wird geschlossen.</small>
+        <div class="bm-confirm__btns"><button data-bm-confirm="no">Abbrechen</button><button class="danger" data-bm-confirm="yes" data-srv="${esc(id)}">Beenden</button></div></div>`;
+      return;
+    }
+    if (conf.dataset.bmConfirm === 'no') { list.innerHTML = bmList('remote'); return; }
+    const id = conf.dataset.srv, d = servers().find((x) => x.id === id);
+    closeCardMenuNow();
+    // App: über TMSRemote — das schickt das Stopp auch über die eigene, nur
+    // pausierte Bildverbindung und meldet „beendet“ erst, wenn der Rechner es
+    // bestätigt hat.
+    if (window.TMSRemote && typeof window.TMSRemote.closeDevice === 'function') {
+      window.TMSRemote.closeDevice(id);
+      say(`Fernzugriff auf ${d ? d.name : 'dem Gerät'} wird beendet …`);
+    } else {
+      if (typeof window.__closeRemoteDevice === 'function') window.__closeRemoteDevice(id);
+      say(`Fernzugriff auf ${d ? d.name : 'dem Gerät'} beendet`);
+    }
+  }, true);
+
+  // Vom Fernzugriff zurück: der grüne Ring um ⋮ pulsiert EINMAL, danach Ruhe.
+  let wasRemote = document.body.classList.contains('remote-focus'), pulseT = 0;
+  new MutationObserver(() => {
+    const now = document.body.classList.contains('remote-focus');
+    if (wasRemote && !now && document.body.classList.contains('remote-alive')) {
+      document.body.classList.remove('remote-pulse');
+      void document.body.offsetWidth; // Animation neu starten
+      document.body.classList.add('remote-pulse');
+      clearTimeout(pulseT);
+      pulseT = setTimeout(() => document.body.classList.remove('remote-pulse'), 2600);
+    }
+    wasRemote = now;
+  }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   document.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest('.card-menu [data-bm]');
     if (!b) return;
@@ -12944,6 +13034,78 @@ window.__tmsInput = function () {};
       window.__newTermServer = id;
       try { if (typeof window.addTerminal === 'function') window.addTerminal(); } finally { window.__newTermServer = null; }
     } else if (typeof window.__openRemoteFor === 'function') window.__openRemoteFor(id);
+  }, true);
+
+  // ════════════════════════════════════════════════════════════════════
+  // 8) UPDATE — schlicht, in der App laden + installieren, ohne Neustart.
+  //    Die App prüft regelmäßig und meldet den Stand (setUpdateState):
+  //    none | available | downloading | ready | error.
+  // ════════════════════════════════════════════════════════════════════
+  const UP = { status: 'none', current: '', latest: '', notes: '', size: 0, received: 0, error: '' };
+  const upBar = document.createElement('div'); upBar.id = 'updBar'; upBar.className = 'upd upd--bar'; upBar.hidden = true;
+  document.body.appendChild(upBar);
+  let upNotesOpen = false;
+  const mb = (b) => { const v = b / 1048576; return (v >= 10 ? Math.round(v) : v.toFixed(1).replace('.', ',')) + ' MB'; };
+  const upDismissed = () => { try { return localStorage.getItem('tms-upd-dismissed') === UP.latest; } catch (_) { return false; } };
+  function upHtml(withClose) {
+    const pct = UP.size ? Math.min(100, Math.round((UP.received / UP.size) * 100)) : 0;
+    const sub = UP.status === 'downloading' ? `Lädt … ${UP.size ? `${mb(UP.received)} von ${mb(UP.size)}` : ''}`
+      : UP.status === 'ready' ? 'Geladen'
+      : UP.status === 'error' ? esc(UP.error || 'Laden fehlgeschlagen')
+      : `Neue Version${UP.size ? ' · ' + mb(UP.size) : ''}`;
+    const act = UP.status === 'downloading' ? `<span class="upd-pct">${pct} %</span>`
+      : UP.status === 'ready' ? '<button class="upd-btn" data-up="install">Installieren</button>'
+      : UP.status === 'error' ? '<button class="upd-btn" data-up="download">Nochmal</button>'
+      : '<button class="upd-btn" data-up="download">Laden</button>';
+    const notes = (UP.notes || '').trim();
+    return `<div class="upd-main">
+        <span class="upd-ic">${ic('download', 2)}</span>
+        <button class="upd-txt" data-up="notes" aria-expanded="${upNotesOpen}"><b>Update ${esc(UP.latest.replace(/^v/, ''))}</b><small>${sub}</small></button>
+        ${act}${withClose ? `<button class="upd-x" data-up="dismiss" aria-label="Ausblenden">${ic('x', 2)}</button>` : ''}
+      </div>
+      ${UP.status === 'downloading' ? `<i class="upd-prog" style="--p:${pct}%"></i>` : ''}
+      ${upNotesOpen && notes ? `<div class="upd-notes"><small>Was ist neu · aktuell ${esc(UP.current)}</small>${esc(notes)}</div>` : ''}`;
+  }
+  function upRender() {
+    const has = UP.status !== 'none' && UP.latest;
+    // Die schwebende Leiste: bis man sie wegtippt (Laden/Installieren zeigt sie wieder)
+    const busy = UP.status === 'downloading' || UP.status === 'ready';
+    upBar.hidden = !has || (upDismissed() && !busy);
+    if (!upBar.hidden) upBar.innerHTML = upHtml(true);
+    document.querySelectorAll('.upd--card').forEach((c) => { if (has) c.innerHTML = upHtml(false); else c.remove(); });
+  }
+  /** Bund-Seite: dieselbe Anzeige als ruhige Karte (statt der Glas-Pille). */
+  window.__bundUpdateCard = function (host) {
+    if (UP.status === 'none' || !UP.latest) return;
+    const c = document.createElement('div'); c.className = 'upd upd--card'; c.innerHTML = upHtml(false);
+    host.appendChild(c);
+  };
+  window.__bundUpdateState = function (st) {
+    const prevLatest = UP.latest;
+    Object.assign(UP, st || {});
+    if (UP.latest !== prevLatest) upNotesOpen = false;
+    upRender();
+  };
+  // Mockup: Demo-Update aus den Beispieldaten zeigen
+  if (!LIVE() && window.TMS_DATA && TMS_DATA.update && TMS_DATA.update.latest && TMS_DATA.update.latest !== TMS_DATA.update.current) {
+    const u = TMS_DATA.update;
+    setTimeout(() => { window.__bundUpdateState({ status: 'available', current: u.current, latest: u.latest, notes: u.notes, size: 31 * 1048576 });
+      if (typeof window.renderServers === 'function') window.renderServers(); }, 0);
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.upd [data-up]');
+    if (!b) return;
+    e.stopPropagation();
+    const a = b.dataset.up;
+    if (a === 'notes') { upNotesOpen = !upNotesOpen; upRender(); return; }
+    if (a === 'dismiss') { try { localStorage.setItem('tms-upd-dismissed', UP.latest); } catch (_) {} upRender(); return; }
+    if (a === 'download') { Object.assign(UP, { status: 'downloading', received: 0, error: '' }); upRender(); }
+    if (LIVE()) post('update:' + a);
+    else if (a === 'download') {
+      // Mockup: Download simulieren
+      UP.size = UP.size || 31 * 1048576;
+      const t = setInterval(() => { UP.received += UP.size / 12; if (UP.received >= UP.size) { clearInterval(t); UP.status = 'ready'; } upRender(); }, 250);
+    } else if (a === 'install') say('Mockup: Android-Installer öffnet sich');
   }, true);
 })();
 </script>
@@ -16202,6 +16364,7 @@ window.__tmsNormalizePrayer = normalizePrayerPayload;</script>
   // ══ Update-Banner ═════════════════════════════════════════════════════════
   var origRenderUpdateBanner = window.renderUpdateBanner;
   window.renderUpdateBanner = function (host) {
+    if (window.__bundUpdateCard) { window.__bundUpdateCard(host); return; } // schlichte Karte (bund.js)
     var u = window.TMS_DATA.update || {};
     if (!u.latest || u.latest === u.current) return; // nothing to offer
     origRenderUpdateBanner(host);
@@ -16220,7 +16383,13 @@ window.__tmsNormalizePrayer = normalizePrayerPayload;</script>
   // Tippt der Nutzer den Fernzugriff-Knopf auf der Geraetekarte an: React
   // Native holt die Zugangsdaten und reicht sie ueber setRemoteTarget zurueck
   // (siehe weiter unten) — die Seite baut die Bildverbindung selbst auf.
-  window.__tmsOpenRemote = function (id) { remoteWantId = id || null; post('remote:open', { id: id }); };
+  window.__tmsOpenRemote = function (id) {
+    remoteWantId = id || null;
+    // Ein liegengebliebenes „Beenden“ (Zugangsdaten kamen nie) darf das
+    // Öffnen nicht in ein Schliessen verwandeln.
+    if (id && typeof remoteClosing === 'object') delete remoteClosing[id];
+    post('remote:open', { id: id });
+  };
 
   // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
   /** Bund: Diktat gibt es nur, solange ein Gerät mit caps.dictation (der Mac)
@@ -16262,6 +16431,16 @@ window.__tmsNormalizePrayer = normalizePrayerPayload;</script>
   window.TMSBridge.setActiveDevice = function (id) {
     window.__bundActiveDev = id || null;
     if (window.__deskRender) window.__deskRender();
+  };
+  /** Update-Stand von der App: none | available | downloading | ready | error. */
+  window.TMSBridge.setUpdateState = function (st) {
+    st = st || {};
+    window.TMS_DATA.update = { current: st.current || '', latest: st.latest || st.current || '', notes: st.notes || '' };
+    var wasNone = !window.__bundUpdateStateSeen || window.__bundUpdateStateSeen === 'none';
+    window.__bundUpdateStateSeen = st.status;
+    if (window.__bundUpdateState) window.__bundUpdateState(st);
+    // Bund-Seite nur neu bauen, wenn die Karte erscheint/verschwindet (nicht bei jedem Fortschritt)
+    if ((wasNone !== (st.status === 'none')) && typeof window.renderServers === 'function') window.renderServers();
   };
   window.TMSBridge.setUpdate = function (update) {
     window.TMS_DATA.update = update;
@@ -16320,30 +16499,37 @@ window.__tmsNormalizePrayer = normalizePrayerPayload;</script>
   /** Sitzung eines Geraets schliessen, zu dem gerade keine Bildverbindung
    *  steht: kurz verbinden, remote:stop, fertig (der Server beendet dann die
    *  ruhende Sitzung). Unerreichbar = der Punkt bleibt, spaeter erneut. */
+  function devName(id) {
+    var d = (window.TMS_DATA.servers || []).filter(function (x) { return x.id === id; })[0];
+    return d ? d.name : 'dem Gerät';
+  }
+  /** Erst wenn der Rechner remote:stopped schickt, gilt die Sitzung als
+   *  beendet. Vorher hiess es nach 0,8 s blind „beendet“ — auch wenn der
+   *  Rechner das Stopp gar nicht umgesetzt hatte. */
+  var CLOSE_CONFIRM_MS = function () { return window.__tmsCloseConfirmMs || 6000; };
   function closeRemoteVia(t) {
-    var s;
-    try { s = new WebSocket('ws://' + t.host + ':' + t.port + '/remote?token=' + encodeURIComponent(t.token)); }
-    catch (e) { return; }
-    var finished = false;
-    var done = function () {
+    var s, finished = false, timer = 0;
+    var toast = function (m) { if (typeof window.toast === 'function') window.toast(m); };
+    var finish = function (ok) {
       if (finished) return;
       finished = true;
-      setRemoteAlive(t.id, false);
-      try { s.close(); } catch (e) {}
+      clearTimeout(timer);
+      try { s && s.close(); } catch (e) {}
+      if (ok) { setRemoteAlive(t.id, false); toast('Fernzugriff auf ' + devName(t.id) + ' beendet'); }
+      else { setRemoteAlive(t.id, true); toast(devName(t.id) + ' nicht erreichbar — der Fernzugriff läuft dort evtl. weiter. Bitte später erneut beenden.'); }
     };
-    s.onopen = function () {
-      try { s.send(JSON.stringify({ type: 'remote:stop' })); } catch (e) {}
-      setTimeout(done, 800);
-    };
-    s.onmessage = function (e) { if (typeof e.data === 'string' && e.data.indexOf('remote:stopped') >= 0) done(); };
-    s.onerror = function () {
-      if (!finished && typeof window.toast === 'function') window.toast('Gerät nicht erreichbar — die Verbindung bleibt vorerst bestehen');
-    };
+    try { s = new WebSocket('ws://' + t.host + ':' + t.port + '/remote?token=' + encodeURIComponent(t.token)); }
+    catch (e) { finish(false); return; }
+    timer = setTimeout(function () { finish(false); }, CLOSE_CONFIRM_MS());
+    s.onopen = function () { try { s.send(JSON.stringify({ type: 'remote:stop' })); } catch (e) { finish(false); } };
+    s.onmessage = function (e) { if (typeof e.data === 'string' && e.data.indexOf('remote:stopped') >= 0) finish(true); };
+    s.onerror = function () { finish(false); };
+    s.onclose = function () { finish(false); }; // zu, bevor der Rechner bestätigt hat
   }
   window.__closeRemoteDevice = function (id) {
     if (!id) return;
     remoteClosing[id] = true;
-    post('remote:open', { id: id });
+    post('remote:open', { id: id, closing: true });
   };
   setTimeout(renderRemoteAlive, 0);
 
@@ -17275,9 +17461,15 @@ window.__tmsNormalizePrayer = normalizePrayerPayload;</script>
         window.__tmsOpenRemote(id);
         window.TMSRemote.start(presetByDev[id] || 'auto');
       },
-      /** Sitzung eines Geraets beenden (Insel: "Schliessen"). */
+      /** Sitzung eines Geraets beenden (⋮-Menü „Beenden“), ohne den
+       *  Fernzugriff zu öffnen. Laeuft sie ueber die eigene (pausierte)
+       *  Verbindung: Stopp dort hinein und nicht neu verbinden. Bestaetigt wird
+       *  in jedem Fall ueber eine frische Verbindung — die alte kann halb tot
+       *  sein, und der Server beendet die Sitzung, wo immer sie gerade haengt.
+       *  Der gruene Ring geht erst mit dieser Bestaetigung weg. */
       closeDevice: function (id) {
-        if (id && id === curDev() && (wantRunning || ws)) { window.TMSRemote.stop(); return; }
+        if (!id) return;
+        if (id === curDev() && (wantRunning || ws)) window.TMSRemote.stop({ keepMark: true });
         window.__closeRemoteDevice(id);
       },
       start: function (which) {
@@ -17289,7 +17481,7 @@ window.__tmsNormalizePrayer = normalizePrayerPayload;</script>
         }
         maybeConnect();
       },
-      stop: function () {
+      stop: function (opts) {
         // Muss VOR dem Schliessen laufen: releaseAllSticky() sendet ueber
         // TMSRemote.input(), das nur sendet, solange ws noch offen und
         // remoteState.running noch true ist. Nach dem close()/running=false
@@ -17314,7 +17506,8 @@ window.__tmsNormalizePrayer = normalizePrayerPayload;</script>
         // und plant faelschlich einen Wiederverbindungs-Zeitgeber.
         wantRunning = false;
         suspended = false;
-        setRemoteAlive(curDev(), false);
+        // keepMark: closeDevice() nimmt den Ring erst mit der Bestaetigung weg.
+        if (!(opts && opts.keepMark === true)) setRemoteAlive(curDev(), false);
         if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
         if (ws) { try { ws.close(); } catch (e) {} ws = null; }

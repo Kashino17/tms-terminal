@@ -376,6 +376,8 @@ body:has(section[data-screen="servers"]:not([hidden])) .upd--bar { display: none
 .upd-txt small { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .upd-btn { flex: none; height: 32px; padding: 0 14px; border-radius: 999px; border: 0; background: var(--accent, #8ab4ff); color: var(--on-accent, #071021); font: 700 13px var(--font-ui); }
 .upd-btn:active { transform: scale(.96); }
+.upd-spin { flex: none; width: 22px; height: 22px; margin: 0 10px 0 4px; border-radius: 50%; border: 2.5px solid rgba(var(--accent-rgb, 138,180,255), .25); border-top-color: var(--accent, #8ab4ff); animation: updSpin .8s linear infinite; }
+@keyframes updSpin { to { transform: rotate(360deg); } }
 .upd-pct { flex: none; min-width: 44px; text-align: right; font: 700 13px var(--font-ui); color: var(--accent, #8ab4ff); padding-right: 4px; font-variant-numeric: tabular-nums; }
 .upd-x { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; padding: 0; border: 0; background: none; color: var(--text-dim); }
 .upd-x svg { width: 15px; height: 15px; }

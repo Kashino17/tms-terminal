@@ -138,6 +138,10 @@ patch('bund stylesheet', '<link rel="stylesheet" href="bund.css">',
   '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/bund.css'), 'utf8') + '</style>');
 patch('bund controller', '<script src="bund.js"></script>',
   '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/bund.js'), 'utf8') + '</script>');
+patch('settings stylesheet', '<link rel="stylesheet" href="settings.css">',
+  '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/settings.css'), 'utf8') + '</style>');
+patch('settings controller', '<script src="settings.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/settings.js'), 'utf8') + '</script>');
 
 // ── 5) xterm.js + the bridge, after the mockup's own script.
 function stringExports(file) {

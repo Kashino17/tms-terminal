@@ -473,6 +473,83 @@ if (!PW) {
     } finally { await browser.close(); }
   });
 
+  test('Einstellungen: eine Seite, echte Werte aus der App, Schalter senden an die App', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await page.evaluate(() => { document.body.classList.remove('is-locked'); window.show('settings'); });
+      await page.waitForTimeout(300);
+      // Ohne Werte der App: nichts Erfundenes
+      assert.match(await page.textContent('.st-quick'), /Wird geprüft/);
+      assert.equal(await page.locator('#bubbleSettingsGroup, .settings-group, #s2ClassicSettings').count(), 0, 'alte Gruppen sind weg');
+      await page.evaluate(() => {
+        window.TMSBridge.setSettings({ voicePrompt: true, browserBridge: false, persistent: true, appLock: true, lockGrace: 300, version: '1.141.0', prevVersion: { version: '1.140.0', size: '31 MB' } });
+        window.TMSBridge.bubbleStatus({ serviceOn: true, bound: true, enabled: true, snoozedUntil: 0, keepAlive: true, notifications: true });
+      });
+      await page.waitForTimeout(150);
+      assert.match(await page.textContent('.st-quick'), /Aktiv/);
+      assert.match(await page.textContent('.st-cat[data-st-go="sicherheit"]'), /App-Sperre an · entsperrt 5 Min\./);
+      assert.match(await page.textContent('.st-cat[data-st-go="diktat"]'), /KI-Prompt an/);
+      assert.match(await page.textContent('.st-cat[data-st-go="app"]'), /Version 1\.141\.0/);
+      // Bubble-Schalter im Schnellzugriff → bestehende Bubble-Nachricht
+      await page.click('.st-quick .switch');
+      assert.deepEqual((await posts('bubble:toggle')).pop().payload, { enabled: false });
+      // Unterseite + Schalter → settings:set
+      await page.click('.st-cat[data-st-go="diktat"]');
+      await page.waitForTimeout(200);
+      assert.ok((await posts('bubble:status')).length >= 1, 'frischer Bubble-Stand beim Öffnen');
+      await page.click('[data-st-row="voice-prompt"] .switch');
+      assert.deepEqual((await posts('settings:set')).pop().payload, { key: 'voicePrompt', value: false });
+      // Zurück-Geste: Unterseite → Übersicht, Bildschirm bleibt
+      await page.evaluate(() => window.TMSBridge.handleBack());
+      await page.waitForTimeout(150);
+      assert.equal(await page.locator('.st-head').count(), 0);
+      assert.equal(await page.evaluate(() => document.querySelector('[data-screen="settings"]').hidden), false);
+      // App-Sperre: fragt die App (PIN), kippt nicht selbst um
+      await page.click('.st-cat[data-st-go="sicherheit"]');
+      await page.waitForTimeout(150);
+      await page.click('[data-st-row="app-lock"] .switch');
+      assert.deepEqual((await posts('settings:set')).pop().payload, { key: 'appLock', value: false });
+      assert.equal(await page.evaluate(() => document.querySelector('[data-st-switch="appLock"]').checked), true, 'bleibt an, bis die App es bestätigt');
+      await page.click('[data-st-act="lock:now"]');
+      assert.equal((await posts('lock:now')).length, 1);
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Einstellungen: Gebetsruf aus den echten Gebetsdaten, Update-Leiste verdeckt nichts', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await page.evaluate(() => {
+        document.body.classList.remove('is-locked');
+        window.TMSBridge.setPrayer([{ name: 'Fajr', time: '05:12' }, { name: 'Dhuhr', time: '13:10' }],
+          { location: { label: 'Kuala Lumpur' }, method: { id: 3, name: 'MWL' }, adhan: { enabled: true, wecker: false, selected: 'nafees' }, perms: { notifications: true, exactAlarms: false } });
+        window.TMSBridge.setUpdateState({ status: 'available', current: '1.140.0', latest: 'v1.141.0', notes: '', size: 1000 });
+        window.show('settings');
+      });
+      await page.waitForTimeout(300);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('updBar')).display), 'none', 'Leiste weg auf den Einstellungen');
+      assert.equal(await page.locator('.st-cat[data-st-go="app"] .st-badge').count(), 1, 'Update als Abzeichen');
+      assert.equal(await page.locator('.st-cat[data-st-go="gebet"] .st-dot--warn').count(), 1, 'ungenaue Alarme = Hinweis');
+      await page.click('.st-cat[data-st-go="gebet"]');
+      await page.waitForTimeout(150);
+      assert.match(await page.textContent('[data-st-row="adhan-reciter"]'), /Ahmad al-Nafees/);
+      assert.match(await page.textContent('[data-st-row="adhan-loc"]'), /Kuala Lumpur/);
+      await page.click('[data-st-row="adhan-wecker"] .switch');
+      assert.deepEqual((await posts('adhan:wecker')).pop().payload, { enabled: true });
+      await page.click('[data-st-row="adhan-method"]');
+      await page.click('[data-st-pick="adhan.method"][data-v="4"]');
+      assert.deepEqual((await posts('adhan:method')).pop().payload, { method: 4 });
+      await page.click('[data-st-act="adhan:exact"]');
+      assert.deepEqual((await posts('adhan:perms')).pop().payload, { which: 'exact' });
+      // Suche springt zur Zeile
+      await page.evaluate(() => window.TMSBridge.handleBack());
+      await page.fill('#stSearch', 'pin');
+      await page.waitForTimeout(150);
+      assert.match(await page.textContent('.st-results'), /PIN|App-Sperre/);
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
   test('Update: schlichte Leiste — Laden in der App, Fortschritt, Installieren, ✕, Karte auf der Bund-Seite', async () => {
     const { browser, page, errors, posts } = await boot();
     try {
@@ -492,6 +569,14 @@ if (!PW) {
       await page.evaluate((mb) => window.TMSBridge.setUpdateState({ status: 'ready', current: '1.138.0', latest: 'v1.139.0', notes: '', size: 31 * mb, received: 31 * mb }), MB);
       await page.evaluate(() => document.querySelector('#updBar [data-up="install"]').click());
       assert.equal((await posts('update:install')).length, 1);
+      // Sofort sichtbares Warten, kein zweiter Installer bei weiteren Tipps
+      assert.match(await page.textContent('#updBar'), /Installer öffnet sich/);
+      assert.equal(await page.locator('#updBar .upd-spin').count(), 1, 'Ladekreis statt Knopf');
+      assert.equal(await page.locator('#updBar [data-up="install"]').count(), 0, 'kein zweites Antippen möglich');
+      // Zurück ohne Installation: ehrlicher Hinweis, Knopf wieder da
+      await page.evaluate((mb) => window.TMSBridge.setUpdateState({ status: 'ready', note: 'Nicht installiert? Nochmal tippen', current: '1.138.0', latest: 'v1.139.0', notes: '', size: 31 * mb, received: 31 * mb }), MB);
+      assert.match(await page.textContent('#updBar'), /Nicht installiert\? Nochmal tippen/);
+      assert.equal(await page.locator('#updBar [data-up="install"]').count(), 1);
       // Wegtippen (bei einer neuen, noch nicht geladenen Version)
       await page.evaluate((mb) => window.TMSBridge.setUpdateState({ status: 'available', current: '1.138.0', latest: 'v1.140.0', notes: '', size: 31 * mb }), MB);
       await page.evaluate(() => document.querySelector('#updBar [data-up="dismiss"]').click());

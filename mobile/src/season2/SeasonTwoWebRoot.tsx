@@ -9,7 +9,7 @@
  * The classic UI is untouched — Season 2 is still just a settings toggle.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert, Modal, TextInput } from 'react-native';
+import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert, Modal, TextInput, NativeModules } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -25,7 +25,10 @@ import { isUserTitle } from '../store/tabIdentity';
 import { useAutoApproveStore } from '../store/autoApproveStore';
 import { storageService, getToken } from '../services/storage.service';
 import { consumePendingBrowserBridgeUrl, consumePendingPromptSessionId } from '../services/notifications.service';
-import { checkForUpdate, getCurrentVersion, downloadApk, installApk, cleanupApks } from '../services/updater.service';
+import { checkForUpdate, getCurrentVersion, downloadApk, installApk, cleanupApks, checkForPreviousVersion, downloadAndInstall, formatSize } from '../services/updater.service';
+import { useLockStore } from '../store/lockStore';
+import { clearDurableStorage } from '../services/durableStorage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CHECK_EVERY_MS, RESUME_GAP_MS, shouldCheck } from '../services/update.core.mjs';
 import { getConnection, type WebSocketService } from '../services/websocket.service';
 import { useS2ConnStore, useS2Connection, type S2Server } from './s2conn/connection';
@@ -769,12 +772,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   //    wodurch "Über" eine falsche Version und ein Fake-Update zeigte.
   // In-App-Updater: sucht beim Start, alle 15 min und beim Zurückholen der App
   // (kein Neustart nötig), lädt die APK in der App und öffnet den Installer.
-  const upd = useRef({ status: 'none' as 'none' | 'available' | 'downloading' | 'ready' | 'error',
-    current: '', latest: '', notes: '', size: 0, received: 0, error: '', url: '', file: '' });
+  const upd = useRef({ status: 'none' as 'none' | 'available' | 'downloading' | 'ready' | 'installing' | 'error',
+    current: '', latest: '', notes: '', size: 0, received: 0, error: '', url: '', file: '', note: '' });
   const pushUpd = useCallback((patch: Partial<typeof upd.current>) => {
     Object.assign(upd.current, patch);
     const u = upd.current;
-    call('setUpdateState', { status: u.status, current: u.current, latest: u.latest, notes: u.notes, size: u.size, received: u.received, error: u.error });
+    call('setUpdateState', { status: u.status, current: u.current, latest: u.latest, notes: u.notes, size: u.size, received: u.received, error: u.error, note: u.note });
   }, [call]);
   const lastUpdCheck = useRef(0);
   const runUpdCheck = useCallback(async (manual: boolean) => {
@@ -786,7 +789,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     }
     const u = upd.current;
     // Läuft schon ein Download / liegt die Datei bereit für DIESE Version: nichts zurücksetzen
-    const sameBusy = u.latest === up.version && (u.status === 'downloading' || u.status === 'ready');
+    const sameBusy = u.latest === up.version && (u.status === 'downloading' || u.status === 'ready' || u.status === 'installing');
     if (!sameBusy) pushUpd({ status: 'available', latest: up.version, notes: up.changelog, size: up.size, received: 0, error: '', url: up.downloadUrl, file: '' });
     if (manual) call('toast', `Update ${up.version.replace(/^v/, '')} verfügbar`);
   }, [call, pushUpd]);
@@ -804,6 +807,34 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     });
     return () => { clearInterval(t); sub.remove(); };
   }, [ready, pageEpoch, pushUpd, runUpdCheck]);
+  /** Installer öffnen — genau einmal, mit sichtbarem Warten. Android braucht
+   *  ein paar Sekunden (Datei prüfen, Play Protect), bis der Installer
+   *  erscheint; weitere Tipps öffneten ihn früher mehrfach übereinander.
+   *  Kommt die App danach zurück, wurde nicht installiert (sonst startet sie neu). */
+  const installing = useRef(false);
+  const openInstaller = useCallback(async (file: string) => {
+    if (installing.current) return;
+    installing.current = true;
+    pushUpd({ status: 'installing', note: '' });
+    let left = false;
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st !== 'active') { left = true; return; }
+      if (left) finish('Nicht installiert? Nochmal tippen');
+    });
+    function finish(note: string) {
+      if (done) return;
+      done = true;
+      installing.current = false;
+      sub.remove();
+      if (timer) clearTimeout(timer);
+      pushUpd({ status: 'ready', note });
+    }
+    timer = setTimeout(() => { if (!left) finish('Der Installer kam nicht — nochmal tippen'); }, 20_000);
+    try { await installApk(file); }
+    catch { finish('Installer ließ sich nicht öffnen — nochmal tippen'); }
+  }, [pushUpd]);
   const startUpdDownload = useCallback(async () => {
     if (!upd.current.url) { await runUpdCheck(true); if (!upd.current.url) return; }
     const u = upd.current;
@@ -811,12 +842,12 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     pushUpd({ status: 'downloading', received: 0, error: '' });
     try {
       const file = await downloadApk(u.url, u.latest, u.size, (received, total) => pushUpd({ received, size: total || u.size }));
-      pushUpd({ status: 'ready', file, received: upd.current.size });
-      await installApk(file); // Installer gleich öffnen
+      pushUpd({ status: 'ready', file, received: upd.current.size, note: '' });
+      await openInstaller(file); // Installer gleich öffnen
     } catch (e: any) {
       pushUpd({ status: 'error', error: e?.message ? String(e.message) : 'Laden fehlgeschlagen' });
     }
-  }, [pushUpd, runUpdCheck]);
+  }, [pushUpd, runUpdCheck, openInstaller]);
 
   // ── Nach jedem RECONNECT neu anhängen. Der Server hängt Sessions beim
   //    Verbindungsabriss ab und puffert ihren Output — ohne Reattach bliebe
@@ -956,13 +987,62 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (!ready || !dictationBubble.available) return;
     dictationBubble.status().then((st) => { if (st) call('bubbleStatus', st); });
   }, [ready, call]);
+  // ── Einstellungen (settings.js): nur was in Season 2 wirklich wirkt ──
+  const prevVer = useRef<{ version: string; downloadUrl: string; size: number } | null>(null);
+  const pushSettings = useCallback(() => {
+    if (!ready) return;
+    const st = useSettingsStore.getState();
+    const pv = prevVer.current;
+    call('setSettings', {
+      voicePrompt: st.voicePromptEnhanceEnabled,
+      browserBridge: st.browserBridgeEnabled,
+      persistent: st.persistentConnection,
+      appLock: useLockStore.getState().isEnabled,
+      lockGrace: st.lockGraceSeconds,
+      version: getCurrentVersion(),
+      prevVersion: pv ? { version: pv.version.replace(/^v/, ''), size: formatSize(pv.size) } : null,
+    });
+  }, [ready, call]);
+  useEffect(() => {
+    if (!ready) return;
+    pushSettings();
+    // Ändert sich etwas (auch über PinSetup oder die klassische Seite): Seite nachziehen.
+    const a = useSettingsStore.subscribe(pushSettings);
+    const b = useLockStore.subscribe(pushSettings);
+    checkForPreviousVersion().then((pv) => { prevVer.current = pv; pushSettings(); }).catch(() => {});
+    return () => { a(); b(); };
+  }, [ready, pageEpoch, pushSettings]);
+  // „Verbindung im Hintergrund“ gilt auch in Season 2 (wie im klassischen Terminal).
+  useEffect(() => {
+    if (useSettingsStore.getState().persistentConnection) { try { NativeModules.ConnectionService?.start(); } catch {} }
+  }, []);
+  const applySetting = useCallback((key: string, value: unknown) => {
+    const st = useSettingsStore.getState();
+    switch (key) {
+      case 'voicePrompt': st.setVoicePromptEnhanceEnabled(!!value); break;
+      case 'browserBridge': st.setBrowserBridgeEnabled(!!value); break;
+      case 'persistent':
+        st.setPersistentConnection(!!value);
+        try { if (value) NativeModules.ConnectionService?.start(); else NativeModules.ConnectionService?.stop(); } catch {}
+        break;
+      case 'lockGrace': st.setLockGrace(Number(value) || 0); break;
+      case 'appLock': {
+        // Ein/Aus nur mit PIN (Einrichten bzw. alte PIN) — wie in den klassischen Einstellungen.
+        const on = useLockStore.getState().isEnabled;
+        if (!!value !== on) navigation.navigate('PinSetup', { mode: value ? 'setup' : 'disable' });
+        pushSettings();
+        break;
+      }
+      default: break;
+    }
+  }, [navigation, pushSettings]);
   // Switched on but stopped by Android (no rebind until the switch is toggled): say so
   // on every app start / return — otherwise the bubble is just silently gone.
   const warnIfBubbleStopped = useCallback(() => {
     if (!ready || !dictationBubble.available) return;
     dictationBubble.status().then((st) => {
       if (st && st.serviceOn && st.enabled && st.bound === false) {
-        call('toast', 'Diktat-Bubble von Android gestoppt — Einstellungen → Diktat-Bubble antippen');
+        call('toast', 'Diktat-Bubble von Android gestoppt — Einstellungen → Diktat-Bubble → Beheben');
       }
     });
   }, [ready, call]);
@@ -1087,7 +1167,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (type === 'update:download') { void startUpdDownload(); return; }
     if (type === 'update:install') {
       const f = upd.current.file;
-      if (f) installApk(f).catch(() => call('toast', 'Installer ließ sich nicht öffnen'));
+      if (f) void openInstaller(f);
       else void startUpdDownload();
       return;
     }
@@ -1198,6 +1278,36 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         })();
         return;
       }
+    }
+
+    // ── Einstellungen: brauchen keinen Server ──
+    if (type === 'nav:screen' && payload?.screen === 'settings') { pushSettings(); pushBubbleStatus(); pushCloudAccounts(); }
+    if (type === 'settings:set') { applySetting(String(payload?.key ?? ''), payload?.value); return; }
+    if (type === 'bubble:snooze') { dictationBubble.snooze(); setTimeout(pushBubbleStatus, 300); return; }
+    if (type === 'lock:pin') { navigation.navigate('PinSetup', { mode: 'change' }); return; }
+    if (type === 'lock:now') {
+      const l = useLockStore.getState();
+      if (l.isEnabled) l.lock(); else call('toast', 'Die App-Sperre ist aus');
+      return;
+    }
+    if (type === 'update:previous') {
+      void (async () => {
+        const pv = prevVer.current ?? await checkForPreviousVersion().catch(() => null);
+        if (!pv) { call('toast', 'Keine vorherige Version gefunden'); return; }
+        Alert.alert('Version wiederherstellen', `Wirklich auf ${pv.version} zurücksetzen?\n\nDie APK (${formatSize(pv.size)}) wird heruntergeladen und installiert.`, [
+          { text: 'Abbrechen', style: 'cancel' },
+          { text: 'Wiederherstellen', onPress: () => { void downloadAndInstall(pv.downloadUrl); } },
+        ]);
+      })();
+      return;
+    }
+    if (type === 'app:wipe') {
+      void (async () => {
+        await AsyncStorage.clear();
+        await clearDurableStorage();
+        Alert.alert('Alles gelöscht', 'Bitte die App jetzt schließen und neu öffnen.');
+      })();
+      return;
     }
 
     // Kein Hauptserver: Standard-Gerät ist das des Terminals vorne.
@@ -1615,7 +1725,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         }
         break;
     }
-  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, pushBubbleStatus, call, navigation, setSeasonTwoEnabled, setServer, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, deleteServerNow, connFor]);
+  }, [wsService, server, token, activeSessionId, micState, toggleMic, cancelMic, pushBubbleStatus, call, navigation, setSeasonTwoEnabled, setServer, loadCloud, loadCloudDetail, cloudConnect, cloudDisconnect, cloudReveal, pushCloudAccounts, pushCloudOrg, sheets, fileExplorer, deleteServerNow, connFor, startUpdDownload, openInstaller, runUpdCheck, pushSettings, applySetting]);
 
   // Android-Zurück (Geste wie Taste) gehört uns, nicht dem System: sonst
   // schließt ein Wisch aus dem Browser heraus die ganze App. Was „zurück"

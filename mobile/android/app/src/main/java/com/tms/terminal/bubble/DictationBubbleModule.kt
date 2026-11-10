@@ -89,4 +89,9 @@ class DictationBubbleModule(private val rc: ReactApplicationContext) : ReactCont
     fun wake() {
         config.wake()
     }
+
+    @ReactMethod
+    fun snooze() {
+        config.snooze()
+    }
 }

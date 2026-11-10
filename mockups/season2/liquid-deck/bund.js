@@ -934,7 +934,7 @@
   //    Die App prüft regelmäßig und meldet den Stand (setUpdateState):
   //    none | available | downloading | ready | error.
   // ════════════════════════════════════════════════════════════════════
-  const UP = { status: 'none', current: '', latest: '', notes: '', size: 0, received: 0, error: '' };
+  const UP = { status: 'none', current: '', latest: '', notes: '', size: 0, received: 0, error: '', note: '' };
   const upBar = document.createElement('div'); upBar.id = 'updBar'; upBar.className = 'upd upd--bar'; upBar.hidden = true;
   document.body.appendChild(upBar);
   let upNotesOpen = false;
@@ -943,10 +943,12 @@
   function upHtml(withClose) {
     const pct = UP.size ? Math.min(100, Math.round((UP.received / UP.size) * 100)) : 0;
     const sub = UP.status === 'downloading' ? `Lädt … ${UP.size ? `${mb(UP.received)} von ${mb(UP.size)}` : ''}`
-      : UP.status === 'ready' ? 'Geladen'
+      : UP.status === 'installing' ? 'Installer öffnet sich … Android prüft die App'
+      : UP.status === 'ready' ? esc(UP.note || 'Geladen — bereit zum Installieren')
       : UP.status === 'error' ? esc(UP.error || 'Laden fehlgeschlagen')
       : `Neue Version${UP.size ? ' · ' + mb(UP.size) : ''}`;
     const act = UP.status === 'downloading' ? `<span class="upd-pct">${pct} %</span>`
+      : UP.status === 'installing' ? '<span class="upd-spin" role="status" aria-label="Installer öffnet sich"></span>'
       : UP.status === 'ready' ? '<button class="upd-btn" data-up="install">Installieren</button>'
       : UP.status === 'error' ? '<button class="upd-btn" data-up="download">Nochmal</button>'
       : '<button class="upd-btn" data-up="download">Laden</button>';
@@ -962,7 +964,7 @@
   function upRender() {
     const has = UP.status !== 'none' && UP.latest;
     // Die schwebende Leiste: bis man sie wegtippt (Laden/Installieren zeigt sie wieder)
-    const busy = UP.status === 'downloading' || UP.status === 'ready';
+    const busy = UP.status === 'downloading' || UP.status === 'ready' || UP.status === 'installing';
     upBar.hidden = !has || (upDismissed() && !busy);
     if (!upBar.hidden) upBar.innerHTML = upHtml(true);
     document.querySelectorAll('.upd--card').forEach((c) => { if (has) c.innerHTML = upHtml(false); else c.remove(); });
@@ -993,11 +995,15 @@
     if (a === 'notes') { upNotesOpen = !upNotesOpen; upRender(); return; }
     if (a === 'dismiss') { try { localStorage.setItem('tms-upd-dismissed', UP.latest); } catch (_) {} upRender(); return; }
     if (a === 'download') { Object.assign(UP, { status: 'downloading', received: 0, error: '' }); upRender(); }
+    // Installieren: sofort sichtbar warten — bis der Installer da ist, vergehen
+    // ein paar Sekunden (Android prüft die Datei). Weitere Tipps öffneten früher
+    // den Installer mehrfach übereinander.
+    if (a === 'install') { if (UP.status === 'installing') return; Object.assign(UP, { status: 'installing', note: '' }); upRender(); }
     if (LIVE()) post('update:' + a);
     else if (a === 'download') {
       // Mockup: Download simulieren
       UP.size = UP.size || 31 * 1048576;
       const t = setInterval(() => { UP.received += UP.size / 12; if (UP.received >= UP.size) { clearInterval(t); UP.status = 'ready'; } upRender(); }, 250);
-    } else if (a === 'install') say('Mockup: Android-Installer öffnet sich');
+    } else if (a === 'install') setTimeout(() => { Object.assign(UP, { status: 'ready', note: 'Nicht installiert? Nochmal tippen' }); upRender(); }, 2500);
   }, true);
 })();

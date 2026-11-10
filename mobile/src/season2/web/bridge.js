@@ -1797,120 +1797,18 @@
   window.managerRemoveAttachment = function (index) { post('manager:removeAttachment', { index: index }); };
 
   // RN → Seite: Modelle, Anhänge, Transkript in die Eingabezeile.
-  // ── Diktat-Bubble (Android-Bedienungshilfe) in den Einstellungen ──────────
-  // Die Seite rendert die Einstellungen selbst neu (renderSettings); die
-  // Eigener Gültigkeitsbereich: ein gleichnamiges `var` weiter oben im Bridge-IIFE
-  // (origRenderSettings) machte die Hülle rekursiv — die ganze Seite startete nicht.
-  (function () {
-    // Gruppe wird danach jedes Mal angehaengt — ohne das Mockup zu aendern.
-    var bubbleStatus = null;
-    function bubbleTime(ms) {
-      var d = new Date(ms);
-      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-    }
-    function injectBubbleSettings() {
-      var body = document.getElementById('settingsBody');
-      if (!body) return;
-      var group = document.getElementById('bubbleSettingsGroup');
-      if (!group) {
-        group = document.createElement('div');
-        group.className = 'settings-group glass';
-        group.id = 'bubbleSettingsGroup';
-        var anchor = document.getElementById('terminalSettingsGroup');
-        if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(group, anchor.nextSibling);
-        else body.appendChild(group);
-      }
-      var st = bubbleStatus;
-      var on = !!(st && st.serviceOn);
-      // Switched on, but Android stopped it ("Stopp" in "Aktive Apps" / force stop) and
-      // will not rebind it until the switch is toggled — opening TMS does not help.
-      var stopped = on && st.bound === false;
-      var sleeping = !!(st && st.snoozedUntil > Date.now());
-      var html = '<div class="settings-group__title">Diktat-Bubble</div>' +
-        '<div class="settings-row is-tap" id="bubbleServiceRow">' +
-          '<span class="settings-row__label">Mikrofon in allen Apps<small>' +
-            (!st ? 'Wird geprüft …'
-              : stopped ? 'Von Android gestoppt — antippen, dann den Schalter einmal aus- und wieder einschalten'
-              : on ? 'Aktiv — erscheint mit der Tastatur, in jeder App'
-              : 'Aus — antippen und „TMS Diktat-Bubble“ einschalten') +
-          '</small></span><span class="settings-row__value">' + (stopped ? 'Gestoppt' : on ? 'An' : 'Aus') + '</span></div>';
-      if (on && !stopped) {
-        html += '<div class="settings-row"><span class="settings-row__label">Bubble anzeigen<small>Gedrückt halten = 15 Min. schlafen</small></span>' +
-          '<label class="switch"><input type="checkbox" id="bubbleEnabledSwitch" ' + (st.enabled ? 'checked' : '') +
-          '><span class="switch__track"><span class="switch__thumb"></span></span></label></div>';
-        if (sleeping) {
-          html += '<div class="settings-row is-tap" id="bubbleWakeRow"><span class="settings-row__label">Schläft bis ' +
-            bubbleTime(st.snoozedUntil) + '<small>Antippen zum Aufwecken</small></span></div>';
-        }
-        // Hintergrund-Schutz (wie Wispr Flow): Vordergrund-Dienst + Benachrichtigung
-        // „Diktat-Bubble bereit“. Ältere Apps melden keepAlive nicht → keine Zeile.
-        if (st.enabled && typeof st.keepAlive === 'boolean') {
-          var ka = st.keepAlive, nt = st.notifications !== false;
-          html += '<div class="settings-row' + (ka && nt ? '' : ' is-tap') + '" id="bubbleKeepRow">' +
-            '<span class="settings-row__label">Hintergrund-Schutz<small>' +
-              (!ka ? 'Nicht aktiv — antippen zum Starten'
-                : nt ? 'Aktiv — die Bubble bleibt im Hintergrund wach'
-                : 'Aktiv, aber die Benachrichtigung ist blockiert — antippen zum Erlauben') +
-            '</small></span><span class="settings-row__value">' + (!ka ? 'Aus' : nt ? 'An' : 'Prüfen') + '</span></div>';
-        }
-      }
-      // Diagnose: letzte Entscheidung der Bubble (sichtbar / Tastatur zu / kein Feld …).
-      // Steht die Zeit still, obwohl gerade getippt wird, kommen keine Ereignisse mehr an.
-      if (st && st.lastCheck && st.lastCheckAt) {
-        var cd = new Date(st.lastCheckAt);
-        var ct = String(cd.getDate()).padStart(2, '0') + '.' + String(cd.getMonth() + 1).padStart(2, '0') + '. ' +
-          bubbleTime(st.lastCheckAt) + ':' + String(cd.getSeconds()).padStart(2, '0');
-        html += '<div class="settings-row" id="bubbleCheckRow"><span class="settings-row__label">Letzte Prüfung<small>' +
-          ct + ' — ' + String(st.lastCheck).replace(/[&<>"]/g, function (c) {
-            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-          }) + '</small></span></div>';
-      }
-      // Diagnose: die letzten Entscheidungen der Bubble zum Einfuegen in den Chat.
-      if (st && on) {
-        html += '<div class="settings-row is-tap" id="bubbleTraceRow"><span class="settings-row__label">Protokoll kopieren' +
-          '<small>Für die Fehlersuche — danach im Chat einfügen</small></span></div>';
-      }
-      // Diagnose: wann und warum Android die Bubble zuletzt beendet hat (ohne Updates).
-      if (st && st.lastExit && st.lastExitAt) {
-        var d = new Date(st.lastExitAt);
-        var when = String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '. ' + bubbleTime(st.lastExitAt);
-        html += '<div class="settings-row" id="bubbleExitRow"><span class="settings-row__label">Letzter Abbruch<small>' +
-          when + ' — ' + String(st.lastExit).replace(/[&<>"]/g, function (c) {
-            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-          }) + '</small></span></div>';
-      }
-      group.innerHTML = html;
-      var svc = document.getElementById('bubbleServiceRow');
-      if (svc) svc.addEventListener('click', function () { post('bubble:open', {}); });
-      var sw = document.getElementById('bubbleEnabledSwitch');
-      if (sw) sw.addEventListener('change', function () { post('bubble:toggle', { enabled: sw.checked }); });
-      var traceRow = document.getElementById('bubbleTraceRow');
-      if (traceRow) traceRow.addEventListener('click', function () { post('bubble:copytrace', {}); });
-      var wake = document.getElementById('bubbleWakeRow');
-      if (wake) wake.addEventListener('click', function () { post('bubble:wake', {}); });
-      var keep = document.getElementById('bubbleKeepRow');
-      if (keep) keep.addEventListener('click', function () {
-        var s = bubbleStatus || {};
-        if (!s.keepAlive) post('bubble:keepalive', {});
-        else if (s.notifications === false) post('bubble:notify', {});
-      });
-    }
-    var bubbleOrigRenderSettings = window.renderSettings;
-    if (typeof bubbleOrigRenderSettings === 'function') {
-      window.renderSettings = function () {
-        var r = bubbleOrigRenderSettings.apply(this, arguments);
-        injectBubbleSettings();
-        post('bubble:status', {});
-        return r;
-      };
-    }
-    window.TMSBridge.bubbleStatus = function (st) {
-      bubbleStatus = st;
-      injectBubbleSettings();
-    };
-    // The page renders its settings once at boot, before this bridge exists.
-    if (document.getElementById('settingsBody')) { injectBubbleSettings(); post('bubble:status', {}); }
-  })();
+  // ── Diktat-Bubble: Zustand für die Einstellungen (settings.js zeichnet) ──
+  window.TMSBridge.bubbleStatus = function (st) {
+    window.TMS_DATA.settings = window.TMS_DATA.settings || {};
+    window.TMS_DATA.settings.bubble = st || null;
+    if (typeof window.renderSettings === 'function') window.renderSettings();
+  };
+  /** Werte aus der App (Sperre, KI-Prompt, Login-Links, Hintergrund, Version …). */
+  window.TMSBridge.setSettings = function (vals) {
+    var cur = window.TMS_DATA.settings || {};
+    window.TMS_DATA.settings = Object.assign({}, cur, vals || {}, { bubble: cur.bubble || null });
+    if (typeof window.renderSettings === 'function') window.renderSettings();
+  };
 
   window.TMSBridge.setManagerProviders = function (providers, active) {
     window.TMS_DATA.manager.providers = providers || [];
@@ -2117,6 +2015,8 @@
     //    sonst den Zurück-Druck schlucken, ohne noch etwas zu tun.
     var sheet = document.querySelector('.sheet-wrap.is-open');
     if (sheet && typeof window.closeSheet === 'function') { window.closeSheet(sheet); return; }
+    // 1b. Einstellungen: Unterseite → Übersicht (bzw. Suche leeren)
+    if (typeof window.__settingsBack === 'function' && window.__settingsBack()) return;
     // 2. Die aufgeklappte Insel
     var header = document.getElementById('statusHeader');
     if (header && header.classList.contains('is-expanded')) {
@@ -3075,32 +2975,7 @@
     });
   };
 
-  // ══ Einstellungen ═════════════════════════════════════════════════════════
-  // Without this there is no way out of Season 2 from inside Season 2.
-  var origRenderSettings = window.renderSettings;
-  window.renderSettings = function () {
-    origRenderSettings();
-    var body = document.getElementById('settingsBody');
-    if (!body) return;
-    var group = document.createElement('div');
-    group.className = 'settings-group glass';
-    group.innerHTML =
-      '<div class="settings-group__title">Oberfläche</div>' +
-      '<div class="settings-row is-tap" id="s2ToClassic">' +
-        '<span class="settings-row__label">Klassische Oberfläche<small>Season 2 verlassen — jederzeit wieder umschaltbar</small></span>' +
-        '<span class="settings-row__value">Wechseln</span></div>' +
-      '<div class="settings-row is-tap" id="s2ClassicSettings">' +
-        '<span class="settings-row__label">Klassische Einstellungen<small>Sicherheit, Benachrichtigungen, Cloud-Tokens, Manager …</small></span>' +
-        '<span class="settings-row__value">Öffnen</span></div>';
-    body.appendChild(group);
-    group.querySelector('#s2ToClassic').addEventListener('click', function () {
-      post('nav:classic', { screen: 'classic' });
-    });
-    group.querySelector('#s2ClassicSettings').addEventListener('click', function () {
-      post('nav:classic', { screen: 'settings' });
-    });
-  };
-  window.renderSettings();
+  // ══ Einstellungen: settings.js (eine Seite für alles, inkl. „Klassische Oberfläche“) ══
 
   // ══ Update-Banner ═════════════════════════════════════════════════════════
   var origRenderUpdateBanner = window.renderUpdateBanner;

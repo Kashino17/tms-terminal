@@ -30,6 +30,7 @@ interface NativeBubble {
   openAccessibilitySettings(): void;
   setEnabled(enabled: boolean): void;
   wake(): void;
+  snooze?(): void;
   startKeepAlive?(): void;
   copyTrace?(): Promise<number>;
   openNotificationSettings?(): void;
@@ -50,6 +51,8 @@ export const dictationBubble = {
   openSettings(): void { native?.openAccessibilitySettings(); },
   setEnabled(enabled: boolean): void { native?.setEnabled(enabled); },
   wake(): void { native?.wake(); },
+  /** 15 Min. Pause wie langes Drücken (ältere Builds ohne native Funktion: nichts). */
+  snooze(): void { native?.snooze?.(); },
   startKeepAlive(): void { native?.startKeepAlive?.(); },
   /** Copies the bubble's decision protocol to the clipboard; number of lines, or null if unsupported. */
   async copyTrace(): Promise<number | null> {
