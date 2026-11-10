@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Korrekturen: Snippets lassen sich wieder bedienen, anlegen und schliessen. Explorer und andere halbe Karten schliessen beim Tipp aufs Terminal und springen nicht wieder auf. Bilder: wieder die gewohnte Karte mit Kamera und Galerie, schliesst nach dem Hochladen. Drei-Punkte-Menue: Neues Terminal und Fernzugriff klappen die Geraete untereinander auf. Explorer: Ordner lassen sich in den Papierkorb legen (Windows), bei mehreren wird gesagt, was nicht ging. Server: MacBook neu starten, Windows: tms-terminal update. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Laeuft eine Fernzugriff-Sitzung, zeigt ein sanft pulsierender gruener Ring um die drei Punkte das an. Im Menue schimmert dann Fernzugriff, aufgeklappt das Geraet mit der laufenden Sitzung. Im geteilten Bildschirm bleibt es ruhig. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
