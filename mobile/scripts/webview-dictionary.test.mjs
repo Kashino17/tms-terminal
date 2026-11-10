@@ -36,7 +36,7 @@ if (!PW) {
   const require = createRequire(join(PW, 'index.js'));
   const { chromium } = require('playwright');
 
-  async function boot(width = 412) {
+  async function boot(width = 412, open = true) {
     const src = readFileSync(SOURCE, 'utf8');
     const html = JSON.parse(src.match(/export const LIQUID_DECK_HTML = (".*");\s*$/s)[1]);
     const file = join(tmpdir(), `tms-webview-dict-${process.pid}.html`);
@@ -50,7 +50,7 @@ if (!PW) {
     await page.addInitScript(() => { window.ReactNativeWebView = { postMessage: (m) => window.__post(m) }; });
     await page.goto('file://' + file);
     await page.waitForTimeout(1200);
-    await page.evaluate(() => { document.body.classList.remove('is-locked'); show('settings'); window.__settingsOpen('diktat'); });
+    await page.evaluate((o) => { document.body.classList.remove('is-locked'); show('settings'); if (o) window.__settingsOpen('diktat'); }, open);
     return { browser, page, posts, errors };
   }
   const sent = (posts, type) => posts.filter((m) => m.type === type);
@@ -83,11 +83,55 @@ if (!PW) {
       await page.click('[data-st-act="dw:heard:b2"]');
       assert.deepEqual(sent(posts, 'dict:update').at(-1).payload, { id: 'b2', heard: ['Tail Scale', 'Tailskale'] });
 
+      // Die Seite zieht jede Änderung sofort nach: „Tailskale“ steht schon da, „Tail Scale“ (erstes Schild) geht.
       await page.click('[data-st-act="dw:unheard:b2:0"]');
-      assert.deepEqual(sent(posts, 'dict:update').at(-1).payload, { id: 'b2', heard: [] });
+      assert.deepEqual(sent(posts, 'dict:update').at(-1).payload, { id: 'b2', heard: ['Tailskale'] });
 
       await page.click('[data-st-act="dw:del:b2"]');
       assert.deepEqual(sent(posts, 'dict:remove').at(-1).payload, { id: 'b2' });
+    } finally { await browser.close(); }
+  });
+
+  // Review: aufgeklappt ist „Diktat & Sprache“ schon vorausgewählt — ohne Tipp wurde nie gefragt.
+  test('schon beim Zeigen der Einstellungen wird das Woerterbuch angefragt (aufgeklappt und zugeklappt)', async () => {
+    for (const width of [840, 412]) {
+      const { browser, posts } = await boot(width, false);
+      try { assert.ok(sent(posts, 'dict:get').length >= 1, `Breite ${width}`); } finally { await browser.close(); }
+    }
+  });
+
+  // Review: zwei schnelle Aenderungen hintereinander — die zweite rechnete mit dem alten Stand.
+  test('zwei Hoerfehler schnell nacheinander entfernt: beide sind weg', async () => {
+    const { browser, page, posts } = await boot();
+    try {
+      await page.evaluate((s) => window.TMSBridge.setDictionary(s), STATE);
+      await page.click('[data-st-act="dw:open:a1"]');
+      await page.click('[data-st-act="dw:unheard:a1:0"]');
+      await page.click('[data-st-act="dw:unheard:a1:0"]');
+      assert.deepEqual(sent(posts, 'dict:update').at(-1).payload, { id: 'a1', heard: [] });
+      await page.fill('#dwHeard', 'Eins'); await page.click('[data-st-act="dw:heard:a1"]');
+      await page.fill('#dwHeard', 'Zwei'); await page.click('[data-st-act="dw:heard:a1"]');
+      assert.deepEqual(sent(posts, 'dict:update').at(-1).payload, { id: 'a1', heard: ['Eins', 'Zwei'] });
+    } finally { await browser.close(); }
+  });
+
+  test('ein Begriff, der nicht mehr in die Hoerliste passt, sagt das', async () => {
+    const { browser, page } = await boot();
+    try {
+      await page.evaluate((s) => window.TMSBridge.setDictionary({ ...s, entries: s.entries.map((e) => (e.id === 'c3' ? { ...e, inPrompt: false } : { ...e, inPrompt: true })) }), STATE);
+      const text = await page.textContent('#dwList');
+      assert.match(text, /Fernzugriff[\s\S]*passt nicht mehr in die Hörliste/);
+    } finally { await browser.close(); }
+  });
+
+  test('HTML in Begriff und Kennung bleibt Text', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      await page.evaluate(() => window.TMSBridge.setDictionary({ entries: [{ id: 'x"><img src=x onerror=window.__pwned=1>', term: '<b onclick=1>fett</b>', heard: ['<i>x</i>'], source: 'manual', uses: 0, createdAt: 1 }], speed: { count: 0, medianMs: 0, under700: 0, waits: [] } }));
+      assert.equal(await page.$('#dwList img, #dwList b[onclick], #dwList i:not(.st-dot)') !== null && await page.evaluate(() => !!document.querySelector('#dwList img')), false);
+      assert.equal(await page.evaluate(() => window.__pwned), undefined);
+      assert.match(await page.textContent('#dwList'), /<b onclick=1>fett<\/b>/);
+      assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });
 

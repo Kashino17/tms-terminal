@@ -276,6 +276,17 @@ test('the dictionary fix is applied to every piece, also to one transcribed ahea
   assert.strictEqual(s.last('dictation:result').text, 'Stück 1 Stück 2');
 });
 
+// Review: the dictionary is a convenience — it must never cost a dictation.
+test('a throwing dictionary fix does not lose the dictation', async () => {
+  const h = streamed({ fix: () => { throw new Error('bad regexp'); } }); const s = sink();
+  h.mgr.start('d1', 'adts', s.fn);
+  h.mgr.chunk('d1', 0, bytes(50), s.fn);
+  h.mgr.end('d1', 50, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, 'seg1');
+  assert.strictEqual(s.last('dictation:error'), undefined);
+});
+
 test('whole-file uploads get the dictionary fix too', async () => {
   const h = harness({ fix: (t) => t.toUpperCase() }); const s = sink();
   h.mgr.start('d1', 'file', s.fn);

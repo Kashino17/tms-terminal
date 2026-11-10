@@ -329,7 +329,9 @@ export class DictationManager {
 
   private fixed(text: string): string {
     const t = text.trim();
-    return t && this.deps.fix ? this.deps.fix(t) : t;
+    if (!t || !this.deps.fix) return t;
+    // The dictionary is a convenience: if it fails, the words as heard are the result.
+    try { return this.deps.fix(t); } catch (err) { this.deps.log(`[dictation] dictionary fix failed (ignored): ${(err as Error).message}`); return t; }
   }
 
   /** Decide what the piece transcribed ahead is worth now that more audio (or the stop) has arrived. */

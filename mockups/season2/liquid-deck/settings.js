@@ -248,13 +248,21 @@
   const SOURCES = { manual: 'Von dir angelegt', seed: 'Mitgeliefert', learned: 'Automatisch gelernt' };
   const dwCard = (title, body, extra) => `<div class="dw-sec">${title ? `<div class="dw-sec__head"><h3>${title}</h3>${extra || ''}</div>` : ''}<div class="dw-card">${body}</div></div>`;
   const dwNote = (title, text) => `<div class="dw-card dw-state"><b>${title}</b><span>${text}</span></div>`;
-  /** Im Mockup ohne App: Änderungen bleiben lokal, damit man alles ausprobieren kann. */
+  /**
+   * Eine Änderung: sofort im gezeigten Stand nachziehen, dann an den Rechner.
+   * Sofort, weil die nächste Änderung auf dem gezeigten Stand aufbaut — zwei
+   * schnelle Tipps hintereinander würden sonst die erste Änderung zurückdrehen.
+   * Der Rechner antwortet mit seinem Stand; der gilt. (Im Mockup ohne App
+   * bleibt es beim lokalen Stand, damit man alles ausprobieren kann.)
+   */
   function dictSend(type, payload) {
-    if (LIVE()) return post(type, payload);
-    const d = Dict(), e = d.entries.find((x) => x.id === payload.id);
-    if (type === 'dict:add' && !d.entries.some((x) => x.term.toLowerCase() === payload.term.toLowerCase())) d.entries.unshift({ id: 'n' + Date.now(), term: payload.term, heard: [], source: 'manual', uses: 0, createdAt: Date.now() });
-    if (type === 'dict:update' && e) e.heard = payload.heard;
-    if (type === 'dict:remove') d.entries = d.entries.filter((x) => x.id !== payload.id);
+    const d = Dict(), e = d && d.entries ? d.entries.find((x) => x.id === payload.id) : null;
+    if (d && d.entries) {
+      if (type === 'dict:add' && !LIVE()) d.entries.unshift({ id: 'n' + Date.now(), term: payload.term, heard: [], source: 'manual', uses: 0, createdAt: Date.now() });
+      if (type === 'dict:update' && e) e.heard = payload.heard;
+      if (type === 'dict:remove') d.entries = d.entries.filter((x) => x.id !== payload.id);
+    }
+    post(type, payload);
     render(true);
   }
 
@@ -268,7 +276,7 @@
     const items = shown.map((e) => {
       const open = DW.open === e.id;
       return `<div class="dw-item${open ? ' is-open' : ''}" data-dw-term="${esc((e.term + ' ' + e.heard.join(' ')).toLowerCase())}">
-        <button type="button" class="dw-item__row" data-st-act="dw:open:${esc(e.id)}"><span class="dw-item__text"><b>${esc(e.term)}</b><small>${e.heard.length ? 'gehört als ' + e.heard.map(esc).join(', ') : 'wird beim Zuhören bevorzugt'}</small></span>
+        <button type="button" class="dw-item__row" data-st-act="dw:open:${esc(e.id)}"><span class="dw-item__text"><b>${esc(e.term)}</b><small>${e.heard.length ? 'gehört als ' + e.heard.map(esc).join(', ') : e.inPrompt === false ? 'passt nicht mehr in die Hörliste' : 'wird beim Zuhören bevorzugt'}</small></span>
           ${e.uses ? `<span class="dw-item__n">${e.uses}×</span>` : ''}<span class="st-chev st-chev--down">${ic('chev', 2)}</span></button>
         ${open ? `<div class="dw-item__more"><div class="dw-lab">Wird so gehört</div>
           <div class="dw-chips">${e.heard.map((h, i) => `<span class="dw-chip">${esc(h)}<button type="button" data-st-act="dw:unheard:${esc(e.id)}:${i}" aria-label="${esc(h)} entfernen">${ic('x', 2.4)}</button></span>`).join('') || '<span class="dw-none">Noch kein Hörfehler bekannt</span>'}</div>
@@ -280,7 +288,7 @@
         <button type="button" class="st-btn st-btn--accent" data-st-act="dw:add">Hinzufügen</button></div>
       <div class="dw-filter">${[['all', 'Alle'], ['manual', 'Von dir'], ['seed', 'Mitgeliefert']].map(([v, l]) => `<button type="button" class="${DW.filter === v ? 'is-on' : ''}" data-st-act="dw:filter:${v}">${l} <i>${count(v)}</i></button>`).join('')}</div>
       <div id="dwList">${items || '<p class="dw-none dw-none--pad">Hier ist noch nichts.</p>'}</div>`)
-      + '<p class="st-sec__note">Begriffe werden beim Zuhören bevorzugt. Trägst du zu einem Begriff ein, wie er falsch gehört wird, ersetzt das Diktat es von selbst — nur ganze Wörter, nie mitten im Wort.</p>';
+      + `<p class="st-sec__note">Begriffe werden beim Zuhören bevorzugt${d.entries.some((e) => e.inPrompt === false) ? ' — die Spracherkennung kann sich nur eine begrenzte Liste merken, deine eigenen kommen zuerst' : ''}. Trägst du zu einem Begriff ein, wie er falsch gehört wird, ersetzt das Diktat es von selbst — nur ganze Wörter, nie mitten im Wort.</p>`;
   }
   function dwDictation() {
     const d = Dict(), sp = d && d.speed;
@@ -699,7 +707,9 @@
   // Beim Zeigen frisch zeichnen (versteckt wird nicht gezeichnet).
   if (typeof SCREEN_HOOKS === 'object' && SCREEN_HOOKS) {
     const prev = SCREEN_HOOKS.settings;
-    SCREEN_HOOKS.settings = function () { if (prev) prev.apply(this, arguments); lastHtml = ''; render(true); };
+    // Beim Zeigen auch das Wörterbuch holen: aufgeklappt ist „Diktat & Sprache“ schon
+    // vorausgewählt, und die Zeile der Übersicht nennt Begriffe und Tempo.
+    SCREEN_HOOKS.settings = function () { if (prev) prev.apply(this, arguments); lastHtml = ''; render(true); post('dict:get'); };
   }
   // Update-Stand ändert Abzeichen/Karte.
   const prevUpd = window.__bundUpdateState;

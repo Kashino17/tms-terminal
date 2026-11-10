@@ -96,7 +96,7 @@ function send(ws: WebSocket, msg: ServerMessage): void {
 // One process-wide manager: sessions outlive the socket that started them, so
 // a reconnecting app resumes its dictation instead of losing it.
 /** Terms and mishearings of the dictation (the user edits them in the app). */
-export const dictionary = new DictionaryStore(path.join(os.homedir(), '.tms-terminal', 'dictionary.json'));
+export const dictionary = new DictionaryStore(path.join(os.homedir(), '.tms-terminal', 'dictionary.json'), undefined, (m) => logger.warn(m));
 /** Stop -> text timings of the last 50 dictations (numbers only). */
 export const dictationStats = new DictationStatsStore(path.join(os.homedir(), '.tms-terminal', 'dictation-stats.json'));
 const dictations = new DictationManager({
@@ -989,7 +989,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           send(ws, { type: 'audio:progress', sessionId, payload: { chunk: info.chunk, total: info.total, text: info.text } });
         },
       }).then((raw) => {
-        const text = dictionary.fix(raw);
+        let text = raw;
+        try { text = dictionary.fix(raw); } catch { /* the words as heard */ }
         logger.info(`[whisper] audio:transcribe done in ${Date.now() - legacyStartedAt}ms, ${text.length} chars`);
         send(ws, { type: 'audio:transcription', sessionId, payload: { text } });
       }).catch((err) => {

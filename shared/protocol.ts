@@ -491,7 +491,7 @@ export interface DictationResultMessage   { type: 'dictation:result';   payload:
 export interface DictationErrorMessage    { type: 'dictation:error';    payload: { id: string; message: string } }
 
 /** A dictionary entry: the right spelling and the ways it gets misheard. */
-export interface DictEntryPayload { id: string; term: string; heard: string[]; source: 'seed' | 'manual' | 'learned'; uses: number; createdAt: number }
+export interface DictEntryPayload { id: string; term: string; heard: string[]; source: 'seed' | 'manual' | 'learned'; uses: number; createdAt: number; /** fits into what the transcriber is told to listen for */ inPrompt?: boolean }
 /** Stop -> text of the last dictations in ms (oldest first), their median and the share within 700ms. */
 export interface DictSpeedPayload { count: number; medianMs: number; under700: number; waits: number[] }
 export interface DictStateMessage { type: 'dict:state'; payload: { entries: DictEntryPayload[]; speed: DictSpeedPayload } }

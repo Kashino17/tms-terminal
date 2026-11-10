@@ -32,6 +32,7 @@ import { clearDurableStorage } from '../services/durableStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CHECK_EVERY_MS, RESUME_GAP_MS, shouldCheck } from '../services/update.core.mjs';
 import { getConnection, setConnectionsPingMode, type WebSocketService } from '../services/websocket.service';
+import { createDictRelay } from './dictRelay.core.mjs';
 import { planAttention, pingMode } from './attention.core.mjs';
 import { useS2ConnStore, useS2Connection, type S2Server } from './s2conn/connection';
 import {
@@ -268,7 +269,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   const speechDevRef = useRef<string | null>(null);
   // Wörterbuch + Tempo liegen auf dem Rechner, der diktiert (server/src/audio/dictionary.ts).
   const dictDevRef = useRef<string | null>(null);
-  const dictAnsweredAt = useRef(0);
+  const dictRelayRef = useRef<ReturnType<typeof createDictRelay> | null>(null);
   const rem = useRef<{ run: RemVoiceRun; dev: string; parts: string[]; german: boolean; heard: boolean; watchdog: ReturnType<typeof setTimeout> | null } | null>(null);
   const speakOnPhone = useCallback((parts: string[], german: boolean) => {
     const speech = NativeModules.TmsSpeech as { speak?: (parts: string[], german: boolean) => Promise<boolean> } | undefined;
@@ -433,6 +434,13 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   //    (Zwischenablage, Mac-Entsperren, Browser-Brücke …), jedes weitere
   //    Gerät nur seine Terminals (terminal:*). So stehen die Terminals aller
   //    Geräte nebeneinander in einer Leiste.
+  /** Was die Seite über das Wörterbuch erfährt, wenn die Antwort ausbleibt (dictRelay.core.mjs). */
+  const dictRelay = useCallback(() => {
+    if (!dictRelayRef.current) {
+      dictRelayRef.current = createDictRelay({ show: (data) => call('setDictionary', data), later: (fn, ms) => { setTimeout(fn, ms); } });
+    }
+    return dictRelayRef.current;
+  }, [call]);
   const makeHandler = useCallback((srvId: string, conn: WebSocketService, primary: boolean) => {
     /** Titel vom Server in den Speicher UND auf die Karte. */
     const applyServerTitle = (sessionId: string, title: string) => {
@@ -444,10 +452,7 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
     return (m: any) => {
       // ── Wörterbuch + Tempo: nur vom Rechner, der diktiert ──
-      if (m?.type === 'dict:state') {
-        if (srvId === dictDevRef.current) { dictAnsweredAt.current = Date.now(); call('setDictionary', m.payload); }
-        return;
-      }
+      if (m?.type === 'dict:state') { dictRelay().state(srvId, dictDevRef.current, m.payload ?? {}); return; }
       // ── Gemeinsame Zwischenablage (server/src/clipboard) ──
       // Der Verlauf liegt auf dem Handy (bund/clipboardStore). Jedes Gerät meldet
       // seine Kopien; den alten Server-Verlauf übernehmen wir genau einmal.
@@ -499,6 +504,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
       }
       // ── Titel: der Server ist die Quelle der Wahrheit (titles.store.ts) ──
       if (m?.type === 'terminal:titles') {
+        // Kommt bei jedem (Wieder-)Verbinden: eine liegengebliebene Wörterbuch-Anfrage jetzt nachholen.
+        dictRelay().connected(srvId, dictDevRef.current, (msg) => conn.send(msg as never));
         const serverTitles: Record<string, string> = m.payload?.titles ?? {};
         for (const [sid, title] of Object.entries(serverTitles)) applyServerTitle(sid, title);
         // Einmaliges Hochladen: Titel, die bisher nur auf diesem Handy lagen
@@ -1457,12 +1464,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     if (type === 'settings:set') { applySetting(String(payload?.key ?? ''), payload?.value); return; }
     // ── Wörterbuch: die Seite spricht mit dem Rechner, der diktiert — wir reichen nur durch ──
     if (type === 'dict:get' || type === 'dict:add' || type === 'dict:update' || type === 'dict:remove') {
-      const conn = dictDevRef.current ? getConnection(dictDevRef.current) : null;
-      if (!conn) { call('setDictionary', { offline: true }); return; }
-      const askedAt = Date.now();
-      conn.send({ type, payload: payload ?? {} } as never);
-      // Ein Server von vor dem Wörterbuch antwortet nie: das sagen, statt ewig zu laden.
-      if (type === 'dict:get') setTimeout(() => { if (dictAnsweredAt.current < askedAt) call('setDictionary', { unsupported: true }); }, 4000);
+      const dev = dictDevRef.current;
+      dictRelay().ask(type, payload ?? {}, dev, (msg) => (dev ? getConnection(dev).send(msg as never) : false));
       return;
     }
     if (type === 'bubble:snooze') { dictationBubble.snooze(); setTimeout(pushBubbleStatus, 300); return; }
