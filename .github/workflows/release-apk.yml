@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Schneller und sparsamer: Die Diktat-Bubble zeichnet nicht mehr dauernd, wenn sie nur dasteht. Die Arbeitsflaeche (Terminal, Tasten, Eingabezeile) ist jetzt matt - am Fold doppelt so schnell gezeichnet; Glas bleibt in Einstellungen > Darstellung waehlbar. Ist die App nicht zu sehen, ruht sie fast ganz: seltene Pings, kein Dauer-Wachhalten mehr. Mit dem naechsten Server-Update werden auch verdeckte Terminals gebuendelt uebertragen. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Fernzugriff sparsamer: Bleibt eine Sitzung nur gehalten (du arbeitest im Terminal weiter oder die App ist im Hintergrund), gibt das Handy den Video-Dekoder frei. Mit dem naechsten Server-Update pausiert dann auch der Rechner seine Aufnahme, statt jedes Bild zu berechnen und wegzuwerfen - beim Zurueckkehren ist das Bild sofort wieder da. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
