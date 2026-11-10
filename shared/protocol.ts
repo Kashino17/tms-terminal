@@ -111,6 +111,15 @@ export interface AppStateMessage {
   type: 'client:app_state';
   payload: { foreground: boolean };
 }
+/**
+ * What the app is showing — the server paces terminal output by it
+ * (server/src/websocket/output.pacer.ts). focus: null = several terminals
+ * visible, '' = none, otherwise the session in front.
+ */
+export interface AttentionMessage {
+  type: 'client:attention';
+  payload: { foreground: boolean; focus: string | null };
+}
 export interface ActiveTabMessage {
   type: 'client:active_tab';
   payload: { tabId: string; sessionId?: string };
@@ -236,6 +245,7 @@ export type ClientMessage =
   | DictationResumeMessage
   | FileUploadMessage
   | AppStateMessage
+  | AttentionMessage
   | ActiveTabMessage
   | BrowserBridgeToggleMessage
   | BrowserBridgeCallbackMessage

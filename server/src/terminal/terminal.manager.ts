@@ -273,7 +273,10 @@ export class TerminalManager {
    *  Installs a buffer callback so any PTY output while detached is captured. */
   /** Detach a session. If `expectedGen` is provided and doesn't match the current
    *  attach generation, the detach is stale (a newer reattach already happened) and is skipped. */
-  detachSession(sessionId: string, expectedGen?: number): void {
+  /** `undelivered`: output this connection's pacer still held back (see
+   *  websocket/output.pacer.ts). The client never saw it — it starts the
+   *  missed-output buffer, so the next reattach knows the client is behind. */
+  detachSession(sessionId: string, expectedGen?: number, undelivered = ''): void {
     if (!this.sessions.has(sessionId)) return;
     // If a generation is specified, only proceed if it matches the current one.
     // This prevents an old connection's close handler from overwriting a newer reattach's callbacks.
@@ -284,6 +287,7 @@ export class TerminalManager {
     }
     this.closeCallbacks.delete(sessionId);
     this.attachedIds.delete(sessionId);
+    if (undelivered) this.reattachBuffers.set(sessionId, (this.reattachBuffers.get(sessionId) || '') + undelivered);
 
     // Snapshot CWD and foreground process before the client goes away (async, best-effort)
     const session = this.sessions.get(sessionId)!;

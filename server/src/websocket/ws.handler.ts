@@ -24,6 +24,7 @@ import { handleDictationMessage, createDictationConnectionHandler } from '../aud
 import { decodeToFloat32 } from '../audio/ffmpeg-decode';
 import { captureSoon } from '../terminal/restore/snapshotter';
 import { ConnectionRateLimiter } from './rate-limiter';
+import { createOutputPacer } from './output.pacer';
 import { browserBridge } from '../browserbridge/browserbridge.manager';
 import { asPaste } from '../terminal/paste.policy';
 import { titleStore } from '../terminal/titles';
@@ -275,6 +276,17 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   // Per-connection rate limiter
   const rateLimiter = new ConnectionRateLimiter();
 
+  // Output pacing (see output.pacer.ts): covered terminals in bundles, a
+  // backgrounded app almost nothing — same bytes, same order, fewer wake-ups.
+  const pacer = createOutputPacer((sid, data) => {
+    send(ws, { type: 'terminal:output', sessionId: sid, payload: { data } });
+  });
+  /** Send what the pacer still holds for a session (it is about to end). */
+  const flushPaced = (sid: string): void => {
+    const rest = pacer.take(sid);
+    if (rest) send(ws, { type: 'terminal:output', sessionId: sid, payload: { data: rest } });
+  };
+
   logger.success(`Client connected: ${ip}`);
   liveSockets.add(ws);
   send(ws, { type: 'terminal:titles', payload: { titles: titleStore.all() } });
@@ -513,7 +525,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     const session = globalManager.reattachSession(
       sessionId,
       (sid, data) => {
-        send(ws, { type: 'terminal:output', sessionId: sid, payload: { data } });
+        pacer.push(sid, data);
         promptDetector.feed(sid, data);
         screenPromptWatcher.poke(sid);
         idleDetector.activity(sid);
@@ -531,6 +543,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         autopilotService.clearSession(sid);
         const apTimer = autopilotTimers.get(sid);
         if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sid); }
+        flushPaced(sid);
         send(ws, { type: 'terminal:closed', sessionId: sid, payload: { exitCode } });
         forgetTitle(sid);
       },
@@ -580,7 +593,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       logger.info(`Client backgrounding — detaching all sessions (${ownedSessions.size} sessions)`);
       for (const sessionId of ownedSessions) {
         const gen = sessionGens.get(sessionId);
-        globalManager.detachSession(sessionId, gen);
+        globalManager.detachSession(sessionId, gen, pacer.take(sessionId));
       }
       // Do NOT close the WebSocket — the client will close it from their side
       return;
@@ -749,6 +762,13 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
     if (msg.type === 'client:active_tab') {
+      return;
+    }
+    // What the app is showing right now — drives the output pacer.
+    // focus: null = several terminals visible / unknown, '' = none, id = that one in front.
+    if (msg.type === 'client:attention') {
+      const p: { foreground?: unknown; focus?: unknown } = msg.payload ?? {};
+      pacer.setAttention(p.foreground !== false, typeof p.focus === 'string' ? p.focus : null);
       return;
     }
 
@@ -986,7 +1006,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           const session = globalManager.createSession(
             { cols, rows },
             (sessionId, data) => {
-              send(ws, { type: 'terminal:output', sessionId, payload: { data } });
+              pacer.push(sessionId, data);
               promptDetector.feed(sessionId, data);
               screenPromptWatcher.poke(sessionId);
               idleDetector.activity(sessionId);
@@ -1004,6 +1024,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
               autopilotService.clearSession(sessionId);
               const apTimer = autopilotTimers.get(sessionId);
               if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sessionId); }
+              flushPaced(sessionId);
               send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
               forgetTitle(sessionId);
             },
@@ -1114,6 +1135,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           });
           break;
         }
+
+        // Wer tippt, sieht sofort: dieses Terminal antwortet für kurze Zeit
+        // ungebremst, egal was die App als „vorne" gemeldet hat.
+        pacer.noteInput(msg.sessionId);
 
         // SELBSTHEILUNG: Eine LEBENDE Verbindung tippt in eine ABGEHÄNGTE Session.
         //
@@ -1273,8 +1298,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
     for (const sessionId of ownedSessions) {
       const gen = sessionGens.get(sessionId);
-      globalManager.detachSession(sessionId, gen);
+      // What the pacer still held never reached the app — hand it over as missed output.
+      globalManager.detachSession(sessionId, gen, pacer.take(sessionId));
     }
+    pacer.dispose();
     ownedSessions.clear();
     sessionGens.clear();
   });
@@ -1284,8 +1311,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     if (currentWs === ws) currentWs = null;
     for (const sessionId of ownedSessions) {
       // Do NOT unwatch promptDetector — same rationale as ws.on('close')
-      globalManager.detachSession(sessionId);
+      globalManager.detachSession(sessionId, undefined, pacer.take(sessionId));
     }
+    pacer.dispose();
     ownedSessions.clear();
   });
 }
