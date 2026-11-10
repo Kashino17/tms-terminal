@@ -17,7 +17,6 @@ function manager() {
   return new DictationManager({
     decode: async (b) => new Float32Array(b.length * 1600).fill(0.3),
     transcribeWav: async () => 'hallo',
-    rewrite: async (t) => t,
     now: () => 0,
     log: () => {},
   }, { decodeThrottleMs: 0 });
@@ -70,4 +69,12 @@ test('a socket error on a dictation connection does not throw', () => {
   const ws = fakeWs();
   createDictationConnectionHandler(manager(), () => {})(ws, 'x');
   assert.doesNotThrow(() => ws.emit('error', new Error('Invalid WebSocket frame')));
+});
+
+// The "KI-Prompt" rewriter is gone; an app that still sends the flag must keep working.
+test('enhance from an old app is accepted and ignored', () => {
+  const sent: any[] = [];
+  const mgr = new DictationManager({ decode: async () => new Float32Array(0), transcribeWav: async () => 'x', now: () => 0, log: () => {} });
+  assert.strictEqual(handleDictationMessage(mgr, { type: 'dictation:start', payload: { id: 'old1', format: 'adts', enhance: true } }, (m) => sent.push(m)), true);
+  assert.strictEqual(sent[0].type, 'dictation:ack');
 });

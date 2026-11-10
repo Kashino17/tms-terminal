@@ -94,11 +94,19 @@ export interface AudioTranscribeMessage {
 // The app uploads the growing recording in byte-offset chunks while the user
 // speaks; the server transcribes ahead. Sessions are keyed by `id`, not by
 // socket, so a reconnect resumes them (see server/src/audio/dictation.ts).
+/** `enhance` belonged to the removed prompt rewriter; old apps may still send it, the server ignores it. */
 export interface DictationStartMessage  { type: 'dictation:start';  payload: { id: string; format: 'adts' | 'file'; enhance?: boolean } }
 export interface DictationChunkMessage  { type: 'dictation:chunk';  payload: { id: string; offset: number; data: string } }
 export interface DictationEndMessage    { type: 'dictation:end';    payload: { id: string; totalBytes: number } }
 export interface DictationCancelMessage { type: 'dictation:cancel'; payload: { id: string } }
 export interface DictationResumeMessage { type: 'dictation:resume'; payload: { id: string } }
+
+// ── Dictation dictionary (settings page ⇄ the machine that transcribes) ──
+// Every request is answered with `dict:state`; a change goes to all connected apps.
+export interface DictGetMessage    { type: 'dict:get';    payload?: Record<string, never> }
+export interface DictAddMessage    { type: 'dict:add';    payload: { term: string } }
+export interface DictUpdateMessage { type: 'dict:update'; payload: { id: string; term?: string; heard?: string[] } }
+export interface DictRemoveMessage { type: 'dict:remove'; payload: { id: string } }
 
 // ── File Upload (Client → Server) ────────────────────────────────
 export interface FileUploadMessage {
@@ -266,6 +274,10 @@ export type ClientMessage =
   | DictationEndMessage
   | DictationCancelMessage
   | DictationResumeMessage
+  | DictGetMessage
+  | DictAddMessage
+  | DictUpdateMessage
+  | DictRemoveMessage
   | FileUploadMessage
   | AppStateMessage
   | AttentionMessage
@@ -478,6 +490,12 @@ export interface DictationProgressMessage { type: 'dictation:progress'; payload:
 export interface DictationResultMessage   { type: 'dictation:result';   payload: { id: string; text: string } }
 export interface DictationErrorMessage    { type: 'dictation:error';    payload: { id: string; message: string } }
 
+/** A dictionary entry: the right spelling and the ways it gets misheard. */
+export interface DictEntryPayload { id: string; term: string; heard: string[]; source: 'seed' | 'manual' | 'learned'; uses: number; createdAt: number }
+/** Stop -> text of the last dictations in ms (oldest first), their median and the share within 700ms. */
+export interface DictSpeedPayload { count: number; medianMs: number; under700: number; waits: number[] }
+export interface DictStateMessage { type: 'dict:state'; payload: { entries: DictEntryPayload[]; speed: DictSpeedPayload } }
+
 export interface AudioErrorMessage {
   type: 'audio:error';
   sessionId: string;
@@ -602,6 +620,7 @@ export type ServerMessage =
   | DictationProgressMessage
   | DictationResultMessage
   | DictationErrorMessage
+  | DictStateMessage
   | TerminalCreatedMessage
   | TerminalOutputMessage
   | TerminalClosedMessage

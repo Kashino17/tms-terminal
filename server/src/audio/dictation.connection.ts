@@ -37,7 +37,8 @@ export function handleDictationMessage(manager: DictationManager, msg: { type?: 
   };
   switch (type) {
     case 'dictation:start':
-      manager.start(id, p.format === 'adts' ? 'adts' : 'file', p.enhance === true, sink);
+      // `enhance` (the removed prompt rewriter) may still arrive from an old app: ignored.
+      manager.start(id, p.format === 'adts' ? 'adts' : 'file', sink);
       break;
     case 'dictation:chunk': {
       const offset = p.offset;

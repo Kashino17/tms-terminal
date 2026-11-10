@@ -45,7 +45,6 @@ const mgr = new DictationManager({
   decode: decodeToFloat32,
   openPcm: () => new AdtsPcm((b) => decodeToFloat32(b, 'adts')),
   transcribeWav: (b64) => { calls++; return transcribe(b64); },
-  rewrite: async (t) => t,
   onDone: (s) => { lastStat = s; },
   now: () => Date.now(),
   log: (m) => { if (args.includes('--verbose')) console.log('   ', m); },
@@ -75,7 +74,7 @@ async function run(label: string, bytesPerSec: number, dropPieceAt: number | nul
     if (ev.type === 'dictation:result') { result = ev.text; doneAt = Date.now(); }
     if (ev.type === 'dictation:error') { console.error('ERROR', ev.message); process.exit(1); }
   };
-  mgr.start(id, 'adts', false, sink);
+  mgr.start(id, 'adts', sink);
   const tailFrom = adts.length - tailSecs * bytesPerSec;
   let n = 0;
   for (let off = 0; off < adts.length; off += piece, n++) {

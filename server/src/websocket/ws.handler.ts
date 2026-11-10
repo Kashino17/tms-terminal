@@ -17,14 +17,14 @@ import { screenPromptWatcher, setScreenSource } from '../notifications/prompt.wa
 import { promptFingerprint, type PromptClass } from '../notifications/prompt.classifier';
 import { isAutoApprove, setAutoApprove, clearAutoApprove } from './auto.approve.state';
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
-import { rewrite as rewritePrompt } from '../audio/prompt-rewriter-sidecar';
 import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
-import { DictationManager, acceptRewrite } from '../audio/dictation';
+import { DictationManager } from '../audio/dictation';
 import { handleDictationMessage, createDictationConnectionHandler } from '../audio/dictation.connection';
 import { decodeToFloat32 } from '../audio/ffmpeg-decode';
 import { AdtsPcm } from '../audio/adts-pcm';
 import { DictationStatsStore } from '../audio/dictation.stats';
 import { DictionaryStore } from '../audio/dictionary';
+import { handleDictionaryMessage } from '../audio/dictionary.connection';
 import { captureSoon } from '../terminal/restore/snapshotter';
 import { ConnectionRateLimiter } from './rate-limiter';
 import { createOutputPacer } from './output.pacer';
@@ -105,7 +105,6 @@ const dictations = new DictationManager({
   onDone: (stat) => dictationStats.record(stat),
   transcribeWav: (wavBase64) => whisperTranscribe(wavBase64, { prompt: dictionary.prompt() }),
   fix: (text) => dictionary.fix(text),
-  rewrite: (text) => rewritePrompt(text),
   now: () => Date.now(),
   log: (msg) => logger.info(msg),
 });
@@ -955,12 +954,14 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
 
     if (handleDictationMessage(dictations, msg, (m) => send(ws, m as ServerMessage))) return;
+    // The dictionary of this machine: answered to the asker, changes go to every connected app.
+    if (handleDictionaryMessage(dictionary, dictationStats, msg, (m) => send(ws, m as ServerMessage),
+      (m) => { for (const sock of liveSockets) send(sock, m as ServerMessage); })) return;
 
     if (msg.type === 'audio:transcribe') {
       const sessionId = isValidSessionId(msg.sessionId) ? msg.sessionId : '__dictation__';
       const audio = msg.payload?.audio;
       const format = msg.payload?.format;
-      const enhance = msg.payload?.enhance === true;
 
       if (typeof audio !== 'string' || audio.length === 0) {
         send(ws, { type: 'audio:error', sessionId, payload: { message: 'Keine Audiodaten empfangen' } });
@@ -974,7 +975,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       // MLX sidecar uses a single model for all lengths; no per-size model switch.
       // Keep-alive heartbeat: the app gives up after 25s without any audio
       // message, but single-chunk audio (<~72s) yields no progress events and
-      // a cold sidecar start or the enhance rewrite can exceed 25s. chunk 0 is
+      // a cold sidecar start can exceed 25s. chunk 0 is
       // never emitted by the sidecar, so clients that render chunk numbers
       // skip it while the inactivity watchdogs still reset.
       const keepAlive = setInterval(() => {
@@ -983,24 +984,14 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
       const legacyStartedAt = Date.now();
       whisperTranscribe(audio, {
+        prompt: dictionary.prompt(),
         onProgress: (info) => {
           send(ws, { type: 'audio:progress', sessionId, payload: { chunk: info.chunk, total: info.total, text: info.text } });
         },
-      }).then(async (text) => {
-        logger.info(`[whisper] audio:transcribe done in ${Date.now() - legacyStartedAt}ms, ${text.length} chars${enhance ? ' (enhance next)' : ''}`);
-        if (!enhance || !text.trim()) {
-          send(ws, { type: 'audio:transcription', sessionId, payload: { text } });
-          return;
-        }
-        try {
-          const enhanced = acceptRewrite(text, await rewritePrompt(text));
-          send(ws, { type: 'audio:transcription', sessionId, payload: { text: enhanced } });
-        } catch (rewriteErr) {
-          const reason = rewriteErr instanceof Error ? rewriteErr.message : String(rewriteErr);
-          logger.warn(`[rewriter] Falling back to raw transcript: ${reason}`);
-          // Soft-fail: still deliver the raw Whisper text so the user is never blocked.
-          send(ws, { type: 'audio:transcription', sessionId, payload: { text } });
-        }
+      }).then((raw) => {
+        const text = dictionary.fix(raw);
+        logger.info(`[whisper] audio:transcribe done in ${Date.now() - legacyStartedAt}ms, ${text.length} chars`);
+        send(ws, { type: 'audio:transcription', sessionId, payload: { text } });
       }).catch((err) => {
         const message = err instanceof Error ? err.message : 'Transkription fehlgeschlagen';
         logger.warn(`[whisper] Transcription failed after ${Date.now() - legacyStartedAt}ms: ${message}`);

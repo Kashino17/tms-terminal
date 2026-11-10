@@ -28,7 +28,6 @@ import { usePtyKeeper } from './terminal/terminal.factory';
 import { titleStore } from './terminal/titles';
 import { clipboardHub } from './clipboard';
 import { shutdown as shutdownWhisper, prewarm as prewarmWhisper, dictationAvailable } from './audio/whisper-sidecar';
-import { shutdown as shutdownRewriter, prewarm as prewarmRewriter } from './audio/prompt-rewriter-sidecar';
 import { isAutoApprove, setAutoApprove } from './websocket/auto.approve.state';
 
 // ── Global error handlers ────────────────────────────────────────────
@@ -259,7 +258,6 @@ async function main(): Promise<void> {
     // Warm both audio sidecars in the background so the first dictation after
     // a server restart never pays the model-load (or iCloud re-download) cost.
     void prewarmWhisper();
-    void prewarmRewriter();
   });
 
   // Graceful shutdown
@@ -275,7 +273,6 @@ async function main(): Promise<void> {
     void titleStore.flush();
     clipboardHub.stop();
     shutdownWhisper();
-    shutdownRewriter();
     shutdownVoice();
 
     // Letzte, exakte Aufnahme — fuer den Fall, dass auch der Waechter nicht

@@ -22,7 +22,6 @@ export interface DictationDeps {
   /** Decode the bytes received so far to 16 kHz mono float32. */
   decode(bytes: Buffer, format: DictationFormat): Promise<Float32Array>;
   transcribeWav(wavBase64: string): Promise<string>;
-  rewrite(text: string): Promise<string>;
   /** Corrects known mishearings in a transcribed piece (the dictionary). */
   fix?: (text: string) => string;
   /** Incremental decoder for a streamed ('adts') recording. Without it the whole upload is decoded on each pass. */
@@ -62,7 +61,6 @@ const AHEAD_PAD_SECS = 0.15;
 interface Session {
   id: string;
   format: DictationFormat;
-  enhance: boolean;
   sink: Sink;
   parts: Buffer[];
   pcm: PcmStream | null;      // streamed recordings: decoded incrementally, `parts` stays empty
@@ -101,14 +99,6 @@ interface Session {
   doneAtStop: number;         // sample up to which a finished text existed when the stop arrived
 }
 
-/** Use the rewrite unless it lost more than half of the words (truncation/hallucination guard). */
-export function acceptRewrite(original: string, rewritten: string): string {
-  const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
-  const rw = (rewritten ?? '').trim();
-  if (!rw) return original;
-  return words(rw) < words(original) * 0.5 ? original : rw;
-}
-
 export class DictationManager {
   private sessions = new Map<string, Session>();
   private readonly throttleMs: number;
@@ -125,19 +115,19 @@ export class DictationManager {
     this.cut = opts.cut ?? nextCut;
   }
 
-  start(id: string, format: DictationFormat, enhance: boolean, sink: Sink): void {
+  start(id: string, format: DictationFormat, sink: Sink): void {
     let s = this.sessions.get(id);
     if (!s) {
       const now = this.deps.now();
       s = {
-        id, format, enhance, sink, parts: [], pcm: format === 'adts' && this.deps.openPcm ? this.deps.openPcm() : null,
+        id, format, sink, parts: [], pcm: format === 'adts' && this.deps.openPcm ? this.deps.openPcm() : null,
         received: 0, status: 'receiving', endTotal: null,
         cursor: 0, texts: [], work: Promise.resolve(), passQueued: false, lastPassAt: 0,
         throttleTimer: null, heartbeat: null, cancelled: false, lastActivity: now, startedAt: now,
         endedAt: 0, finishedAt: 0, text: '', error: '', computeMs: 0, audioSecs: 0, bytesPerSec: 0, restSecs: 0, restMeasured: false, spec: null, specRejected: null, specHit: false, doneAtStop: 0,
       };
       this.sessions.set(id, s);
-      this.deps.log(`[dictation] ${id}: start (${format}${enhance ? ', enhance' : ''})`);
+      this.deps.log(`[dictation] ${id}: start (${format})`);
     }
     s.sink = sink;
     sink({ type: 'dictation:ack', id, bytes: s.received });
@@ -383,14 +373,7 @@ export class DictationManager {
           this.deps.log(`[dictation] ${s.id}: final pass failed, retrying once: ${(err as Error).message}`);
           await this.transcribeReady(s, true);
         }
-        let text = s.texts.filter(Boolean).join(' ');
-        if (s.enhance && text.trim() && !s.cancelled) {
-          try {
-            text = acceptRewrite(text, await this.deps.rewrite(text));
-          } catch (err) {
-            this.deps.log(`[dictation] ${s.id}: rewrite failed, using raw text: ${(err as Error).message}`);
-          }
-        }
+        const text = s.texts.filter(Boolean).join(' ');
         s.text = text;
         s.status = 'done';
         this.deps.log(`[dictation] ${s.id}: done — ${s.audioSecs.toFixed(1)}s audio, ${this.deps.now() - s.endedAt}ms stop->result, rest ${s.restSecs.toFixed(1)}s${s.specHit ? ' (ready ahead)' : ''}, compute ${s.computeMs}ms, ${text.length} chars`);

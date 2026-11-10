@@ -33,7 +33,6 @@ const mgr = new DictationManager({
     if (process.env.DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.DELAY_MS)));
     return text;
   },
-  rewrite: async (t) => t,
   now: () => Date.now(),
   log: (m) => console.log(new Date().toISOString().slice(11, 19), m),
 });
