@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Schneller und sparsamer: Getipptes erscheint ohne die bisherige feste Wartezeit von 60 ms. Die App fragt die Leitung nur noch so oft ab wie noetig (alle 3 s nur, wenn ein Ping-Wert zu sehen ist). Mit dem naechsten Server-Update fliessen im Hintergrund gar keine Terminal-Daten mehr - bei der Rueckkehr ist der Stand sofort da. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Neu: Antwort lesen. Das Buch am Terminal zeigt Claudes letzte Antwort sauber gesetzt - mit echten Tabellen, Code zum Kopieren, Schriftgroesse, aelteren Antworten und Vorlesen. Und unter dem Titel steht jetzt, woran das Terminal gerade arbeitet, statt LAEUFT/BEREIT. Beides braucht das naechste Server-Update (tms-terminal update); Antworten lesen geht in Terminals, die danach neu geoeffnet wurden. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
