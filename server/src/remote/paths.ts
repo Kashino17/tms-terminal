@@ -68,3 +68,8 @@ export function winCurtainScriptPath(): string {
 export function winDisplayScriptPath(): string {
   return path.join(serverRoot(), 'src', 'remote', 'helpers', 'win', 'display-helper.ps1');
 }
+
+/** `<root>/src/remote/helpers/win/clipboard-helper.ps1` — shared clipboard on Windows. */
+export function winClipboardScriptPath(): string {
+  return path.join(serverRoot(), 'src', 'remote', 'helpers', 'win', 'clipboard-helper.ps1');
+}

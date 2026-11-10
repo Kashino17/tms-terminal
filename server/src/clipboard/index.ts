@@ -7,7 +7,9 @@ import * as path from 'node:path';
 import { config, loadServerConfig } from '../config';
 import { getPlatform } from '../utils/platform';
 import { ClipboardStore, type ClipChange, type ClipItem } from './clipboard.store';
-import { startMacClipboardWatcher, type MacClipboardWatcher } from './mac.watcher';
+import { startMacClipboardWatcher } from './mac.watcher';
+import { startWinClipboardWatcher } from './win.watcher';
+import type { ClipboardWatcher } from './line.watcher';
 
 export type ClipEvent =
   | { kind: 'added'; change: ClipChange }
@@ -15,7 +17,7 @@ export type ClipEvent =
 
 const store = new ClipboardStore(path.join(config.configDir, 'clipboard.json'));
 const listeners = new Set<(ev: ClipEvent) => void>();
-let watcher: MacClipboardWatcher | null = null;
+let watcher: ClipboardWatcher | null = null;
 
 function emit(ev: ClipEvent): void {
   for (const fn of listeners) { try { fn(ev); } catch { /* one bad listener must not stop the rest */ } }
@@ -28,11 +30,15 @@ export function isClipboardSyncEnabled(): boolean {
 
 export const clipboardHub = {
   start(): void {
-    if (watcher || !isClipboardSyncEnabled() || getPlatform() !== 'darwin') return;
-    watcher = startMacClipboardWatcher((text) => {
+    if (watcher || !isClipboardSyncEnabled()) return;
+    // 'mac' = "copied on this computer" (also on Windows; the app files it under the device).
+    const onCopy = (text: string): void => {
       const change = store.add(text, 'mac');
       if (change) emit({ kind: 'added', change });
-    });
+    };
+    const platform = getPlatform();
+    if (platform === 'darwin') watcher = startMacClipboardWatcher(onCopy);
+    else if (platform === 'win32') watcher = startWinClipboardWatcher(onCopy);
   },
   stop(): void {
     watcher?.stop();
@@ -44,7 +50,7 @@ export const clipboardHub = {
     return () => listeners.delete(fn);
   },
   list(): ClipItem[] { return store.list(); },
-  /** Copied on the phone: into the history and onto the Mac's pasteboard (paste there with ⌘V). */
+  /** Copied on the phone: into the history and onto this computer's clipboard (⌘V / Strg+V). */
   addFromPhone(text: string): void {
     const change = store.add(text, 'phone');
     if (!change) return;
