@@ -19,6 +19,7 @@
   header.setAttribute('aria-label', 'Aktive Terminal-Sitzung');
   header.innerHTML = `<button id="compactSessionPicker" aria-haspopup="dialog" aria-controls="compactSessions" aria-label="Sitzung wechseln">
     <span class="compact-session-tag"></span><span class="compact-session-label"><strong></strong><small></small></span>${icon('chevron', 16)}</button>
+    <button id="compactRead" aria-label="Letzte Antwort lesen" title="Antwort lesen"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/><path d="M8.5 7.5h7M8.5 11h5"/></svg></button>
     <button id="compactReading" aria-label="Lesefokus einschalten" aria-pressed="false">${icon('eye', 20)}</button>
     <button id="compactMenu" aria-label="Terminal-Menü öffnen" aria-haspopup="dialog" aria-controls="compactSettings">${icon('dotsV', 20)}</button>`;
   body.appendChild(header);
@@ -107,6 +108,7 @@
     schedule();
   }
   header.querySelector('#compactReading').addEventListener('click', () => setReading(!reading));
+  header.querySelector('#compactRead').addEventListener('click', () => { if (window.TMSReader) window.TMSReader.open(target()); });
   resume.addEventListener('click', () => { setReading(false); body.classList.remove('compact-reading'); setDockPage('term'); input.focus({ preventScroll: true }); });
   sessions.querySelector('.compact-dialog__add').addEventListener('click', () => { sessions.close(); addTerminal(); schedule(); });
   settings.querySelector('#compactSessionMenu').addEventListener('click', () => {
@@ -158,7 +160,12 @@
     root.style.setProperty('--compact-keys-h', keysHeight + 'px');
     const session = TMS_DATA.sessions.find(item => item.id === target());
     header.querySelector('strong').textContent = session?.name || 'Keine Sitzung';
-    header.querySelector('small').textContent = session ? [(window.__devShort ? window.__devShort((TMS_DATA.servers || []).find(x => x.id === session.server)) : ''), folderLabel(session.cwd || ''), STATUS_LABELS[session.status] || session.status].filter(Boolean).join(' · ') : 'Sitzung hinzufügen';
+    // Statt „Läuft/Bereit": woran gerade gearbeitet wird (mit Zustandspunkt).
+    header.querySelector('small').innerHTML = session
+      ? [(window.__devShort ? window.__devShort((TMS_DATA.servers || []).find(x => x.id === session.server)) : ''), folderLabel(session.cwd || '')].filter(Boolean).map(escapeHtml).join(' · ') + (window.__taskHtml ? window.__taskHtml(session) : '')
+      : 'Sitzung hinzufügen';
+    const readBtn = header.querySelector('#compactRead');
+    if (readBtn) { readBtn.style.display = session && session.taskState ? '' : 'none'; readBtn.classList.toggle('has-new', !!(session && session.answerNew)); }
     header.querySelector('.compact-session-tag').style.background = session?.colorTag || 'var(--text-dim)';
     const next = [height, window.innerWidth, dockHeight, keysHeight, reading, target(), fontSize].join(':');
     if (changed || signature !== next) {

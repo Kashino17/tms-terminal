@@ -95,8 +95,7 @@
         const letter = esc((s.name.trim()[0] || '?').toUpperCase());
         html += `<button class="ds-row${act && act.id === s.id ? ' is-active' : ''}${online ? '' : ' is-off'}" data-i="${i}" style="--dc:${devColor(srv.id)}">
           <span class="ds-tag" data-st="${s.status}" style="background:${s.colorTag}" title="${esc(s.name)}">${letter}</span>
-          <span class="ds-row__mid ds-label"><span class="ds-row__name">${esc(s.name)}</span><span class="ds-row__cwd">${esc(s.cwd || '')}</span></span>
-          <span class="ds-st ${s.status}">${STATUS[s.status] || ''}</span></button>`;
+          <span class="ds-row__mid ds-label"><span class="ds-row__name">${esc(s.name)}</span><span class="ds-row__cwd">${window.__taskHtml && window.__taskHtml(s) ? window.__taskHtml(s) : esc((typeof folderLabel === 'function' ? folderLabel(s.cwd || '') : s.cwd) || '')}</span></span></button>`;
       });
     });
     const mac = servers().find(hasDictation);

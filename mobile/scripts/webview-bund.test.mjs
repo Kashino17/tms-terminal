@@ -214,7 +214,7 @@ if (!PW) {
       await page.waitForTimeout(300);
       await page.evaluate((i) => window.updateStatusChip(i, 'waiting'), id);
       await page.waitForTimeout(400);
-      assert.match(await page.textContent('#deskSide'), /FRAGE/);
+      assert.match(await page.textContent('#deskSide'), /Wartet auf dich/, 'früher die Marke FRAGE — jetzt steht dort, was los ist');
     } finally { await browser.close(); }
   });
 
@@ -655,15 +655,18 @@ if (!PW) {
   test('Arbeitendes Terminal: nach drei Pulsen läuft keine Animation mehr; Punktleiste wird nicht grundlos neu gebaut', async () => {
     const { browser, page, errors } = await boot();
     try {
-      await page.evaluate(() => { for (let i = 0; i < 3; i++) window.addTerminal(); show('terminals'); });
+      await page.evaluate(() => {
+        window.TMSBridge.restoreSessions([1, 2, 3].map((n) => ({ sessionId: 'S-' + n, name: 'T' + n, serverId: 'A' })));
+        show('terminals');
+      });
       await page.waitForTimeout(300);
-      await page.evaluate(() => document.querySelectorAll('.status-chip').forEach((c) => { c.dataset.status = 'running'; }));
+      await page.evaluate(() => window.TMSBridge.setActivities(Object.fromEntries([1, 2, 3].map((n) => ['S-' + n, { task: 'Thema ' + n, state: 'working' }]))));
       await page.waitForTimeout(300);
       const running = () => page.evaluate(() => document.getAnimations().filter((a) => a.playState === 'running' && a.effect && a.effect.target && a.effect.target.closest('#stack')).length);
       assert.ok(await running() > 0, 'der Punkt pulsiert beim Zustandswechsel');
       await page.waitForTimeout(4500);
       assert.equal(await running(), 0, 'danach Ruhe — nichts hält das Zeichnen wach');
-      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.status-chip[data-status="running"] .dot')).opacity), '1', 'Punkt bleibt sichtbar stehen');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#stack .card-task[data-state="working"] .card-task__dot')).opacity), '1', 'Punkt bleibt sichtbar stehen');
       // Punktleiste: dieselbe Geräteliste nochmal → kein Neuaufbau
       const dot = await page.evaluateHandle(() => document.querySelector('.ts-seg'));
       await page.evaluate(() => window.TMSBridge.setServers(JSON.parse(JSON.stringify(window.TMS_DATA.servers))));
@@ -832,6 +835,265 @@ if (!PW) {
       assert.ok(r.lat.every((ms) => ms >= 0 && ms < 40), `erste Ausgabe nach Pause sofort sichtbar (gemessen: ${r.lat.join(', ')} ms)`);
       assert.ok(r.renders <= 8, `Dauerausgabe bleibt gedrosselt (${r.renders} Neuzeichnungen für 40 Häppchen)`);
       assert.equal(r.hasLast, true, 'nichts geht verloren');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  // ── Woran gearbeitet wird ────────────────────────────────────────────────
+  // Statt der Marke LÄUFT/BEREIT steht unter dem Titel: Ordner · Zustand ·
+  // Aufgabe. Die Aufgabe ist der Titel, den das KI-Werkzeug seiner Sitzung
+  // selbst gibt (Server: terminal:activity).
+  test('Kartenkopf: statt LÄUFT/BEREIT steht dort, woran gearbeitet wird', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      await page.evaluate(() => {
+        window.TMSBridge.setActivities({ 'S-C': { task: 'Kam vor der Karte', state: 'done' } }); // Stand beim Verbinden, Karten folgen
+        window.TMSBridge.restoreSessions(['A', 'B', 'C'].map((n) => ({ sessionId: 'S-' + n, name: 'Term ' + n, serverId: 'A' })));
+        show('terminals'); setActive(0);
+      });
+      await page.waitForTimeout(500);
+      const card = (sid) => page.evaluate((id) => {
+        const sess = window.TMS_DATA.sessions.find((x) => x.name === 'Term ' + id.slice(2));
+        const el = document.querySelector(`#stack .term-card[data-id="${sess.id}"]`);
+        const task = el.querySelector('.card-task');
+        const btn = el.querySelector('.read-btn');
+        return {
+          // Ordner + Aufgabe, wie sie nebeneinander stehen (ohne das Geräte-Kürzel davor)
+          line: (el.querySelector('.card-folder').textContent + (task ? task.textContent : '')).replace(/\s+/g, ' ').trim(),
+          state: task ? task.dataset.state : null,
+          text: task ? task.querySelector('.card-task__text').textContent : null,
+          read: !!btn && !btn.hidden, dot: !!btn && btn.classList.contains('has-new'),
+        };
+      }, sid);
+      assert.equal(await page.locator('#stack .term-card .status-chip').count(), 0, 'die Marke LÄUFT/BEREIT ist weg');
+      assert.deepEqual(await card('S-A'), { line: '~', state: null, text: null, read: false, dot: false }, 'normale Shell: nur der Ordner, kein Lesen-Knopf');
+      assert.deepEqual(await card('S-C'), { line: '~·Kam vor der Karte', state: 'done', text: 'Kam vor der Karte', read: true, dot: false }, 'Aufgabe, die vor der Karte ankam');
+
+      await page.evaluate(() => {
+        window.TMSBridge.setSessionCwd('S-A', '/Users/x/Developer/tms-terminal');
+        window.TMSBridge.setActivities({ 'S-A': { task: 'Kampagnen-Bericht bauen', state: 'working' }, 'S-B': { task: '', state: 'done' } });
+      });
+      assert.deepEqual(await card('S-A'), { line: 'tms-terminal·Kampagnen-Bericht bauen', state: 'working', text: 'Kampagnen-Bericht bauen', read: true, dot: false });
+      assert.deepEqual(await card('S-B'), { line: '~', state: null, text: null, read: true, dot: false }, 'ruhende Sitzung ohne Thema: keine Aufgabe, aber lesbar');
+      // Der Ordner wechselt: die Aufgabe bleibt stehen.
+      await page.evaluate(() => window.TMSBridge.setSessionCwd('S-A', '/Users/x/Desktop/ads-cockpit'));
+      assert.equal((await card('S-A')).line, 'ads-cockpit·Kampagnen-Bericht bauen');
+
+      // Rückfrage (Prompt-Erkennung): „Wartet auf dich", danach wieder die Arbeit.
+      await page.evaluate(() => window.TMSBridge.setSessionStatus('S-A', 'waiting'));
+      assert.deepEqual([(await card('S-A')).state, (await card('S-A')).line], ['waiting', 'ads-cockpit·Wartet auf dich·Kampagnen-Bericht bauen']);
+      await page.evaluate(() => window.TMSBridge.setSessionStatus('S-A', 'running'));
+      assert.equal((await card('S-A')).state, 'working');
+
+      // Fertig geworden: vorne kein Punkt (man sieht es), verdeckt ein Punkt am Buch.
+      await page.evaluate(() => window.TMSBridge.setActivities({ 'S-B': { task: 'Tests reparieren', state: 'working' } }));
+      await page.evaluate(() => window.TMSBridge.setActivities({ 'S-A': { task: 'Kampagnen-Bericht bauen', state: 'done' }, 'S-B': { task: 'Tests reparieren', state: 'done' } }));
+      assert.deepEqual([(await card('S-A')).dot, (await card('S-B')).dot], [false, true]);
+      // Neue Runde: der Punkt gilt der alten Antwort nicht mehr.
+      await page.evaluate(() => window.TMSBridge.setActivities({ 'S-B': { task: 'Tests reparieren', state: 'working' } }));
+      assert.equal((await card('S-B')).dot, false);
+
+      // Punktleiste: der Hinweis beim Wechsel nennt die Aufgabe in der zweiten Zeile.
+      await page.evaluate(() => setActive(1));
+      await page.waitForTimeout(250);
+      assert.match(await page.evaluate(() => document.querySelector('.term-switcher__label').textContent), /Term B\nTests reparieren/);
+      await page.evaluate(() => setActive(0));
+
+      // Claude beendet, die Shell setzt ihren eigenen Titel: Zeile und Knopf verschwinden.
+      await page.evaluate(() => window.TMSBridge.setActivities({ 'S-A': null }));
+      assert.deepEqual(await card('S-A'), { line: 'ads-cockpit', state: null, text: null, read: false, dot: false });
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  // ── Antwort lesen ────────────────────────────────────────────────────────
+  test('Lesemodus: holt die Antworten vom Rechner und setzt sie sauber (Tabelle, Code, Liste), blättert, kopiert', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await page.evaluate(() => {
+        window.TMSBridge.restoreSessions([{ sessionId: 'S-A', name: 'Energie', serverId: 'A' }, { sessionId: 'S-B', name: 'Ads', serverId: 'A' }]);
+        show('terminals'); setActive(0);
+        window.TMSBridge.setActivities({ 'S-A': { task: 'Tiefenanalyse', state: 'done' }, 'S-B': { task: 'Bericht', state: 'working' } });
+      });
+      await page.waitForTimeout(500);
+      await page.click('#stack .stack-card.is-active .read-btn');
+      await page.waitForTimeout(450);
+      assert.deepEqual((await posts('reader:get')).map((p) => p.payload), [{ sessionId: 'S-A' }], 'fragt die Sitzung des Terminals vorne an');
+      assert.equal(await page.evaluate(() => document.getElementById('reader').hidden), false);
+      assert.match(await page.textContent('.rd-body'), /Antwort wird geladen/);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('dock')).visibility), 'hidden', 'Eingabezeile weicht dem Lesen');
+
+      const md = '## Ergebnis\n\nAlles **behoben** mit `npm test`.\nZweite Zeile.\n\n| Lücke | vorher | jetzt | Quelle |\n|---|---|---|---|\n| Pings | alle 3 s | alle 12 s | Messung |\n\n### Befehl\n\n```\ntms-terminal update\n```\n\n- eins\n  - unterpunkt\n- zwei\n\n1. erstens\n2. zweitens\n\n<img src=x onerror="window.__xss=1">';
+      await page.evaluate((m) => window.TMSBridge.readerAnswers('S-A', { open: false, answers: [
+        { prompt: 'Erste Frage', md: 'Alte Antwort', at: Date.now() - 3 * 3600_000 },
+        { prompt: 'Geh in die Tiefe', md: m, at: Date.now() - 120_000 },
+      ] }), md);
+      const view = () => page.evaluate(() => ({
+        sub: document.querySelector('.rd-title small').textContent,
+        name: document.querySelector('.rd-title strong span').textContent,
+        count: document.querySelector('.rd-count').textContent,
+        prompt: document.querySelector('.rd-prompt summary span').textContent,
+        h: [...document.querySelectorAll('.rd-body h2, .rd-body h3')].map((x) => x.tagName + ':' + x.textContent),
+        p: document.querySelector('.rd-body p') ? document.querySelector('.rd-body p').innerHTML : '',
+        cards: !!document.querySelector('.rd-table.is-cards'),
+        cells: [...document.querySelectorAll('.rd-table td')].map((x) => x.dataset.label + '=' + x.textContent),
+        code: document.querySelector('.rd-code pre') ? document.querySelector('.rd-code pre').textContent : null,
+        nested: !!document.querySelector('.rd-body ul > li > ul > li'),
+        ol: document.querySelectorAll('.rd-body ol > li').length,
+        img: document.querySelectorAll('.rd-body img').length,
+      }));
+      const v = await view();
+      assert.equal(v.name, 'Energie');
+      assert.equal(v.sub, 'Letzte Antwort · vor 2 Min.');
+      assert.equal(v.count, '2 / 2');
+      assert.equal(v.prompt, 'Geh in die Tiefe');
+      assert.deepEqual(v.h, ['H2:Ergebnis', 'H3:Befehl']);
+      assert.equal(v.p, 'Alles <strong>behoben</strong> mit <code>npm test</code>.<br>Zweite Zeile.');
+      assert.equal(v.cards, true, 'vier Spalten auf schmalem Schirm: Karten statt seitlich scrollen');
+      assert.deepEqual(v.cells, ['Lücke=Pings', 'vorher=alle 3 s', 'jetzt=alle 12 s', 'Quelle=Messung']);
+      assert.equal(v.code, 'tms-terminal update');
+      assert.equal(v.nested, true); assert.equal(v.ol, 2);
+      assert.equal(v.img, 0, 'HTML aus der Antwort wird als Text gezeigt, nie ausgeführt');
+      assert.equal(await page.evaluate(() => window.__xss), undefined);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'nichts ragt seitlich hinaus');
+
+      // Kopieren: die Antwort, wie sie geschrieben wurde
+      await page.click('[data-rd="copy"]');
+      assert.equal((await posts('clipboard:write')).pop().payload.text, md);
+      await page.click('.rd-code [data-rd="copycode"]');
+      assert.equal((await posts('clipboard:write')).pop().payload.text, 'tms-terminal update');
+      // Inhalt springt zur Überschrift
+      await page.click('[data-rd="toc"]');
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('[data-pop="toc"] button')].map((b) => b.textContent)), ['Ergebnis', 'Befehl']);
+      await page.click('[data-pop="toc"] button:nth-of-type(2)');
+      // Blättern
+      await page.click('[data-rd="older"]');
+      const o = await view();
+      assert.deepEqual([o.sub, o.count, o.prompt, o.p], ['Ältere Antwort · vor 3 Std.', '1 / 2', 'Erste Frage', 'Alte Antwort']);
+      assert.equal(await page.evaluate(() => document.querySelector('[data-rd="older"]').disabled), true);
+
+      // Antworten: zurück ins Terminal, Eingabe bereit
+      await page.click('[data-rd="reply"]');
+      await page.waitForTimeout(700);
+      assert.equal(await page.evaluate(() => document.getElementById('reader').hidden), true);
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'dockInput');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Lesemodus: arbeitet Claude weiter, steht das dabei; wird er fertig, rückt die neue Antwort nach; Gründe statt leerer Seite', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await page.evaluate(() => {
+        window.TMSBridge.restoreSessions([{ sessionId: 'S-A', name: 'Energie', serverId: 'A' }, { sessionId: 'S-B', name: 'Ads', serverId: 'A' }]);
+        show('terminals'); setActive(0);
+        window.TMSBridge.setActivities({ 'S-A': { task: 'Bericht bauen', state: 'working' }, 'S-B': { task: 'Alt', state: 'working' } });
+        window.TMSBridge.setActivities({ 'S-B': { task: 'Alt', state: 'done' } }); // verdeckt fertig geworden → Punkt
+      });
+      await page.waitForTimeout(400);
+      await page.click('#stack .stack-card.is-active .read-btn');
+      await page.waitForTimeout(300);
+      await page.evaluate(() => window.TMSBridge.readerAnswers('S-A', { open: true, answers: [{ prompt: 'davor', md: 'Letzte fertige Antwort', at: Date.now() }] }));
+      assert.match(await page.textContent('.rd-note'), /Claude arbeitet gerade weiter: Bericht bauen/);
+      assert.equal(await page.evaluate(() => document.querySelector('.rd-note').hidden), false);
+      assert.equal(await page.textContent('.rd-count'), '', 'eine Antwort: kein Zähler');
+      // Fertig: der Lesemodus fragt von selbst neu und zeigt die neue Antwort.
+      await page.evaluate(() => window.TMSBridge.setActivities({ 'S-A': { task: 'Bericht bauen', state: 'done' } }));
+      await page.waitForTimeout(600);
+      assert.equal((await posts('reader:get')).length, 2);
+      await page.evaluate(() => window.TMSBridge.readerAnswers('S-A', { open: false, answers: [
+        { prompt: 'davor', md: 'Letzte fertige Antwort', at: Date.now() }, { prompt: 'Bau den Bericht', md: 'Der Bericht steht.', at: Date.now() }] }));
+      assert.equal(await page.textContent('.rd-body p'), 'Der Bericht steht.');
+      assert.equal(await page.evaluate(() => document.querySelector('.rd-note').hidden), true);
+      assert.equal(await page.evaluate(() => !!document.querySelector('#stack .stack-card.is-active .read-btn.has-new')), false, 'gerade gelesen: kein Punkt');
+      await page.click('[data-rd="close"]');
+      await page.waitForTimeout(500);
+
+      // Zweites Terminal: Punkt da, verschwindet beim Öffnen; der Rechner nennt einen Grund.
+      await page.evaluate(() => setActive(1));
+      await page.waitForTimeout(500);
+      assert.equal(await page.evaluate(() => !!document.querySelector('#stack .stack-card.is-active .read-btn.has-new')), true);
+      await page.click('#stack .stack-card.is-active .read-btn');
+      await page.waitForTimeout(300);
+      assert.equal(await page.evaluate(() => !!document.querySelector('#stack .stack-card.is-active .read-btn.has-new')), false);
+      await page.evaluate(() => window.TMSBridge.readerAnswers('S-B', { open: false, answers: [], reason: 'no-transcript' }));
+      assert.match(await page.textContent('.rd-body'), /führt keinen Verlauf.*neues Terminal/s);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('[data-rd="copy"]')).visibility), 'hidden');
+      // Späte Antwort einer alten Anfrage darf die Seite nicht überschreiben.
+      await page.click('[data-rd="close"]');
+      await page.waitForTimeout(450);
+      await page.evaluate(() => window.TMSBridge.readerAnswers('S-B', { open: false, answers: [{ prompt: '', md: 'zu spät', at: 0 }] }));
+      assert.equal(await page.evaluate(() => document.getElementById('reader').hidden), true);
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Aufgeklappt: Seitenleiste und Kopfzeile zeigen die Aufgabe, der Lesemodus liegt neben der Seitenleiste', async () => {
+    const { browser, page, errors, posts } = await boot({ width: 750, height: 830 });
+    try {
+      await page.evaluate(() => {
+        window.TMSBridge.restoreSessions([{ sessionId: 'S-A', name: 'Energie', serverId: 'A' }, { sessionId: 'S-B', name: 'Shell', serverId: 'A' }]);
+        show('terminals');
+        window.TMSBridge.setActivities({ 'S-A': { task: 'Tiefenanalyse Energie', state: 'working' } });
+      });
+      await page.waitForTimeout(700);
+      await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close())); // „Dein Terminal" nach dem Anlegen
+      await page.evaluate(() => { const row = [...document.querySelectorAll('.ds-row')].find((r) => /Energie/.test(r.textContent)); if (row) row.click(); });
+      await page.waitForTimeout(500);
+      const rows = await page.evaluate(() => [...document.querySelectorAll('.ds-row')].map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
+      assert.ok(rows.some((r) => /Energie.*Tiefenanalyse Energie/.test(r)), 'Seitenleiste nennt die Aufgabe: ' + JSON.stringify(rows));
+      assert.ok(!rows.some((r) => /LÄUFT|BEREIT/.test(r)), 'keine Marke mehr');
+      assert.match(await page.textContent('#compactTerminalHeader small'), /Tiefenanalyse Energie/);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('compactRead')).display !== 'none'), true);
+      await page.click('#compactRead');
+      await page.waitForTimeout(450);
+      assert.deepEqual((await posts('reader:get')).map((p) => p.payload), [{ sessionId: 'S-A' }]);
+      const left = await page.evaluate(() => Math.round(document.getElementById('reader').getBoundingClientRect().left));
+      const side = await page.evaluate(() => Math.round(document.getElementById('deskSide').getBoundingClientRect().right));
+      assert.equal(left, side, 'die Seitenleiste bleibt sichtbar');
+      // Terminal ohne KI: kein Lesen-Knopf in der Kopfzeile
+      await page.click('[data-rd="close"]');
+      await page.evaluate(() => { const row = [...document.querySelectorAll('.ds-row')].find((r) => /Shell/.test(r.textContent)); if (row) row.click(); });
+      await page.waitForTimeout(500);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('compactRead')).display), 'none');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Lesemodus: Vorlesen schickt die Stücke ohne Code ans Handy, markiert das gesprochene und lässt sich anhalten', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await page.evaluate(() => {
+        window.TMSBridge.restoreSessions([{ sessionId: 'S-A', name: 'Energie', serverId: 'A' }]);
+        show('terminals'); setActive(0);
+        window.TMSBridge.setActivities({ 'S-A': { task: 'Thema', state: 'done' } });
+      });
+      await page.waitForTimeout(400);
+      await page.click('#stack .stack-card.is-active .read-btn');
+      await page.waitForTimeout(300);
+      await page.evaluate(() => window.TMSBridge.readerAnswers('S-A', { open: false, answers: [{ prompt: 'x', at: Date.now(),
+        md: '## Ergebnis\n\nAlles ist behoben.\n\n```\nnpm test\n```\n\n- erster Punkt\n\n| Lücke | Jetzt |\n|---|---|\n| Pings | alle 12 s |' }] }));
+      assert.equal(await page.evaluate(() => document.querySelector('[data-rd="speak"]').hidden), false);
+      await page.click('[data-rd="speak"]');
+      const sent = (await posts('reader:speak')).pop().payload;
+      assert.deepEqual(sent, { parts: ['Ergebnis', 'Alles ist behoben.', 'erster Punkt', 'Pings', 'Jetzt: alle 12 s'], german: true }, 'Code wird nicht vorgelesen; Tabellenzellen nennen ihre Spalte');
+      assert.match(await page.textContent('[data-rd="speak"]'), /Anhalten/);
+      // Das Handy meldet, wo die Stimme ist.
+      await page.evaluate(() => window.TMSBridge.readerSpeech({ index: 1 }));
+      assert.equal(await page.evaluate(() => document.querySelector('.rd-body .is-speaking').textContent), 'Alles ist behoben.');
+      await page.evaluate(() => window.TMSBridge.readerSpeech({ index: 2 }));
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.rd-body .is-speaking')].map((x) => x.textContent)), ['erster Punkt']);
+      // Fertig: Knopf zurück, Markierung weg.
+      await page.evaluate(() => window.TMSBridge.readerSpeech({ done: true }));
+      assert.match(await page.textContent('[data-rd="speak"]'), /Vorlesen/);
+      assert.equal(await page.locator('.rd-body .is-speaking').count(), 0);
+      // Anhalten von Hand und beim Schließen.
+      await page.click('[data-rd="speak"]');
+      await page.click('[data-rd="speak"]');
+      assert.equal((await posts('reader:speakStop')).length, 1);
+      await page.click('[data-rd="speak"]');
+      await page.click('[data-rd="close"]');
+      assert.equal((await posts('reader:speakStop')).length, 2, 'Lesemodus zu: die Stimme schweigt');
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });

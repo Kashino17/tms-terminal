@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.ViewManager
 
 class ConnectionPackage : ReactPackage {
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-        return listOf(ConnectionModule(reactContext), ApkInstallerModule(reactContext))
+        return listOf(ConnectionModule(reactContext), ApkInstallerModule(reactContext), SpeechModule(reactContext))
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {

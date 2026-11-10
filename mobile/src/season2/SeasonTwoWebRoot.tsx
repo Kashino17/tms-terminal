@@ -9,7 +9,7 @@
  * The classic UI is untouched — Season 2 is still just a settings toggle.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert, Modal, TextInput, NativeModules } from 'react-native';
+import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert, Modal, TextInput, NativeModules, DeviceEventEmitter } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -251,6 +251,16 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     webRef.current?.injectJavaScript(js);
   }, []);
 
+  // Lesemodus „Vorlesen": die Sprachausgabe meldet, welches Stück sie gerade
+  // spricht und wann sie fertig ist (android: SpeechModule.kt).
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('TmsSpeech', (ev) => call('readerSpeech', ev));
+    return () => {
+      sub.remove();
+      (NativeModules.TmsSpeech as { stop?: () => void } | undefined)?.stop?.();
+    };
+  }, [call]);
+
   // Browser-Bridge: tell the server whether terminal browser-opens should be
   // routed here. Fires on connect and whenever the toggle changes (incl. after
   // a server switch, which re-connects). See docs/superpowers/specs/2026-07-17-terminal-browser-sync-design.md
@@ -456,6 +466,22 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
             conn.send({ type: 'terminal:rename', sessionId: tab.sessionId, payload: { title: tab.title } } as never);
           }
         }
+        return;
+      }
+      if (m?.type === 'terminal:activity') {
+        // Woran die Terminals arbeiten (Server liest den Titel des KI-Werkzeugs).
+        const activities: Record<string, unknown> = { ...(m.payload?.activities ?? {}) };
+        if (m.payload?.full) {
+          // Der ganze Stand dieses Geräts: was fehlt, hat keine Aufgabe mehr.
+          for (const [sid, owner] of Object.entries(sessionServer.current)) {
+            if (owner === srvId && !(sid in activities)) activities[sid] = null;
+          }
+        }
+        call('setActivities', activities);
+        return;
+      }
+      if (m?.type === 'reader:answers' && m.sessionId) {
+        call('readerAnswers', m.sessionId, m.payload);
         return;
       }
       if (m?.type === 'terminal:title' && m.sessionId) {
@@ -1429,6 +1455,27 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
 
       // Ein anderes Terminal ist nach vorne gekommen (Tipp in der Leiste, Wischen …).
       // Was die Seite gerade zeigt — der Server taktet die Ausgabe danach.
+      case 'reader:speak': {
+        // Vorlesen mit der Sprachausgabe des Handys (SpeechModule.kt) — ohne Netz.
+        const parts = Array.isArray(payload?.parts) ? (payload.parts as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+        const speech = NativeModules.TmsSpeech as { speak?: (parts: string[], german: boolean) => Promise<boolean> } | undefined;
+        if (!speech?.speak || !parts.length) { call('readerSpeech', { error: 'Vorlesen ist auf diesem Gerät nicht verfügbar' }); break; }
+        speech.speak(parts, !!payload?.german).catch((e: { code?: string }) => {
+          call('readerSpeech', { error: e?.code === 'no_voice'
+            ? 'Dem Handy fehlt die Stimme für diese Sprache (Einstellungen › Sprachausgabe)'
+            : 'Die Sprachausgabe des Handys ließ sich nicht starten' });
+        });
+        break;
+      }
+      case 'reader:speakStop':
+        (NativeModules.TmsSpeech as { stop?: () => void } | undefined)?.stop?.();
+        break;
+
+      case 'reader:get':
+        // Lesemodus: die letzten Antworten der Sitzung — vom Gerät, auf dem sie läuft.
+        if (payload?.sessionId) connFor(payload.sessionId)?.send({ type: 'reader:get', sessionId: payload.sessionId } as never);
+        break;
+
       case 'term:focus': {
         const f = payload?.focus;
         focusRef.current = typeof f === 'string' ? f : null;

@@ -15,7 +15,8 @@ export interface ActivityFeed {
 }
 
 export function createActivityFeed(
-  send: (changes: Record<string, Activity | null>) => void,
+  /** `full`: this is the whole state — what is missing from it has no activity. */
+  send: (changes: Record<string, Activity | null>, full: boolean) => void,
   initial: Record<string, Activity> = {},
 ): ActivityFeed {
   let foreground = true;
@@ -25,19 +26,21 @@ export function createActivityFeed(
   const pending = new Map<string, Activity | null>();
   for (const [id, a] of Object.entries(initial)) pending.set(id, a);
 
-  const flush = (): void => {
-    if (pending.size === 0) return;
+  const flush = (full = false): void => {
+    // The full state goes out even when empty: after a reconnect the app must
+    // learn that activities it still shows are gone.
+    if (pending.size === 0 && !full) return;
     const changes: Record<string, Activity | null> = {};
     for (const [id, a] of pending) {
       changes[id] = a;
       if (a) known.set(id, a); else known.delete(id);
     }
     pending.clear();
-    send(changes);
+    send(changes, full);
   };
 
   return {
-    start() { flush(); },
+    start() { flush(true); },
     note(sessionId, activity) {
       if (sameActivity(known.get(sessionId) ?? null, activity)) pending.delete(sessionId);
       else pending.set(sessionId, activity);

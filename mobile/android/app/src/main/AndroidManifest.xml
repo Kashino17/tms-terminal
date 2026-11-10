@@ -32,6 +32,10 @@
       <category android:name="android.intent.category.BROWSABLE"/>
       <data android:scheme="https"/>
     </intent>
+    <!-- Lesemodus „Vorlesen": ohne diesen Eintrag findet Android 11+ die Sprachausgabe nicht. -->
+    <intent>
+      <action android:name="android.intent.action.TTS_SERVICE"/>
+    </intent>
   </queries>
   <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="true" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/data_extraction_rules" android:theme="@style/AppTheme" android:usesCleartextTraffic="true">
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>

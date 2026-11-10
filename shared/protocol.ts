@@ -375,7 +375,11 @@ export interface TerminalActivity {
  */
 export interface TerminalActivityMessage {
   type: 'terminal:activity';
-  payload: { activities: Record<string, TerminalActivity | null> };
+  payload: {
+    activities: Record<string, TerminalActivity | null>;
+    /** The whole state (sent on connect): sessions missing from it have no activity. */
+    full?: boolean;
+  };
 }
 export interface ReaderAnswer {
   /** What the user typed for this round; '' when it was not started by typing. */

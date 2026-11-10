@@ -155,6 +155,10 @@ patch('settings stylesheet', '<link rel="stylesheet" href="settings.css">',
   '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/settings.css'), 'utf8') + '</style>');
 patch('settings controller', '<script src="settings.js"></script>',
   '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/settings.js'), 'utf8') + '</script>');
+patch('reader stylesheet', '<link rel="stylesheet" href="reader.css">',
+  '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/reader.css'), 'utf8') + '</style>');
+patch('reader controller', '<script src="reader.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/reader.js'), 'utf8') + '</script>');
 
 // ── 5) xterm.js + the bridge, after the mockup's own script.
 function stringExports(file) {

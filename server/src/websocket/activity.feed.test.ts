@@ -5,19 +5,25 @@ import type { Activity } from '../terminal/activity';
 
 function rig(initial: Record<string, Activity> = {}) {
   const sent: Array<Record<string, Activity | null>> = [];
-  const feed = createActivityFeed((changes) => { sent.push(changes); }, initial);
-  return { feed, sent };
+  const fulls: boolean[] = [];
+  const feed = createActivityFeed((changes, full) => { sent.push(changes); fulls.push(full); }, initial);
+  return { feed, sent, fulls };
 }
 const work = (task: string): Activity => ({ task, state: 'working' });
 const done = (task: string): Activity => ({ task, state: 'done' });
 
-test('beim Verbinden: der ganze Stand in einer Nachricht — leer heißt keine Nachricht', () => {
+test('beim Verbinden: der ganze Stand in einer Nachricht, als vollständig markiert — auch wenn er leer ist', () => {
   const a = rig({ s1: work('A'), s2: done('B') });
   a.feed.start();
   assert.deepEqual(a.sent, [{ s1: work('A'), s2: done('B') }]);
+  assert.deepEqual(a.fulls, [true]);
+  // Leer und trotzdem gesendet: nach einem Neuverbinden muss die App erfahren,
+  // dass Aufgaben, die sie noch anzeigt, nicht mehr gelten.
   const b = rig();
   b.feed.start();
-  assert.deepEqual(b.sent, []);
+  assert.deepEqual(b.sent, [{}]);
+  b.feed.note('s1', work('A'));
+  assert.deepEqual(b.fulls, [true, false], 'danach nur noch Änderungen');
 });
 
 test('im Vordergrund geht jeder Wechsel sofort raus', () => {
@@ -26,7 +32,7 @@ test('im Vordergrund geht jeder Wechsel sofort raus', () => {
   feed.note('s1', work('A'));
   feed.note('s1', done('A'));
   feed.note('s1', null);
-  assert.deepEqual(sent, [{ s1: work('A') }, { s1: done('A') }, { s1: null }]);
+  assert.deepEqual(sent.slice(1), [{ s1: work('A') }, { s1: done('A') }, { s1: null }]);
 });
 
 test('App im Hintergrund: NICHTS wird gesendet — beim Zurückkehren eine Nachricht mit dem Endstand', () => {

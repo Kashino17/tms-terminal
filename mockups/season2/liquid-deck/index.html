@@ -2278,6 +2278,7 @@
 <link rel="stylesheet" href="compact-terminal.css">
 <link rel="stylesheet" href="bund.css">
 <link rel="stylesheet" href="settings.css">
+<link rel="stylesheet" href="reader.css">
 <style>
   /* ===== Bund (Mockup) ===== */
   .dock-btn[data-nav="manager"] { display: none !important; }
@@ -5223,8 +5224,43 @@
     const session = TMS_DATA.sessions.find(s => s.id === cardId);
     if (session) session.cwd = cwd;
     const label = folderLabel(cwd);
-    document.querySelectorAll(`.term-card[data-id="${cardId}"] .card-cwd`).forEach(el => { el.textContent = label; });
+    document.querySelectorAll(`.term-card[data-id="${cardId}"] .card-folder`).forEach(el => { el.textContent = label; });
     if (window.TMSCompact) window.TMSCompact.sync();
+  };
+
+  // ── „Woran wird gearbeitet" — die kleine Zeile neben dem Ordnernamen ──
+  // Ersetzt die Marke LÄUFT / BEREIT. Der Text ist der Titel, den das
+  // KI-Werkzeug seiner Sitzung selbst gibt (Server: terminal/activity.ts);
+  // session.task / session.taskState setzt die Bridge (setActivities).
+  // „Wartet auf dich" kommt zusätzlich aus der Prompt-Erkennung (status).
+  window.__taskHtml = function (s) {
+    if (!s) return '';
+    const waiting = s.status === 'waiting' || s.taskState === 'waiting';
+    const state = waiting ? 'waiting' : s.taskState;
+    if (!state) return '';
+    const text = s.task || (state === 'working' ? 'Arbeitet' : '');
+    if (!text && !waiting) return ''; // ruhende Sitzung ohne Thema: nichts zu sagen
+    return `<span class="card-task" data-state="${state}"><span class="card-task__sep">·</span><i class="card-task__dot"></i>${
+      waiting ? `<b>Wartet auf dich</b>${text ? '<span class="card-task__sep">·</span>' : ''}` : ''
+    }<span class="card-task__text">${escapeHtml(text)}</span></span>`;
+  };
+  /** Aufgabe oder Zustand einer Sitzung hat sich geändert: nur diese Stellen neu setzen. */
+  window.__taskSync = function (id) {
+    const s = TMS_DATA.sessions.find(x => x.id === id);
+    if (!s) return;
+    const html = window.__taskHtml(s);
+    document.querySelectorAll(`.term-card[data-id="${id}"] .card-cwd`).forEach(line => {
+      const old = line.querySelector('.card-task');
+      if (old) old.remove();
+      if (html) line.insertAdjacentHTML('beforeend', html);
+    });
+    document.querySelectorAll(`.term-card[data-id="${id}"] .read-btn`).forEach(b => {
+      b.hidden = !s.taskState;
+      b.classList.toggle('has-new', !!s.answerNew);
+    });
+    if (window.TMSCompact) window.TMSCompact.sync();
+    if (window.__deskRender) window.__deskRender();
+    if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
   };
 
   function cardHeaderHtml(session, id, isList) {
@@ -5238,9 +5274,9 @@
               const many = TMS_DATA.servers.filter(x => x.active || x.primary).length > 1;
               const srv = many && window.__sessionServerId ? TMS_DATA.servers.find(x => x.id === window.__sessionServerId(session)) : null;
               return srv && window.__devShort ? `<b class="card-dev" style="--dc:${window.__devColor(srv.id)}"><i></i>${escapeHtml(window.__devShort(srv))}</b>` : '';
-            })()}${escapeHtml(folderLabel(cs.cwd || ''))}</span>
+            })()}<span class="card-folder">${escapeHtml(folderLabel(cs.cwd || ''))}</span>${window.__taskHtml(session)}</span>
           </div>
-          <span class="status-chip" data-status="${session.status}"><span class="dot"></span><span class="status-chip__label">${STATUS_LABELS[session.status] || session.status}</span></span>
+          <button class="read-btn${session.answerNew ? ' has-new' : ''}" data-act="read"${session.taskState ? '' : ' hidden'} aria-label="Letzte Antwort lesen" title="Antwort lesen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/><path d="M8.5 7.5h7M8.5 11h5"/></svg></button>
           <button class="card-menu-btn" data-act="menu" aria-haspopup="menu" aria-expanded="false" aria-label="Terminal-Menü" title="Menü">${icon('dotsV', 18)}</button>
         </div>`;
   }
@@ -6055,9 +6091,9 @@
     // komplette Rail samt Glas-Layern weggeworfen und neu erzeugt.
     const changed = session.status !== status;
     session.status = status;
-    const chip = document.querySelector(`.term-card[data-id="${id}"] .status-chip`);
-    if (chip) { chip.dataset.status = status; chip.querySelector('.status-chip__label').textContent = STATUS_LABELS[status] || status; }
-    if (changed) refreshPreviews();
+    // Die Marke LÄUFT/BEREIT im Kartenkopf gibt es nicht mehr — dort steht,
+    // woran gearbeitet wird (__taskHtml). „Wartet auf dich" hängt am Status.
+    if (changed) { window.__taskSync(id); refreshPreviews(); }
   }
 
   function refreshPreviews() {
@@ -6123,7 +6159,7 @@
       if (!card) return;
       const idx = state.order.indexOf(card.dataset.id);
       const isActiveCard = idx === Math.round(state.activeFloat);
-      if (isActiveCard && e.target.closest('.card-body-shell, .card-name, .card-desc, .status-chip, .card-menu-btn, .replay-pill, .keys-panel, .term-input-row')) return;
+      if (isActiveCard && e.target.closest('.card-body-shell, .card-name, .card-desc, .read-btn, .card-menu-btn, .replay-pill, .keys-panel, .term-input-row')) return;
       pointerId = e.pointerId; startX = e.clientX; startY = e.clientY; startFloat = state.activeFloat; moved = false;
       cardWidthPx = card.getBoundingClientRect().width || 300;
       dragging = true;
@@ -7108,7 +7144,7 @@
     surface.addEventListener('pointerdown', e => {
       if (document.body.classList.contains('compact-terminal')) return;
       // Controls with their own gestures never start a swipe.
-      if (e.target.closest('.term-input-row, .card-name, .card-desc, .card-menu-btn, .status-chip, .chevron-btn, .replay-pill, .jump-bottom-orb, .keys-panel')) return;
+      if (e.target.closest('.term-input-row, .card-name, .card-desc, .card-menu-btn, .read-btn, .chevron-btn, .replay-pill, .jump-bottom-orb, .keys-panel')) return;
       pointerId = e.pointerId; startX = e.clientX; startY = e.clientY;
       dragging = false; decided = false; cleaned = false;
       railW = rail.getBoundingClientRect().width || 260;
@@ -10943,7 +10979,7 @@
     if (!s) return '';
     const many = TMS_DATA.servers.filter(x => x.active || x.primary).length > 1;
     const srv = many && window.__sessionServerId ? TMS_DATA.servers.find(x => x.id === window.__sessionServerId(s)) : null;
-    return (srv && window.__devShort ? window.__devShort(srv) + ' · ' : '') + s.name;
+    return (srv && window.__devShort ? window.__devShort(srv) + ' · ' : '') + s.name + (s.task ? '\n' + s.task : '');
   }
   /** Punkte nach Nähe zum Daumen skalieren — ein weicher Bauch, kein Sprung. */
   function tsPaint(f) {
@@ -11217,5 +11253,6 @@
 <script src="compact-terminal.js"></script>
 <script src="bund.js"></script>
 <script src="settings.js"></script>
+<script src="reader.js"></script>
 </body>
 </html>

@@ -312,7 +312,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   // Woran jedes Terminal arbeitet: der ganze Stand jetzt, danach nur Wechsel —
   // und gar nichts, solange die App nicht sichtbar ist (activity.feed.ts).
   const activityFeed = createActivityFeed(
-    (activities) => send(ws, { type: 'terminal:activity', payload: { activities } }),
+    (activities, full) => send(ws, { type: 'terminal:activity', payload: full ? { activities, full } : { activities } }),
     globalManager.getActivities(),
   );
   const stopActivity = globalManager.onActivity((sid, activity) => activityFeed.note(sid, activity));

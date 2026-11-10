@@ -242,7 +242,7 @@ function viewport() {
   const properties = new Map();
   const events = [];
   const counters = { grow: 0 };
-  const label = { style: {} };
+  const label = { style: {}, classList: { toggle() {} } }; // steht für jedes Element der Kopfzeile (Untertitel, Lesen-Knopf)
   const body = { classList: {
     contains: name => classes.has(name),
     toggle(name, on) { if (on) classes.add(name); else classes.delete(name); },

@@ -1685,6 +1685,7 @@
         if (!cardId) return;
         bound[cardId] = item.sessionId;
         byCard[cardId] = item.sessionId;
+        applyActivity(item.sessionId);
         // React Native braucht die Karten-ID (Notizen, Auto-Approve). Früher
         // rechnete es sie als t1..tN aus — mit mehreren Geräten stimmt das nicht mehr.
         post('terminal:restored', { cardId: cardId, sessionId: item.sessionId });
@@ -1726,6 +1727,7 @@
       bound[cardId] = sessionId;
       byCard[cardId] = sessionId;
       window.__tmsReportActive();
+      applyActivity(sessionId);
       mountTerm(cardId);
       flush(cardId);
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
@@ -4435,6 +4437,72 @@
         return (p && p.message) || 'Der Fernzugriff ist fehlgeschlagen.';
     }
   }
+
+  // ══ Woran gearbeitet wird + Antwort lesen ═══════════════════════════════
+  // Der Server liest den Titel, den das KI-Werkzeug seinem Terminal gibt, und
+  // meldet nur echte Wechsel (terminal:activity). Hier landet das auf der
+  // Karte: session.task / session.taskState, gezeichnet von window.__taskHtml.
+  var activityOf = {};     // sessionId -> { task, state } — auch für Karten, die es noch nicht gibt
+  function applyActivity(sessionId) {
+    var cardId = cardOf(sessionId);
+    if (!cardId) return;
+    var sess = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
+    if (!sess) return;
+    var a = activityOf[sessionId] || null;
+    var was = sess.taskState || null;
+    var next = a ? a.state : null;
+    var task = a ? (a.task || '') : '';
+    if (was === next && (sess.task || '') === task) return;
+    if (was === 'working' && next === 'done') {
+      // Eine Antwort ist fertig. Liest der Nutzer gerade genau diese Sitzung,
+      // rückt sie nach; war das Terminal nicht vorne, bekommt das Buch einen Punkt.
+      var reading = window.TMSReader && window.TMSReader.isOpen && window.TMSReader.isOpen();
+      var front = !window.__tmsAppInactive && typeof window.dockTargetId === 'function' && window.dockTargetId() === cardId;
+      if (!front && !reading) sess.answerNew = true;
+      if (reading) setTimeout(function () { window.TMSReader.refresh(cardId); }, 400); // der Verlauf wird kurz nach dem Titel geschrieben
+    }
+    if (next === 'working' || next === null) sess.answerNew = false;
+    sess.task = task;
+    sess.taskState = next;
+    if (typeof window.__taskSync === 'function') window.__taskSync(cardId);
+  }
+  window.TMSBridge.setActivities = function (activities) {
+    Object.keys(activities || {}).forEach(function (sessionId) {
+      var a = activities[sessionId];
+      if (a && typeof a.state === 'string') activityOf[sessionId] = { task: String(a.task || ''), state: a.state };
+      else delete activityOf[sessionId];
+      applyActivity(sessionId);
+    });
+  };
+
+  // Lesemodus: die Seite fragt über diese Funktion (liquid-deck/reader.js).
+  var readerWaiting = {};  // sessionId -> Rückruf
+  window.__readerRequest = function (cardId, cb) {
+    var sessionId = byCard[cardId];
+    if (!sessionId) { cb({ answers: [], open: false, reason: 'no-claude' }); return; }
+    readerWaiting[sessionId] = cb;
+    post('reader:get', { sessionId: sessionId });
+  };
+  window.TMSBridge.readerAnswers = function (sessionId, payload) {
+    var cb = readerWaiting[sessionId];
+    if (!cb) return;
+    delete readerWaiting[sessionId];
+    cb(payload || { answers: [], open: false, reason: 'error' });
+  };
+
+  // Vorlesen: die Sprachausgabe des Handys (android: SpeechModule.kt). Die Seite
+  // schickt die Stücke, zurück kommt, welches gerade gesprochen wird.
+  var speechListener = null;
+  window.__readerSpeech = {
+    speak: function (parts, german, onEvent) { speechListener = onEvent; post('reader:speak', { parts: parts, german: !!german }); },
+    stop: function () { speechListener = null; post('reader:speakStop', {}); },
+  };
+  window.TMSBridge.readerSpeech = function (ev) {
+    var l = speechListener;
+    if (!l) return;
+    if (ev && (ev.done || ev.error)) speechListener = null;
+    l(ev || {});
+  };
 
   post('bridge:ready', {});
 })();
