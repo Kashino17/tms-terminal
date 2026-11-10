@@ -331,3 +331,8 @@
 - v1.143.0: Installer am Emulator belegt — NEW_TASK versteckte InstallStart hinter TMS, expo-intent-launcher blockierte Folgestarts (ActivityAlreadyStarted). Fix ApkInstallerModule (startActivity aus Activity, Erlaubnis „Apps installieren“ zuerst).
 - v1.144.0 Gebetsruf: Zeiten auf dem Handy (adhan-java 1.2.1), Land aus Zeitzone → Methode (assets/prayer_methods.json), JAKIM auf e-Solat kalibriert (Fajr/Isha 18° + 2 Min.; ±2 Min. ganzes Jahr), MUIS/Kemenag amtlich, Rest Aladhan ±1. Alarm-Kette nativ (setAlarmClock, Boot/TZ/Update). AdhanRingService: gesperrt Vollbild, entsperrt Overlay über allem; Stumm/Laut/Sperr-/Lautstärketaste. Einstellungen: Methode automatisch, nächster Azān, Erlaubnis-Checkliste.
 - Emulator-Probe 1.144.0: KL-Zeiten = amtlich ±1 Min., Alarm als Wecker (exakt), Overlay bleibt nach Home, Lautstärke/Sperrtaste = Stumm, Laut spielt USAGE_ALARM, Alarm übersteht Neustart. Nicht testbar im Emulator: echter Sperrbildschirm mit PIN, GPS-Einspeisung (Ort per Picker gesetzt).
+
+## 2026-11-10 — v1.145.0 Flackern beim Terminalwechsel
+- Gemessen statt geraten: Emulator + zwei isolierte Test-Server (8790/8795, eigenes HOME), 6 Terminals mit Dauerausgabe. Seiten-JS unauffällig (keine Long Tasks); Last auf RenderThread/GPU (50–57 % bei Wechseln). screenrecord-Montage zeigt eckige Blöcke auf Dock/Punkten/Gerätelinie.
+- Ursache: backdrop-filter auf ALLEN Stapelkarten, die beim Wechsel gleichzeitig federn. Fix: Glas nur auf `.stack-card.is-active` (Ruhebild identisch). 150→280 Bilder je 5 Wechsel, App-Antwort 201→139 ms, Artefakte weg. Aufgeklappte Desk-Ansicht hatte schon kein Glas.
+- Lokal mit Playwright schlagen terminal-create/webview-bubble schon vorher fehl, webview-prayer hängt — CI (ohne Playwright) grün.
