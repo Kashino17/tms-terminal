@@ -388,6 +388,91 @@ if (!PW) {
     } finally { await browser.close(); }
   });
 
+  // Der echte Weg bis zum Rechner (nachgebildete Verbindungen): die Sitzung
+  // läuft, der Nutzer ist zurück im Terminal (Bild pausiert, Verbindung offen).
+  // „Beenden“ im ⋮-Menü muss das Stopp über DIESE Verbindung schicken und den
+  // grünen Ring erst nach der Bestätigung des Rechners wegnehmen.
+  async function fakeRemote(page, { answer = true } = {}) {
+    await page.evaluate((answer) => {
+      window.__socks = [];
+      window.WebSocket = class {
+        constructor(url) {
+          this.url = url; this.sent = []; this.readyState = 0; window.__socks.push(this);
+          setTimeout(() => {
+            this.readyState = 1; this.onopen && this.onopen();
+          }, 10);
+        }
+        send(d) {
+          this.sent.push(d);
+          const t = JSON.parse(d).type;
+          const reply = (type) => setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify({ type, payload: { width: 100, height: 50, scale: 1, fps: 30, reason: 'x' } }) }), 5);
+          if (t === 'remote:start') reply('remote:started');
+          if (t === 'remote:stop' && answer) reply('remote:stopped'); // stumm = Rechner setzt das Stopp nicht um
+        }
+        close() { if (this.readyState === 3) return; this.readyState = 3; setTimeout(() => this.onclose && this.onclose({}), 5); }
+      };
+    }, answer);
+    await page.evaluate(() => {
+      window.__newTermServer = 'A'; window.addTerminal(); window.__newTermServer = null;
+      window.__tmsOpenRemote('B');
+      window.TMSBridge.setRemoteTarget({ id: 'B', host: 'b', port: 1, token: 't' });
+      window.TMSRemote.start('auto');
+    });
+    await page.waitForTimeout(150);
+    await page.evaluate(() => window.TMSRemote.suspend()); // zurück im Terminal
+    await page.waitForTimeout(400);
+  }
+  async function endFromMenu(page) {
+    await page.evaluate(() => document.querySelector('.term-card .card-menu-btn').click());
+    await page.waitForTimeout(250);
+    await page.evaluate(() => document.querySelector('.card-menu [data-bm-open="remote"]').click());
+    await page.waitForTimeout(150);
+    await page.evaluate(() => document.querySelector('.card-menu [data-bm-stop="B"]').click());
+    await page.waitForTimeout(150);
+    await page.evaluate(() => document.querySelector('.card-menu [data-bm-confirm="yes"]').click());
+    await page.waitForTimeout(100);
+  }
+  const alive = (page) => page.evaluate(() => document.body.classList.contains('remote-alive'));
+
+  test('Fernzugriff beenden aus dem Menü erreicht den Rechner über die offene Verbindung', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await fakeRemote(page);
+      assert.equal(await alive(page), true, 'Sitzung läuft');
+      await endFromMenu(page);
+      const live = await page.evaluate(() => window.__socks[0].sent.map((d) => JSON.parse(d).type));
+      assert.ok(live.includes('remote:stop'), 'Stopp geht über die laufende Verbindung: ' + live.join(','));
+      // Zur Bestätigung zusätzlich über eine frische Verbindung (falls die alte halb tot ist).
+      const ask = (await posts('remote:open')).pop();
+      assert.equal(ask.payload.id, 'B');
+      assert.equal(ask.payload.closing, true, 'App weiß, dass es ums Beenden geht');
+      await page.evaluate(() => window.TMSBridge.setRemoteTarget({ id: 'B', host: 'b', port: 1, token: 't' }));
+      await page.waitForTimeout(150);
+      assert.equal(await alive(page), false, 'Ring weg — der Rechner hat bestätigt');
+      await page.waitForTimeout(800);
+      assert.equal(await page.evaluate(() => window.__socks.filter((s) => s.readyState !== 3).length), 0, 'keine Verbindung bleibt offen, kein Neuaufbau');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Fernzugriff beenden: Rechner bestätigt nicht → Ring bleibt, ehrliche Meldung', async () => {
+    const { browser, page, errors } = await boot();
+    try {
+      await fakeRemote(page, { answer: false });
+      await page.evaluate(() => { window.__tmsCloseConfirmMs = 1500; window.__toasts = []; const t = window.toast; window.toast = (m) => { window.__toasts.push(m); return t && t(m); }; });
+      // Halb tote Verbindung: das Stopp darüber kommt nie an.
+      await page.evaluate(() => { window.__socks[0].send = function (d) { this.sent.push(d); }; });
+      await endFromMenu(page);
+      await page.evaluate(() => window.TMSBridge.setRemoteTarget({ id: 'B', host: 'b', port: 1, token: 't' }));
+      await page.waitForTimeout(1000);
+      assert.equal(await alive(page), true, 'ohne Bestätigung nicht „beendet“ (früher nach 0,8 s blind)');
+      await page.waitForTimeout(900);
+      assert.equal(await alive(page), true, 'nicht bestätigt = weiter als laufend markiert');
+      assert.ok((await page.evaluate(() => window.__toasts)).some((m) => /nicht erreichbar/.test(m)));
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
   test('Update: schlichte Leiste — Laden in der App, Fortschritt, Installieren, ✕, Karte auf der Bund-Seite', async () => {
     const { browser, page, errors, posts } = await boot();
     try {

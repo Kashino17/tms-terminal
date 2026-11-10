@@ -3124,7 +3124,13 @@
   // Tippt der Nutzer den Fernzugriff-Knopf auf der Geraetekarte an: React
   // Native holt die Zugangsdaten und reicht sie ueber setRemoteTarget zurueck
   // (siehe weiter unten) — die Seite baut die Bildverbindung selbst auf.
-  window.__tmsOpenRemote = function (id) { remoteWantId = id || null; post('remote:open', { id: id }); };
+  window.__tmsOpenRemote = function (id) {
+    remoteWantId = id || null;
+    // Ein liegengebliebenes „Beenden“ (Zugangsdaten kamen nie) darf das
+    // Öffnen nicht in ein Schliessen verwandeln.
+    if (id && typeof remoteClosing === 'object') delete remoteClosing[id];
+    post('remote:open', { id: id });
+  };
 
   // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
   /** Bund: Diktat gibt es nur, solange ein Gerät mit caps.dictation (der Mac)
@@ -3234,30 +3240,37 @@
   /** Sitzung eines Geraets schliessen, zu dem gerade keine Bildverbindung
    *  steht: kurz verbinden, remote:stop, fertig (der Server beendet dann die
    *  ruhende Sitzung). Unerreichbar = der Punkt bleibt, spaeter erneut. */
+  function devName(id) {
+    var d = (window.TMS_DATA.servers || []).filter(function (x) { return x.id === id; })[0];
+    return d ? d.name : 'dem Gerät';
+  }
+  /** Erst wenn der Rechner remote:stopped schickt, gilt die Sitzung als
+   *  beendet. Vorher hiess es nach 0,8 s blind „beendet“ — auch wenn der
+   *  Rechner das Stopp gar nicht umgesetzt hatte. */
+  var CLOSE_CONFIRM_MS = function () { return window.__tmsCloseConfirmMs || 6000; };
   function closeRemoteVia(t) {
-    var s;
-    try { s = new WebSocket('ws://' + t.host + ':' + t.port + '/remote?token=' + encodeURIComponent(t.token)); }
-    catch (e) { return; }
-    var finished = false;
-    var done = function () {
+    var s, finished = false, timer = 0;
+    var toast = function (m) { if (typeof window.toast === 'function') window.toast(m); };
+    var finish = function (ok) {
       if (finished) return;
       finished = true;
-      setRemoteAlive(t.id, false);
-      try { s.close(); } catch (e) {}
+      clearTimeout(timer);
+      try { s && s.close(); } catch (e) {}
+      if (ok) { setRemoteAlive(t.id, false); toast('Fernzugriff auf ' + devName(t.id) + ' beendet'); }
+      else { setRemoteAlive(t.id, true); toast(devName(t.id) + ' nicht erreichbar — der Fernzugriff läuft dort evtl. weiter. Bitte später erneut beenden.'); }
     };
-    s.onopen = function () {
-      try { s.send(JSON.stringify({ type: 'remote:stop' })); } catch (e) {}
-      setTimeout(done, 800);
-    };
-    s.onmessage = function (e) { if (typeof e.data === 'string' && e.data.indexOf('remote:stopped') >= 0) done(); };
-    s.onerror = function () {
-      if (!finished && typeof window.toast === 'function') window.toast('Gerät nicht erreichbar — die Verbindung bleibt vorerst bestehen');
-    };
+    try { s = new WebSocket('ws://' + t.host + ':' + t.port + '/remote?token=' + encodeURIComponent(t.token)); }
+    catch (e) { finish(false); return; }
+    timer = setTimeout(function () { finish(false); }, CLOSE_CONFIRM_MS());
+    s.onopen = function () { try { s.send(JSON.stringify({ type: 'remote:stop' })); } catch (e) { finish(false); } };
+    s.onmessage = function (e) { if (typeof e.data === 'string' && e.data.indexOf('remote:stopped') >= 0) finish(true); };
+    s.onerror = function () { finish(false); };
+    s.onclose = function () { finish(false); }; // zu, bevor der Rechner bestätigt hat
   }
   window.__closeRemoteDevice = function (id) {
     if (!id) return;
     remoteClosing[id] = true;
-    post('remote:open', { id: id });
+    post('remote:open', { id: id, closing: true });
   };
   setTimeout(renderRemoteAlive, 0);
 
@@ -4189,9 +4202,15 @@
         window.__tmsOpenRemote(id);
         window.TMSRemote.start(presetByDev[id] || 'auto');
       },
-      /** Sitzung eines Geraets beenden (Insel: "Schliessen"). */
+      /** Sitzung eines Geraets beenden (⋮-Menü „Beenden“), ohne den
+       *  Fernzugriff zu öffnen. Laeuft sie ueber die eigene (pausierte)
+       *  Verbindung: Stopp dort hinein und nicht neu verbinden. Bestaetigt wird
+       *  in jedem Fall ueber eine frische Verbindung — die alte kann halb tot
+       *  sein, und der Server beendet die Sitzung, wo immer sie gerade haengt.
+       *  Der gruene Ring geht erst mit dieser Bestaetigung weg. */
       closeDevice: function (id) {
-        if (id && id === curDev() && (wantRunning || ws)) { window.TMSRemote.stop(); return; }
+        if (!id) return;
+        if (id === curDev() && (wantRunning || ws)) window.TMSRemote.stop({ keepMark: true });
         window.__closeRemoteDevice(id);
       },
       start: function (which) {
@@ -4203,7 +4222,7 @@
         }
         maybeConnect();
       },
-      stop: function () {
+      stop: function (opts) {
         // Muss VOR dem Schliessen laufen: releaseAllSticky() sendet ueber
         // TMSRemote.input(), das nur sendet, solange ws noch offen und
         // remoteState.running noch true ist. Nach dem close()/running=false
@@ -4228,7 +4247,8 @@
         // und plant faelschlich einen Wiederverbindungs-Zeitgeber.
         wantRunning = false;
         suspended = false;
-        setRemoteAlive(curDev(), false);
+        // keepMark: closeDevice() nimmt den Ring erst mit der Bestaetigung weg.
+        if (!(opts && opts.keepMark === true)) setRemoteAlive(curDev(), false);
         if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
         if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
         if (ws) { try { ws.close(); } catch (e) {} ws = null; }

@@ -262,6 +262,36 @@ test('„Verbindung schließen“ von einer frischen Verbindung beendet die ruhe
   assert.equal(other.typed('remote:stopped').length, 1);
 });
 
+// ⋮-Menü „Beenden“: die Bildverbindung der App ist nur pausiert (remote:view
+// false), die Sitzung gehört also noch ihr — und ruht NICHT. Ein Stopp über
+// eine zweite Verbindung muss sie trotzdem beenden (auch wenn die erste
+// Verbindung halb tot ist und ihr eigenes Stopp nie ankommt).
+test('remote:stop über eine zweite Verbindung beendet die laufende Sitzung der ersten', async () => {
+  const { ws, capture, input } = wire();
+  send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });
+  await tick();
+  send(ws, { type: 'remote:view', payload: { visible: false } });
+  const other = new FakeWs();
+  handleRemoteConnection(other as any, { makeCapture: fakeCapture, makeInput: () => fakeInput(), isEnabled: () => true });
+  send(other, { type: 'remote:stop' });
+  await tick(); await tick();
+  assert.equal(capture.stopped, true, 'die Aufnahme am Rechner ist aus');
+  assert.ok(input.calls.includes('stop'));
+  assert.equal(other.typed('remote:stopped').length, 1, 'die zweite Verbindung bekommt die Bestätigung');
+  assert.equal(ws.typed('remote:stopped').length, 1, 'die erste erfährt es auch');
+  ws.close();
+  await tick();
+  assert.equal(hasParkedSession(), false, 'und sie ruht danach nicht weiter');
+});
+
+test('remote:stop ohne jede Sitzung bestätigt trotzdem (nichts läuft)', async () => {
+  const other = new FakeWs();
+  handleRemoteConnection(other as any, { makeCapture: fakeCapture, makeInput: () => fakeInput(), isEnabled: () => true });
+  send(other, { type: 'remote:stop' });
+  await tick(); await tick();
+  assert.equal(other.typed('remote:stopped').length, 1);
+});
+
 test('remote:view false: kein Bild unterwegs, die Sitzung laeuft weiter; true holt ein Vollbild', async () => {
   const { ws, capture } = wire();
   send(ws, { type: 'remote:start', payload: QUALITY_PRESETS.auto });

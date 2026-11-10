@@ -106,6 +106,12 @@ export async function endParked(): Promise<boolean> {
   return true;
 }
 
+/** The connection whose session is running right now (one per server). A
+ *  `remote:stop` from another connection — the app's "end" in the ⋮ menu,
+ *  while its own picture connection is only paused or already half dead —
+ *  must reach this session too, not just a resting one. */
+let live: { end: () => Promise<void> } | null = null;
+
 /** Test hook: is there a resting session? */
 export function hasParkedSession(): boolean { return parked !== null; }
 
@@ -189,9 +195,13 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
     if (r !== null) rttMs = r;
   });
 
+  /** This connection as the server's running session (see `live` above). */
+  const me = { end: async () => { userStopped = true; await stop('vom Nutzer beendet'); } };
+
   async function stop(reason: string, tell = true) {
     const c = capture, i = input;
     capture = null; input = null;
+    if (live === me) live = null;
     if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
     if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
     if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
@@ -214,6 +224,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
     const c = capture, i = input;
     if (!c || !i || !lastOpts || !lastInfo) return false;
     capture = null; input = null;
+    if (live === me) live = null;
     if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
     if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
     if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
@@ -349,6 +360,7 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
       capture = c;
       const injector = adopt ? adopt.input : deps.makeInput();
       input = injector;
+      live = me;
       const resumed = adopt !== null;
       adopt = null; // owned by this connection now
 
@@ -493,10 +505,13 @@ export function handleRemoteConnection(ws: RemoteWs, deps: RemoteDeps, ip = 'unk
       case 'remote:stop':
         enqueue(async () => {
           userStopped = true;
-          // Closing from the app ends a resting session too (also one this
-          // connection never picked up: "Verbindung schließen" in the island).
-          if (!capture && !input && parked) {
-            await endParked();
+          // Closing from the app ends the session wherever it is: resting, or
+          // still held by another connection (the app's paused picture
+          // connection — "Beenden" in the ⋮ menu opens a fresh one). Always
+          // confirmed, so the app only shows "beendet" once it really is.
+          if (!capture && !input) {
+            if (parked) await endParked();
+            else if (live && live !== me) await live.end();
             reply({ type: 'remote:stopped', payload: { reason: 'vom Nutzer beendet' } });
             return;
           }

@@ -1074,7 +1074,9 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
     // server === null). Ohne diesen Hinweis drückt man ihn und es passiert
     // sichtbar nichts. Nur dieser eine Fall — die allgemeine Wächterzeile
     // darunter bleibt für alle anderen Nachrichten unverändert.
-    if (type === 'remote:open' && (!wsService || !server)) {
+    // Beenden (⋮-Menü) braucht keine Terminal-Verbindung: die Seite spricht
+    // den Rechner direkt an, hier werden nur die Zugangsdaten nachgeschlagen.
+    if (type === 'remote:open' && !payload?.closing && (!wsService || !server)) {
       call('toast', 'Erst mit dem Server verbinden, dann Fernzugriff öffnen');
       return;
     }

@@ -888,8 +888,16 @@
     if (conf.dataset.bmConfirm === 'no') { list.innerHTML = bmList('remote'); return; }
     const id = conf.dataset.srv, d = servers().find((x) => x.id === id);
     closeCardMenuNow();
-    if (typeof window.__closeRemoteDevice === 'function') window.__closeRemoteDevice(id);
-    say(`Fernzugriff auf ${d ? d.name : 'dem Gerät'} beendet`);
+    // App: über TMSRemote — das schickt das Stopp auch über die eigene, nur
+    // pausierte Bildverbindung und meldet „beendet“ erst, wenn der Rechner es
+    // bestätigt hat.
+    if (window.TMSRemote && typeof window.TMSRemote.closeDevice === 'function') {
+      window.TMSRemote.closeDevice(id);
+      say(`Fernzugriff auf ${d ? d.name : 'dem Gerät'} wird beendet …`);
+    } else {
+      if (typeof window.__closeRemoteDevice === 'function') window.__closeRemoteDevice(id);
+      say(`Fernzugriff auf ${d ? d.name : 'dem Gerät'} beendet`);
+    }
   }, true);
 
   // Vom Fernzugriff zurück: der grüne Ring um ⋮ pulsiert EINMAL, danach Ruhe.
