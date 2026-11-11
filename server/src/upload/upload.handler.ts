@@ -21,13 +21,6 @@ interface UploadOptions {
 const MAX_BODY_SIZE = 50 * 1024 * 1024; // 50 MB
 const MAX_MULTIPART_SIZE = 500 * 1024 * 1024; // 500 MB
 
-const ALLOWED_VIDEO_MIMES = new Set([
-  'video/mp4',
-  'video/quicktime',
-  'video/3gpp',
-  'video/webm',
-]);
-
 function handleUpload(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -101,6 +94,131 @@ function handleUpload(
   });
 }
 
+export interface MediaOptions {
+  /** Absolute folder the file ends up in. */
+  dir: string;
+  defaultExt: string;
+  /** Word used in the log lines. */
+  label: string;
+  maxBytes?: number;
+}
+
+/**
+ * Streams one multipart file (image or video) to disk and answers with its
+ * path. No auth in here — handleMultipartUpload does that first.
+ *
+ * The answer is sent only after the file is completely written AND renamed.
+ * Busboy reports "done" as soon as the request body is parsed; the disk write
+ * is still running at that moment. Answering on busboy's signal alone reported
+ * "No file received" for every single upload and deleted the half-written
+ * file — that is why videos never arrived.
+ */
+export function receiveMedia(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  opts: MediaOptions,
+): void {
+  const maxBytes = opts.maxBytes ?? MAX_MULTIPART_SIZE;
+  let responded = false;
+  let tempPath = '';
+  let out: fs.WriteStream | null = null;
+  /** Settles when the file is on disk under its final name. */
+  let stored: Promise<{ path: string; filename: string }> | null = null;
+
+  const respond = (status: number, body: object) => {
+    if (responded) return;
+    responded = true;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  };
+
+  const cleanup = () => {
+    if (out && !out.destroyed) out.destroy();
+    if (tempPath) { try { fs.unlinkSync(tempPath); } catch {} }
+  };
+
+  const fail = (status: number, error: string) => {
+    cleanup();
+    if (!responded) logger.error(`${opts.label} upload failed (${status}): ${error}`);
+    respond(status, { error });
+  };
+
+  let busboy: ReturnType<typeof Busboy>;
+  try {
+    fs.mkdirSync(opts.dir, { recursive: true });
+    busboy = Busboy({ headers: req.headers, limits: { fileSize: maxBytes, files: 1 } });
+  } catch (err) {
+    fail(400, 'Invalid multipart request');
+    return;
+  }
+
+  busboy.on('file', (_field: string, file: NodeJS.ReadableStream & { resume: () => void }, info: { filename: string; encoding: string; mimeType: string }) => {
+    const { filename, mimeType } = info;
+    if (!mimeType.startsWith('image/') && !mimeType.startsWith('video/')) {
+      file.resume(); // drain
+      stored = Promise.reject(Object.assign(new Error(`Unsupported file type: ${mimeType}`), { status: 400 }));
+      stored.catch(() => {}); // handled in 'close'
+      return;
+    }
+
+    const ext = path.extname(filename) || opts.defaultExt;
+    const base = path.basename(filename, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const finalName = `${Date.now()}_${base}${ext}`;
+    const finalPath = path.join(opts.dir, finalName);
+    tempPath = finalPath + '.tmp';
+    const ws = fs.createWriteStream(tempPath);
+    out = ws;
+
+    stored = new Promise((resolve, reject) => {
+      let tooLarge = false;
+      // Busboy cuts the stream at the limit and then ends it normally, so the
+      // write still "finishes" — with a truncated file. Remember that it was cut.
+      file.on('limit', () => { tooLarge = true; });
+      file.on('error', reject);
+      ws.on('error', reject);
+      ws.on('finish', () => {
+        if (tooLarge) {
+          const mb = Math.round(maxBytes / 1024 / 1024);
+          reject(Object.assign(new Error(`File too large (max ${mb} MB)`), { status: 413 }));
+          return;
+        }
+        try {
+          fs.renameSync(tempPath, finalPath);
+          resolve({ path: finalPath, filename: finalName });
+        } catch (err) { reject(err); }
+      });
+    });
+    stored.catch(() => {}); // handled in 'close'
+    file.pipe(ws);
+  });
+
+  // 'close' = the whole request body is parsed. The file may still be flushing.
+  busboy.on('close', () => {
+    if (!stored) { fail(400, 'No file received'); return; }
+    stored.then(
+      (saved) => {
+        logger.success(`${opts.label} saved: ${saved.path}`);
+        respond(200, saved);
+      },
+      (err: Error & { status?: number }) => fail(err.status ?? 500, err.status ? err.message : `Write error: ${err.message}`),
+    );
+  });
+
+  busboy.on('error', (err: Error) => fail(400, `Invalid upload: ${err.message}`));
+
+  // Connection dropped mid-upload (phone lost the network): no half file stays.
+  // A normally finished request also emits 'close' — req.complete tells them apart.
+  req.on('close', () => {
+    if (!req.complete && !responded) {
+      logger.error(`${opts.label} upload aborted by the client`);
+      responded = true;
+      cleanup();
+    }
+  });
+
+  req.pipe(busboy);
+}
+
 function handleMultipartUpload(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -120,103 +238,11 @@ function handleMultipartUpload(
     return;
   }
 
-  const dir = path.join(os.homedir(), 'Desktop', opts.outputDir);
-  fs.mkdirSync(dir, { recursive: true });
-
-  let fileSaved = false;
-  let finalPath = '';
-  let finalName = '';
-  let tempPath = '';
-  let responded = false;
-
-  const respond = (status: number, body: object) => {
-    if (responded) return;
-    responded = true;
-    res.writeHead(status, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(body));
-  };
-
-  const cleanup = () => {
-    if (tempPath && fs.existsSync(tempPath)) {
-      try { fs.unlinkSync(tempPath); } catch {}
-    }
-  };
-
-  let busboy: ReturnType<typeof Busboy>;
-  try {
-    busboy = Busboy({
-      headers: req.headers,
-      limits: { fileSize: MAX_MULTIPART_SIZE, files: 1 },
-    });
-  } catch (err) {
-    respond(400, { error: 'Invalid multipart request' });
-    return;
-  }
-
-  busboy.on('file', (fieldname: string, file: NodeJS.ReadableStream & { resume: () => void }, info: { filename: string; encoding: string; mimeType: string }) => {
-    const { filename, mimeType } = info;
-
-    // Validate MIME type
-    const isImage = mimeType.startsWith('image/');
-    const isVideo = ALLOWED_VIDEO_MIMES.has(mimeType);
-    if (!isImage && !isVideo) {
-      file.resume(); // drain
-      respond(400, { error: `Unsupported file type: ${mimeType}` });
-      return;
-    }
-
-    const ext = path.extname(filename) || opts.defaultExt;
-    const base = path.basename(filename, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
-    finalName = `${Date.now()}_${base}${ext}`;
-    finalPath = path.join(dir, finalName);
-    tempPath = finalPath + '.tmp';
-
-    const writeStream = fs.createWriteStream(tempPath);
-
-    file.on('limit', () => {
-      writeStream.destroy();
-      cleanup();
-      respond(413, { error: 'File too large (max 500 MB)' });
-    });
-
-    file.pipe(writeStream);
-
-    writeStream.on('finish', () => {
-      try {
-        fs.renameSync(tempPath, finalPath);
-        fileSaved = true;
-      } catch (err) {
-        cleanup();
-        respond(500, { error: 'Failed to save file' });
-      }
-    });
-
-    writeStream.on('error', (err) => {
-      cleanup();
-      respond(500, { error: 'Write error' });
-    });
+  receiveMedia(req, res, {
+    dir: path.join(os.homedir(), 'Desktop', opts.outputDir),
+    defaultExt: opts.defaultExt,
+    label: opts.subDir,
   });
-
-  busboy.on('finish', () => {
-    if (fileSaved) {
-      logger.success(`${opts.subDir} saved: ${finalPath}`);
-      respond(200, { path: finalPath, filename: finalName });
-    } else if (!responded) {
-      cleanup();
-      respond(400, { error: 'No file received' });
-    }
-  });
-
-  busboy.on('error', (err: Error) => {
-    cleanup();
-    respond(500, { error: 'Upload failed' });
-  });
-
-  req.on('close', () => {
-    if (!fileSaved) cleanup();
-  });
-
-  req.pipe(busboy);
 }
 
 export function handleUploadRequest(req: http.IncomingMessage, res: http.ServerResponse): void {

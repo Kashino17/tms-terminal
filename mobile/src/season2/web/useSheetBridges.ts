@@ -18,6 +18,9 @@ import { parentDir, joinDir } from './filePaths';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { uploadMediaFile } from './fileTransfer';
+import { MAX_VIDEO_BYTES, uploadSummary } from './mediaUpload';
 import type { WebSocketService } from '../../services/websocket.service';
 import { usePortForwardingStore } from '../../store/portForwardingStore';
 // Serverseitige Notizen (klassischer Store) und die Notizen des HTML-Sheets je
@@ -37,6 +40,9 @@ import { usePrayerStore, prayerMethodName } from '../../store/prayerStore';
 import { readAdhanSettings, canScheduleExactAdhan } from '../../services/adhan.service';
 
 type Call = (fn: string, ...args: unknown[]) => void;
+
+/** Eigener Name, damit das Diktat (hält den Bildschirm ebenfalls wach) nicht mit freigegeben wird. */
+const UPLOAD_AWAKE_TAG = 'tms-upload';
 
 // Bund: eigene Snippet-Liste auf dem Handy (durableStorage, überlebt Updates).
 const SNIPPETS_KEY = 'tms-bund-snippets';
@@ -129,7 +135,7 @@ export function useSheetBridges({
       : ''
   ), [server, token]);
 
-  /** Pick an image, upload it, and remember where it landed. */
+  /** Pick photos or videos, upload them, and remember where they landed. */
   // Ziel (Gerät + Karte) steht beim Antippen fest: `server`/`token` sind in
   // dieser Closure eingefroren, und die Pfade gehen in genau die Karte, von der
   // aus gestartet wurde — auch wenn währenddessen das Terminal gewechselt wird.
@@ -156,64 +162,91 @@ export function useSheetBridges({
 
       const uploaded: Array<{ path: string; url: string; isVideo?: boolean }> = [];
       const total = result.assets.length;
-      call('uploadProgress', 0, total, server.id);
-      for (const asset of result.assets) {
-        const isVideo = asset.type === 'video';
-        if (isVideo && (asset.fileSize ?? 0) > 500 * 1024 * 1024) {
-          call('toast', 'Video übersprungen: größer als 500 MB');
-          continue;
+      const counts = { images: 0, videos: 0, failed: 0, tooBig: 0, firstError: '' };
+      const base = `http://${server.host}:${server.port}`;
+      let done = 0;
+      call('uploadProgress', 0, total, server.id, 0);
+      // Ein großes Video braucht Minuten. Geht der Bildschirm dabei aus, legt
+      // Android die App schlafen und der Upload reißt ab.
+      await activateKeepAwakeAsync(UPLOAD_AWAKE_TAG).catch(() => {});
+      try {
+        for (const asset of result.assets) {
+          const isVideo = asset.type === 'video';
+          try {
+            let json: any;
+            if (isVideo) {
+              // Größe von der Datei selbst lesen: Android liefert sie als
+              // `filesize`, die Typen sagen `fileSize` — das Feld war immer leer.
+              const info = await FileSystem.getInfoAsync(asset.uri);
+              const bytes = info.exists && 'size' in info ? info.size ?? 0 : 0;
+              if (bytes > MAX_VIDEO_BYTES) { counts.tooBig++; continue; }
+              // Multipart: die Datei wird nativ von der Platte gestreamt. Als
+              // Base64 durch die JS-Brücke wäre bei 200 MB Schluss.
+              let lastPct = -1;
+              json = await uploadMediaFile(`${base}/upload/media`, token, {
+                uri: asset.uri,
+                name: asset.fileName ?? `video-${Date.now()}.mp4`,
+                type: asset.mimeType ?? 'video/mp4',
+              }, (frac) => {
+                // Nicht jedes Paket an die Seite melden — alle 2 % reicht.
+                const pct = Math.floor(frac * 100);
+                if (pct >= lastPct + 2) { lastPct = pct; call('uploadProgress', done, total, server.id, frac); }
+              });
+            } else {
+              const data = asset.base64
+                ?? (await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
+              const r = await fetch(`${base}/upload/screenshot`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                  filename: asset.fileName ?? `screenshot-${uploaded.length}.jpg`,
+                  data,
+                  mimeType: asset.mimeType ?? 'image/jpeg',
+                }),
+              });
+              json = await r.json();
+              if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
+            }
+            uploaded.push({ path: json.path, url: isVideo ? '' : downloadUrl(json.path), isVideo });
+            if (isVideo) counts.videos++; else counts.images++;
+          } catch (e: any) {
+            // Eine Datei scheitert — die anderen gehen trotzdem durch.
+            counts.failed++;
+            if (!counts.firstError) counts.firstError = e?.message ?? 'Upload fehlgeschlagen';
+          } finally {
+            done++;
+            // Die Auswahl legt von jeder Datei eine Kopie im App-Cache an (bei
+            // einem Video die volle Größe). Nach dem Senden weg damit.
+            if (FileSystem.cacheDirectory && asset.uri.startsWith(FileSystem.cacheDirectory)) {
+              FileSystem.deleteAsync(asset.uri, { idempotent: true }).catch(() => {});
+            }
+            if (done < total) call('uploadProgress', done, total, server.id, 0); // 3 von 12 …
+          }
         }
-        let json: any;
-        if (isVideo) {
-          // Multipart wie im klassischen Panel — 500 MB als Base64 wären das
-          // Ende der JS-Brücke. Der Server (/upload/media) kann genau 500 MB.
-          const form = new FormData();
-          form.append('file', {
-            uri: asset.uri,
-            name: asset.fileName ?? `video-${Date.now()}.mp4`,
-            type: asset.mimeType ?? 'video/mp4',
-          } as unknown as Blob);
-          const r = await fetch(`http://${server.host}:${server.port}/upload/media`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-            body: form,
-          });
-          json = await r.json();
-          if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
-        } else {
-          const data = asset.base64
-            ?? (await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
-          const r = await fetch(`http://${server.host}:${server.port}/upload/screenshot`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({
-              filename: asset.fileName ?? `screenshot-${uploaded.length}.jpg`,
-              data,
-              mimeType: asset.mimeType ?? 'image/jpeg',
-            }),
-          });
-          json = await r.json();
-          if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
-        }
-        uploaded.push({ path: json.path, url: isVideo ? '' : downloadUrl(json.path), isVideo });
-        call('uploadProgress', uploaded.length, total, server.id); // 3 von 12 …
+      } finally {
+        deactivateKeepAwake(UPLOAD_AWAKE_TAG).catch(() => {});
+      }
+
+      if (!uploaded.length) {
+        call('uploadProgress', 1, 1); // Fortschritt wieder ausblenden
+        call('setTool', 'screenshots', shots); // Karte zurück auf Kamera/Galerie
+        call('toast', uploadSummary(counts));
+        return;
       }
       const next = [...uploaded.reverse(), ...shots];
       setShots(next);
-      // Ein Bild hochzuladen hat nur einen Zweck: die KI soll es ansehen. Also
-      // landet der Serverpfad sofort im Terminal — still (null), die Meldung
-      // kommt gleich gebündelt.
+      // Ein Bild oder Video hochzuladen hat nur einen Zweck: die KI soll es
+      // ansehen. Also landet der Serverpfad sofort im Terminal — still (null),
+      // die Meldung kommt gleich gebündelt.
       const paths = next.slice(0, uploaded.length).map((s) => s.path).join(' ');
       if (cardId) call('insertIntoCard', cardId, paths, null);
       else call('insertIntoTerminal', paths, null);
       // Und KEIN setTool: die Galerie soll sich hinterher nicht wieder
       // aufklappen. Liste still nachführen, Sheet zu, kurz bestätigen.
-      const n = uploaded.length;
-      call('uploadFinished', next,
-        n > 1 ? `${n} Bilder hochgeladen und eingefügt` : 'Bild hochgeladen und eingefügt');
+      call('uploadFinished', next, uploadSummary(counts));
     } catch (e: any) {
       call('uploadProgress', 1, 1); // Fortschritt wieder ausblenden
-      call('toast', `Screenshot: ${e?.message ?? 'Upload fehlgeschlagen'}`);
+      call('toast', `Upload: ${e?.message ?? 'fehlgeschlagen'}`);
     }
   }, [server, token, shots, downloadUrl, call]);
 

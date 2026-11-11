@@ -7,6 +7,7 @@
 // and uploads go through here instead.
 import * as FileSystem from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
+import { uploadErrorText } from './mediaUpload';
 
 /** Images up to this size are shown inline (as data: URL); bigger ones open natively. */
 export const INLINE_IMAGE_MAX = 15 * 1024 * 1024;
@@ -94,4 +95,38 @@ export async function uploadPart(p: UploadPart, reply: Reply): Promise<void> {
   } catch (e: any) {
     reply({ error: e?.message ? `Verbindung: ${e.message}` : 'Verbindung abgebrochen' });
   }
+}
+
+export interface MediaFile { uri: string; name: string; type: string }
+
+/**
+ * Send one phone file (a video) to POST /upload/media as multipart. The file
+ * is streamed from disk by the native side — it never passes through JS, so
+ * its size does not matter here.
+ *
+ * XMLHttpRequest instead of fetch: fetch cannot report how much of the body is
+ * through, and a big video takes minutes over the tailnet.
+ */
+export function uploadMediaFile(
+  url: string, token: string, file: MediaFile, onProgress: (frac: number) => void,
+): Promise<{ path: string; filename: string }> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append('file', file as unknown as Blob);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) onProgress(Math.min(1, e.loaded / e.total));
+    };
+    xhr.onload = () => {
+      let d: any = {};
+      try { d = JSON.parse(xhr.responseText || '{}'); } catch { /* not JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300 && d.path) resolve(d);
+      else reject(new Error(uploadErrorText(xhr.status, d.error)));
+    };
+    xhr.onerror = () => reject(new Error(uploadErrorText(0)));
+    xhr.onabort = () => reject(new Error('Abgebrochen'));
+    xhr.send(form);
+  });
 }

@@ -2771,7 +2771,7 @@
 
   // Screenshots — the real workflow: grab an image, upload it to the server,
   // then drop its path into the terminal so the AI can actually look at it.
-  var uploadState = null; // { done, total } während des Hochladens
+  var uploadState = null; // { done, total, frac } während des Hochladens
   var shotSelect = false; // von uploadFinished zurückgesetzt (Auswahlmodus entfernt)
   var shotSel = {};       // dito
 
@@ -2780,11 +2780,17 @@
   // fügt die RN-Seite die Serverpfade in die Eingabezeile ein und
   // uploadFinished schließt die Karte automatisch.
   window.buildScreenshotsSheet = function () {
-    var progress = uploadState
-      ? '<div class="up-progress"><div class="up-progress__bar"><span style="width:' +
-          Math.round((uploadState.done / Math.max(1, uploadState.total)) * 100) + '%"></span></div>' +
-        '<div class="up-progress__label">Lade hoch … ' + uploadState.done + ' von ' + uploadState.total + '</div></div>'
-      : '';
+    // Balken = fertige Dateien + Anteil der laufenden. Ein einzelnes Video von
+    // 200 MB stünde sonst minutenlang auf „0 von 1" — das sähe wie ein Hänger aus.
+    var progress = '';
+    if (uploadState) {
+      var total = Math.max(1, uploadState.total);
+      var pct = Math.max(0, Math.min(100, Math.round(((uploadState.done + uploadState.frac) / total) * 100)));
+      var nr = Math.min(uploadState.done + 1, total);
+      var part = uploadState.frac > 0 ? ' · ' + Math.round(uploadState.frac * 100) + ' %' : '';
+      progress = '<div class="up-progress"><div class="up-progress__bar"><span style="width:' + pct + '%"></span></div>' +
+        '<div class="up-progress__label">Lade hoch … ' + nr + ' von ' + total + part + '</div></div>';
+    }
 
     var choice = uploadState ? '' :
       '<div class="shot-choice">' +
@@ -2807,9 +2813,11 @@
     };
   };
 
-  /** Ladefortschritt: wie viele von wie vielen Bildern schon durch sind. */
-  window.TMSBridge.uploadProgress = function (done, total, srvId) {
-    uploadState = (done >= total) ? null : { done: done, total: total };
+  /** Ladefortschritt: wie viele von wie vielen Dateien schon durch sind, und
+   *  (bei Videos) welcher Anteil der laufenden Datei: frac 0..1. */
+  window.TMSBridge.uploadProgress = function (done, total, srvId, frac) {
+    uploadState = (done >= total) ? null
+      : { done: done, total: total, frac: Math.max(0, Math.min(1, Number(frac) || 0)) };
     // NUR während des Uploads das offene Sheet mit Fortschritt neu bauen. Beim
     // Abschluss NICHT: setTool→openSheet würde das Sheet erneut öffnen und dabei
     // den Close-Timer canceln, den insertIntoTerminal/uploadFinished gleich
