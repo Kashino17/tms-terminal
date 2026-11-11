@@ -393,3 +393,9 @@
 - Commits 16a1189 (Vorlese-Reste), e117575 (Ausbau + Altdaten), 3c0ea34 (Release), Tag v1.152.0 lokal. Offen: `git push origin v1.152.0` — der Sitzungs-Modus hat den Push gesperrt; danach CI + Prüfung am Fold.
 - Tempo live gemessen nach Server-Update: 11 Diktate, Mitte 0,46 s (vorher 1,5 s), 73 % ≤ 0,7 s; Nutzer zufrieden → kein weiterer Tempo-Ausbau (App-Takt 500 ms entfällt).
 - Wörterbuch + neue Einstellungsseite gebaut im Worktree (Branch feat/diktat-woerterbuch, a483f47, ungemergt): dictionary.json auf dem Diktat-Rechner, dict:*-Nachrichten, Reiter Wörterbuch · Diktat · Bubble, alle Einstellungen matt, KI-Prompt/Rewriter entfernt. Review: 6 wichtige Befunde behoben. Wartet auf Freigabe für Merge + `tms-terminal update` + App-Release.
+
+## 2026-11-11 — v1.153.0 Diktat-Wörterbuch + neue Einstellungen
+- v1.152.0 (Season 1 ausgebaut) abgeschlossen: Branch + Tag gepusht, CI grün. Nutzer: „niemand sonst arbeitet in Fernzugriff, abschließen, pushen, releasen“.
+- Wörterbuch-Branch mit dem Season-1-Ausbau zusammengeführt (SettingsScreen.tsx entfällt, Seite neu gebaut), per Fast-Forward in feat/fernzugriff. Server 620 Tests, Seite 13 + 34, Durchreiche 6, tsc beide sauber, lokaler `assembleRelease` ok.
+- Neu in der App: Einstellungen › Diktat & Sprache mit Reitern Wörterbuch · Diktat · Bubble, alle Einstellungen matt, KI-Prompt weg. Server: `~/.tms-terminal/dictionary.json`, `dict:*`-Nachrichten, Whisper-Prompt aus dem Wörterbuch, Rewriter entfernt. **Braucht `tms-terminal update` am Mac.**
+- Offen: Prüfung am Fold (Tastatur im Wörterbuch-Feld, Reiter-Leiste); danach eigene Pläne für Denkpausen „...“, Lernen aus Korrekturen, Flüstermodus.
