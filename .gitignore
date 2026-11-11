@@ -54,3 +54,7 @@ mobile/android/app/google-services.json
 .superpowers/
 mcp-server/node_modules/
 mcp-server/dist/
+
+# Python bytecode (written when the sidecar tests run)
+__pycache__/
+*.pyc
