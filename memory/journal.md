@@ -417,3 +417,4 @@
 - Logik in `mockups/season2/liquid-deck/fav-dirs.js` (rein, 14 Tests), vor bund.js geladen und vom Build eingebettet. Speicher: Handy, durableStorage `tms-bund-fav-dirs`; Seite führt die Liste, App bewahrt sie nur auf (`files:favsLoad` / `files:favsSave`, `TMSBridge.setFileFavs`). Kein Server-Update nötig.
 - 6 neue Browser-Tests in webview-bund (40 grün); veralteter Bilder-Test an den Fortschrittstext aus v1.154.0 angepasst.
 - Emulator-Kopie + Testserver :8793: zwei Ordner gemerkt, App beendet und neu gestartet → beide Chips wieder da; langes Drücken per echter Berührung öffnet das Menü ohne zu springen; „cd dorthin“ führt `cd '<pfad>'` im Terminal aus, Explorer schließt. Am Fold noch nicht geprüft.
+- Nutzer gab frei: Commits ad06ef7 (Feature) + d4dd5ca (Release), Tag v1.155.0 gepusht, CI grün (Lauf 42989687076), latest = v1.155.0 mit APK. Offen: Prüfung am Fold (auch aufgeklappt).
