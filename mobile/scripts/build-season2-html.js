@@ -149,6 +149,9 @@ patch('compact controller', '<script src="compact-terminal.js"></script>',
 // Bund: Desk-Ansicht, Karten mit Griff, Explorer, Zwischenablage, Snippets.
 patch('bund stylesheet', '<link rel="stylesheet" href="bund.css">',
   '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/bund.css'), 'utf8') + '</style>');
+// Favoriten-Ordner des Explorers: reine Logik, muss vor bund.js da sein.
+patch('fav dirs logic', '<script src="fav-dirs.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/fav-dirs.js'), 'utf8') + '</script>');
 patch('bund controller', '<script src="bund.js"></script>',
   '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/bund.js'), 'utf8') + '</script>');
 patch('settings stylesheet', '<link rel="stylesheet" href="settings.css">',

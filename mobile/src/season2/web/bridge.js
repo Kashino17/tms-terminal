@@ -2312,6 +2312,8 @@
     if (window.fsSetDir) window.fsSetDir(path, entries, srvId);
     window.__tmsCwd = path; // Sheet und Screen teilen sich den Ort
   };
+  /** Favoriten-Ordner des Explorers, vom Handy-Speicher (alle Geräte). */
+  window.TMSBridge.setFileFavs = function (map) { if (window.fsSetFavs) window.fsSetFavs(map || {}); };
   window.fsReadFile = function (path) { post('files:readRaw', { path: path }); };
   window.TMSBridge.fileContent = function (path, content, error, truncated) {
     if (window.fsSetFileContent) window.fsSetFileContent(path, content, error, truncated);

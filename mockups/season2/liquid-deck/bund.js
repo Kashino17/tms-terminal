@@ -29,6 +29,10 @@
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
     pin: '<path d="M12 17v5M5 17h14l-2-5V5H7v7z"/>',
+    star: '<path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9-4.3-4.1 5.9-.8z"/>',
+    starOn: '<path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9-4.3-4.1 5.9-.8z" fill="currentColor"/>',
+    left: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+    right: '<path d="M5 12h14M13 6l6 6-6 6"/>',
     phone: '<rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/>',
     mac: '<rect x="4" y="5" width="16" height="11" rx="2"/><path d="M2 19h20"/>',
     win: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
@@ -223,7 +227,10 @@
   const fmtSize = (b) => b >= GB ? (b / GB).toFixed(1) + ' GB' : b >= MB ? (b / MB).toFixed(1) + ' MB' : Math.max(1, Math.round(b / KB)) + ' KB';
   const fmtAge = (d) => d === 0 ? 'Heute' : d === 1 ? 'Gestern' : `vor ${d} Tagen`;
 
-  const fx = { open: false, dev: null, cwd: {}, q: '', sort: 'name', selecting: false, sel: new Set(), pressT: 0 };
+  const fx = { open: false, dev: null, cwd: {}, q: '', sort: 'name', selecting: false, sel: new Set(), pressT: 0,
+    favs: {}, favLoaded: false, favDirty: false, favHtml: '' };
+  // Favoriten-Ordner: Logik in fav-dirs.js (ohne Seite getestet).
+  const FAV = window.BundFavDirs;
   const panel = document.createElement('div');
   panel.className = 'flat-panel fx2'; panel.hidden = true;
   panel.innerHTML = `
@@ -238,6 +245,7 @@
       <div class="fx2-crumbs"></div>
       <button class="fx2-cd" data-fx="cd">${ic('terminal', 2)}cd hier</button>
     </div>
+    <div class="fx2-favs" aria-label="Favoriten"></div>
     <label class="fx2-search">${ic('search')}<input type="search" placeholder="In diesem Ordner suchen…"></label>
     <div class="fx2-meta"><span class="fx2-count"></span><button class="fx2-sort" data-fx="sort">${ic('sort', 2)}<span>Name</span></button></div>
     <div class="fx2-list"></div>
@@ -291,6 +299,7 @@
     if (LIVE()) fxLoad(fx.cwd[fx.dev]);
     fx.q = ''; panel.querySelector('.fx2-search input').value = '';
     fxSelect(false);
+    favEnsure();
     showSheet(panel);
     fx.open = true; fxRender();
   }
@@ -300,7 +309,7 @@
   window.__bundOpenFilesOn = function (id, path) {
     fx.pinDev = id; fx.dev = id; fx.cwd[id] = path || '~'; fx.loading = true;
     fx.q = ''; panel.querySelector('.fx2-search input').value = '';
-    fxSelect(false); showSheet(panel); fx.open = true; fxRender();
+    fxSelect(false); favEnsure(); showSheet(panel); fx.open = true; fxRender();
   };
   function fxDeviceCheck() {
     if (fx.pinDev) return; // aus dem Fernzugriff: bleibt auf genau diesem Gerät
@@ -350,6 +359,7 @@
     });
     const cr = panel.querySelector('.fx2-crumbs'); cr.innerHTML = crumbs; cr.scrollLeft = 99999;
     panel.querySelector('.fx2-cd').title = `cd in „${s ? s.name : ''}“`;
+    favRender(cwd);
     const raw = entries(cwd);
     let list = (raw || []).slice();
     if (fx.q) list = list.filter((e) => e[0].toLowerCase().includes(fx.q.toLowerCase()));
@@ -398,6 +408,7 @@
       const a = b.dataset.fx;
       if (a === 'close') fxClose();
       if (a === 'up') goDir(parent(fx.cwd[fx.dev]));
+      if (a === 'favcur') favToggle(fx.cwd[fx.dev]);
       if (a === 'cd') { const s = activeSess(); fxClose(); act('cd', { path: fx.cwd[fx.dev] }, `cd ${fx.cwd[fx.dev]} → ${s ? s.name : ''}`); }
       if (a === 'select') { fxSelect(!fx.selecting); fxRender(); }
       if (a === 'sort') { fx.sort = { name: 'date', date: 'size', size: 'name' }[fx.sort]; fxRender(); }
@@ -437,7 +448,9 @@
     const isDir = row.dataset.dir === '1', p = row.dataset.p, n = row.dataset.n;
     const k = isDir ? ['fFolder', 'var(--accent)'] : KIND(n);
     const items = isDir
-      ? [['open', 'chev', 'Öffnen'], ['cdto', 'terminal', 'cd in diesen Ordner'], ['insert', 'insert', 'Pfad einfügen'], ['copy', 'copy', 'Pfad kopieren'], ['select', 'select', 'Auswählen'], ['rename', 'rename', 'Umbenennen'], ['trash', 'trash', 'In den Papierkorb', 1]]
+      ? [['open', 'chev', 'Öffnen'], ['cdto', 'terminal', 'cd in diesen Ordner'], ['insert', 'insert', 'Pfad einfügen'], ['copy', 'copy', 'Pfad kopieren'],
+          FAV.isFav(fx.favs, fx.dev, p) ? ['fav', 'starOn', 'Favorit entfernen'] : ['fav', 'star', 'Als Favorit merken'],
+          ['select', 'select', 'Auswählen'], ['rename', 'rename', 'Umbenennen'], ['trash', 'trash', 'In den Papierkorb', 1]]
       : [['preview', 'eye', 'Vorschau'], ['insert', 'insert', 'Pfad einfügen'], ['copy', 'copy', 'Pfad kopieren'], ['share', 'share', 'Teilen'], ['download', 'download', 'Herunterladen'], ['select', 'select', 'Auswählen'], ['rename', 'rename', 'Umbenennen'], ['trash', 'trash', 'In den Papierkorb', 1]];
     menu.innerHTML = `<div class="fx2-menu__head"><span class="ft" style="--c:${k[1]}">${ic(k[0])}</span><div><b>${esc(n)}</b><small>${esc(row.dataset.meta)}</small></div></div>` +
       items.map(([a, i, l, d]) => `<button class="mi${d ? ' danger' : ''}" data-mi="${a}">${ic(i)}${l}</button>`).join('');
@@ -449,11 +462,109 @@
       if (a === 'preview') preview(n, p, row.dataset.meta);
       if (a === 'insert') { insertText(/\s/.test(p) ? `"${p}"` : p); fxClose(); }
       if (a === 'copy') act('copyPath', { paths: [p] }, 'Pfad kopiert');
+      if (a === 'fav') favToggle(p);
       if (a === 'share') act('share', { path: p }, 'Teilen-Menü öffnet sich');
       if (a === 'download') act('download', { paths: [p], zip: false }, `${n} → Downloads`);
       if (a === 'select') { fxSelect(true); fx.sel.add(p); fxRender(); }
       if (a === 'rename') askName('Umbenennen', n, (name) => act('rename', { path: p, name }, 'Umbenannt'));
       if (a === 'trash') askTrash([p]);
+    };
+    scrim.classList.add('is-on'); menu.classList.add('is-on');
+  }
+  // ── Favoriten-Ordner: Leiste unter dem Pfad ──────────────────────────
+  // Ein Tipp springt in den Ordner, langes Drücken öffnet das Menü. Die
+  // Favoriten gehören zum Gerät, das der Explorer gerade zeigt (fx.dev).
+  const favBar = panel.querySelector('.fx2-favs');
+  const MOCK_FAVS_KEY = 'tms-mock-fav-dirs';
+  /** Einmal laden: in der App aus dem Handy-Speicher, im Mockup Beispiele. */
+  function favEnsure() {
+    if (fx.favLoaded) return;
+    if (LIVE()) { post('files:favsLoad', {}); return; }
+    fx.favLoaded = true;
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(MOCK_FAVS_KEY) || 'null'); } catch (_) {}
+    fx.favs = stored ? FAV.sanitize(stored) : FAV.sanitize({
+      'srv-mac': [{ path: '/Users/ayysir/Desktop/TMS Terminal', label: 'TMS Terminal' }, { path: '/Users/ayysir/Desktop/Screenshots', label: 'Screenshots' }, { path: '/Users/ayysir/Developer', label: 'Developer' }],
+      'srv-win': [{ path: 'C:\\Users\\ayysir\\Desktop\\Projects', label: 'Projects' }],
+    });
+  }
+  /** Antwort der App: gespeicherte Favoriten aller Geräte. */
+  window.fsSetFavs = function (map) {
+    // Nach dem ersten Laden führt die Seite die Liste — ein später Stand aus
+    // dem Speicher darf einen gerade entfernten Favoriten nicht zurückholen.
+    if (fx.favLoaded) return;
+    // Wurde schon etwas gemerkt, bevor die Antwort kam, geht es nicht verloren.
+    fx.favs = fx.favDirty ? FAV.merge(fx.favs, map) : FAV.sanitize(map);
+    fx.favLoaded = true;
+    if (fx.favDirty) favSave();
+    if (fx.open) fxRender();
+  };
+  function favSave() {
+    fx.favDirty = true;
+    if (LIVE()) post('files:favsSave', { favs: fx.favs });
+    else { try { localStorage.setItem(MOCK_FAVS_KEY, JSON.stringify(fx.favs)); } catch (_) {} }
+  }
+  function favSet(next, msg) {
+    if (next === fx.favs) return;
+    fx.favs = next; favSave(); fxRender();
+    if (msg) say(msg);
+  }
+  function favToggle(path) {
+    // Vor der ersten Antwort des Rechners steht hier noch "~/Desktop" — der
+    // echte Pfad kommt gleich. Erst dann merken, sonst passt er später nicht.
+    if (LIVE() && /^~/.test(path)) { say('Ordner lädt noch …'); return; }
+    const was = FAV.isFav(fx.favs, fx.dev, path);
+    if (!was && FAV.listFor(fx.favs, fx.dev).length >= FAV.MAX_PER_DEVICE) { say(`Höchstens ${FAV.MAX_PER_DEVICE} Favoriten pro Gerät`); return; }
+    favSet(FAV.toggle(fx.favs, fx.dev, path), was ? 'Favorit entfernt' : `„${FAV.nameOf(path)}“ als Favorit gemerkt`);
+  }
+  function favRender(cwd) {
+    const favs = FAV.listFor(fx.favs, fx.dev), cur = FAV.norm(cwd), on = FAV.isFav(fx.favs, fx.dev, cwd);
+    const html = `<button class="fx2-fav-add${on ? ' is-on' : ''}" data-fx="favcur" aria-label="${on ? 'Favorit entfernen' : 'Diesen Ordner als Favorit merken'}">${ic(on ? 'starOn' : 'star')}${favs.length ? '' : '<span>Diesen Ordner merken</span>'}</button>` +
+      favs.map((f) => `<button class="fx2-fav${FAV.norm(f.path) === cur ? ' is-cur' : ''}" data-fav="${esc(f.path)}">${ic('fFolder')}<span>${esc(f.label)}</span></button>`).join('');
+    // Nur bei Änderung neu setzen — sonst springt die Leiste beim Blättern an den Anfang.
+    if (html === fx.favHtml) return;
+    fx.favHtml = html; favBar.innerHTML = html;
+    const curEl = favBar.querySelector('.fx2-fav.is-cur');
+    if (curEl && curEl.scrollIntoView) curEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  // Tippen = hin, lang drücken = Menü. Wischen in der Leiste zählt als keins von beiden.
+  let favPress = null;
+  favBar.addEventListener('pointerdown', (e) => {
+    const chip = e.target.closest('.fx2-fav'); if (!chip) return;
+    chip.classList.add('is-pressed');
+    favPress = { chip, x: e.clientX, y: e.clientY, long: false, t: setTimeout(() => {
+      favPress.long = true; chip.classList.remove('is-pressed'); if (navigator.vibrate) navigator.vibrate(12); favMenu(chip.dataset.fav);
+    }, 450) };
+  });
+  const favEnd = () => { if (favPress) { clearTimeout(favPress.t); favPress.chip.classList.remove('is-pressed'); } };
+  favBar.addEventListener('pointermove', (e) => { if (favPress && (Math.abs(e.clientX - favPress.x) > 8 || Math.abs(e.clientY - favPress.y) > 8)) { favEnd(); favPress = null; } });
+  favBar.addEventListener('pointercancel', () => { favEnd(); favPress = null; });
+  favBar.addEventListener('pointerup', () => {
+    if (!favPress) return; favEnd(); const { chip, long } = favPress; favPress = null; if (long) return;
+    goDir(chip.dataset.fav);
+  });
+  favBar.addEventListener('contextmenu', (e) => { if (e.target.closest('.fx2-fav')) e.preventDefault(); });
+  function favMenu(path) {
+    const list = FAV.listFor(fx.favs, fx.dev), i = FAV.indexOf(fx.favs, fx.dev, path);
+    if (i === -1) return;
+    const f = list[i];
+    const items = [['open', 'chev', 'Öffnen'], ['cdto', 'terminal', 'cd dorthin'], ['insert', 'insert', 'Pfad einfügen'], ['copy', 'copy', 'Pfad kopieren'], ['rename', 'rename', 'Favorit umbenennen']];
+    if (i > 0) items.push(['left', 'left', 'Nach links']);
+    if (i < list.length - 1) items.push(['right', 'right', 'Nach rechts']);
+    items.push(['unfav', 'trash', 'Favorit entfernen', 1]);
+    menu.innerHTML = `<div class="fx2-menu__head"><span class="ft" style="--c:#f5b301">${ic('starOn')}</span><div><b>${esc(f.label)}</b><small>${esc(f.path)}</small></div></div>` +
+      items.map(([a, ico, l, d]) => `<button class="mi${d ? ' danger' : ''}" data-mi="${a}">${ic(ico)}${l}</button>`).join('');
+    menu.onclick = (e) => {
+      const b = e.target.closest('[data-mi]'); if (!b) return; closeOverlays();
+      const a = b.dataset.mi, p = f.path;
+      if (a === 'open') goDir(p);
+      if (a === 'cdto') { const s = activeSess(); fxClose(); act('cd', { path: p }, `cd ${p} → ${s ? s.name : ''}`); }
+      if (a === 'insert') { insertText(/\s/.test(p) ? `"${p}"` : p); fxClose(); }
+      if (a === 'copy') act('copyPath', { paths: [p] }, 'Pfad kopiert');
+      if (a === 'rename') askName('Favorit umbenennen', f.label, (name) => favSet(FAV.rename(fx.favs, fx.dev, p, name)));
+      if (a === 'left') favSet(FAV.move(fx.favs, fx.dev, p, -1));
+      if (a === 'right') favSet(FAV.move(fx.favs, fx.dev, p, 1));
+      if (a === 'unfav') favSet(FAV.remove(fx.favs, fx.dev, p), 'Favorit entfernt');
     };
     scrim.classList.add('is-on'); menu.classList.add('is-on');
   }

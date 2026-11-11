@@ -5,6 +5,11 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { saveToDownloads } from './downloads';
 import { baseName, cacheSafe, fetchPreview, uploadPart } from './fileTransfer';
+import { durableStorage } from '../../services/durableStorage';
+
+/** Favoriten-Ordner des Explorers: { [geraeteId]: [{ path, label }] }. Die Seite
+ *  führt die Liste (fav-dirs.js), das Handy bewahrt sie nur auf — über Updates hinweg. */
+const FAV_DIRS_KEY = 'tms-bund-fav-dirs';
 
 type Call = (fn: string, ...args: unknown[]) => void;
 
@@ -38,6 +43,13 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
   }, [ready, server, token, base, call]);
 
   const auth = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
+
+  const pushFavs = useCallback(async () => {
+    let map: unknown = {};
+    try { const raw = await durableStorage.getItem(FAV_DIRS_KEY); if (raw) map = JSON.parse(raw); } catch { /* leer anfangen */ }
+    call('setFileFavs', map);
+  }, [call]);
+  useEffect(() => { if (ready) void pushFavs(); }, [ready, pushFavs]);
 
   const listRaw = useCallback(async (path: string): Promise<void> => {
     if (!server || !token) return;
@@ -121,6 +133,16 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
     switch (type) {
       case 'files:listRaw':
         listRaw(String(payload.path ?? '~'));
+        return true;
+
+      case 'files:favsLoad':
+        void pushFavs();
+        return true;
+
+      case 'files:favsSave':
+        if (payload?.favs && typeof payload.favs === 'object') {
+          durableStorage.setItem(FAV_DIRS_KEY, JSON.stringify(payload.favs)).catch(() => {});
+        }
         return true;
 
       // Aus dem Fernzugriff: Gerät (payload.id) + Startordner. Root stellt das
@@ -260,7 +282,7 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
       }
     }
     return false;
-  }, [listRaw, refresh, download, server, token, base, auth, call]);
+  }, [listRaw, refresh, download, pushFavs, server, token, base, auth, call]);
 
   return useMemo(() => ({ handle }), [handle]);
 }

@@ -308,7 +308,8 @@ if (!PW) {
       await page.evaluate(() => document.getElementById('shotPickBtn').click());
       await page.evaluate(() => { window.TMSBridge.uploadProgress(0, 2, 'A'); window.TMSBridge.uploadProgress(1, 2, 'A'); });
       await page.waitForTimeout(300);
-      assert.match(await page.textContent('#toolSheetWrap'), /1 von 2/);
+      // Die Karte nennt die Datei, die gerade läuft: eine ist durch → „2 von 2“.
+      assert.match(await page.textContent('#toolSheetWrap'), /2 von 2/);
       await page.evaluate(() => { window.TMSBridge.uploadProgress(2, 2, 'A'); window.TMSBridge.uploadFinished([], '2 Bilder hochgeladen'); });
       await page.waitForTimeout(800);
       assert.equal(await page.evaluate(() => { const w = document.getElementById('toolSheetWrap'); return w.hidden || !w.classList.contains('is-open') && getComputedStyle(w).visibility !== 'visible' || getComputedStyle(w).display === 'none' || getComputedStyle(w).opacity === '0'; }), true, 'Karte zu');
@@ -1100,6 +1101,150 @@ if (!PW) {
       await page.click('[data-rd="close"]');
       assert.equal((await posts('reader:speakStop')).length, 2, 'Lesemodus zu: die Stimme schweigt');
       assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  // ── Favoriten-Ordner im Explorer ─────────────────────────────────────────
+  const DESK = [
+    { name: 'Kunden', path: '/Users/x/Desktop/Kunden', isDir: true, size: 0, modified: Date.now() },
+    { name: 'rechnung.pdf', path: '/Users/x/Desktop/rechnung.pdf', isDir: false, size: 2048, modified: Date.now() },
+  ];
+  const STORED = { A: [{ path: '/Users/x/Developer/tms', label: 'TMS' }, { path: '/Users/x/Desktop', label: 'Desktop' }], B: [{ path: 'C:\\Projects', label: 'Projects' }] };
+  async function openExplorer(page, stored) {
+    await page.evaluate(() => window.__bundTool('files'));
+    await page.waitForTimeout(300);
+    await page.evaluate(([favs, desk]) => {
+      window.TMSBridge.setFileFavs(favs);
+      window.TMSBridge.setFilesDir('/Users/x/Desktop', desk, 'A');
+    }, [stored, DESK]);
+    await page.waitForTimeout(150);
+  }
+  const chips = (page) => page.evaluate(() => [...document.querySelectorAll('.fx2-fav')].map((c) => c.textContent.trim() + (c.classList.contains('is-cur') ? '*' : '')));
+  async function longPress(page, sel) {
+    const box = await page.locator(sel).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(600);
+    await page.mouse.up();
+    await page.waitForTimeout(350);
+  }
+  const menuItems = (page) => page.evaluate(() => (document.querySelector('.fx2-menu.is-on') ? [...document.querySelectorAll('.fx2-menu .mi')].map((b) => b.textContent.trim()) : null));
+
+  test('Favoriten: Leiste kommt aus dem Handy-Speicher, nur die des Geräts, ein Tipp springt hin', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await page.evaluate(() => window.__bundTool('files'));
+      await page.waitForTimeout(300);
+      assert.equal((await posts('files:favsLoad')).length, 1, 'Explorer fragt die Favoriten an');
+      await openExplorer(page, STORED);
+      assert.deepEqual(await chips(page), ['TMS', 'Desktop*'], 'Mac-Favoriten, aktueller Ordner markiert, kein Windows-Pfad');
+      await page.click('.fx2-fav[data-fav="/Users/x/Developer/tms"]');
+      await page.waitForTimeout(200);
+      assert.equal((await posts('files:listRaw')).pop().payload.path, '/Users/x/Developer/tms');
+      assert.equal(await menuItems(page), null, 'kurzer Tipp öffnet kein Menü');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Favoriten: Stern merkt den Ordner, in dem man steht, und speichert auf dem Handy', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await openExplorer(page, {});
+      assert.match(await page.textContent('.fx2-fav-add'), /Diesen Ordner merken/, 'leere Leiste erklärt sich');
+      await page.click('.fx2-fav-add');
+      await page.waitForTimeout(150);
+      assert.deepEqual(await chips(page), ['Desktop*']);
+      assert.deepEqual((await posts('files:favsSave')).pop().payload.favs, { A: [{ path: '/Users/x/Desktop', label: 'Desktop' }] });
+      assert.ok(await page.evaluate(() => document.querySelector('.fx2-fav-add').classList.contains('is-on')), 'Stern gefüllt');
+      // Ein später Stand aus dem Speicher holt nichts zurück und löscht nichts.
+      await page.evaluate(() => window.TMSBridge.setFileFavs({ A: [{ path: '/alt', label: 'alt' }] }));
+      assert.deepEqual(await chips(page), ['Desktop*']);
+      await page.click('.fx2-fav-add');
+      await page.waitForTimeout(150);
+      assert.deepEqual(await chips(page), []);
+      assert.deepEqual((await posts('files:favsSave')).pop().payload.favs, {});
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Favoriten: Ordner per langem Drücken in der Liste merken', async () => {
+    const { browser, page, posts } = await boot();
+    try {
+      await openExplorer(page, {});
+      await longPress(page, '.fx2-row[data-n="Kunden"]');
+      assert.ok((await menuItems(page)).includes('Als Favorit merken'));
+      await page.click('.fx2-menu [data-mi="fav"]');
+      await page.waitForTimeout(150);
+      assert.deepEqual(await chips(page), ['Kunden']);
+      assert.deepEqual((await posts('files:favsSave')).pop().payload.favs.A, [{ path: '/Users/x/Desktop/Kunden', label: 'Kunden' }]);
+      await longPress(page, '.fx2-row[data-n="Kunden"]');
+      assert.ok((await menuItems(page)).includes('Favorit entfernen'), 'gemerkter Ordner bietet Entfernen an');
+    } finally { await browser.close(); }
+  });
+
+  test('Favoriten: langes Drücken öffnet das Menü; „cd dorthin“ schreibt cd ins Terminal vorne', async () => {
+    const { browser, page, errors, posts } = await boot();
+    try {
+      await page.evaluate(() => { window.__newTermServer = 'A'; window.addTerminal(); window.__newTermServer = null; });
+      await page.waitForTimeout(400);
+      const created = (await posts('terminal:create')).pop();
+      await page.evaluate((id) => window.TMSBridge.bindSession(id, 'S1'), created.payload.cardId);
+      await openExplorer(page, STORED);
+      await longPress(page, '.fx2-fav[data-fav="/Users/x/Developer/tms"]');
+      assert.deepEqual(await menuItems(page), ['Öffnen', 'cd dorthin', 'Pfad einfügen', 'Pfad kopieren', 'Favorit umbenennen', 'Nach rechts', 'Favorit entfernen']);
+      assert.match(await page.textContent('.fx2-menu__head'), /TMS.*\/Users\/x\/Developer\/tms/s);
+      assert.notEqual((await posts('files:listRaw')).pop().payload.path, '/Users/x/Developer/tms', 'langes Drücken springt nicht');
+      await page.click('.fx2-menu [data-mi="cdto"]');
+      await page.waitForTimeout(300);
+      const sent = (await posts('terminal:input')).pop();
+      assert.deepEqual(sent.payload, { sessionId: 'S1', data: "cd '/Users/x/Developer/tms'\r" });
+      assert.equal(await page.evaluate(() => document.querySelector('.fx2').classList.contains('is-open')), false, 'Explorer zu');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
+  test('Favoriten: umbenennen, verschieben, entfernen — jede Änderung wird gespeichert', async () => {
+    const { browser, page, posts } = await boot();
+    try {
+      await openExplorer(page, STORED);
+      const saved = async () => (await posts('files:favsSave')).pop().payload.favs.A;
+      await longPress(page, '.fx2-fav[data-fav="/Users/x/Desktop"]');
+      assert.ok(!(await menuItems(page)).includes('Nach rechts'), 'letzter kann nicht weiter nach rechts');
+      await page.click('.fx2-menu [data-mi="left"]');
+      await page.waitForTimeout(150);
+      assert.deepEqual(await chips(page), ['Desktop*', 'TMS']);
+      assert.deepEqual((await saved()).map((f) => f.path), ['/Users/x/Desktop', '/Users/x/Developer/tms']);
+      await longPress(page, '.fx2-fav[data-fav="/Users/x/Developer/tms"]');
+      await page.click('.fx2-menu [data-mi="rename"]');
+      await page.waitForTimeout(200);
+      await page.fill('.fx2-name-in', 'Projekt');
+      await page.click('.fx2-confirm [data-c="yes"]');
+      await page.waitForTimeout(150);
+      assert.deepEqual(await chips(page), ['Desktop*', 'Projekt']);
+      assert.deepEqual((await saved())[1], { path: '/Users/x/Developer/tms', label: 'Projekt' }, 'nur der Name, nicht der Pfad');
+      assert.equal((await posts('files:rename')).length, 0, 'der Ordner auf dem Rechner wird NICHT umbenannt');
+      await longPress(page, '.fx2-fav[data-fav="/Users/x/Developer/tms"]');
+      await page.click('.fx2-menu [data-mi="unfav"]');
+      await page.waitForTimeout(150);
+      assert.deepEqual(await chips(page), ['Desktop*']);
+      assert.equal((await saved()).length, 1);
+      assert.deepEqual((await posts('files:favsSave')).pop().payload.favs.B, STORED.B, 'Favoriten des anderen Geräts bleiben unberührt');
+    } finally { await browser.close(); }
+  });
+
+  test('Favoriten: Leiste passt bei 412 px, lange Namen werden gekürzt, die Zeile ist wischbar', async () => {
+    const { browser, page } = await boot();
+    try {
+      const many = { A: [{ path: '/a', label: 'Ein sehr sehr langer Ordnername der nie endet' }, ...Array.from({ length: 12 }, (_, i) => ({ path: '/p' + i, label: 'Projekt ' + i }))] };
+      await openExplorer(page, many);
+      const m = await page.evaluate(() => {
+        const bar = document.querySelector('.fx2-favs'), r = bar.getBoundingClientRect(), first = document.querySelector('.fx2-fav').getBoundingClientRect();
+        return { left: r.left, right: r.right, vw: innerWidth, scrolls: bar.scrollWidth > bar.clientWidth, h: first.height, w: first.width, pageX: document.documentElement.scrollWidth };
+      });
+      assert.ok(m.left >= 0 && m.right <= m.vw, 'Leiste bleibt im Bild');
+      assert.equal(m.pageX, m.vw, 'Seite scrollt nicht seitlich');
+      assert.ok(m.scrolls, 'viele Favoriten: Zeile ist wischbar');
+      assert.ok(m.h >= 36 && m.w <= 190, 'Chip groß genug zum Treffen, langer Name gekürzt');
     } finally { await browser.close(); }
   });
 }

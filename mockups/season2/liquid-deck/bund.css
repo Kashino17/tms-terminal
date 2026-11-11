@@ -111,6 +111,21 @@ body.desk .flat-panel { left: var(--desk-side-w); }
 .fx2-cd { height: 36px; padding: 0 12px; border-radius: 10px; flex: none; display: inline-flex; align-items: center; gap: 6px;
   font: 650 13px var(--font-ui); color: var(--accent); background: rgba(var(--accent-rgb), .12); }
 .fx2-cd svg { width: 16px; height: 16px; }
+/* Favoriten-Ordner: eine Zeile Chips unter dem Pfad, seitlich wischbar */
+.fx2-favs { display: flex; align-items: center; gap: 6px; padding: 8px 10px 0; overflow-x: auto; scrollbar-width: none; flex: none; touch-action: pan-x; }
+.fx2-favs::-webkit-scrollbar { display: none; }
+.fx2-fav, .fx2-fav-add { height: 36px; flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px 0 9px; border-radius: 10px; max-width: 190px;
+  font: 600 13px var(--font-ui); color: var(--text); background: var(--flat-bg-2); border: 1px solid var(--flat-line-2);
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.fx2-fav span, .fx2-fav-add span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx2-fav svg { width: 17px; height: 17px; color: var(--accent); flex: none; }
+.fx2-fav:hover, .fx2-fav.is-pressed { background: var(--flat-hover); }
+.fx2-fav.is-cur { color: var(--accent); border-color: rgba(var(--accent-rgb), .45); background: rgba(var(--accent-rgb), .12); }
+.fx2-fav-add { padding: 0 9px; color: var(--text-dim); }
+.fx2-fav-add span { padding-right: 3px; }
+.fx2-fav-add svg { width: 18px; height: 18px; flex: none; }
+.fx2-fav-add.is-on { color: #f5b301; }
+.fx2.is-selecting .fx2-favs { display: none; }
 .fx2-search { margin: 8px 10px 4px; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: 10px;
   background: var(--flat-bg-2); border: 1px solid var(--flat-line-2); flex: none; }
 .fx2-search svg { width: 17px; height: 17px; color: var(--text-dim); flex: none; }
