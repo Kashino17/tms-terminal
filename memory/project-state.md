@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-11 — v1.152.0 Season 1 ausgebaut (Tag-Push offen)_
+_Zuletzt aktualisiert: 2026-11-11 — Videos über die Bilder-Karte fertig und geprüft, unveröffentlicht (Commit/Release + Server-Update Mac/Windows offen)_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-11 (neueste):** Videos über die Bilder-Karte gehen jetzt wirklich: Server-Fehler behoben (`/upload/media` antwortete vor dem Schreiben mit „No file received“), App zeigt Prozent-Fortschritt. Arbeitsstand im Live-Tree, NICHT committet/released. Server-dist ist gebaut, läuft aber erst nach Neustart. **Offen:** Freigabe für Commit + Release (nächste Version nach v1.153.0), `tms-terminal update` Mac + Windows (PC war offline).
 
 **Stand 2026-11-11 (neueste):** v1.153.0 getaggt — Diktat-Wörterbuch + neue Einstellungsseite (Reiter Wörterbuch · Diktat · Bubble, alles matt, KI-Prompt/Rewriter entfernt), Diktat-Tempo serverseitig (Mitte 0,46 s gemessen). v1.152.0 (Season 1 ausgebaut) veröffentlicht. **Offen:** `tms-terminal update` am Mac (Wörterbuch wirkt erst danach; ohne zeigt die Seite „braucht ein Update“); Prüfung der neuen Seite am Fold; nächste Diktat-Pläne: Denkpausen „...“, Lernen aus Korrekturen, Flüstermodus (Spec `docs/superpowers/specs/2026-11-11-diktat-bubble-2-design.md`).
 
