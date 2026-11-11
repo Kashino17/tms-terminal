@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Aufgeraeumt: Die alte Oberflaeche (Season 1) ist ausgebaut, die App ist rund 10 MB kleiner. Der Schalter Klassische Oberflaeche in den Einstellungen entfaellt. Beim ersten Start werden die Daten der alten Ansicht einmalig geloescht (Hydra, alte Snippets, dort gespeicherte Browser-Logins, Orb-Anordnung). Vorlesen: liegengebliebene Tonstuecke werden beim Start entfernt. Kein Server-Update noetig. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Diktat und Sprache neu: Ein Woerterbuch fuer dein Diktat - eigene Begriffe werden beim Zuhoeren bevorzugt, eingetragene Hoerfehler (z. B. Cloud Code statt Claude Code) ersetzt das Diktat von selbst, nur als ganze Woerter. Suchen, hinzufuegen, Hoerfehler ergaenzen und loeschen unter Einstellungen, Diktat und Sprache. Neu aufgebaut mit drei Reitern (Woerterbuch, Diktat, Bubble), Tempo-Anzeige aus deinen letzten Diktaten, alle Einstellungen matt statt Glas. Der Schalter KI-Prompt entfaellt. Diktate sind nach dem Stopp deutlich schneller da (Server). Braucht das Server-Update (tms-terminal update). Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
