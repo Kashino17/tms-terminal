@@ -400,10 +400,12 @@
 - Neu in der App: Einstellungen › Diktat & Sprache mit Reitern Wörterbuch · Diktat · Bubble, alle Einstellungen matt, KI-Prompt weg. Server: `~/.tms-terminal/dictionary.json`, `dict:*`-Nachrichten, Whisper-Prompt aus dem Wörterbuch, Rewriter entfernt. **Braucht `tms-terminal update` am Mac.**
 - Offen: Prüfung am Fold (Tastatur im Wörterbuch-Feld, Reiter-Leiste); danach eigene Pläne für Denkpausen „...“, Lernen aus Korrekturen, Flüstermodus.
 
-## 2026-11-11 — Videos über die Bilder-Karte (unveröffentlicht)
+## 2026-11-11 — v1.154.0 Videos über die Bilder-Karte
 - Nutzerwunsch: Videos wie Bilder hochladen (Mac + Windows), Pfad in die Eingabe, bis 200 MB.
 - Befund: App konnte Videos seit v1.61.0 auswählen und senden, der Rechner antwortete aber auf JEDEN Video-Upload mit 400 „No file received“ — `/upload/media` antwortete bei busboy-`finish`, bevor die Datei geschrieben und umbenannt war, und löschte sie. Kein Log im Multipart-Weg → nie aufgefallen (kein einziges Video in ~/Desktop/Screenshots).
 - Server: `receiveMedia` antwortet erst nach Schreiben + Umbenennen; jede Video-Art (`video/*`); Fehler werden geloggt; abgebrochene Verbindung hinterlässt keine halbe Datei. Grenze bleibt 500 MB. 7 neue Tests (Server gesamt 628).
 - App: Video per XHR-Multipart mit Prozent-Fortschritt in der Karte („2 von 3 · 43 %“), Bildschirm bleibt während des Uploads an, Cache-Kopie der Auswahl wird gelöscht, Größe von der Datei gelesen (Android liefert `filesize`, nicht `fileSize` — Prüfung griff nie), Teilerfolg statt Abbruch der ganzen Auswahl, Meldung Bild/Video/Dateien, Hinweis „Rechner-Software zu alt“ bei altem Server. 10 neue Tests (App 191 + 6 übersprungen).
 - Geprüft: echter Handler mit 200-MB-Datei per curl (byte-identisch); Emulator-Kopie + Testserver :8793: Galerie → 2 Videos (27 KB, 200 MB in 21 s) + 1 Foto → 3 Pfade in der Eingabe, Karte zu, Cache leer.
-- Offen (Freigabe Nutzer): Commit + App-Release; `tms-terminal update` am Mac und am Windows-PC (war offline, 100.80.72.101 nicht erreichbar) — ohne Server-Update bleibt es bei „No file received“.
+- Nutzer gab frei: Commits dd278fc (Fix) + 1cbe16d (Release), Tag v1.154.0 gepusht, CI grün (Lauf 42939821190), latest = v1.154.0 mit APK.
+- Mac-Server per `tms-terminal update` auf 1cbe16d (09:33), 7 Terminals liefen im Wächter weiter; echter Video-Upload gegen :8767 → 200, Datei identisch.
+- Offen: Windows-PC war offline (100.80.72.101) → dort `tms-terminal update`, bis dahin meldet die App „Rechner-Software zu alt für Videos“. Prüfung am Fold (echte Galerie, großes Video über Tailscale) durch den Nutzer.
