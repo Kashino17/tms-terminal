@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-11 — v1.154.0 Videos über die Bilder-Karte (released, Mac-Server aktuell, Windows-Update offen)_
+_Zuletzt aktualisiert: 2026-11-11 — v1.155.0 Favoriten-Ordner im Datei-Explorer_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-11 (neueste):** v1.155.0: Favoriten-Leiste im Datei-Explorer (Chips unter dem Pfad, Tipp springt hin, langes Drücken mit cd dorthin / Pfad einfügen / kopieren / umbenennen / verschieben / entfernen), pro Gerät, auf dem Handy gespeichert (`tms-bund-fav-dirs`). Kein Server-Update nötig. **Offen:** Prüfung am Fold (auch aufgeklappt); Windows-PC braucht weiterhin `tms-terminal update` für Videos (v1.154.0).
 
 **Stand 2026-11-11 (neueste):** v1.154.0 released (latest, CI grün): Videos über die Bilder-Karte bis 500 MB, Pfad in die Eingabe wie bei Bildern, Prozent-Fortschritt. Ursache war der Rechner (`/upload/media` antwortete vor dem Schreiben mit „No file received“). Mac-Server auf 1cbe16d aktualisiert und live geprüft. **Offen:** `tms-terminal update` am Windows-PC (war offline); Prüfung am Fold.
 

@@ -409,3 +409,11 @@
 - Nutzer gab frei: Commits dd278fc (Fix) + 1cbe16d (Release), Tag v1.154.0 gepusht, CI grün (Lauf 42939821190), latest = v1.154.0 mit APK.
 - Mac-Server per `tms-terminal update` auf 1cbe16d (09:33), 7 Terminals liefen im Wächter weiter; echter Video-Upload gegen :8767 → 200, Datei identisch.
 - Offen: Windows-PC war offline (100.80.72.101) → dort `tms-terminal update`, bis dahin meldet die App „Rechner-Software zu alt für Videos“. Prüfung am Fold (echte Galerie, großes Video über Tailscale) durch den Nutzer.
+
+## 2026-11-11 — v1.155.0 Favoriten-Ordner im Datei-Explorer
+- Nutzerwunsch: Ordner favorisieren, Leiste oben, ein Tipp springt hin, langes Drücken mit Optionen (cd dorthin usw.).
+- Gebaut im Bund-Explorer (`bund.js`): Zeile Chips unter dem Pfad, Stern merkt/entfernt den aktuellen Ordner, Ordner-Menü in der Liste hat „Als Favorit merken“. Langes Drücken auf einen Chip: Öffnen, cd dorthin, Pfad einfügen, Pfad kopieren, Favorit umbenennen (nur der Chip-Name), Nach links/rechts, Favorit entfernen.
+- Eigene Entscheidungen: Favoriten pro Gerät (Mac-Pfade gelten am Windows-PC nicht), höchstens 30 je Gerät, Leiste im Auswahlmodus ausgeblendet, alte Favoriten der früheren Dateien-Karte (`tms-fav-paths`) nicht übernommen.
+- Logik in `mockups/season2/liquid-deck/fav-dirs.js` (rein, 14 Tests), vor bund.js geladen und vom Build eingebettet. Speicher: Handy, durableStorage `tms-bund-fav-dirs`; Seite führt die Liste, App bewahrt sie nur auf (`files:favsLoad` / `files:favsSave`, `TMSBridge.setFileFavs`). Kein Server-Update nötig.
+- 6 neue Browser-Tests in webview-bund (40 grün); veralteter Bilder-Test an den Fortschrittstext aus v1.154.0 angepasst.
+- Emulator-Kopie + Testserver :8793: zwei Ordner gemerkt, App beendet und neu gestartet → beide Chips wieder da; langes Drücken per echter Berührung öffnet das Menü ohne zu springen; „cd dorthin“ führt `cd '<pfad>'` im Terminal aus, Explorer schließt. Am Fold noch nicht geprüft.

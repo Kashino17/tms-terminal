@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Videos hochladen: Ueber die Bilder-Karte (Kamera-Symbol, Galerie) gehen jetzt auch Videos an den Rechner, bis 500 MB, einzeln oder gemischt mit Fotos, bis 20 auf einmal. Der Pfad steht danach wie bei Bildern in der Eingabe. Die Karte zeigt bei Videos den Fortschritt in Prozent, der Bildschirm bleibt waehrend des Uploads an. Bisher lehnte der Rechner jedes Video ab. Braucht das Server-Update (tms-terminal update) am Mac und am Windows-PC - ohne meldet die App: Rechner-Software zu alt fuer Videos. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Favoriten im Datei-Explorer: Unter dem Pfad steht jetzt eine Leiste mit deinen gemerkten Ordnern - ein Tipp springt direkt hinein. Der Stern links merkt den Ordner, in dem du gerade stehst; in der Liste geht es ueber langes Druecken auf einen Ordner. Langes Druecken auf einen Favoriten: Oeffnen, cd dorthin (im Terminal vorne), Pfad einfuegen, Pfad kopieren, umbenennen, nach links oder rechts schieben, entfernen. Favoriten gelten pro Geraet (Mac und Windows getrennt) und bleiben ueber Updates erhalten. Kein Server-Update noetig. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
