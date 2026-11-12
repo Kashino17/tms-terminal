@@ -3627,6 +3627,8 @@
         bitrateKbps: 6000,
         mode: 'dex',
         localCursor: true,
+        audio: true,
+        audioCodec: 'pcm',
       };
     }
     window.computeDeXViewportSpec = computeDeXViewportSpec;
@@ -3635,7 +3637,14 @@
      *  der Server laesst ihn dafuer aus dem Video weg, wo er das kann. */
     function startPayload() {
       if (preset === 'dex' || (remoteTarget && remoteTarget.mode === 'dex')) {
-        var availH = (window.innerHeight || 768) - ((window.remoteState && window.remoteState.dexSplitHeight) || 0);
+        var split = (window.remoteState && window.remoteState.dexSplitHeight) || 0;
+        // Full monitor: the screen's real shape (iPad 4:3), not the momentary viewport — the
+        // session starts before the status bar / safe-area padding are gone, which gave 2048x1472
+        // and black side bars.
+        if (!split && window.screen && window.screen.width && window.screen.height) {
+          return computeDeXViewportSpec(window.screen.width, window.screen.height, window.devicePixelRatio || 2);
+        }
+        var availH = (window.innerHeight || 768) - split;
         return computeDeXViewportSpec(window.innerWidth || 1024, Math.max(320, availH), window.devicePixelRatio || 2);
       }
       var p = { localCursor: true, audio: !!remoteOpts.audio, curtain: !!remoteOpts.curtain };
@@ -3666,6 +3675,9 @@
     // (Rueckstau), wird neu angesetzt statt den Ton immer spaeter zu spielen.
     var sound = { ctx: null, dec: null, next: 0 };
     function soundCtx() {
+      // iOS: Web Audio defaults to the 'ambient' session, which the iPad's silent mode mutes
+      // completely (packets played, nothing audible). 'playback' = media, like a video.
+      try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch (e) {}
       if (!sound.ctx) {
         var AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) return null;
@@ -3678,8 +3690,33 @@
     // Android gibt Ton erst nach einer Beruehrung frei — jede Beruehrung im
     // Fernzugriff weckt den Ton-Ausgang, falls er noch schlaeft.
     document.addEventListener('pointerdown', function () {
-      if (remoteOpts.audio && wantRunning) soundCtx();
+      if (soundWanted() && wantRunning) soundCtx();
     }, true);
+    // DeX cable monitor: the iPad IS the Fold's screen, so its sound belongs on the iPad too.
+    function soundWanted() { return !!remoteOpts.audio || !!(window.remoteState && window.remoteState.dexMode); }
+    // iOS only unlocks Web Audio on a completed gesture (touchend/click/keyup), not on
+    // pointerdown/touchstart — without these the context stayed 'suspended' forever.
+    ['touchend', 'pointerup', 'click', 'keyup'].forEach(function (evName) {
+      document.addEventListener(evName, function () { if (soundWanted() && wantRunning) soundCtx(); }, true);
+    });
+    var pcmStats = { packets: 0, played: 0 };
+    // DeX diagnostics: the iPad can't be inspected from the Mac, so report the sound state to
+    // the Fold server, which writes it to its log.
+    setInterval(function () {
+      if (!window.remoteState || !window.remoteState.dexMode || !ws || ws.readyState !== 1) return;
+      try {
+        ws.send(JSON.stringify({ type: 'remote:diag', payload: {
+          ctx: sound.ctx ? sound.ctx.state : 'none',
+          rate: sound.ctx ? sound.ctx.sampleRate : 0,
+          t: sound.ctx ? Math.round(sound.ctx.currentTime * 100) / 100 : 0,
+          next: Math.round((sound.next || 0) * 100) / 100,
+          pcm: pcmStats.packets, played: pcmStats.played,
+          want: soundWanted(), run: !!wantRunning,
+          AD: typeof AudioDecoder !== 'undefined',
+          session: navigator.audioSession ? navigator.audioSession.type : 'n/a',
+        } }));
+      } catch (e) {}
+    }, 30000);
     function soundReset() {
       if (sound.dec) { try { sound.dec.close(); } catch (e) {} }
       sound.dec = null;
@@ -3687,7 +3724,7 @@
     }
     function playSound(data) {
       var ctx = sound.ctx;
-      if (!ctx || !remoteOpts.audio) { data.close(); return; }
+      if (!ctx || !soundWanted()) { data.close(); return; }
       var n = data.numberOfFrames, ch = Math.min(2, data.numberOfChannels);
       var buf = ctx.createBuffer(ch, n, data.sampleRate);
       try {
@@ -3715,8 +3752,34 @@
       src.start(sound.next);
       sound.next += buf.duration;
     }
+    /** DeX cable monitor: raw PCM (0x03, ts, s16le stereo 48 kHz) — iOS WKWebView has no
+     *  WebCodecs AudioDecoder for Opus, so the Fold sends uncompressed audio over the cable. */
+    function onPcmPacket(view) {
+      pcmStats.packets++;
+      if (!soundWanted()) return;
+      var ctx = soundCtx();
+      if (!ctx) return;
+      pcmStats.played++;
+      var bytes = view.length - 5;
+      var frames = bytes >> 2;
+      if (frames <= 0) return;
+      var dv = new DataView(view.buffer, view.byteOffset + 5, frames * 4);
+      var buf = ctx.createBuffer(2, frames, 48000);
+      var l = buf.getChannelData(0), r = buf.getChannelData(1);
+      for (var i = 0; i < frames; i++) {
+        l[i] = dv.getInt16(i * 4, true) / 32768;
+        r[i] = dv.getInt16(i * 4 + 2, true) / 32768;
+      }
+      var now = ctx.currentTime;
+      if (sound.next < now + 0.02 || sound.next > now + 0.35) sound.next = now + 0.08;
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(sound.next);
+      sound.next += buf.duration;
+    }
     function onSoundPacket(view) {
-      if (!remoteOpts.audio || !soundCtx()) return;
+      if (!soundWanted() || !soundCtx()) return;
       if (!sound.dec || sound.dec.state === 'closed') {
         if (typeof AudioDecoder === 'undefined') return;
         sound.dec = new AudioDecoder({
@@ -3964,6 +4027,7 @@
     function onBinary(buf) {
       var view = new Uint8Array(buf);
       if (view.length >= 6 && view[0] === 0x02) { onSoundPacket(view); return; }
+      if (view.length >= 9 && view[0] === 0x03) { onPcmPacket(view); return; }
       if (view.length < 6 || (view[0] & 0x7f) !== 0x01) return;
       var keyframe = (view[0] & 0x80) !== 0;
       var ts = (view[1] << 24 | view[2] << 16 | view[3] << 8 | view[4]) >>> 0;
@@ -4409,6 +4473,7 @@
     function isDeXOverlayElement(target) {
       return !!(target && target.closest && (
         target.closest('#remoteExit') ||
+        target.closest('#dexFab') ||
         target.closest('#dexHudBar') ||
         target.closest('#dexTerminalDock')
       ));
@@ -4417,7 +4482,7 @@
     document.addEventListener('pointermove', function (e) {
       if (!window.remoteState.fullscreen) return;
       if (isDeXOverlayElement(e.target)) return;
-      if (e.pointerType !== 'mouse' && !(window.remoteState.dexMode && heldTouchId === e.pointerId)) return;
+      if (e.pointerType !== 'mouse') return;
       var box = stageBox();
       if (!box) return;
       var p = window.toStageNormalized(e.clientX, e.clientY, box);
@@ -4427,19 +4492,17 @@
     document.addEventListener('pointerdown', function (e) {
       if (!window.remoteState.fullscreen) return;
       if (isDeXOverlayElement(e.target)) return;
-      var isDirectDeXTouch = window.remoteState.dexMode && (e.pointerType === 'touch' || e.pointerType === 'pen');
-      if (e.pointerType !== 'mouse' && !isDirectDeXTouch) return;
+      if (window.remoteState.dexMode) focusDeXKeys();
+      // Finger and pencil belong to the stage's gesture handler (direct mode in DeX); handling
+      // them here as well sent every tap twice with conflicting positions.
+      if (e.pointerType !== 'mouse') return;
       var box = stageBox();
       if (!box || e.clientX < box.x || e.clientX > box.x + box.w || e.clientY < box.y || e.clientY > box.y + box.h) return;
       e.preventDefault();
-      if (isDirectDeXTouch) {
-        var p = window.toStageNormalized(e.clientX, e.clientY, box);
-        if (p) window.TMSRemote.input({ t: 'm', x: p.x, y: p.y });
-        heldTouchId = e.pointerId;
-        heldButtons['l'] = true;
-        window.TMSRemote.input({ t: 'b', b: 'l', d: true });
-        return;
-      }
+      // iPadOS WKWebView reports no hover moves for the Magic Keyboard trackpad, so the remote
+      // pointer would stay where it was: move it to the click position first.
+      var p = window.toStageNormalized(e.clientX, e.clientY, box);
+      if (p) window.TMSRemote.input({ t: 'm', x: p.x, y: p.y });
       var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
       heldButtons[b] = true;
       window.TMSRemote.input({ t: 'b', b: b, d: true });
@@ -4487,6 +4550,46 @@
         mods: { s: e.shiftKey, c: e.ctrlKey, a: e.altKey, m: e.metaKey },
       });
     }
+    // WKWebView only hands hardware-keyboard events to the page while an element has focus.
+    // In DeX mode a hidden field without on-screen keyboard keeps that focus (keys are
+    // intercepted in forwardKey, nothing is ever typed into it).
+    function dexKeySink() {
+      var el = document.getElementById('dexKeySink');
+      if (!el) {
+        el = document.createElement('textarea');
+        el.id = 'dexKeySink';
+        el.setAttribute('inputmode', 'none');
+        el.setAttribute('autocapitalize', 'off');
+        el.setAttribute('autocorrect', 'off');
+        el.setAttribute('spellcheck', 'false');
+        el.setAttribute('aria-hidden', 'true');
+        el.style.cssText = 'position:fixed;left:-40px;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;resize:none;';
+        el.addEventListener('input', function () { el.value = ''; });
+        document.body.appendChild(el);
+      }
+      return el;
+    }
+    function focusDeXKeys() {
+      if (!window.remoteState || !window.remoteState.dexMode) return;
+      var el = dexKeySink();
+      if (document.activeElement !== el) { try { el.focus({ preventScroll: true }); } catch (err) {} }
+    }
+    window.focusDeXKeys = focusDeXKeys;
+
+    // Native iPad input in DeX mode (TMSUsbRelay → useDeXUsbMonitor → here): keyboard, trackpad
+    // hover and trackpad scrolling, which WKWebView never reports to the page.
+    window.TMSBridge.dexInput = function (ev) {
+      if (!ev || !window.remoteState || !window.remoteState.dexMode || !window.TMSRemote) return;
+      if (ev.t === 'hover') {
+        var box = stageBox();
+        if (!box) return;
+        var p = window.toStageNormalized(ev.x, ev.y, box);
+        if (p) window.TMSRemote.input({ t: 'm', x: p.x, y: p.y });
+        return;
+      }
+      window.TMSRemote.input(ev);
+    };
+    window.blurDeXKeys = function () { var el = document.getElementById('dexKeySink'); if (el) el.blur(); };
     document.addEventListener('keydown', function (e) { forwardKey(e, true); }, true);
     document.addEventListener('keyup', function (e) { forwardKey(e, false); }, true);
   })();
@@ -4583,7 +4686,79 @@
   var prevScreenBeforeDeX = 'terminals';
   var dexSplitOpen = false;
 
+  // DeX monitor chrome: the Fold's desktop always fills the whole iPad. The HUD (top) and the
+  // remote shortcut dock (bottom) are hidden; a small floating button toggles them, and they
+  // then lie OVER the picture (the picture never shrinks or moves). Nothing appears by itself.
+  function ensureDeXChromeStyle() {
+    if (document.getElementById('dexChromeStyle')) return;
+    var st = document.createElement('style');
+    st.id = 'dexChromeStyle';
+    st.textContent = ''
+      + 'body.dex-mode section.rx .rx-surface{top:0 !important;bottom:0 !important;background:#000;}'
+      + 'body.dex-mode section.rx .rx-dock{position:absolute !important;left:0;right:0;bottom:0;z-index:20;transition:transform .2s ease,opacity .2s ease;}'
+      + 'body.dex-mode:not(.dex-chrome) section.rx .rx-dock{transform:translateY(120%);opacity:0;pointer-events:none;}'
+      + 'body.dex-mode #dexHudBar{transition:transform .2s ease,opacity .2s ease;}'
+      + 'body.dex-mode:not(.dex-chrome) #dexHudBar{transform:translate(-50%,-150%) !important;opacity:0;pointer-events:none;}'
+      + 'body.dex-mode #dock,body.dex-mode #statusHeader,body.dex-mode .rx-gexit,body.dex-mode .remote-badge{display:none !important;}'
+      + '#dexFab{position:fixed;z-index:10001;width:38px;height:38px;border-radius:19px;display:none;'
+      + 'align-items:center;justify-content:center;background:rgba(15,23,42,.55);border:1px solid rgba(255,255,255,.22);'
+      + 'color:#fff;font:600 15px var(--font-ui,sans-serif);box-shadow:0 4px 14px rgba(0,0,0,.45);'
+      + '-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);touch-action:none;user-select:none;opacity:.7;}'
+      + '#dexFab.on{opacity:1;background:rgba(2,132,199,.85);}'
+      + 'body.dex-mode #dexFab{display:flex;}';
+    document.head.appendChild(st);
+
+    // Floating toggle, draggable so it never sits on something you need.
+    var fab = document.createElement('div');
+    fab.id = 'dexFab';
+    fab.textContent = '☰';
+    var pos = null;
+    try { pos = JSON.parse(localStorage.getItem('tms-dex-fab') || 'null'); } catch (e) {}
+    function place(x, y) {
+      var w = window.innerWidth || 1024, h = window.innerHeight || 768;
+      x = Math.max(4, Math.min(w - 42, x)); y = Math.max(4, Math.min(h - 42, y));
+      fab.style.left = x + 'px'; fab.style.top = y + 'px';
+      return { x: x, y: y };
+    }
+    place(pos ? pos.x : (window.innerWidth || 1024) - 54, pos ? pos.y : 14);
+    var drag = null;
+    fab.addEventListener('pointerdown', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: fab.offsetLeft, oy: fab.offsetTop, moved: false };
+      try { fab.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    fab.addEventListener('pointermove', function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      e.stopPropagation();
+      var dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+      if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+      drag.moved = true;
+      place(drag.ox + dx, drag.oy + dy);
+    });
+    function release(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      e.stopPropagation();
+      if (drag.moved) {
+        try { localStorage.setItem('tms-dex-fab', JSON.stringify({ x: fab.offsetLeft, y: fab.offsetTop })); } catch (err) {}
+      } else {
+        toggleDeXChrome();
+      }
+      drag = null;
+    }
+    fab.addEventListener('pointerup', release);
+    fab.addEventListener('pointercancel', function (e) { drag = null; });
+    document.body.appendChild(fab);
+  }
+  function toggleDeXChrome(force) {
+    var on = typeof force === 'boolean' ? force : !document.body.classList.contains('dex-chrome');
+    document.body.classList.toggle('dex-chrome', on);
+    var fab = document.getElementById('dexFab');
+    if (fab) fab.classList.toggle('on', on);
+  }
+  window.toggleDeXChrome = toggleDeXChrome;
+
   function ensureDeXHudDom() {
+    ensureDeXChromeStyle();
     var hud = document.getElementById('dexHudBar');
     if (!hud) {
       hud = document.createElement('div');
@@ -4697,6 +4872,18 @@
         : 'terminals';
     }
     window.remoteState.dexMode = true;
+    var dexWasActive = document.body.classList.contains('dex-mode');
+    document.body.classList.add('dex-mode');
+    if (!dexWasActive) toggleDeXChrome(false);
+    // The stage grows to the full screen via CSS (dex-mode) and again when iOS drops the status
+    // bar / safe-area padding; neither fires a resize, so the picture kept its old, smaller scale
+    // and showed black bars all around. Re-measure a few times while the layout settles.
+    [0, 120, 400, 900, 1600].forEach(function (ms) {
+      setTimeout(function () {
+        try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+        if (typeof window.layoutRemoteStage === 'function') window.layoutRemoteStage();
+      }, ms);
+    });
     window.remoteState.dexDevice = info.device || 'Samsung Galaxy Fold 7';
     var devEl = document.getElementById('dexHudDevice');
     if (devEl) devEl.textContent = window.remoteState.dexDevice;
@@ -4721,8 +4908,12 @@
     if (typeof window.__tmsRemoteTargetReady === 'function') {
       window.__tmsRemoteTargetReady();
     }
-    if (typeof window.toast === 'function') {
-      window.toast('⚡ Samsung DeX Monitor aktiv (' + info.host + ')');
+    if (typeof window.focusDeXKeys === 'function') window.focusDeXKeys();
+    // Announce once per plug-in, not on every reconnect.
+    if (!dexWasActive && typeof window.toast === 'function') {
+      window.toast(info.host === '127.0.0.1'
+        ? '⚡ Samsung DeX per USB-C-Kabel'
+        : '⚡ Samsung DeX Monitor aktiv (' + info.host + ')');
     }
   };
 
@@ -4732,6 +4923,9 @@
     var hud = document.getElementById('dexHudBar');
     if (hud) hud.style.display = 'none';
     window.remoteState.dexMode = false;
+    document.body.classList.remove('dex-mode', 'dex-chrome');
+    var fabOff = document.getElementById('dexFab'); if (fabOff) fabOff.classList.remove('on');
+    if (typeof window.blurDeXKeys === 'function') window.blurDeXKeys();
     if (window.TMSRemote && typeof window.TMSRemote.stop === 'function') {
       window.TMSRemote.stop();
     }

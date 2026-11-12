@@ -13,6 +13,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.tms.terminal.dex.DeXShellServer
+import com.tms.terminal.dex.UsbMuxBridge
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -72,6 +73,10 @@ class DeXHostModule(private val reactContext: ReactApplicationContext) :
             }
             ensureDiscoveryServerRunning()
         } catch ( ignored: Throwable) {}
+        // Cable path to the iPad (Fold as USB host, Apple usbmux) — no network involved.
+        try { UsbMuxBridge.get(reactContext).start() } catch (t: Throwable) {
+            android.util.Log.w("TMS-UsbMux", "bridge start failed", t)
+        }
     }
 
     override fun getName(): String = NAME
@@ -137,8 +142,12 @@ class DeXHostModule(private val reactContext: ReactApplicationContext) :
                 val privileged = srv?.optBoolean("privileged", false) ?: false
                 val running = srv?.optBoolean("ok", false) ?: false
                 val primaryIp = usbIps.values.firstOrNull()
+                val mux = UsbMuxBridge.get(reactContext)
+                mux.scan()
 
                 val res = Arguments.createMap().apply {
+                    putBoolean("ipadCable", mux.isConnected())
+                    putString("ipadCableState", mux.state())
                     putBoolean("running", running)
                     putBoolean("privileged", privileged)
                     putBoolean("usbPlugged", usbPlugged || primaryIp != null)

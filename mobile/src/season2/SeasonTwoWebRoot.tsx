@@ -7,7 +7,7 @@
  * clipboard, and speaks to the page through window.TMSBridge.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert, Modal, TextInput, NativeModules, DeviceEventEmitter } from 'react-native';
+import { AppState, BackHandler, View, Text, Pressable, StyleSheet, Alert, Modal, TextInput, NativeModules, DeviceEventEmitter, Platform, StatusBar } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -1980,7 +1980,11 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   }, [call]);
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.root, dexUsb.dexActive
+      // DeX monitor: edge to edge, so the stage gets the iPad's real 4:3 and no side bars.
+      ? { paddingTop: 0, paddingBottom: 0 }
+      : { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      {Platform.OS === 'ios' ? <StatusBar hidden={dexUsb.dexActive} animated /> : null}
       <WebView
         ref={webRef}
         // Fehlersuche am echten Gerät: nur über ein per Kopplungscode
@@ -1992,7 +1996,10 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         // bekam Bilder, konnte sie aber nicht dekodieren ("Dieses Geraet kann den
         // Bildstrom nicht anzeigen"). Nachgewiesen im selben Chrome: http://tms.local
         // → VideoDecoder undefined, https://tms.local → vorhanden.
-        source={{ html: LIQUID_DECK_HTML, baseUrl: 'https://tms.local' }}
+        // iOS: WKWebView has no mixedContentMode, so from https:// every ws:// (Fernzugriff, DeX
+        // cable monitor on ws://127.0.0.1) was blocked — black screen. http://localhost is still a
+        // secure context (VideoDecoder present) and, being http itself, has no mixed content.
+        source={{ html: LIQUID_DECK_HTML, baseUrl: Platform.OS === 'ios' ? 'http://localhost' : 'https://tms.local' }}
         // Der Server spricht bewusst ws:// und http:// (Tailscale verschluesselt).
         // Von einer https-Seite aus ist das "gemischter Inhalt" und ohne diese
         // Freigabe blockiert — der Fernzugriff baute seine Verbindung nicht auf.

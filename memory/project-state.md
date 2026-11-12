@@ -1,8 +1,10 @@
 # Projektzustand
 
-_Zuletzt aktualisiert: 2026-11-11 — v1.155.0 Favoriten-Ordner im Datei-Explorer_
+_Zuletzt aktualisiert: 2026-11-13 — v1.157.0 DeX-Monitor per USB-C-Kabel (iPad)_
 
 ## Aktueller geprüfter Stand
+
+**Stand 2026-11-13 (neueste):** v1.157.0: Fold als Monitor am iPad per USB-C, ohne Netz. Fold wird USB-Host (Rollen-Wächter im freigeschalteten Server), spricht Apples usbmux (`dex/UsbMuxBridge.java`), iPad-App sammelt die Verbindungen im lokalen Expo-Modul `mobile/modules/tms-usb-relay` (127.0.0.1:8769 → 8768). Bild 2048×1536, Ton als PCM (REMOTE_SUBMIX), Touch direkt, Trackpad/Tastatur/Scrollen nativ abgegriffen, schwebender ☰-Knopf für die Leisten. Freischalten: `tms-terminal dex <ip:port>` (nach jedem Fold-Neustart). iPad-App per Xcode signiert (kostenloses Team VX77WGZ6WB, 7 Tage gültig, Mindest-iOS 15 per Kommandozeile). **Nicht möglich:** echtes Samsung-DeX auf virtuellem Bildschirm (One UI 8 hat DW_SUPPORT_VIRTUAL_SECONDARY_DISPLAYS=false einkompiliert); Android-Fenstermodus vom Nutzer abgelehnt. **Offen:** Umlaute über die Tastatur ungetestet; Mac-Server-Update für `tms-terminal dex` (CLI liegt im Repo).
 
 **Stand 2026-11-11 (neueste):** v1.155.0: Favoriten-Leiste im Datei-Explorer (Chips unter dem Pfad, Tipp springt hin, langes Drücken mit cd dorthin / Pfad einfügen / kopieren / umbenennen / verschieben / entfernen), pro Gerät, auf dem Handy gespeichert (`tms-bund-fav-dirs`). Kein Server-Update nötig. **Offen:** Prüfung am Fold (auch aufgeklappt); Windows-PC braucht weiterhin `tms-terminal update` für Videos (v1.154.0).
 

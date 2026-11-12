@@ -1,8 +1,23 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
+import { EventEmitter, requireOptionalNativeModule } from 'expo-modules-core';
 
 const DEX_PORT = 8768;
+
+/**
+ * iPad side of the cable path: the Fold (USB host) opens usbmux streams to this iPad and the
+ * native TMSUsbRelay module exposes them as 127.0.0.1:8768. The iPad cannot join the Fold's USB
+ * tethering network, so loopback is the primary (and on the cable, only) way to reach the Fold.
+ */
+const USB_RELAY_HOST = '127.0.0.1';
+const usbRelay = Platform.OS === 'ios'
+  ? requireOptionalNativeModule<{
+      start(): boolean;
+      status(): Record<string, unknown>;
+      setDexInput(enabled: boolean): Promise<void>;
+    }>('TMSUsbRelay')
+  : null;
 
 export interface DeXHostStatus {
   ok?: boolean;
@@ -153,12 +168,29 @@ export function useDeXUsbMonitor(
     }
   }, [call]);
 
+  // iPad: monitor shown → native capture of keyboard / trackpad hover / trackpad scroll and a
+  // chrome-free full screen (the root view drops its safe-area padding while this is true).
+  const [dexActive, setDexActiveState] = useState(false);
+  const setDexActive = useCallback((on: boolean) => {
+    setDexActiveState(on);
+    if (usbRelay) usbRelay.setDexInput(on).catch(() => {});
+  }, []);
+
   const notifyManualStop = useCallback(() => {
     if (activeDeXIp.current) {
       manualDismissedIp.current = activeDeXIp.current;
       activeDeXIp.current = null;
     }
-  }, []);
+    setDexActive(false);
+  }, [setDexActive]);
+
+  useEffect(() => {
+    if (!usbRelay) return;
+    const sub = new EventEmitter(usbRelay as never).addListener('onDexInput', (ev: unknown) => {
+      call('dexInput', ev);
+    });
+    return () => sub.remove();
+  }, [call]);
 
   // ── Android Host Side (Samsung Galaxy Fold 7) ─────────────────────────────
   useEffect(() => {
@@ -199,6 +231,7 @@ export function useDeXUsbMonitor(
   useEffect(() => {
     if (!ready || Platform.OS !== 'ios') return;
     let cancelled = false;
+    try { usbRelay?.start(); } catch {}
 
     const checkConnection = async (netState?: NetInfoState, allowSubnetScan = false) => {
       if (probing.current || cancelled) return;
@@ -206,7 +239,17 @@ export function useDeXUsbMonitor(
       try {
         // 1) If already connected to DeX over USB, verify health
         if (activeDeXIp.current) {
-          const alive = await probeDeXEndpoint(activeDeXIp.current, 600);
+          // Cable: ask the relay whether the Fold still holds usbmux streams. An extra HTTP probe
+          // through the busy cable lost its tiny reply now and then; two misses tore down the
+          // running video and restarted it about once a minute. The video socket reconnects by
+          // itself, so only a vanished cable (no streams at all) may end the monitor.
+          let alive: boolean;
+          if (usbRelay && activeDeXIp.current === USB_RELAY_HOST) {
+            const st = usbRelay.status() as { idleStreams?: number; activeStreams?: number };
+            alive = (st.idleStreams ?? 0) + (st.activeStreams ?? 0) > 0;
+          } else {
+            alive = !!(await probeDeXEndpoint(activeDeXIp.current, 1500));
+          }
           if (alive) {
             missCount.current = 0;
             return;
@@ -217,6 +260,7 @@ export function useDeXUsbMonitor(
             manualDismissedIp.current = null;
             missCount.current = 0;
             call('stopDeXMonitor');
+            setDexActive(false);
           }
           return;
         }
@@ -224,11 +268,17 @@ export function useDeXUsbMonitor(
         // 2) Not connected yet: probe prioritized USB-C tethering candidate IPs
         const state = netState ?? (await NetInfo.fetch().catch(() => null));
         const localIp = (state?.details as { ipAddress?: string } | undefined)?.ipAddress ?? null;
-        const candidates = buildUsbDeXCandidateIps(localIp, lastKnownIp.current);
+        // Cable only: the relay answers solely while a Fold is on the USB-C cable. LAN/tethering
+        // candidates are skipped on purpose — they would jump into monitor mode whenever the
+        // Fold merely shares the Wi-Fi (the iPad never gets the Fold's USB tethering network).
+        const candidates = usbRelay
+          ? [USB_RELAY_HOST]
+          : buildUsbDeXCandidateIps(localIp, lastKnownIp.current);
 
         for (const ip of candidates) {
           if (cancelled) return;
-          const st = await probeDeXEndpoint(ip, 350);
+          // The cable relay adds two hops (iPad relay → usbmux → Fold bridge); give it more time.
+          const st = await probeDeXEndpoint(ip, ip === USB_RELAY_HOST ? 1500 : 350);
           if (st) {
             lastKnownIp.current = ip;
             if (manualDismissedIp.current === ip) return;
@@ -239,13 +289,16 @@ export function useDeXUsbMonitor(
               port: st.port || DEX_PORT,
               device: st.device || 'Samsung Galaxy Fold 7',
             });
+            setDexActive(true);
             return;
           }
+          // Cable pulled while dismissed: the next plug-in should open the monitor again.
+          if (ip === USB_RELAY_HOST && manualDismissedIp.current === ip) manualDismissedIp.current = null;
         }
 
         // 3) If USB interface just came up with a 192.168.x.y address (Android 11+ randomized NCM IP),
         //    scan the /24 subnet in fast batches.
-        if (allowSubnetScan && localIp && localIp.startsWith('192.168.')) {
+        if (!usbRelay && allowSubnetScan && localIp && localIp.startsWith('192.168.')) {
           const found = await scanUsbSubnetForDeX(localIp);
           if (found && !cancelled) {
             lastKnownIp.current = found.ip;
@@ -281,11 +334,12 @@ export function useDeXUsbMonitor(
       unsub();
       clearInterval(timer);
     };
-  }, [ready, call]);
+  }, [ready, call, setDexActive]);
 
   return {
     openTetherSettings,
     startHostEngine,
     notifyManualStop,
+    dexActive,
   };
 }

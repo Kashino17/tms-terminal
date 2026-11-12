@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Samsung DeX USB-C Monitor-Modus fuer iPad & Galaxy Fold 7: Verbindest du dein Galaxy Fold 7 per USB-C-Kabel mit dem iPad und aktivierst USB-Tethering, erkennt die TMS Terminal App auf dem iPad das Fold automatisch und schaltet ohne Klick in den 4:3 Vollbild-DeX-Monitor (2048x1536 @ 60 FPS, H.264 Hardware-Stream, direkter Multitouch, Apple Pencil Hover/Druck & Magic Keyboard/Trackpad). Ueber die schwebende DeX-Pill oben laesst sich jederzeit das Terminal-Split-Stage-Dock (70% DeX / 30% Terminal) einblenden. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "DeX-Monitor per USB-C-Kabel fuers iPad: Das Fold wird USB-Host und spricht das iPad direkt an (wie ein Mac, kein WLAN noetig). Bild in 4:3 Vollbild, Ton ueber die iPad-Lautsprecher, Touch, Magic-Keyboard-Trackpad und Tastatur. Einmal nach jedem Fold-Neustart am Mac freischalten: tms-terminal dex. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest

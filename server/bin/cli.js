@@ -1113,6 +1113,15 @@ fi
     break;
   }
 
+  // ── tms-terminal dex ── Fold-Bildschirm fürs iPad freischalten ────────
+  // Startet den DeX-Server der Fold-App mit Shell-Rechten (app_process, UID 2000).
+  // Nur so darf er den virtuellen Bildschirm anlegen, Eingaben einspeisen und
+  // die USB-Rolle umschalten. Hält bis zum Neustart des Handys.
+  case 'dex': {
+    process.exit(dexUnlock(rest[0]) ? 0 : 1);
+    break;
+  }
+
   case 'help': {
     printHelp();
     break;
@@ -1123,6 +1132,67 @@ fi
     printHelp();
     process.exit(2);
   }
+}
+
+function findAdb() {
+  const candidates = [
+    process.env.ANDROID_HOME && path.join(process.env.ANDROID_HOME, 'platform-tools', 'adb'),
+    path.join(os.homedir(), 'Library', 'Android', 'sdk', 'platform-tools', 'adb'),
+    path.join(os.homedir(), 'AppData', 'Local', 'Android', 'Sdk', 'platform-tools', 'adb.exe'),
+  ].filter(Boolean);
+  for (const p of candidates) if (fs.existsSync(p)) return p;
+  try { execFileSync(os.platform() === 'win32' ? 'where' : 'which', ['adb'], { stdio: 'ignore' }); return 'adb'; } catch { return null; }
+}
+
+/** Unlocks the Fold's DeX server via adb. `target` = serial or ip:port (wireless debugging). */
+function dexUnlock(target) {
+  const adb = findAdb();
+  if (!adb) { bad('adb nicht gefunden (Android platform-tools installieren).'); return false; }
+  const run = (args, timeout = 20000) => require('child_process').spawnSync(adb, args, { encoding: 'utf8', timeout, windowsHide: true });
+
+  if (target && target.includes(':')) {
+    const r = run(['connect', target]);
+    info((r.stdout || r.stderr || '').trim());
+  }
+  let serial = target;
+  if (!serial) {
+    const list = (run(['devices']).stdout || '').split('\n').slice(1)
+      .map((l) => l.trim().split(/\s+/)).filter((p) => p[1] === 'device' && !p[0].startsWith('emulator-'));
+    if (list.length === 0) {
+      bad('Kein Handy per adb erreichbar.');
+      hint('Am Fold: Entwickleroptionen › WLAN-Debugging › „IP-Adresse & Port“ ablesen, dann:');
+      hint('  tms-terminal dex <ip>:<port>');
+      return false;
+    }
+    if (list.length > 1) hint(`Mehrere Geräte, nehme ${list[0][0]} (anderes: tms-terminal dex <serial>)`);
+    serial = list[0][0];
+  }
+
+  const script = [
+    'P=$(pm path com.tms.terminal | head -1 | cut -d: -f2)',
+    '[ -z "$P" ] && { echo "TMS_NOAPP"; exit 3; }',
+    // Match the program name, not just the text: this very shell's args contain the class name too.
+    'for p in $(ps -A -o PID,ARGS | awk \'$2=="app_process" && /DeXShellServer/ {print $1}\'); do kill $p; done',
+    'sleep 0.5',
+    // setsid: own session/process group, so restarting adbd (wireless debugging toggled, Wi-Fi
+    // change) does not take the server down with the shell that started it.
+    'S=$(command -v setsid >/dev/null 2>&1 && echo setsid)',
+    'CLASSPATH="$P" $S nohup app_process / com.tms.terminal.dex.DeXShellServer --port 8768 > /data/local/tmp/tms-dex.log 2>&1 < /dev/null &',
+    'for i in 1 2 3 4 5 6 7 8; do sleep 0.5; S=$(curl -s -m 1 http://127.0.0.1:8768/dex/status); case "$S" in *\'"privileged":true\'*) echo "TMS_OK $S"; exit 0;; esac; done',
+    'echo "TMS_FAIL"; tail -5 /data/local/tmp/tms-dex.log',
+  ].join('\n');
+  info(`Schalte den DeX-Bildschirm auf ${serial} frei …`);
+  const r = run(['-s', serial, 'shell', script], 30000);
+  const out = `${r.stdout || ''}${r.stderr || ''}`;
+  if (out.includes('TMS_OK')) {
+    ok('DeX-Bildschirm freigeschaltet. iPad per USB-C anstecken, TMS Terminal auf dem iPad öffnen.');
+    hint('Gilt bis zum nächsten Neustart des Handys.');
+    return true;
+  }
+  if (out.includes('TMS_NOAPP')) { bad('TMS Terminal ist auf dem Gerät nicht installiert.'); return false; }
+  bad('Freischalten fehlgeschlagen:');
+  for (const l of out.trim().split('\n').slice(-6)) hint(l);
+  return false;
 }
 
 function printHelp() {
@@ -1162,6 +1232,8 @@ ${b('Einrichtung & Pflege')}
   tms-terminal display         Windows: virtueller Bildschirm für „Bildschirm aus“
       install | test | restore   einrichten (einmal Admin-Klick), Probelauf,
       uninstall                  Notweg: Laptop-Display zurück · entfernen
+  tms-terminal dex [ip:port]   Fold: Bildschirm fürs iPad (USB-C) freischalten —
+                               per adb/WLAN-Debugging, einmal nach jedem Neustart
   tms-terminal uninstall       Alles entfernen (Konfiguration, globaler Befehl)
 
 ${g('Rückfragen überspringen: --yes · Dateien: ~/.tms-terminal/')}

@@ -126,7 +126,82 @@ public final class DeXShellServer {
 
         System.out.println("[TMS-DeX] Starting DeXShellServer on port " + port + " (uid=" + android.os.Process.myUid() + ")");
         DeXShellServer server = new DeXShellServer(port, true, createSystemContext());
+        Thread roles = new Thread(DeXShellServer::watchUsbRoleForIpad, "TMS-DeX-UsbRole");
+        roles.setDaemon(true);
+        roles.start();
         server.startBlocking();
+    }
+
+    /**
+     * iPad cable monitor needs the Fold to be USB host. Two dual-role ports usually come up with
+     * the iPad as host, so on every new plug-in we flip our data role to host (keeping the power
+     * role, so the iPad keeps charging the Fold). If no Apple device enumerates within 5 s — a
+     * charger, a Mac, a PC — we flip back and leave that connection alone until the next plug-in.
+     * Runs only in the privileged (shell) process: changing port roles needs MANAGE_USB.
+     */
+    private static void watchUsbRoleForIpad() {
+        boolean handled = false;
+        while (true) {
+            try {
+                String d = runShell("dumpsys usb");
+                String[] st = parsePortStatus(d);
+                if (st == null || !"true".equals(st[1])) {
+                    handled = false;
+                } else if (!handled) {
+                    handled = true;
+                    if ("device".equals(st[4])) {
+                        String port = st[0], power = st[3];
+                        System.out.println("[TMS-DeX] USB plug-in as device → trying host role for iPad");
+                        runShell("dumpsys usb set-port-roles " + port + " " + power + " host");
+                        boolean apple = false;
+                        for (int i = 0; i < 10 && !apple; i++) {
+                            Thread.sleep(500);
+                            apple = runShell("dumpsys usb").contains("manufacturer_name=Apple");
+                        }
+                        if (!apple) {
+                            System.out.println("[TMS-DeX] no Apple device as host → reverting to device role");
+                            runShell("dumpsys usb set-port-roles " + port + " " + power + " device");
+                        } else {
+                            System.out.println("[TMS-DeX] iPad attached, staying USB host");
+                        }
+                    }
+                }
+                Thread.sleep(1500);
+            } catch (Throwable t) {
+                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+            }
+        }
+    }
+
+    /** Returns {portId, connected, mode, powerRole, dataRole} of the first USB-C port, or null. */
+    static String[] parsePortStatus(String dump) {
+        java.util.regex.Matcher id = java.util.regex.Pattern.compile("\\bid=(port\\d+)").matcher(dump);
+        int s = dump.indexOf("status={");
+        if (!id.find() || s < 0) return null;
+        String block = dump.substring(s, Math.min(dump.length(), s + 400));
+        return new String[]{
+                id.group(1),
+                field(block, "connected"),
+                field(block, "current_mode"),
+                field(block, "power_role"),
+                field(block, "data_role"),
+        };
+    }
+
+    private static String field(String block, String key) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\b" + key + "=(\\w+)").matcher(block);
+        return m.find() ? m.group(1) : "";
+    }
+
+    private static String runShell(String cmd) throws IOException, InterruptedException {
+        Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", cmd});
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+        InputStream in = p.getInputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+        p.waitFor();
+        return bo.toString("UTF-8");
     }
 
     private static Context createSystemContext() {
@@ -144,6 +219,55 @@ public final class DeXShellServer {
         }
     }
 
+    /**
+     * DisplayManager whose context claims to be com.android.shell. Under app_process we run as
+     * UID 2000 with the "android" system context, and createVirtualDisplay rejects that with
+     * "packageName must match the owner uid" (same workaround as scrcpy's FakeContext).
+     */
+    /** Context that identifies as com.android.shell (UID 2000), for APIs that check the caller. */
+    static Context shellContext(Context base) {
+        if (base == null || !isPrivilegedProcess()) return base;
+        return new android.content.ContextWrapper(base) {
+            @Override public String getPackageName() { return "com.android.shell"; }
+            @Override public String getOpPackageName() { return "com.android.shell"; }
+            @Override public Context getApplicationContext() { return this; }
+            @Override public android.content.AttributionSource getAttributionSource() {
+                return new android.content.AttributionSource.Builder(2000)
+                        .setPackageName("com.android.shell").build();
+            }
+        };
+    }
+
+    private static DisplayManager shellDisplayManager(Context base) {
+        if (!isPrivilegedProcess()) return null;
+        try {
+            Context fake = shellContext(base);
+            Constructor<DisplayManager> ctor = DisplayManager.class.getDeclaredConstructor(Context.class);
+            ctor.setAccessible(true);
+            return ctor.newInstance(fake);
+        } catch (Throwable t) {
+            System.err.println("[TMS-DeX] shellDisplayManager failed: " + t);
+            return null;
+        }
+    }
+
+    private static boolean isPrivilegedProcess() {
+        int uid = android.os.Process.myUid();
+        return uid == 2000 || uid == 0;
+    }
+
+    /** Asks a running in-app standby server on this port to release it (privileged takeover). */
+    private static void requestStandbyYield(int port) {
+        try {
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection)
+                    new java.net.URL("http://127.0.0.1:" + port + "/dex/yield").openConnection();
+            c.setConnectTimeout(400);
+            c.setReadTimeout(400);
+            c.getResponseCode();
+            c.disconnect();
+        } catch (Throwable ignored) {}
+    }
+
     public void startAsync() {
         if (running.get()) return;
         Thread t = new Thread(this::startBlocking, "TMS-DeX-Server");
@@ -156,7 +280,22 @@ public final class DeXShellServer {
         try {
             serverSocket = new ServerSocket();
             serverSocket.setReuseAddress(true);
-            serverSocket.bind(new InetSocketAddress("0.0.0.0", port));
+            boolean bound = false;
+            for (int attempt = 0; attempt < 10 && !bound; attempt++) {
+                try {
+                    serverSocket.bind(new InetSocketAddress("0.0.0.0", port));
+                    bound = true;
+                } catch (java.net.BindException be) {
+                    // The in-app standby server holds the port: ask it to step aside, then retry.
+                    if (!isPrivilegedProcess()) throw be;
+                    requestStandbyYield(port);
+                    try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+                    serverSocket.close();
+                    serverSocket = new ServerSocket();
+                    serverSocket.setReuseAddress(true);
+                }
+            }
+            if (!bound) throw new IOException("port " + port + " still busy");
             System.out.println("[TMS-DeX] Listening on 0.0.0.0:" + port);
 
             while (running.get()) {
@@ -219,6 +358,16 @@ public final class DeXShellServer {
             }
 
             String cleanPath = path.split("\\?")[0];
+            if ("/dex/yield".equals(cleanPath)) {
+                // Only a non-privileged standby server yields, and only to a loopback caller.
+                boolean local = socket.getInetAddress() != null && socket.getInetAddress().isLoopbackAddress();
+                boolean yield = local && !isPrivilegedProcess();
+                writeHttpJson(out, 200, "{\"ok\":true,\"yielded\":" + yield + "}");
+                socket.close();
+                if (yield) stop();
+                return;
+            }
+
             if ("/dex/status".equals(cleanPath) || "/status".equals(cleanPath)) {
                 JSONObject status = buildStatusJson();
                 writeHttpJson(out, 200, status.toString());
@@ -392,6 +541,16 @@ public final class DeXShellServer {
                     );
                     sessionRef[0] = ctrl;
                     ctrl.start();
+                    // Sound to the iPad speakers (viewer asks with audio:true; DeX mode always does).
+                    if (payload != null && payload.optBoolean("audio", false)) {
+                        boolean pcm = "pcm".equals(payload.optString("audioCodec", ""));
+                        ctrl.audio = new DeXAudioCapture(shellContext(appContext), out, writeLock, pcm);
+                        ctrl.audio.start();
+                    }
+                    break;
+                }
+                case "remote:diag": {
+                    System.out.println("[TMS-DeX] iPad diag: " + (payload != null ? payload.toString() : "{}"));
                     break;
                 }
                 case "remote:stop": {
@@ -491,7 +650,13 @@ public final class DeXShellServer {
 
         private void initInputReflection() {
             try {
-                Class<?> imClass = Class.forName("android.hardware.input.InputManager");
+                // Android 14+ moved the singleton to InputManagerGlobal; older builds keep InputManager.getInstance().
+                Class<?> imClass;
+                try {
+                    imClass = Class.forName("android.hardware.input.InputManagerGlobal");
+                } catch (ClassNotFoundException e) {
+                    imClass = Class.forName("android.hardware.input.InputManager");
+                }
                 Method getInstance = imClass.getDeclaredMethod("getInstance");
                 getInstance.setAccessible(true);
                 inputManager = getInstance.invoke(null);
@@ -513,7 +678,10 @@ public final class DeXShellServer {
             encodeThread.start();
         }
 
+        DeXAudioCapture audio;
+
         void stop() {
+            if (audio != null) { audio.stop(); audio = null; }
             if (!active.compareAndSet(true, false)) return;
             releaseResources();
         }
@@ -658,7 +826,8 @@ public final class DeXShellServer {
 
         private int createDeXVirtualDisplay(Surface surface) throws Exception {
             if (appContext != null) {
-                DisplayManager dm = (DisplayManager) appContext.getSystemService(Context.DISPLAY_SERVICE);
+                DisplayManager dm = shellDisplayManager(appContext);
+                if (dm == null) dm = (DisplayManager) appContext.getSystemService(Context.DISPLAY_SERVICE);
                 if (dm != null) {
                     try {
                         virtualDisplay = dm.createVirtualDisplay(
@@ -742,13 +911,24 @@ public final class DeXShellServer {
                     int mask = "r".equals(btn)
                             ? MotionEvent.BUTTON_SECONDARY
                             : ("m".equals(btn) ? MotionEvent.BUTTON_TERTIARY : MotionEvent.BUTTON_PRIMARY);
+                    // Android only treats a mouse click as a click with the BUTTON_PRESS/RELEASE
+                    // pair around DOWN/UP (same sequence a real mouse and scrcpy produce).
                     if (down) {
+                        boolean first = pressedButtons == 0;
                         pressedButtons |= mask;
-                        downTime = SystemClock.uptimeMillis();
-                        injectMouseMotion(MotionEvent.ACTION_DOWN, mask, cursorX, cursorY, 0f, 0f);
+                        if (first) {
+                            downTime = SystemClock.uptimeMillis();
+                            injectMouseMotion(MotionEvent.ACTION_DOWN, 0, cursorX, cursorY, 0f, 0f);
+                        }
+                        injectMouseMotion(MotionEvent.ACTION_BUTTON_PRESS, mask, cursorX, cursorY, 0f, 0f);
                     } else {
+                        if ((pressedButtons & mask) == 0) break;
                         pressedButtons &= ~mask;
-                        injectMouseMotion(MotionEvent.ACTION_UP, mask, cursorX, cursorY, 0f, 0f);
+                        injectMouseMotion(MotionEvent.ACTION_BUTTON_RELEASE, mask, cursorX, cursorY, 0f, 0f);
+                        if (pressedButtons == 0) {
+                            injectMouseMotion(MotionEvent.ACTION_UP, 0, cursorX, cursorY, 0f, 0f);
+                            downTime = 0;
+                        }
                     }
                     break;
                 }
@@ -822,7 +1002,8 @@ public final class DeXShellServer {
                 coords[0] = new MotionEvent.PointerCoords();
                 coords[0].x = x;
                 coords[0].y = y;
-                coords[0].pressure = (pressedButtons != 0) ? 1.0f : 0.0f;
+                boolean pressing = pressedButtons != 0 || action == MotionEvent.ACTION_BUTTON_RELEASE;
+                coords[0].pressure = pressing ? 1.0f : 0.0f;
                 coords[0].size = 1.0f;
                 if (action == MotionEvent.ACTION_SCROLL) {
                     coords[0].setAxisValue(MotionEvent.AXIS_HSCROLL, hScroll);
@@ -845,12 +1026,29 @@ public final class DeXShellServer {
                         InputDevice.SOURCE_MOUSE,
                         0
                 );
+                if (actionButton != 0) {
+                    if (setActionButtonMethod == null) {
+                        setActionButtonMethod = MotionEvent.class.getMethod("setActionButton", int.class);
+                    }
+                    setActionButtonMethod.invoke(event, actionButton);
+                }
                 if (displayId > 0 && setDisplayIdMotionMethod != null) {
                     setDisplayIdMotionMethod.invoke(event, displayId);
                 }
-                injectInputEventMethod.invoke(inputManager, event, 0);
+                Object ok = injectInputEventMethod.invoke(inputManager, event, 0);
+                if (Boolean.FALSE.equals(ok)) logInjectProblem("motion action=" + action + " rejected");
                 event.recycle();
-            } catch (Throwable ignored) {}
+            } catch (Throwable t) {
+                logInjectProblem("motion action=" + action + ": " + t);
+            }
+        }
+
+        private Method setActionButtonMethod;
+        private int injectProblems = 0;
+
+        /** Injection failures were swallowed silently before; log the first few to the dex log. */
+        private void logInjectProblem(String what) {
+            if (injectProblems++ < 20) System.err.println("[TMS-DeX] inject problem: " + what);
         }
 
         private void injectKeyEvent(int action, int keyCode, int metaState) {
@@ -872,8 +1070,9 @@ public final class DeXShellServer {
                 if (displayId > 0 && setDisplayIdKeyMethod != null) {
                     setDisplayIdKeyMethod.invoke(ev, displayId);
                 }
-                injectInputEventMethod.invoke(inputManager, ev, 0);
-            } catch (Throwable ignored) {}
+                Object ok = injectInputEventMethod.invoke(inputManager, ev, 0);
+                if (Boolean.FALSE.equals(ok)) logInjectProblem("key " + keyCode + " rejected");
+            } catch (Throwable t) { logInjectProblem("key " + keyCode + ": " + t); }
         }
 
         private void injectTextString(String text) {
@@ -1004,7 +1203,7 @@ public final class DeXShellServer {
         sendWsFrame(out, writeLock, 0x1, text.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static void sendWsFrame(OutputStream out, Object writeLock, int opcode, byte[] payload) {
+    static void sendWsFrame(OutputStream out, Object writeLock, int opcode, byte[] payload) {
         synchronized (writeLock) {
             try {
                 out.write(0x80 | (opcode & 0x0F));
@@ -1017,8 +1216,11 @@ public final class DeXShellServer {
                     out.write(len & 0xFF);
                 } else {
                     out.write(127);
+                    // 64-bit length: shift a long — on an int, ">>> 56" is ">>> 24" (shift mod 32)
+                    // and every frame over 64 KB (keyframes) got a garbage length.
+                    long len64 = len;
                     for (int i = 56; i >= 0; i -= 8) {
-                        out.write((int) ((len >>> i) & 0xFF));
+                        out.write((int) ((len64 >>> i) & 0xFF));
                     }
                 }
                 out.write(payload);

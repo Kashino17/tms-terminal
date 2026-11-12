@@ -3833,6 +3833,9 @@
     inertia: null,
   };
   function R() { return window.TMSRemote; }
+  // DeX cable monitor (iPad as the Fold's screen): always direct — a tap clicks exactly where
+  // the finger is, like a touchscreen; the trackpad mode makes no sense on a monitor.
+  function rxIsDirect() { return rx.mode === 'direct' || !!(window.remoteState && window.remoteState.dexMode); }
   function rxImgW() { return window.remoteState.w || 1440; }
   function rxImgH() { return window.remoteState.h || 900; }
   function rxCursor() {
@@ -4075,7 +4078,7 @@
       if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
       if (pts.size === 1) {
         // Direkt-Modus: Zeiger springt sofort unter den Finger.
-        if (rx.mode === 'direct') {
+        if (rxIsDirect()) {
           var n0 = rxClientToImage(e.clientX, e.clientY);
           if (n0) send({ t: 'm', x: n0.x, y: n0.y });
         }
@@ -4157,7 +4160,7 @@
       }
 
       if (pts.size !== 1) return;
-      if (rx.mode === 'direct') {
+      if (rxIsDirect()) {
         var n1 = rxClientToImage(e.clientX, e.clientY);
         if (n1) send({ t: 'm', x: n1.x, y: n1.y });
         if (window.rxCursorChanged) window.rxCursorChanged();
@@ -4191,7 +4194,7 @@
       if (ok && g.max < 3) {
         var kind = classifyPadTap(g.max, false, dur, g.moved, TAP_MS, TAP_SLOP);
         if (kind === 'left') {
-          if (rx.mode === 'direct') {
+          if (rxIsDirect()) {
             var n = rxClientToImage(p.sx, p.sy);
             if (n) send({ t: 'm', x: n.x, y: n.y });
             else { g = null; return; }
@@ -4699,7 +4702,7 @@
     var host = document.querySelector('[data-screen="remote"]');
     if (host) host.classList.toggle('fullscreen', on);
     document.body.classList.toggle('remote-fs', on);
-    if (on) rxSurfaceToast('Spielmodus · Maus & Tastatur gehen direkt an den Rechner');
+    if (on && !window.remoteState.dexMode) rxSurfaceToast('Spielmodus · Maus & Tastatur gehen direkt an den Rechner');
     else rx.s = 0;   // zurueck zur gemerkten Groesse
     rxLayout(true);
   };

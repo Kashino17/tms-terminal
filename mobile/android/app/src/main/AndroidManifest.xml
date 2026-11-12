@@ -58,6 +58,11 @@
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="com.tms.terminal"/>
       </intent-filter>
+      <!-- DeX cable monitor: iPad attached while the Fold is USB host -->
+      <intent-filter>
+        <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"/>
+      </intent-filter>
+      <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" android:resource="@xml/usb_apple_mux"/>
     </activity>
     <activity android:name="com.facebook.react.devsupport.DevSettingsActivity" android:exported="false"/>
     <activity

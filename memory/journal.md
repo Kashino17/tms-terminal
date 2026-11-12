@@ -418,3 +418,10 @@
 - 6 neue Browser-Tests in webview-bund (40 grün); veralteter Bilder-Test an den Fortschrittstext aus v1.154.0 angepasst.
 - Emulator-Kopie + Testserver :8793: zwei Ordner gemerkt, App beendet und neu gestartet → beide Chips wieder da; langes Drücken per echter Berührung öffnet das Menü ohne zu springen; „cd dorthin“ führt `cd '<pfad>'` im Terminal aus, Explorer schließt. Am Fold noch nicht geprüft.
 - Nutzer gab frei: Commits ad06ef7 (Feature) + d4dd5ca (Release), Tag v1.155.0 gepusht, CI grün (Lauf 42989687076), latest = v1.155.0 mit APK. Offen: Prüfung am Fold (auch aufgeklappt).
+
+## 2026-11-13 — DeX-Monitor per Kabel fürs iPad (v1.157.0)
+- iloader-Login scheiterte (Apple-ID zeitweise gesperrt) → iPad-App über Xcode + devicectl installiert.
+- Geminis Ansatz (USB-Tethering) trägt nicht: iPad nimmt das Netz vom Fold nicht an. Stattdessen Fold als USB-Host + usbmux (wie Smart Switch/Duet), am Gerät bewiesen.
+- Bild-Server repariert: Paketname/UID (scrcpy-FakeContext), InputManagerGlobal, Klicks brauchen BUTTON_PRESS, WS-Länge >64 KB war kaputt (int-Shift), Port-Übergabe Standby→freigeschaltet.
+- iPad: WebView-Herkunft http://localhost (https blockte ws://), native Tastatur/Hover/Scroll, Ton als PCM + audioSession 'playback' (Stummmodus), Lebenszeichen über Relais statt HTTP (Neustart 1×/min weg), Relayout gegen schwarze Balken.
+- Echtes Samsung-DeX per Systemcode-Analyse geprüft: auf virtuellen Bildschirmen auf diesem Gerät abgeschaltet. Fenstermodus gebaut, auf Wunsch wieder entfernt.
