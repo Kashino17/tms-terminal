@@ -9,10 +9,14 @@ import fs from 'node:fs';
 
 const src = fs.readFileSync(new URL('../src/season2/SeasonTwoWebRoot.tsx', import.meta.url), 'utf8');
 
-test('die Oberflaeche laedt unter https (sicherer Kontext fuer WebCodecs)', () => {
-  const m = /baseUrl:\s*'([^']+)'/.exec(src);
+test('die Oberflaeche laedt in einem sicheren Kontext (WebCodecs)', () => {
+  // Android: https://tms.local (mixedContentMode erlaubt ws://). iOS: WKWebView kennt kein
+  // mixedContentMode und sperrte von https jedes ws:// — http://localhost ist ebenfalls ein
+  // sicherer Kontext (VideoDecoder vorhanden) und hat als http-Seite keinen gemischten Inhalt.
+  const m = /baseUrl:\s*Platform\.OS === 'ios' \? '([^']+)' : '([^']+)'/.exec(src);
   assert.ok(m, 'baseUrl nicht gefunden');
-  assert.match(m[1], /^https:\/\//, `baseUrl ist ${m[1]} — ohne https kein VideoDecoder, kein Fernzugriff-Bild`);
+  assert.equal(m[1], 'http://localhost', `iOS-baseUrl ist ${m[1]} — nur localhost ist unter http ein sicherer Kontext`);
+  assert.match(m[2], /^https:\/\//, `Android-baseUrl ist ${m[2]} — ohne https kein VideoDecoder, kein Fernzugriff-Bild`);
 });
 
 test('ws:// und http:// zum Server bleiben erlaubt (gemischter Inhalt)', () => {

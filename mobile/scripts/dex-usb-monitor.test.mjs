@@ -68,7 +68,9 @@ test('bridge.js stellt startDeXMonitor, stopDeXMonitor, Direct-Touch und Termina
   assert.ok(bridgeSource.includes('window.TMSBridge.startDeXMonitor = function'), 'startDeXMonitor fehlt');
   assert.ok(bridgeSource.includes('window.TMSBridge.stopDeXMonitor = function'), 'stopDeXMonitor fehlt');
   assert.ok(bridgeSource.includes('window.TMSBridge.setDeXHostStatus = function'), 'setDeXHostStatus fehlt');
-  assert.ok(bridgeSource.includes("e.pointerType === 'touch' || e.pointerType === 'pen'"), 'Touch/Apple-Pencil-Weiterleitung fehlt');
+  // Finger/Stift bedient die Buehne im DeX-Modus direkt (rxIsDirect im Mockup); Tastatur,
+  // Trackpad-Hover und -Scrollen kommen nativ vom iPad (TMSUsbRelay) ueber dexInput.
+  assert.ok(bridgeSource.includes('window.TMSBridge.dexInput = function'), 'native iPad-Eingaben (dexInput) fehlen');
   assert.ok(bridgeSource.includes('dexTerminalDock'), 'DeX + Terminal Split-Stage Dock fehlt');
 });
 
