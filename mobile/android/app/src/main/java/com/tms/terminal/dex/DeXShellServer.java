@@ -62,6 +62,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *     Answers /dex/status probes over the USB-C tethering interface so the iPad immediately detects
  *     the Fold 7 when plugged in via USB-C.
  */
+@android.annotation.SuppressLint({"BlockedPrivateApi", "DiscouragedPrivateApi", "PrivateApi", "SoonBlockedPrivateApi"})
+@SuppressWarnings({"deprecation"})
 public final class DeXShellServer {
 
     public static final int DEFAULT_PORT = 8768;

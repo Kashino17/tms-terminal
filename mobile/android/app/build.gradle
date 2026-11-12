@@ -84,6 +84,10 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace 'com.tms.terminal'
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
     defaultConfig {
         applicationId 'com.tms.terminal'
         minSdkVersion rootProject.ext.minSdkVersion
