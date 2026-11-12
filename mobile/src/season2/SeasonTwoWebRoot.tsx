@@ -44,6 +44,7 @@ import { PRAYER_NAMES, getNextPrayer, type PrayerTimes } from '../services/praye
 import * as Notifications from 'expo-notifications';
 import * as ExpoLocation from 'expo-location';
 import { useDictation } from './hooks/useDictation';
+import { useDeXUsbMonitor } from './hooks/useDeXUsbMonitor';
 import { dictationBubble } from '../services/dictationBubble.service';
 import { useCloudBridge } from './web/useSeasonTwoBackends';
 import { useCloudAuthStore, type CloudPlatform } from '../store/cloudAuthStore';
@@ -1178,6 +1179,8 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
   useEffect(() => {
     if (useSettingsStore.getState().persistentConnection) { try { NativeModules.ConnectionService?.start(); } catch {} }
   }, []);
+
+  const dexUsb = useDeXUsbMonitor(ready, call);
   const applySetting = useCallback((key: string, value: unknown) => {
     const st = useSettingsStore.getState();
     switch (key) {
@@ -1486,6 +1489,20 @@ export function SeasonTwoWebRoot({ navigation }: Props) {
         Alert.alert('Alles gelöscht', 'Bitte die App jetzt schließen und neu öffnen.');
       })();
       return;
+    }
+
+    // ── Samsung DeX USB-C Monitor & Host-Steuerung (läuft vor dem Server-Guard,
+    //    damit Fold 7 ↔ iPad auch komplett offline ohne PC-Server funktioniert).
+    switch (type) {
+      case 'dex:openTether':
+        void dexUsb.openTetherSettings();
+        return;
+      case 'dex:startEngine':
+        void dexUsb.startHostEngine();
+        return;
+      case 'dex:manualStop':
+        dexUsb.notifyManualStop();
+        return;
     }
 
     // Kein Hauptserver: Standard-Gerät ist das des Terminals vorne.

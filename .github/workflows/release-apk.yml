@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Favoriten im Datei-Explorer: Unter dem Pfad steht jetzt eine Leiste mit deinen gemerkten Ordnern - ein Tipp springt direkt hinein. Der Stern links merkt den Ordner, in dem du gerade stehst; in der Liste geht es ueber langes Druecken auf einen Ordner. Langes Druecken auf einen Favoriten: Oeffnen, cd dorthin (im Terminal vorne), Pfad einfuegen, Pfad kopieren, umbenennen, nach links oder rechts schieben, entfernen. Favoriten gelten pro Geraet (Mac und Windows getrennt) und bleiben ueber Updates erhalten. Kein Server-Update noetig. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Samsung DeX USB-C Monitor-Modus fuer iPad & Galaxy Fold 7: Verbindest du dein Galaxy Fold 7 per USB-C-Kabel mit dem iPad und aktivierst USB-Tethering, erkennt die TMS Terminal App auf dem iPad das Fold automatisch und schaltet ohne Klick in den 4:3 Vollbild-DeX-Monitor (2048x1536 @ 60 FPS, H.264 Hardware-Stream, direkter Multitouch, Apple Pencil Hover/Druck & Magic Keyboard/Trackpad). Ueber die schwebende DeX-Pill oben laesst sich jederzeit das Terminal-Split-Stage-Dock (70% DeX / 30% Terminal) einblenden. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest

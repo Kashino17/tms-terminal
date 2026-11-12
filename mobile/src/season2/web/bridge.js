@@ -3602,13 +3602,45 @@
       sparsam: { maxWidth: 1280, fps: 24, bitrateKbps: 800 },
       auto:    { maxWidth: 1600, fps: 30, bitrateKbps: 1500 },
       scharf:  { maxWidth: 1920, fps: 30, bitrateKbps: 3000 },
+      dex:     { maxWidth: 2048, maxHeight: 1536, fps: 60, bitrateKbps: 6000, dpi: 220, mode: 'dex' },
     };
+
+    /**
+     * Berechnet aus der echten iPad-Fenstergroesse eine durch 16 teilbare
+     * DeX-Aufloesung im exakten Seitenverhaeltnis des Bildschirms (z. B. 4:3 ->
+     * 2048x1536 statt 1920x1080), damit Samsung DeX auf dem iPad ohne schwarze
+     * Balken im Vollbild laeuft.
+     */
+    function computeDeXViewportSpec(vw, vh, dpr) {
+      var wCss = Math.max(Number(vw) || 1024, Number(vh) || 768);
+      var hCss = Math.min(Number(vw) || 1024, Number(vh) || 768);
+      var aspect = wCss / Math.max(1, hCss);
+      var targetW = 2048;
+      var targetH = Math.round((targetW / aspect) / 16) * 16;
+      targetH = Math.max(1024, Math.min(1600, targetH));
+      var dpi = Math.round(Math.max(180, Math.min(264, 110 * (Number(dpr) || 2))));
+      return {
+        maxWidth: targetW,
+        maxHeight: targetH,
+        dpi: dpi,
+        fps: 60,
+        bitrateKbps: 6000,
+        mode: 'dex',
+        localCursor: true,
+      };
+    }
+    window.computeDeXViewportSpec = computeDeXViewportSpec;
 
     /** Die App zeichnet den Zeiger selbst (siehe "Lokaler Zeiger" unten) —
      *  der Server laesst ihn dafuer aus dem Video weg, wo er das kann. */
     function startPayload() {
+      if (preset === 'dex' || (remoteTarget && remoteTarget.mode === 'dex')) {
+        var availH = (window.innerHeight || 768) - ((window.remoteState && window.remoteState.dexSplitHeight) || 0);
+        return computeDeXViewportSpec(window.innerWidth || 1024, Math.max(320, availH), window.devicePixelRatio || 2);
+      }
       var p = { localCursor: true, audio: !!remoteOpts.audio, curtain: !!remoteOpts.curtain };
-      for (var k in PRESETS[preset]) p[k] = PRESETS[preset][k];
+      var chosen = PRESETS[preset] || PRESETS.auto;
+      for (var k in chosen) p[k] = chosen[k];
       return p;
     }
 
@@ -4368,11 +4400,24 @@
     window.releaseHardwareInput = releaseHardwareInput;
     window.addEventListener('blur', releaseHardwareInput);
 
-    // Angeschlossene Maus: absolute Abbildung ueber dem Bild — der PC-Zeiger
-    // steht dort, wo der Android-Zeiger ueber dem Bild steht (siehe
-    // toStageNormalized() im Mockup fuer die Begruendung).
+    // Angeschlossene Maus + direkter Touch/Stift im Samsung-DeX-Monitormodus:
+    // Auf dem iPad muss sowohl das Magic-Keyboard-Trackpad (mouse) als auch der
+    // Finger (touch) und der Apple Pencil (pen) direkt in Samsung DeX klicken
+    // und ziehen koennen.
+    var heldTouchId = null;
+
+    function isDeXOverlayElement(target) {
+      return !!(target && target.closest && (
+        target.closest('#remoteExit') ||
+        target.closest('#dexHudBar') ||
+        target.closest('#dexTerminalDock')
+      ));
+    }
+
     document.addEventListener('pointermove', function (e) {
-      if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
+      if (!window.remoteState.fullscreen) return;
+      if (isDeXOverlayElement(e.target)) return;
+      if (e.pointerType !== 'mouse' && !(window.remoteState.dexMode && heldTouchId === e.pointerId)) return;
       var box = stageBox();
       if (!box) return;
       var p = window.toStageNormalized(e.clientX, e.clientY, box);
@@ -4380,36 +4425,49 @@
     });
 
     document.addEventListener('pointerdown', function (e) {
-      if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
-      if (e.target.closest && e.target.closest('#remoteExit')) return;   // Abzeichen bleibt der Rueckweg, nicht Teil der Fernsteuerung
-      // Wie bei pointermove ans Bildrechteck gebunden: ein Klick im schwarzen
-      // Rand neben dem Bild darf keinen Druck anfangen, sonst landet er an
-      // der zuletzt bekannten Zeigerstelle statt dort, wo der Nutzer hinsieht.
+      if (!window.remoteState.fullscreen) return;
+      if (isDeXOverlayElement(e.target)) return;
+      var isDirectDeXTouch = window.remoteState.dexMode && (e.pointerType === 'touch' || e.pointerType === 'pen');
+      if (e.pointerType !== 'mouse' && !isDirectDeXTouch) return;
       var box = stageBox();
       if (!box || e.clientX < box.x || e.clientX > box.x + box.w || e.clientY < box.y || e.clientY > box.y + box.h) return;
       e.preventDefault();
+      if (isDirectDeXTouch) {
+        var p = window.toStageNormalized(e.clientX, e.clientY, box);
+        if (p) window.TMSRemote.input({ t: 'm', x: p.x, y: p.y });
+        heldTouchId = e.pointerId;
+        heldButtons['l'] = true;
+        window.TMSRemote.input({ t: 'b', b: 'l', d: true });
+        return;
+      }
       var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
       heldButtons[b] = true;
       window.TMSRemote.input({ t: 'b', b: b, d: true });
     });
-    document.addEventListener('pointerup', function (e) {
-      if (!window.remoteState.fullscreen || e.pointerType !== 'mouse') return;
+    function onFullscreenPointerRelease(e) {
+      if (!window.remoteState.fullscreen) return;
+      if (heldTouchId !== null && e.pointerId === heldTouchId) {
+        heldTouchId = null;
+        if (heldButtons['l']) {
+          delete heldButtons['l'];
+          window.TMSRemote.input({ t: 'b', b: 'l', d: false });
+        }
+        return;
+      }
+      if (e.pointerType !== 'mouse') return;
       var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
-      // Bewusst NICHT ans Bildrechteck gebunden: ein Druck, der innerhalb
-      // begonnen hat, muss sein Loslassen auch dann bekommen, wenn der
-      // Zeiger inzwischen ausserhalb ist — sonst bleibt die Maustaste
-      // haengen (in diesem Vorhaben schon dreimal gefunden). heldButtons
-      // haelt fest, was hier tatsaechlich als gedrueckt gilt; ein Loslassen
-      // ohne zugehoerigen Druck (nie im Bild begonnen) wird nicht gesendet.
       if (!heldButtons[b]) return;
       delete heldButtons[b];
       window.TMSRemote.input({ t: 'b', b: b, d: false });
-    });
+    }
+    document.addEventListener('pointerup', onFullscreenPointerRelease);
+    document.addEventListener('pointercancel', onFullscreenPointerRelease);
     document.addEventListener('contextmenu', function (e) {
       if (window.remoteState.fullscreen) e.preventDefault();
     });
     document.addEventListener('wheel', function (e) {
       if (!window.remoteState.fullscreen) return;
+      if (isDeXOverlayElement(e.target)) return;
       e.preventDefault();
       window.TMSRemote.input({ t: 's', dx: Math.round(-e.deltaX / 20), dy: Math.round(-e.deltaY / 20) });
     }, { passive: false });
@@ -4417,6 +4475,7 @@
     // Angeschlossene Tastatur: Tasten abfangen, bevor der Browser sie deutet.
     function forwardKey(e, down) {
       if (!window.remoteState.fullscreen) return;
+      if (isDeXOverlayElement(e.target)) return;
       if (e.key === 'Escape' && e.shiftKey) {      // Notausstieg, falls das Abzeichen verdeckt ist
         if (down) window.setRemoteFullscreen(false);
         return;
@@ -4518,6 +4577,213 @@
     if (!l) return;
     if (ev && (ev.done || ev.error)) speechListener = null;
     l(ev || {});
+  };
+
+  // ══ Samsung DeX USB-C Auto-Monitor & Split-Stage ══════════════════════════
+  var prevScreenBeforeDeX = 'terminals';
+  var dexSplitOpen = false;
+
+  function ensureDeXHudDom() {
+    var hud = document.getElementById('dexHudBar');
+    if (!hud) {
+      hud = document.createElement('div');
+      hud.id = 'dexHudBar';
+      hud.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;'
+        + 'display:none;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;'
+        + 'background:rgba(15,23,42,0.86);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);'
+        + 'border:1px solid rgba(56,189,248,0.45);color:#f8fafc;font:600 12px var(--font-ui, sans-serif);'
+        + 'box-shadow:0 8px 24px rgba(0,0,0,0.45);';
+      hud.innerHTML = '<span style="color:#38bdf8">⚡ DeX USB</span>'
+        + '<span id="dexHudDevice" style="opacity:0.9">Fold 7</span>'
+        + '<span id="dexHudStat" style="opacity:0.75;font-weight:500"></span>'
+        + '<button id="dexSplitBtn" type="button" style="margin-left:4px;padding:4px 9px;border-radius:999px;'
+        + 'border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;font:600 11.5px var(--font-ui, sans-serif);cursor:pointer">'
+        + '⌨️ Terminal-Dock</button>'
+        + '<button id="dexExitBtn" type="button" style="padding:4px 9px;border-radius:999px;'
+        + 'border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.16);color:#fecaca;font:600 11.5px var(--font-ui, sans-serif);cursor:pointer">'
+        + 'Beenden</button>';
+      document.body.appendChild(hud);
+
+      var splitBtn = document.getElementById('dexSplitBtn');
+      if (splitBtn) splitBtn.addEventListener('click', function () {
+        toggleDeXSplitDock(!dexSplitOpen);
+      });
+      var exitBtn = document.getElementById('dexExitBtn');
+      if (exitBtn) exitBtn.addEventListener('click', function () {
+        window.TMSBridge.stopDeXMonitor();
+        post('dex:manualStop', {});
+      });
+    }
+
+    var dock = document.getElementById('dexTerminalDock');
+    if (!dock) {
+      dock = document.createElement('div');
+      dock.id = 'dexTerminalDock';
+      dock.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:250px;z-index:9998;'
+        + 'display:none;flex-direction:column;background:rgba(9,13,22,0.96);'
+        + 'border-top:1px solid rgba(56,189,248,0.38);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);'
+        + 'padding:8px 12px;color:#e2e8f0;font:12.5px var(--font-mono, monospace);';
+      dock.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font:600 12px var(--font-ui, sans-serif)">'
+        + '<span style="color:#38bdf8">TMS Terminal · Split-Stage unter Samsung DeX</span>'
+        + '<button id="dexDockCloseBtn" type="button" style="background:none;border:none;color:#94a3b8;font-size:14px;cursor:pointer">✕</button>'
+        + '</div>'
+        + '<div id="dexDockOutput" style="flex:1;overflow-y:auto;white-space:pre-wrap;padding:6px 8px;border-radius:8px;background:rgba(0,0,0,0.45);font:12px var(--font-mono, monospace);line-height:1.45;"></div>'
+        + '<form id="dexDockForm" style="display:flex;gap:8px;margin-top:6px;">'
+        + '<input id="dexTermInput" type="text" placeholder="Befehl an aktives TMS-Terminal senden …" '
+        + 'style="flex:1;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#fff;font:12.5px var(--font-mono, monospace);" />'
+        + '<button type="submit" style="padding:7px 14px;border-radius:8px;border:none;background:#0284c7;color:#fff;font:600 12px var(--font-ui, sans-serif);cursor:pointer">Senden</button>'
+        + '</form>';
+      document.body.appendChild(dock);
+
+      var closeBtn = document.getElementById('dexDockCloseBtn');
+      if (closeBtn) closeBtn.addEventListener('click', function () { toggleDeXSplitDock(false); });
+
+      var form = document.getElementById('dexDockForm');
+      if (form) form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var inp = document.getElementById('dexTermInput');
+        if (!inp || !inp.value) return;
+        var activeCardId = (window.__tmsState && window.__tmsState.activeCardId) || Object.keys(byCard)[0];
+        var sid = activeCardId && byCard[activeCardId];
+        if (sid) {
+          post('terminal:input', { sessionId: sid, data: inp.value + '\r' });
+          inp.value = '';
+          setTimeout(refreshDeXDockOutput, 120);
+        } else if (typeof window.toast === 'function') {
+          window.toast('Kein aktives Terminal verbunden');
+        }
+      });
+    }
+  }
+
+  function refreshDeXDockOutput() {
+    var out = document.getElementById('dexDockOutput');
+    if (!out) return;
+    var activeCardId = (window.__tmsState && window.__tmsState.activeCardId) || Object.keys(byCard)[0];
+    var cs = activeCardId && window.__tmsCardState && window.__tmsCardState[activeCardId];
+    if (cs && cs.lines && cs.lines.length) {
+      out.textContent = cs.lines.slice(-18).join('\n');
+      out.scrollTop = out.scrollHeight;
+    } else {
+      out.textContent = '(Bereit — Befehle unten eingeben, waehrend oben Samsung DeX laeuft)';
+    }
+  }
+
+  function toggleDeXSplitDock(open) {
+    ensureDeXHudDom();
+    dexSplitOpen = !!open;
+    var dock = document.getElementById('dexTerminalDock');
+    var splitH = dexSplitOpen ? Math.min(260, Math.round((window.innerHeight || 768) * 0.34)) : 0;
+    if (window.remoteState) window.remoteState.dexSplitHeight = splitH;
+    if (dock) {
+      dock.style.height = splitH + 'px';
+      dock.style.display = dexSplitOpen ? 'flex' : 'none';
+    }
+    if (dexSplitOpen) refreshDeXDockOutput();
+    if (typeof window.layoutRemoteStage === 'function') window.layoutRemoteStage();
+    if (window.TMSRemote && typeof window.TMSRemote.setQuality === 'function' && window.remoteState && window.remoteState.running) {
+      window.TMSRemote.setQuality('dex');
+    }
+  }
+  window.toggleDeXSplitDock = toggleDeXSplitDock;
+
+  window.TMSBridge.startDeXMonitor = function (info) {
+    if (!info || !info.host) return;
+    ensureDeXHudDom();
+    if (!window.remoteState) window.remoteState = {};
+    if (!window.remoteState.dexMode) {
+      prevScreenBeforeDeX = (window.__tmsState && window.__tmsState.screen && window.__tmsState.screen !== 'remote')
+        ? window.__tmsState.screen
+        : 'terminals';
+    }
+    window.remoteState.dexMode = true;
+    window.remoteState.dexDevice = info.device || 'Samsung Galaxy Fold 7';
+    var devEl = document.getElementById('dexHudDevice');
+    if (devEl) devEl.textContent = window.remoteState.dexDevice;
+    var hud = document.getElementById('dexHudBar');
+    if (hud) hud.style.display = 'flex';
+
+    remoteTarget = {
+      id: '__dex_usb__',
+      host: info.host,
+      port: info.port || 8768,
+      token: info.token || 'usb-dex',
+      mode: 'dex',
+    };
+    remoteWantId = '__dex_usb__';
+    if (typeof window.show === 'function') window.show('remote');
+    if (window.TMSRemote && typeof window.TMSRemote.start === 'function') {
+      window.TMSRemote.start('dex');
+    }
+    if (typeof window.setRemoteFullscreen === 'function') {
+      window.setRemoteFullscreen(true);
+    }
+    if (typeof window.__tmsRemoteTargetReady === 'function') {
+      window.__tmsRemoteTargetReady();
+    }
+    if (typeof window.toast === 'function') {
+      window.toast('⚡ Samsung DeX Monitor aktiv (' + info.host + ')');
+    }
+  };
+
+  window.TMSBridge.stopDeXMonitor = function () {
+    if (!window.remoteState || !window.remoteState.dexMode) return;
+    toggleDeXSplitDock(false);
+    var hud = document.getElementById('dexHudBar');
+    if (hud) hud.style.display = 'none';
+    window.remoteState.dexMode = false;
+    if (window.TMSRemote && typeof window.TMSRemote.stop === 'function') {
+      window.TMSRemote.stop();
+    }
+    var targetScreen = prevScreenBeforeDeX || 'terminals';
+    if (typeof window.show === 'function') window.show(targetScreen);
+    if (typeof window.toast === 'function') {
+      window.toast('Samsung DeX getrennt — zurueck im Terminal');
+    }
+  };
+
+  window.TMSBridge.setDeXHostStatus = function (status) {
+    window.TMS_DATA.dexHost = status || null;
+    var host = document.querySelector('[data-screen="servers"]');
+    if (!host) return;
+    var banner = document.getElementById('tmsDeXHostCard');
+    if (!status) {
+      if (banner) banner.remove();
+      return;
+    }
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'tmsDeXHostCard';
+      banner.style.cssText = 'margin:10px 14px 4px;padding:12px 14px;border-radius:16px;'
+        + 'background:rgba(14,165,233,0.12);border:1px solid rgba(56,189,248,0.38);'
+        + 'color:var(--text, #f8fafc);font:12.5px var(--font-ui, sans-serif);';
+      var titleRow = host.querySelector('.screen-title-row');
+      if (titleRow && titleRow.nextSibling) {
+        titleRow.parentNode.insertBefore(banner, titleRow.nextSibling);
+      } else {
+        host.insertBefore(banner, host.firstChild);
+      }
+    }
+    var usbBadge = status.usbTethering
+      ? ('🟢 USB-C aktiv (' + (status.usbIp || 'bereit') + ':' + (status.port || 8768) + ')')
+      : (status.usbPlugged ? '🟡 USB-Kabel erkannt — USB-Tethering aktivieren' : '⚪ USB-Kabel ans iPad anschliessen');
+    var engBadge = status.privileged
+      ? '🟢 DeX-Engine bereit (One UI 8 Virtual Display)'
+      : '🟡 DeX-Standby (1x per ADB/Button freischalten)';
+    banner.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+      + '<strong style="font-size:13.5px;color:#38bdf8">📱→🖥️ Samsung DeX USB-Host (iPad Monitor)</strong>'
+      + '<span style="font-size:11px;opacity:0.8">' + (status.connectedClients > 0 ? ('Verbunden (' + status.width + '×' + status.height + ')') : 'Bereit') + '</span>'
+      + '</div>'
+      + '<div style="font-size:12px;opacity:0.9;margin-bottom:4px">' + usbBadge + '</div>'
+      + '<div style="font-size:12px;opacity:0.9;margin-bottom:8px">' + engBadge + '</div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      + '<button type="button" id="btnDeXTether" style="padding:6px 11px;border-radius:10px;border:1px solid rgba(56,189,248,0.45);background:rgba(56,189,248,0.18);color:#fff;font:600 12px var(--font-ui, sans-serif)">1. USB-Tethering</button>'
+      + '<button type="button" id="btnDeXStart" style="padding:6px 11px;border-radius:10px;border:1px solid rgba(56,189,248,0.45);background:rgba(56,189,248,0.18);color:#fff;font:600 12px var(--font-ui, sans-serif)">2. DeX-Engine starten</button>'
+      + '</div>';
+    var b1 = document.getElementById('btnDeXTether');
+    if (b1) b1.onclick = function () { post('dex:openTether', {}); };
+    var b2 = document.getElementById('btnDeXStart');
+    if (b2) b2.onclick = function () { post('dex:startEngine', {}); };
   };
 
   post('bridge:ready', {});

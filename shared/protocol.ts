@@ -684,7 +684,17 @@ export interface RemoteStartMessage {
   /** localCursor: the app draws the pointer itself (see remote:cursor).
    *  audio: play the computer's sound on the phone (muted on the computer).
    *  curtain: black screen + dimmed backlight on the computer while connected. */
-  payload: { maxWidth: number; fps: number; bitrateKbps: number; localCursor?: boolean; audio?: boolean; curtain?: boolean };
+  payload: {
+    maxWidth: number;
+    maxHeight?: number;
+    dpi?: number;
+    fps: number;
+    bitrateKbps: number;
+    localCursor?: boolean;
+    audio?: boolean;
+    curtain?: boolean;
+    mode?: 'dex' | 'desktop';
+  };
 }
 export interface RemoteStopMessage { type: 'remote:stop' }
 export interface RemoteKeyframeMessage { type: 'remote:keyframe' }
@@ -715,7 +725,7 @@ export interface RemoteStartedMessage {
   /** keyframeOnDemand: false = remote:keyframe can't be honoured (Windows) — the app should drop less. */
   payload: { width: number; height: number; scale: number; fps: number; codec: 'avc1'; localCursor?: boolean; keyframeOnDemand?: boolean; unlock?: boolean;
     /** What actually runs — the app shows it, a request alone is no promise. */
-    audio?: boolean; curtain?: boolean };
+    audio?: boolean; curtain?: boolean; displayId?: number; mode?: 'dex' | 'desktop' };
 }
 /** Pointer position on the Mac, normalized 0..1 — only after a localCursor start. */
 export interface RemoteCursorMessage { type: 'remote:cursor'; payload: { x: number; y: number } }
