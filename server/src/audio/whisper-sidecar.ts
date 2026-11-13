@@ -10,6 +10,7 @@ interface PendingRequest {
   audioBase64: string;
   options: TranscribeOptions;
   attempts: number;
+  outputSeqAtArm: number;
 }
 
 // Watchdog: abort a request only if a single chunk makes no progress for this long.
@@ -34,11 +35,27 @@ const SIDECAR_DIR = path.join(SERVER_ROOT, 'audio');
 const SIDECAR_SCRIPT = path.join(SIDECAR_DIR, 'whisper_sidecar_mlx.py');
 const VENV_PYTHON = path.join(SIDECAR_DIR, '.venv-mlx', 'bin', 'python3');
 
+/** Kann dieses Gerät diktieren? mlx-whisper gibt es nur auf dem Mac, und nur mit
+ *  eingerichteter .venv-mlx. Die App blendet das Mikro aus, wenn kein Gerät im
+ *  Bund das meldet (`/health` → caps). */
+export function dictationAvailable(
+  script: string = SIDECAR_SCRIPT,
+  python: string = VENV_PYTHON,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const fs = require('fs');
+  return platform === 'darwin' && fs.existsSync(script) && fs.existsSync(python);
+}
+
 let sidecar: ChildProcess | null = null;
 let lineBuffer = '';
 let requestId = 0;
 const pending = new Map<string, PendingRequest>();
 let startPromise: Promise<void> | null = null;
+// Bumped on ANY sidecar output. The sidecar is serial, so a request waiting in
+// line sees no output of its own — but if the sidecar is still talking, it is
+// alive and busy, not stuck.
+let outputSeq = 0;
 
 function ensureRunning(): Promise<void> {
   if (sidecar && !sidecar.killed) return Promise.resolve();
@@ -68,6 +85,7 @@ function ensureRunning(): Promise<void> {
     }, SIDECAR_START_TIMEOUT_MS);
 
     child.stderr?.on('data', (chunk: Buffer) => {
+      outputSeq++;
       const text = chunk.toString();
       logger.info(`[whisper] ${text.trim()}`);
       if (!resolved && text.includes('Ready for requests')) {
@@ -80,6 +98,7 @@ function ensureRunning(): Promise<void> {
     });
 
     child.stdout?.on('data', (chunk: Buffer) => {
+      outputSeq++;
       lineBuffer += chunk.toString();
       const lines = lineBuffer.split('\n');
       lineBuffer = lines.pop() ?? '';
@@ -115,15 +134,20 @@ function ensureRunning(): Promise<void> {
     child.on('exit', (code) => {
       logger.warn(`[whisper] Sidecar exited with code ${code}`);
       clearTimeout(startTimer);
-      sidecar = null;
-      startPromise = null;
-      for (const [, req] of pending) clearTimeout(req.timer);
 
       if (!resolved) {
         resolved = true;
+        if (sidecar === child) sidecar = null;
+        startPromise = null; // our own start failed
         reject(new Error(`Whisper sidecar failed to start (exit ${code})`));
         return;
       }
+
+      // A killed sidecar may exit AFTER a new one already took over (or is
+      // starting): then this exit must not touch the new one or its requests.
+      if (sidecar !== child) return;
+      sidecar = null;
+      for (const [, req] of pending) clearTimeout(req.timer);
 
       if (pending.size === 0) return;
       // Restart and retry each open request once.
@@ -155,13 +179,26 @@ function ensureRunning(): Promise<void> {
 export interface TranscribeOptions {
   language?: string;
   model?: string; // 'large-v3' | 'turbo' | 'medium'
+  /** Vocabulary to listen for (the dictation dictionary). Without it the sidecar's fixed prompt applies. */
+  prompt?: string;
   onProgress?: (info: { chunk: number; total: number; text: string }) => void;
 }
 
 function armWatchdog(id: string, req: PendingRequest): void {
+  req.outputSeqAtArm = outputSeq;
   req.timer = setTimeout(() => {
+    // Waiting in line behind a long, healthy request: keep waiting.
+    if (outputSeq !== req.outputSeqAtArm && pending.has(id)) { armWatchdog(id, req); return; }
     pending.delete(id);
     req.reject(new Error(`Transkription Timeout (${CHUNK_STALL_TIMEOUT_MS / 1000}s). Chunk haengt oder Model zu langsam.`));
+    // The sidecar works through requests one at a time: if it is stuck on this
+    // one, every later request would queue behind it. Kill it — the exit
+    // handler restarts it and resends the other open requests.
+    const stuck = sidecar;
+    if (stuck && !stuck.killed) {
+      logger.warn(`[whisper] ${id} stalled ${CHUNK_STALL_TIMEOUT_MS / 1000}s — killing sidecar so later requests are not blocked`);
+      stuck.kill('SIGKILL');
+    }
   }, CHUNK_STALL_TIMEOUT_MS);
 }
 
@@ -171,6 +208,7 @@ function writeRequest(id: string, req: PendingRequest): void {
     audio_base64: req.audioBase64,
     language: req.options.language ?? 'de',
     model: req.options.model,
+    prompt: req.options.prompt || undefined,
   }) + '\n';
   sidecar!.stdin!.write(payload);
 }
@@ -205,7 +243,7 @@ export async function transcribe(audioBase64: string, options: TranscribeOptions
     const req: PendingRequest = {
       resolve, reject, timer: null as unknown as NodeJS.Timeout,
       onProgress: options.onProgress,
-      audioBase64, options, attempts: 1,
+      audioBase64, options, attempts: 1, outputSeqAtArm: outputSeq,
     };
     pending.set(id, req);
     armWatchdog(id, req);

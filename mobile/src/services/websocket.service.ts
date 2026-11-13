@@ -1,3 +1,5 @@
+import { RttWindow } from './rtt.core.mjs';
+import { pingPlan, nextPingDelay, type PingMode } from '../season2/attention.core.mjs';
 import NetInfo, { NetInfoState, NetInfoStateType } from '@react-native-community/netinfo';
 import { WebSocketConfig, ConnectionState } from '../types/websocket.types';
 
@@ -6,8 +8,10 @@ type StateHandler = (state: ConnectionState) => void;
 
 const RECONNECT_BASE = 500;   // 500ms initial delay (faster recovery on mobile)
 const RECONNECT_MAX = 5000;   // cap at 5s (was 30s) — backoff: 500ms, 1s, 2s, 4s, 5s
-const PING_INTERVAL_NORMAL = 12000;  // 12s — inside server's 15s heartbeat window
-const PING_INTERVAL_FAST = 6000;     // 6s — adaptive: used when RTT is unstable
+// Ehrlicher Ping: alle 3 s messen (früher 12 s) — die Anzeige soll den echten
+// Pfad zeigen (Heimnetz direkt ≈10 ms, Tailscale-Relais 80–450 ms).
+const PING_INTERVAL_NORMAL = 3000;
+const PING_INTERVAL_FAST = 3000;
 const WATCHDOG_TIMEOUT = 30000; // 30s — 15s margin over server's 15s heartbeat
 const RTT_REPORT_INTERVAL = 5; // send RTT to server every 5 pings
 // No max reconnect cap: a server restart can take arbitrarily long, and the
@@ -38,10 +42,11 @@ export class WebSocketService {
   private config: WebSocketConfig | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private pingTimer: ReturnType<typeof setTimeout> | null = null;
   private listeners = new Set<MessageHandler>();
   private persistentHandler: MessageHandler | null = null;
   private onStateChange: StateHandler = () => {};
+  private stateListeners = new Set<StateHandler>();
   private _state: ConnectionState = 'disconnected';
   private netInfoUnsub: (() => void) | null = null;
   private lastNetType: NetInfoStateType | null = null;
@@ -49,21 +54,40 @@ export class WebSocketService {
   // RTT tracking
   private pingSentAt: number | null = null;
   private _rawRtt: number | undefined = undefined;     // last raw sample
-  private _smoothedRtt: number | undefined = undefined; // EMA-smoothed RTT
+  private _smoothedRtt: number | undefined = undefined; // EMA-smoothed RTT (Qualität/Jitter)
+  /** Anzeige-Ping: Median der letzten 5 Rohwerte. */
+  private rttWindow = new RttWindow(5);
   private _jitter: number = 0;                          // EMA-smoothed jitter
   private _quality: ConnectionQuality = 'good';
   private pingCount = 0;
   private currentPingInterval = PING_INTERVAL_NORMAL;
   private consecutivePoorCount = 0;                     // track sustained poor RTT
   private largeTransferUntil = 0;                       // watchdog grace window during big uploads
+  /** Wie oft gepingt wird (attention.core.mjs pingPlan): live | calm | quiet. */
+  private pingMode: PingMode = 'live';
+
+  /**
+   * Ping-Takt nach Bedarf. Jeder Ping weckt das Funkmodul — bisher alle 3 s,
+   * auch wenn nirgends ein Ping-Wert zu sehen war oder die App im Hintergrund
+   * lag. Zurück auf `live` wird sofort gemessen: so fällt eine inzwischen tote
+   * Leitung gleich auf und die Anzeige ist frisch.
+   */
+  setPingMode(mode: PingMode): void {
+    if (mode === this.pingMode) return;
+    this.pingMode = mode;
+    if (!this.pingTimer) return; // nicht verbunden: gilt ab dem nächsten Aufbau
+    this.schedulePing();
+    this.resetWatchdog();
+    if (mode === 'live') this.doPing();
+  }
 
   get state(): ConnectionState {
     return this._state;
   }
 
-  /** Smoothed round-trip time in ms (EMA-filtered, undefined if not yet measured) */
+  /** Ping für die Anzeige: Median der letzten 5 Messungen (undefined vor der ersten). */
   getRtt(): number | undefined {
-    return this._smoothedRtt !== undefined ? Math.round(this._smoothedRtt) : undefined;
+    return this.rttWindow.median();
   }
 
   /** Raw (unsmoothed) last RTT sample */
@@ -84,6 +108,15 @@ export class WebSocketService {
   private setState(state: ConnectionState): void {
     this._state = state;
     this.onStateChange(state);
+    for (const l of this.stateListeners) {
+      try { l(state); } catch { /* a listener must not break the socket */ }
+    }
+  }
+
+  /** Additional state listener (setStateHandler has a single owner); returns unsubscribe. */
+  addStateListener(handler: StateHandler): () => void {
+    this.stateListeners.add(handler);
+    return () => this.stateListeners.delete(handler);
   }
 
   /** Add a listener; returns an unsubscribe function */
@@ -193,14 +226,17 @@ export class WebSocketService {
     };
   }
 
-  send(msg: object): void {
+  /** Returns false when the socket is not open and the message was dropped. */
+  send(msg: object): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
       const data = JSON.stringify(msg);
       if (data.length > LARGE_SEND_THRESHOLD) {
         this.largeTransferUntil = Date.now() + LARGE_SEND_GRACE_MS;
       }
       this.ws.send(data);
+      return true;
     }
+    return false;
   }
 
   disconnect(): void {
@@ -245,6 +281,7 @@ export class WebSocketService {
 
   private updateRttMetrics(rawRtt: number): void {
     this._rawRtt = rawRtt;
+    this.rttWindow.push(rawRtt);
 
     // EMA-smoothed RTT: smooth out spikes while staying responsive
     if (this._smoothedRtt === undefined) {
@@ -292,9 +329,20 @@ export class WebSocketService {
   private startPing(): void {
     this.pingCount = 0;
     this.currentPingInterval = PING_INTERVAL_NORMAL;
-    this.pingTimer = setInterval(() => {
+    this.schedulePing();
+  }
+
+  /** Eine Kette aus Einzel-Zeitgebern statt eines Intervalls: seltene Pings
+   *  lassen sich so auf eine gemeinsame Uhr-Marke legen (alle Geräte wecken
+   *  das Funkmodul dann im selben Moment statt nacheinander). */
+  private schedulePing(): void {
+    if (this.pingTimer) clearTimeout(this.pingTimer);
+    const plan = pingPlan(this.pingMode);
+    const every = this.pingMode === 'live' ? this.currentPingInterval : plan.pingMs;
+    this.pingTimer = setTimeout(() => {
       this.doPing();
-    }, this.currentPingInterval);
+      this.schedulePing();
+    }, nextPingDelay(every, plan.aligned, Date.now()));
   }
 
   private doPing(): void {
@@ -307,18 +355,13 @@ export class WebSocketService {
     }
   }
 
-  private restartPingWithInterval(intervalMs: number): void {
-    if (this.pingTimer) {
-      clearInterval(this.pingTimer);
-    }
-    this.pingTimer = setInterval(() => {
-      this.doPing();
-    }, intervalMs);
+  private restartPingWithInterval(_intervalMs: number): void {
+    if (this.pingTimer) this.schedulePing();
   }
 
   private stopPing(): void {
     if (this.pingTimer) {
-      clearInterval(this.pingTimer);
+      clearTimeout(this.pingTimer);
       this.pingTimer = null;
     }
   }
@@ -340,7 +383,7 @@ export class WebSocketService {
         this.reconnectAttempts = 0;
         this.doConnect();
       }
-    }, WATCHDOG_TIMEOUT);
+    }, Math.max(WATCHDOG_TIMEOUT, pingPlan(this.pingMode).watchdogMs));
   }
 
   private stopWatchdog(): void {
@@ -405,8 +448,16 @@ export function getConnection(serverId: string): WebSocketService {
   if (existing) return existing;
 
   const ws = new WebSocketService();
+  ws.setPingMode(poolPingMode);
   connectionPool.set(serverId, ws);
   return ws;
+}
+
+/** Ping-Takt für alle Verbindungen — auch für später angelegte. */
+let poolPingMode: PingMode = 'live';
+export function setConnectionsPingMode(mode: PingMode): void {
+  poolPingMode = mode;
+  for (const ws of connectionPool.values()) ws.setPingMode(mode);
 }
 
 /**

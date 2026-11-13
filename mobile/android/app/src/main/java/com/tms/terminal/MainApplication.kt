@@ -31,6 +31,8 @@ class MainApplication : Application(), ReactApplication {
             packages.add(AdhanPackage())
             packages.add(ConnectionPackage())
             packages.add(AgentNotificationPackage())
+            packages.add(com.tms.terminal.bubble.DictationBubblePackage())
+            packages.add(DeXHostPackage())
             return packages
           }
 
@@ -46,8 +48,16 @@ class MainApplication : Application(), ReactApplication {
   override val reactHost: ReactHost
     get() = getDefaultReactHost(this.applicationContext, reactNativeHost)
 
+  /** The dictation bubble's own process (see AndroidManifest): native only, no React Native. */
+  private val isBubbleProcess: Boolean by lazy {
+    val name = if (android.os.Build.VERSION.SDK_INT >= 28) Application.getProcessName()
+      else try { java.io.File("/proc/self/cmdline").readText().trimEnd('\u0000') } catch (_: Exception) { "" }
+    name.endsWith(":bubble")
+  }
+
   override fun onCreate() {
     super.onCreate()
+    if (isBubbleProcess) { com.tms.terminal.bubble.BubbleDiagnostics.installCrashRecorder(this); return }
     SoLoader.init(this, false)
     if (!BuildConfig.REACT_NATIVE_UNSTABLE_USE_RUNTIME_SCHEDULER_ALWAYS) {
       ReactFeatureFlags.unstable_useRuntimeSchedulerAlways = false
@@ -64,6 +74,7 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onConfigurationChanged(newConfig: Configuration) {
     super.onConfigurationChanged(newConfig)
+    if (isBubbleProcess) return
     ApplicationLifecycleDispatcher.onConfigurationChanged(this, newConfig)
   }
 }

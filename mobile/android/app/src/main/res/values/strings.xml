@@ -2,4 +2,7 @@
   <string name="app_name">TMS Terminal</string>
   <string name="expo_splash_screen_resize_mode" translatable="false">contain</string>
   <string name="expo_splash_screen_status_bar_translucent" translatable="false">false</string>
+  <string name="bubble_service_label">TMS Diktat-Bubble</string>
+  <string name="bubble_accessibility_summary">Schwebendes Mikrofon in allen Apps</string>
+  <string name="bubble_accessibility_description">Zeigt ein kleines TMS-Mikrofon, sobald du in einer App ein Textfeld öffnest. Antippen startet ein Diktat; der Text wird von deinem TMS-Server transkribiert und ins Feld eingefügt – oder in die Zwischenablage, wenn kein Feld mehr offen ist. Die Bedienungshilfe liest nur, welches Feld gerade den Eingabefokus hat, und fügt dort Text ein. Passwortfelder werden ignoriert.</string>
 </resources>

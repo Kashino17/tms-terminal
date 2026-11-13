@@ -27,6 +27,11 @@ Thumbs.db
 mobile/android/app/build/
 mobile/android/.gradle/
 mobile/ios/build/
+# Von Expo-Prebuild erzeugt — nicht Teil des Quellcodes
+mobile/ios/
+# Werkzeug-Symlinks anderer Agenten, nicht Teil dieses Projekts
+mobile/.goose/
+mobile/.agents/
 
 # Binaries
 *.apk
@@ -49,3 +54,7 @@ mobile/android/app/google-services.json
 .superpowers/
 mcp-server/node_modules/
 mcp-server/dist/
+
+# Python bytecode (written when the sidecar tests run)
+__pycache__/
+*.pyc

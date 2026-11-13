@@ -6,12 +6,14 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "build:season2": "node scripts/build-season2-html.js"
+    "build:season2": "node scripts/build-season2-html.js",
+    "test:mockup": "node --test scripts/*.test.mjs",
+    "test:webview": "node --test scripts/webview-prayer.test.mjs",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "1.21.0",
     "@react-native-community/netinfo": "11.1.0",
-    "@react-native-cookies/cookies": "^6.2.1",
     "@react-native-firebase/app": "^20.5.0",
     "@react-native-firebase/messaging": "^20.5.0",
     "@react-navigation/native": "^6.1.9",
@@ -20,13 +22,13 @@
     "expo-asset": "~9.0.2",
     "expo-av": "~13.10.6",
     "expo-background-fetch": "~11.8.1",
-    "expo-blur": "~12.9.2",
     "expo-clipboard": "~5.0.1",
     "expo-crypto": "~12.8.1",
     "expo-file-system": "~16.0.9",
     "expo-haptics": "~12.8.1",
     "expo-image-picker": "~14.7.1",
     "expo-intent-launcher": "~10.11.0",
+    "expo-keep-awake": "~12.8.2",
     "expo-local-authentication": "~13.8.0",
     "expo-location": "~16.5.5",
     "expo-notifications": "~0.27.8",
@@ -37,12 +39,8 @@
     "expo-web-browser": "~12.8.2",
     "react": "18.2.0",
     "react-native": "0.73.6",
-    "react-native-gesture-handler": "~2.14.0",
-    "react-native-markdown-display": "^7.0.2",
-    "react-native-reanimated": "~3.6.2",
     "react-native-safe-area-context": "4.8.2",
     "react-native-screens": "~3.29.0",
-    "react-native-svg": "14.1.0",
     "react-native-webview": "13.6.4",
     "reusify": "^1.1.0",
     "zustand": "^4.5.0"
@@ -50,6 +48,8 @@
   "devDependencies": {
     "@babel/core": "^7.20.0",
     "@types/react": "~18.2.45",
+    "adhan": "^4.4.6",
+    "patch-package": "^8.0.0",
     "typescript": "^5.3.0"
   },
   "private": true

@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
   <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
   <uses-permission android:name="android.permission.RECORD_AUDIO"/>
   <!-- Screenshots: Kamera aufnehmen und Bilder aus der Galerie wählen. Ohne die
@@ -15,22 +16,38 @@
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+  <!-- Gebetsruf: Wecker-Alarme ohne Nutzerfreigabe (Wecker-App), Ton als Dienst,
+       Standort auch ohne geöffnete App (Reisen), Akku-Ausnahme anfragbar. -->
+  <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+  <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
   <queries>
     <intent>
       <action android:name="android.intent.action.VIEW"/>
       <category android:name="android.intent.category.BROWSABLE"/>
       <data android:scheme="https"/>
     </intent>
+    <!-- Lesemodus „Vorlesen": ohne diesen Eintrag findet Android 11+ die Sprachausgabe nicht. -->
+    <intent>
+      <action android:name="android.intent.action.TTS_SERVICE"/>
+    </intent>
   </queries>
-  <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="true" android:theme="@style/AppTheme" android:usesCleartextTraffic="true">
+  <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="true" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/data_extraction_rules" android:theme="@style/AppTheme" android:usesCleartextTraffic="true">
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
     <meta-data android:name="expo.modules.updates.EXPO_SDK_VERSION" android:value="50.0.0"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"/>
-    <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.App.SplashScreen" android:exported="true" android:screenOrientation="fullUser">
+    <!-- smallestScreenSize: unfolding the Fold changes the smallest width. Without it Android
+         destroyed and recreated the Activity on every fold/unfold — reloading the whole UI and
+         (via AsyncStorage's onHostDestroy) closing the database under in-flight writes.
+         Density is deliberately not listed: React Native needs a resource reload when it
+         changes, and the WebView restore below handles that recreation. -->
+    <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|uiMode" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.App.SplashScreen" android:exported="true" android:screenOrientation="fullUser">
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
         <category android:name="android.intent.category.LAUNCHER"/>
@@ -41,6 +58,11 @@
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="com.tms.terminal"/>
       </intent-filter>
+      <!-- DeX cable monitor: iPad attached while the Fold is USB host -->
+      <intent-filter>
+        <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"/>
+      </intent-filter>
+      <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" android:resource="@xml/usb_apple_mux"/>
     </activity>
     <activity android:name="com.facebook.react.devsupport.DevSettingsActivity" android:exported="false"/>
     <activity
@@ -56,8 +78,50 @@
       android:name=".AdhanAlarmReceiver"
       android:exported="false"/>
     <service
+      android:name=".prayer.AdhanRingService"
+      android:exported="false"
+      android:foregroundServiceType="mediaPlayback"/>
+    <receiver
+      android:name=".prayer.PrayerSystemReceiver"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED"/>
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+        <action android:name="android.intent.action.TIMEZONE_CHANGED"/>
+        <action android:name="android.intent.action.TIME_SET"/>
+      </intent-filter>
+    </receiver>
+    <service
       android:name=".ConnectionService"
       android:exported="false"
       android:foregroundServiceType="dataSync"/>
+    <!-- Keeps the dictation bubble alive like Wispr Flow: ongoing notification +
+         foreground service, so Samsung does not kill/freeze the process and leave the
+         accessibility service unbound until the app is opened again. -->
+    <service
+      android:name=".bubble.BubbleKeepAliveService"
+      android:process=":bubble"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Keeps the user-enabled system-wide dictation bubble (accessibility service) running in the background."/>
+    </service>
+    <!-- Own small process (no React Native, no WebView): an accessibility binding keeps its
+         process at "visible" priority forever. In the app process that kept the whole UI
+         (WebView, JS, terminals) awake in the background and never let Android freeze it. -->
+    <service
+      android:name=".bubble.DictationBubbleService"
+      android:process=":bubble"
+      android:label="@string/bubble_service_label"
+      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService"/>
+      </intent-filter>
+      <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/tms_bubble_accessibility"/>
+    </service>
   </application>
 </manifest>

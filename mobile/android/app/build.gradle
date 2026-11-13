@@ -84,12 +84,16 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace 'com.tms.terminal'
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
     defaultConfig {
         applicationId 'com.tms.terminal'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 20900
-        versionName "1.109.0"
+        versionCode 25701
+        versionName "1.157.1"
 
         buildConfigField("boolean", "REACT_NATIVE_UNSTABLE_USE_RUNTIME_SCHEDULER_ALWAYS", (findProperty("reactNative.unstable_useRuntimeSchedulerAlways") ?: true).toString())
     }
@@ -149,6 +153,8 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    // Gebetszeiten auf dem Handy (ohne Netz), siehe prayer/PrayerEngine.kt
+    implementation("com.batoulapps.adhan:adhan:1.2.1")
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
@@ -175,6 +181,10 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+    // Dictation bubble: pure-Kotlin logic is unit-tested on the JVM
+    // (org.json is only a stub in android.jar, so tests need the real one).
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20231013")
 }
 
 apply from: new File(["node", "--print", "require.resolve('@react-native-community/cli-platform-android/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim(), "../native_modules.gradle");

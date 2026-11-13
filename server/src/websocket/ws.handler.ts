@@ -1,14 +1,14 @@
+import { ProcessWatch } from '../terminal/process.watch';
 import type WebSocket from 'ws';
 import type { ClientMessage, ServerMessage } from '../../../shared/protocol';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import { globalManager } from '../terminal/terminal.manager';
-import { readProcessCwd, normalizeCwd } from '../terminal/cwd.utils';
+import { readProcessCwd, readForegroundProcess, normalizeCwd } from '../terminal/cwd.utils';
 import { promptDetector } from '../notifications/prompt.detector';
 import { idleDetector } from '../notifications/idle.detector';
 import { fcmService } from '../notifications/fcm.service';
-import { watcherService } from '../watchers/watcher.service';
 import { getProcessSnapshot, killProcess } from '../system/process.monitor';
 import { logger } from '../utils/logger';
 import { autopilotService } from '../autopilot/autopilot.service';
@@ -17,16 +17,60 @@ import { screenPromptWatcher, setScreenSource } from '../notifications/prompt.wa
 import { promptFingerprint, type PromptClass } from '../notifications/prompt.classifier';
 import { isAutoApprove, setAutoApprove, clearAutoApprove } from './auto.approve.state';
 import { transcribe as whisperTranscribe } from '../audio/whisper-sidecar';
-import { rewrite as rewritePrompt } from '../audio/prompt-rewriter-sidecar';
 import { synthesize as ttsSynthesize, isAvailable as ttsAvailable } from '../audio/tts-sidecar';
-import { ManagerService } from '../manager/manager.service';
-import { loadManagerConfig, saveManagerConfig } from '../manager/manager.config';
+import { DictationManager } from '../audio/dictation';
+import { handleDictationMessage, createDictationConnectionHandler } from '../audio/dictation.connection';
+import { decodeToFloat32 } from '../audio/ffmpeg-decode';
+import { AdtsPcm } from '../audio/adts-pcm';
+import { DictationStatsStore } from '../audio/dictation.stats';
+import { DictionaryStore } from '../audio/dictionary';
+import { handleDictionaryMessage } from '../audio/dictionary.connection';
 import { captureSoon } from '../terminal/restore/snapshotter';
-import { handleAgendaTool, handleEntriesTool, buildOverview } from '../manager/tools/stufe1.handlers';
-import { listAgenda } from '../manager/agenda/agenda.store';
-import { listEntries } from '../manager/entries/entries.store';
 import { ConnectionRateLimiter } from './rate-limiter';
+import { createOutputPacer } from './output.pacer';
+import { createActivityFeed } from './activity.feed';
+import { readAnswers, forgetReader } from '../reader';
+import { startSpeechRun, type SpeechRun } from '../voice/run';
+import { synthesize, voiceAvailable } from '../voice/engine';
 import { browserBridge } from '../browserbridge/browserbridge.manager';
+import { asPaste } from '../terminal/paste.policy';
+import { titleStore } from '../terminal/titles';
+import { cleanTitle } from '../terminal/titles.store';
+import { clipboardHub } from '../clipboard';
+import {
+  hasMacUnlockPassword,
+  setMacUnlockPassword,
+  getMacUnlockPassword,
+  unlockMacScreen,
+} from '../auth/mac-unlock.service';
+
+// ── Terminal-Titel: auf dem Server gespeichert, an ALLE Apps verteilt ─────────
+// Der Titel eines Terminals gehoert dem Server (titles.store.ts): so ueberlebt
+// er eine Neuinstallation der App und ist auf jedem Geraet derselbe.
+const liveSockets = new Set<WebSocket>();
+function broadcastTitle(sessionId: string, title: string | null): void {
+  const msg: ServerMessage = { type: 'terminal:title', sessionId, payload: { title } };
+  const data = JSON.stringify(msg);
+  for (const sock of liveSockets) {
+    if (sock.readyState === 1) sock.send(data);
+  }
+}
+// ── Gemeinsame Zwischenablage: jede Aenderung geht an ALLE Apps ──────────────
+clipboardHub.onChange((ev) => {
+  const msg: ServerMessage = ev.kind === 'added'
+    ? { type: 'clipboard:added', payload: { item: ev.change.item, removed: ev.change.removed } }
+    : { type: 'clipboard:removed', payload: { ids: ev.ids } };
+  const data = JSON.stringify(msg);
+  for (const sock of liveSockets) if (sock.readyState === 1) sock.send(data);
+});
+
+/** Ein Terminal ist endgueltig weg — sein Titel auch. */
+function forgetTitle(sessionId: string): void {
+  forgetReader(sessionId);
+  if (titleStore.get(sessionId) === undefined) return;
+  titleStore.remove(sessionId);
+  broadcastTitle(sessionId, null);
+}
 
 // Wire up the detach feed callback so the prompt detector keeps receiving
 // data even when sessions are detached (client backgrounded/disconnected).
@@ -48,6 +92,28 @@ function send(ws: WebSocket, msg: ServerMessage): void {
   }
 }
 
+// ── Streamed dictation ──────────────────────────────────────────────
+// One process-wide manager: sessions outlive the socket that started them, so
+// a reconnecting app resumes its dictation instead of losing it.
+/** Terms and mishearings of the dictation (the user edits them in the app). */
+export const dictionary = new DictionaryStore(path.join(os.homedir(), '.tms-terminal', 'dictionary.json'), undefined, (m) => logger.warn(m));
+/** Stop -> text timings of the last 50 dictations (numbers only). */
+export const dictationStats = new DictationStatsStore(path.join(os.homedir(), '.tms-terminal', 'dictation-stats.json'));
+const dictations = new DictationManager({
+  decode: (bytes, format) => decodeToFloat32(bytes, format),
+  openPcm: () => new AdtsPcm((bytes) => decodeToFloat32(bytes, 'adts')),
+  onDone: (stat) => dictationStats.record(stat),
+  transcribeWav: (wavBase64) => whisperTranscribe(wavBase64, { prompt: dictionary.prompt() }),
+  fix: (text) => dictionary.fix(text),
+  now: () => Date.now(),
+  log: (msg) => logger.info(msg),
+});
+setInterval(() => dictations.sweep(), 60_000).unref();
+
+
+/** Lean connection for the Android dictation bubble (`?role=dictation`). */
+export const handleDictationConnection = createDictationConnectionHandler(dictations, (m) => logger.info(m));
+
 // ── Live working-directory tracking ──────────────────────────────────
 // A cd/pushd changes the shell's cwd. Rather than parse the output text,
 // we re-read the real cwd once the terminal output settles after a command,
@@ -67,6 +133,51 @@ async function refreshCwd(ws: WebSocket, sessionId: string): Promise<void> {
   send(ws, { type: 'terminal:cwd', sessionId, payload: { cwd: normalizeCwd(raw) } });
 }
 
+// ── Vordergrund-Programm beim Start einer Vollbild-TUI ───────────────
+// Unter Windows schluckt ConPTY die DECSET-Maus-Sequenzen von OpenCode; die
+// Seite erzwingt den Maus-Modus dann nur, wenn sie den Prozessnamen kennt.
+// Bisher kam der erst nach einer Neuverbindung. Jetzt: beim ÜBERGANG in den
+// alternativen Bildschirm einmal nachsehen (nicht bei jeder Ausgabe — unter
+// Windows startet das jedes Mal PowerShell).
+const altScreenSeen = new Map<string, boolean>();
+async function refreshProcessOnAltScreen(ws: WebSocket, sessionId: string): Promise<void> {
+  const session = globalManager.getSession(sessionId);
+  if (!session) return;
+  const alt = await globalManager.isAltScreen(sessionId);
+  const was = altScreenSeen.get(sessionId) ?? false;
+  altScreenSeen.set(sessionId, alt);
+  // Beide Übergänge melden: auch das ENDE (vim beendet) — sonst hielte die App
+  // den alten Namen und gäbe dem Terminal weiter die echte statt der
+  // virtuellen Höhe.
+  if (alt === was) return;
+  const name = await readForegroundProcess(session.pty.pid);
+  if (!name) return;
+  session.processName = name;
+  send(ws, { type: 'terminal:process', sessionId, payload: { processName: name } });
+}
+
+// Windows: ConPTY gibt den alternativen Bildschirm nicht weiter — der Start
+// einer Vollbild-TUI ist im Strom unsichtbar. Dort stattdessen nach Ausgabe-
+// Pausen gedrosselt nachsehen (siehe process.watch.ts).
+const procWs = new Map<string, WebSocket>();
+const processWatch = new ProcessWatch({
+  now: () => Date.now(),
+  setTimer: (fn, ms) => { const t = setTimeout(fn, ms); t.unref(); return t; },
+  clearTimer: (t) => clearTimeout(t as NodeJS.Timeout),
+  read: async (sessionId) => {
+    const session = globalManager.getSession(sessionId);
+    return session ? readForegroundProcess(session.pty.pid) : null;
+  },
+  report: (sessionId, name) => {
+    const session = globalManager.getSession(sessionId);
+    const ws = procWs.get(sessionId);
+    if (!session || !ws) return;
+    session.processName = name;
+    send(ws, { type: 'terminal:process', sessionId, payload: { processName: name } });
+  },
+});
+const IS_WINDOWS = os.platform() === 'win32';
+
 /** Debounced cwd re-read — called on every output chunk. */
 function scheduleCwdCheck(ws: WebSocket, sessionId: string): void {
   const prev = cwdCheckTimers.get(sessionId);
@@ -74,6 +185,8 @@ function scheduleCwdCheck(ws: WebSocket, sessionId: string): void {
   const t = setTimeout(() => {
     cwdCheckTimers.delete(sessionId);
     void refreshCwd(ws, sessionId);
+    if (IS_WINDOWS) { procWs.set(sessionId, ws); processWatch.poke(sessionId); }
+    else void refreshProcessOnAltScreen(ws, sessionId);
   }, CWD_SETTLE_MS);
   t.unref();
   cwdCheckTimers.set(sessionId, t);
@@ -83,6 +196,9 @@ function scheduleCwdCheck(ws: WebSocket, sessionId: string): void {
 function clearCwdCheck(sessionId: string): void {
   const t = cwdCheckTimers.get(sessionId);
   if (t) { clearTimeout(t); cwdCheckTimers.delete(sessionId); }
+  altScreenSeen.delete(sessionId);
+  processWatch.forget(sessionId);
+  procWs.delete(sessionId);
 }
 
 /** Push the current best-known cwd immediately (on attach/create) so the
@@ -96,8 +212,6 @@ function pushInitialCwd(ws: WebSocket, sessionId: string): void {
 function isValidSessionId(sessionId: unknown): sessionId is string {
   return typeof sessionId === 'string' && sessionId.length > 0 && sessionId.length < 50;
 }
-
-const VALID_WATCHER_TYPES = ['file', 'process', 'keyword'] as const;
 
 // Last known FCM tokens — persists across client reconnects so that
 // prompt notifications can still be sent even if the client briefly disconnects.
@@ -144,74 +258,8 @@ const lastUserInputAt = new Map<string, number>();
 // Auto-approve is blocked if pendingInputLen > 0 (user has unsent text).
 const pendingInputLen = new Map<string, number>();
 
-// ── Manager Agent ────────────────────────────────────────────────────
-export const managerService = new ManagerService(loadManagerConfig());
-
-// Save manager state on graceful shutdown (before process exits)
-process.on('SIGINT', () => managerService.saveStateOnShutdown());
-process.on('SIGTERM', () => managerService.saveStateOnShutdown());
-
-// Mutable reference to the current WebSocket connection.
-// Manager callbacks use this instead of the closure-captured `ws` so that
-// responses are always sent to the CURRENT client, not a stale dead socket.
+// The connection that receives browser-bridge pushes (the most recent one).
 let currentWs: WebSocket | null = null;
-// Buffer for manager messages sent while the client is disconnected.
-// Flushed on reconnect.
-const pendingManagerMessages: Array<Record<string, unknown>> = [];
-
-const MAX_PENDING_MANAGER_MESSAGES = 100;
-
-function sendManager(msg: Record<string, unknown>): void {
-  if (currentWs && currentWs.readyState === currentWs.OPEN) {
-    currentWs.send(JSON.stringify(msg));
-  } else {
-    // Client disconnected — buffer the message for delivery on reconnect
-    pendingManagerMessages.push(msg);
-    // Cap buffer to prevent unbounded growth during long disconnects
-    if (pendingManagerMessages.length > MAX_PENDING_MANAGER_MESSAGES) {
-      const dropped = pendingManagerMessages.length - MAX_PENDING_MANAGER_MESSAGES;
-      pendingManagerMessages.splice(0, dropped);
-      logger.info(`Manager: dropped ${dropped} old buffered messages (cap=${MAX_PENDING_MANAGER_MESSAGES})`);
-    }
-    logger.info(`Manager: buffered message (type=${msg.type}, queue=${pendingManagerMessages.length})`);
-  }
-}
-
-function flushPendingManagerMessages(ws: WebSocket): void {
-  if (pendingManagerMessages.length === 0) return;
-  logger.info(`Manager: flushing ${pendingManagerMessages.length} buffered messages`);
-  while (pendingManagerMessages.length > 0) {
-    const msg = pendingManagerMessages.shift()!;
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify(msg));
-    }
-  }
-}
-
-function setupManagerCallbacks(ws: WebSocket): void {
-  managerService.setCallbacks(
-    (summary) => sendManager({ type: 'manager:summary', payload: summary }),
-    (response) => sendManager({ type: 'manager:response', payload: response }),
-    (error) => sendManager({ type: 'manager:error', payload: { message: error } }),
-    (config) => sendManager({ type: 'manager:personality_configured', payload: config }),
-    (phase, detail, elapsed) => sendManager({ type: 'manager:thinking', payload: { phase, detail, elapsed } }),
-    (token, tokenStats) => sendManager({ type: 'manager:stream_chunk', payload: { token, ...tokenStats } }),
-    (text, actions, phases, images, presentations) => sendManager({ type: 'manager:stream_end', payload: { text, actions, phases, images, presentations } }),
-    createTerminalForManager,
-    closeTerminalForManager,
-    (tasks) => sendManager({ type: 'manager:tasks', payload: { tasks } }),
-  );
-
-  // Proactive messages: reminders, check-ins, suggestions the agent raises itself.
-  managerService.setProactiveCallback((msg, unread) => {
-    sendManager({ type: 'manager:proactive', payload: { ...msg, unread } });
-  });
-}
-
-// These need to be module-level so setupManagerCallbacks can reference them
-// They're assigned inside handleConnection when ws is available
-let createTerminalForManager: (label?: string) => string | null = () => null;
-let closeTerminalForManager: (sessionId: string) => boolean = () => false;
 
 // ── Autopilot state ──────────────────────────────────────────────────
 const aiSessions = new Set<string>(); // sessions where AI tool was detected
@@ -234,15 +282,53 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   const ownedSessions = new Set<string>();
   // Track attach generation per session — passed to detachSession to prevent stale detach
   const sessionGens = new Map<string, number>();
+  // Deduplicate rapid identical reattach requests (e.g. AppState wake storms)
+  const lastReattach = new Map<string, { at: number; cols: number; rows: number }>();
   // Use the persisted tokens as the starting value; overwritten on register
   let deviceToken: string | null = persistedTokens.size > 0 ? [...persistedTokens][0] : null;
 
   // Per-connection rate limiter
   const rateLimiter = new ConnectionRateLimiter();
 
-  logger.success(`Client connected: ${ip}`);
+  // Output pacing (see output.pacer.ts): covered terminals in bundles, a
+  // backgrounded app almost nothing — same bytes, same order, fewer wake-ups.
+  /** Sessions handed over while the app was not visible (see below). */
+  const heldDetached = new Set<string>();
+  const pacer = createOutputPacer((sid, data) => {
+    send(ws, { type: 'terminal:output', sessionId: sid, payload: { data } });
+  }, undefined, (sid, data) => {
+    // The app is not visible and this session keeps producing: stop queueing
+    // for it altogether. Detached, its output only feeds the mirror and the
+    // detectors (auto-approve, pushes keep working); `data` — what the app
+    // never saw — counts as missed, so the app gets one full picture when it
+    // comes back (client:attention below) instead of megabytes in the pocket.
+    globalManager.detachSession(sid, sessionGens.get(sid), data);
+    heldDetached.add(sid);
+  });
+  /** Send what the pacer still holds for a session (it is about to end). */
+  const flushPaced = (sid: string): void => {
+    const rest = pacer.take(sid);
+    if (rest) send(ws, { type: 'terminal:output', sessionId: sid, payload: { data: rest } });
+  };
 
-  // Update the mutable WS reference so manager callbacks always use the current connection
+  logger.success(`Client connected: ${ip}`);
+  liveSockets.add(ws);
+  send(ws, { type: 'terminal:titles', payload: { titles: titleStore.all() } });
+  // Woran jedes Terminal arbeitet: der ganze Stand jetzt, danach nur Wechsel —
+  // und gar nichts, solange die App nicht sichtbar ist (activity.feed.ts).
+  const activityFeed = createActivityFeed(
+    (activities, full) => send(ws, { type: 'terminal:activity', payload: full ? { activities, full } : { activities } }),
+    globalManager.getActivities(),
+  );
+  const stopActivity = globalManager.onActivity((sid, activity) => activityFeed.note(sid, activity));
+  activityFeed.start();
+  // Vorlesen in der geklonten Stimme: höchstens ein Lauf je Verbindung.
+  let speech: { reqId: string; run: SpeechRun } | null = null;
+  const stopSpeech = (): void => { speech?.run.stop(); speech = null; };
+  void hasMacUnlockPassword().then((configured) => {
+    send(ws, { type: 'mac:unlock_status', payload: { configured, supported: process.platform === 'darwin' } });
+  });
+
   currentWs = ws;
 
   // Browser-Bridge: when a captured browser-open is forwarded, push the URL to
@@ -255,8 +341,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
   });
 
-  // Flush any manager messages that were buffered while disconnected
-  flushPendingManagerMessages(ws);
 
   /** „Shell 3" — dieselbe Beschriftung wie beim Idle-Push. */
   const terminalLabel = (sessionId: string): string => {
@@ -271,6 +355,13 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       // (siehe screenPromptWatcher unten). Der Byte-Weg ist dann nur noch für
       // „die KI ist fertig" zuständig — und bleibt Rückfall ohne Spiegel.
       if (context?.reason === 'prompt' && globalManager.hasMirror(sessionId)) return;
+
+      // Sudo / Passwort-Abfrage niemals automatisch beantworten — immer ans Handy melden.
+      if (/(\[sudo\]\s*password\s+for\s+[^:]+:\s*|^password:\s*|enter\s+passphrase\s+for\s+[^:]+:\s*)/im.test(snippet)) {
+        const pendingFlag = (pendingInputLen.get(sessionId) ?? 0) > 0;
+        send(ws, { type: 'terminal:prompt_detected', sessionId, payload: { snippet, hasPendingInput: pendingFlag, kind: 'sudo' } });
+        return;
+      }
 
       // Server-side auto-approve: if enabled, send the approving keystroke directly
       // to the PTY. This works even when the client is backgrounded/disconnected.
@@ -342,6 +433,21 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     // Klassifiziert auf dem gerenderten Bildschirm statt auf dem Byte-Strom und
     // wird so lange erneut bewertet, bis der Prompt gelöst ist (prompt.watcher).
     screenPromptWatcher.watch(sessionId, (cls: PromptClass, attempt: number) => {
+      if (cls.kind === 'sudo') {
+        if (attempt === 0) {
+          send(ws, {
+            type: 'terminal:prompt_detected',
+            sessionId,
+            payload: {
+              snippet: cls.question,
+              hasPendingInput: (pendingInputLen.get(sessionId) ?? 0) > 0,
+              kind: 'sudo',
+            },
+          });
+        }
+        return;
+      }
+
       if (cls.key !== null) {
         // Berechtigung oder Ja/Nein — beantwortbar.
         if (isAutoApprove(sessionId)) {
@@ -411,81 +517,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     });
   };
 
-  /** Create a new terminal session on behalf of the Manager Agent. */
-  createTerminalForManager = (label?: string): string | null => {
-    try {
-      const cols = 80;
-      const rows = 24;
-      const session = globalManager.createSession(
-        { cols, rows },
-        (sessionId, data) => {
-          send(ws, { type: 'terminal:output', sessionId, payload: { data } });
-          promptDetector.feed(sessionId, data);
-          screenPromptWatcher.poke(sessionId);
-          idleDetector.activity(sessionId);
-          scheduleCwdCheck(ws, sessionId);
-          resetAutopilotTimer(sessionId);
-          managerService.feedOutput(sessionId, data);
-        },
-        (sessionId, exitCode) => {
-          ownedSessions.delete(sessionId);
-          promptDetector.unwatch(sessionId);
-          screenPromptWatcher.unwatch(sessionId);
-          lastQuestionPush.delete(sessionId);
-          idleDetector.unwatch(sessionId);
-          clearCwdCheck(sessionId);
-          aiSessions.delete(sessionId);
-          send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
-        },
-      );
-      ownedSessions.add(session.id);
-      sessionGens.set(session.id, globalManager.getAttachGen(session.id));
-      watchSession(session.id);
-      watchSessionIdle(session.id);
-      pushInitialCwd(ws, session.id);
-
-      const shellNum = ownedSessions.size;
-      const sessionLabel = label || `Shell ${shellNum}`;
-      managerService.setSessionLabel(session.id, sessionLabel);
-
-      // Notify the client about the new session
-      send(ws, {
-        type: 'terminal:created',
-        sessionId: session.id,
-        payload: { cols: session.cols, rows: session.rows, fromManager: true, label: sessionLabel },
-      } as any);
-
-      logger.info(`Manager: created terminal "${sessionLabel}" (${session.id.slice(0, 8)})`);
-      return session.id;
-    } catch (err) {
-      logger.warn(`Manager: failed to create terminal — ${err instanceof Error ? err.message : err}`);
-      return null;
-    }
-  };
-
-  /** Close a terminal session on behalf of the Manager Agent. */
-  closeTerminalForManager = (sessionId: string): boolean => {
-    try {
-      if (!ownedSessions.has(sessionId)) {
-        logger.warn(`Manager: cannot close session ${sessionId.slice(0, 8)} — not owned by this connection`);
-        return false;
-      }
-      globalManager.closeSession(sessionId);
-      ownedSessions.delete(sessionId);
-      promptDetector.unwatch(sessionId);
-      screenPromptWatcher.unwatch(sessionId);
-      lastQuestionPush.delete(sessionId);
-      idleDetector.unwatch(sessionId);
-      aiSessions.delete(sessionId);
-      send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode: 0 } });
-      logger.info(`Manager: closed terminal ${sessionId.slice(0, 8)}`);
-      return true;
-    } catch (err) {
-      logger.warn(`Manager: failed to close terminal — ${err instanceof Error ? err.message : err}`);
-      return false;
-    }
-  };
-
   /** Reset the autopilot idle timer for a session. Fires after AUTOPILOT_IDLE_MS of inactivity. */
   const resetAutopilotTimer = (sessionId: string): void => {
     const existing = autopilotTimers.get(sessionId);
@@ -515,8 +546,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
   // Set up autopilot callbacks for WebSocket notifications
   autopilotService.setCallbacks(
-    (sid, itemId) => send(ws, { type: 'autopilot:prompt_sent', sessionId: sid, payload: { id: itemId } } as any),
-    (sid, itemId) => send(ws, { type: 'autopilot:prompt_done', sessionId: sid, payload: { id: itemId } } as any),
+    (sid, itemId) => send(ws, { type: 'autopilot:prompt_sent', sessionId: sid, payload: { id: itemId } }),
+    (sid, itemId) => send(ws, { type: 'autopilot:prompt_done', sessionId: sid, payload: { id: itemId } }),
   );
 
   /**
@@ -525,30 +556,35 @@ export function handleConnection(ws: WebSocket, ip: string): void {
    * Die Größe bleibt, wie sie ist — der Aufrufer kennt die Maße des Clients nicht,
    * und ein unnötiges SIGWINCH lässt Claude & Co. ihr ganzes Bild neu malen.
    */
-  const attachToThisClient = (sessionId: string, clientCols?: number, clientRows?: number): boolean => {
+  const attachToThisClient = (sessionId: string, clientCols?: number, clientRows?: number, clientFresh = false): boolean => {
     const session = globalManager.reattachSession(
       sessionId,
       (sid, data) => {
-        send(ws, { type: 'terminal:output', sessionId: sid, payload: { data } });
+        pacer.push(sid, data);
         promptDetector.feed(sid, data);
+        screenPromptWatcher.poke(sid);
         idleDetector.activity(sid);
         scheduleCwdCheck(ws, sid);
         resetAutopilotTimer(sid);
-        managerService.feedOutput(sid, data);
       },
       (sid, exitCode) => {
         ownedSessions.delete(sid);
         promptDetector.unwatch(sid);
+        screenPromptWatcher.unwatch(sid);
+        lastQuestionPush.delete(sid);
         idleDetector.unwatch(sid);
         clearCwdCheck(sid);
         aiSessions.delete(sid);
         autopilotService.clearSession(sid);
         const apTimer = autopilotTimers.get(sid);
         if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sid); }
+        flushPaced(sid);
         send(ws, { type: 'terminal:closed', sessionId: sid, payload: { exitCode } });
+        forgetTitle(sid);
       },
       clientCols,
       clientRows,
+      clientFresh,
     );
     if (!session) return false;
 
@@ -575,35 +611,32 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
-    // Handle extension message types not in shared/protocol.ts
-    const msgType = (msg as any).type as string;
-
     // ── Rate limiting ────────────────────────────────────────────────
-    if (!rateLimiter.consume(msgType)) {
+    if (!rateLimiter.consume(msg.type)) {
       // Drops are rare with the generous buckets — but a silently dropped
       // create/reattach would leave a ghost card and a dropped transcribe a
       // stuck spinner, so those get an explicit error back.
-      if (msgType === 'terminal:create' || msgType === 'terminal:reattach') {
-        send(ws, { type: 'terminal:error', sessionId: (msg as any).sessionId ?? 'none', payload: { message: 'Zu viele Anfragen — bitte kurz warten' } });
-      } else if (msgType === 'audio:transcribe') {
-        send(ws, { type: 'audio:error', sessionId: (msg as any).sessionId ?? 'none', payload: { message: 'Zu viele Anfragen — bitte kurz warten' } } as any);
+      if (msg.type === 'terminal:create' || msg.type === 'terminal:reattach') {
+        send(ws, { type: 'terminal:error', sessionId: (msg as { sessionId?: string }).sessionId ?? 'none', payload: { message: 'Zu viele Anfragen — bitte kurz warten' } });
+      } else if (msg.type === 'audio:transcribe') {
+        send(ws, { type: 'audio:error', sessionId: (msg as { sessionId?: string }).sessionId ?? 'none', payload: { message: 'Zu viele Anfragen — bitte kurz warten' } });
       }
       return;
     }
 
-    if (msgType === 'client:backgrounding') {
+    if (msg.type === 'client:backgrounding') {
       logger.info(`Client backgrounding — detaching all sessions (${ownedSessions.size} sessions)`);
       for (const sessionId of ownedSessions) {
         const gen = sessionGens.get(sessionId);
-        globalManager.detachSession(sessionId, gen);
+        globalManager.detachSession(sessionId, gen, pacer.take(sessionId));
       }
       // Do NOT close the WebSocket — the client will close it from their side
       return;
     }
 
-    if (msgType === 'client:set_ai_session') {
-      const sid = (msg as any).sessionId;
-      const hasAi = !!(msg as any).payload?.hasAi;
+    if (msg.type === 'client:set_ai_session') {
+      const sid = msg.sessionId;
+      const hasAi = !!msg.payload?.hasAi;
       if (typeof sid === 'string') {
         if (hasAi) aiSessions.add(sid);
         else aiSessions.delete(sid);
@@ -612,9 +645,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
-    if (msgType === 'client:set_auto_approve') {
-      const sid = (msg as any).sessionId;
-      const enabled = !!(msg as any).payload?.enabled;
+    if (msg.type === 'client:set_auto_approve') {
+      const sid = msg.sessionId;
+      const enabled = !!msg.payload?.enabled;
       if (typeof sid === 'string') {
         setAutoApprove(sid, enabled);
         // Sofort sichern statt bis zum 30-Sekunden-Takt zu warten: ein Neustart
@@ -628,8 +661,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
-    if (msgType === 'client:rtt') {
-      const rtt = (msg as any).payload?.rtt;
+    if (msg.type === 'client:rtt') {
+      const rtt = msg.payload?.rtt;
       if (typeof rtt === 'number' && rtt > 0 && rtt < 30000) {
         for (const sessionId of ownedSessions) {
           globalManager.setSessionRtt(sessionId, rtt);
@@ -638,8 +671,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
-    if (msgType === 'client:set_idle_threshold') {
-      const seconds = (msg as any).payload?.seconds;
+    if (msg.type === 'client:set_idle_threshold') {
+      const seconds = msg.payload?.seconds;
       if (typeof seconds === 'number' && seconds >= 0) {
         if (seconds === 0) {
           // Disabled — unwatch all sessions from idle detector
@@ -661,9 +694,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
 
     // ── Autopilot message handlers ───────────────────────────────────
-    if (msgType === 'autopilot:optimize') {
-      const { items, cwd } = (msg as any).payload ?? {};
-      const sessionId = (msg as any).sessionId;
+    if (msg.type === 'autopilot:optimize') {
+      const { items, cwd } = msg.payload ?? {};
+      const sessionId = msg.sessionId;
       if (!Array.isArray(items) || !cwd || !sessionId) return;
 
       // Mark items as optimizing
@@ -678,18 +711,18 @@ export function handleConnection(ws: WebSocket, ip: string): void {
             optimizedPrompt: result.prompt,
             status: 'queued',
           });
-          send(ws, { type: 'autopilot:optimized', sessionId, payload: { id, optimizedPrompt: result.prompt } } as any);
+          send(ws, { type: 'autopilot:optimized', sessionId, payload: { id, optimizedPrompt: result.prompt } });
         } else {
           autopilotService.updateItem(sessionId, id, { status: 'error', error: result.error });
-          send(ws, { type: 'autopilot:optimize_error', sessionId, payload: { id, error: result.error } } as any);
+          send(ws, { type: 'autopilot:optimize_error', sessionId, payload: { id, error: result.error } });
         }
       });
       return;
     }
 
-    if (msgType === 'autopilot:add_item') {
-      const sessionId = (msg as any).sessionId;
-      const item = (msg as any).payload;
+    if (msg.type === 'autopilot:add_item') {
+      const sessionId = msg.sessionId;
+      const item = msg.payload;
       if (sessionId && item?.id && item?.text) {
         autopilotService.addItem(sessionId, {
           id: item.id,
@@ -701,36 +734,36 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
-    if (msgType === 'autopilot:remove_item') {
-      const sessionId = (msg as any).sessionId;
-      const itemId = (msg as any).payload?.id;
+    if (msg.type === 'autopilot:remove_item') {
+      const sessionId = msg.sessionId;
+      const itemId = msg.payload?.id;
       if (sessionId && itemId) {
         autopilotService.removeItem(sessionId, itemId);
       }
       return;
     }
 
-    if (msgType === 'autopilot:update_item') {
-      const sessionId = (msg as any).sessionId;
-      const { id, ...updates } = (msg as any).payload ?? {};
+    if (msg.type === 'autopilot:update_item') {
+      const sessionId = msg.sessionId;
+      const { id, ...updates } = msg.payload ?? {};
       if (sessionId && id) {
         autopilotService.updateItem(sessionId, id, updates);
       }
       return;
     }
 
-    if (msgType === 'autopilot:reorder') {
-      const sessionId = (msg as any).sessionId;
-      const itemIds = (msg as any).payload?.itemIds;
+    if (msg.type === 'autopilot:reorder') {
+      const sessionId = msg.sessionId;
+      const itemIds = msg.payload?.itemIds;
       if (sessionId && Array.isArray(itemIds)) {
         autopilotService.reorderQueue(sessionId, itemIds);
       }
       return;
     }
 
-    if (msgType === 'autopilot:queue_toggle') {
-      const sessionId = (msg as any).sessionId;
-      const enabled = !!(msg as any).payload?.enabled;
+    if (msg.type === 'autopilot:queue_toggle') {
+      const sessionId = msg.sessionId;
+      const enabled = !!msg.payload?.enabled;
       if (sessionId) {
         autopilotService.setEnabled(sessionId, enabled);
         logger.info(`Autopilot queue ${enabled ? 'enabled' : 'disabled'} for ${sessionId.slice(0, 8)}`);
@@ -738,114 +771,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
       return;
     }
 
-    // ── Manager Agent message handlers ────────────────────────────────
-    if (msgType === 'manager:toggle') {
-      const enabled = !!(msg as any).payload?.enabled;
-      if (enabled) {
-        setupManagerCallbacks(ws);
-        managerService.start();
-      } else {
-        managerService.stop();
-      }
-      send(ws, { type: 'manager:status', payload: { enabled } } as any);
-      // Also send provider list on toggle
-      void managerService.getProviders().then((p) =>
-        send(ws, { type: 'manager:providers', payload: p } as any));
-      return;
-    }
-
-    // Reine Abfrage der Modell-Liste — ohne den Manager zu starten/stoppen.
-    // Season 2 braucht das beim Verbinden: der Server schickte die Liste bisher
-    // nur bei manager:toggle, das Season 2 nie sendet ("Keine Modelle gemeldet").
-    if (msgType === 'manager:get_providers') {
-      void managerService.getProviders().then((p) =>
-        send(ws, { type: 'manager:providers', payload: p } as any));
-      return;
-    }
-
-    if (msgType === 'manager:chat') {
-      // Ensure callbacks are set on every chat (survives server restarts + reconnects)
-      setupManagerCallbacks(ws);
-      if (!managerService.isEnabled()) managerService.start();
-
-      const text = (msg as any).payload?.text;
-      const targetSessionId = (msg as any).payload?.targetSessionId;
-      const onboarding = !!(msg as any).payload?.onboarding;
-      if (typeof text === 'string' && text.length > 0) {
-        managerService.handleChat(text, targetSessionId, onboarding).catch((err) => {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          send(ws, { type: 'manager:error', payload: { message: errMsg } } as any);
-        });
-      }
-      return;
-    }
-
-    if (msgType === 'manager:cancel') {
-      managerService.cancelCurrentRequest();
-      send(ws, { type: 'manager:stream_end', payload: { text: '⛔ Abgebrochen.', actions: [], phases: [] } } as any);
-      return;
-    }
-
-    if (msgType === 'manager:poll') {
-      setupManagerCallbacks(ws);
-      if (!managerService.isEnabled()) managerService.start();
-      const pollTarget = (msg as any).payload?.targetSessionId;
-      managerService.poll(pollTarget, true).catch((err) => {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        send(ws, { type: 'manager:error', payload: { message: errMsg } } as any);
-      });
-      return;
-    }
-
-    if (msgType === 'manager:set_provider') {
-      const providerId = (msg as any).payload?.providerId;
-      const contextLength = (msg as any).payload?.contextLength;
-      if (typeof providerId === 'string') {
-        void (async () => {
-          try {
-            // Ein lokales Modell wird jetzt geladen (kann ~1-2 min dauern) —
-            // der App vorher Bescheid geben, damit der Chip "lädt…" zeigt.
-            send(ws, { type: 'manager:model_loading', payload: { providerId, loading: true } } as any);
-            await managerService.setProvider(providerId, typeof contextLength === 'number' ? contextLength : undefined);
-            const p = await managerService.getProviders();
-            send(ws, { type: 'manager:providers', payload: p } as any);
-          } catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            send(ws, { type: 'manager:error', payload: { message: errMsg } } as any);
-          } finally {
-            send(ws, { type: 'manager:model_loading', payload: { providerId, loading: false } } as any);
-          }
-        })();
-      }
-      return;
-    }
-
-    if (msgType === 'manager:set_personality') {
-      const payload = (msg as any).payload;
-      if (payload && typeof payload === 'object') {
-        managerService.setPersonality(payload);
-      }
-      return;
-    }
-
-    if (msgType === 'manager:set_api_key') {
-      const { providerId, apiKey } = (msg as any).payload ?? {};
-      if (typeof providerId === 'string' && typeof apiKey === 'string') {
-        const updates: Record<string, string> = {};
-        if (providerId === 'kimi') updates.kimiApiKey = apiKey;
-        else if (providerId === 'glm') updates.glmApiKey = apiKey;
-        else if (providerId === 'openai') updates.openaiApiKey = apiKey;
-        managerService.updateProviderConfig(updates);
-        saveManagerConfig(updates);
-        void managerService.getProviders().then((p) =>
-          send(ws, { type: 'manager:providers', payload: p } as any));
-      }
-      return;
-    }
-
     // ── File Upload from mobile app ───────────────────────────────
-    if (msgType === 'client:file_upload') {
-      const { filename, data, mimeType } = (msg as any).payload ?? {};
+    if (msg.type === 'client:file_upload') {
+      const { filename, data, mimeType } = msg.payload ?? {};
       if (typeof filename === 'string' && typeof data === 'string') {
         try {
           const uploadDir = path.join(os.homedir(), '.tms-terminal', 'uploads');
@@ -854,9 +782,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           const filePath = path.join(uploadDir, `${Date.now()}_${safeName}`);
           fs.writeFileSync(filePath, Buffer.from(data, 'base64'));
           logger.info(`File upload: ${safeName} (${mimeType}) → ${filePath}`);
-          // Send file path to manager as a chat message
-          managerService.handleChat(`[DATEI-UPLOAD] Der User hat eine Datei gesendet: ${filePath} (${mimeType || 'unbekannt'}, ${safeName}). Verarbeite sie entsprechend.`).catch(() => {});
-          send(ws, { type: 'client:file_uploaded', payload: { path: filePath, filename: safeName } } as any);
+          send(ws, { type: 'client:file_uploaded', payload: { path: filePath, filename: safeName } });
         } catch (err) {
           logger.warn(`File upload failed: ${err}`);
         }
@@ -865,148 +791,212 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
 
     // ── App State tracking ──────────────────────────────────────────
-    if (msgType === 'client:app_state') {
-      const { foreground } = (msg as any).payload ?? {};
-      (managerService as any).appForeground = !!foreground;
+    if (msg.type === 'client:app_state') {
+      const { foreground } = msg.payload ?? {};
       logger.info(`App state: ${foreground ? 'foreground' : 'background'}`);
       return;
     }
-    if (msgType === 'client:active_tab') {
-      const { tabId, sessionId: tabSessionId } = (msg as any).payload ?? {};
-      (managerService as any).activeTabId = tabId;
-      (managerService as any).activeSessionId = tabSessionId;
+    if (msg.type === 'client:active_tab') {
       return;
     }
-
-    if (msgType === 'manager:sync_labels') {
-      const labels = (msg as any).payload?.labels as Array<{ sessionId: string; name: string }> | undefined;
-      if (Array.isArray(labels)) {
-        // Clean up stale labels: remove any session labels not in the current sync
-        const syncedIds = new Set(labels.map(l => l.sessionId));
-        const currentList = managerService.getSessionList();
-        for (const { sessionId } of currentList) {
-          if (!syncedIds.has(sessionId) && !ownedSessions.has(sessionId)) {
-            managerService.clearSession(sessionId);
-          }
+    // What the app is showing right now — drives the output pacer.
+    // focus: null = several terminals visible / unknown, '' = none, id = that one in front.
+    if (msg.type === 'client:attention') {
+      const p: { foreground?: unknown; focus?: unknown } = msg.payload ?? {};
+      pacer.setAttention(p.foreground !== false, typeof p.focus === 'string' ? p.focus : null);
+      activityFeed.setForeground(p.foreground !== false);
+      // Back on screen: sessions handed over meanwhile are attached again —
+      // the reattach sends their current picture (they have missed output).
+      if (p.foreground !== false && heldDetached.size > 0) {
+        const back = [...heldDetached];
+        heldDetached.clear();
+        for (const sid of back) {
+          if (ownedSessions.has(sid) && globalManager.isDetached(sid)) attachToThisClient(sid);
         }
-        // Apply new labels
-        for (const { sessionId, name } of labels) {
-          if (typeof sessionId === 'string' && typeof name === 'string') {
-            managerService.setSessionLabel(sessionId, name);
-          }
+      }
+      return;
+    }
+
+    if (msg.type === 'clipboard:list') {
+      send(ws, { type: 'clipboard:history', payload: { items: clipboardHub.list() } });
+      return;
+    }
+    if (msg.type === 'clipboard:push') {
+      const text = msg.payload?.text;
+      if (typeof text === 'string') clipboardHub.addFromPhone(text);
+      return;
+    }
+    if (msg.type === 'clipboard:use' || msg.type === 'clipboard:delete') {
+      const id = msg.payload?.id;
+      if (typeof id !== 'string') return;
+      if (msg.type === 'clipboard:use') clipboardHub.use(id); else clipboardHub.remove(id);
+      return;
+    }
+    if (msg.type === 'clipboard:clear') {
+      clipboardHub.clear();
+      return;
+    }
+
+    if (msg.type === 'speech:speak') {
+      // Satz für Satz erzeugen und sofort schicken — die App spielt schon,
+      // während der nächste Satz entsteht (voice/run.ts).
+      const reqId = String(msg.payload?.reqId ?? '').slice(0, 64);
+      const parts = Array.isArray(msg.payload?.parts) ? msg.payload.parts.filter((x): x is string => typeof x === 'string').slice(0, 400) : [];
+      stopSpeech();
+      if (!reqId) return;
+      if (!voiceAvailable()) { send(ws, { type: 'speech:error', payload: { reqId, message: 'unavailable' } }); return; }
+      const run = startSpeechRun(parts, synthesize,
+        (c) => send(ws, { type: 'speech:audio', payload: { reqId, seq: c.seq, index: c.index, first: c.first, last: c.last, format: 'mp3', audio: c.audio.toString('base64'), ms: c.ms } }),
+        (message) => { logger.warn(`[voice] ${message}`); send(ws, { type: 'speech:error', payload: { reqId, message } }); });
+      speech = { reqId, run };
+      void run.done.then(() => { if (speech?.run === run) speech = null; });
+      return;
+    }
+    if (msg.type === 'speech:played') {
+      if (speech && speech.reqId === msg.payload?.reqId && typeof msg.payload?.seq === 'number') speech.run.played(msg.payload.seq);
+      return;
+    }
+    if (msg.type === 'speech:stop') {
+      stopSpeech();
+      return;
+    }
+
+    if (msg.type === 'reader:get') {
+      // Lesemodus: die letzten Antworten der KI-Sitzung in diesem Terminal —
+      // aus ihrem eigenen Verlauf, nicht vom Bildschirm abgelesen. Nur auf
+      // Wunsch (ein Tipp in der App), nie von selbst.
+      const sid = msg.sessionId;
+      const session = isValidSessionId(sid) ? globalManager.getSession(sid) : undefined;
+      if (!session) { send(ws, { type: 'reader:answers', sessionId: String(sid ?? ''), payload: { answers: [], open: false, reason: 'no-claude' } }); return; }
+      void readAnswers(sid, session.pty.pid).then((result) => {
+        send(ws, { type: 'reader:answers', sessionId: sid, payload: result });
+      });
+      return;
+    }
+
+    if (msg.type === 'terminal:titles_get') {
+      send(ws, { type: 'terminal:titles', payload: { titles: titleStore.all() } });
+      return;
+    }
+
+    if (msg.type === 'terminal:rename') {
+      const sessionId = msg.sessionId;
+      const title = cleanTitle(msg.payload?.title);
+      if (!isValidSessionId(sessionId) || !title || !globalManager.getSession(sessionId)) return;
+      if (titleStore.set(sessionId, title)) {
+        logger.info(`Titel ${sessionId.slice(0, 8)} → "${title}"`);
+        broadcastTitle(sessionId, title);
+      }
+      return;
+    }
+
+    // ── Biometric Mac Unlock & Sudo Relay (Keychain-backed) ────────
+    if (msg.type === 'mac:unlock_status') {
+      void hasMacUnlockPassword().then((configured) => {
+        send(ws, { type: 'mac:unlock_status', payload: { configured, supported: process.platform === 'darwin' } });
+      });
+      return;
+    }
+
+    if (msg.type === 'mac:unlock_setup') {
+      const password = msg.payload?.password ?? '';
+      void (async () => {
+        if (!password) {
+          send(ws, { type: 'mac:biometric_unlock_result', payload: { ok: false, mode: 'remote', error: 'Passwort darf nicht leer sein' } });
+          return;
         }
-        logger.info(`Manager: synced ${labels.length} labels from client`);
-      }
+        send(ws, { type: 'mac:unlock_status', payload: { configured: true, supported: process.platform === 'darwin' } });
+        const saved = await setMacUnlockPassword(password);
+        const configured = await hasMacUnlockPassword();
+        send(ws, { type: 'mac:unlock_status', payload: { configured, supported: process.platform === 'darwin' } });
+        if (!saved) {
+          send(ws, { type: 'mac:biometric_unlock_result', payload: { ok: false, mode: 'remote', error: 'Speichern im Schlüsselbund fehlgeschlagen' } });
+        }
+      })();
       return;
     }
 
-    if (msgType === 'manager:memory_read') {
-      const mem = require('../manager/manager.memory');
-      send(ws, { type: 'manager:memory_data', payload: { memory: mem.loadMemory() } } as any);
+    if (msg.type === 'mac:biometric_unlock') {
+      const mode = msg.payload?.mode === 'sudo' ? 'sudo' : 'remote';
+      const sid = msg.payload?.sessionId ?? msg.sessionId;
+      const inlinePassword = typeof msg.payload?.password === 'string' && msg.payload.password.length > 0
+        ? msg.payload.password
+        : undefined;
+      void (async () => {
+        if (inlinePassword) {
+          await setMacUnlockPassword(inlinePassword);
+          send(ws, { type: 'mac:unlock_status', payload: { configured: true, supported: process.platform === 'darwin' } });
+        }
+        if (mode === 'sudo') {
+          if (!isValidSessionId(sid)) {
+            send(ws, { type: 'mac:biometric_unlock_result', payload: { ok: false, mode: 'sudo', error: 'Keine gültige Terminal-Session' } });
+            return;
+          }
+          const pwd = inlinePassword ?? (await getMacUnlockPassword());
+          if (!pwd) {
+            send(ws, { type: 'mac:biometric_unlock_result', payload: { ok: false, mode: 'sudo', error: 'Kein Mac-Passwort im Schlüsselbund hinterlegt' } });
+            return;
+          }
+          const wrote = globalManager.write(sid, pwd + '\r');
+          pendingInputLen.set(sid, 0);
+          screenPromptWatcher.resolved(sid);
+          promptDetector.noteApproved(sid);
+          logger.info(`Biometric sudo confirmed for session ${sid.slice(0, 8)} (ok=${wrote})`);
+          send(ws, { type: 'mac:biometric_unlock_result', payload: { ok: wrote, mode: 'sudo', error: wrote ? undefined : 'Session nicht gefunden' } });
+          return;
+        }
+
+        const res = await unlockMacScreen();
+        logger.info(`Biometric Mac screen unlock triggered (ok=${res.ok}${res.error ? `, err=${res.error}` : ''})`);
+        send(ws, { type: 'mac:biometric_unlock_result', payload: { ok: res.ok, mode: 'remote', error: res.error } });
+      })();
       return;
     }
 
-    if (msgType === 'manager:memory_write') {
-      const { section, data } = (msg as any).payload ?? {};
-      if (typeof section === 'string' && data !== undefined) {
-        const mem = require('../manager/manager.memory');
-        mem.updateMemorySection(section, data);
-        send(ws, { type: 'manager:memory_data', payload: { memory: mem.loadMemory() } } as any);
-      }
-      return;
-    }
+    if (handleDictationMessage(dictations, msg, (m) => send(ws, m as ServerMessage))) return;
+    // The dictionary of this machine: answered to the asker, changes go to every connected app.
+    if (handleDictionaryMessage(dictionary, dictationStats, msg, (m) => send(ws, m as ServerMessage),
+      (m) => { for (const sock of liveSockets) send(sock, m as ServerMessage); })) return;
 
-    if (msgType === 'manager:overview') {
-      const terminals = managerService.getSessionList().map(s => ({ label: s.label, status: '—' }));
-      send(ws, {
-        type: 'manager:response',
-        payload: { text: buildOverview({ nowMs: Date.now(), terminals }) },
-      } as any);
-      return;
-    }
+    if (msg.type === 'audio:transcribe') {
+      const sessionId = isValidSessionId(msg.sessionId) ? msg.sessionId : '__dictation__';
+      const audio = msg.payload?.audio;
+      const format = msg.payload?.format;
 
-    if (msgType === 'manager:agenda') {
-      const payload = (msg as any).payload ?? {};
-      if (payload.action !== 'list') {
-        handleAgendaTool({ action: payload.action, ...(payload.args ?? {}) }, Date.now());
-      }
-      const now = Date.now();
-      const items = listAgenda(now, now + 365 * 24 * 60 * 60 * 1000).map(e => ({
-        id: e.item.id, title: e.item.title, note: e.item.note, at: e.item.at,
-        allDay: e.item.allDay, repeat: e.item.repeat,
-        reminderOffsets: e.item.reminders.map(r => r.offsetMinutes),
-        occurrenceAt: e.occurrenceAt,
-      }));
-      send(ws, { type: 'manager:agenda_data', payload: { items } } as any);
-      return;
-    }
-
-    if (msgType === 'manager:entries') {
-      const payload = (msg as any).payload ?? {};
-      if (payload.action !== 'list') {
-        handleEntriesTool({ action: payload.action, ...(payload.args ?? {}) });
-      }
-      send(ws, { type: 'manager:entries_data', payload: { entries: listEntries() } } as any);
-      return;
-    }
-
-    if (msgType === 'manager:outbox_read') {
-      const unread = managerService.markOutboxRead();
-      send(ws, { type: 'manager:unread', payload: { unread } } as any);
-      return;
-    }
-
-    if (msgType === 'audio:transcribe') {
-      const sessionId = (msg as any).sessionId;
-      const audio = (msg as any).payload?.audio;
-      const format = (msg as any).payload?.format;
-      const enhance = (msg as any).payload?.enhance === true;
-
-      if (!isValidSessionId(sessionId)) {
-        send(ws, { type: 'audio:error', sessionId: 'none', payload: { message: 'Invalid sessionId' } } as any);
-        return;
-      }
       if (typeof audio !== 'string' || audio.length === 0) {
-        send(ws, { type: 'audio:error', sessionId, payload: { message: 'Keine Audiodaten empfangen' } } as any);
+        send(ws, { type: 'audio:error', sessionId, payload: { message: 'Keine Audiodaten empfangen' } });
         return;
       }
       if (format !== 'wav') {
-        send(ws, { type: 'audio:error', sessionId, payload: { message: 'Nur WAV-Format unterstuetzt' } } as any);
+        send(ws, { type: 'audio:error', sessionId, payload: { message: 'Nur WAV-Format unterstuetzt' } });
         return;
       }
 
-      // MLX sidecar uses a single turbo model for all lengths; no per-size model switch.
+      // MLX sidecar uses a single model for all lengths; no per-size model switch.
       // Keep-alive heartbeat: the app gives up after 25s without any audio
       // message, but single-chunk audio (<~72s) yields no progress events and
-      // a cold sidecar start or the enhance rewrite can exceed 25s. chunk 0 is
+      // a cold sidecar start can exceed 25s. chunk 0 is
       // never emitted by the sidecar, so clients that render chunk numbers
       // skip it while the inactivity watchdogs still reset.
       const keepAlive = setInterval(() => {
-        send(ws, { type: 'audio:progress', sessionId, payload: { chunk: 0, total: 0, text: '' } } as any);
+        send(ws, { type: 'audio:progress', sessionId, payload: { chunk: 0, total: 0, text: '' } });
       }, 10_000);
 
+      const legacyStartedAt = Date.now();
       whisperTranscribe(audio, {
+        prompt: dictionary.prompt(),
         onProgress: (info) => {
-          send(ws, { type: 'audio:progress', sessionId, payload: { chunk: info.chunk, total: info.total, text: info.text } } as any);
+          send(ws, { type: 'audio:progress', sessionId, payload: { chunk: info.chunk, total: info.total, text: info.text } });
         },
-      }).then(async (text) => {
-        if (!enhance || !text.trim()) {
-          send(ws, { type: 'audio:transcription', sessionId, payload: { text } } as any);
-          return;
-        }
-        try {
-          const enhanced = await rewritePrompt(text);
-          send(ws, { type: 'audio:transcription', sessionId, payload: { text: enhanced } } as any);
-        } catch (rewriteErr) {
-          const reason = rewriteErr instanceof Error ? rewriteErr.message : String(rewriteErr);
-          logger.warn(`[rewriter] Falling back to raw transcript: ${reason}`);
-          // Soft-fail: still deliver the raw Whisper text so the user is never blocked.
-          send(ws, { type: 'audio:transcription', sessionId, payload: { text } } as any);
-        }
+      }).then((raw) => {
+        let text = raw;
+        try { text = dictionary.fix(raw); } catch { /* the words as heard */ }
+        logger.info(`[whisper] audio:transcribe done in ${Date.now() - legacyStartedAt}ms, ${text.length} chars`);
+        send(ws, { type: 'audio:transcription', sessionId, payload: { text } });
       }).catch((err) => {
         const message = err instanceof Error ? err.message : 'Transkription fehlgeschlagen';
-        logger.warn(`[whisper] Transcription failed: ${message}`);
-        send(ws, { type: 'audio:error', sessionId, payload: { message } } as any);
+        logger.warn(`[whisper] Transcription failed after ${Date.now() - legacyStartedAt}ms: ${message}`);
+        send(ws, { type: 'audio:error', sessionId, payload: { message } });
       }).finally(() => {
         clearInterval(keepAlive);
       });
@@ -1014,26 +1004,26 @@ export function handleConnection(ws: WebSocket, ip: string): void {
     }
 
     // ── TTS: Text-to-Speech synthesis ─────────────────────────────
-    if (msgType === 'tts:generate') {
-      const text = (msg as any).payload?.text;
-      const messageId = (msg as any).payload?.messageId ?? 'unknown';
+    if (msg.type === 'tts:generate') {
+      const text = msg.payload?.text;
+      const messageId = msg.payload?.messageId ?? 'unknown';
 
       if (!text || typeof text !== 'string') {
-        send(ws, { type: 'tts:error', payload: { messageId, message: 'Kein Text angegeben' } } as any);
+        send(ws, { type: 'tts:error', payload: { messageId, message: 'Kein Text angegeben' } });
         return;
       }
 
       if (!ttsAvailable()) {
-        send(ws, { type: 'tts:error', payload: { messageId, message: 'TTS nicht verfügbar. Installiere: pip install mlx-audio' } } as any);
+        send(ws, { type: 'tts:error', payload: { messageId, message: 'TTS nicht verfügbar. Installiere: pip install mlx-audio' } });
         return;
       }
 
       ttsSynthesize(text).then(({ audioBase64, durationSecs }) => {
-        send(ws, { type: 'tts:result', payload: { messageId, audio: audioBase64, duration: durationSecs } } as any);
+        send(ws, { type: 'tts:result', payload: { messageId, audio: audioBase64, duration: durationSecs } });
       }).catch((err) => {
         const message = err instanceof Error ? err.message : 'TTS fehlgeschlagen';
         logger.warn(`[tts] Synthesis failed: ${message}`);
-        send(ws, { type: 'tts:error', payload: { messageId, message } } as any);
+        send(ws, { type: 'tts:error', payload: { messageId, message } });
       });
       return;
     }
@@ -1070,8 +1060,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           const oldest = persistedTokens.values().next().value;
           if (oldest !== undefined) persistedTokens.delete(oldest);
         }
-        watcherService.setDeviceToken(deviceToken);
-        managerService.setFcmTokens(persistedTokens);
         logger.success(`FCM token registered for ${ip} (len=${deviceToken.length})`);
         break;
       }
@@ -1093,13 +1081,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           const session = globalManager.createSession(
             { cols, rows },
             (sessionId, data) => {
-              send(ws, { type: 'terminal:output', sessionId, payload: { data } });
+              pacer.push(sessionId, data);
               promptDetector.feed(sessionId, data);
               screenPromptWatcher.poke(sessionId);
               idleDetector.activity(sessionId);
               scheduleCwdCheck(ws, sessionId);
               resetAutopilotTimer(sessionId);
-              managerService.feedOutput(sessionId, data);
             },
             (sessionId, exitCode) => {
               ownedSessions.delete(sessionId);
@@ -1112,7 +1099,9 @@ export function handleConnection(ws: WebSocket, ip: string): void {
               autopilotService.clearSession(sessionId);
               const apTimer = autopilotTimers.get(sessionId);
               if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(sessionId); }
+              flushPaced(sessionId);
               send(ws, { type: 'terminal:closed', sessionId, payload: { exitCode } });
+              forgetTitle(sessionId);
             },
           );
           ownedSessions.add(session.id);
@@ -1120,9 +1109,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           watchSession(session.id);
           watchSessionIdle(session.id);
           pushInitialCwd(ws, session.id);
-          // Register session with manager — initial label, client will sync real names
-          const shellNum = ownedSessions.size;
-          managerService.setSessionLabel(session.id, `Shell ${shellNum}`);
           send(ws, {
             type: 'terminal:created',
             sessionId: session.id,
@@ -1150,6 +1136,8 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         }
 
         const { cols, rows } = msg.payload;
+        // Leeres Client-Terminal (App-Kaltstart) → immer Vollbild mit Verlauf.
+        const fresh = msg.payload.fresh === true;
 
         if (!Number.isInteger(cols) || cols < 1 || cols > 500) {
           send(ws, { type: 'terminal:error', sessionId: msg.sessionId, payload: { message: 'Invalid cols: must be integer 1-500' } });
@@ -1160,26 +1148,39 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           break;
         }
 
+        // Deduplicate rapid identical reattach storms on this same connection
+        const nowAt = Date.now();
+        const prevReattach = lastReattach.get(msg.sessionId);
+        if (
+          !fresh &&
+          prevReattach &&
+          nowAt - prevReattach.at < 1000 &&
+          prevReattach.cols === cols &&
+          prevReattach.rows === rows &&
+          ownedSessions.has(msg.sessionId) &&
+          !globalManager.isDetached(msg.sessionId)
+        ) {
+          break;
+        }
+        lastReattach.set(msg.sessionId, { at: nowAt, cols, rows });
+
         // Ein Anhänge-Pfad für alle: derselbe Helfer, den auch die Selbstheilung
         // bei Eingabe/Resize benutzt. Nur hier kennen wir die echten Maße des
         // Clients und dürfen die PTY darauf setzen.
-        if (attachToThisClient(msg.sessionId, cols, rows)) {
+        if (attachToThisClient(msg.sessionId, cols, rows, fresh)) {
           const session = globalManager.getSession(msg.sessionId)!;
           pendingInputLen.set(session.id, 0); // alter Zählerstand der Vorgängerverbindung
-          if (!managerService.getSessionList().find(s => s.sessionId === session.id)) {
-            managerService.setSessionLabel(session.id, `Shell ${ownedSessions.size}`);
-          }
           globalManager.resize(session.id, cols, rows);
 
           // Autopilot-Warteschlange nachziehen — sie lief weiter, während der Client weg war.
           const queue = autopilotService.getQueue(session.id);
           for (const item of queue) {
             if (item.status === 'queued' && item.optimizedPrompt) {
-              send(ws, { type: 'autopilot:optimized', sessionId: session.id, payload: { id: item.id, optimizedPrompt: item.optimizedPrompt } } as any);
+              send(ws, { type: 'autopilot:optimized', sessionId: session.id, payload: { id: item.id, optimizedPrompt: item.optimizedPrompt } });
             } else if (item.status === 'done') {
-              send(ws, { type: 'autopilot:prompt_done', sessionId: session.id, payload: { id: item.id } } as any);
+              send(ws, { type: 'autopilot:prompt_done', sessionId: session.id, payload: { id: item.id } });
             } else if (item.status === 'error' && item.error) {
-              send(ws, { type: 'autopilot:optimize_error', sessionId: session.id, payload: { id: item.id, error: item.error } } as any);
+              send(ws, { type: 'autopilot:optimize_error', sessionId: session.id, payload: { id: item.id, error: item.error } });
             }
           }
         } else {
@@ -1210,6 +1211,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
           break;
         }
 
+        // Wer tippt, sieht sofort: dieses Terminal antwortet für kurze Zeit
+        // ungebremst, egal was die App als „vorne" gemeldet hat.
+        pacer.noteInput(msg.sessionId);
+
         // SELBSTHEILUNG: Eine LEBENDE Verbindung tippt in eine ABGEHÄNGTE Session.
         //
         // Das kann nur eines heißen: der Client ist wieder da, hat es aber nicht
@@ -1230,9 +1235,10 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         trackPendingInput(msg.sessionId, data);
         idleDetector.activity(msg.sessionId);
         resetAutopilotTimer(msg.sessionId);
-        managerService.trackUserInput(msg.sessionId);
 
-        if (!globalManager.write(msg.sessionId, data)) {
+        // Große Texte (Diktat, Zwischenablage) als EINEN Einfügeblock — sonst
+        // zerteilt macOS sie und Claude Code zeigt nur noch den Rest (paste.policy.ts).
+        if (!globalManager.write(msg.sessionId, asPaste(data, globalManager.wantsBracketedPaste(msg.sessionId)))) {
           send(ws, {
             type: 'terminal:error',
             sessionId: msg.sessionId,
@@ -1308,7 +1314,7 @@ export function handleConnection(ws: WebSocket, ip: string): void {
         idleDetector.unwatch(msg.sessionId);
         aiSessions.delete(msg.sessionId);
         autopilotService.clearSession(msg.sessionId);
-        managerService.clearSession(msg.sessionId);
+        forgetTitle(msg.sessionId);
         const apTimer = autopilotTimers.get(msg.sessionId);
         if (apTimer) { clearTimeout(apTimer); autopilotTimers.delete(msg.sessionId); }
         if (!globalManager.closeSession(msg.sessionId)) {
@@ -1318,68 +1324,6 @@ export function handleConnection(ws: WebSocket, ip: string): void {
             payload: { message: 'Session not found' },
           });
         }
-        break;
-      }
-
-      // ── Watcher messages ──────────────────────────────────────────────
-      case 'watcher:list': {
-        const watchers = watcherService.getAll();
-        send(ws, { type: 'watcher:list', payload: { watchers } });
-        break;
-      }
-
-      case 'watcher:create': {
-        const w = msg.payload;
-        if (!w || typeof w.id !== 'string' || typeof w.label !== 'string' || typeof w.type !== 'string' || typeof w.enabled !== 'boolean' || !w.config || typeof w.config !== 'object') {
-          send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Invalid watcher:create payload' } });
-          break;
-        }
-        // Validate watcher type against whitelist
-        if (!(VALID_WATCHER_TYPES as readonly string[]).includes(w.type)) {
-          send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: `Invalid watcher type: must be one of ${VALID_WATCHER_TYPES.join(', ')}` } });
-          break;
-        }
-        watcherService.create(w as { id: string; type: 'file' | 'process' | 'keyword'; label: string; enabled: boolean; config: Record<string, string> });
-        send(ws, { type: 'watcher:created', payload: w as { id: string; type: string; label: string; enabled: boolean; config: Record<string, string> } });
-        break;
-      }
-
-      case 'watcher:update': {
-        const payload = msg.payload;
-        if (!payload || typeof payload.id !== 'string') {
-          send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Invalid watcher:update payload' } });
-          break;
-        }
-        // Whitelist allowed update fields — only enabled, label, config
-        const allowedUpdates: Partial<{ enabled: boolean; label: string; config: Record<string, string> }> = {};
-        if ('enabled' in payload && typeof payload.enabled === 'boolean') allowedUpdates.enabled = payload.enabled;
-        if ('label' in payload && typeof (payload as Record<string, unknown>).label === 'string') allowedUpdates.label = (payload as Record<string, unknown>).label as string;
-        if ('config' in payload && typeof (payload as Record<string, unknown>).config === 'object' && (payload as Record<string, unknown>).config !== null) allowedUpdates.config = (payload as Record<string, unknown>).config as Record<string, string>;
-        const updated = watcherService.update(payload.id, allowedUpdates);
-        if (updated) {
-          send(ws, { type: 'watcher:updated', payload: updated as { id: string; enabled: boolean } });
-        }
-        break;
-      }
-
-      case 'watcher:delete': {
-        const payload = msg.payload;
-        if (!payload || typeof payload.id !== 'string') {
-          send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Invalid watcher:delete payload' } });
-          break;
-        }
-        watcherService.delete(payload.id);
-        send(ws, { type: 'watcher:deleted', payload: { id: payload.id } });
-        break;
-      }
-
-      case 'watcher:test': {
-        const payload = msg.payload;
-        if (!payload || typeof payload.id !== 'string') {
-          send(ws, { type: 'terminal:error', sessionId: 'none', payload: { message: 'Invalid watcher:test payload' } });
-          break;
-        }
-        watcherService.test(payload.id);
         break;
       }
 
@@ -1418,9 +1362,12 @@ export function handleConnection(ws: WebSocket, ip: string): void {
   });
 
   ws.on('close', () => {
+    liveSockets.delete(ws);
+    stopActivity();
+    stopSpeech();
     logger.info(`Client disconnected: ${ip} — detaching ${ownedSessions.size} sessions (kept alive)`);
 
-    // Clear the current WS reference so manager messages get buffered
+    // This was the browser-bridge target: no app connected → shim opens locally
     if (currentWs === ws) {
       currentWs = null;
       browserBridge.setNotifier(null); // no app connected → shim falls back to local open
@@ -1428,26 +1375,24 @@ export function handleConnection(ws: WebSocket, ip: string): void {
 
     for (const sessionId of ownedSessions) {
       const gen = sessionGens.get(sessionId);
-      globalManager.detachSession(sessionId, gen);
+      // What the pacer still held never reached the app — hand it over as missed output.
+      globalManager.detachSession(sessionId, gen, pacer.take(sessionId));
     }
+    pacer.dispose();
     ownedSessions.clear();
     sessionGens.clear();
-
-    // Distill manager memory on disconnect (session end)
-    if (managerService.isEnabled()) {
-      managerService.distill().catch(err => {
-        logger.warn(`Manager: disconnect distill failed — ${err instanceof Error ? err.message : err}`);
-      });
-    }
   });
 
   ws.on('error', (err) => {
     logger.error(`WebSocket error from ${ip}: ${err.message}`);
+    stopActivity();
+    stopSpeech();
     if (currentWs === ws) currentWs = null;
     for (const sessionId of ownedSessions) {
       // Do NOT unwatch promptDetector — same rationale as ws.on('close')
-      globalManager.detachSession(sessionId);
+      globalManager.detachSession(sessionId, undefined, pacer.take(sessionId));
     }
+    pacer.dispose();
     ownedSessions.clear();
   });
 }

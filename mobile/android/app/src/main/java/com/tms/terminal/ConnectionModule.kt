@@ -24,6 +24,12 @@ class ConnectionModule(reactContext: ReactApplicationContext) :
         }
     }
 
+    /** CPU wach halten — nur solange Ton vom Rechner aufs Handy läuft (Fernzugriff). */
+    @ReactMethod
+    fun setKeepAwake(on: Boolean) {
+        ConnectionService.setKeepAwake(reactApplicationContext, on)
+    }
+
     @ReactMethod
     fun stop() {
         val intent = Intent(reactApplicationContext, ConnectionService::class.java)

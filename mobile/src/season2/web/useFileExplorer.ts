@@ -4,6 +4,12 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { saveToDownloads } from './downloads';
+import { baseName, cacheSafe, fetchPreview, uploadPart } from './fileTransfer';
+import { durableStorage } from '../../services/durableStorage';
+
+/** Favoriten-Ordner des Explorers: { [geraeteId]: [{ path, label }] }. Die Seite
+ *  führt die Liste (fav-dirs.js), das Handy bewahrt sie nur auf — über Updates hinweg. */
+const FAV_DIRS_KEY = 'tms-bund-fav-dirs';
 
 type Call = (fn: string, ...args: unknown[]) => void;
 
@@ -16,8 +22,8 @@ interface Args {
 
 const MIME_BY_EXT: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
-  svg: 'image/svg+xml', pdf: 'application/pdf', mp4: 'video/mp4', webm: 'video/webm',
-  mov: 'video/quicktime', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4',
+  svg: 'image/svg+xml', heic: 'image/heic', heif: 'image/heif', avif: 'image/avif', pdf: 'application/pdf',
+  mp4: 'video/mp4', webm: 'video/webm', mkv: 'video/x-matroska', mov: 'video/quicktime', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4',
   zip: 'application/zip', md: 'text/markdown', txt: 'text/plain', json: 'application/json',
 };
 const mimeFor = (name: string) =>
@@ -26,6 +32,11 @@ const mimeFor = (name: string) =>
 export function useFileExplorer({ ready, call, server, token }: Args) {
   const cwd = useRef('~');
   const base = server ? `http://${server.host}:${server.port}` : '';
+  // Fernzugriff "Dateien": Explorer auf DEM Gerät an DIESEM Ordner öffnen.
+  // Wechselt dabei das Gerät, merkt sich der Ordner bis nach dem Wechsel.
+  const serverIdRef = useRef<string | null>(server?.id ?? null);
+  serverIdRef.current = server?.id ?? null;
+  const pending = useRef<string | null>(null);
 
   useEffect(() => {
     if (ready && server && token) call('setFilesBase', base, token);
@@ -33,16 +44,29 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
 
   const auth = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
-  const listRaw = useCallback(async (path: string) => {
+  const pushFavs = useCallback(async () => {
+    let map: unknown = {};
+    try { const raw = await durableStorage.getItem(FAV_DIRS_KEY); if (raw) map = JSON.parse(raw); } catch { /* leer anfangen */ }
+    call('setFileFavs', map);
+  }, [call]);
+  useEffect(() => { if (ready) void pushFavs(); }, [ready, pushFavs]);
+
+  const listRaw = useCallback(async (path: string): Promise<void> => {
     if (!server || !token) return;
     try {
       const r = await fetch(`${base}/files/list?path=${encodeURIComponent(path)}`, { headers: auth });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
+      // Ordner gilt hier nicht (Gerätewechsel, gelöscht …) → einmal Home statt
+      // dauerhaft HTTP 400.
+      if (!r.ok && path !== '~' && (r.status === 400 || r.status === 404 || r.status === 403)) {
+        cwd.current = '~';
+        return listRaw('~');
+      }
       if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
       cwd.current = d.path;
       call('setFilesDir', d.path, (d.entries ?? []).map((e: any) => ({
         name: e.name, path: e.path, isDir: e.isDir, size: e.size, modified: e.modified,
-      })));
+      })), server.id);
     } catch (e: any) {
       call('toast', `Dateien: ${e?.message ?? 'Laden fehlgeschlagen'}`);
     }
@@ -50,16 +74,34 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
 
   const refresh = useCallback(() => listRaw(cwd.current), [listRaw]);
 
+  // Gerätewechsel: Ordner des alten Geräts verwerfen, die Seite zurücksetzen
+  // (sie lädt neu, falls der Explorer gerade offen ist).
+  const serverKey = server ? `${server.id}@${server.host}:${server.port}` : '';
+  const lastServerKey = useRef(serverKey);
+  useEffect(() => {
+    if (!ready || lastServerKey.current === serverKey) return;
+    lastServerKey.current = serverKey;
+    if (pending.current) {
+      const p = pending.current;
+      pending.current = null;
+      cwd.current = p;
+      listRaw(p);
+      return;
+    }
+    cwd.current = '~';
+    call('resetFilesDir');
+  }, [ready, serverKey, call, listRaw]);
+
   const download = useCallback(async (paths: string[], zip: boolean) => {
     if (!server || !token || !paths.length) return;
     const id = `dl-${Date.now()}`;
     const filename = zip
-      ? `tms-${paths.length === 1 ? (paths[0].split('/').pop() ?? 'ordner') : 'auswahl'}.zip`
-      : (paths[0].split('/').pop() ?? 'datei');
+      ? `tms-${paths.length === 1 ? baseName(paths[0]) : 'auswahl'}.zip`
+      : baseName(paths[0]);
     const url = zip
       ? `${base}/files/zip?paths=${encodeURIComponent(JSON.stringify(paths))}&token=${token}`
       : `${base}/files/download?path=${encodeURIComponent(paths[0])}&token=${token}`;
-    const tmp = `${FileSystem.cacheDirectory}${id}-${filename}`;
+    const tmp = `${FileSystem.cacheDirectory}${id}-${cacheSafe(filename)}`;
     call('downloadProgress', id, filename, 0, 'running');
     try {
       const task = FileSystem.createDownloadResumable(url, tmp, {}, (p) => {
@@ -93,14 +135,37 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
         listRaw(String(payload.path ?? '~'));
         return true;
 
+      case 'files:favsLoad':
+        void pushFavs();
+        return true;
+
+      case 'files:favsSave':
+        if (payload?.favs && typeof payload.favs === 'object') {
+          durableStorage.setItem(FAV_DIRS_KEY, JSON.stringify(payload.favs)).catch(() => {});
+        }
+        return true;
+
+      // Aus dem Fernzugriff: Gerät (payload.id) + Startordner. Root stellt das
+      // Gerät um; ist es schon dran, sofort listen, sonst nach dem Wechsel.
+      case 'files:openOn': {
+        const path = String(payload?.path ?? '~');
+        if (!payload?.id || payload.id === serverIdRef.current) { listRaw(path); return true; }
+        pending.current = path;
+        // Fällt der Wechsel aus (Gerät unbekannt), nicht ewig warten.
+        setTimeout(() => {
+          if (pending.current === path) { pending.current = null; listRaw(path); }
+        }, 1500);
+        return true;
+      }
+
       case 'files:readRaw': {
         if (!server || !token) return true;
         (async () => {
           try {
-            const r = await fetch(`${base}/files/read?path=${encodeURIComponent(payload.path)}`, { headers: auth });
+            const r = await fetch(`${base}/files/read?path=${encodeURIComponent(payload.path)}&max=524288`, { headers: auth });
             const d = await r.json();
             if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
-            call('fileContent', payload.path, d.content ?? '', null);
+            call('fileContent', payload.path, d.content ?? '', null, !!d.truncated);
           } catch (e: any) {
             call('fileContent', payload.path, '', e?.message ?? 'Lesen fehlgeschlagen');
           }
@@ -115,8 +180,11 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
       case 'files:share': {
         if (!server || !token) return true;
         (async () => {
-          const name = String(payload.path).split('/').pop() ?? 'datei';
-          const tmp = `${FileSystem.cacheDirectory}share-${name}`;
+          const name = baseName(String(payload.path));
+          const tmp = `${FileSystem.cacheDirectory}share-${cacheSafe(name)}`;
+          // Zeigen, dass etwas passiert: grosse Dateien (oder solche, die der
+          // Mac erst aus iCloud holt) brauchen Sekunden.
+          call('toast', `„${name}“ wird geladen …`);
           try {
             const { uri, status } = await FileSystem.downloadAsync(
               `${base}/files/download?path=${encodeURIComponent(payload.path)}&token=${token}`, tmp);
@@ -158,11 +226,41 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
               headers: { 'Content-Type': 'application/json', ...auth },
               body: JSON.stringify({ paths }),
             });
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            call('toast', paths.length > 1 ? `${paths.length} in den Papierkorb gelegt` : 'In den Papierkorb gelegt');
+            const d = await r.json().catch(() => ({} as any));
+            if (!r.ok) throw new Error(d?.error ?? `HTTP ${r.status}`);
+            const n = Number(d?.trashed ?? paths.length);
+            const failed: Array<{ path: string; error: string }> = Array.isArray(d?.failed) ? d.failed : [];
+            const okMsg = n > 1 ? `${n} in den Papierkorb gelegt` : 'In den Papierkorb gelegt';
+            const name = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
+            call('toast', failed.length
+              ? `${okMsg} · ${failed.length === 1 ? `„${name(failed[0].path)}“ ging nicht: ${failed[0].error}` : `${failed.length} gingen nicht (z. B. „${name(failed[0].path)}“: ${failed[0].error})`}`
+              : okMsg);
             refresh();
-          } catch (e: any) { call('toast', `Löschen: ${e?.message ?? 'fehlgeschlagen'}`); }
+          } catch (e: any) { call('toast', `Löschen: ${e?.message ?? 'fehlgeschlagen'}`); refresh(); }
         })();
+        return true;
+      }
+
+      // Vorschau-Inhalt nativ holen (die Seite darf es nicht, s. fileTransfer.ts).
+      case 'files:fetchPreview': {
+        const reqId = String(payload?.reqId ?? '');
+        const reply = (d: Record<string, unknown>) => call('netReply', reqId, d);
+        if (!server || !token) { reply({ error: 'Kein Gerät verbunden' }); return true; }
+        const p = String(payload.path);
+        fetchPreview(`${base}/files/download?path=${encodeURIComponent(p)}&token=${token}`,
+          p, String(payload.kind ?? ''), mimeFor(baseName(p)), reply);
+        return true;
+      }
+
+      // Handy → Rechner, ein Base64-Stück nach dem anderen (Ziel kommt von der Seite:
+      // Fernzugriff-Gerät oder Explorer-Gerät).
+      case 'files:uploadPart': {
+        const reqId = String(payload?.reqId ?? '');
+        uploadPart({
+          base: String(payload.base), token: String(payload.token), dir: String(payload.dir),
+          name: String(payload.name), up: String(payload.up), part: Number(payload.part) || 0,
+          final: !!payload.final, reveal: !!payload.reveal, b64: String(payload.b64 ?? ''),
+        }, (d: Record<string, unknown>) => call('netReply', reqId, d));
         return true;
       }
 
@@ -184,7 +282,7 @@ export function useFileExplorer({ ready, call, server, token }: Args) {
       }
     }
     return false;
-  }, [listRaw, refresh, download, server, token, base, auth, call]);
+  }, [listRaw, refresh, download, pushFavs, server, token, base, auth, call]);
 
   return useMemo(() => ({ handle }), [handle]);
 }

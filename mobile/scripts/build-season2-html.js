@@ -13,12 +13,45 @@
 const fs = require('fs');
 const path = require('path');
 
-const MOCKUP_DIR = '/Users/ayysir/Desktop/TMS Terminal/mockups/season2';
+const MOCKUP_DIR = path.resolve(__dirname, '../../mockups/season2');
 const OUT = path.resolve(__dirname, '../src/season2/web/liquidDeckHtml.ts');
 
 let html = fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/index.html'), 'utf8');
 const dataJs = fs.readFileSync(path.join(MOCKUP_DIR, 'shared/data.js'), 'utf8');
 const bridgeJs = fs.readFileSync(path.resolve(__dirname, '../src/season2/web/bridge.js'), 'utf8');
+// Reine Hilfsfunktionen ohne Fenster-Zugriff. Sie kommt VOR bridge.js, weil die
+// Bruecke sie beim Start braucht.
+//
+// Die Datei ist ein ES-Modul, damit der Test sie direkt importieren kann. Fuer die
+// Seite wird daraus ein klassisches Skript: "export " faellt weg, und ganz unten
+// haengt der Aufruf an window. Sonst muesste der Test eine Kopie lesen.
+const prayerBridgeSource = fs.readFileSync(
+  path.resolve(__dirname, '../src/season2/web/prayerBridge.js'),
+  'utf8',
+);
+if (!/export function normalizePrayerPayload/.test(prayerBridgeSource)) {
+  throw new Error(
+    'prayerBridge.js: normalizePrayerPayload fehlt oder wurde umbenannt — build-season2-html.js anpassen',
+  );
+}
+const prayerBridgeJs = prayerBridgeSource
+  .replace(/^export /gm, '')
+  // Am Dateiende an window haengen. normalizePrayerPayload ist die einzige
+  // Funktion in der Datei; falls das kippt, greift die Pruefung oben.
+  + '\nwindow.__tmsNormalizePrayer = normalizePrayerPayload;'
+  + '\nwindow.__tmsNormalizePerms = normalizePerms;';
+
+// Aufmerksamkeits-Logik (welches Terminal ist zu sehen): dieselbe Datei, die
+// der Test und React Native importieren — in der Seite als klassisches Skript.
+const attentionSource = fs.readFileSync(
+  path.resolve(__dirname, '../src/season2/attention.core.mjs'),
+  'utf8',
+);
+if (!/export function focusOf/.test(attentionSource)) {
+  throw new Error('attention.core.mjs: focusOf fehlt oder wurde umbenannt — build-season2-html.js anpassen');
+}
+const attentionJs = '(function () {\n' + attentionSource.replace(/^export /gm, '')
+  + '\nwindow.__tmsFocusOf = focusOf;\n})();';
 
 /** Applies a required source patch and fails loudly if the mockup moved on. */
 function patch(label, find, replace) {
@@ -37,12 +70,10 @@ ${dataJs}
 window.TMS_DATA.sessions = [];
 window.TMS_DATA.files = [];
 window.TMS_DATA.processes = [];
-window.TMS_DATA.watchers = [];
 window.TMS_DATA.ports = [];
 window.TMS_DATA.snippets = [];
 window.TMS_DATA.notes = [];
 window.TMS_DATA.screenshots = [];
-window.TMS_DATA.sql = { statements: [] };
 window.TMS_DATA.cloudProjects = [];
 window.TMS_DATA.cloudAccounts = { vercel: { connected: false, maskedKey: null }, render: { connected: false, maskedKey: null } };
 window.TMS_DATA.cloudOrg = { folders: [], assignments: {}, favorites: {}, startFolderId: null, defaultFilters: { provider: 'all', status: 'all' } };
@@ -108,6 +139,29 @@ patch('demo boot', `  initLiveSession();
   // are pushed in by the bridge (TMSBridge.output / .setStatus). And no demo PIN
   // gate — the real app has its own security settings; "Jetzt sperren" still works.
   show('terminals');`);
+
+// The short-window layout is shared by the browser mockup and native WebView.
+// Inline both assets: the generated data-URL document cannot resolve relative files.
+patch('compact stylesheet', '<link rel="stylesheet" href="compact-terminal.css">',
+  '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/compact-terminal.css'), 'utf8') + '</style>');
+patch('compact controller', '<script src="compact-terminal.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/compact-terminal.js'), 'utf8') + '</script>');
+// Bund: Desk-Ansicht, Karten mit Griff, Explorer, Zwischenablage, Snippets.
+patch('bund stylesheet', '<link rel="stylesheet" href="bund.css">',
+  '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/bund.css'), 'utf8') + '</style>');
+// Favoriten-Ordner des Explorers: reine Logik, muss vor bund.js da sein.
+patch('fav dirs logic', '<script src="fav-dirs.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/fav-dirs.js'), 'utf8') + '</script>');
+patch('bund controller', '<script src="bund.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/bund.js'), 'utf8') + '</script>');
+patch('settings stylesheet', '<link rel="stylesheet" href="settings.css">',
+  '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/settings.css'), 'utf8') + '</style>');
+patch('settings controller', '<script src="settings.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/settings.js'), 'utf8') + '</script>');
+patch('reader stylesheet', '<link rel="stylesheet" href="reader.css">',
+  '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/reader.css'), 'utf8') + '</style>');
+patch('reader controller', '<script src="reader.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/reader.js'), 'utf8') + '</script>');
 
 // ── 5) xterm.js + the bridge, after the mockup's own script.
 function stringExports(file) {
@@ -184,6 +238,8 @@ patch('body end', '</body>', `<style>${xterm.XTERM_CSS}
 </style>
 <script>${xterm.XTERM_XTERM}</script>
 <script>${xterm.XTERM_FIT}</script>
+<script>${prayerBridgeJs}</script>
+<script>${attentionJs}</script>
 <script>${bridgeJs}</script>
 </body>`);
 

@@ -1,16 +1,16 @@
 import { v4 as uuidv4 } from 'uuid';
 import { createPty } from './terminal.factory';
-import { TerminalSession, CreateSessionOptions } from './terminal.types';
+import { TerminalSession, CreateSessionOptions, PtyLike } from './terminal.types';
 import { readProcessCwd, readForegroundProcess } from './cwd.utils';
 import { planReattach, wantsSnapshot, CLEAR_SEQUENCE } from './reattach.policy';
-import { SessionMirror, type ScreenView } from './emulator.mirror';
+import { SessionMirror, type ScreenView, type MirrorState } from './emulator.mirror';
+import { parseActivityTitle, sameActivity, type Activity } from './activity';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
 type OutputCallback = (sessionId: string, data: string) => void;
 type CloseCallback = (sessionId: string, exitCode: number) => void;
 
-const IDLE_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
 const REATTACH_BUFFER_MAX = 300_000; // 300 KB — captured while client is away
 const OUTPUT_BUFFER_FLUSH_SIZE = 8192; // 8 KB — flush immediately when buffer exceeds this
 const MAX_SESSIONS = 50;
@@ -32,7 +32,6 @@ export class TerminalManager {
   /** Detach-Puffer ist übergelaufen — sein Anfang wurde abgeschnitten. */
   private reattachOverflow = new Set<string>();
   private outputTimers = new Map<string, NodeJS.Timeout>();
-  private idleTimers = new Map<string, NodeJS.Timeout>();
   private batchIntervals = new Map<string, number>();  // per-session adaptive batch interval (ms)
   private lastInputAt = new Map<string, number>();     // last real user keystroke — gates the echo fast-path
   private attachGen = new Map<string, number>();       // monotonic generation counter — prevents stale detach
@@ -42,6 +41,34 @@ export class TerminalManager {
   private appliedDims = new Map<string, { cols: number; rows: number }>();  // last size actually sent to the pty
   /** Spiegel-Emulator pro Session — die Quelle für Snapshot-Reattaches (emulator.mirror.ts). */
   private mirrors = new Map<string, SessionMirror>();
+  /** Spiegel, die erst NACH dem Start des Terminals angelegt wurden und dessen
+   *  Vergangenheit nicht kennen (übernommen ohne gesicherten Zustand). Ihr
+   *  Vollbild darf den Verlauf eines Clients mit Inhalt nie ersetzen. */
+  private partialMirrors = new Set<string>();
+
+  /** Woran jedes Terminal arbeitet — aus dem Titel, den das KI-Werkzeug setzt (activity.ts). */
+  private activities = new Map<string, Activity>();
+  private activityListeners = new Set<(sessionId: string, activity: Activity | null) => void>();
+
+  /** Meldet jeden ECHTEN Wechsel (nicht das Drehzeichen). Rückgabe: abmelden. */
+  onActivity(listener: (sessionId: string, activity: Activity | null) => void): () => void {
+    this.activityListeners.add(listener);
+    return () => { this.activityListeners.delete(listener); };
+  }
+
+  getActivities(): Record<string, Activity> {
+    return Object.fromEntries(this.activities);
+  }
+
+  private noteTitle(sessionId: string, title: string): void {
+    const next = parseActivityTitle(title);
+    const prev = this.activities.get(sessionId) ?? null;
+    if (sameActivity(prev, next)) return;
+    if (next) this.activities.set(sessionId, next); else this.activities.delete(sessionId);
+    for (const l of this.activityListeners) {
+      try { l(sessionId, next); } catch { /* ein Zuhörer darf den Terminal-Strom nie stören */ }
+    }
+  }
 
   /** Optional callback invoked during detached buffering — allows prompt detector
    *  to keep receiving data for server-side auto-approve and FCM push notifications. */
@@ -73,7 +100,20 @@ export class TerminalManager {
     return mirror.screen();
   }
 
+  /** Läuft in dieser Session gerade ein Vollbild-Programm? (false ohne Spiegel) */
+  async isAltScreen(sessionId: string): Promise<boolean> {
+    const mirror = this.mirrors.get(sessionId);
+    if (!mirror) return false;
+    await mirror.flushed();
+    return mirror.altScreen;
+  }
+
   /** Hat diese Session einen Spiegel? Entscheidet, welcher Erkennungsweg gilt. */
+  /** Will das Programm in dieser Session Eingefügtes in Bracketed-Paste-Markern? */
+  wantsBracketedPaste(sessionId: string): boolean {
+    return this.mirrors.get(sessionId)?.bracketedPasteMode ?? false;
+  }
+
   hasMirror(sessionId: string): boolean {
     return this.mirrors.has(sessionId);
   }
@@ -97,13 +137,80 @@ export class TerminalManager {
     // Eine vorgegebene ID kommt nur von der Wiederherstellung nach einem
     // Neustart — die App findet ihre Reiter über genau diese ID wieder.
     const id = options.id ?? uuidv4();
-    const pty = createPty(options.cols, options.rows, { TMS_SESSION_ID: id }, options.cwd);
+    const pty = createPty(options.cols, options.rows, { TMS_SESSION_ID: id }, options.cwd, id);
+    const session = this.wireSession(id, pty, options.cols, options.rows, onOutput, onClose);
+    logger.success(`Session created: ${id}`);
+    return session;
+  }
 
+  /**
+   * Take over a terminal that kept running in the terminal keeper daemon
+   * while this server was gone (restart, update, crash). Same wiring as a
+   * fresh session — the shell and whatever runs in it (Claude) never noticed.
+   * Starts detached: output buffers until a client reattaches, exactly like
+   * after a disconnect.
+   */
+  adoptSession(
+    id: string,
+    pty: PtyLike,
+    cols: number,
+    rows: number,
+    /** Vom vorigen Server gesicherter Spiegel — ohne ihn kennt der neue Spiegel
+     *  nur, was ab jetzt kommt (Verlauf wäre beim nächsten Vollbild weg). */
+    seed?: MirrorState,
+  ): TerminalSession {
+    const session = this.wireSession(id, pty, cols, rows, () => {}, () => {});
+    const mirror = this.mirrors.get(id);
+    // Der Titel gilt unabhängig von der Größe — und eine ruhende Sitzung setzt
+    // ihn nicht noch einmal: ohne ihn wüsste die App nach dem Neustart nicht
+    // mehr, woran hier gearbeitet wurde.
+    if (seed?.title) { mirror?.seedTitle(seed.title); this.noteTitle(id, seed.title); }
+    // Nur bei gleicher Größe: der gesicherte Strom gilt exakt für seine Maße,
+    // und eine PTY ändert über einen Neustart hinweg ihre Größe nicht.
+    let verlauf: string;
+    if (mirror && seed && seed.cols === cols && seed.rows === rows && seed.data) {
+      mirror.feed(seed.data); // vor jedem PTY-Byte — onData liefert erst später
+      if (seed.partial) this.partialMirrors.add(id);
+      verlauf = seed.partial ? 'wiederhergestellt, Anfang fehlte schon vorher' : 'wiederhergestellt';
+    } else {
+      this.partialMirrors.add(id);
+      verlauf = seed ? `nicht übernommen (gesichert ${seed.cols}x${seed.rows}, PTY ${cols}x${rows})` : 'unbekannt';
+    }
+    this.detachSession(id);
+    logger.success(`Session adopted: ${id} (pid ${pty.pid}, Verlauf ${verlauf})`);
+    return session;
+  }
+
+  /** Alle Spiegel für den nächsten Server sichern (beim Herunterfahren). */
+  async exportMirrorStates(timeoutMs = 1500): Promise<Record<string, MirrorState>> {
+    const entries = [...this.mirrors.entries()];
+    const flushed = Promise.all(entries.map(([, m]) => m.flushed()));
+    await Promise.race([flushed, new Promise((r) => setTimeout(r, timeoutMs))]);
+    const out: Record<string, MirrorState> = {};
+    for (const [id, m] of entries) {
+      try {
+        out[id] = { cols: m.cols, rows: m.rows, data: m.serializeNow(), partial: this.partialMirrors.has(id) || undefined, title: m.title || undefined };
+      } catch (e) {
+        logger.warn(`Spiegel ${id.slice(0, 8)} nicht gesichert: ${(e as Error).message}`);
+      }
+    }
+    return out;
+  }
+
+  private wireSession(
+    id: string,
+    pty: PtyLike,
+    cols: number,
+    rows: number,
+    onOutput: OutputCallback,
+    onClose: CloseCallback,
+  ): TerminalSession {
+    const options = { cols, rows };
     const session: TerminalSession = {
       id,
       pty,
-      cols: options.cols,
-      rows: options.rows,
+      cols,
+      rows,
       createdAt: new Date(),
     };
 
@@ -113,7 +220,9 @@ export class TerminalManager {
     // Der Spiegel ist Komfort, kein Muss: schlägt er fehl, laufen Reattaches
     // über den alten Replay/Clear-Weg weiter.
     try {
-      this.mirrors.set(id, new SessionMirror(options.cols, options.rows));
+      const mirror = new SessionMirror(options.cols, options.rows);
+      mirror.onTitle((title) => this.noteTitle(id, title));
+      this.mirrors.set(id, mirror);
     } catch (e) {
       logger.error(`Session mirror creation failed for ${id}: ${(e as Error).message}`);
     }
@@ -187,7 +296,6 @@ export class TerminalManager {
     // Die Startgröße IST schon angewandt — sonst hebt der erste identische
     // Resize des Clients ein unnötiges SIGWINCH (und damit einen Voll-Repaint).
     this.appliedDims.set(id, { cols: options.cols, rows: options.rows });
-    logger.success(`Session created: ${id}`);
     return session;
   }
 
@@ -196,7 +304,10 @@ export class TerminalManager {
    *  Installs a buffer callback so any PTY output while detached is captured. */
   /** Detach a session. If `expectedGen` is provided and doesn't match the current
    *  attach generation, the detach is stale (a newer reattach already happened) and is skipped. */
-  detachSession(sessionId: string, expectedGen?: number): void {
+  /** `undelivered`: output this connection's pacer still held back (see
+   *  websocket/output.pacer.ts). The client never saw it — it starts the
+   *  missed-output buffer, so the next reattach knows the client is behind. */
+  detachSession(sessionId: string, expectedGen?: number, undelivered = ''): void {
     if (!this.sessions.has(sessionId)) return;
     // If a generation is specified, only proceed if it matches the current one.
     // This prevents an old connection's close handler from overwriting a newer reattach's callbacks.
@@ -207,6 +318,7 @@ export class TerminalManager {
     }
     this.closeCallbacks.delete(sessionId);
     this.attachedIds.delete(sessionId);
+    if (undelivered) this.reattachBuffers.set(sessionId, (this.reattachBuffers.get(sessionId) || '') + undelivered);
 
     // Snapshot CWD and foreground process before the client goes away (async, best-effort)
     const session = this.sessions.get(sessionId)!;
@@ -232,15 +344,11 @@ export class TerminalManager {
       // Keep prompt detector alive for server-side auto-approve + FCM notifications
       this.detachFeedCallback?.(sessionId, data);
     });
-
-    // Start idle timer — kill if nobody reconnects within 4 hours
-    const existing = this.idleTimers.get(sessionId);
-    if (existing) clearTimeout(existing);
-    const timer = setTimeout(() => {
-      logger.info(`Session ${sessionId} idle timeout — closing`);
-      this.closeSession(sessionId);
-    }, IDLE_TIMEOUT_MS);
-    this.idleTimers.set(sessionId, timer);
+    // No idle timeout any more. A detached terminal used to be killed after
+    // four hours without a reconnect — overnight, with the phone asleep, that
+    // took every terminal and the Claude session inside it down at once
+    // (update.log: 20 such kills, five in the same second on 2026-08-01).
+    // A terminal now ends only when the user closes it.
   }
 
   /** Get a summary of missed output for a detached session. */
@@ -268,13 +376,11 @@ export class TerminalManager {
     onClose: CloseCallback,
     clientCols?: number,
     clientRows?: number,
+    /** Das Terminal des Clients ist leer (App-Kaltstart) → immer Vollbild schicken. */
+    clientFresh = false,
   ): TerminalSession | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
-
-    // Cancel idle timer
-    const idleTimer = this.idleTimers.get(sessionId);
-    if (idleTimer) { clearTimeout(idleTimer); this.idleTimers.delete(sessionId); }
 
     // Advance the attach generation — any pending detach with the old gen becomes a no-op
     const nextGen = (this.attachGen.get(sessionId) ?? 0) + 1;
@@ -290,7 +396,12 @@ export class TerminalManager {
     const overflowed = this.reattachOverflow.has(sessionId);
     const mirror = this.mirrors.get(sessionId);
 
-    if (mirror && wantsSnapshot(session.cols, clientCols, buffered?.length ?? 0, overflowed)) {
+    // Ein Spiegel ohne Vorgeschichte (übernommen ohne gesicherten Zustand) kennt
+    // nur den Rest seit dem Server-Start: sein Vollbild würde einem Client mit
+    // Inhalt den ganzen Verlauf wegnehmen. Dann lieber der Replay-Weg unten.
+    if (mirror && this.partialMirrors.has(sessionId) && mirror.historyFull) this.partialMirrors.delete(sessionId);
+    const mirrorUsable = mirror && (clientFresh || !this.partialMirrors.has(sessionId));
+    if (mirror && mirrorUsable && wantsSnapshot(session.cols, clientCols, buffered?.length ?? 0, overflowed, clientFresh)) {
       this.reattachBuffers.delete(sessionId);
       this.reattachOverflow.delete(sessionId);
       // In Client-Größe reflowen, BEVOR serialisiert wird — das Snapshot muss
@@ -313,7 +424,7 @@ export class TerminalManager {
       });
       logger.success(
         `Session reattached via snapshot: ${sessionId.slice(0, 8)} ` +
-        `(cols ${session.cols}→${clientCols ?? '?'}, missed=${buffered?.length ?? 0}B, overflow=${overflowed})`,
+        `(cols ${session.cols}→${clientCols ?? '?'}, missed=${buffered?.length ?? 0}B, overflow=${overflowed}, fresh=${clientFresh})`,
       );
       this.healPtyDims(sessionId, session, clientCols, clientRows);
       return session;
@@ -460,6 +571,15 @@ export class TerminalManager {
     }
   }
 
+  /**
+   * Server shutdown while the terminal keeper holds the terminals: forget them
+   * here WITHOUT killing anything — the next server adopts them. (Without the
+   * keeper, shutdown still has to closeAllSessions(): the PTYs are our children.)
+   */
+  releaseAllSessions(): void {
+    for (const id of [...this.sessions.keys()]) this._cleanup(id);
+  }
+
   detachAllSessions(): void {
     for (const [id] of this.sessions) {
       this.detachSession(id);
@@ -520,13 +640,13 @@ export class TerminalManager {
     this.attachedIds.delete(sessionId);
     const t = this.outputTimers.get(sessionId);
     if (t) { clearTimeout(t); this.outputTimers.delete(sessionId); }
-    const i = this.idleTimers.get(sessionId);
-    if (i) { clearTimeout(i); this.idleTimers.delete(sessionId); }
     const r = this.resizeTimers.get(sessionId);
     if (r) { clearTimeout(r); this.resizeTimers.delete(sessionId); }
     this.appliedDims.delete(sessionId);
+    this.activities.delete(sessionId);
     this.mirrors.get(sessionId)?.dispose();
     this.mirrors.delete(sessionId);
+    this.partialMirrors.delete(sessionId);
   }
 }
 

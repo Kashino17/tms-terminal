@@ -137,3 +137,69 @@ test('Reattach ohne verpasste Ausgabe bei gleicher Breite lässt den Client unan
   assert.equal(seen.join(''), '', 'kein Clear, kein Snapshot, kein Replay — nichts zu tun');
   mgr.closeSession(id);
 });
+
+test('App-Kaltstart (fresh): gleiche Breite, nichts verpasst — trotzdem Vollbild MIT Verlauf', async () => {
+  const mgr = new TerminalManager();
+  const session = mgr.createSession({ cols: 50, rows: 24 }, () => {}, () => {});
+  const id = session!.id;
+  mgr.write(id, 'echo VERLAUF_VOR_DEM_NEUSTART\r');
+  await sleep(1200);
+
+  mgr.detachSession(id);
+  await sleep(300);
+  // Kaltstart: das Seiten-Terminal ist leer und sagt das.
+  const seen: string[] = [];
+  mgr.reattachSession(id, (_i, data) => seen.push(data), () => {}, 50, 24, true);
+  await sleep(600);
+
+  const got = seen.join('');
+  assert.ok(got.includes('\x1b[3J'), 'Clear vorweg');
+  assert.ok(got.includes('VERLAUF_VOR_DEM_NEUSTART'), 'der bisherige Verlauf kommt mit');
+  mgr.closeSession(id);
+});
+
+/**
+ * Sparmodus (output.pacer.ts): der Server hält Ausgabe zurück, solange die App
+ * nicht sichtbar ist. Reißt die Verbindung in dieser Zeit ab, hat der Client
+ * diese Bytes NIE gesehen — der Spiegel aber schon. Ohne Übergabe hielte der
+ * Reattach „nichts verpasst" für wahr und ließe den Client unangetastet: das
+ * Terminal stünde auf einem alten Stand.
+ */
+test('Abhängen mit noch nicht gesendeter Ausgabe: der Reattach liefert sie nach', async () => {
+  const mgr = new TerminalManager();
+  const session = mgr.createSession({ cols: 80, rows: 24 }, () => {}, () => {});
+  const id = session!.id;
+  mgr.write(id, 'echo NIE_GESENDET\r');
+  await sleep(1200);
+
+  // Die Verbindung endet; der Pacer hatte noch etwas in der Hand.
+  mgr.detachSession(id, undefined, 'x');
+  const seen: string[] = [];
+  mgr.reattachSession(id, (_i, data) => seen.push(data), () => {}, 80, 24);
+  await sleep(500);
+
+  const got = seen.join('');
+  assert.ok(got.includes('\x1b[3J'), 'Clear vorweg — der Client-Stand gilt als veraltet');
+  assert.ok(got.includes('NIE_GESENDET'), 'das Vollbild enthält, was der Client nie bekam');
+  mgr.closeSession(id);
+});
+
+test('Abhängen mit veralteter Generation übernimmt keine ungesendete Ausgabe', async () => {
+  const mgr = new TerminalManager();
+  const session = mgr.createSession({ cols: 80, rows: 24 }, () => {}, () => {});
+  const id = session!.id;
+  await sleep(600);
+  const alt = mgr.getAttachGen(id);
+  const seen: string[] = [];
+  // Eine neuere Verbindung hat längst übernommen …
+  mgr.detachSession(id);
+  mgr.reattachSession(id, (_i, data) => seen.push(data), () => {}, 80, 24);
+  await sleep(300);
+  const before = seen.join('');
+  // … dann meldet sich die alte mit ihrem Rest: der darf nichts mehr ändern.
+  mgr.detachSession(id, alt, 'REST_DER_ALTEN_VERBINDUNG');
+  assert.equal(mgr.isDetached(id), false, 'die neue Verbindung bleibt angehängt');
+  await sleep(200);
+  assert.equal(seen.join(''), before, 'kein Byte aus dem Rest der alten Verbindung');
+  mgr.closeSession(id);
+});

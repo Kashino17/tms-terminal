@@ -18,6 +18,23 @@
     try { RN.postMessage(JSON.stringify({ type: type, payload: payload || {} })); } catch (e) {}
   }
 
+  // Reine Funktion in einer eigenen Datei, damit mobile/scripts/prayer-bridge.test.mjs
+  // sie ohne Fenster pruefen kann. Hier nur der Aufruf — die Datei wird von
+  // build-season2-html.js vor bridge.js eingefuegt.
+  // Das Mockup selbst kennt kein postMessage — es ist eine reine HTML-Seite. Fuer
+  // die Stellen, die jetzt wirklich etwas bestellen (Gebetsruf-Schalter), geben
+  // wir ihm unsere post() als window.__tmsPost. Sonst waeren diese Knoepfe im
+  // Mockup stumm und in der App stumm — zweimal schlecht statt einmal gut.
+  window.__tmsPost = post;
+
+  var normalizePrayerPayload = window.__tmsNormalizePrayer;
+  if (typeof normalizePrayerPayload !== 'function') {
+    // Ohne die Datei waere nur die alte Liste moeglich — nicht stumm werden.
+    normalizePrayerPayload = function (times) {
+      return { times: Array.isArray(times) ? times : [], meta: null };
+    };
+  }
+
   var terms = {};        // cardId -> { term, fit, element, host }
   var bound = {};        // cardId -> sessionId | 'pending'
   var byCard = {};       // cardId -> sessionId (resolved only)
@@ -28,6 +45,62 @@
     for (var id in byCard) if (byCard[id] === sessionId) return id;
     return null;
   }
+
+  // Mehrere Geräte: React Native soll wissen, welches Terminal vorne ist —
+  // Dateien und Fingerabdruck-Bestätigung gehören zu dessen Gerät. Nur echte
+  // Wechsel werden gemeldet.
+  var lastActiveSid = null;
+  window.__tmsReportActive = function () {
+    if (typeof window.__tmsReportFocus === 'function') window.__tmsReportFocus();
+    var st = window.__tmsState;
+    var cardId = st && st.order ? st.order[st.activeIndex] : null;
+    var sid = (cardId && byCard[cardId]) || null;
+    // Eine Karte ohne Sitzung (gerade angelegt) meldet sich erst nach bindSession.
+    if (!sid || sid === lastActiveSid) return;
+    lastActiveSid = sid;
+    post('term:active', { sessionId: sid });
+  };
+
+  // ── Aufmerksamkeit: welches Terminal ist wirklich zu sehen? ───────────────
+  // Der Server sendet danach: das Terminal vorne sofort, verdeckte gebündelt
+  // (server/src/websocket/output.pacer.ts). Gemeldet wird nur ein echter
+  // Wechsel. Die Regel selbst steht in attention.core.mjs (getestet).
+  var lastFocus, lastLatency;
+  /** Ist gerade irgendwo ein Ping-Wert zu sehen? Nur dann lohnt es, alle 3 s
+   *  zu messen — sonst prüft die App die Leitung nur noch selten. */
+  var LATENCY_SPOTS = '#statusLatencyLabel, .ds-dev__ms, .rail-dev__meta, #remotePill .rp-dev small, section[data-screen="servers"]:not([hidden])';
+  function latencyVisible() {
+    var els = document.querySelectorAll(LATENCY_SPOTS);
+    for (var i = 0; i < els.length; i++) if (els[i].offsetParent !== null) return true;
+    return false;
+  }
+  window.__tmsReportFocus = function () {
+    var st = window.__tmsState;
+    if (!st || typeof window.__tmsFocusOf !== 'function') return;
+    var screen = document.querySelector('section[data-screen="terminals"]');
+    var compact = document.body.classList.contains('compact-terminal');
+    var cardId = compact && typeof window.dockTargetId === 'function' ? window.dockTargetId() : st.order[st.activeIndex];
+    var focus = window.__tmsFocusOf({
+      terminalsVisible: !!screen && !screen.hidden,
+      remote: document.body.classList.contains('remote-focus'),
+      overview: !!st.overviewOpen,
+      listView: st.terminalView === 'list',
+      compact: compact,
+      activeSession: (cardId && byCard[cardId]) || null,
+    });
+    var latency = latencyVisible();
+    if (focus === lastFocus && latency === lastLatency) return;
+    lastFocus = focus;
+    lastLatency = latency;
+    post('term:focus', { focus: focus, latency: latency });
+  };
+  // Ansichtswechsel (Liste/Stapel, Übersicht, Sheets) laufen über viele kleine
+  // Funktionen der Seite — statt jede einzeln zu umwickeln, wird nach jeder
+  // Berührung einmal nachgesehen. Gesendet wird ohnehin nur bei Änderung.
+  var focusT = 0;
+  function focusSoon() { clearTimeout(focusT); focusT = setTimeout(window.__tmsReportFocus, 350); }
+  document.addEventListener('click', focusSoon, true);
+  document.addEventListener('pointerup', focusSoon, true);
 
   // ── The mockup asks for this while building cardState (see the builder's
   //    source patch). Every card therefore owns a "sim" that talks to the PTY,
@@ -87,14 +160,31 @@
    * ein ZWEITES Mal um. Genau das hat den Inhalt zerrissen und verschoben.
    */
   function measureCell(pre) {
+    // Höhe an einer ECHTEN .term-line messen: die Font-Box des Spans ist nur
+    // ~15px hoch, die gezeichnete Zeile aber line-height (1.6em + 2px) ≈ 22,8px.
+    // Mit der Font-Box als Zeilenhöhe bekam die PTY zu viele rows — die TUI malte
+    // mehr Zeilen, als in die Karte passen, und der obere Rand (Tab-Leiste!) war
+    // dauerhaft abgeschnitten.
     var probe = document.createElement('span');
-    probe.className = 'term-line__text';
+    probe.className = 'term-line';
     probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;left:-9999px;';
-    probe.textContent = new Array(101).join('0');
+    var text = document.createElement('span');
+    text.className = 'term-line__text';
+    text.textContent = new Array(101).join('0');
+    probe.appendChild(text);
     pre.appendChild(probe);
-    var r = probe.getBoundingClientRect();
+    var r = text.getBoundingClientRect();
+    var h = probe.getBoundingClientRect().height;
     probe.remove();
-    return { w: r.width / 100, h: r.height };
+    // getBoundingClientRect zählt CSS-Transforms mit, clientWidth (Basis der
+    // Spaltenrechnung in measureFit) nicht. layoutStack() verkleinert jede
+    // Karte nach Abstand zur aktiven (92,5 / 85 / 77,5 %) — ungekürzt bekam
+    // jede Session eine Breite je nach Stapel-Position (39/42/46/50 Spalten),
+    // und jeder Wisch löste SIGWINCH + Umbruch-Salat aus. Skalierung rausrechnen.
+    var hr = pre.getBoundingClientRect();
+    var sx = pre.offsetWidth ? hr.width / pre.offsetWidth : 1;
+    var sy = pre.offsetHeight ? hr.height / pre.offsetHeight : 1;
+    return { w: r.width / 100 / (sx || 1), h: h / (sy || 1) };
   }
 
   /** Karte vermessen → gewünschte Spalten/Zeilen. null, wenn (noch) ohne Größe. */
@@ -106,72 +196,120 @@
     var cs = getComputedStyle(host);
     var innerW = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     var innerH = host.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    cell = fitFont(host, innerW, cell);
     return {
-      cols: Math.max(20, Math.floor(innerW / cell.w)),
-      rows: Math.max(5, Math.floor(innerH / cell.h)),
+      cols: Math.max(20, Math.min(FIXED_COLS, Math.floor(innerW / cell.w))),
+      rows: Math.max(2, Math.floor(innerH / cell.h)),
     };
   }
 
-  /** SPALTEN-FREEZE: eine neue Breite wird erst übernommen, wenn sie so lange
-   *  stabil ansteht. Jede Spaltenänderung reflowt den xterm-Puffer UND lässt
-   *  die TUI auf das SIGWINCH ihr komplettes Bild neu malen — gegen die frisch
-   *  umgebrochenen alten Zeilen entstehen genau die verklebten/gedoppelten
-   *  Ausgaben. Zwischenwerte laufender Karten-Animationen (520ms-Feder) laufen
-   *  hier ins Leere; nur Falten, Drehen und Schriftgröße kommen durch. */
-  var COLS_SETTLE_MS = 350;
-  function settleCols(cardId, want) {
-    var t = terms[cardId];
-    if (!t) return;
-    if (t.colsWant === want && t.colsTimer) return; // Timer läuft schon auf dieses Ziel
-    t.colsWant = want;
-    clearTimeout(t.colsTimer);
-    t.colsTimer = setTimeout(function () {
-      t.colsTimer = null;
-      var tt = terms[cardId];
-      if (!tt) return;
-      var fit = measureFit(tt);
-      if (!fit || fit.cols === tt.pinCols) return;      // zurückgeschnappt — Fehlalarm
-      if (fit.cols !== tt.colsWant) { settleCols(cardId, fit.cols); return; } // noch in Bewegung
-      // Echte neue Breite: Ratsche zurücksetzen und EINMAL sauber umstellen.
-      tt.pinCols = fit.cols;
-      tt.pinRows = fit.rows;
-      if (tt.term.cols !== tt.pinCols || tt.term.rows !== tt.pinRows) {
-        try { tt.term.resize(tt.pinCols, tt.pinRows); } catch (e) { return; }
-        invalidateRowCache(cardId);
-        renderTerm(cardId);
-      }
-    }, COLS_SETTLE_MS);
+  // FESTE BREITE: Jede Sitzung hat FIXED_COLS Spalten — Außendisplay,
+  // aufgeklappt, Split-Screen. Nicht die Spaltenzahl folgt der Kartenbreite,
+  // sondern die Schrift. Jeder Breitenwechsel war sonst ein SIGWINCH, und
+  // Claudes bereits (hart) umgebrochener Verlauf wurde in der neuen Breite
+  // zerhackt. Ab FONT_MAX bleibt rechts Platz frei; unter FONT_MIN lieber
+  // weniger Spalten als unlesbare Schrift.
+  var FIXED_COLS = 50, FONT_MIN = 10, FONT_MAX = 20;
+  function fitFont(host, innerW, cell) {
+    var cur = parseFloat(getComputedStyle(host).fontSize) || 13;
+    var want = Math.floor(Math.max(FONT_MIN, Math.min(FONT_MAX, cur * innerW / (FIXED_COLS * cell.w))) * 10) / 10;
+    for (var i = 0; i < 6; i++) {
+      if (Math.abs(want - cur) >= 0.05) { host.style.fontSize = want + 'px'; cur = want; cell = measureCell(host); }
+      if (Math.floor(innerW / cell.w) >= FIXED_COLS || want <= FONT_MIN) break;
+      // Glyphen-Rundung: echte Zeichenbreite minimal größer als gerechnet.
+      want = Math.max(FONT_MIN, Math.round((want - 0.1) * 10) / 10);
+    }
+    return cell;
   }
 
-  /** Sofort vermessen. Gibt false zurück, wenn die Karte (noch) keine Größe hat. */
+  // A keyboard / split divider changes BOTH dimensions. Commit one stable
+  // size after the animation, rather than keeping a permanently oversized TUI
+  // or sending a SIGWINCH for every intermediate animation frame.
+  var SIZE_SETTLE_MS = 350;
+  // ZEILEN-RATSCHE (v1.123.9 zurück; v1.123.7 hatte sie entfernt): Bei gleicher
+  // Breite wachsen die Zeilen nur, sie schrumpfen nie. Die Tastatur drückte die
+  // Karte auf ~13 Zeilen; Claudes Live-Bereich (Eingabe, Fortschritt, Todos) ist
+  // oft höher. Ink erreicht dann beim Neumalen die oberen Zeilen nicht mehr und
+  // jeder Frame bleibt als Kopie im Verlauf stehen (E2E: 1 → 14 Claude-Köpfe nach
+  // 13 Tastatur-Runden). Ist die Karte kleiner, scrollt die Anzeige — renderTerm
+  // hält das Ende (Eingabefeld) sichtbar. Neue Breite setzt die Ratsche zurück.
+  function ratchetFit(t, fit) {
+    if (!fit || t.pinCols === undefined || fit.cols !== t.pinCols) return fit;
+    // Wechsel zwischen virtueller und echter Höhe (Vollbild-Programm an/aus)
+    // ist gewollt in BEIDE Richtungen — dort greift die Ratsche nicht.
+    if (t.pinReal !== wantsRealRows(t)) return fit;
+    return fit.rows < t.pinRows ? { cols: fit.cols, rows: t.pinRows } : fit;
+  }
+  // VIRTUELLE HÖHE (2026-11-05): Die PTY bekommt VIRTUAL_ROWS Zeilen, die Karte
+  // zeigt davon nur den Inhalt bis zum Ende (renderTerm schneidet leere Zeilen
+  // unter dem Inhalt ab). Grund: Claude zeigt in Bestätigungs-Boxen ganze
+  // Befehle — bei 50 Spalten oft 100+ Zeilen hoch. Ist die Box höher als das
+  // Terminal, kann Claude ihren weggerollten Teil nie mehr löschen: Box-Reste
+  // und doppelte Absätze bleiben im Verlauf (E2E: 31 Zeilen → Reste, 200 → keine).
+  // Vollbild-Programme (vim, OpenCode, …) brauchen dagegen die echte Höhe.
+  var VIRTUAL_ROWS = 200;
+  function wantsRealRows(t) {
+    return !t.virt || t.term.buffer.active.type === 'alternate' || !!t.forceMouse || runsFullscreenTui(t);
+  }
+  // Windows: ConPTY gibt den alternativen Bildschirm nicht weiter — vim, less &
+  // Co. sind dort nur am Prozessnamen erkennbar (Server meldet ihn per
+  // terminal:process). Unter macOS/Linux greift schon der Puffer-Wechsel oben.
+  var FULLSCREEN_TUIS = { vim: 1, nvim: 1, vi: 1, view: 1, less: 1, more: 1, man: 1, htop: 1, btop: 1, top: 1,
+    nano: 1, micro: 1, hx: 1, emacs: 1, lazygit: 1, tig: 1, mc: 1, ranger: 1, yazi: 1, k9s: 1, opencode: 1 };
+  function runsFullscreenTui(t) {
+    if (typeof procBySession === 'undefined' || typeof byCard === 'undefined' || !t.cardId) return false;
+    var n = String(procBySession[byCard[t.cardId]] || '').toLowerCase().split(/[\\/]/).pop().replace(/\.exe$/, '');
+    return !!FULLSCREEN_TUIS[n];
+  }
+  function virtualFit(t, fit) {
+    if (!fit || wantsRealRows(t) || fit.rows >= VIRTUAL_ROWS) return fit;
+    return { cols: fit.cols, rows: VIRTUAL_ROWS };
+  }
+  function computeFit(t) { return ratchetFit(t, virtualFit(t, measureFit(t))); }
+  function applyTerminalSize(cardId, size) {
+    var t = terms[cardId];
+    if (!t) return;
+    if (t.term.cols !== size.cols || t.term.rows !== size.rows) {
+      t.term.resize(size.cols, size.rows);
+      invalidateRowCache(cardId);
+    }
+    t.pinCols = size.cols;
+    t.pinRows = size.rows;
+    t.pinReal = wantsRealRows(t);
+  }
+  function settleTerminalSize(cardId, size) {
+    var t = terms[cardId];
+    if (!t) return;
+    var key = size.cols + 'x' + size.rows;
+    if (t.sizeWant === key && t.sizeTimer) return;
+    t.sizeWant = key;
+    clearTimeout(t.sizeTimer);
+    t.sizeTimer = setTimeout(function () {
+      t.sizeTimer = null;
+      if (terms[cardId] !== t) return; // closed/replaced while waiting
+      var fit = computeFit(t);
+      if (!fit) return;
+      if (fit.cols === t.pinCols && fit.rows === t.pinRows) return;
+      if (fit.cols + 'x' + fit.rows !== t.sizeWant) {
+        settleTerminalSize(cardId, fit);
+        return;
+      }
+      try { applyTerminalSize(cardId, fit); } catch (_) { return; }
+      renderTerm(cardId);
+    }, SIZE_SETTLE_MS);
+  }
   function fitNow(cardId) {
     var t = terms[cardId];
     if (!t) return false;
-    var fit = measureFit(t);
+    var fit = computeFit(t);
     if (!fit) return false;
-    // ZEILEN-RATSCHE — der Kern gegen Dopplungen: Tastatur, Tastenleiste und
-    // Tipp-Modus ändern die Kartenhöhe ständig, und jede Zeilen-Änderung ist
-    // ein SIGWINCH, auf das Claude & Co. ihre KOMPLETTE Oberfläche neu malen —
-    // der alte Frame bleibt als Leiche im Scrollback (die "Dopplungen").
-    // Deshalb: rows wächst nur auf das größte gesehene Maß und schrumpft nie;
-    // wird die Karte kleiner, scrollt sie einfach. Spalten sind zusätzlich
-    // EINGEFROREN: ein neuer Messwert wandert über settleCols() und wird erst
-    // übernommen, wenn er stabil ansteht (Falten, Drehen, Schriftgröße).
     if (t.pinCols === undefined) {
-      t.pinCols = fit.cols;                    // Erstvermessung: sofort übernehmen
-      t.pinRows = fit.rows;
-    } else if (fit.cols !== t.pinCols) {
-      settleCols(cardId, fit.cols);            // Kandidat — Puffer bleibt unangetastet
-      t.pinRows = Math.max(t.pinRows || fit.rows, fit.rows);
+      try { applyTerminalSize(cardId, fit); } catch (_) { return false; }
+    } else if (fit.cols !== t.pinCols || fit.rows !== t.pinRows) {
+      settleTerminalSize(cardId, fit);
     } else {
-      if (t.colsTimer) { clearTimeout(t.colsTimer); t.colsTimer = null; } // zurückgeschnappt
-      t.pinRows = Math.max(t.pinRows || fit.rows, fit.rows);
-    }
-    if (t.term.cols !== t.pinCols || t.term.rows !== t.pinRows) {
-      try { t.term.resize(t.pinCols, t.pinRows); } catch (e) { return false; }
-      // Ein Resize reflowt den Puffer: alle absoluten Zeilenindizes verschieben
-      // sich — der inkrementelle Zeilen-Cache ist damit wertlos.
-      invalidateRowCache(cardId);
+      clearTimeout(t.sizeTimer);
+      t.sizeTimer = null;
     }
     return true;
   }
@@ -202,11 +340,32 @@
   emuHost.style.cssText = 'position:fixed;top:0;left:-4000px;';
   document.body.appendChild(emuHost);
 
+  // Input growth, key accessories and reading focus can change a terminal
+  // without firing a window resize. Observe its actual content box as well.
+  var terminalHostObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (!entry.target.isConnected) { terminalHostObserver.unobserve(entry.target); return; }
+      var id = entry.target.dataset.cardId;
+      if (id && terms[id]) fitSoon(id);
+    });
+  });
+  function observeTerminalHost(t, host) {
+    if (t.host && t.host !== host && terminalHostObserver) terminalHostObserver.unobserve(t.host);
+    t.host = host;
+    if (terminalHostObserver) terminalHostObserver.observe(host);
+    if (!host.__tmsFollowWired) {
+      host.__tmsFollowWired = true;
+      host.addEventListener('scroll', function () {
+        var current = terms[host.dataset.cardId];
+        if (current && current.host === host) current.followTail = host.scrollHeight - host.scrollTop - host.clientHeight < 30;
+      }, { passive: true });
+    }
+  }
   function mountTerm(cardId) {
     var host = document.querySelector('.card-body[data-card-id="' + cardId + '"]');
     if (!host) return;
     var t = terms[cardId];
-    if (t) { t.host = host; fitSoon(cardId); renderTerm(cardId); return; }
+    if (t) { observeTerminalHost(t, host); fitSoon(cardId); renderTerm(cardId); return; }
 
     var box = document.createElement('div');
     box.style.cssText = 'width:600px;height:400px;';
@@ -221,6 +380,39 @@
       convertEol: false,
     });
     term.open(box);
+    // xterms eigener Renderer malt in dieses unsichtbare Kästchen — für nichts:
+    // die Karte baut renderTerm selbst. Seine Pause außerhalb des Bildschirms
+    // griff in der echten Seite nicht (gemessen: alle versteckten Emulatoren
+    // malten jede Zeile, bei 10 Terminals der größte Rechenposten). Fest pausieren.
+    // Gemessen (10 Terminals, Dauerausgabe): 80 000 Neuaufbauten in 70 s kamen
+    // über xterms Auswahl-Logik (SelectionService → handleSelectionChanged →
+    // DomRenderer.renderRows), am Pausen-Schalter vorbei. Darum den Renderer
+    // selbst stilllegen, nicht nur den Takt.
+    var rsvc = term._core && term._core._renderService;
+    if (rsvc && typeof rsvc._renderRows === 'function') {
+      rsvc._renderRows = function () {};
+      rsvc.handleSelectionChanged = function () {};
+      var rdr = rsvc._renderer && rsvc._renderer.value;
+      if (rdr && typeof rdr.renderRows === 'function') {
+        rdr.renderRows = function () {};
+        rdr.handleSelectionChanged = function () {};
+      }
+      if (typeof rsvc._handleIntersectionChange === 'function') {
+        rsvc._handleIntersectionChange = function () { rsvc._isPaused = true; };
+        rsvc._isPaused = true;
+      }
+    }
+    // Dasselbe für xterms restliche Bildschirm-Verwaltung: Scrollfläche
+    // (Viewport) und Auswahl (SelectionService) forderten bei jeder Ausgabe
+    // je ein Bild an und schrieben Stile in das unsichtbare Kästchen —
+    // gemessen ~33 Anforderungen/s bei einem 10-Hz-Spinner. Gescrollt und
+    // ausgewählt wird in der Karte (renderTerm), nie hier.
+    try {
+      var vp = term._core && term._core.viewport;
+      if (vp && typeof vp._refresh === 'function') vp._refresh = function () {};
+      var selSvc = term._core && term._core._selectionService;
+      if (selSvc && typeof selSvc.refresh === 'function') selSvc.refresh = function () {};
+    } catch (e) { /* andere xterm-Version: dann eben wie bisher */ }
 
     // Der Emulator ist unsichtbar, aber sein Textfeld ist die Tastatur-Anbindung:
     // ein Tipp ins Terminal fokussiert es. Androids Wortvorschlag komponierte hier
@@ -238,7 +430,44 @@
     term.onData(function (d) { window.__tmsInput(cardId, d); });
     term.onResize(function (sz) { queueResize(cardId, sz.cols, sz.rows); });
 
-    terms[cardId] = { term: term, box: box, host: host, scrollTotal: 0 };
+    terms[cardId] = { term: term, box: box, host: host, scrollTotal: 0, cardId: cardId, followTail: true };
+    // Welche Zeilen hat die letzte Ausgabe verändert? xterm kennt das intern
+    // (dieselbe Meldung treibt sonst seinen eigenen Renderer, der hier
+    // unsichtbar pausiert). renderTerm liest damit nur geänderte Zeilen neu
+    // statt den ganzen lebenden Bildschirm — Voraussetzung für die virtuelle
+    // Höhe. Fehlt die Meldung (andere xterm-Version), bleibt alles beim Alten.
+    var ih = term._core && term._core._inputHandler;
+    if (ih && typeof ih.onRequestRefreshRows === 'function') {
+      try {
+        ih.onRequestRefreshRows(function (s0, e0) {
+          var tt = terms[cardId];
+          if (!tt || tt.term !== term) return;
+          var b = term.buffer.active;
+          // Global-ID einer Bildschirmzeile = Scroll-Zähler + Zeile. Gemeldet
+          // wird am Ende eines Schreibvorgangs; was davor schon k Zeilen
+          // hochgerollt ist, lag damals k Zeilen tiefer → Bereich nach oben weiten.
+          var k = tt.dScroll === undefined ? 0 : tt.scrollTotal - tt.dScroll;
+          tt.dScroll = tt.scrollTotal;
+          var g0 = tt.scrollTotal - b.baseY + b.viewportY;
+          var lo = g0 + Math.min(s0, e0) - k, hi = g0 + Math.max(s0, e0);
+          if (tt.dLo === undefined || lo < tt.dLo) tt.dLo = lo;
+          if (tt.dHi === undefined || hi > tt.dHi) tt.dHi = hi;
+        });
+        terms[cardId].virt = true;
+      } catch (_) { /* ohne Meldung: echte Höhe, Voll-Lesen wie bisher */ }
+    }
+    // Vollbild-Programm startet/endet: Höhe umschalten (virtuell ↔ echt).
+    term.buffer.onBufferChange(function () {
+      invalidateRowCache(cardId);
+      fitNow(cardId);
+    });
+    observeTerminalHost(terms[cardId], host);
+    // Kam der Prozessname schon vor dem Mount (Reattach-Rennen), hier nachziehen.
+    var sid0 = byCard[cardId];
+    if (sid0) {
+      terms[cardId].forceMouse = isMouseTui(procBySession[sid0]);
+      forceMouseOn(terms[cardId]);
+    }
     // Monotoner Scroll-Zähler: die Basis der GLOBALEN Zeilen-IDs des Renderers.
     // Absolute Puffer-Indizes allein taugen nicht als Adresse — sobald der
     // xterm-Ringpuffer voll ist (baseY sättigt am Scrollback-Limit), verschiebt
@@ -258,7 +487,6 @@
   var WIN_SLACK = 200;  // so weit darf das DOM-Fenster überwachsen, bevor beschnitten wird
   // URLs zuerst; Pfade nur, wenn davor kein / : ~ oder Wortzeichen steht — sonst
   // wird die zweite Hälfte einer umgebrochenen URL als eigener "Pfad" erkannt.
-  var URL_RE = /(https?:\/\/[^\s"'<>()]+)|((?<![\w:\/~])(?:~|\.{0,2})\/[\w.\-]+(?:\/[\w.\-]+)+)/g;
 
   function xterm256(c) {
     if (c < 16) return PALETTE[c];
@@ -281,27 +509,48 @@
     return xterm256(cell.getBgColor());
   }
 
-  /** Eine Pufferzeile -> [{text, style}] zusammengefasste Abschnitte. */
+  /** Effektiver Zell-Hintergrund; inverse Zellen tauschen Vorder- und Hintergrund. */
+  function cellBg(cell) {
+    var fg = colorOf(cell, true), bg = colorOf(cell, false);
+    // Muss zu runStyle() passen, sonst weicht das Zeilenband vom Lauf ab.
+    if (cell.isInverse()) return fg || '#f0f2f6';
+    return bg;
+  }
+
+  /**
+   * Eine Pufferzeile -> zusammengefasste Abschnitte + der Hintergrund, den ALLE
+   * Zellen der Zeile teilen (oder null).
+   *
+   * Warum das GANZE Zeilenband zählt: eine TUI wie opencode malt ihre Panels
+   * als lückenlose Hintergrundfarbe über die komplette Breite. Ein Inline-Span
+   * deckt aber nur die Font-Box ab (ca. 15px bei 13px Schrift), nicht die
+   * Zeilenhöhe (1,6 → 20,8px) — dadurch blieben zwischen den Zeilen Streifen in
+   * Kartenfarbe stehen. Einen einheitlichen Zeilenhintergrund malt deshalb der
+   * Block .term-line selbst (volle Zeilenhöhe, volle Breite).
+   */
   function rowRuns(line) {
-    var runs = [], cur = null;
+    var runs = [], cur = null, uniformBg;
     for (var i = 0; i < line.length; i++) {
       var cell = line.getCell(i);
       if (!cell) continue;
       var ch = cell.getChars() || ' ';
+      var cbg = cellBg(cell);
+      if (uniformBg === undefined) uniformBg = cbg;
+      else if (uniformBg !== cbg) uniformBg = null;
       var st = (colorOf(cell, true) || '') + '|' + (colorOf(cell, false) || '') + '|' +
                (cell.isBold() ? 'b' : '') + (cell.isDim() ? 'd' : '') +
                (cell.isItalic() ? 'i' : '') + (cell.isUnderline() ? 'u' : '') + (cell.isInverse() ? 'v' : '');
       if (!cur || cur.st !== st) { cur = { st: st, text: '', cell: cell }; runs.push(cur); }
       cur.text += ch;
     }
-    return runs;
+    return { runs: runs, bg: uniformBg === undefined ? null : uniformBg };
   }
 
-  function runStyle(cell) {
+  function runStyle(cell, lineBg) {
     var fg = colorOf(cell, true), bg = colorOf(cell, false), css = '';
     if (cell.isInverse()) { var tmp = fg; fg = bg || '#1e2126'; bg = tmp || '#f0f2f6'; }
     if (fg) css += 'color:' + fg + ';';
-    if (bg) css += 'background:' + bg + ';';
+    if (bg && bg !== lineBg) css += 'background:' + bg + ';';
     if (cell.isBold()) css += 'font-weight:700;';
     if (cell.isDim()) css += 'opacity:.62;';
     if (cell.isItalic()) css += 'font-style:italic;';
@@ -315,13 +564,20 @@
    * Umgebrochene Links werden über die LOGISCHE Zeile erkannt, damit ein Tipp
    * die ganze URL liefert statt der Hälfte bis zum Zeilenumbruch.
    */
-  /** Baut den Inhalt einer .term-line (den inneren __text-Span) für EINE Zeile. */
+  /** Baut den Inhalt einer .term-line (den inneren __text-Span) für EINE Zeile.
+   *  Gibt zusätzlich den einheitlichen Zeilenhintergrund zurück; der gehört auf
+   *  den .term-line-Block (der Patcher schreibt ihn dorthin). */
   function buildRowInner(line, linkRanges) {
-    if (!line) return '<span class="term-line__text"></span>';
-    var runs = rowRuns(line);
+    if (!line) return { inner: '<span class="term-line__text"></span>', bg: null };
+    var rr = rowRuns(line);
+    var runs = rr.runs, lineBg = rr.bg;
     var col = 0, html = '';
     for (var q = 0; q < runs.length; q++) {
-      var run = runs[q], style = runStyle(run.cell), txt = run.text;
+      var run = runs[q], style = runStyle(run.cell, lineBg), txt = run.text;
+      var runBg = cellBg(run.cell);
+      // Ein abweichender Hintergrund innerhalb der Zeile kann nicht am Block
+      // liegen — er bekommt .term-run (inline-block, volle Zeilenhöhe).
+      var runClass = runBg && runBg !== lineBg ? ' class="term-run"' : '';
       // Den Abschnitt an Link-Grenzen zerlegen, damit die URL anklickbar wird.
       var pos = 0;
       while (pos < txt.length) {
@@ -337,7 +593,7 @@
         }
         var piece = txt.slice(pos, stop);
         if (piece) {
-          var inner = '<span style="' + style + '">' + escapeHtml(piece) + '</span>';
+          var inner = '<span' + runClass + ' style="' + style + '">' + escapeHtml(piece) + '</span>';
           html += hit
             ? '<span class="wrapped-link" data-url="' + escapeHtml(hit.url) +
               '" data-short="' + escapeHtml(hit.url.slice(-10)) + '" role="link">' + inner + '</span>'
@@ -347,19 +603,24 @@
       }
       col += txt.length;
     }
-    return '<span class="term-line__text">' + html + '</span>';
+    return { inner: '<span class="term-line__text">' + html + '</span>', bg: lineBg };
   }
 
-  function rowWrapper(k, inner) {
+  function rowWrapper(k, inner, bg) {
     // data-b markiert Bridge-eigene Zeilen: daran erkennt der Patcher fremde
     // Rebuilds (renderCardLines des Mockups) und fällt auf den Vollaufbau zurück.
-    return '<span class="term-line" data-b="1" data-i="' + k + '">' + inner + '</span>';
+    // Der Zeilenhintergrund (TUI-Panel) sitzt am Block, damit er die volle
+    // Zeilenhöhe deckt — nicht am Inline-Span (der nur die Font-Box malt).
+    return '<span class="term-line" data-b="1" data-i="' + k + '"' +
+      (bg ? ' data-bg="' + bg + '" style="background:' + bg + '"' : '') +
+      '>' + inner + '</span>';
   }
 
   function invalidateRowCache(cardId) {
     var t = terms[cardId];
     if (!t) return;
     t.rc = null; t.rcMin = 0; t.dom = null; t.domStart = undefined; t.domLen = 0;
+    t.cEndG = undefined; t.rEnd = undefined; t.dScroll = undefined;
     t.winStart = undefined; // Reflow verschiebt die absoluten Indizes — Fenster neu setzen
     // Globale IDs neu eichen: nach Resize-Reflow (und term.clear/reset) stimmt
     // das Verhältnis Scroll-Zähler ↔ baseY nicht mehr; ab hier gilt wieder
@@ -396,6 +657,29 @@
     if (t.scrollTotal === undefined || t.scrollTotal < baseY) t.scrollTotal = baseY;
     var trimmed = t.scrollTotal - baseY;
     var end = trimmed + baseY + t.term.rows;           // global: eine Zeile hinter der letzten
+    // Virtuelle Höhe: Leere Zeilen UNTER dem Inhalt gehören nicht auf die Karte
+    // (sonst stünde Claudes Eingabefeld über 170 Leerzeilen). Gesucht wird nur
+    // ab dem bekannten Inhaltsende bzw. der tiefsten geänderten Zeile.
+    var dLo = t.dLo, dHi = t.dHi;
+    t.dLo = t.dHi = undefined;
+    var now = Date.now();
+    // Sicherheitsnetz: höchstens einmal pro Sekunde den ganzen Bildschirm neu
+    // lesen — sollte xterm je eine Änderung nicht melden, heilt sie so von selbst.
+    var fullPass = !t.virt || !t.rc || !(t.fullAt > now - 1000);
+    if (fullPass) t.fullAt = now;
+    if (t.virt && buf.type !== 'alternate') {
+      var vpTop = trimmed + baseY;
+      var hiG = (fullPass || t.cEndG === undefined) ? end
+        : Math.min(end, Math.max(t.cEndG, dHi === undefined ? 0 : dHi + 1));
+      var floorG = vpTop + buf.cursorY + 1;
+      while (hiG > floorG) {
+        var ln = buf.getLine(hiG - 1 - trimmed);
+        if (ln && ln.translateToString(true).length) break;
+        hiG--;
+      }
+      t.cEndG = hiG;
+      end = hiG;
+    }
 
     // ── Klebriges Fenster ─────────────────────────────────────────────────
     // Ein mitwanderndes Fenster (immer die letzten MAX_ROWS) verschiebt bei JEDER
@@ -420,6 +704,10 @@
     // Ausgabe alle 800 Zeilen zellenweise neu gebaut: der größte CPU-Fresser
     // des ganzen Layouts.
     var rc = t.rc || (t.rc = {}, t.rcMin = start, t.rc);
+    // Unter das Inhaltsende gefallene Zeilen vergessen: wurden sie dort
+    // geändert, las sie niemand — der alte Stand darf später nicht zurückkommen.
+    if (t.rEnd > end) for (var gz = end; gz < t.rEnd; gz++) delete rc[gz];
+    t.rEnd = end;
     if (start > (t.rcMin || 0)) {
       for (var d = t.rcMin || 0; d < start; d++) delete rc[d];
       t.rcMin = start;
@@ -449,42 +737,25 @@
       // Stand von damals ein: leere Historie ("Grenze nach oben") und alte
       // Inhalte an neuen Zeilennummern (die Dopplungen/Verschiebungen).
       if (c && c.frozen && i < liveFrom) { rows[k] = c; continue; }
+      // Lebende Zeile, die die letzte Ausgabe nicht berührt hat: unverändert.
+      if (c && !fullPass && !(dLo !== undefined && i >= dLo && i <= dHi)) { rows[k] = c; continue; }
       var line = buf.getLine(i - trimmed);
       rows[k] = rc[i] = {
         text: line ? line.translateToString(true) : '',
         wrapped: !!(line && line.isWrapped),
         inner: null,           // wird unten gebaut, sobald die Links bekannt sind
+        bg: null,              // einheitlicher Zeilenhintergrund (TUI-Panel)
         sig: null,
         frozen: i - trimmed < baseY, // fertig gescrollt = ändert sich nie wieder
       };
     }
 
-    // Logische Zeilen (über Umbrüche hinweg) für die Link-Erkennung — reine
-    // String-Arbeit auf den gecachten Texten, kein Zellen-Lesen.
-    var links = {}; // rowIndex -> [{from, to, url}]
-    var g = 0;
-    while (g < total) {
-      var group = [g], text = rows[g].text;
-      var k2 = g + 1;
-      var cols = t.term.cols;
-      while (k2 < total && (rows[k2].wrapped || rows[k2 - 1].text.length >= cols)) {
-        group.push(k2); text += rows[k2].text; k2++;
-      }
-      var m;
-      URL_RE.lastIndex = 0;
-      while ((m = URL_RE.exec(text))) {
-        var url = m[0].replace(/[.,;:)\]]+$/, '');
-        var from = m.index, to = from + url.length;
-        var off = 0;
-        for (var gi = 0; gi < group.length; gi++) {
-          var ri = group[gi], len = rows[ri].text.length;
-          var a = Math.max(from, off) - off, bEnd = Math.min(to, off + len) - off;
-          if (bEnd > a) (links[ri] = links[ri] || []).push({ from: a, to: bEnd, url: url });
-          off += len;
-        }
-      }
-      g = k2;
-    }
+    // Logische Zeilen für die Link-Erkennung: Terminal-Umbrüche UND die harten
+    // Umbrüche, die Claude Code selbst macht (Zeile bis zum Rand, Fortsetzung
+    // eingerückt) — Regel und Tests: stitchRows im Mockup (termText-Block).
+    // Jeder Teil eines umgebrochenen Links trägt so die GANZE URL; ein Tipp
+    // darauf kopiert sie vollständig, ohne Umbrüche und Einrückung.
+    var links = typeof window.stitchLinks === 'function' ? window.stitchLinks(rows, t.term.cols) : {};
 
     // Inneres HTML nur für Zeilen (neu) bauen, deren Inhalt oder Link-Lage sich
     // geändert hat. Gecachte Historie mit unveränderter Link-Signatur ist fertig.
@@ -494,11 +765,13 @@
       var sig = '';
       for (var si = 0; si < ranges.length; si++) sig += ranges[si].from + ':' + ranges[si].to + ':' + ranges[si].url + ';';
       if (row.inner !== null && row.sig === sig) continue;
-      row.inner = buildRowInner(buf.getLine(start + r - trimmed), ranges);
+      var built = buildRowInner(buf.getLine(start + r - trimmed), ranges);
+      row.inner = built.inner;
+      row.bg = built.bg;
       row.sig = sig;
     }
 
-    var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
+    var atBottom = t.followTail !== false;
 
     // ── DOM abgleichen statt neu bauen ────────────────────────────────────
     // Der komplette innerHTML-Tausch hat pro Ausgabe-Tick hunderte KB HTML
@@ -512,7 +785,7 @@
 
     if (!canPatch) {
       var out = new Array(total);
-      for (var f = 0; f < total; f++) out[f] = rowWrapper(f, rows[f].inner);
+      for (var f = 0; f < total; f++) out[f] = rowWrapper(f, rows[f].inner, rows[f].bg);
       pre.innerHTML = out.join('');
       dom = t.dom = {};
       for (var f2 = 0; f2 < total; f2++) dom[start + f2] = rows[f2].inner;
@@ -525,9 +798,18 @@
       var keep = Math.min(lineEls.length, total);
       for (var p = 0; p < keep; p++) {
         var absI = start + p;
+        var el = lineEls[p];
         if (dom[absI] !== rows[p].inner) {
-          lineEls[p].innerHTML = rows[p].inner;
+          el.innerHTML = rows[p].inner;
           dom[absI] = rows[p].inner;
+        }
+        // Der Panel-Hintergrund liegt am Block (siehe rowWrapper) und muss
+        // deshalb separat nachgezogen werden — er ändert sich auch dann, wenn
+        // der Zeileninhalt gleich bleibt (TUI malt ihren Hintergrund um).
+        var wantBg = rows[p].bg || '';
+        if ((el.dataset.bg || '') !== wantBg) {
+          if (wantBg) { el.style.background = wantBg; el.dataset.bg = wantBg; }
+          else { el.style.background = ''; delete el.dataset.bg; }
         }
       }
       // Sollte das DOM je LÄNGER sein als das Fenster (kommt regulär nicht
@@ -536,7 +818,7 @@
       if (total > keep) {
         var addHtml = '';
         for (var n = keep; n < total; n++) {
-          addHtml += rowWrapper(n, rows[n].inner);
+          addHtml += rowWrapper(n, rows[n].inner, rows[n].bg);
           dom[start + n] = rows[n].inner;
         }
         if (keep > 0) lineEls[keep - 1].insertAdjacentHTML('afterend', addHtml);
@@ -558,9 +840,11 @@
     if (cs) {
       pre.classList.toggle('selection-mode', !!cs.selectionMode);
       cs.lines = rows.map(function (x) { return x.text; }); // Kopieren/Selektion lesen daraus
+      cs.rowsWrapped = rows.map(function (x) { return x.wrapped; });
+      cs.cols = t.term.cols;
       cs._renderedLen = cs.lines.length;
       if (cs.selection && cs.selection.end >= total) cs.selection = null;
-      if (cs.selection) {
+      if (cs.selection && cs.selection.sc === undefined) {
         pre.querySelectorAll('.term-line').forEach(function (l, i) {
           l.classList.toggle('is-selected', i >= cs.selection.start && i <= cs.selection.end);
         });
@@ -583,14 +867,19 @@
     if (typeof window.updateJumpOrb === 'function') window.updateJumpOrb(cardId, !atBottom);
   }
 
-  // Gedrosselt: bei Dauerausgabe nicht öfter als alle 60ms neu zeichnen.
-  var renderTimers = {};
+  // Gedrosselt: bei Dauerausgabe nicht öfter als alle 60 ms neu zeichnen —
+  // aber die ERSTE Ausgabe nach einer Pause sofort. Vorher wartete jede Ausgabe
+  // pauschal 60 ms (gemessen: Tastendruck → sichtbar 85 ms bei 2 ms Netz).
+  var RENDER_GAP_MS = 60;
+  var renderTimers = {}, lastRenderAt = {};
   function scheduleRender(cardId) {
     if (renderTimers[cardId]) return;
+    var wait = Math.max(0, RENDER_GAP_MS - (Date.now() - (lastRenderAt[cardId] || 0)));
     renderTimers[cardId] = setTimeout(function () {
       renderTimers[cardId] = null;
+      lastRenderAt[cardId] = Date.now();
       renderTerm(cardId);
-    }, 60);
+    }, wait);
   }
   // Der Demo-Ticker des Mockups würfelt die Latenz — am echten Server aus.
   if (typeof window.__tmsStopLatencyDemo === 'function') window.__tmsStopLatencyDemo();
@@ -606,22 +895,11 @@
     return true;
   };
 
-  // SPALTEN SOFORT, ZEILEN IN RUHE. Eine Spaltenänderung MUSS im Gleichschritt
-  // zur PTY (16 ms): jede Millisekunde Versatz malt die TUI für die falsche
-  // Breite in einen schon umgebrochenen Puffer — die verschränkten Zeilen.
-  // Reines Zeilen-Wachstum dagegen ist Umbruch-NEUTRAL, kommt aber beim
-  // Karten-Aufbau als Serie (die Feder-Animation wächst die Ratsche
-  // 15→24→31→38). Jeder Schritt sofort weitergereicht wäre je ein SIGWINCH,
-  // auf das Claude sein komplettes Bild neu malt — die übereinander
-  // gestapelten Start-Banner. Darum wandern reine Zeilen-Änderungen erst zur
-  // PTY, wenn sie stabil stehen; gesendet wird der DANN aktuelle Stand.
+  // Both dimensions already settle before term.resize(). Forward that stable
+  // size together so the PTY does not lag another animation behind xterm.
   var resizeTimers = {}, lastDims = {};
-  var ROWS_SETTLE_MS = 350;
   function queueResize(cardId, cols, rows) {
     if (!cols || !rows) return;
-    var sid0 = byCard[cardId];
-    var lastCols = sid0 && lastDims[sid0] ? parseInt(lastDims[sid0], 10) : null;
-    var delay = lastCols === cols ? ROWS_SETTLE_MS : 16;
     clearTimeout(resizeTimers[cardId]);
     resizeTimers[cardId] = setTimeout(function () {
       var sid = byCard[cardId];
@@ -634,7 +912,7 @@
       if (lastDims[sid] === key) return;
       lastDims[sid] = key;
       post('terminal:resize', { sessionId: sid, cols: c, rows: r });
-    }, delay);
+    }, 16);
   }
 
   /** Vorschau für Übersicht und Rail — aus dem echten Puffer. */
@@ -668,7 +946,7 @@
     var sid = byCard[cardId];
     var t = terms[cardId];
     if (!sid || !t || !queued[sid]) return;
-    queued[sid].forEach(function (c) { t.term.write(c); });
+    queued[sid].forEach(function (c) { writeTerm(t, c); });
     delete queued[sid];
   }
 
@@ -693,7 +971,15 @@
     }
     var d = dims(cardId);
     lastDims[sessionId] = d.cols + 'x' + d.rows;
-    post('terminal:attach', { cardId: cardId, sessionId: sessionId, cols: d.cols, rows: d.rows });
+    post('terminal:attach', { cardId: cardId, sessionId: sessionId, cols: d.cols, rows: d.rows, fresh: isFresh(cardId) });
+  }
+  /** Leeres Seiten-Terminal (Kaltstart, neu gebaute Seite)? Dann muss der Server
+   *  das Vollbild MIT Verlauf schicken — bei gleicher Breite und ohne verpasste
+   *  Ausgabe schickte er sonst nichts, und nach einem App-Neustart blieb die
+   *  Karte leer bis auf das, was Claude selbst neu malte. */
+  function isFresh(cardId) {
+    var t = terms[cardId];
+    return !(t && t.gotData);
   }
 
   // Cards appear/disappear whenever the mockup rebuilds its workspace. Follow
@@ -702,8 +988,11 @@
   var timer = null;
   var createTries = {}; // cardId -> Anläufe, die Karte vor dem Anlegen zu vermessen
   function syncTerms() {
-    clearTimeout(timer);
+    // Keep the first scheduled scan: frequent UI updates must not postpone
+    // terminal creation indefinitely.
+    if (timer !== null) return;
     timer = setTimeout(function () {
+      timer = null;
       document.querySelectorAll('.card-body[data-card-id]').forEach(function (host) {
         var cardId = host.getAttribute('data-card-id');
         // The cloud log viewer reuses the card-body markup but is a read-only
@@ -728,6 +1017,7 @@
             cols: (tc && tc.term.cols) || 80,
             rows: (tc && tc.term.rows) || 24,
             name: sessName ? sessName.name : undefined,
+            serverId: (sessName && sessName.server) || undefined,
           });
         }
       });
@@ -739,26 +1029,32 @@
       });
     }, 50);
   }
-  // Watch for cards appearing and disappearing — but xterm rewrites its rows on
-  // every single chunk of output, and reacting to that made syncTerms re-measure
-  // every card continuously. That was the scroll jank. Ignore anything that
-  // happens inside a terminal.
-  // Wir suchen NEUE Karten — nichts sonst. Der Karteninhalt ist unsere eigene
-  // Ausgabe: darauf zu reagieren hieße, sich selbst zu triggern (und genau das
-  // hat vorher jedes Neuzeichnen in eine Endlosschleife geschickt, die das
-  // Vermessen der Karte nie zu Ende kommen ließ — und das Scrollen ruckeln).
+  // Only added/removed card bodies require a scan. Header, status and preview
+  // updates are not card changes; following those repeatedly remeasures every
+  // terminal and can starve a newly added card while other sessions are busy.
+  var cardBodySelector = '.card-body[data-card-id]';
+  function containsCardBody(node) {
+    return node.nodeType === 1 &&
+      (node.matches(cardBodySelector) || node.querySelector(cardBodySelector));
+  }
   new MutationObserver(function (records) {
     for (var i = 0; i < records.length; i++) {
       var t = records[i].target;
       if (t.nodeType === 1 && t.closest &&
           (t.closest('.card-body[data-card-id]') || t.closest('#tmsEmulators'))) continue;
-      syncTerms();
-      return;
+      var nodes = Array.prototype.concat.call(
+        Array.prototype.slice.call(records[i].addedNodes),
+        Array.prototype.slice.call(records[i].removedNodes)
+      );
+      for (var j = 0; j < nodes.length; j++) {
+        if (containsCardBody(nodes[j])) { syncTerms(); return; }
+      }
     }
   }).observe(document.body, { childList: true, subtree: true });
-  window.addEventListener('resize', function () {
-    Object.keys(terms).forEach(fitSoon);
-  });
+  function fitAllTerminals() { Object.keys(terms).forEach(fitSoon); }
+  window.addEventListener('resize', fitAllTerminals);
+  window.addEventListener('tms:terminal-layout', fitAllTerminals);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', fitAllTerminals);
 
   // ── Replace the mockup's demo plumbing ────────────────────────────────────
   // Not a no-op: xterm owns the pixels, but the mockup still expects this to
@@ -800,14 +1096,23 @@
 
     function apply(ev) {
       var base = pre.getBoundingClientRect();
-      var total = pre.querySelectorAll('.term-line').length;
-      var idx = Math.floor((ev.clientY - base.top - padTop + pre.scrollTop) / lineH);
+      var lines = pre.querySelectorAll('.term-line');
+      var total = lines.length;
+      // Der Griff haengt UNTER der Zeile (Stiel nach oben) — gemeint ist die Zeile
+      // ueber dem Finger, nicht die, auf der er liegt.
+      var idx = Math.floor((ev.clientY - lineH * 0.9 - base.top - padTop + pre.scrollTop) / lineH);
       idx = Math.max(0, Math.min(total - 1, idx));
-      if (kind === 'start') cs.selection.start = Math.min(idx, cs.selection.end);
-      else cs.selection.end = Math.max(idx, cs.selection.start);
-      pre.querySelectorAll('.term-line').forEach(function (l, i) {
-        l.classList.toggle('is-selected', i >= cs.selection.start && i <= cs.selection.end);
-      });
+      var col = colAt(pre, lines[idx], ev.clientX, 'round');
+      var sel = cs.selection;
+      if (sel.sc === undefined) { sel.sc = 0; sel.ec = lineText(lines[sel.end]).length; }
+      // Anfang bleibt vor dem Ende und umgekehrt — kein Ueberkreuzen.
+      if (kind === 'start') {
+        if (idx > sel.end || (idx === sel.end && col > sel.ec)) { idx = sel.end; col = sel.ec; }
+        sel.start = idx; sel.sc = col;
+      } else {
+        if (idx < sel.start || (idx === sel.start && col < sel.sc)) { idx = sel.start; col = sel.sc; }
+        sel.end = idx; sel.ec = col;
+      }
       window.positionHandlesAndBubble(cardId);
       // Am Rand weiterziehen scrollt nach — sonst endete die Auswahl am Sichtfeld.
       if (ev.clientY < base.top + 28) pre.scrollTop -= lineH;
@@ -869,15 +1174,326 @@
   // scrollTerminalToBottom und updateJumpOrb bleiben die des Mockups: die
   // .card-body ist wieder der echte Scroller.
 
-  /** Zeile in den Kopier-Modus nehmen. */
-  function startLineSelection(line) {
+  // ══ Zeichengenaue Auswahl ═════════════════════════════════════════════════
+  // Vorher kannte die Auswahl nur ganze Zeilen ("von Zeile X bis Y"). Jetzt:
+  // Zeile + Zeichen fuer Anfang und Ende. Langer Druck markiert das Wort unter
+  // dem Finger — auf einem Link den GANZEN Link ueber alle Umbrueche —, die
+  // Griffe verschieben zeichenweise, ein Tipp im Markier-Modus nimmt die Zeile.
+  // Gemalt wird ueber die Custom-Highlight-API: die Zeilen bleiben unberuehrt,
+  // das Neuzeichnen bei laufender Ausgabe stellt die Markierung nur neu her.
+  // Textregeln (Umbrueche, Links, Fuellzeichen): termText-Block im Mockup.
+  var HAS_HL = typeof CSS !== 'undefined' && !!CSS.highlights && typeof Highlight === 'function';
+  var selRanges = {};                       // cardId -> Range
+
+  function selPre(cardId) { return document.querySelector('.card-body[data-card-id="' + cardId + '"]'); }
+  function lineTextEl(line) { return line && line.querySelector('.term-line__text'); }
+  function lineText(line) { var el = lineTextEl(line); return el ? el.textContent : ''; }
+  function selRows(cardId, pre) {
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    var els = pre.querySelectorAll('.term-line');
+    var out = new Array(els.length);
+    for (var i = 0; i < els.length; i++) {
+      out[i] = { text: lineText(els[i]), wrapped: !!(cs && cs.rowsWrapped && cs.rowsWrapped[i]) };
+    }
+    return out;
+  }
+  function selCols(cardId) {
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    return cs && cs.cols ? cs.cols : Infinity; // Cloud-Logs: keine harten Umbrueche verbinden
+  }
+  /** Zeichenbreite (Monospace) aus einer Zeile mit Text messen. */
+  function charWidth(pre) {
+    var els = pre.querySelectorAll('.term-line__text');
+    for (var i = els.length - 1; i >= 0; i--) {
+      var n = els[i].textContent.length;
+      if (n > 4) return els[i].getBoundingClientRect().width / n;
+    }
+    return 8;
+  }
+  /** Fingerposition x → Zeichenspalte in dieser Zeile (round: zwischen zwei Zeichen, floor: das Zeichen). */
+  function colAt(pre, line, x, mode) {
+    var el = lineTextEl(line);
+    if (!el) return 0;
+    var len = el.textContent.length;
+    var left = el.getBoundingClientRect().left;
+    var v = (x - left) / charWidth(pre);
+    var c = mode === 'floor' ? Math.floor(v) : Math.round(v);
+    return Math.max(0, Math.min(len, c));
+  }
+  /** Textknoten + Versatz fuer Zeichen c einer Zeile. */
+  function domPoint(line, c) {
+    var el = lineTextEl(line);
+    if (!el) return { node: line, off: 0 };
+    var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), n, left = c, last = null;
+    while ((n = w.nextNode())) {
+      if (left <= n.length) return { node: n, off: left };
+      left -= n.length; last = n;
+    }
+    return last ? { node: last, off: last.length } : { node: el, off: 0 };
+  }
+  function caretX(pre, line, pt) {
+    var r = document.createRange();
+    try { r.setStart(pt.node, pt.off); r.collapse(true); } catch (e) { return 0; }
+    var rect = r.getBoundingClientRect();
+    var base = pre.getBoundingClientRect();
+    var x = rect.width || rect.left ? rect.left : (lineTextEl(line) || line).getBoundingClientRect().left;
+    return x - base.left - pre.clientLeft + pre.scrollLeft;
+  }
+  function paintHighlight() {
+    if (!HAS_HL) return;
+    var list = Object.keys(selRanges).map(function (k) { return selRanges[k]; }).filter(Boolean);
+    if (list.length) CSS.highlights.set('term-sel', new Highlight(list[0]));
+    for (var i = 1; i < list.length; i++) CSS.highlights.get('term-sel').add(list[i]);
+    if (!list.length) CSS.highlights.delete('term-sel');
+  }
+
+  // ── Maus an echte TUIs (opencode, vim, htop …) ────────────────────────────
+  // Diese Programme laufen im Alternate Screen und schalten Mouse-Reporting an
+  // (?1000/?1002/?1003 zusammen mit ?1006). Dann gibt es KEINEN Terminal-
+  // Scrollback: der sichtbare Ausschnitt ist die ganze App. Blaettern und
+  // Tippen muessen deshalb als Maus-Event ins PTY — sonst wirkt der Output
+  // abgeschnitten (man kommt nie weiter nach oben) und Tabs/Buttons der TUI
+  // reagieren nicht. xterm kennt Protokoll und Encoding bereits; wir fragen
+  // seinen CoreMouseService, statt SGR-Sequenzen zu raten.
+  //
+  // Reattach-Falle: der Server schickt nach einem App-Neustart nur einen
+  // SerializeAddon-Snapshot. Der enthaelt Text und Farben, aber KEINE DECSET-
+  // Modi — opencode schaltet Maus-Reporting nur EINMAL beim Start ein, nie
+  // beim Resize. Danach waere areMouseEventsActive fuer immer false und
+  // Tipp/Wheel tot. Der Server nennt beim Reattach aber den Vordergrundprozess
+  // (terminal:reattached.processName). Fuer bekannte Maus-TUIs stellen wir die
+  // Modi lokal wieder her; das PTY sieht davon nichts.
+  var procBySession = {};
+  var MOUSE_TUIS = { opencode: 1 };
+  function isMouseTui(name) {
+    // Windows liefert "C:\…\opencode.exe" — Pfad (/ oder \) und .exe abstreifen.
+    var n = String(name || '').toLowerCase().split(/[\\/]/).pop().replace(/\.exe$/, '');
+    return !!MOUSE_TUIS[n];
+  }
+  function forceMouseOn(t) {
+    if (!t || t.mouseForced || t.forceBlocked) return;
+    var sid = byCard[t.cardId];
+    if (!isMouseTui(procBySession[sid])) return;
+    t.mouseForced = true;
+    t.forceMouse = true;
+    t.term.write('\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h');
+  }
+  /** Live-Ausgabe beobachten: ein explizites Ausschalten der TUI gewinnt. */
+  function noteMouseModes(t, chunk) {
+    if (!t || !chunk || typeof chunk !== 'string' || chunk.indexOf('\x1b[?100') === -1) return;
+    var on = /\x1b\[\?(?:1000|1002|1003|1006)h/.test(chunk);
+    var off = /\x1b\[\?(?:1000|1002|1003|1006|1015|1016)l/.test(chunk);
+    if (on) t.forceBlocked = false;
+    if (off && !on) {
+      t.forceMouse = false;
+      t.mouseForced = false;
+      t.forceBlocked = true;
+    }
+  }
+  function writeTerm(t, chunk, cb) {
+    noteMouseModes(t, chunk);
+    if (chunk) t.gotData = true;
+    t.term.write(chunk, cb);
+  }
+  function mouseService(t) {
+    var core = t && t.term && t.term._core;
+    var svc = core && core.coreMouseService;
+    if (!svc) return null;
+    if (!svc.areMouseEventsActive) forceMouseOn(t);
+    return svc.areMouseEventsActive ? svc : null;
+  }
+  /** Zeile/Spalte unter dem Finger -> 0-basierte Screen-Zelle. */
+  function mouseCell(pre, line, x) {
+    var t = terms[pre.getAttribute('data-card-id')];
+    var svc = mouseService(t);
+    if (!svc || !line) return null;
+    var rel = Number(line.dataset.i);
+    if (!isFinite(rel)) return null;
+    var buf = t.term.buffer.active;
+    // Gleiche Rechnung wie renderTerm: globale Zeile -> Pufferzeile -> Screen.
+    var trimmed = (t.scrollTotal === undefined ? buf.baseY : t.scrollTotal) - buf.baseY;
+    var bufLine = (t.domStart || 0) + rel - trimmed;
+    var row = bufLine - buf.baseY;
+    if (row < 0 || row >= t.term.rows) return null; // Historie ist kein Mausziel
+    var col = Math.max(0, Math.min(t.term.cols - 1, colAt(pre, line, x, 'floor')));
+    return { svc: svc, col: col, row: row };
+  }
+  /** xterm-Action: 1 = Druck, 0 = Loslassen, 0/1 + Taste 4 = Wheel hoch/runter. */
+  function sendMouse(svc, col, row, button, action) {
+    try {
+      svc.triggerMouseEvent({ col: col, row: row, button: button, action: action,
+        ctrl: false, alt: false, shift: false });
+    } catch (e) { /* keine Mouse-API: dann lieber nichts senden als Zeichensalat */ }
+  }
+  /** Sichtbare Zeile an y — auch wenn die Karte gerade gescrollt ist. */
+  function lineAtPoint(pre, y) {
+    var lines = pre.querySelectorAll('.term-line');
+    if (!lines.length) return null;
+    var h = lines[0].getBoundingClientRect().height || 20;
+    var top = pre.getBoundingClientRect().top +
+      (parseFloat(getComputedStyle(pre).paddingTop) || 0) - pre.scrollTop;
+    var idx = Math.floor((y - top) / h);
+    return lines[Math.max(0, Math.min(lines.length - 1, idx))];
+  }
+  function sendWheel(pre, x, y, up, ticks) {
+    if (pre.classList.contains('selection-mode')) return false;
+    var cell = mouseCell(pre, lineAtPoint(pre, y), x);
+    if (!cell) return false;
+    for (var i = 0; i < ticks; i++) sendMouse(cell.svc, cell.col, cell.row, 4, up ? 0 : 1);
+    return true;
+  }
+  /** Ein Tipp wird zum Linksklick (Druck + Loslassen) in der TUI. */
+  function sendTap(pre, line, x) {
+    var cell = mouseCell(pre, line, x);
+    if (!cell) return false;
+    sendMouse(cell.svc, cell.col, cell.row, 0, 1);
+    sendMouse(cell.svc, cell.col, cell.row, 0, 0);
+    return true;
+  }
+
+  // Nach Langdruck (Auswahl) oder Wischen darf kein Klick mehr folgen.
+  var tapBlockUntil = 0;
+  var WHEEL_STEP = 20; // px Fingerweg pro Raststufe
+  var touchPan = null;
+
+  document.addEventListener('touchstart', function (e) {
+    touchPan = null;
+    if (e.touches.length !== 1) return;
+    var pre = e.target.closest && e.target.closest('.card-body[data-card-id]');
+    if (!pre || !mouseService(terms[pre.getAttribute('data-card-id')])) return;
+    var p = e.touches[0];
+    touchPan = { pre: pre, y0: p.clientY, x0: p.clientX, lastY: p.clientY, axis: 0, acc: 0 };
+  }, { capture: true, passive: true });
+
+  document.addEventListener('touchmove', function (e) {
+    if (!touchPan || e.touches.length !== 1) return;
+    var p = e.touches[0];
+    var dy = p.clientY - touchPan.lastY, dx = p.clientX - touchPan.x0;
+    if (!touchPan.axis) {
+      if (Math.abs(dx) < 5 && Math.abs(p.clientY - touchPan.y0) < 5) return;
+      // Waagerecht ist eine Karten-/App-Geste — die nicht abfangen.
+      if (Math.abs(dx) > Math.abs(p.clientY - touchPan.y0)) { touchPan = null; return; }
+      touchPan.axis = 1;
+      dy = 0;
+    }
+    e.preventDefault(); // kein DOM-Scroll: die TUI blaettert selbst
+    touchPan.lastY = p.clientY;
+    touchPan.acc += dy;
+    var ticks = Math.floor(Math.abs(touchPan.acc) / WHEEL_STEP);
+    if (ticks > 0) {
+      // Finger nach unten = aeltere Zeilen (Wheel hoch), wie beim nativen Scrollen.
+      var up = touchPan.acc > 0;
+      // An der START-Stelle bleiben: beim Ziehen wandert der Finger sonst ueber
+      // Statusleiste/Eingabefeld, wo ein Wheel-Event nichts mehr bewirkt.
+      sendWheel(touchPan.pre, touchPan.x0, touchPan.y0, up, Math.min(ticks, 6));
+      touchPan.acc -= (up ? 1 : -1) * ticks * WHEEL_STEP;
+      tapBlockUntil = Date.now() + 500;
+    }
+  }, { capture: true, passive: false });
+
+  function endTouchPan() { touchPan = null; }
+  document.addEventListener('touchend', endTouchPan, true);
+  document.addEventListener('touchcancel', endTouchPan, true);
+
+  // Mausrad (Desktop/Chromebook) genauso weiterreichen.
+  document.addEventListener('wheel', function (e) {
+    if (e.ctrlKey) return;
+    var pre = e.target.closest && e.target.closest('.card-body[data-card-id]');
+    if (!pre) return;
+    var ticks = Math.max(1, Math.min(6, Math.round(Math.abs(e.deltaY) / 40) || 1));
+    if (sendWheel(pre, e.clientX, e.clientY, e.deltaY < 0, ticks)) e.preventDefault();
+  }, { capture: true, passive: false });
+
+  window.positionHandlesAndBubble = function (cardId) {
+    var pre = selPre(cardId);
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    if (!pre || !cs) return;
+    var hs = pre.querySelector('.sel-handle--start');
+    var he = pre.querySelector('.sel-handle--end');
+    var bubble = pre.querySelector('.copy-bubble');
+    var sel = cs.selection;
+    var lines = pre.querySelectorAll('.term-line');
+    if (!sel || sel.sc === undefined || !lines[sel.start] || !lines[sel.end]) {
+      [hs, he, bubble].forEach(function (el) { if (el) el.remove(); });
+      delete selRanges[cardId]; paintHighlight();
+      return;
+    }
+    var sl = lines[sel.start], el = lines[sel.end];
+    var a = domPoint(sl, sel.sc), b = domPoint(el, sel.ec);
+    if (HAS_HL) {
+      var range = document.createRange();
+      try { range.setStart(a.node, a.off); range.setEnd(b.node, b.off); selRanges[cardId] = range; } catch (e) { delete selRanges[cardId]; }
+      paintHighlight();
+    } else {
+      for (var i = 0; i < lines.length; i++) lines[i].classList.toggle('is-selected', i >= sel.start && i <= sel.end);
+    }
+    if (!hs) { hs = window.makeHandle('start', cardId); pre.appendChild(hs); }
+    if (!he) { he = window.makeHandle('end', cardId); pre.appendChild(he); }
+    if (!bubble) { bubble = window.makeBubble(cardId); pre.appendChild(bubble); }
+    var x1 = caretX(pre, sl, a), x2 = caretX(pre, el, b);
+    hs.style.top = (sl.offsetTop + sl.offsetHeight) + 'px'; hs.style.left = x1 + 'px';
+    he.style.top = (el.offsetTop + el.offsetHeight) + 'px'; he.style.left = x2 + 'px';
+    bubble.style.top = Math.max(0, sl.offsetTop - 38) + 'px';
+    bubble.style.left = Math.max(0, Math.min(Math.min(x1, x2), pre.clientWidth - 100)) + 'px';
+  };
+
+  window.clearSelection = function (cardId) {
+    var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+    if (cs) cs.selection = null;
+    var pre = selPre(cardId);
+    if (pre) pre.querySelectorAll('.term-line.is-selected').forEach(function (l) { l.classList.remove('is-selected'); });
+    window.positionHandlesAndBubble(cardId);
+  };
+
+  /** Tipp im Markier-Modus: die ganze Zeile (ohne Fuellzeichen); nochmal = aufheben. */
+  window.handleLineTap = function (pre, line) {
+    var id = pre.dataset.cardId;
+    var cs = window.__tmsCardState && window.__tmsCardState[id];
+    if (!cs) return;
+    var i = Number(line.dataset.i);
+    var len = lineText(line).replace(/\s+$/, '').length;
+    var s0 = cs.selection;
+    if (s0 && s0.start === i && s0.end === i && s0.sc === 0 && s0.ec === len) { window.clearSelection(id); return; }
+    cs.selection = { start: i, end: i, sc: 0, ec: len };
+    window.positionHandlesAndBubble(id);
+  };
+
+  window.makeBubble = function (cardId) {
+    var el = document.createElement('button');
+    el.className = 'copy-bubble';
+    el.textContent = 'Kopieren';
+    el.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var cs = window.__tmsCardState && window.__tmsCardState[cardId];
+      var pre = selPre(cardId);
+      if (!cs || !cs.selection || !pre) return;
+      var sel = cs.selection;
+      var text = window.copyRange(selRows(cardId, pre), selCols(cardId), sel.start, sel.sc, sel.end, sel.ec);
+      if (!text) { window.toast && window.toast('Nichts markiert'); return; }
+      window.copyText(text);
+      if (window.toast) window.toast('Kopiert ✓');
+      window.clearSelection(cardId);
+    });
+    return el;
+  };
+
+  /** Langer Druck: in den Markier-Modus, Wort bzw. ganzer Link unter dem Finger. */
+  function startLineSelection(line, x) {
     var pre = line.closest('.card-body[data-card-id]');
     if (!pre) return;
+    tapBlockUntil = Date.now() + 900; // nach dem Markieren keinen TUI-Klick senden
     var id = pre.getAttribute('data-card-id');
     if (!pre.classList.contains('selection-mode') && typeof window.toggleCardSelectionMode === 'function') {
       window.toggleCardSelectionMode(id, null);
     }
-    if (typeof window.handleLineTap === 'function') window.handleLineTap(pre, line);
+    var cs = window.__tmsCardState && window.__tmsCardState[id];
+    if (!cs) return;
+    var i = Number(line.dataset.i);
+    var col = x === undefined ? 0 : colAt(pre, line, x, 'floor');
+    var r = window.rangeAt(selRows(id, pre), selCols(id), i, col);
+    // Auf Leerraum gedrueckt: dann eben die Zeile (wie bisher).
+    if (r.sr === r.er && r.sc === r.ec) { window.handleLineTap(pre, line); }
+    else { cs.selection = { start: r.sr, end: r.er, sc: r.sc, ec: r.ec }; window.positionHandlesAndBubble(id); }
     if (navigator.vibrate) navigator.vibrate(10);
   }
 
@@ -889,7 +1505,7 @@
     var line = e.target.closest && e.target.closest('.card-body[data-card-id] .term-line');
     if (!line) return;
     e.preventDefault();
-    startLineSelection(line);
+    startLineSelection(line, e.clientX);
   });
 
   // Langes Drücken auf eine Terminalzeile startet das Markieren — die einzige
@@ -903,9 +1519,10 @@
     selMoved = false;
     selStart = { x: e.clientX, y: e.clientY };
     clearTimeout(selHold);
+    var holdX = e.clientX;
     selHold = setTimeout(function () {
       if (selMoved) return;
-      startLineSelection(line);
+      startLineSelection(line, holdX);
     }, 550);
   }, true);
   document.addEventListener('pointermove', function (e) {
@@ -961,6 +1578,13 @@
     if (pre.classList.contains('selection-mode')) return; // Zeile antippen = auswählen
 
     if (e.target.closest('.wrapped-link') || e.target.closest('.jump-bottom-orb')) return;
+    // Echte TUI mit Mouse-Reporting: den Tipp als Linksklick ins PTY geben.
+    // Ohne das reagierten Tabs/Buttons von opencode nie — der Tipp landete nur
+    // in der Eingabezeile der App. Ein Klick ist Druck + Loslassen an derselben
+    // Zelle; bei Auswahl/Wischen ist er gesperrt (tapBlockUntil).
+    if (e.detail > 0 && Date.now() >= tapBlockUntil) {
+      sendTap(pre, e.target.closest('.term-line'), e.clientX);
+    }
     var id = pre.getAttribute('data-card-id');
     if (window.__tmsState) window.__tmsState.activeCardId = id;
     if (typeof window.setDockPage === 'function') window.setDockPage('term');
@@ -985,7 +1609,11 @@
     window.dockRecordingTranscribing();
     post('mic:stop', { cardId: micCard });
   };
-  window.cancelDictation = function () {
+  window.cancelDictation = function (reason) {
+    // Only the ✕ on the recording bar ('user') ends a real recording. The
+    // mockup also calls cancelDictation() on every screen change, view toggle
+    // and new terminal — each of those used to kill the dictation mid-sentence.
+    if (reason !== 'user') return;
     if (!micCard) return;
     post('mic:cancel', { cardId: micCard });
     micCard = null;
@@ -1003,6 +1631,22 @@
 
   // ── React Native → WebView ────────────────────────────────────────────────
   window.TMSBridge = {
+    /** Vordergrundprozess einer Session — vom Server beim Reattach mitgeschickt.
+     *  Bekannte Maus-TUIs (opencode) bekommen ihre DECSET-Modi lokal zurueck,
+     *  weil der Snapshot sie nicht enthaelt. */
+    setProcessName: function (sessionId, name) {
+      if (!sessionId) return;
+      var cardId = cardOf(sessionId);
+      var t = cardId && terms[cardId];
+      var wasReal = t ? wantsRealRows(t) : false;
+      procBySession[sessionId] = name || '';
+      if (!t) return;
+      t.forceMouse = isMouseTui(name);
+      t.mouseForced = false;
+      t.forceBlocked = false;
+      forceMouseOn(t);
+      if (wantsRealRows(t) !== wasReal) fitNow(cardId); // Maus-TUI: echte Höhe
+    },
     /** Nach einem Reattach die WAHREN xterm-Maße über den normalen,
      *  beruhigten Resize-Weg bestätigen. Stimmen sie mit der PTY überein,
      *  ist das serverseitig ein No-op (kein SIGWINCH, kein Repaint); ging
@@ -1030,7 +1674,10 @@
       var origToast = window.toast;
       window.toast = function () {};
       list.forEach(function (item) {
+        // Mehrere Geräte: die Karte landet in der Gruppe ihres Servers.
+        window.__newTermServer = item.serverId || null;
         window.addTerminal();
+        window.__newTermServer = null;
         var ids = [].map.call(document.querySelectorAll('.card-body[data-card-id]'), function (el) {
           return el.getAttribute('data-card-id');
         });
@@ -1038,6 +1685,10 @@
         if (!cardId) return;
         bound[cardId] = item.sessionId;
         byCard[cardId] = item.sessionId;
+        applyActivity(item.sessionId);
+        // React Native braucht die Karten-ID (Notizen, Auto-Approve). Früher
+        // rechnete es sie als t1..tN aus — mit mehreren Geräten stimmt das nicht mehr.
+        post('terminal:restored', { cardId: cardId, sessionId: item.sessionId });
         if (item.name) {
           var sess = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
           if (sess) sess.name = item.name;
@@ -1051,6 +1702,7 @@
       });
       restoring = false;
       window.toast = origToast;
+      window.__tmsReportActive();
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
       if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
       // addTerminal() arms the rename field for a brand-new terminal; a restored
@@ -1074,16 +1726,36 @@
     bindSession: function (cardId, sessionId) {
       bound[cardId] = sessionId;
       byCard[cardId] = sessionId;
+      window.__tmsReportActive();
+      applyActivity(sessionId);
       mountTerm(cardId);
       flush(cardId);
       if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
       attachSized(cardId, sessionId);
     },
+    /**
+     * Titel vom Server (Quelle der Wahrheit, siehe server/src/terminal/titles.store.ts)
+     * auf die Karte bringen — auch wenn er auf einem anderen Geraet gesetzt wurde.
+     * Ein gerade bearbeitetes Namensfeld wird nicht ueberschrieben.
+     */
+    setCardTitle: function (sessionId, title) {
+      var cardId = cardOf(sessionId);
+      if (!cardId || !title) return;
+      var sess = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
+      if (!sess || sess.name === title) return;
+      sess.name = title;
+      document.querySelectorAll('[data-id="' + cardId + '"] .card-name').forEach(function (el) {
+        if (el.dataset.editing !== '1') el.value = title;
+      });
+      if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
+      if (typeof window.syncDockTerminal === 'function') window.syncDockTerminal();
+      if (window.__tmsState && window.__tmsState.overviewOpen && typeof window.renderOverview === 'function') window.renderOverview();
+    },
     /** PTY output. */
     output: function (sessionId, chunk) {
       var cardId = cardOf(sessionId);
       if (!cardId || !terms[cardId]) { (queued[sessionId] = queued[sessionId] || []).push(chunk); return; }
-      terms[cardId].term.write(chunk, function () { scheduleRender(cardId); });
+      writeTerm(terms[cardId], chunk, function () { scheduleRender(cardId); });
       refreshPreview(cardId);
     },
     /** App im Vordergrund? Im Hintergrund ruht das Malen (siehe __tmsCardVisible). */
@@ -1112,7 +1784,8 @@
     /** Connection state -> Dynamic Island + latency chips. */
     setStatus: function (info) {
       if (typeof window.setIslandActivity === 'function') window.setIslandActivity(info.kind || 'ok', info.label || '');
-      var srv = (window.TMS_DATA.servers || [])[0];
+      var srvList = window.TMS_DATA.servers || [];
+      var srv = srvList.find(function (x) { return x.primary; }) || srvList[0];
       if (srv) {
         if (info.latency != null) srv.latency = info.latency;
         if (info.name) srv.name = info.name;
@@ -1184,6 +1857,25 @@
   window.managerRemoveAttachment = function (index) { post('manager:removeAttachment', { index: index }); };
 
   // RN → Seite: Modelle, Anhänge, Transkript in die Eingabezeile.
+  // ── Diktat-Bubble: Zustand für die Einstellungen (settings.js zeichnet) ──
+  window.TMSBridge.bubbleStatus = function (st) {
+    window.TMS_DATA.settings = window.TMS_DATA.settings || {};
+    window.TMS_DATA.settings.bubble = st || null;
+    if (typeof window.renderSettings === 'function') window.renderSettings();
+  };
+  /** Werte aus der App (Sperre, Login-Links, Hintergrund, Version …). */
+  window.TMSBridge.setSettings = function (vals) {
+    var cur = window.TMS_DATA.settings || {};
+    window.TMS_DATA.settings = Object.assign({}, cur, vals || {}, { bubble: cur.bubble || null });
+    if (typeof window.renderSettings === 'function') window.renderSettings();
+  };
+
+  /** Wörterbuch + Tempo vom Diktat-Rechner: { entries, speed } · { offline } · { unsupported }. */
+  window.TMSBridge.setDictionary = function (data) {
+    window.TMS_DATA.dictionary = data || null;
+    if (typeof window.renderSettings === 'function') window.renderSettings();
+  };
+
   window.TMSBridge.setManagerProviders = function (providers, active) {
     window.TMS_DATA.manager.providers = providers || [];
     window.TMS_DATA.manager.activeProvider = active || '';
@@ -1360,6 +2052,7 @@
     curScreen = name;
     origShow(name);
     post('nav:screen', { screen: name });
+    window.__tmsReportFocus();
     if (name === 'browser') setTimeout(syncNativeBrowser, 80);
     // Bildschirm verlassen: der native WebView wird nicht nur unsichtbar, er wird
     // ABGEBAUT (onBrowserScreen: false) — sonst liefe seine Seite im Hintergrund weiter.
@@ -1372,11 +2065,25 @@
   // dann der Bildschirm selbst. Erst wenn nichts mehr übrig ist, darf React
   // Native ans Beenden denken (und fragt dann noch einmal nach).
   window.TMSBridge.handleBack = function () {
+    if (window.TMSCompact && window.TMSCompact.closeOverlay()) return;
+    // 0. Fernzugriff im Vollbild: die Zurück-Geste wirkt wie das Abzeichen
+    //    (#remoteExit) — verlässt das Vollbild, nicht den Fernzugriffs-
+    //    Bildschirm selbst. Ohne das leiten die Dokument-Zuhörer für
+    //    Tastatur/Zeiger/Rad (siehe bridge.js) weiter an den PC, während der
+    //    Nutzer mit der Geste erkennbar zurückwollte — genau der Fall, für
+    //    den der Vollbild-Modus überhaupt existiert (Hardware am Fold), darf
+    //    also nicht ausgerechnet dort die Zurück-Geste verschlucken.
+    if (window.remoteState && window.remoteState.fullscreen) {
+      window.setRemoteFullscreen(false);
+      return;
+    }
     // 1. Ein offenes Sheet (Tab-Liste, Werkzeuge, Menü, Spotlight …). Bewusst
     //    .is-open und nicht :not([hidden]) — ein gerade zufallendes Sheet würde
     //    sonst den Zurück-Druck schlucken, ohne noch etwas zu tun.
     var sheet = document.querySelector('.sheet-wrap.is-open');
     if (sheet && typeof window.closeSheet === 'function') { window.closeSheet(sheet); return; }
+    // 1b. Einstellungen: Unterseite → Übersicht (bzw. Suche leeren)
+    if (typeof window.__settingsBack === 'function' && window.__settingsBack()) return;
     // 2. Die aufgeklappte Insel
     var header = document.getElementById('statusHeader');
     if (header && header.classList.contains('is-expanded')) {
@@ -1515,12 +2222,46 @@
   };
   window.TMSBridge.browserSync = syncNativeBrowser;
 
+  // ══ Gemeinsame Zwischenablage (Handy ⇄ Mac) ══════════════════════════════
+  // Der Verlauf gehoert dem Server (server/src/clipboard): Kopien am Mac meldet
+  // der Mac-Helfer, Kopien in der App gehen ueber clipboard:write hin. Die App
+  // (SeasonTwoWebRoot) legt Gewaehltes auf die Handy-Zwischenablage und liest
+  // beim Oeffnen, was zuletzt in anderen Handy-Apps kopiert wurde.
+  window.__clipItems = []; // keine Demo-Eintraege in der echten App
+  window.clipOnOpen = function () { post('clipboard:open', {}); };
+  window.clipUse = function (item) { post('clipboard:use', { id: item.id, text: item.text }); };
+  window.clipDelete = function (id) { post('clipboard:delete', { id: id }); };
+  window.clipClear = function () { post('clipboard:clear', {}); };
+  function clipChanged() { if (typeof window.clipRender === 'function') window.clipRender(); }
+  window.TMSBridge.clipboardSet = function (items) {
+    window.__clipItems = Array.isArray(items) ? items : [];
+    clipChanged();
+  };
+  window.TMSBridge.clipboardAdded = function (item, removed) {
+    if (!item || typeof item.text !== 'string') return;
+    var drop = {};
+    (removed || []).forEach(function (id) { drop[id] = true; });
+    drop[item.id] = true;
+    window.__clipItems = [item].concat(window.__clipItems.filter(function (x) { return !drop[x.id]; })).slice(0, 40);
+    clipChanged();
+  };
+  window.TMSBridge.clipboardRemoved = function (ids) {
+    var drop = {};
+    (ids || []).forEach(function (id) { drop[id] = true; });
+    window.__clipItems = window.__clipItems.filter(function (x) { return !drop[x.id]; });
+    clipChanged();
+  };
+
   // ══ Werkzeug-Sheets ═══════════════════════════════════════════════════════
   // Each sheet renders straight out of TMS_DATA[key], so the whole job is to
   // put real data there and to make the taps do real work.
   var origOpenTool = window.openToolSheet;
   var openTool = null;
   window.openToolSheet = function (id) {
+    // Bund-Karten (Explorer, Zwischenablage, Snippets) holen ihre Daten selbst.
+    // Hier NICHT als offen merken: sonst baut jedes setTool der App sie neu auf —
+    // Snippets sprangen in einer Endlosschleife immer wieder auf.
+    if (window.__bundTool && window.__bundTool(id)) return;
     openTool = id;
     origOpenTool(id);
     post('tool:open', { tool: id });
@@ -1562,13 +2303,20 @@
     return fsBase ? fsBase + '/files/pdfjs/web/viewer.html?file=' + encodeURIComponent(window.fsFileUrl(p)) : '';
   };
   window.fsListDir = function (path) { post('files:listRaw', { path: path }); };
-  window.TMSBridge.setFilesDir = function (path, entries) {
-    if (window.fsSetDir) window.fsSetDir(path, entries);
+  /** Gerätewechsel: der Ordner des alten Geräts gilt nicht mehr. */
+  window.TMSBridge.resetFilesDir = function () {
+    window.__tmsCwd = '~';
+    if (window.fsResetDir) window.fsResetDir();
+  };
+  window.TMSBridge.setFilesDir = function (path, entries, srvId) {
+    if (window.fsSetDir) window.fsSetDir(path, entries, srvId);
     window.__tmsCwd = path; // Sheet und Screen teilen sich den Ort
   };
+  /** Favoriten-Ordner des Explorers, vom Handy-Speicher (alle Geräte). */
+  window.TMSBridge.setFileFavs = function (map) { if (window.fsSetFavs) window.fsSetFavs(map || {}); };
   window.fsReadFile = function (path) { post('files:readRaw', { path: path }); };
-  window.TMSBridge.fileContent = function (path, content, error) {
-    if (window.fsSetFileContent) window.fsSetFileContent(path, content, error);
+  window.TMSBridge.fileContent = function (path, content, error, truncated) {
+    if (window.fsSetFileContent) window.fsSetFileContent(path, content, error, truncated);
   };
   window.TMSBridge.downloadProgress = function (id, name, pct, state) {
     if (window.fsDownloadProgress) window.fsDownloadProgress(id, name, pct, state);
@@ -2025,7 +2773,7 @@
 
   // Screenshots — the real workflow: grab an image, upload it to the server,
   // then drop its path into the terminal so the AI can actually look at it.
-  var uploadState = null; // { done, total } während des Hochladens
+  var uploadState = null; // { done, total, frac } während des Hochladens
   var shotSelect = false; // von uploadFinished zurückgesetzt (Auswahlmodus entfernt)
   var shotSel = {};       // dito
 
@@ -2034,11 +2782,17 @@
   // fügt die RN-Seite die Serverpfade in die Eingabezeile ein und
   // uploadFinished schließt die Karte automatisch.
   window.buildScreenshotsSheet = function () {
-    var progress = uploadState
-      ? '<div class="up-progress"><div class="up-progress__bar"><span style="width:' +
-          Math.round((uploadState.done / Math.max(1, uploadState.total)) * 100) + '%"></span></div>' +
-        '<div class="up-progress__label">Lade hoch … ' + uploadState.done + ' von ' + uploadState.total + '</div></div>'
-      : '';
+    // Balken = fertige Dateien + Anteil der laufenden. Ein einzelnes Video von
+    // 200 MB stünde sonst minutenlang auf „0 von 1" — das sähe wie ein Hänger aus.
+    var progress = '';
+    if (uploadState) {
+      var total = Math.max(1, uploadState.total);
+      var pct = Math.max(0, Math.min(100, Math.round(((uploadState.done + uploadState.frac) / total) * 100)));
+      var nr = Math.min(uploadState.done + 1, total);
+      var part = uploadState.frac > 0 ? ' · ' + Math.round(uploadState.frac * 100) + ' %' : '';
+      progress = '<div class="up-progress"><div class="up-progress__bar"><span style="width:' + pct + '%"></span></div>' +
+        '<div class="up-progress__label">Lade hoch … ' + nr + ' von ' + total + part + '</div></div>';
+    }
 
     var choice = uploadState ? '' :
       '<div class="shot-choice">' +
@@ -2053,17 +2807,19 @@
         if (cap) cap.addEventListener('click', function () {
           var flash = document.getElementById('shotFlash');
           if (flash) { flash.classList.add('is-flashing'); setTimeout(function () { flash.classList.remove('is-flashing'); }, 160); }
-          post('shot:capture', { source: 'camera' });
+          post('shot:capture', { source: 'camera', cardId: activeCardId() });
         });
         var pick = document.getElementById('shotPickBtn');
-        if (pick) pick.addEventListener('click', function () { post('shot:capture', { source: 'library' }); });
+        if (pick) pick.addEventListener('click', function () { post('shot:capture', { source: 'library', cardId: activeCardId() }); });
       },
     };
   };
 
-  /** Ladefortschritt: wie viele von wie vielen Bildern schon durch sind. */
-  window.TMSBridge.uploadProgress = function (done, total) {
-    uploadState = (done >= total) ? null : { done: done, total: total };
+  /** Ladefortschritt: wie viele von wie vielen Dateien schon durch sind, und
+   *  (bei Videos) welcher Anteil der laufenden Datei: frac 0..1. */
+  window.TMSBridge.uploadProgress = function (done, total, srvId, frac) {
+    uploadState = (done >= total) ? null
+      : { done: done, total: total, frac: Math.max(0, Math.min(1, Number(frac) || 0)) };
     // NUR während des Uploads das offene Sheet mit Fortschritt neu bauen. Beim
     // Abschluss NICHT: setTool→openSheet würde das Sheet erneut öffnen und dabei
     // den Close-Timer canceln, den insertIntoTerminal/uploadFinished gleich
@@ -2111,15 +2867,72 @@
   // ══ React Native → WebView (Sheets) ═══════════════════════════════════════
   window.TMSBridge.setTool = function (key, data, cwd) {
     window.TMS_DATA[key] = data;
+    if (window.__bundOnTool) window.__bundOnTool(key, data);
     if (cwd) window.__tmsCwd = cwd;
     if (openTool === key) origOpenTool(key); // rebuild the open sheet in place
   };
   /** Nach einem Upload: den Serverpfad sofort ins Terminal schreiben. */
   window.TMSBridge.insertIntoTerminal = function (text, msg) { insertIntoTerminal(text, msg); };
-  window.TMSBridge.setPrayer = function (times) {
-    window.TMS_DATA.prayerTimes = times;
+  /** Bund: Zwischenablage-Verlauf vom Handy (mit Quelle + Anheften). */
+  window.TMSBridge.setClips = function (list) { if (window.__bundSetClips) window.__bundSetClips(list || []); };
+  window.__tmsActiveCardId = function () { return activeCardId(); };
+  /** Upload fertig: Pfade in GENAU die Karte, von der aus gestartet wurde. Ist
+   *  sie nicht mehr vorne, gehen sie direkt an ihre Eingabe (ohne Enter). */
+  window.TMSBridge.insertIntoCard = function (cardId, text, msg) {
+    if (!text) return;
+    if (!cardId || !document.querySelector('.term-card[data-id="' + cardId + '"]') || cardId === activeCardId()) { insertIntoTerminal(text, msg); return; }
+    if (typeof window.__tmsInput === 'function') window.__tmsInput(cardId, text);
+    if (msg !== null) toast(msg || 'Eingefügt');
+  };
+  /**
+   * Gebetszeiten in die Seite. `meta` ist optional: ohne sie verhaelt sich die
+   * Seite exakt wie vorher (Liste + Countdown). Die Normalisierung liegt in
+   * prayerBridge.js, damit sie ohne Fenster getestet werden kann.
+   */
+  window.TMSBridge.setPrayer = function (times, meta) {
+    var p = normalizePrayerPayload(times, meta);
+    window.TMS_DATA.prayerTimes = p.times;
+    window.TMS_DATA.prayerMeta = p.meta;
     if (typeof window.renderPrayerList === 'function') window.renderPrayerList();
+    // Kein renderPrayerScreen(): der 1-Sekunden-Ticker laeuft nur, solange der
+    // Screen offen ist. setPrayer kommt auch im Hintergrund, alle paar Sekunden.
+    if (typeof window.renderPrayerMeta === 'function') window.renderPrayerMeta();
+    if (typeof window.renderAdhanSettings === 'function') window.renderAdhanSettings();
     if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
+  };
+
+  /** Nur die Adhan-Einstellungen, ohne die Zeiten neu zu schicken. Wird nach
+   *  jedem Schalter benutzt, damit der Schalter nicht zurueckkippt. */
+  window.TMSBridge.setAdhanSettings = function (adhan) {
+    var meta = window.TMS_DATA.prayerMeta;
+    if (!meta) return;
+    meta.adhan = {
+      enabled: !!adhan.enabled,
+      wecker: !!adhan.wecker,
+      selected: String(adhan.selected || 'mishary'),
+    };
+    if (typeof window.renderAdhanSettings === 'function') window.renderAdhanSettings();
+  };
+
+  /** Nur die Berechtigungen — die kann der Nutzer jederzeit auf der Systemseite
+   *  aendern, ohne dass wir neue Zeiten schicken muessen. */
+  var normalizePerms = window.__tmsNormalizePerms || function (p) {
+    return { notifications: !!p.notifications, exactAlarms: !!p.exactAlarms };
+  };
+  window.TMSBridge.setAdhanPerms = function (perms) {
+    var meta = window.TMS_DATA.prayerMeta;
+    if (!meta) return;
+    meta.perms = Object.assign({}, meta.perms || {}, normalizePerms(perms || {}));
+    if (typeof window.renderAdhanSettings === 'function') window.renderAdhanSettings();
+  };
+  /** Stand vom Handy: nächster geplanter Azān, Methode (automatisch), Erlaubnisse. */
+  window.TMSBridge.setAdhanStatus = function (st) {
+    var meta = window.TMS_DATA.prayerMeta;
+    if (!meta || !st) return;
+    if (st.perms) meta.perms = Object.assign({}, meta.perms || {}, normalizePerms(st.perms));
+    if (st.method) meta.method = Object.assign({}, meta.method || {}, { name: String(st.method), auto: true, country: st.country || null });
+    meta.next = st.nextAt ? { name: String(st.nextName || ''), at: Number(st.nextAt), exact: !!st.nextExact } : null;
+    if (typeof window.renderAdhanSettings === 'function') window.renderAdhanSettings();
   };
   /** Jump to the Browser screen and load a URL (used by the Ports sheet). */
   window.TMSBridge.openBrowser = function (url) {
@@ -2144,6 +2957,8 @@
   // (er ersetzt ganze Wörter — als Rückschritte plus neuer Text).
   var dockInput = document.getElementById('dockInput');
   var dockLast = '';
+  var dockDrafts = Object.create(null);
+  var dockLastTarget = window.dockTargetId && window.dockTargetId();
 
   function dockToPty() {
     var id = window.dockTargetId && window.dockTargetId();
@@ -2154,44 +2969,48 @@
     dockLast = now;
     if (data) window.__tmsInput(id, data);
   }
-  // Kein Stumm-Schalter: eine programmatische Wertzuweisung feuert ohnehin kein
-  // input-Event. Der Schalter hat stattdessen das erste getippte Zeichen
-  // verschluckt, wenn direkt nach einem Zurücksetzen losgetippt wurde.
-  function dockReset() {
+  function dockReset(cardId) {
+    var id = cardId || (window.dockTargetId && window.dockTargetId());
+    if (id) delete dockDrafts[id];
+    if (id && id !== (window.dockTargetId && window.dockTargetId())) return;
     dockInput.value = '';
     dockLast = '';
-    // Das Feld darf mitwachsen (bis 3 Zeilen) — nach dem Leeren muss es auch
-    // wieder auf eine Zeile zurückfallen, sonst bleibt die Bar aufgebläht.
     if (typeof window.autoGrowInput === 'function') window.autoGrowInput(dockInput);
   }
   if (dockInput) {
     dockInput.addEventListener('input', dockToPty);
     dockInput.addEventListener('focus', function () { dockLast = dockInput.value; });
   }
-
-  // Der Text steht schon im Terminal — beim Absenden fehlt nur noch das Enter.
   window.sendTerminalCommand = function (id, cmd) {
     if (!id) return;
     window.__tmsInput(id, '\r');
-    dockReset();
+    dockReset(id);
   };
-
-  // ^C und Esc verwerfen die Zeile in der Shell — dann auch bei uns.
   var origHandleTermKey = window.handleTermKey;
   window.handleTermKey = function (key, id) {
     origHandleTermKey(key, id);
-    if (key === 'ctrlc' || key === 'esc') dockReset();
+    if (key === 'ctrlc' || key === 'esc' || key === 'enter') dockReset(id);
   };
   var origSendCtrlC = window.sendCtrlC;
-  window.sendCtrlC = function (id) { origSendCtrlC(id); dockReset(); };
+  window.sendCtrlC = function (id) { origSendCtrlC(id); dockReset(id); };
 
-  // Ein anderes Terminal = eine andere Zeile: nicht die alte weiterschreiben.
+  // The PTY already contains the typed draft. Restore only the local field and
+  // its sent-text baseline; replaying it would duplicate the shell input.
   var origSyncDock = window.syncDockTerminal;
-  var dockLastTarget = null;
   window.syncDockTerminal = function () {
-    origSyncDock();
     var id = window.dockTargetId && window.dockTargetId();
-    if (id !== dockLastTarget) { dockLastTarget = id; dockReset(); }
+    if (id !== dockLastTarget) {
+      if (dockLastTarget && (window.TMS_DATA.sessions || []).some(function (s) { return s.id === dockLastTarget; })) {
+        dockDrafts[dockLastTarget] = { value: dockInput.value, sent: dockLast, start: dockInput.selectionStart, end: dockInput.selectionEnd };
+      }
+      dockLastTarget = id;
+      var draft = id && dockDrafts[id];
+      dockInput.value = draft ? draft.value : '';
+      dockLast = draft ? draft.sent : '';
+      if (draft) dockInput.setSelectionRange(draft.start, draft.end);
+      if (typeof window.autoGrowInput === 'function') window.autoGrowInput(dockInput);
+    }
+    origSyncDock();
   };
 
   // Die Seite stimmt NIE selbst zu. Auto-Approve führt der Server aus — er kennt
@@ -2242,36 +3061,12 @@
     });
   };
 
-  // ══ Einstellungen ═════════════════════════════════════════════════════════
-  // Without this there is no way out of Season 2 from inside Season 2.
-  var origRenderSettings = window.renderSettings;
-  window.renderSettings = function () {
-    origRenderSettings();
-    var body = document.getElementById('settingsBody');
-    if (!body) return;
-    var group = document.createElement('div');
-    group.className = 'settings-group glass';
-    group.innerHTML =
-      '<div class="settings-group__title">Oberfläche</div>' +
-      '<div class="settings-row is-tap" id="s2ToClassic">' +
-        '<span class="settings-row__label">Klassische Oberfläche<small>Season 2 verlassen — jederzeit wieder umschaltbar</small></span>' +
-        '<span class="settings-row__value">Wechseln</span></div>' +
-      '<div class="settings-row is-tap" id="s2ClassicSettings">' +
-        '<span class="settings-row__label">Klassische Einstellungen<small>Sicherheit, Benachrichtigungen, Cloud-Tokens, Manager …</small></span>' +
-        '<span class="settings-row__value">Öffnen</span></div>';
-    body.appendChild(group);
-    group.querySelector('#s2ToClassic').addEventListener('click', function () {
-      post('nav:classic', { screen: 'classic' });
-    });
-    group.querySelector('#s2ClassicSettings').addEventListener('click', function () {
-      post('nav:classic', { screen: 'settings' });
-    });
-  };
-  window.renderSettings();
+  // ══ Einstellungen: settings.js (eine Seite für alles) ══
 
   // ══ Update-Banner ═════════════════════════════════════════════════════════
   var origRenderUpdateBanner = window.renderUpdateBanner;
   window.renderUpdateBanner = function (host) {
+    if (window.__bundUpdateCard) { window.__bundUpdateCard(host); return; } // schlichte Karte (bund.js)
     var u = window.TMS_DATA.update || {};
     if (!u.latest || u.latest === u.current) return; // nothing to offer
     origRenderUpdateBanner(host);
@@ -2287,15 +3082,73 @@
   // Native die Verbindung um (Terminals des alten Servers weg, die des neuen rein).
   window.__tmsSwitchServer = function (id) { post('server:switch', { id: id }); };
 
+  // Tippt der Nutzer den Fernzugriff-Knopf auf der Geraetekarte an: React
+  // Native holt die Zugangsdaten und reicht sie ueber setRemoteTarget zurueck
+  // (siehe weiter unten) — die Seite baut die Bildverbindung selbst auf.
+  window.__tmsOpenRemote = function (id) {
+    remoteWantId = id || null;
+    // Ein liegengebliebenes „Beenden“ (Zugangsdaten kamen nie) darf das
+    // Öffnen nicht in ein Schliessen verwandeln.
+    if (id && typeof remoteClosing === 'object') delete remoteClosing[id];
+    post('remote:open', { id: id });
+  };
+
   // ══ React Native → WebView (Server, Update, Auto-Approve) ═════════════════
+  /** Bund: Diktat gibt es nur, solange ein Gerät mit caps.dictation (der Mac)
+   *  online ist — sonst ist der Mikro-Knopf weg (und kommt zurück). */
+  window.TMSBridge.setDictationAvailable = function (on) {
+    if (!document.getElementById('bundNoDictCss')) {
+      var st = document.createElement('style');
+      st.id = 'bundNoDictCss';
+      st.textContent = 'body.no-dictation #dockMicBtn, body.no-dictation .term-mic-btn { display: none !important; }';
+      document.head.appendChild(st);
+    }
+    document.body.classList.toggle('no-dictation', !on);
+  };
+  /** Bund: Tipp auf ein Gerät — es gibt nichts umzuschalten, nur zu den Terminals. */
+  window.TMSBridge.goToTerminals = function () { if (typeof window.goToTerminals === 'function') window.goToTerminals(); };
   window.TMSBridge.setServers = function (servers) {
+    // Die Latenz pflegt die Seite (setStatus / setServerLatency) — eine frische
+    // Liste ohne Wert darf den letzten Ping nicht wegwischen.
+    var prev = {};
+    (window.TMS_DATA.servers || []).forEach(function (s) { prev[s.id] = s.latency; });
+    servers.forEach(function (s) { if (s.latency == null && prev[s.id] != null) s.latency = prev[s.id]; });
     window.TMS_DATA.servers = servers;
     if (typeof window.renderServers === 'function') window.renderServers();
     if (typeof window.renderSettings === 'function') window.renderSettings();
+    // Gerätenamen in Leiste/Kopfzeile erscheinen, sobald ein zweites Gerät da ist.
+    if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
+    if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
+    if (window.__deskRender) window.__deskRender();
+  };
+  /** Ping der weiteren Geräte (der Hauptserver kommt über setStatus). */
+  window.TMSBridge.setServerLatency = function (map) {
+    (window.TMS_DATA.servers || []).forEach(function (s) {
+      if (map && Object.prototype.hasOwnProperty.call(map, s.id)) s.latency = map[s.id];
+    });
+    if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
+    if (window.__deskRender) window.__deskRender();
+  };
+  /** Bund: Gerät vorne laut App (gilt, wenn kein Terminal vorne einem Gerät gehört). */
+  window.TMSBridge.setActiveDevice = function (id) {
+    window.__bundActiveDev = id || null;
+    if (window.__deskRender) window.__deskRender();
+  };
+  /** Update-Stand von der App: none | available | downloading | ready | error. */
+  window.TMSBridge.setUpdateState = function (st) {
+    st = st || {};
+    window.TMS_DATA.update = { current: st.current || '', latest: st.latest || st.current || '', notes: st.notes || '' };
+    var wasNone = !window.__bundUpdateStateSeen || window.__bundUpdateStateSeen === 'none';
+    window.__bundUpdateStateSeen = st.status;
+    if (window.__bundUpdateState) window.__bundUpdateState(st);
+    // Bund-Seite nur neu bauen, wenn die Karte erscheint/verschwindet (nicht bei jedem Fortschritt)
+    if ((wasNone !== (st.status === 'none')) && typeof window.renderServers === 'function') window.renderServers();
   };
   window.TMSBridge.setUpdate = function (update) {
     window.TMS_DATA.update = update;
     if (typeof window.renderServers === 'function') window.renderServers();
+    if (typeof window.renderSettings === 'function' &&
+        window.TMS_DATA.servers && window.TMS_DATA.servers.length) window.renderSettings();
   };
   /** React Native owns Auto-Approve; make the card's toggle agree with it. */
   window.TMSBridge.setAutoApprove = function (cardId, on) {
@@ -2305,6 +3158,203 @@
     if (isOn !== !!on && typeof window.toggleCardAutoApprove === 'function') {
       window.toggleCardAutoApprove(cardId);
     }
+  };
+  // React Native reicht nur die Zugangsdaten durch — Bilddaten sieht es nie.
+  //
+  // C2: `show('remote')` und `TMSRemote.start()` laufen synchron direkt beim
+  // Antippen des Fernzugriffs-Knopfs (siehe den Mockup-Aufruf), aber die
+  // Zugangsdaten kommen erst ueber den Umweg durch React Native zurueck —
+  // bei einem fremden Server zusaetzlich nach einem asynchronen
+  // Speicher-Zugriff dort. connect() bricht darum beim ersten Druck immer
+  // mit "Kein Server verbunden." ab, `ws` bleibt null, und ohne ein `onclose`
+  // gibt es keinen Ausloeser fuer einen neuen Versuch — erst ein zweiter
+  // Tastendruck (der TMSRemote.start() erneut aufruft) verbindet. Der Haken
+  // unten holt das nach, sobald die Zugangsdaten tatsaechlich da sind.
+  var remoteTarget = null;
+  // Das Gerät, dessen Zugangsdaten gerade erwartet werden. Die Antworten von
+  // React Native kommen asynchron (fremdes Gerät: erst nach einem Speicher-
+  // Zugriff) — beim schnellen Wechsel MAC → WIN konnte die späte MAC-Antwort
+  // nach der WIN-Antwort eintreffen, und der nächste Neuversuch verband dann
+  // wieder mit dem Mac, während die Insel WIN zeigte.
+  var remoteWantId = null;
+  // ── Fernzugriffe laufen, bis der Nutzer sie schliesst ────────────────────
+  // Bildschirmwechsel, Hintergrund, Netzabbruch, Geraetewechsel: die Sitzung
+  // auf dem Rechner bleibt (Bildschirm aus, Ton am Handy …) — der Server haelt
+  // sie, bis jemand "Schliessen" sagt. Welche Geraete gerade eine haben, merkt
+  // sich das Handy hier (gruener Punkt in der Insel), ueber App-Neustarts hinweg.
+  var remoteAlive = (function () {
+    try { return JSON.parse(localStorage.getItem('tms-remote-alive') || '{}') || {}; } catch (e) { return {}; }
+  })();
+  var remoteClosing = {};
+  function setRemoteAlive(id, on) {
+    if (!id || !!remoteAlive[id] === !!on) return;
+    if (on) remoteAlive[id] = true; else delete remoteAlive[id];
+    try { localStorage.setItem('tms-remote-alive', JSON.stringify(remoteAlive)); } catch (e) {}
+    renderRemoteAlive();
+  }
+  function renderRemoteAlive() {
+    if (document.body) document.body.classList.toggle('remote-alive', Object.keys(remoteAlive).length > 0);
+    if (typeof window.__renderRemoteAlive === 'function') window.__renderRemoteAlive();
+  }
+  window.__remoteAliveIds = function () { return Object.keys(remoteAlive); };
+  window.__setRemoteAlive = setRemoteAlive;
+  /** Sitzung eines Geraets schliessen, zu dem gerade keine Bildverbindung
+   *  steht: kurz verbinden, remote:stop, fertig (der Server beendet dann die
+   *  ruhende Sitzung). Unerreichbar = der Punkt bleibt, spaeter erneut. */
+  function devName(id) {
+    var d = (window.TMS_DATA.servers || []).filter(function (x) { return x.id === id; })[0];
+    return d ? d.name : 'dem Gerät';
+  }
+  /** Erst wenn der Rechner remote:stopped schickt, gilt die Sitzung als
+   *  beendet. Vorher hiess es nach 0,8 s blind „beendet“ — auch wenn der
+   *  Rechner das Stopp gar nicht umgesetzt hatte. */
+  var CLOSE_CONFIRM_MS = function () { return window.__tmsCloseConfirmMs || 6000; };
+  function closeRemoteVia(t) {
+    var s, finished = false, timer = 0;
+    var toast = function (m) { if (typeof window.toast === 'function') window.toast(m); };
+    var finish = function (ok) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      try { s && s.close(); } catch (e) {}
+      if (ok) { setRemoteAlive(t.id, false); toast('Fernzugriff auf ' + devName(t.id) + ' beendet'); }
+      else { setRemoteAlive(t.id, true); toast(devName(t.id) + ' nicht erreichbar — der Fernzugriff läuft dort evtl. weiter. Bitte später erneut beenden.'); }
+    };
+    try { s = new WebSocket('ws://' + t.host + ':' + t.port + '/remote?token=' + encodeURIComponent(t.token)); }
+    catch (e) { finish(false); return; }
+    timer = setTimeout(function () { finish(false); }, CLOSE_CONFIRM_MS());
+    s.onopen = function () { try { s.send(JSON.stringify({ type: 'remote:stop' })); } catch (e) { finish(false); } };
+    s.onmessage = function (e) { if (typeof e.data === 'string' && e.data.indexOf('remote:stopped') >= 0) finish(true); };
+    s.onerror = function () { finish(false); };
+    s.onclose = function () { finish(false); }; // zu, bevor der Rechner bestätigt hat
+  }
+  window.__closeRemoteDevice = function (id) {
+    if (!id) return;
+    remoteClosing[id] = true;
+    post('remote:open', { id: id, closing: true });
+  };
+  setTimeout(renderRemoteAlive, 0);
+
+  window.TMSBridge.setRemoteTarget = function (t) {
+    if (t && t.id && remoteClosing[t.id]) { delete remoteClosing[t.id]; closeRemoteVia(t); return; }
+    if (t && t.id && remoteWantId && t.id !== remoteWantId) return;
+    remoteTarget = t;
+    if (typeof window.__tmsRemoteTargetReady === 'function') window.__tmsRemoteTargetReady();
+  };
+
+  // ── Dateien Handy ⇄ Rechner ─────────────────────────────────────────────
+  // Senden: die Seite laedt die gewaehlten Dateien selbst hoch (XHR, mit
+  // Fortschritt) — POST /files/upload, rohe Datei als Rumpf. Ohne
+  // Content-Type und mit ?token=, damit keine CORS-Vorabfrage noetig ist.
+  // Nacheinander, damit ein grosses Video nicht alle anderen ausbremst.
+  // Chromium sperrt Anfragen der App-Seite (https://tms.local) ins lokale
+  // Netz — Tailscale 100.x zaehlt dazu. <img>/<video>/<iframe>/XHR an den
+  // Rechner scheitern deshalb in der App; nativ (React Native) geht alles.
+  // Darum laufen Upload und Vorschau-Inhalte ueber die App.
+  var netReqs = {}, netSeq = 0;
+  function viaApp(type, payload, cb) {
+    var id = 'n' + (++netSeq) + '-' + Date.now().toString(36);
+    netReqs[id] = cb;
+    payload.reqId = id;
+    post(type, payload);
+    return id;
+  }
+  /** Antwort der App auf viaApp (mehrfach moeglich, z. B. Fortschritt). */
+  window.TMSBridge.netReply = function (id, data) {
+    var cb = netReqs[id];
+    if (!cb) return;
+    if (!data || !data.progress) delete netReqs[id];
+    cb(data || {});
+  };
+  var UP_CHUNK = 3 * 1024 * 1024; // roh; als Base64 ≈ 4 MB pro Nachricht
+  function readChunkB64(blob, cb) {
+    var r = new FileReader();
+    r.onload = function () { var s = String(r.result || ''); cb(null, s.slice(s.indexOf(',') + 1)); };
+    r.onerror = function () { cb('Datei nicht lesbar'); };
+    r.readAsDataURL(blob);
+  }
+  function uploadFiles(base, token, files, dir, reveal, onProgress, onDone) {
+    if (window.ReactNativeWebView) return uploadFilesViaApp(base, token, files, dir, reveal, onProgress, onDone);
+    return uploadFilesXhr(base, token, files, dir, reveal, onProgress, onDone);
+  }
+  function uploadFilesViaApp(base, token, files, dir, reveal, onProgress, onDone) {
+    var list = Array.prototype.slice.call(files || []);
+    var total = list.reduce(function (n, f) { return n + (f.size || 0); }, 0) || 1;
+    var sent = 0, saved = [], i = 0;
+    function nextFile() {
+      if (i >= list.length) { onDone(null, saved); return; }
+      var f = list[i++], last = i === list.length;
+      var up = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+      var parts = Math.max(1, Math.ceil((f.size || 0) / UP_CHUNK)), part = 0;
+      function nextPart() {
+        var start = part * UP_CHUNK, blob = f.slice(start, Math.min(f.size, start + UP_CHUNK));
+        readChunkB64(blob, function (err, b64) {
+          if (err) { onDone(err, saved); return; }
+          viaApp('files:uploadPart', {
+            base: base, token: token, dir: dir, name: f.name || 'datei', up: up, part: part,
+            final: part === parts - 1, reveal: !!(reveal && last), b64: b64,
+          }, function (res) {
+            if (res.error) { onDone(res.status === 404 ? 'Server zu alt — am Rechner „tms-terminal update“ ausführen' : res.error, saved); return; }
+            sent += blob.size;
+            if (onProgress) onProgress(Math.min(1, sent / total), f.name);
+            part++;
+            if (part < parts) nextPart();
+            else { saved.push(res.result || { name: f.name }); nextFile(); }
+          });
+        });
+      }
+      nextPart();
+    }
+    nextFile();
+  }
+  /** Vorschau-Inhalt ueber die App: Bild als data:-URL, Video/PDF im Android-Betrachter. */
+  window.fsLoadPreview = function (path, kind, cb) {
+    if (!window.ReactNativeWebView) { var u = window.fsFileUrl(path); setTimeout(function () { cb({ src: u }); }, 0); return; }
+    viaApp('files:fetchPreview', { path: path, kind: kind }, cb);
+  };
+  function uploadFilesXhr(base, token, files, dir, reveal, onProgress, onDone) {
+    var list = Array.prototype.slice.call(files || []);
+    var total = list.reduce(function (n, f) { return n + (f.size || 0); }, 0) || 1;
+    var sent = 0, saved = [], i = 0;
+    function next() {
+      if (i >= list.length) { onDone(null, saved); return; }
+      var f = list[i++];
+      var url = base + '/files/upload?dir=' + encodeURIComponent(dir) + '&name=' + encodeURIComponent(f.name || 'datei')
+        + (reveal && i === list.length ? '&reveal=1' : '') + '&token=' + encodeURIComponent(token);
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.upload.onprogress = function (e) { if (onProgress) onProgress(Math.min(1, (sent + (e.loaded || 0)) / total), f.name); };
+      xhr.onload = function () {
+        var d = {};
+        try { d = JSON.parse(xhr.responseText || '{}'); } catch (e) {}
+        if (xhr.status === 404) { onDone('Server zu alt — am Rechner „tms-terminal update“ ausführen', saved); return; }
+        if (xhr.status !== 200) { onDone(d.error || ('HTTP ' + xhr.status), saved); return; }
+        sent += f.size || 0;
+        saved.push(d);
+        next();
+      };
+      xhr.onerror = function () { onDone('Verbindung abgebrochen', saved); };
+      // Leerer Typ: sonst setzt der Browser den MIME-Typ als Content-Type (→ Vorabfrage).
+      xhr.send(f.slice(0, f.size, ''));
+    }
+    next();
+  }
+  /** Fernzugriff → an das gerade gezeigte Geraet (Standard: Downloads › TMS, im Finder zeigen). */
+  window.rxUpload = function (files, dir, onProgress, onDone) {
+    if (!remoteTarget || !remoteTarget.host) { onDone('Kein Gerät verbunden', []); return; }
+    uploadFiles('http://' + remoteTarget.host + ':' + remoteTarget.port, remoteTarget.token, files, dir || '~/Downloads/TMS', true, onProgress, onDone);
+  };
+  /** Explorer → in den gerade offenen Ordner. */
+  window.fsUpload = function (files, dir, onProgress, onDone) {
+    if (!fsBase) { onDone('Kein Gerät verbunden', []); return; }
+    uploadFiles(fsBase, fsToken, files, dir, false, onProgress, onDone);
+  };
+  // Holen: Explorer auf DEM Geraet an DIESEM Ordner — RN stellt das Geraet um
+  // und listet, die Seite zeigt den Explorer schon mal (ohne beim alten Geraet zu listen).
+  window.rxOpenFilesOn = function (id, path) {
+    if (typeof window.__bundOpenFilesOn === 'function') window.__bundOpenFilesOn(id, path || '~');
+    else if (typeof window.fsShowAt === 'function') window.fsShowAt(path || '~', true);
+    post('files:openOn', { id: id, path: path || '~' });
   };
 
   document.addEventListener('pointerdown', function (e) {
@@ -2338,6 +3388,7 @@
   window.TMSBridge.sessionExpired = function (sessionId) {
     var cardId = cardOf(sessionId);
     if (!cardId) return;
+    dockReset(cardId);
     delete byCard[cardId];
     bound[cardId] = 'pending';
     var t = terms[cardId];
@@ -2345,7 +3396,7 @@
     if (typeof window.toast === 'function') window.toast('Session abgelaufen — starte neu');
     var d = dims(cardId);
     var sessName = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
-    post('terminal:create', { cardId: cardId, cols: d.cols, rows: d.rows, name: sessName ? sessName.name : undefined });
+    post('terminal:create', { cardId: cardId, cols: d.cols, rows: d.rows, name: sessName ? sessName.name : undefined, serverId: (sessName && sessName.server) || undefined });
   };
   /**
    * Nach einem Verbindungsabriss hängt der Server die Sessions ab und puffert
@@ -2360,13 +3411,14 @@
       if (!sid) return;
       var d = dims(cardId);
       lastDims[sid] = d.cols + 'x' + d.rows;
-      post('terminal:attach', { cardId: cardId, sessionId: sid, cols: d.cols, rows: d.rows });
+      post('terminal:attach', { cardId: cardId, sessionId: sid, cols: d.cols, rows: d.rows, fresh: isFresh(cardId) });
     });
   };
   /** Der Server konnte für diese Karte keine PTY anlegen. Ohne das hier bliebe
    *  sie als Geisterkarte stehen: leer, nie gebunden, beim nächsten
    *  Wiederherstellen spurlos verschwunden. Weg damit — den Grund sagt der Toast. */
   window.TMSBridge.sessionCreateFailed = function (cardId) {
+    dockReset(cardId);
     delete bound[cardId];
     delete byCard[cardId];
     if (terms[cardId]) { try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {} delete terms[cardId]; }
@@ -2376,6 +3428,7 @@
   window.TMSBridge.sessionClosed = function (sessionId) {
     var cardId = cardOf(sessionId);
     if (!cardId) return;
+    dockReset(cardId);
     delete bound[cardId];
     delete byCard[cardId];
     if (terms[cardId]) { try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {} delete terms[cardId]; }
@@ -2387,6 +3440,9 @@
    *  zu schließen (die laufen auf dem Server weiter). Danach bestückt
    *  restoreSessions die Seite mit den Terminals des neuen Servers. */
   window.TMSBridge.clearAllTerminals = function () {
+    dockDrafts = Object.create(null);
+    dockLastTarget = null;
+    dockReset();
     Object.keys(terms).forEach(function (cardId) {
       try { terms[cardId].term.dispose(); terms[cardId].box.remove(); } catch (e) {}
       delete terms[cardId];
@@ -2418,6 +3474,7 @@
       var prev = item.querySelector('.rail-item__preview');
       if (prev && window.__tmsPreview) prev.innerHTML = window.__tmsPreview(item.getAttribute('data-id'), 2);
     });
+    if (window.__deskRender) window.__deskRender(); // Bund-Seitenleiste: LÄUFT/FRAGE/…
   };
 
   // ── Multiple-Choice-Rückfragen: die Antwort erreicht die PTY wirklich ─────
@@ -2496,6 +3553,1431 @@
         window.TMSBridge.openBrowser(item.url);
       });
     });
+  };
+
+  // ══ Fernzugriff ═══════════════════════════════════════════════════════
+  // Eigene WebSocket-Verbindung, direkt aus der Seite heraus. Der Umweg ueber
+  // React Native scheidet aus: dessen Bruecke kann nur Text, Video muesste also
+  // base64-kodiert werden — ein Drittel mehr Daten, 30-mal pro Sekunde.
+  (function () {
+    var ws = null;
+    var decoder = null;
+    var canvas = null;
+    var ctx = null;
+    var retry = 0;
+    var retryTimer = null;
+    var wantRunning = false;
+    // Ton vom Rechner soll auch bei ausgeschaltetem Bildschirm weiterlaufen:
+    // nur DANN hält die App das Handy wach (ConnectionService.setKeepAwake) —
+    // früher hielt sie es immer wach, sobald „Hintergrund-Verbindung" an war.
+    var soundAwake = false;
+    function reportSound() {
+      var on = !!wantRunning && !!(remoteOpts && remoteOpts.audio);
+      if (on === soundAwake) return;
+      soundAwake = on;
+      post('remote:sound', { on: on });
+    }
+    // N1 (Nachpruefung): waehrend einer Hintergrund-Unterbrechung (suspend())
+    // muss der normale Wiederverbindungs-Weg in onclose() stillliegen — sonst
+    // sieht der ohnehin noch anhaengende onclose nach dem Schliessen
+    // `wantRunning === true` (das bleibt bei suspend() bewusst unangetastet,
+    // siehe TMSRemote.suspend() weiter unten) und plant selbst einen
+    // Wiederverbindungs-Zeitgeber. Kommt die App dann zurueck, ruft resume()
+    // sofort connect() UND der nachlaufende Zeitgeber ruft kurz danach ein
+    // zweites — zwei offene Verbindungen, zwei Sitzungen auf dem PC, von
+    // denen stop() nur noch die aktuelle erreicht.
+    var suspended = false;
+    var preset = 'auto';
+    /** Qualitaet je Geraet — eine ruhende Sitzung wird nur mit denselben
+     *  Wuenschen uebernommen (sonst startet der Rechner neu). */
+    var presetByDev = {};
+    function curDev() { return (remoteTarget && remoteTarget.id) || remoteWantId || null; }
+    // Ueberlebt den Neuaufbau der Buehne (siehe buildRemoteScreen-Einklinkung
+    // weiter unten) — sonst zeigt die frische Leiste kurz "Verbinde …", obwohl
+    // die Verbindung laengst steht oder gerade an einem echten Fehler haengt.
+    var lastVeil = '';
+    var lastStat = '';
+
+    var PRESETS = {
+      sparsam: { maxWidth: 1280, fps: 24, bitrateKbps: 800 },
+      auto:    { maxWidth: 1600, fps: 30, bitrateKbps: 1500 },
+      scharf:  { maxWidth: 1920, fps: 30, bitrateKbps: 3000 },
+      dex:     { maxWidth: 2048, maxHeight: 1536, fps: 60, bitrateKbps: 6000, dpi: 220, mode: 'dex' },
+    };
+
+    /**
+     * Berechnet aus der echten iPad-Fenstergroesse eine durch 16 teilbare
+     * DeX-Aufloesung im exakten Seitenverhaeltnis des Bildschirms (z. B. 4:3 ->
+     * 2048x1536 statt 1920x1080), damit Samsung DeX auf dem iPad ohne schwarze
+     * Balken im Vollbild laeuft.
+     */
+    function computeDeXViewportSpec(vw, vh, dpr) {
+      var wCss = Math.max(Number(vw) || 1024, Number(vh) || 768);
+      var hCss = Math.min(Number(vw) || 1024, Number(vh) || 768);
+      var aspect = wCss / Math.max(1, hCss);
+      var targetW = 2048;
+      var targetH = Math.round((targetW / aspect) / 16) * 16;
+      targetH = Math.max(1024, Math.min(1600, targetH));
+      var dpi = Math.round(Math.max(180, Math.min(264, 110 * (Number(dpr) || 2))));
+      return {
+        maxWidth: targetW,
+        maxHeight: targetH,
+        dpi: dpi,
+        fps: 60,
+        bitrateKbps: 6000,
+        mode: 'dex',
+        localCursor: true,
+        audio: true,
+        audioCodec: 'pcm',
+      };
+    }
+    window.computeDeXViewportSpec = computeDeXViewportSpec;
+
+    /** Die App zeichnet den Zeiger selbst (siehe "Lokaler Zeiger" unten) —
+     *  der Server laesst ihn dafuer aus dem Video weg, wo er das kann. */
+    function startPayload() {
+      if (preset === 'dex' || (remoteTarget && remoteTarget.mode === 'dex')) {
+        var split = (window.remoteState && window.remoteState.dexSplitHeight) || 0;
+        // Full monitor: the screen's real shape (iPad 4:3), not the momentary viewport — the
+        // session starts before the status bar / safe-area padding are gone, which gave 2048x1472
+        // and black side bars.
+        if (!split && window.screen && window.screen.width && window.screen.height) {
+          return computeDeXViewportSpec(window.screen.width, window.screen.height, window.devicePixelRatio || 2);
+        }
+        var availH = (window.innerHeight || 768) - split;
+        return computeDeXViewportSpec(window.innerWidth || 1024, Math.max(320, availH), window.devicePixelRatio || 2);
+      }
+      var p = { localCursor: true, audio: !!remoteOpts.audio, curtain: !!remoteOpts.curtain };
+      var chosen = PRESETS[preset] || PRESETS.auto;
+      for (var k in chosen) p[k] = chosen[k];
+      return p;
+    }
+
+    // ── Ton aufs Handy / Bildschirm verdunkeln ─────────────────────────────
+    // Zwei Schalter im Fernzugriff-Menue, pro Handy gemerkt, fuer jedes Geraet
+    // gleich. Sie wirken beim Sitzungsstart — Umschalten startet die Sitzung
+    // neu (wie die Qualitaetsstufe).
+    var remoteOpts = (function () {
+      try { return JSON.parse(localStorage.getItem('tms-remote-opts') || '{}') || {}; } catch (e) { return {}; }
+    })();
+    function saveRemoteOpts() {
+      try { localStorage.setItem('tms-remote-opts', JSON.stringify(remoteOpts)); } catch (e) {}
+    }
+    function renderRemoteOpts() {
+      ['audio', 'curtain'].forEach(function (k) {
+        var b = document.querySelector('.remote-opt[data-opt="' + k + '"]');
+        if (b) b.classList.toggle('on', !!remoteOpts[k]);
+      });
+    }
+
+    // Wiedergabe: Opus-Pakete (0x02) → WebCodecs-AudioDecoder → Web Audio,
+    // mit kleinem Polster gegen Netz-Zacken. Wird das Polster zu gross
+    // (Rueckstau), wird neu angesetzt statt den Ton immer spaeter zu spielen.
+    var sound = { ctx: null, dec: null, next: 0 };
+    function soundCtx() {
+      // iOS: Web Audio defaults to the 'ambient' session, which the iPad's silent mode mutes
+      // completely (packets played, nothing audible). 'playback' = media, like a video.
+      try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch (e) {}
+      if (!sound.ctx) {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        try { sound.ctx = new AC({ latencyHint: 'interactive', sampleRate: 48000 }); }
+        catch (e) { try { sound.ctx = new AC(); } catch (e2) { return null; } }
+      }
+      if (sound.ctx.state === 'suspended') { try { sound.ctx.resume(); } catch (e) {} }
+      return sound.ctx;
+    }
+    // Android gibt Ton erst nach einer Beruehrung frei — jede Beruehrung im
+    // Fernzugriff weckt den Ton-Ausgang, falls er noch schlaeft.
+    document.addEventListener('pointerdown', function () {
+      if (soundWanted() && wantRunning) soundCtx();
+    }, true);
+    // DeX cable monitor: the iPad IS the Fold's screen, so its sound belongs on the iPad too.
+    function soundWanted() { return !!remoteOpts.audio || !!(window.remoteState && window.remoteState.dexMode); }
+    // iOS only unlocks Web Audio on a completed gesture (touchend/click/keyup), not on
+    // pointerdown/touchstart — without these the context stayed 'suspended' forever.
+    ['touchend', 'pointerup', 'click', 'keyup'].forEach(function (evName) {
+      document.addEventListener(evName, function () { if (soundWanted() && wantRunning) soundCtx(); }, true);
+    });
+    var pcmStats = { packets: 0, played: 0 };
+    // DeX diagnostics: the iPad can't be inspected from the Mac, so report the sound state to
+    // the Fold server, which writes it to its log.
+    setInterval(function () {
+      if (!window.remoteState || !window.remoteState.dexMode || !ws || ws.readyState !== 1) return;
+      try {
+        ws.send(JSON.stringify({ type: 'remote:diag', payload: {
+          ctx: sound.ctx ? sound.ctx.state : 'none',
+          rate: sound.ctx ? sound.ctx.sampleRate : 0,
+          t: sound.ctx ? Math.round(sound.ctx.currentTime * 100) / 100 : 0,
+          next: Math.round((sound.next || 0) * 100) / 100,
+          pcm: pcmStats.packets, played: pcmStats.played,
+          want: soundWanted(), run: !!wantRunning,
+          AD: typeof AudioDecoder !== 'undefined',
+          session: navigator.audioSession ? navigator.audioSession.type : 'n/a',
+        } }));
+      } catch (e) {}
+    }, 30000);
+    function soundReset() {
+      if (sound.dec) { try { sound.dec.close(); } catch (e) {} }
+      sound.dec = null;
+      sound.next = 0;
+    }
+    function playSound(data) {
+      var ctx = sound.ctx;
+      if (!ctx || !soundWanted()) { data.close(); return; }
+      var n = data.numberOfFrames, ch = Math.min(2, data.numberOfChannels);
+      var buf = ctx.createBuffer(ch, n, data.sampleRate);
+      try {
+        for (var c = 0; c < ch; c++) {
+          var plane = new Float32Array(n);
+          data.copyTo(plane, { planeIndex: c, format: 'f32-planar' });
+          buf.copyToChannel(plane, c);
+        }
+      } catch (e) {
+        // Aeltere WebViews: nur das eigene Format kopierbar (verschachtelt).
+        var all = new Float32Array(n * data.numberOfChannels);
+        try { data.copyTo(all, { planeIndex: 0 }); } catch (e2) { data.close(); return; }
+        for (var c2 = 0; c2 < ch; c2++) {
+          var p2 = new Float32Array(n);
+          for (var i = 0; i < n; i++) p2[i] = all[i * data.numberOfChannels + c2];
+          buf.copyToChannel(p2, c2);
+        }
+      }
+      data.close();
+      var now = ctx.currentTime;
+      if (sound.next < now + 0.02 || sound.next > now + 0.35) sound.next = now + 0.08;
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(sound.next);
+      sound.next += buf.duration;
+    }
+    /** DeX cable monitor: raw PCM (0x03, ts, s16le stereo 48 kHz) — iOS WKWebView has no
+     *  WebCodecs AudioDecoder for Opus, so the Fold sends uncompressed audio over the cable. */
+    function onPcmPacket(view) {
+      pcmStats.packets++;
+      if (!soundWanted()) return;
+      var ctx = soundCtx();
+      if (!ctx) return;
+      pcmStats.played++;
+      var bytes = view.length - 5;
+      var frames = bytes >> 2;
+      if (frames <= 0) return;
+      var dv = new DataView(view.buffer, view.byteOffset + 5, frames * 4);
+      var buf = ctx.createBuffer(2, frames, 48000);
+      var l = buf.getChannelData(0), r = buf.getChannelData(1);
+      for (var i = 0; i < frames; i++) {
+        l[i] = dv.getInt16(i * 4, true) / 32768;
+        r[i] = dv.getInt16(i * 4 + 2, true) / 32768;
+      }
+      var now = ctx.currentTime;
+      if (sound.next < now + 0.02 || sound.next > now + 0.35) sound.next = now + 0.08;
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(sound.next);
+      sound.next += buf.duration;
+    }
+    function onSoundPacket(view) {
+      if (!soundWanted() || !soundCtx()) return;
+      if (!sound.dec || sound.dec.state === 'closed') {
+        if (typeof AudioDecoder === 'undefined') return;
+        sound.dec = new AudioDecoder({
+          output: playSound,
+          error: function () { soundReset(); },
+        });
+        sound.dec.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 });
+      }
+      var ts = (view[1] << 24 | view[2] << 16 | view[3] << 8 | view[4]) >>> 0;
+      try {
+        sound.dec.decode(new EncodedAudioChunk({ type: 'key', timestamp: ts * 1000, data: view.subarray(5) }));
+      } catch (e) { soundReset(); }
+    }
+
+    function remoteVisible() {
+      return !!document.querySelector('section[data-screen="remote"]:not([hidden])');
+    }
+    /** Was der Rechner wirklich macht, nach dem Start sagen — ein Wunsch ist
+     *  kein Versprechen. Einmal pro Geraet und Inhalt, und nur im Fernzugriff:
+     *  jede Wiederverbindung wiederholte die Meldung, auch im Terminal. */
+    var optsReported = {};
+    function reportRemoteOpts(p) {
+      if (!remoteVisible()) return;
+      var miss = [];
+      if (remoteOpts.audio && p.audio !== true) miss.push('Ton');
+      if (remoteOpts.curtain && p.curtain !== true) miss.push('Verdunkeln');
+      if (!miss.length || typeof window.toast !== 'function') return;
+      var old = p.audio === undefined && p.curtain === undefined;
+      var key = (remoteTarget ? remoteTarget.host + ':' + remoteTarget.port : '?') + '|' + miss.join('+') + '|' + old;
+      if (optsReported[key]) return;
+      optsReported[key] = true;
+      window.toast(miss.join(' + ') + (old
+        ? ': Server auf dem Gerät zu alt — dort einmal tms-terminal update'
+        : ' auf diesem Gerät nicht verfügbar'));
+    }
+
+    function veil(text) {
+      lastVeil = text || '';
+      var v = document.getElementById('remoteVeil');
+      var t = document.getElementById('remoteVeilText');
+      if (!v || !t) return;
+      if (text) { t.textContent = text; v.dataset.show = '1'; }
+      else { v.dataset.show = '0'; }
+    }
+
+    function stat(text) {
+      lastStat = text || '';
+      var el = document.getElementById('remoteStat');
+      if (el) el.textContent = text;
+    }
+
+    // ── Bild, Zoom und Gesten gehoeren dem Mockup (Fernzugriff v2) ─────────
+    // Das Bild IST das Trackpad: Lage/Groesse/Zoom rechnet rxLayout() im
+    // Mockup, die Gesten auf der Flaeche ebenso. Hier bleiben nur Video,
+    // Ton, Verbindung und das Zeiger-Modell (Vorhersage + Abgleich mit dem Mac).
+    function applyView() { renderCursor(); }
+
+    // ── Lokaler Zeiger ──────────────────────────────────────────────────────
+    // Der Zeiger im Video lief jeder Bewegung um einen vollen Netz-Umlauf
+    // hinterher (ueber das Tailscale-Relais 100-500 ms). Jetzt laesst der Mac
+    // ihn aus dem Video weg (localCursor), und die App zeichnet ihn selbst:
+    // Trackpad-Bewegungen verschieben ihn SOFORT um genau das Stueck, das sie
+    // auch auf dem Mac bewegen (dx/dy sind Mac-Punkte, siehe input.darwin.ts).
+    // Die echte Position kommt als remote:cursor und korrigiert nur, solange
+    // gerade niemand bewegt — sonst risse die verspaetete Meldung den Zeiger
+    // mitten in der Bewegung zurueck.
+    // srv = letzte echte Position vom Mac. Der Mac meldet nur, wenn sich der
+    // Zeiger BEWEGT — waehrend eigener Bewegung verworfene Meldungen kamen also
+    // nie wieder, und eine einmal entstandene Abweichung (Eingaben, die beim
+    // Neuverbinden unterwegs verloren gingen; die echte Maus am Mac) blieb fuer
+    // immer: Zeiger sichtbar an einer Stelle, Klick landet an einer anderen.
+    // Darum wird die zuletzt gemeldete Position nach jeder Bewegung, sobald
+    // Ruhe ist, nachgezogen (settleCursor).
+    var cursor = { x: 0.5, y: 0.5, known: false, lastLocalAt: 0, srv: null, settleTimer: null };
+    var linkRttMs = 0;
+    // display:block ist Pflicht: ein Inline-SVG sitzt auf der Grundlinie einer
+    // Textzeile und rutschte so ~7 px UNTER den eigentlichen Punkt (gemessen) —
+    // der Pfeil zeigte tiefer, als der Mac klickte.
+    var CURSOR_SVG = '<svg viewBox="0 0 12 18" width="100%" height="100%" style="display:block" aria-hidden="true">'
+      + '<path d="M0.5 0.5 L0.5 14.5 L4 11.2 L6.4 16.8 L8.6 15.9 L6.3 10.5 L11 10.5 Z" '
+      + 'fill="#fff" stroke="#000" stroke-width="1" stroke-linejoin="round"/></svg>';
+
+    /** Zeichnen macht das Mockup (#rxCursor, folgt Zoom und Ausschnitt). */
+    function renderCursor() {
+      if (typeof window.rxCursorChanged === 'function') window.rxCursorChanged();
+    }
+    /** Fuer das Mockup: wo der Mac-Zeiger gerade steht (0..1), null = unbekannt/im Video. */
+    function cursorPos() {
+      var st = window.remoteState;
+      return st.localCursor && st.running && cursor.known && st.w ? { x: cursor.x, y: cursor.y } : null;
+    }
+
+    /** Vorhersage: was die App gerade schickt, sieht sie sofort. */
+    function predictCursor(ev) {
+      var st = window.remoteState;
+      if (!st.localCursor || !st.w) return;
+      if (ev.t === 'd') {
+        var ptsW = Math.max(1, Math.round(st.w / (st.scale || 1)) - 1);
+        var ptsH = Math.max(1, Math.round(st.h / (st.scale || 1)) - 1);
+        cursor.x = Math.min(1, Math.max(0, cursor.x + ev.dx / ptsW));
+        cursor.y = Math.min(1, Math.max(0, cursor.y + ev.dy / ptsH));
+      } else if (ev.t === 'm') {
+        cursor.x = ev.x; cursor.y = ev.y;
+      } else return;
+      cursor.known = true;
+      cursor.lastLocalAt = Date.now();
+      renderCursor();
+      armSettle();
+    }
+
+    function quietMs() { return Math.max(85, Math.min(220, (linkRttMs || 25) * 1.5 + 40)); }
+
+    /** Nach der letzten eigenen Bewegung (plus Hin- und Rueckweg) die echte Position uebernehmen. */
+    function armSettle() {
+      if (cursor.settleTimer) clearTimeout(cursor.settleTimer);
+      cursor.settleTimer = setTimeout(settleCursor, quietMs() + 15);
+    }
+
+    function settleCursor() {
+      cursor.settleTimer = null;
+      var wait = quietMs() - (Date.now() - cursor.lastLocalAt);
+      if (wait > 0) { cursor.settleTimer = setTimeout(settleCursor, wait + 15); return; }
+      if (!cursor.srv) return;
+      cursor.x = cursor.srv.x; cursor.y = cursor.srv.y; cursor.known = true;
+      renderCursor();
+    }
+
+    /** Echte Position vom Mac — gilt sofort, solange die eigene Bewegung ruht, sonst beim Nachziehen. */
+    function serverCursor(p) {
+      if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+      cursor.srv = { x: p.x, y: p.y };
+      var quiet = Date.now() - cursor.lastLocalAt > quietMs();
+      if (cursor.known && !quiet) {
+        // Sanfte Drift-Korrektur waehrend der Bewegung, falls Vorhersage und
+        // echte Mac-Position z.B. am Bildschirmrand minimal auseinanderlaufen.
+        var errX = p.x - cursor.x, errY = p.y - cursor.y;
+        if (Math.hypot(errX, errY) < 0.035) {
+          cursor.x += errX * 0.25;
+          cursor.y += errY * 0.25;
+          renderCursor();
+        }
+        if (!cursor.settleTimer) armSettle();
+        return;
+      }
+      cursor.x = p.x; cursor.y = p.y; cursor.known = true;
+      renderCursor();
+    }
+
+    /** Lage und Groesse des Bildes rechnet das Mockup (rxLayout): Fuellen/Ganz,
+     *  Ausschnitt folgt dem Zeiger, bei offener Tastatur wird es nie kleiner. */
+    function layoutStage() {
+      if (typeof window.rxLayout === 'function') window.rxLayout();
+    }
+
+    // ── Lebenszyklus der Buehne ─────────────────────────────────────────────
+    // SCREEN_HOOKS.remote ruft buildRemoteScreen() bei JEDEM Wechsel auf den
+    // Fernzugriffs-Bildschirm auf — nicht nur beim ersten Mal — und wirft dabei
+    // Canvas, Overlay und Leiste komplett weg und baut sie neu (die Leiste
+    // faellt dabei auch auf "Trackpad" zurueck). Das ist im Mockup so angelegt
+    // und bleibt unangetastet. WebSocket und Dekoder wissen davon nichts und
+    // laufen einfach weiter — nur unsere `canvas`/`ctx`-Referenzen wuerden sonst
+    // auf ein verwaistes, unsichtbares Element zeigen: das Bild faellt beim
+    // naechsten Bildschirmwechsel scheinbar aus, obwohl weiter Daten ankommen
+    // und man es im Code nirgends sieht. Deshalb klinken wir uns hier ein:
+    // nach jedem Neuaufbau (egal ob durch Navigation der App oder durch unser
+    // eigenes start()) holen wir Canvas/Context frisch und spielen den letzten
+    // Verbindungsstatus zurueck. Der Dekoder selbst wird dabei nicht angefasst
+    // — er wird einfach weiterbedient, sein Zustand (SPS/PPS, letztes
+    // Vollbild) bleibt gueltig, nur das Ziel seiner naechsten drawImage()-
+    // Aufrufe aendert sich.
+    // ── Entsperren per Fingerabdruck gibt es nur am Mac ─────────────────────
+    // Der Sperrhinweis blieb vom Mac stehen: der Mac meldete "gesperrt", nach
+    // dem Wechsel zu WIN setzte nichts das zurück (Windows meldet keinen
+    // Sperrzustand). Und der Touch-ID-Knopf stand bei jedem Gerät da. Jetzt:
+    // Zustand pro Verbindung, und der Server sagt im remote:started, ob das
+    // Gerät entsperrt werden kann (aeltere Server: am Geraetenamen erkannt).
+    var unlockKnown = null;
+    (function () {
+      var st = document.createElement('style');
+      st.textContent = 'body.remote-no-unlock [data-btn="touchid"],'
+        + 'body.remote-no-unlock [data-code="__touchid"],'
+        + 'body.remote-no-unlock #remoteTouchId,'
+        + 'body.remote-no-unlock #remoteLockBanner{display:none!important}';
+      document.head.appendChild(st);
+    })();
+    function remoteUnlockable() {
+      if (unlockKnown !== null) return unlockKnown;
+      var id = window.__remoteSrv;
+      var srv = (window.TMS_DATA.servers || []).filter(function (x) { return x.id === id; })[0];
+      return !(srv && typeof window.__devShort === 'function' && window.__devShort(srv) === 'WIN');
+    }
+    function renderLockUi() {
+      var can = remoteUnlockable();
+      document.body.classList.toggle('remote-no-unlock', !can);
+      var banner = document.getElementById('remoteLockBanner');
+      if (banner) banner.hidden = !(can && window.remoteState.locked);
+    }
+    function resetLock() {
+      window.remoteState.locked = false;
+      unlockKnown = null;
+      renderLockUi();
+    }
+
+    var realBuildRemoteScreen = window.buildRemoteScreen;
+    window.buildRemoteScreen = function () {
+      if (typeof realBuildRemoteScreen === 'function') realBuildRemoteScreen();
+      // Zurueck im Fernzugriff: eine beim Verlassen pausierte Sitzung geht weiter.
+      if (wantRunning && suspended) setTimeout(function () { window.TMSRemote.resume(); }, 0);
+      canvas = document.getElementById('remoteCanvas');
+      ctx = canvas ? canvas.getContext('2d') : null;
+      layoutStage();
+      renderLockUi();
+      renderRemoteOpts();
+      if (lastVeil) veil(lastVeil);
+      if (lastStat) stat(lastStat);
+    };
+
+    function ensureDecoder() {
+      if (decoder && decoder.state !== 'closed') return true;
+      if (typeof VideoDecoder === 'undefined') {
+        // Haeufigster Grund: die Seite laeuft nicht im sicheren Kontext (dann gibt
+        // es WebCodecs gar nicht) — das sagen, statt das Geraet zu beschuldigen.
+        veil(window.isSecureContext
+          ? 'Dieses Geraet kann den Bildstrom nicht anzeigen (kein WebCodecs).'
+          : 'Bildstrom gesperrt: die App-Oberflaeche laeuft nicht im sicheren Modus — bitte App aktualisieren.');
+        return false;
+      }
+      decoder = new VideoDecoder({
+        output: function (frame) {
+          if (ctx) ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+          frame.close();
+        },
+        error: function () {
+          // Ein Dekoderfehler heilt nur mit einem frischen Vollbild.
+          try { decoder.close(); } catch (e) {}
+          decoder = null;
+          if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:keyframe' }));
+        },
+      });
+      // Ohne `description` erwartet WebCodecs Annex-B — genau das, was der Server sendet.
+      decoder.configure({ codec: 'avc1.42E01E', optimizeForLatency: true });
+      return true;
+    }
+
+    function onBinary(buf) {
+      var view = new Uint8Array(buf);
+      if (view.length >= 6 && view[0] === 0x02) { onSoundPacket(view); return; }
+      if (view.length >= 9 && view[0] === 0x03) { onPcmPacket(view); return; }
+      if (view.length < 6 || (view[0] & 0x7f) !== 0x01) return;
+      var keyframe = (view[0] & 0x80) !== 0;
+      var ts = (view[1] << 24 | view[2] << 16 | view[3] << 8 | view[4]) >>> 0;
+      // Quittung sofort beim Empfang: daraus misst der Server, wie viel sich
+      // auf der Leitung staut, und verwirft lieber Bilder, als sekundenlang
+      // hinterherzulaufen (server/src/remote/flow.ts).
+      if (ws && ws.readyState === 1) ws.send('{"type":"remote:ack","payload":{"ts":' + ts + '}}');
+      // Bild nicht zu sehen (suspend): Nachzügler von unterwegs verwerfen —
+      // sie würden nur einen neuen Dekoder für nichts aufbauen.
+      if (suspended) return;
+      if (!ensureDecoder()) return;
+      // Vor dem ersten Vollbild ist jedes Zwischenbild sinnlos — der Dekoder
+      // haette keinen Ausgangspunkt und zeichnete graue Kloetze.
+      if (decoder.state !== 'configured') return;
+      // Kommt der Dekoder nicht hinterher, lieber aufs naechste Vollbild
+      // springen als mit wachsendem Rueckstand weiterzuzeichnen. Ein
+      // verworfenes Zwischenbild entwertet alle folgenden — also bis zum
+      // Vollbild nichts mehr dekodieren und eines anfordern.
+      // Windows (ffmpeg) kann kein Vollbild auf Anfrage schneiden — dort
+      // hiesse Verwerfen bis zu 2 s Standbild. Ein paar Bilder Rueckstand,
+      // wie sie ein Relais in Buendeln abliefert, holt der Dekoder in
+      // Sekundenbruchteilen auf; erst ein echter Rueckstau wird verworfen.
+      var lagLimit = window.remoteState.keyframeOnDemand === false ? 8 : 2;
+      if (!keyframe && decoder.decodeQueueSize > lagLimit) decoder.__gotKey = false;
+      if (!keyframe && !decoder.__gotKey) {
+        // Hoechstens alle 500 ms nachfragen — geht eine Anforderung verloren
+        // oder kommt das Vollbild spaet, fragt das naechste Zwischenbild erneut.
+        var now = Date.now();
+        if (ws && ws.readyState === 1 && now - (decoder.__keyAskedAt || 0) > 500) {
+          decoder.__keyAskedAt = now;
+          ws.send(JSON.stringify({ type: 'remote:keyframe' }));
+        }
+        return;
+      }
+      if (keyframe) decoder.__gotKey = true;
+      decoder.decode(new EncodedVideoChunk({
+        type: keyframe ? 'key' : 'delta',
+        timestamp: ts * 1000,
+        data: view.subarray(5),
+      }));
+    }
+
+    function onControl(msg) {
+      switch (msg.type) {
+        case 'remote:started':
+          // Neue Masse heissen neuer Bildaufbau — der alte Dekoder rechnet noch
+          // mit der alten Groesse und wuerde verzerrte Bilder liefern. Trifft
+          // sowohl den Helfer-Neustart nach einem Absturz als auch einen
+          // echten Aufloesungswechsel (Monitor an-/abgesteckt, Umstellung) —
+          // beide schicken ein frisches remote:started mit neuen Massen.
+          if (decoder && (window.remoteState.w !== msg.payload.width
+                       || window.remoteState.h !== msg.payload.height)) {
+            try { decoder.close(); } catch (e) {}
+            decoder = null;
+          }
+          window.remoteState.running = true;
+          setRemoteAlive(curDev(), true);
+          window.remoteState.localCursor = !!msg.payload.localCursor;
+          window.remoteState.keyframeOnDemand = msg.payload.keyframeOnDemand !== false;
+          if (typeof msg.payload.unlock === 'boolean') unlockKnown = msg.payload.unlock;
+          renderLockUi();
+          reportRemoteOpts(msg.payload);
+          window.remoteState.w = msg.payload.width;
+          window.remoteState.h = msg.payload.height;
+          window.remoteState.scale = msg.payload.scale;
+          retry = 0;
+          // Sperrbildschirm/Hintergrund/Netzabbruch reissen die Verbindung
+          // ohne dass jemand die Tastatur verlaesst — der Weg zum Mac war beim
+          // Verbindungsabbruch (onclose) schon tot, darum konnte eine dort
+          // noch festgestellte Sondertaste damals nicht geloest werden. Hier,
+          // sobald running wieder true ist (also TMSRemote.input() wirklich
+          // sendet), holt das dieselbe Funktion nach. remoteSticky blieb seit
+          // dem Abbruch unveraendert (bewusst nicht am onclose zurueckgesetzt
+          // — dort waere jeder Sendeversuch ohnehin verpufft), darum weiss
+          // releaseAllSticky() hier noch, was tatsaechlich offen war; der
+          // eingebaute "off"-Check macht den Aufruf beim ganz normalen ersten
+          // Verbinden (nichts war je gedrueckt) zum No-op.
+          if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+          // Dieselbe Ueberlegung gilt fuer die harte Tastatur/Maus im Vollbild:
+          // riss die Verbindung genau waehrend ein Hardware-Anschlag/-Klick
+          // unten war, kam dessen Loslassen nie an. releaseHardwareInput()
+          // weiss noch, was zuletzt gehalten wurde, und holt es hier nach.
+          if (typeof window.releaseHardwareInput === 'function') window.releaseHardwareInput();
+          veil('');
+          layoutStage();
+          break;
+        case 'remote:status':
+          // I16: Spezifikation Abschnitt 7 verlangt "fps · ms" (Verzoegerung)
+          // in der Kopfzeile, nicht die Bitrate — und der Server misst
+          // rttMs jetzt wirklich (Ping/Pong auf der Steuerverbindung),
+          // statt ihn fest auf 0 zu senden.
+          // Verworfene Bilder sichtbar machen: daran sieht man am Geraet, ob
+          // ein Standbild von der Leitung kam.
+          stat(msg.payload.fps + ' fps · ' + msg.payload.rttMs + ' ms'
+            + (msg.payload.dropped > 0 ? ' · ' + msg.payload.dropped + ' verworfen' : ''));
+          linkRttMs = msg.payload.rttMs || 0;
+          break;
+        case 'remote:cursor':
+          serverCursor(msg.payload);
+          break;
+        case 'remote:locked':
+          window.remoteState.locked = !!(msg.payload && msg.payload.locked);
+          renderLockUi();
+          break;
+        case 'remote:stopped':
+          window.remoteState.running = false;
+          setRemoteAlive(curDev(), false);
+          renderCursor();
+          veil('Beendet');
+          break;
+        case 'remote:error':
+          window.remoteState.running = false;
+          setRemoteAlive(curDev(), false);
+          veil(remoteErrorText(msg.payload));
+          break;
+      }
+    }
+
+    function connect() {
+      if (!remoteTarget) { veil('Kein Server verbunden.'); return; }
+      canvas = document.getElementById('remoteCanvas');
+      ctx = canvas ? canvas.getContext('2d') : null;
+
+      var url = 'ws://' + remoteTarget.host + ':' + remoteTarget.port
+              + '/remote?token=' + encodeURIComponent(remoteTarget.token);
+      // Jede Verbindung reagiert nur, solange sie DIE aktuelle ist. Das
+      // Schließen einer alten meldet sich erst eine Netz-Runde später — beim
+      // Gerätewechsel stand dann schon die neue, und der späte onclose der
+      // alten setzte `ws = null`: die neue lief unbemerkt weiter, ein
+      // "Neuversuch" öffnete eine dritte, und zwei Bildströme (MAC und WIN)
+      // zeichneten abwechselnd in denselben Dekoder.
+      var sock = new WebSocket(url);
+      ws = sock;
+      sock.binaryType = 'arraybuffer';
+
+      sock.onopen = function () {
+        if (ws !== sock) { try { sock.close(); } catch (e) {} return; }
+        // Neue Verbindung, Zeigerposition unbekannt. NICHT erst bei
+        // remote:started zuruecksetzen: die erste Positionsmeldung des Macs
+        // kommt VOR remote:started an und waere sonst gleich wieder vergessen.
+        cursor.known = false;
+        cursor.srv = null;
+        if (cursor.settleTimer) { clearTimeout(cursor.settleTimer); cursor.settleTimer = null; }
+        // Der Mac meldet seinen Sperrzustand gleich zu Beginn neu.
+        resetLock();
+        ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
+        // Gerade nicht zu sehen (anderer Bildschirm, Hintergrund): die Sitzung
+        // laeuft, aber ohne Bildstrom.
+        if (suspended) ws.send(JSON.stringify({ type: 'remote:view', payload: { visible: false } }));
+        veil('Verbinde …');
+      };
+      sock.onmessage = function (e) {
+        if (ws !== sock) return;
+        if (typeof e.data === 'string') { try { onControl(JSON.parse(e.data)); } catch (err) {} }
+        else onBinary(e.data);
+      };
+      sock.onclose = function () {
+        if (ws !== sock) return; // eine längst abgelöste Verbindung
+        ws = null;
+        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+        window.remoteState.running = false;
+        renderCursor();
+        // N1: waehrend suspend() darf hier NIE ein Wiederverbindungs-Zeitgeber
+        // entstehen — wantRunning bleibt bei suspend() absichtlich `true`
+        // (siehe suspended-Deklaration oben), also reicht dessen Pruefung
+        // allein nicht mehr.
+        soundReset();
+        // Auch im Hintergrund/auf anderem Bildschirm wieder verbinden: die
+        // Sitzung soll laufen, bis der Nutzer sie schliesst (der Server haelt
+        // sie inzwischen, siehe remote.socket.ts park()).
+        if (!wantRunning) return;
+        // Nie aufgeben: die Verbindung faellt unterwegs staendig kurz weg.
+        retry = Math.min(retry + 1, 6);
+        veil('Verbindung verloren — neuer Versuch …');
+        retryTimer = setTimeout(connect, Math.min(500 * retry, 4000));
+      };
+      sock.onerror = function () { try { sock.close(); } catch (e) {} };
+    }
+
+    // C2: eine Sitzung wird gewuenscht (wantRunning), aber es steht noch
+    // keine Verbindung — nachziehen, sobald das moeglich ist. Das `!ws`
+    // deckt beides ab: kein doppelter Verbindungsaufbau, wenn die
+    // Zugangsdaten erneut gesetzt werden (z.B. Server-Wechsel), waehrend
+    // schon eine Verbindung steht oder gerade aufgebaut wird.
+    //
+    // Nachpruefung zu C2: ein noch anhaengender Wiederverbindungs-Zeitgeber
+    // (aus einem echten Netzabbruch, nicht aus suspend()) wird hier VOR dem
+    // eigenen connect() geraeumt — sonst feuert er kurz danach ein zweites
+    // Mal, waehrend die frische Verbindung schon steht.
+    /** Bildverbindung zu, Sitzung bleibt: kein remote:stop — der Server laesst
+     *  sie ruhen (Geraetewechsel). Alles Gehaltene vorher loslassen. */
+    function detach() {
+      if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+      if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
+      if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+      wantRunning = false;
+      reportSound();
+      suspended = false;
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      var old = ws;
+      ws = null;
+      if (old) { try { old.close(); } catch (e) {} }
+      if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+      window.remoteState.running = false;
+      resetLock();
+      soundReset();
+    }
+
+    function maybeConnect() {
+      if (!wantRunning || ws) return;
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      connect();
+    }
+    // Von setRemoteTarget (oben in dieser Datei) aufgerufen, sobald React
+    // Native die Zugangsdaten liefert — das ist der eigentliche Fix fuer C2.
+    window.__tmsRemoteTargetReady = maybeConnect;
+
+    window.__tmsBiometricSudo = function (cardId) {
+      var sid = byCard[cardId] || (window.__tmsState && window.__tmsState.activeCardId && byCard[window.__tmsState.activeCardId]);
+      post('biometric:unlock', { mode: 'sudo', sessionId: sid || undefined });
+    };
+
+    window.TMSRemote = {
+      /** Fernzugriff auf ein bestimmtes Gerät (Insel: MAC | WIN). Erst sauber
+       *  trennen und die alten Zugangsdaten vergessen — sonst verbände start()
+       *  sofort wieder mit dem vorigen Gerät, und die neuen Daten kämen zu spät. */
+      switchTo: function (id) {
+        var cur = curDev();
+        // Dasselbe Geraet, Sitzung laeuft schon: nur wieder zeigen.
+        if (id && id === cur && wantRunning) {
+          suspended = true;
+          window.TMSRemote.resume();
+          return;
+        }
+        if (cur) presetByDev[cur] = preset;
+        // Das vorige Geraet NICHT beenden: ohne remote:stop ruht seine Sitzung
+        // auf dem Rechner weiter, bis der Nutzer sie schliesst.
+        detach();
+        remoteTarget = null;
+        // Das letzte Bild gehört dem vorigen Gerät — nicht stehen lassen, bis
+        // das neue sein erstes Vollbild schickt.
+        if (ctx && canvas) { try { ctx.clearRect(0, 0, canvas.width, canvas.height); } catch (e) {} }
+        window.__tmsOpenRemote(id);
+        window.TMSRemote.start(presetByDev[id] || 'auto');
+      },
+      /** Sitzung eines Geraets beenden (⋮-Menü „Beenden“), ohne den
+       *  Fernzugriff zu öffnen. Laeuft sie ueber die eigene (pausierte)
+       *  Verbindung: Stopp dort hinein und nicht neu verbinden. Bestaetigt wird
+       *  in jedem Fall ueber eine frische Verbindung — die alte kann halb tot
+       *  sein, und der Server beendet die Sitzung, wo immer sie gerade haengt.
+       *  Der gruene Ring geht erst mit dieser Bestaetigung weg. */
+      closeDevice: function (id) {
+        if (!id) return;
+        if (id === curDev() && (wantRunning || ws)) window.TMSRemote.stop({ keepMark: true });
+        window.__closeRemoteDevice(id);
+      },
+      start: function (which) {
+        preset = which || preset;
+        wantRunning = true;
+        reportSound();
+        suspended = false; // ein expliziter Start raeumt einen etwaigen Rest auf
+        if (typeof window.buildRemoteScreen === 'function' && !document.getElementById('remoteStage')) {
+          window.buildRemoteScreen();
+        }
+        maybeConnect();
+      },
+      stop: function (opts) {
+        // Muss VOR dem Schliessen laufen: releaseAllSticky() sendet ueber
+        // TMSRemote.input(), das nur sendet, solange ws noch offen und
+        // remoteState.running noch true ist. Nach dem close()/running=false
+        // weiter unten kommt ein Loslassen nicht mehr durch — eine
+        // festgestellte Sondertaste bliebe auf dem Mac haengen.
+        if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+        // C3/I6: Vollbild gehoert zu einer Sitzung, keine Sitzung heisst kein
+        // Vollbild — sonst bleiben die Dokument-Zuhoerer (Tastatur/Zeiger/Rad,
+        // siehe weiter unten) aktiv, waehrend laengst getrennt ist, und fangen
+        // die eigene Tastatur der App ab. setRemoteFullscreen(false) loest
+        // dabei auch alles, was eine angeschlossene Hardware-Tastatur/-Maus
+        // noch haelt (releaseHardwareInput) — derselbe Grund wie bei
+        // releaseAllSticky() oben, nur fuer den Hardware-Weg.
+        if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
+        // I6: und ein noch laufendes Trackpad-Ziehen bzw. ein gehaltener
+        // fester Links-/Rechtsklick-Knopf — der dritte Weg, auf dem eine
+        // Maustaste haengen bleiben kann, den weder releaseAllSticky()
+        // (Bildschirmtastatur) noch setRemoteFullscreen() (Hardware) abdeckt.
+        if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+        // Muss VOR ws.close() gesetzt sein (siehe onclose oben): sonst sieht
+        // der noch anhaengende onclose-Handler kurz "wantRunning === true"
+        // und plant faelschlich einen Wiederverbindungs-Zeitgeber.
+        wantRunning = false;
+        reportSound();
+        suspended = false;
+        // keepMark: closeDevice() nimmt den Ring erst mit der Bestaetigung weg.
+        if (!(opts && opts.keepMark === true)) setRemoteAlive(curDev(), false);
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:stop' }));
+        if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+        window.remoteState.running = false;
+        resetLock();
+        soundReset();
+      },
+      /**
+       * I7: der Hintergrundwechsel (SeasonTwoWebRoot.tsx, ueber AppState)
+       * ruft diese beiden statt start()/stop() direkt. Der Unterschied zu
+       * stop(): wantRunning bleibt unangetastet — es ist der Merker dafuer,
+       * ob der NUTZER eine Sitzung will, nicht ob sie gerade laeuft. Wuerde
+       * suspend() wantRunning auf false setzen, koennte resume() beim
+       * Zurueckkehren nicht mehr unterscheiden "war vorher an" von "wurde
+       * per 'Trennen' beendet" — und wuerde jede Rueckkehr in den
+       * Vordergrund eine neue Aufnahme samt Energie-Assertion auf dem PC
+       * starten, obwohl der Nutzer laengst woanders ist.
+       */
+      suspend: function () {
+        if (typeof window.releaseAllSticky === 'function') window.releaseAllSticky();
+        if (typeof window.setRemoteFullscreen === 'function') window.setRemoteFullscreen(false);
+        if (typeof window.releaseRemotePadHold === 'function') window.releaseRemotePadHold();
+        // N1 (Nachpruefung): MUSS vor ws.close() gesetzt sein — wantRunning
+        // bleibt hier absichtlich `true` (siehe Kommentar oben), also ist
+        // `suspended` der einzige Weg, den noch anhaengenden onclose-Handler
+        // davon abzuhalten, selbst einen Wiederverbindungs-Zeitgeber zu
+        // planen. Ohne das baute sich die Sitzung im Hintergrund von selbst
+        // wieder auf (neue Aufnahme + Energie-Assertion auf dem Mac), und
+        // ein spaeteres resume() haette zusammen mit diesem Zeitgeber zwei
+        // parallele Verbindungen aufgemacht.
+        //
+        // Neu: weg vom Fernzugriff / App im Hintergrund heisst nur noch "Bild
+        // aus". Die Verbindung und die Sitzung auf dem Rechner bleiben (der
+        // Nutzer will sie behalten, bis er sie selbst schliesst); der Server
+        // schickt solange keine Bilder, der Ton laeuft weiter.
+        suspended = true;
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:view', payload: { visible: false } }));
+        // Den Hardware-Dekoder freigeben, solange niemand hinsieht. Beim
+        // Zurückkommen schickt der Rechner ein Vollbild — damit entsteht er neu.
+        if (decoder) { try { decoder.close(); } catch (e) {} decoder = null; }
+      },
+      /** Setzt nur fort, was vorher lief (wantRunning) — nach einem
+       *  expliziten "Trennen" bleibt das ein No-op, siehe suspend() oben. */
+      resume: function () {
+        // Nur im Fernzugriff selbst: kommt die App aus dem Hintergrund zurueck,
+        // waehrend das Terminal offen ist, bleibt die Sitzung pausiert.
+        if (!remoteVisible()) return;
+        suspended = false;
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'remote:view', payload: { visible: true } }));
+        else maybeConnect();
+      },
+      /** Stufenwechsel = neu starten: ffmpeg auf Windows kann die Bitrate nicht im Lauf aendern. */
+      /** Ton aufs Handy / Verdunkeln umschalten — neu starten wie bei der Qualitaet. */
+      toggleOption: function (name) {
+        if (name !== 'audio' && name !== 'curtain') return;
+        remoteOpts[name] = !remoteOpts[name];
+        saveRemoteOpts();
+        reportSound();
+        renderRemoteOpts();
+        if (name === 'audio') { if (remoteOpts.audio) soundCtx(); else soundReset(); }
+        if (typeof window.toast === 'function') {
+          window.toast(name === 'audio'
+            ? (remoteOpts.audio ? 'Ton kommt aufs Handy (am Computer stumm)' : 'Ton bleibt am Computer')
+            : (remoteOpts.curtain ? 'Bildschirm am Computer wird verdunkelt' : 'Bildschirm am Computer bleibt an'));
+        }
+        if (wantRunning && ws && ws.readyState === 1) {
+          soundReset();
+          ws.send(JSON.stringify({ type: 'remote:stop' }));
+          ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
+        }
+      },
+      setQuality: function (which) {
+        preset = which;
+        if (curDev()) presetByDev[curDev()] = which;
+        if (!wantRunning) return;
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'remote:stop' }));
+          ws.send(JSON.stringify({ type: 'remote:start', payload: startPayload() }));
+        }
+      },
+      input: function (ev) {
+        if (ws && ws.readyState === 1 && window.remoteState.running) {
+          ws.send(JSON.stringify(ev));
+          predictCursor(ev);
+        }
+      },
+      dictate: function () { post('mic:start', { target: 'remote' }); },
+      // Entsperren gilt dem Gerät, das gerade im Fernzugriff zu sehen ist.
+      biometricUnlock: function () { post('biometric:unlock', { mode: 'remote', serverId: window.__remoteSrv || undefined }); },
+      cursorPos: cursorPos,
+    };
+
+    // Der Mockup ruft das beim Vollbildwechsel und nach Gesten auf, kommt aber
+    // nicht in diese Kapsel hinein — deshalb ausdruecklich nach aussen geben.
+    window.layoutRemoteStage = layoutStage;
+    window.addEventListener('resize', layoutStage);
+
+    // ── Vollbild: angeschlossene Tastatur und Maus ──────────────────────────
+    // Manuell umgeschaltet (siehe window.setRemoteFullscreen im Mockup) — hier
+    // wird nur noch weitergeleitet, solange window.remoteState.fullscreen an ist.
+
+    /** Rechteck des Bildes innerhalb der Buehne, in Bildschirmkoordinaten (inkl. Zoom/Schwenk). */
+    function stageBox() {
+      var target = canvas || document.getElementById('remoteCanvas') || document.getElementById('remoteStage');
+      if (!target || !window.remoteState.w) return null;
+      var r = target.getBoundingClientRect();
+      var box = window.fitRect(window.remoteState.w, window.remoteState.h, r.width, r.height);
+      return { x: r.left + box.x, y: r.top + box.y, w: box.w, h: box.h };
+    }
+
+    // Gehaltene Hardware-Tasten/-Maustasten: wer hier steht, hat noch KEIN
+    // Loslassen bekommen. Das ist der Fehlertyp, der in diesem Vorhaben schon
+    // mehrfach auftrat (Trackpad-Rechtsklick, Bildschirm-Sondertasten) — bei
+    // echter Hardware kommen keydown/keyup und Maustasten-Events von ausserhalb
+    // unserer Kontrolle, darum wird hier gegengebucht statt blind weitergereicht.
+    var heldKeys = {};      // KeyboardEvent.code -> true
+    var heldButtons = {};   // 'l' | 'm' | 'r' -> true
+
+    /**
+     * Loest aktiv alles, was die angeschlossene Tastatur/Maus noch haelt.
+     * Muss an DREI Stellen laufen, nicht nur einer:
+     *  - Vollbild verlassen (window.setRemoteFullscreen(false) im Mockup)
+     *  - Fensterfokus weg (blur) — z.B. Sperrbildschirm, App-Wechsel, waehrend
+     *    eine Taste/Maustaste unten war; ohne das bleibt sie auf dem Mac haengen
+     *  - frischer Verbindungsaufbau (remote:started) — falls die Verbindung
+     *    genau waehrend eines Tastendrucks abriss, kam das Loslassen nie an
+     *    (derselbe Grund, aus dem releaseAllSticky() dort schon aufgerufen wird)
+     */
+    function releaseHardwareInput() {
+      Object.keys(heldKeys).forEach(function (code) {
+        window.TMSRemote.input({ t: 'k', c: code, d: false, mods: { s: false, c: false, a: false, m: false } });
+      });
+      heldKeys = {};
+      Object.keys(heldButtons).forEach(function (b) {
+        window.TMSRemote.input({ t: 'b', b: b, d: false });
+      });
+      heldButtons = {};
+    }
+    window.releaseHardwareInput = releaseHardwareInput;
+    window.addEventListener('blur', releaseHardwareInput);
+
+    // Angeschlossene Maus + direkter Touch/Stift im Samsung-DeX-Monitormodus:
+    // Auf dem iPad muss sowohl das Magic-Keyboard-Trackpad (mouse) als auch der
+    // Finger (touch) und der Apple Pencil (pen) direkt in Samsung DeX klicken
+    // und ziehen koennen.
+    var heldTouchId = null;
+
+    function isDeXOverlayElement(target) {
+      return !!(target && target.closest && (
+        target.closest('#remoteExit') ||
+        target.closest('#dexFab') ||
+        target.closest('#dexHudBar') ||
+        target.closest('#dexTerminalDock')
+      ));
+    }
+
+    document.addEventListener('pointermove', function (e) {
+      if (!window.remoteState.fullscreen) return;
+      if (isDeXOverlayElement(e.target)) return;
+      if (e.pointerType !== 'mouse') return;
+      var box = stageBox();
+      if (!box) return;
+      var p = window.toStageNormalized(e.clientX, e.clientY, box);
+      if (p) window.TMSRemote.input({ t: 'm', x: p.x, y: p.y });
+    });
+
+    document.addEventListener('pointerdown', function (e) {
+      if (!window.remoteState.fullscreen) return;
+      if (isDeXOverlayElement(e.target)) return;
+      if (window.remoteState.dexMode) focusDeXKeys();
+      // Finger and pencil belong to the stage's gesture handler (direct mode in DeX); handling
+      // them here as well sent every tap twice with conflicting positions.
+      if (e.pointerType !== 'mouse') return;
+      var box = stageBox();
+      if (!box || e.clientX < box.x || e.clientX > box.x + box.w || e.clientY < box.y || e.clientY > box.y + box.h) return;
+      e.preventDefault();
+      // iPadOS WKWebView reports no hover moves for the Magic Keyboard trackpad, so the remote
+      // pointer would stay where it was: move it to the click position first.
+      var p = window.toStageNormalized(e.clientX, e.clientY, box);
+      if (p) window.TMSRemote.input({ t: 'm', x: p.x, y: p.y });
+      var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
+      heldButtons[b] = true;
+      window.TMSRemote.input({ t: 'b', b: b, d: true });
+    });
+    function onFullscreenPointerRelease(e) {
+      if (!window.remoteState.fullscreen) return;
+      if (heldTouchId !== null && e.pointerId === heldTouchId) {
+        heldTouchId = null;
+        if (heldButtons['l']) {
+          delete heldButtons['l'];
+          window.TMSRemote.input({ t: 'b', b: 'l', d: false });
+        }
+        return;
+      }
+      if (e.pointerType !== 'mouse') return;
+      var b = e.button === 2 ? 'r' : e.button === 1 ? 'm' : 'l';
+      if (!heldButtons[b]) return;
+      delete heldButtons[b];
+      window.TMSRemote.input({ t: 'b', b: b, d: false });
+    }
+    document.addEventListener('pointerup', onFullscreenPointerRelease);
+    document.addEventListener('pointercancel', onFullscreenPointerRelease);
+    document.addEventListener('contextmenu', function (e) {
+      if (window.remoteState.fullscreen) e.preventDefault();
+    });
+    document.addEventListener('wheel', function (e) {
+      if (!window.remoteState.fullscreen) return;
+      if (isDeXOverlayElement(e.target)) return;
+      e.preventDefault();
+      window.TMSRemote.input({ t: 's', dx: Math.round(-e.deltaX / 20), dy: Math.round(-e.deltaY / 20) });
+    }, { passive: false });
+
+    // Angeschlossene Tastatur: Tasten abfangen, bevor der Browser sie deutet.
+    function forwardKey(e, down) {
+      if (!window.remoteState.fullscreen) return;
+      if (isDeXOverlayElement(e.target)) return;
+      if (e.key === 'Escape' && e.shiftKey) {      // Notausstieg, falls das Abzeichen verdeckt ist
+        if (down) window.setRemoteFullscreen(false);
+        return;
+      }
+      e.preventDefault();
+      if (down) heldKeys[e.code] = true; else delete heldKeys[e.code];
+      window.TMSRemote.input({
+        t: 'k', c: e.code, d: down,
+        mods: { s: e.shiftKey, c: e.ctrlKey, a: e.altKey, m: e.metaKey },
+      });
+    }
+    // WKWebView only hands hardware-keyboard events to the page while an element has focus.
+    // In DeX mode a hidden field without on-screen keyboard keeps that focus (keys are
+    // intercepted in forwardKey, nothing is ever typed into it).
+    function dexKeySink() {
+      var el = document.getElementById('dexKeySink');
+      if (!el) {
+        el = document.createElement('textarea');
+        el.id = 'dexKeySink';
+        el.setAttribute('inputmode', 'none');
+        el.setAttribute('autocapitalize', 'off');
+        el.setAttribute('autocorrect', 'off');
+        el.setAttribute('spellcheck', 'false');
+        el.setAttribute('aria-hidden', 'true');
+        el.style.cssText = 'position:fixed;left:-40px;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;resize:none;';
+        el.addEventListener('input', function () { el.value = ''; });
+        document.body.appendChild(el);
+      }
+      return el;
+    }
+    function focusDeXKeys() {
+      if (!window.remoteState || !window.remoteState.dexMode) return;
+      var el = dexKeySink();
+      if (document.activeElement !== el) { try { el.focus({ preventScroll: true }); } catch (err) {} }
+    }
+    window.focusDeXKeys = focusDeXKeys;
+
+    // Native iPad input in DeX mode (TMSUsbRelay → useDeXUsbMonitor → here): keyboard, trackpad
+    // hover and trackpad scrolling, which WKWebView never reports to the page.
+    window.TMSBridge.dexInput = function (ev) {
+      if (!ev || !window.remoteState || !window.remoteState.dexMode || !window.TMSRemote) return;
+      if (ev.t === 'hover') {
+        var box = stageBox();
+        if (!box) return;
+        var p = window.toStageNormalized(ev.x, ev.y, box);
+        if (p) window.TMSRemote.input({ t: 'm', x: p.x, y: p.y });
+        return;
+      }
+      window.TMSRemote.input(ev);
+    };
+    window.blurDeXKeys = function () { var el = document.getElementById('dexKeySink'); if (el) el.blur(); };
+    document.addEventListener('keydown', function (e) { forwardKey(e, true); }, true);
+    document.addEventListener('keyup', function (e) { forwardKey(e, false); }, true);
+  })();
+
+  /** Fehlercodes des Servers in Saetze, die weiterhelfen. */
+  function remoteErrorText(p) {
+    switch (p && p.code) {
+      case 'permission_screen':
+        return 'Der Mac darf seinen Bildschirm nicht teilen.\n'
+             + 'Systemeinstellungen → Datenschutz & Sicherheit → Bildschirmaufnahme';
+      case 'permission_input':
+        return 'Der Mac darf keine Eingaben annehmen.\n'
+             + 'Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen';
+      case 'display_asleep':
+        return 'Der Bildschirm des Macs ist eingeschlafen oder es ist keiner angeschlossen. Gleich noch einmal versuchen.';
+      case 'capture_unavailable':
+        return 'Auf dem PC fehlt ffmpeg. Einmalig einrichten:  winget install ffmpeg';
+      case 'disabled':
+        return 'Der Fernzugriff ist auf diesem Server abgeschaltet.';
+      case 'helper_crashed':
+        return 'Die Bildschirmaufnahme ist abgestuerzt. Erneut versuchen.';
+      default:
+        return (p && p.message) || 'Der Fernzugriff ist fehlgeschlagen.';
+    }
+  }
+
+  // ══ Woran gearbeitet wird + Antwort lesen ═══════════════════════════════
+  // Der Server liest den Titel, den das KI-Werkzeug seinem Terminal gibt, und
+  // meldet nur echte Wechsel (terminal:activity). Hier landet das auf der
+  // Karte: session.task / session.taskState, gezeichnet von window.__taskHtml.
+  var activityOf = {};     // sessionId -> { task, state } — auch für Karten, die es noch nicht gibt
+  function applyActivity(sessionId) {
+    var cardId = cardOf(sessionId);
+    if (!cardId) return;
+    var sess = (window.TMS_DATA.sessions || []).find(function (x) { return x.id === cardId; });
+    if (!sess) return;
+    var a = activityOf[sessionId] || null;
+    var was = sess.taskState || null;
+    var next = a ? a.state : null;
+    var task = a ? (a.task || '') : '';
+    if (was === next && (sess.task || '') === task) return;
+    if (was === 'working' && next === 'done') {
+      // Eine Antwort ist fertig. Liest der Nutzer gerade genau diese Sitzung,
+      // rückt sie nach; war das Terminal nicht vorne, bekommt das Buch einen Punkt.
+      var reading = window.TMSReader && window.TMSReader.isOpen && window.TMSReader.isOpen();
+      var front = !window.__tmsAppInactive && typeof window.dockTargetId === 'function' && window.dockTargetId() === cardId;
+      if (!front && !reading) sess.answerNew = true;
+      if (reading) setTimeout(function () { window.TMSReader.refresh(cardId); }, 400); // der Verlauf wird kurz nach dem Titel geschrieben
+    }
+    if (next === 'working' || next === null) sess.answerNew = false;
+    sess.task = task;
+    sess.taskState = next;
+    if (typeof window.__taskSync === 'function') window.__taskSync(cardId);
+  }
+  window.TMSBridge.setActivities = function (activities) {
+    Object.keys(activities || {}).forEach(function (sessionId) {
+      var a = activities[sessionId];
+      if (a && typeof a.state === 'string') activityOf[sessionId] = { task: String(a.task || ''), state: a.state };
+      else delete activityOf[sessionId];
+      applyActivity(sessionId);
+    });
+  };
+
+  // Lesemodus: die Seite fragt über diese Funktion (liquid-deck/reader.js).
+  var readerWaiting = {};  // sessionId -> Rückruf
+  window.__readerRequest = function (cardId, cb) {
+    var sessionId = byCard[cardId];
+    if (!sessionId) { cb({ answers: [], open: false, reason: 'no-claude' }); return; }
+    readerWaiting[sessionId] = cb;
+    post('reader:get', { sessionId: sessionId });
+  };
+  window.TMSBridge.readerAnswers = function (sessionId, payload) {
+    var cb = readerWaiting[sessionId];
+    if (!cb) return;
+    delete readerWaiting[sessionId];
+    cb(payload || { answers: [], open: false, reason: 'error' });
+  };
+
+  // Vorlesen: die Sprachausgabe des Handys (android: SpeechModule.kt). Die Seite
+  // schickt die Stücke, zurück kommt, welches gerade gesprochen wird.
+  var speechListener = null;
+  window.__readerSpeech = {
+    speak: function (parts, german, onEvent) { speechListener = onEvent; post('reader:speak', { parts: parts, german: !!german }); },
+    stop: function () { speechListener = null; post('reader:speakStop', {}); },
+  };
+  window.TMSBridge.readerSpeech = function (ev) {
+    var l = speechListener;
+    if (!l) return;
+    if (ev && (ev.done || ev.error)) speechListener = null;
+    l(ev || {});
+  };
+
+  // ══ Samsung DeX USB-C Auto-Monitor & Split-Stage ══════════════════════════
+  var prevScreenBeforeDeX = 'terminals';
+  var dexSplitOpen = false;
+
+  // DeX monitor chrome: the Fold's desktop always fills the whole iPad. The HUD (top) and the
+  // remote shortcut dock (bottom) are hidden; a small floating button toggles them, and they
+  // then lie OVER the picture (the picture never shrinks or moves). Nothing appears by itself.
+  function ensureDeXChromeStyle() {
+    if (document.getElementById('dexChromeStyle')) return;
+    var st = document.createElement('style');
+    st.id = 'dexChromeStyle';
+    st.textContent = ''
+      + 'body.dex-mode section.rx .rx-surface{top:0 !important;bottom:0 !important;background:#000;}'
+      + 'body.dex-mode section.rx .rx-dock{position:absolute !important;left:0;right:0;bottom:0;z-index:20;transition:transform .2s ease,opacity .2s ease;}'
+      + 'body.dex-mode:not(.dex-chrome) section.rx .rx-dock{transform:translateY(120%);opacity:0;pointer-events:none;}'
+      + 'body.dex-mode #dexHudBar{transition:transform .2s ease,opacity .2s ease;}'
+      + 'body.dex-mode:not(.dex-chrome) #dexHudBar{transform:translate(-50%,-150%) !important;opacity:0;pointer-events:none;}'
+      + 'body.dex-mode #dock,body.dex-mode #statusHeader,body.dex-mode .rx-gexit,body.dex-mode .remote-badge{display:none !important;}'
+      + '#dexFab{position:fixed;z-index:10001;width:38px;height:38px;border-radius:19px;display:none;'
+      + 'align-items:center;justify-content:center;background:rgba(15,23,42,.55);border:1px solid rgba(255,255,255,.22);'
+      + 'color:#fff;font:600 15px var(--font-ui,sans-serif);box-shadow:0 4px 14px rgba(0,0,0,.45);'
+      + '-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);touch-action:none;user-select:none;opacity:.7;}'
+      + '#dexFab.on{opacity:1;background:rgba(2,132,199,.85);}'
+      + 'body.dex-mode #dexFab{display:flex;}';
+    document.head.appendChild(st);
+
+    // Floating toggle, draggable so it never sits on something you need.
+    var fab = document.createElement('div');
+    fab.id = 'dexFab';
+    fab.textContent = '☰';
+    var pos = null;
+    try { pos = JSON.parse(localStorage.getItem('tms-dex-fab') || 'null'); } catch (e) {}
+    function place(x, y) {
+      var w = window.innerWidth || 1024, h = window.innerHeight || 768;
+      x = Math.max(4, Math.min(w - 42, x)); y = Math.max(4, Math.min(h - 42, y));
+      fab.style.left = x + 'px'; fab.style.top = y + 'px';
+      return { x: x, y: y };
+    }
+    place(pos ? pos.x : (window.innerWidth || 1024) - 54, pos ? pos.y : 14);
+    var drag = null;
+    fab.addEventListener('pointerdown', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: fab.offsetLeft, oy: fab.offsetTop, moved: false };
+      try { fab.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    fab.addEventListener('pointermove', function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      e.stopPropagation();
+      var dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+      if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+      drag.moved = true;
+      place(drag.ox + dx, drag.oy + dy);
+    });
+    function release(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      e.stopPropagation();
+      if (drag.moved) {
+        try { localStorage.setItem('tms-dex-fab', JSON.stringify({ x: fab.offsetLeft, y: fab.offsetTop })); } catch (err) {}
+      } else {
+        toggleDeXChrome();
+      }
+      drag = null;
+    }
+    fab.addEventListener('pointerup', release);
+    fab.addEventListener('pointercancel', function (e) { drag = null; });
+    document.body.appendChild(fab);
+  }
+  function toggleDeXChrome(force) {
+    var on = typeof force === 'boolean' ? force : !document.body.classList.contains('dex-chrome');
+    document.body.classList.toggle('dex-chrome', on);
+    var fab = document.getElementById('dexFab');
+    if (fab) fab.classList.toggle('on', on);
+  }
+  window.toggleDeXChrome = toggleDeXChrome;
+
+  function ensureDeXHudDom() {
+    ensureDeXChromeStyle();
+    var hud = document.getElementById('dexHudBar');
+    if (!hud) {
+      hud = document.createElement('div');
+      hud.id = 'dexHudBar';
+      hud.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;'
+        + 'display:none;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;'
+        + 'background:rgba(15,23,42,0.86);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);'
+        + 'border:1px solid rgba(56,189,248,0.45);color:#f8fafc;font:600 12px var(--font-ui, sans-serif);'
+        + 'box-shadow:0 8px 24px rgba(0,0,0,0.45);';
+      hud.innerHTML = '<span style="color:#38bdf8">⚡ DeX USB</span>'
+        + '<span id="dexHudDevice" style="opacity:0.9">Fold 7</span>'
+        + '<span id="dexHudStat" style="opacity:0.75;font-weight:500"></span>'
+        + '<button id="dexSplitBtn" type="button" style="margin-left:4px;padding:4px 9px;border-radius:999px;'
+        + 'border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;font:600 11.5px var(--font-ui, sans-serif);cursor:pointer">'
+        + '⌨️ Terminal-Dock</button>'
+        + '<button id="dexExitBtn" type="button" style="padding:4px 9px;border-radius:999px;'
+        + 'border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.16);color:#fecaca;font:600 11.5px var(--font-ui, sans-serif);cursor:pointer">'
+        + 'Beenden</button>';
+      document.body.appendChild(hud);
+
+      var splitBtn = document.getElementById('dexSplitBtn');
+      if (splitBtn) splitBtn.addEventListener('click', function () {
+        toggleDeXSplitDock(!dexSplitOpen);
+      });
+      var exitBtn = document.getElementById('dexExitBtn');
+      if (exitBtn) exitBtn.addEventListener('click', function () {
+        window.TMSBridge.stopDeXMonitor();
+        post('dex:manualStop', {});
+      });
+    }
+
+    var dock = document.getElementById('dexTerminalDock');
+    if (!dock) {
+      dock = document.createElement('div');
+      dock.id = 'dexTerminalDock';
+      dock.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:250px;z-index:9998;'
+        + 'display:none;flex-direction:column;background:rgba(9,13,22,0.96);'
+        + 'border-top:1px solid rgba(56,189,248,0.38);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);'
+        + 'padding:8px 12px;color:#e2e8f0;font:12.5px var(--font-mono, monospace);';
+      dock.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font:600 12px var(--font-ui, sans-serif)">'
+        + '<span style="color:#38bdf8">TMS Terminal · Split-Stage unter Samsung DeX</span>'
+        + '<button id="dexDockCloseBtn" type="button" style="background:none;border:none;color:#94a3b8;font-size:14px;cursor:pointer">✕</button>'
+        + '</div>'
+        + '<div id="dexDockOutput" style="flex:1;overflow-y:auto;white-space:pre-wrap;padding:6px 8px;border-radius:8px;background:rgba(0,0,0,0.45);font:12px var(--font-mono, monospace);line-height:1.45;"></div>'
+        + '<form id="dexDockForm" style="display:flex;gap:8px;margin-top:6px;">'
+        + '<input id="dexTermInput" type="text" placeholder="Befehl an aktives TMS-Terminal senden …" '
+        + 'style="flex:1;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#fff;font:12.5px var(--font-mono, monospace);" />'
+        + '<button type="submit" style="padding:7px 14px;border-radius:8px;border:none;background:#0284c7;color:#fff;font:600 12px var(--font-ui, sans-serif);cursor:pointer">Senden</button>'
+        + '</form>';
+      document.body.appendChild(dock);
+
+      var closeBtn = document.getElementById('dexDockCloseBtn');
+      if (closeBtn) closeBtn.addEventListener('click', function () { toggleDeXSplitDock(false); });
+
+      var form = document.getElementById('dexDockForm');
+      if (form) form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var inp = document.getElementById('dexTermInput');
+        if (!inp || !inp.value) return;
+        var activeCardId = (window.__tmsState && window.__tmsState.activeCardId) || Object.keys(byCard)[0];
+        var sid = activeCardId && byCard[activeCardId];
+        if (sid) {
+          post('terminal:input', { sessionId: sid, data: inp.value + '\r' });
+          inp.value = '';
+          setTimeout(refreshDeXDockOutput, 120);
+        } else if (typeof window.toast === 'function') {
+          window.toast('Kein aktives Terminal verbunden');
+        }
+      });
+    }
+  }
+
+  function refreshDeXDockOutput() {
+    var out = document.getElementById('dexDockOutput');
+    if (!out) return;
+    var activeCardId = (window.__tmsState && window.__tmsState.activeCardId) || Object.keys(byCard)[0];
+    var cs = activeCardId && window.__tmsCardState && window.__tmsCardState[activeCardId];
+    if (cs && cs.lines && cs.lines.length) {
+      out.textContent = cs.lines.slice(-18).join('\n');
+      out.scrollTop = out.scrollHeight;
+    } else {
+      out.textContent = '(Bereit — Befehle unten eingeben, waehrend oben Samsung DeX laeuft)';
+    }
+  }
+
+  function toggleDeXSplitDock(open) {
+    ensureDeXHudDom();
+    dexSplitOpen = !!open;
+    var dock = document.getElementById('dexTerminalDock');
+    var splitH = dexSplitOpen ? Math.min(260, Math.round((window.innerHeight || 768) * 0.34)) : 0;
+    if (window.remoteState) window.remoteState.dexSplitHeight = splitH;
+    if (dock) {
+      dock.style.height = splitH + 'px';
+      dock.style.display = dexSplitOpen ? 'flex' : 'none';
+    }
+    if (dexSplitOpen) refreshDeXDockOutput();
+    if (typeof window.layoutRemoteStage === 'function') window.layoutRemoteStage();
+    if (window.TMSRemote && typeof window.TMSRemote.setQuality === 'function' && window.remoteState && window.remoteState.running) {
+      window.TMSRemote.setQuality('dex');
+    }
+  }
+  window.toggleDeXSplitDock = toggleDeXSplitDock;
+
+  window.TMSBridge.startDeXMonitor = function (info) {
+    if (!info || !info.host) return;
+    ensureDeXHudDom();
+    if (!window.remoteState) window.remoteState = {};
+    if (!window.remoteState.dexMode) {
+      prevScreenBeforeDeX = (window.__tmsState && window.__tmsState.screen && window.__tmsState.screen !== 'remote')
+        ? window.__tmsState.screen
+        : 'terminals';
+    }
+    window.remoteState.dexMode = true;
+    var dexWasActive = document.body.classList.contains('dex-mode');
+    document.body.classList.add('dex-mode');
+    if (!dexWasActive) toggleDeXChrome(false);
+    // The stage grows to the full screen via CSS (dex-mode) and again when iOS drops the status
+    // bar / safe-area padding; neither fires a resize, so the picture kept its old, smaller scale
+    // and showed black bars all around. Re-measure a few times while the layout settles.
+    [0, 120, 400, 900, 1600].forEach(function (ms) {
+      setTimeout(function () {
+        try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+        if (typeof window.layoutRemoteStage === 'function') window.layoutRemoteStage();
+      }, ms);
+    });
+    window.remoteState.dexDevice = info.device || 'Samsung Galaxy Fold 7';
+    var devEl = document.getElementById('dexHudDevice');
+    if (devEl) devEl.textContent = window.remoteState.dexDevice;
+    var hud = document.getElementById('dexHudBar');
+    if (hud) hud.style.display = 'flex';
+
+    remoteTarget = {
+      id: '__dex_usb__',
+      host: info.host,
+      port: info.port || 8768,
+      token: info.token || 'usb-dex',
+      mode: 'dex',
+    };
+    remoteWantId = '__dex_usb__';
+    if (typeof window.show === 'function') window.show('remote');
+    if (window.TMSRemote && typeof window.TMSRemote.start === 'function') {
+      window.TMSRemote.start('dex');
+    }
+    if (typeof window.setRemoteFullscreen === 'function') {
+      window.setRemoteFullscreen(true);
+    }
+    if (typeof window.__tmsRemoteTargetReady === 'function') {
+      window.__tmsRemoteTargetReady();
+    }
+    if (typeof window.focusDeXKeys === 'function') window.focusDeXKeys();
+    // Announce once per plug-in, not on every reconnect.
+    if (!dexWasActive && typeof window.toast === 'function') {
+      window.toast(info.host === '127.0.0.1'
+        ? '⚡ Samsung DeX per USB-C-Kabel'
+        : '⚡ Samsung DeX Monitor aktiv (' + info.host + ')');
+    }
+  };
+
+  window.TMSBridge.stopDeXMonitor = function () {
+    if (!window.remoteState || !window.remoteState.dexMode) return;
+    toggleDeXSplitDock(false);
+    var hud = document.getElementById('dexHudBar');
+    if (hud) hud.style.display = 'none';
+    window.remoteState.dexMode = false;
+    document.body.classList.remove('dex-mode', 'dex-chrome');
+    var fabOff = document.getElementById('dexFab'); if (fabOff) fabOff.classList.remove('on');
+    if (typeof window.blurDeXKeys === 'function') window.blurDeXKeys();
+    if (window.TMSRemote && typeof window.TMSRemote.stop === 'function') {
+      window.TMSRemote.stop();
+    }
+    var targetScreen = prevScreenBeforeDeX || 'terminals';
+    if (typeof window.show === 'function') window.show(targetScreen);
+    if (typeof window.toast === 'function') {
+      window.toast('Samsung DeX getrennt — zurueck im Terminal');
+    }
+  };
+
+  window.TMSBridge.setDeXHostStatus = function (status) {
+    window.TMS_DATA.dexHost = status || null;
+    var host = document.querySelector('[data-screen="servers"]');
+    if (!host) return;
+    var banner = document.getElementById('tmsDeXHostCard');
+    if (!status) {
+      if (banner) banner.remove();
+      return;
+    }
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'tmsDeXHostCard';
+      banner.style.cssText = 'margin:10px 14px 4px;padding:12px 14px;border-radius:16px;'
+        + 'background:rgba(14,165,233,0.12);border:1px solid rgba(56,189,248,0.38);'
+        + 'color:var(--text, #f8fafc);font:12.5px var(--font-ui, sans-serif);';
+      var titleRow = host.querySelector('.screen-title-row');
+      if (titleRow && titleRow.nextSibling) {
+        titleRow.parentNode.insertBefore(banner, titleRow.nextSibling);
+      } else {
+        host.insertBefore(banner, host.firstChild);
+      }
+    }
+    var usbBadge = status.usbTethering
+      ? ('🟢 USB-C aktiv (' + (status.usbIp || 'bereit') + ':' + (status.port || 8768) + ')')
+      : (status.usbPlugged ? '🟡 USB-Kabel erkannt — USB-Tethering aktivieren' : '⚪ USB-Kabel ans iPad anschliessen');
+    var engBadge = status.privileged
+      ? '🟢 DeX-Engine bereit (One UI 8 Virtual Display)'
+      : '🟡 DeX-Standby (1x per ADB/Button freischalten)';
+    banner.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+      + '<strong style="font-size:13.5px;color:#38bdf8">📱→🖥️ Samsung DeX USB-Host (iPad Monitor)</strong>'
+      + '<span style="font-size:11px;opacity:0.8">' + (status.connectedClients > 0 ? ('Verbunden (' + status.width + '×' + status.height + ')') : 'Bereit') + '</span>'
+      + '</div>'
+      + '<div style="font-size:12px;opacity:0.9;margin-bottom:4px">' + usbBadge + '</div>'
+      + '<div style="font-size:12px;opacity:0.9;margin-bottom:8px">' + engBadge + '</div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      + '<button type="button" id="btnDeXTether" style="padding:6px 11px;border-radius:10px;border:1px solid rgba(56,189,248,0.45);background:rgba(56,189,248,0.18);color:#fff;font:600 12px var(--font-ui, sans-serif)">1. USB-Tethering</button>'
+      + '<button type="button" id="btnDeXStart" style="padding:6px 11px;border-radius:10px;border:1px solid rgba(56,189,248,0.45);background:rgba(56,189,248,0.18);color:#fff;font:600 12px var(--font-ui, sans-serif)">2. DeX-Engine starten</button>'
+      + '</div>';
+    var b1 = document.getElementById('btnDeXTether');
+    if (b1) b1.onclick = function () { post('dex:openTether', {}); };
+    var b2 = document.getElementById('btnDeXStart');
+    if (b2) b2.onclick = function () { post('dex:startEngine', {}); };
   };
 
   post('bridge:ready', {});

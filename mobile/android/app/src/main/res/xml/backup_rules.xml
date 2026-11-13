@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android <= 11 auto-backup. The bubble's server token grants shell access
+     to the Mac and never expires — it must not leave the device. -->
+<full-backup-content>
+  <exclude domain="sharedpref" path="tms_bubble.xml"/>
+</full-backup-content>

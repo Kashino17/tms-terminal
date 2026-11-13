@@ -41,6 +41,13 @@ const MESSAGE_CATEGORIES: Record<string, string> = {
   'client:rtt':       'typing',
   'client:app_state': 'typing',
   'client:active_tab':'typing',
+  // Streamed dictation: one small message every ~2s while recording; the
+  // expensive work is batched by the server itself, so these are cheap.
+  'dictation:start':  'typing',
+  'dictation:chunk':  'typing',
+  'dictation:end':    'typing',
+  'dictation:cancel': 'typing',
+  'dictation:resume': 'typing',
 
   'terminal:create':  'actions',
   'terminal:close':   'actions',
@@ -50,8 +57,6 @@ const MESSAGE_CATEGORIES: Record<string, string> = {
   'system:snapshot':  'actions',
   'system:kill':      'actions',
 
-  'manager:chat':     'ai',
-  'manager:poll':     'ai',
   'audio:transcribe': 'ai',
   'autopilot:optimize': 'ai',
 
