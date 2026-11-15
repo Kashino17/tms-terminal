@@ -14,6 +14,7 @@
 import { nextCut, nextCutLegacy, edgePause, hasSpeech, speechAbove, quietFrom, findPauses, encodeWav, MIN_SEGMENT_SECS } from './dictation.segment';
 import type { PcmStream } from './adts-pcm';
 import type { DictationStat } from './dictation.stats';
+import type { CapturedPiece, DictationCapture } from './dictation.capture';
 
 export type DictationFormat = 'adts' | 'file';
 export type DictationStatus = 'receiving' | 'processing' | 'done' | 'error';
@@ -28,6 +29,8 @@ export interface DictationDeps {
   openPcm?: () => PcmStream;
   /** Called once for every dictation that produced a result. */
   onDone?: (stat: DictationStat) => void;
+  /** Diagnostics: the finished dictation's audio and pieces, to replay recognition errors offline. */
+  onCapture?: (cap: DictationCapture) => void;
   now(): number;
   log(msg: string): void;
 }
@@ -69,6 +72,7 @@ interface Session {
   endTotal: number | null;
   cursor: number;             // samples already handed to Whisper
   texts: string[];
+  pieces: CapturedPiece[];    // what went to Whisper as one piece, for the capture
   work: Promise<void>;        // serialized decode/transcribe passes
   passQueued: boolean;
   lastPassAt: number;
@@ -92,7 +96,7 @@ interface Session {
    * (past the fading end of the last word) at or above `above` — a level fixed
    * from the noise in that pause when it was found.
    */
-  spec: { from: number; to: number; text: string; above: number; checkFrom: number } | null;
+  spec: { from: number; to: number; raw: string; text: string; above: number; checkFrom: number } | null;
   /** A trailing pause after which the speaker went on: not worth transcribing ahead again. */
   specRejected: { from: number; to: number } | null;
   specHit: boolean;           // no transcription had to be started after the stop
@@ -122,7 +126,7 @@ export class DictationManager {
       s = {
         id, format, sink, parts: [], pcm: format === 'adts' && this.deps.openPcm ? this.deps.openPcm() : null,
         received: 0, status: 'receiving', endTotal: null,
-        cursor: 0, texts: [], work: Promise.resolve(), passQueued: false, lastPassAt: 0,
+        cursor: 0, texts: [], pieces: [], work: Promise.resolve(), passQueued: false, lastPassAt: 0,
         throttleTimer: null, heartbeat: null, cancelled: false, lastActivity: now, startedAt: now,
         endedAt: 0, finishedAt: 0, text: '', error: '', computeMs: 0, audioSecs: 0, bytesPerSec: 0, restSecs: 0, restMeasured: false, spec: null, specRejected: null, specHit: false, doneAtStop: 0,
       };
@@ -288,7 +292,9 @@ export class DictationManager {
       const ms = Date.now() - t0;
       s.computeMs += ms;
       this.deps.log(`[dictation] ${s.id}: segment ${s.texts.length + 1} ${(seg.length / RATE).toFixed(1)}s audio -> ${ms}ms${final ? ' (after stop)' : ''}`);
-      s.texts.push(this.fixed(text));
+      const fixed = this.fixed(text);
+      s.texts.push(fixed);
+      s.pieces.push({ from: s.cursor, to: cut, raw: text.trim(), text: fixed });
       s.cursor = cut;
     }
   }
@@ -323,7 +329,7 @@ export class DictationManager {
     const ms = Date.now() - t0;
     s.computeMs += ms;
     if (s.cancelled) return;
-    s.spec = { from, to, text: this.fixed(text), above, checkFrom };
+    s.spec = { from, to, raw: text.trim(), text: this.fixed(text), above, checkFrom };
     this.deps.log(`[dictation] ${s.id}: ahead ${((to - from) / RATE).toFixed(1)}s audio -> ${ms}ms`);
   }
 
@@ -341,6 +347,7 @@ export class DictationManager {
     if (!hasSpeech(samples, spec.checkFrom, samples.length, RATE, spec.above)) {
       if (!final) return;                               // still quiet: keep waiting
       s.texts.push(spec.text);
+      s.pieces.push({ from: spec.from, to: samples.length, raw: spec.raw, text: spec.text });
       s.cursor = samples.length;
       s.specHit = true;
       s.spec = null;
@@ -353,6 +360,7 @@ export class DictationManager {
       const pause = findPauses(samples, spec.from, samples.length, RATE).find((p) => p.end > spec.to && p.start <= spec.to + RATE * 0.2);
       s.texts.push(spec.text);
       s.cursor = pause ? Math.floor((Math.max(pause.start, spec.to) + pause.end) / 2) : spec.to;
+      s.pieces.push({ from: spec.from, to: s.cursor, raw: spec.raw, text: spec.text });
     } else {
       s.specRejected = { from: spec.from, to: spec.to };
     }
@@ -367,13 +375,14 @@ export class DictationManager {
     s.heartbeat.unref?.();
     s.work = s.work.then(async () => {
       try {
+        let samples: Float32Array | null;
         try {
-          await this.transcribeReady(s, true);
+          samples = await this.transcribeReady(s, true);
         } catch (err) {
           // The Whisper sidecar restarts itself after a crash/stall — one
           // retry of the remaining segments usually goes through.
           this.deps.log(`[dictation] ${s.id}: final pass failed, retrying once: ${(err as Error).message}`);
-          await this.transcribeReady(s, true);
+          samples = await this.transcribeReady(s, true);
         }
         const text = s.texts.filter(Boolean).join(' ');
         s.text = text;
@@ -381,6 +390,11 @@ export class DictationManager {
         this.deps.log(`[dictation] ${s.id}: done — ${s.audioSecs.toFixed(1)}s audio, ${this.deps.now() - s.endedAt}ms stop->result, rest ${s.restSecs.toFixed(1)}s${s.specHit ? ' (ready ahead)' : ''}, compute ${s.computeMs}ms, ${text.length} chars`);
         this.emit(s, { type: 'dictation:result', id: s.id, text });
         if (!s.cancelled && s.audioSecs > 0) this.deps.onDone?.({ at: s.endedAt, audioSecs: s.audioSecs, waitMs: this.deps.now() - s.endedAt, restSecs: s.restSecs, specHit: s.specHit });
+        if (!s.cancelled && samples && samples.length > 0 && this.deps.onCapture) {
+          // After the result went out: costs the user no waiting time, and a failure here is only lost diagnostics.
+          try { this.deps.onCapture({ id: s.id, at: s.endedAt, samples, pieces: s.pieces, text }); }
+          catch (err) { this.deps.log(`[dictation] ${s.id}: capture failed (ignored): ${(err as Error).message}`); }
+        }
       } catch (err) {
         s.error = (err as Error).message || 'Transkription fehlgeschlagen';
         s.status = 'error';

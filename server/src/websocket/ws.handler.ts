@@ -22,6 +22,7 @@ import { DictationManager } from '../audio/dictation';
 import { handleDictationMessage, createDictationConnectionHandler } from '../audio/dictation.connection';
 import { decodeToFloat32 } from '../audio/ffmpeg-decode';
 import { AdtsPcm } from '../audio/adts-pcm';
+import { DictationCaptureStore } from '../audio/dictation.capture';
 import { DictationStatsStore } from '../audio/dictation.stats';
 import { DictionaryStore } from '../audio/dictionary';
 import { handleDictionaryMessage } from '../audio/dictionary.connection';
@@ -99,10 +100,13 @@ function send(ws: WebSocket, msg: ServerMessage): void {
 export const dictionary = new DictionaryStore(path.join(os.homedir(), '.tms-terminal', 'dictionary.json'), undefined, (m) => logger.warn(m));
 /** Stop -> text timings of the last 50 dictations (numbers only). */
 export const dictationStats = new DictationStatsStore(path.join(os.homedir(), '.tms-terminal', 'dictation-stats.json'));
+/** Diagnostics: the last 30 dictations (audio + pieces + text) to replay recognition errors offline. Owner-only, max 3 days. */
+const dictationCaptures = new DictationCaptureStore(path.join(os.homedir(), '.tms-terminal', 'dictation-captures'));
 const dictations = new DictationManager({
   decode: (bytes, format) => decodeToFloat32(bytes, format),
   openPcm: () => new AdtsPcm((bytes) => decodeToFloat32(bytes, 'adts')),
   onDone: (stat) => dictationStats.record(stat),
+  onCapture: (cap) => dictationCaptures.save(cap),
   transcribeWav: (wavBase64) => whisperTranscribe(wavBase64, { prompt: dictionary.prompt() }),
   fix: (text) => dictionary.fix(text),
   now: () => Date.now(),

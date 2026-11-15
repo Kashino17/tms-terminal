@@ -4,6 +4,7 @@ import { DictationManager, DictationDeps, DictationEvent, DictationOptions } fro
 import { nextCutLegacy } from './dictation.segment';
 import type { PcmStream } from './adts-pcm';
 import type { DictationStat } from './dictation.stats';
+import type { DictationCapture } from './dictation.capture';
 
 const RATE = 16000;
 // Fake codec: every byte is 0.1s of constant-level audio, so 750 bytes = 75s.
@@ -595,4 +596,46 @@ test('finished sessions drop their audio bytes', async () => {
   h.mgr.end('d1', 10, s.fn);
   await h.mgr.idle('d1');
   assert.strictEqual(h.mgr.bufferedBytes('d1'), 0);
+});
+
+// ── Capture (diagnostics: replay real dictations offline) ─────────────
+test('a finished dictation hands its audio and every piece (raw + fixed text) to the capture', async () => {
+  const caps: DictationCapture[] = [];
+  const h = streamed({ onCapture: (c) => caps.push(c), fix: (t) => t.toUpperCase() }); const s = sink();
+  const audio = Buffer.concat([bytes(150), bytes(6, 0), bytes(100)]);   // 15s, 0.6s pause, 10s
+  h.mgr.start('d1', 'adts', s.fn);
+  await stream(h, 'd1', audio, s.fn);
+  h.mgr.end('d1', audio.length, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(caps.length, 1);
+  const c = caps[0];
+  assert.strictEqual(c.id, 'd1');
+  assert.strictEqual(c.samples.length, audio.length * SAMPLES_PER_BYTE);
+  assert.ok(c.pieces.length >= 2, `pieces ${JSON.stringify(c.pieces)}`);
+  // Pieces cover the recording without gaps or overlap, in order.
+  assert.strictEqual(c.pieces[0].from, 0);
+  for (let i = 1; i < c.pieces.length; i++) assert.strictEqual(c.pieces[i].from, c.pieces[i - 1].to);
+  for (const p of c.pieces) assert.strictEqual(p.text, p.raw.toUpperCase());
+  assert.strictEqual(c.text, s.last('dictation:result').text);
+});
+
+test('a piece transcribed ahead is captured too', async () => {
+  const caps: DictationCapture[] = [];
+  const h = streamed({ onCapture: (c) => caps.push(c) }); const s = sink();
+  h.mgr.start('d1', 'adts', s.fn);
+  h.mgr.chunk('d1', 0, Buffer.concat([bytes(50), bytes(5, 0)]), s.fn);
+  await h.mgr.idle('d1');
+  h.mgr.end('d1', 55, s.fn);
+  await h.mgr.idle('d1');
+  assert.deepStrictEqual(caps[0].pieces.map((p) => p.raw), ['seg1']);
+  assert.strictEqual(caps[0].pieces[0].from, 0);
+});
+
+test('a failing capture never breaks the dictation', async () => {
+  const h = streamed({ onCapture: () => { throw new Error('disk full'); } }); const s = sink();
+  h.mgr.start('d1', 'adts', s.fn);
+  h.mgr.chunk('d1', 0, bytes(50), s.fn);
+  h.mgr.end('d1', 50, s.fn);
+  await h.mgr.idle('d1');
+  assert.strictEqual(s.last('dictation:result').text, 'seg1');
 });
