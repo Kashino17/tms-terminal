@@ -189,35 +189,6 @@ if (!PW) {
     } finally { await browser.close(); }
   });
 
-  test('Desk: Diktat-Status aus caps, „+“ legt ein Terminal auf dem Gerät an', async () => {
-    const { browser, page, errors, posts } = await boot({ width: 750, height: 800 });
-    try {
-      await page.evaluate(() => { window.dispatchEvent(new Event('resize')); });
-      await page.waitForTimeout(500);
-      assert.ok(await page.evaluate(() => document.body.classList.contains('desk')), 'Desk an');
-      assert.match(await page.textContent('#deskSide .ds-foot'), /Diktat bereit/);
-      await page.click('#deskSide [data-add="B"]');
-      await page.waitForTimeout(300);
-      const c = (await posts('terminal:create')).pop();
-      assert.ok(c, 'terminal:create gesendet');
-      assert.equal(c.payload.serverId, 'B');
-      assert.deepEqual(errors, []);
-    } finally { await browser.close(); }
-  });
-
-  test('Desk: Status-Wechsel erscheint in der Seitenleiste ohne Terminalwechsel', async () => {
-    const { browser, page } = await boot({ width: 750, height: 800 });
-    try {
-      await page.evaluate(() => { window.dispatchEvent(new Event('resize')); });
-      await page.waitForTimeout(500);
-      const id = await page.evaluate(() => { window.__newTermServer = 'A'; window.addTerminal(); window.__newTermServer = null; const s = window.TMS_DATA.sessions[window.TMS_DATA.sessions.length - 1]; s.status = 'running'; window.TMSBridge.setServers(window.TMS_DATA.servers); return s.id; });
-      await page.waitForTimeout(300);
-      await page.evaluate((i) => window.updateStatusChip(i, 'waiting'), id);
-      await page.waitForTimeout(400);
-      assert.match(await page.textContent('#deskSide'), /Wartet auf dich/, 'früher die Marke FRAGE — jetzt steht dort, was los ist');
-    } finally { await browser.close(); }
-  });
-
   test('Ohne Insel: ⋮-Menü hat Neues Terminal + Fernzugriff je Gerät', async () => {
     const { browser, page, errors, posts } = await boot();
     try {
@@ -1030,38 +1001,6 @@ if (!PW) {
       await page.waitForTimeout(450);
       await page.evaluate(() => window.TMSBridge.readerAnswers('S-B', { open: false, answers: [{ prompt: '', md: 'zu spät', at: 0 }] }));
       assert.equal(await page.evaluate(() => document.getElementById('reader').hidden), true);
-      assert.deepEqual(errors, []);
-    } finally { await browser.close(); }
-  });
-
-  test('Aufgeklappt: Seitenleiste und Kopfzeile zeigen die Aufgabe, der Lesemodus liegt neben der Seitenleiste', async () => {
-    const { browser, page, errors, posts } = await boot({ width: 750, height: 830 });
-    try {
-      await page.evaluate(() => {
-        window.TMSBridge.restoreSessions([{ sessionId: 'S-A', name: 'Energie', serverId: 'A' }, { sessionId: 'S-B', name: 'Shell', serverId: 'A' }]);
-        show('terminals');
-        window.TMSBridge.setActivities({ 'S-A': { task: 'Tiefenanalyse Energie', state: 'working' } });
-      });
-      await page.waitForTimeout(700);
-      await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close())); // „Dein Terminal" nach dem Anlegen
-      await page.evaluate(() => { const row = [...document.querySelectorAll('.ds-row')].find((r) => /Energie/.test(r.textContent)); if (row) row.click(); });
-      await page.waitForTimeout(500);
-      const rows = await page.evaluate(() => [...document.querySelectorAll('.ds-row')].map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
-      assert.ok(rows.some((r) => /Energie.*Tiefenanalyse Energie/.test(r)), 'Seitenleiste nennt die Aufgabe: ' + JSON.stringify(rows));
-      assert.ok(!rows.some((r) => /LÄUFT|BEREIT/.test(r)), 'keine Marke mehr');
-      assert.match(await page.textContent('#compactTerminalHeader small'), /Tiefenanalyse Energie/);
-      assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('compactRead')).display !== 'none'), true);
-      await page.click('#compactRead');
-      await page.waitForTimeout(450);
-      assert.deepEqual((await posts('reader:get')).map((p) => p.payload), [{ sessionId: 'S-A' }]);
-      const left = await page.evaluate(() => Math.round(document.getElementById('reader').getBoundingClientRect().left));
-      const side = await page.evaluate(() => Math.round(document.getElementById('deskSide').getBoundingClientRect().right));
-      assert.equal(left, side, 'die Seitenleiste bleibt sichtbar');
-      // Terminal ohne KI: kein Lesen-Knopf in der Kopfzeile
-      await page.click('[data-rd="close"]');
-      await page.evaluate(() => { const row = [...document.querySelectorAll('.ds-row')].find((r) => /Shell/.test(r.textContent)); if (row) row.click(); });
-      await page.waitForTimeout(500);
-      assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('compactRead')).display), 'none');
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });

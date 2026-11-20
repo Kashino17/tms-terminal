@@ -3119,7 +3119,6 @@
     // Gerätenamen in Leiste/Kopfzeile erscheinen, sobald ein zweites Gerät da ist.
     if (typeof window.renderTermSwitcher === 'function') window.renderTermSwitcher();
     if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
-    if (window.__deskRender) window.__deskRender();
   };
   /** Ping der weiteren Geräte (der Hauptserver kommt über setStatus). */
   window.TMSBridge.setServerLatency = function (map) {
@@ -3127,12 +3126,10 @@
       if (map && Object.prototype.hasOwnProperty.call(map, s.id)) s.latency = map[s.id];
     });
     if (typeof window.updateLatencyDisplay === 'function') window.updateLatencyDisplay();
-    if (window.__deskRender) window.__deskRender();
   };
   /** Bund: Gerät vorne laut App (gilt, wenn kein Terminal vorne einem Gerät gehört). */
   window.TMSBridge.setActiveDevice = function (id) {
     window.__bundActiveDev = id || null;
-    if (window.__deskRender) window.__deskRender();
   };
   /** Update-Stand von der App: none | available | downloading | ready | error. */
   window.TMSBridge.setUpdateState = function (st) {
@@ -3474,7 +3471,6 @@
       var prev = item.querySelector('.rail-item__preview');
       if (prev && window.__tmsPreview) prev.innerHTML = window.__tmsPreview(item.getAttribute('data-id'), 2);
     });
-    if (window.__deskRender) window.__deskRender(); // Bund-Seitenleiste: LÄUFT/FRAGE/…
   };
 
   // ── Multiple-Choice-Rückfragen: die Antwort erreicht die PTY wirklich ─────

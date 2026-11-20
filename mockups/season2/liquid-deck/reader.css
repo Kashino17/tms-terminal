@@ -20,9 +20,7 @@
 .card-task[data-state="done"] .card-task__dot { width: 11px; height: 11px; margin-right: 5px; border-radius: 0; background: none;
   -webkit-mask: none; position: relative; }
 .card-task[data-state="done"] .card-task__dot::before { content: ''; position: absolute; left: 1px; top: 0; width: 4px; height: 8px; border: solid var(--ok); border-width: 0 2px 2px 0; transform: rotate(42deg); }
-/* Seitenleiste (aufgeklappt) und Kopfzeile dort */
-.ds-row__cwd { display: flex; align-items: center; min-width: 0; }
-.ds-row__cwd .card-task { font-size: inherit; }
+/* Kopfzeile der kompakten Ansicht */
 #compactTerminalHeader small { display: flex; align-items: center; min-width: 0; }
 #compactTerminalHeader small .card-task { font-size: inherit; }
 /* Beim Wechseln: Name + darunter, woran dort gearbeitet wird */
@@ -127,9 +125,8 @@
 .rd-sizes button { flex: 1; text-align: center; padding: 12px 0; border: 1px solid var(--rd-line); }
 .rd-sizes button.is-on { border-color: rgba(var(--accent-rgb), .6); color: var(--accent); }
 
-/* Aufgeklappt: der Lesemodus liegt über dem Terminal, die Seitenleiste bleibt */
+/* Aufgeklappt: größere Schrift im Lesemodus */
 @media (min-width: 700px) {
-  body.desk #reader { left: var(--rd-left, 0px); border-left: 1px solid var(--rd-line); }
   #reader { --rd-fs: 17px; }
   .rd-col { padding: 22px 28px 40px; }
 }
@@ -139,9 +136,6 @@ body.reader-open #dock, body.reader-open #termSwitcher, body.reader-open #global
 
 
 .rd-note[hidden] { display: none; }
-
-/* Seitenleiste: dort zählt, woran gearbeitet wird — der Ordner steht oben in der Kopfzeile. */
-.ds-row__cwd .card-task > .card-task__sep:first-child { display: none; }
 
 /* Ordnerzeile: leer (kein Gerät, kein Ordner, keine Aufgabe) nimmt sie keinen Platz. */
 .card-cwd:not(:has(.card-dev)):not(:has(.card-task)):has(.card-folder:empty) { display: none !important; }

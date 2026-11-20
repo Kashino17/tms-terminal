@@ -1,4 +1,4 @@
-/* Bund v5 — Desk-Ansicht, Datei-Explorer, Zwischenablage, Snippets, Bilder.
+/* Bund v5 — Datei-Explorer, Zwischenablage, Snippets, Bilder.
    Läuft nach dem Hauptskript; nutzt dessen globale Helfer (state, TMS_DATA,
    toast, escapeHtml, setActive). */
 (function () {
@@ -39,7 +39,6 @@
     remote: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
     grid: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
     snippet: '<path d="m8 6-6 6 6 6M16 6l6 6-6 6"/>',
-    sideCollapse: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16M16 10l-2 2 2 2"/>',
     lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     play: '<path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/>',
     // Dateitypen
@@ -63,9 +62,7 @@
   // Gerät vorne: das des Terminals vorne, sonst das, was die App meldet
   // (TMSBridge.setActiveDevice — z. B. erstes Gerät online), zuletzt das erste.
   const activeSrv = () => { const s = activeSess(); return servers().find((x) => x.id === (s && s.server)) || servers().find((x) => x.id === window.__bundActiveDev) || servers()[0]; };
-  const hasDictation = (srv) => (srv.caps || []).some((c) => c === 'dictation' || c === 'Diktat');
   const devChip = (srv) => srv ? `<span class="fp-chip" style="--dc:${devColor(srv.id)}">${ic(devIcon(srv), 2)}${devShort(srv)}</span>` : '';
-  const STATUS = { running: 'LÄUFT', waiting: 'FRAGE', idle: 'BEREIT', done: 'FERTIG' };
 
   function insertText(text) {
     if (LIVE() && typeof window.__tmsInsert === 'function') { window.__tmsInsert(text, 'Eingefügt'); return; }
@@ -75,87 +72,11 @@
     say(`In „${s ? s.name : 'Terminal'}“ eingefügt`);
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  // 1) DESK — aufgeklappt: Seitenleiste nach Gerät + ein Terminal
-  // ════════════════════════════════════════════════════════════════════
-  const side = document.createElement('aside');
-  side.id = 'deskSide';
-  document.body.appendChild(side);
-
-  function renderDesk() {
-    if (!document.body.classList.contains('desk')) return;
-    const act = activeSess();
-    let html = `<div class="ds-top"><span class="ds-top__title ds-label">Terminals</span>
-      <button class="ds-btn" data-ds="remote" title="Fernzugriff">${ic('remote')}</button>
-      <button class="ds-btn" data-ds="bund" title="Bund">${ic('grid')}</button>
-      <button class="ds-btn ds-toggle" data-ds="toggle" title="Leiste ein-/ausfahren">${ic('sideCollapse')}</button></div><div class="ds-scroll">`;
-    servers().forEach((srv) => {
-      const online = srv.status === 'online';
-      const list = state.order.map((id, i) => ({ s: TMS_DATA.sessions.find((x) => x.id === id), i })).filter((o) => o.s && o.s.server === srv.id);
-      html += `<div class="ds-dev${online ? '' : ' is-off'}" style="--dc:${devColor(srv.id)}">${ic(devIcon(srv), 2)}<span class="ds-dev__name">${esc(srv.name)}</span>
-        <span class="ds-dev__ms">${online ? (srv.latency != null ? srv.latency + ' ms' : '') : 'offline'}</span>
-        <button class="ds-dev__add" data-add="${srv.id}" title="Neues Terminal auf ${esc(srv.name)}">${ic('plus', 2.2)}</button></div>`;
-      list.forEach(({ s, i }) => {
-        const letter = esc((s.name.trim()[0] || '?').toUpperCase());
-        html += `<button class="ds-row${act && act.id === s.id ? ' is-active' : ''}${online ? '' : ' is-off'}" data-i="${i}" style="--dc:${devColor(srv.id)}">
-          <span class="ds-tag" data-st="${s.status}" style="background:${s.colorTag}" title="${esc(s.name)}">${letter}</span>
-          <span class="ds-row__mid ds-label"><span class="ds-row__name">${esc(s.name)}</span><span class="ds-row__cwd">${window.__taskHtml && window.__taskHtml(s) ? window.__taskHtml(s) : esc((typeof folderLabel === 'function' ? folderLabel(s.cwd || '') : s.cwd) || '')}</span></span></button>`;
-      });
-    });
-    const mac = servers().find(hasDictation);
-    const dictOn = mac && mac.status === 'online';
-    html += `</div><div class="ds-foot${dictOn ? '' : ' is-off'}" title="${dictOn ? 'Diktat bereit' : 'Diktat aus'}"><i></i><span class="ds-label">${dictOn ? 'Diktat bereit · ' + esc(mac.name) : 'Diktat aus · MacBook offline'}</span></div>`;
-    side.innerHTML = html;
-  }
-  side.addEventListener('click', (e) => {
-    const row = e.target.closest('.ds-row');
-    if (row) { const i = +row.dataset.i; if (typeof setActive === 'function') setActive(i); setTimeout(renderDesk, 30); return; }
-    const add = e.target.closest('[data-add]');
-    if (add) {
-      if (typeof window.addTerminal === 'function') {
-        window.__newTermServer = add.dataset.add;
-        try { window.addTerminal(); } finally { window.__newTermServer = null; }
-        setTimeout(renderDesk, 60);
-      } else say(`Neues Terminal auf ${esc((servers().find((x) => x.id === add.dataset.add) || {}).name || '')}`);
-      return;
-    }
-    const b = e.target.closest('[data-ds]');
-    if (!b) return;
-    if (b.dataset.ds === 'toggle') {
-      const mini = !document.body.classList.contains('side-mini');
-      document.body.classList.toggle('side-mini', mini);
-      try { localStorage.setItem('tms-bund-side-mini', mini ? '1' : '0'); } catch (_) {}
-      return;
-    }
-    if (b.dataset.ds === 'bund' && typeof show === 'function') show('servers');
-    if (b.dataset.ds === 'remote' && document.getElementById('remoteIslandBtn')) document.getElementById('remoteIslandBtn').click();
-  });
-  // Desk-Status folgt der kompakten Ansicht (siehe compact-terminal.js) — und jedem Wechsel.
-  /** Desk (Seitenleiste + ein Terminal) nur aufgeklappt: breit UND die volle
-   *  Fensterhöhe (Grundhöhe je Breite) ist hoch. Die Tastatur ändert nur die
-   *  aktuelle Höhe — die Leiste bleibt; geteilter Bildschirm ist von Anfang an
-   *  niedrig — dort gibt es keine Leiste. */
-  function deskWanted(width, baseHeight) { return width >= 700 && baseHeight > 600; }
-  window.__bundDeskWanted = deskWanted;
-  try { if (localStorage.getItem('tms-bund-side-mini') === '1') document.body.classList.add('side-mini'); } catch (_) {}
-  const baseH = {};
-  const mo = new MutationObserver(() => {
-    const w = window.innerWidth;
-    baseH[w] = Math.max(baseH[w] || 0, window.innerHeight);
-    const wide = deskWanted(w, baseH[w]);
-    const on = document.body.classList.contains('compact-terminal') && wide;
-    if (document.body.classList.contains('desk') !== on) { document.body.classList.toggle('desk', on); }
-    if (on) renderDesk();
-  });
-  mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
-  window.addEventListener('resize', () => { document.body.classList.toggle('desk-probe'); });
+  // Die frühere Desk-Seitenleiste (aufgeklappt) ist entfernt — aufgeklappt
+  // gilt jetzt die Zugeklappt-Optik (fold.js). Hier bleibt nur der Abgleich
+  // des Explorers mit der Geräteliste.
   const prevSync = window.multiSync;
-  window.multiSync = function () { if (prevSync) prevSync.apply(this, arguments); renderDesk(); if (fx.open) fxDeviceCheck(); };
-  let deskT = 0;
-  window.__deskRender = function () {
-    if (deskT || !document.body.classList.contains('desk')) return;
-    deskT = setTimeout(() => { deskT = 0; renderDesk(); }, 200);
-  };
+  window.multiSync = function () { if (prevSync) prevSync.apply(this, arguments); if (fx.open) fxDeviceCheck(); };
 
   // ── Karten mit Griff ────────────────────────────────────────────────
   // Öffnen auf der zuletzt gewählten Höhe (Start: gut die Hälfte) — Suche und

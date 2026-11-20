@@ -131,7 +131,12 @@
     const zoomed = vp && Math.abs(vp.scale - 1) > .05;
     const height = Math.round(vp && !zoomed ? vp.height : window.innerHeight);
     const top = vp && !zoomed ? vp.offsetTop : 0;
-    const enabled = currentScreen === 'terminals' && (height <= 480 || window.innerWidth >= 700) && !body.classList.contains('is-locked');
+    // Fold-Ansichten (fold.js) dürfen entscheiden, wann die kompakte Ansicht gilt;
+    // ohne sie bleibt alles wie bisher.
+    const wanted = typeof window.__compactWanted === 'function'
+      ? window.__compactWanted(window.innerWidth, height)
+      : (height <= 480 || window.innerWidth >= 700);
+    const enabled = currentScreen === 'terminals' && wanted && !body.classList.contains('is-locked');
     const changed = body.classList.contains('compact-terminal') !== enabled;
     const tight = enabled && height <= 280;
     const tightChanged = body.classList.contains('compact-tight') !== tight;

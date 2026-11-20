@@ -250,12 +250,6 @@
     scroller.scrollTop = 0;
   }
 
-  function placeForDesk() {
-    const side = document.getElementById('deskSide');
-    const left = document.body.classList.contains('desk') && side ? Math.round(side.getBoundingClientRect().right) : 0;
-    el.style.setProperty('--rd-left', left + 'px');
-  }
-
   function load(keepIndex) {
     const req = ++cur.req; const id = cur.id;
     const timer = setTimeout(() => { if (cur.req === req && !cur.list.length) showState(WHY.timeout[0], WHY.timeout[1]); }, 8000);
@@ -280,7 +274,6 @@
   function open(id) {
     if (!id) return;
     cur = { id, idx: 0, list: [], open: false, req: cur.req };
-    placeForDesk();
     el.hidden = false;
     document.body.classList.add('reader-open');
     head('');
@@ -362,5 +355,5 @@
       });
     }
   });
-  window.addEventListener('resize', () => { if (!el.hidden) { placeForDesk(); if (cur.list.length) { const top = scroller.scrollTop; paint(); scroller.scrollTop = top; } } });
+  window.addEventListener('resize', () => { if (!el.hidden) { if (cur.list.length) { const top = scroller.scrollTop; paint(); scroller.scrollTop = top; } } });
 })();

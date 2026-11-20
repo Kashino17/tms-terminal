@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "DeX-Monitor per USB-C-Kabel fuers iPad: Das Fold wird USB-Host und spricht das iPad direkt an (wie ein Mac, kein WLAN noetig). Bild in 4:3 Vollbild, Ton ueber die iPad-Lautsprecher, Touch, Magic-Keyboard-Trackpad und Tastatur. Einmal nach jedem Fold-Neustart am Mac freischalten: tms-terminal dex. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Neue Fold-Ansichten: Aufgeklappt zwei Terminals nebeneinander - Antippen gibt den Fokus, die Eingabezeile geht ueber die volle Breite und leuchtet in der Farbe des Terminals. Geteilter Bildschirm (untereinander) sieht jetzt aus wie zugeklappt: Karte, Punkte, Eingabe. Aufgeklappt geteilt ist die Tastatur gesperrt (sprechen), der Knopf Tastatur holt sie. Die alte Seitenleiste ist weg. Rueckfrage-Karten passen in niedrige Fenster. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest

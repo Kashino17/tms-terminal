@@ -672,6 +672,24 @@
   .sheet-wrap--perm { pointer-events: none; }
   .sheet-wrap--perm .sheet-backdrop { bottom: calc(var(--safe-bottom) + var(--dock-h) + 18px); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
   .sheet-wrap--perm .sheet-panel { margin-bottom: calc(var(--safe-bottom) + var(--dock-h) + 22px); pointer-events: auto; }
+  /* Niedrige Fenster (geteilter Bildschirm): die Karte wird nie höher als der
+     Platz über der Eingabe — sonst rutschten Kopf und Frage oben aus dem Bild.
+     Die Optionen geben zuerst nach und scrollen in sich; Kopf, Anmerkung und
+     Senden bleiben stehen. Reicht auch das nicht, scrollt die Karte selbst. */
+  .sheet-wrap--perm .sheet-panel { display: flex; flex-direction: column; overflow-y: auto;
+    max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - var(--dock-h) - 34px); }
+  .sheet-wrap--perm .sheet-panel > * { flex: none; }
+  .sheet-wrap--perm .sheet-panel > .question-options { flex: 0 1 auto; min-height: 58px; }
+  @media (max-height: 560px) {
+    .sheet-wrap--perm .sheet-grabber { margin: 0 auto 8px; }
+    .sheet-wrap--perm .sheet-panel { padding-top: 8px; padding-bottom: 12px; }
+    .sheet-wrap--perm .perm-source { margin-bottom: 6px; }
+    .sheet-wrap--perm .question-text { margin: 2px 0 8px; }
+    .sheet-wrap--perm .question-option-row { padding: 7px 6px; }
+    .sheet-wrap--perm .question-comment-row { margin-bottom: 8px; }
+    .sheet-wrap--perm .question-comment-row textarea { min-height: 0; height: 42px; }
+    .sheet-wrap--perm .perm-actions button { padding: 10px; }
+  }
 
   .mehr-list { display: flex; flex-direction: column; gap: 4px; }
   .mehr-item { display: flex; align-items: center; gap: 12px; padding: 13px 10px; border-radius: var(--radius-md); text-align: left; transition: background 200ms var(--spring); }
@@ -2279,6 +2297,7 @@
 <link rel="stylesheet" href="bund.css">
 <link rel="stylesheet" href="settings.css">
 <link rel="stylesheet" href="reader.css">
+<link rel="stylesheet" href="fold.css">
 <style>
   /* ===== Bund (Mockup) ===== */
   .dock-btn[data-nav="manager"] { display: none !important; }
@@ -5262,7 +5281,6 @@
       b.classList.toggle('has-new', !!s.answerNew);
     });
     if (window.TMSCompact) window.TMSCompact.sync();
-    if (window.__deskRender) window.__deskRender();
     if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
   };
 
@@ -6101,7 +6119,6 @@
 
   function refreshPreviews() {
     if (window.TMSCompact) window.TMSCompact.sync();
-    if (window.__deskRender) window.__deskRender(); // Seitenleiste: LÄUFT/FRAGE/…
     renderRail();
     if (state.overviewOpen) renderOverview();
   }
@@ -11257,5 +11274,6 @@
 <script src="bund.js"></script>
 <script src="settings.js"></script>
 <script src="reader.js"></script>
+<script src="fold.js"></script>
 </body>
 </html>

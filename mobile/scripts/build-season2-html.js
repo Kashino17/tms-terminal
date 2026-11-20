@@ -162,6 +162,11 @@ patch('reader stylesheet', '<link rel="stylesheet" href="reader.css">',
   '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/reader.css'), 'utf8') + '</style>');
 patch('reader controller', '<script src="reader.js"></script>',
   '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/reader.js'), 'utf8') + '</script>');
+// Fold-Ansichten: aufgeklappt zwei Karten, geteilter Bildschirm wie zugeklappt.
+patch('fold stylesheet', '<link rel="stylesheet" href="fold.css">',
+  '<style>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/fold.css'), 'utf8') + '</style>');
+patch('fold controller', '<script src="fold.js"></script>',
+  '<script>' + fs.readFileSync(path.join(MOCKUP_DIR, 'liquid-deck/fold.js'), 'utf8') + '</script>');
 
 // ── 5) xterm.js + the bridge, after the mockup's own script.
 function stringExports(file) {
