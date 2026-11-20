@@ -6,7 +6,7 @@
      closed        zugeklappt / aufgeklappt nebeneinander  → unverändert
      open          aufgeklappt, ganzer Bildschirm           → zwei Karten,
                                                               eine hat den Fokus
-     split-open    aufgeklappt, untereinander geteilt       → eine breite Karte,
+     split-open    aufgeklappt, untereinander geteilt       → ebenfalls zwei Karten,
                                                               Tastatur gesperrt
      split-closed  zugeklappt, untereinander geteilt        → Zugeklappt-Ansicht,
                                                               gestrafft
@@ -61,6 +61,9 @@
     if (!unfolded && fullW && short) return 'split-closed';
     return 'closed';                                    // inkl. nebeneinander
   }
+  // Aufgeklappt (ganz oder untereinander geteilt): zwei Karten nebeneinander.
+  const twoUp = () => fv.mode === 'open' || fv.mode === 'split-open';
+
   function keyboardUp() {
     const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
     return editing() && vh < stableH - 100;
@@ -74,8 +77,10 @@
   function apply() {
     const m = detect();
     const changed = m !== fv.mode;
+    if (m !== fv.mode) tapped = false;
     fv.mode = m;
     body.classList.toggle('fv-open', m === 'open');
+    body.classList.toggle('fv-two', m === 'open' || m === 'split-open');
     body.classList.toggle('fv-split', m === 'split-open' || m === 'split-closed');
     body.classList.toggle('fv-split-open', m === 'split-open');
     body.classList.toggle('fv-split-closed', m === 'split-closed');
@@ -87,7 +92,7 @@
 
   function relayout() {
     if (typeof layoutStack !== 'function' || !document.getElementById('stack')) return;
-    if (fv.mode === 'open') initSlots();
+    if (twoUp()) initSlots();
     layoutStack(state.activeIndex);
     if (typeof renderTermSwitcher === 'function') renderTermSwitcher();
     fitNames();
@@ -96,13 +101,12 @@
   // ── Stapel-Anordnung je Form ──────────────────────────────────────────
   const origLayout = layoutStack;
   layoutStack = function (floatIndex, opts) {
-    if (fv.mode !== 'open' && fv.mode !== 'split-open') return origLayout(floatIndex, opts);
+    if (!twoUp()) return origLayout(floatIndex, opts);
     opts = opts || {};
     const stackEl = document.getElementById('stack');
     if (!stackEl) return;
     if (opts.instant) stackEl.classList.add('is-dragging');
-    if (fv.mode === 'open') layoutTwo(stackEl);
-    else layoutWide(stackEl, floatIndex);
+    layoutTwo(stackEl);
     if (opts.instant) requestAnimationFrame(() => stackEl.classList.remove('is-dragging'));
     if (typeof flushHiddenCards === 'function') flushHiddenCards();
     placeDock();
@@ -116,24 +120,6 @@
     document.querySelectorAll('.stack-card .card-name').forEach(n => {
       measureCtx.font = getComputedStyle(n).font;
       n.style.setProperty('--fv-name-w', Math.ceil(measureCtx.measureText(n.value || '').width + 4) + 'px');
-    });
-  }
-
-  // Split aufgeklappt: eine breite Karte, Wischen blättert sauber weiter.
-  function layoutWide(stackEl, f) {
-    state.order.forEach((id, i) => {
-      const card = stackEl.querySelector(`.stack-card[data-id="${id}"]`);
-      if (!card) return;
-      const off = i - f;
-      const ao = Math.min(Math.abs(off), 3);
-      card.style.transform = `translate3d(calc(${(off * 100).toFixed(2)}% + ${(off * 24).toFixed(1)}px), 0, 0) scale(${(1 - Math.min(ao, 1) * 0.04).toFixed(3)})`;
-      card.style.opacity = (ao < 1 ? 1 - ao * 0.5 : 0).toFixed(3);
-      card.style.zIndex = 100 - Math.round(ao * 10);
-      card.classList.toggle('is-active', ao < 0.05);
-      card.classList.remove('fv-focus', 'fv-side');
-      card.style.pointerEvents = ao < 1.5 ? 'auto' : 'none';
-      const b = card.querySelector('.card-body');
-      if (b) b.style.pointerEvents = ao < 0.05 ? 'auto' : 'none';
     });
   }
 
@@ -202,7 +188,7 @@
   // Farbe der Karte mit Fokus — man sieht sofort, wohin man schreibt.
   let lastTag = '';
   function placeDock() {
-    if (fv.mode !== 'open') { root.style.removeProperty('--fv-dock-w'); root.style.removeProperty('--fv-tag'); lastTag = ''; return; }
+    if (!twoUp()) { root.style.removeProperty('--fv-dock-w'); root.style.removeProperty('--fv-tag'); lastTag = ''; return; }
     const pane = document.querySelector('.stack-pane');
     if (pane) root.style.setProperty('--fv-dock-w', Math.round(pane.getBoundingClientRect().width) + 'px');
     const s = TMS_DATA.sessions.find(x => x.id === fv.slots[fv.focus]);
@@ -220,7 +206,7 @@
 
   const origSetActive = setActive;
   setActive = function (index) {
-    if (fv.mode === 'open' && state.order.length) {
+    if (twoUp() && state.order.length) {
       const i = Math.max(0, Math.min(index, state.order.length - 1));
       placeInSlots(state.order[i]);
     }
@@ -230,17 +216,17 @@
   // Aufgeklappt malen beide Karten — die zweite ist ja sichtbar.
   const origVisible = window.__tmsCardVisible;
   if (origVisible) window.__tmsCardVisible = function (id) {
-    if (fv.mode === 'open' && fv.slots.includes(id) && !window.__tmsAppInactive) return true;
+    if (twoUp() && fv.slots.includes(id) && !window.__tmsAppInactive) return true;
     return origVisible(id);
   };
 
   // Aufgeklappt wird nicht gewischt: Antippen der zweiten Karte holt den Fokus.
   document.addEventListener('pointerdown', e => {
-    if (fv.mode !== 'open' || !e.target.closest('#stack')) return;
+    if (!twoUp() || !e.target.closest('#stack')) return;
     e.stopPropagation();
   }, true);
   document.addEventListener('click', e => {
-    if (fv.mode !== 'open') return;
+    if (!twoUp()) return;
     const card = e.target.closest('#stack .stack-card');
     if (!card || card.classList.contains('fv-focus')) return;
     const idx = state.order.indexOf(card.dataset.id);
@@ -260,7 +246,16 @@
   const mic = document.getElementById('dockMicBtn');
   if (mic && mic.parentNode) mic.parentNode.insertBefore(kbBtn, mic);
 
-  function locked() { return fv.mode === 'split-open' && !fv.kbOn; }
+  // Aufgeklappt (ganzer Bildschirm): die App fokussiert die Eingabe auch von
+  // sich aus — Tipp aufs Terminal, eingefügtes Diktat (Zeile oder Bubble).
+  // Der Fokus bleibt (die Bridge rechnet ab ihm die Differenz zum Terminal),
+  // die Tastatur aber kommt nur, wenn man selbst auf die Eingabezeile tippt.
+  let tapped = false;
+  function locked() {
+    if (fv.mode === 'split-open') return !fv.kbOn;
+    if (fv.mode === 'open') return !tapped;
+    return false;
+  }
   function applyKeyboardLock() {
     if (!input) return;
     if (locked()) input.setAttribute('inputmode', 'none');
@@ -268,7 +263,8 @@
     kbBtn.setAttribute('aria-pressed', String(fv.kbOn));
     kbBtn.setAttribute('aria-label', fv.kbOn ? 'Tastatur ausblenden' : 'Tastatur einblenden');
     const ph = input.dataset.phFull || '';
-    const next = locked() ? ph.replace(/^Befehl an /, 'Sprich mit ') : ph.replace(/^Sprich mit /, 'Befehl an ');
+    const voice = fv.mode === 'split-open' && !fv.kbOn;   // nur dort ist Sprechen der Normalfall
+    const next = voice ? ph.replace(/^Befehl an /, 'Sprich mit ') : ph.replace(/^Sprich mit /, 'Befehl an ');
     if (next !== ph) {
       input.dataset.phFull = next;
       if (typeof fitDockPlaceholder === 'function') fitDockPlaceholder(input);
@@ -289,13 +285,22 @@
     requestAnimationFrame(() => input.focus({ preventScroll: true }));
   });
   input && input.addEventListener('blur', () => {
-    if (!fv.kbOn) return;
+    if (!fv.kbOn && !tapped) return;
     // Tastatur zu (Zurück-Taste, Tipp daneben) = wieder sperren.
-    setTimeout(() => { if (document.activeElement !== input) { fv.kbOn = false; applyKeyboardLock(); } }, 120);
+    setTimeout(() => { if (document.activeElement !== input) { fv.kbOn = false; tapped = false; applyKeyboardLock(); } }, 120);
+  });
+  // Aufgeklappt: der eigene Tipp auf die Eingabezeile gibt die Tastatur frei —
+  // VOR dem Fokus, damit Android sie mit dem freien inputmode anfragt. War das
+  // Feld schon (ohne Tastatur) fokussiert, braucht Android einen neuen Fokus.
+  input && input.addEventListener('pointerdown', () => {
+    if (fv.mode !== 'open' || tapped) return;
+    tapped = true;
+    applyKeyboardLock();
+    if (document.activeElement === input) { input.blur(); input.focus({ preventScroll: true }); }
   });
   let hinted = false;
   input && input.addEventListener('pointerdown', () => {
-    if (!locked() || hinted) return;
+    if (fv.mode !== 'split-open' || !locked() || hinted) return;
     hinted = true;
     if (typeof toast === 'function') toast('Tastatur gesperrt – 🎤 sprechen oder „Tastatur“ tippen');
   });

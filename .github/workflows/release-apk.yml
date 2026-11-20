@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Neue Fold-Ansichten: Aufgeklappt zwei Terminals nebeneinander - Antippen gibt den Fokus, die Eingabezeile geht ueber die volle Breite und leuchtet in der Farbe des Terminals. Geteilter Bildschirm (untereinander) sieht jetzt aus wie zugeklappt: Karte, Punkte, Eingabe. Aufgeklappt geteilt ist die Tastatur gesperrt (sprechen), der Knopf Tastatur holt sie. Die alte Seitenleiste ist weg. Rueckfrage-Karten passen in niedrige Fenster. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Aufgeklappt: Die Tastatur oeffnet sich nur noch, wenn du selbst in die Eingabezeile tippst - nicht beim Tippen aufs Terminal und nicht, wenn ein Diktat (Zeile oder Bubble) eingefuegt wird. Zugeklappt bleibt alles wie bisher. Auch aufgeklappt im geteilten Bildschirm (untereinander) stehen jetzt zwei Terminals nebeneinander. Hinweis: Vor dem Update Play Protect kurz pausieren." \
             --latest
