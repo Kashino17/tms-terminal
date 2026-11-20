@@ -1,0 +1,133 @@
+/* Short windows (Fold split-screen / IME): one full-width terminal, with the
+   existing PTY, input, microphone and keys. No duplicate terminal renderer. */
+#compactTerminalHeader, #compactTerminalHeader #compactResumeInput { display: none; }
+:root {
+  --compact-dock-h: 54px;
+  --compact-keys-h: 0px;
+}
+.compact-terminal { --compact-header-h: 48px; }
+.compact-terminal.compact-tight { --compact-header-h: 44px; }
+.compact-terminal #statusHeader,
+.compact-terminal #islandScrim,
+.compact-terminal #termSwitcher,
+.compact-terminal .rail,
+.compact-terminal .term-card > .card-header,
+.compact-terminal .list-card__surface > .card-header,
+.compact-terminal .term-card::before,
+.compact-terminal .list-card__surface::before,
+.compact-terminal .list-card__rail,
+.compact-terminal #addTerminalCta { display: none !important; }
+.compact-terminal #screens {
+  top: var(--compact-vp-top, 0px);
+  height: var(--compact-vp-h, 100dvh);
+  bottom: auto;
+}
+.compact-terminal section[data-screen="terminals"] {
+  padding: calc(var(--safe-top) + var(--compact-header-h)) 0
+    calc(var(--compact-dock-h) + var(--compact-keys-h) + var(--safe-bottom));
+  transition: none; animation: none;
+}
+.compact-terminal .workspace { padding: 0; gap: 0; }
+.compact-terminal .stack-pane { border-radius: 0; flex: 1; }
+.compact-terminal .stack { inset: 0 !important; touch-action: pan-y; }
+.compact-terminal .term-list { position: relative; padding: 0 !important; overflow: hidden; }
+.compact-terminal .term-list__inner { position: relative; height: 100%; width: 100%; max-width: none; padding: 0; }
+.compact-terminal .term-card {
+  position: absolute; inset: 0; width: 100%; max-width: none; margin: 0;
+  border: 0 !important; border-radius: 0; box-shadow: none !important;
+  background: var(--term-surface); backdrop-filter: none; -webkit-backdrop-filter: none;
+  transform: none !important; opacity: 1 !important; transition: none;
+  visibility: hidden; pointer-events: none !important;
+}
+.compact-terminal .term-card.is-target { visibility: visible; pointer-events: auto !important; }
+.compact-terminal .list-card__surface { height: 100%; border: 0; border-radius: 0; transform: none !important; background: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.compact-terminal .list-card .list-card__collapsible { display: flex !important; flex-direction: column; flex: 1; min-height: 0; border: 0; padding: 0; }
+.compact-terminal .list-card__body-shell { flex: 1; max-height: none; min-height: 0; }
+.compact-terminal .card-body {
+  border: 0; border-radius: 0; margin: 0; padding: 8px 14px;
+  font-size: var(--compact-terminal-font); box-shadow: none; background: none;
+}
+.compact-terminal .term-line { line-height: 1.55; }
+.compact-terminal .replay-pill { margin: 0 8px 4px; padding: 4px; }
+.compact-terminal .term-card .term-input-row { display: none; }
+.compact-terminal #dock {
+  left: 0; top: calc(var(--compact-vp-top, 0px) + var(--compact-vp-h, 100dvh) - var(--compact-dock-h) - var(--safe-bottom));
+  bottom: auto; transform: none !important; width: 100%; max-width: none;
+  padding: 4px 6px; border-radius: 0; border-width: 1px 0 0;
+  background: var(--bg-grad); backdrop-filter: none; -webkit-backdrop-filter: none;
+  box-shadow: none; transition: none;
+}
+.compact-terminal #dock .dock-page--term { align-items: flex-end; gap: 4px; }
+.compact-terminal #dock .term-input-btn { width: 44px; height: 44px; border-radius: 10px; margin: 0; }
+.compact-terminal #dock #dockInput { font-size: 16px; line-height: 22px; padding: 11px 4px; border-radius: 8px; max-height: none; }
+.compact-terminal #dock .term-input-row__prompt { color: var(--accent); margin-bottom: 11px; line-height: 22px; }
+.compact-terminal #globalKeys {
+  left: 0; transform: none !important; width: 100%; max-width: none;
+  bottom: auto; top: calc(var(--compact-vp-top, 0px) + var(--compact-vp-h, 100dvh) - var(--compact-dock-h) - var(--compact-keys-h) - var(--safe-bottom));
+  border-radius: 0; padding: 0 6px; border-width: 1px 0 0; background: var(--bg-grad);
+  backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; transition: none;
+}
+/* Keep every key/tool, in one horizontally scrollable 44px accessory row. */
+.compact-terminal #globalKeys:not([hidden]) { display: flex; flex-direction: row; gap: 4px; overflow-x: auto; }
+.compact-terminal #globalKeys .keys-panel__row { flex: none; gap: 4px; }
+.compact-terminal #globalKeys .keys-panel__keys { flex: none; overflow: visible; }
+.compact-terminal #globalKeys .keys-panel__row--tools { overflow: visible; }
+.compact-terminal #globalKeys .tt-key,
+.compact-terminal #globalKeys .keys-panel__arrows button,
+.compact-terminal #globalKeys .keys-panel__close { height: 44px; min-width: 44px; border-radius: 6px; }
+.compact-terminal #globalKeys .keys-panel__close { position: sticky; right: 0; }
+.compact-terminal #compactTerminalHeader {
+  position: fixed; z-index: 41; display: flex; align-items: center; gap: 4px;
+  left: 0; width: 100%; top: calc(var(--compact-vp-top, 0px) + var(--safe-top));
+  height: var(--compact-header-h); padding: 0 6px; background: var(--bg-grad);
+  border-bottom: 1px solid var(--glass-border);
+}
+.compact-terminal #compactTerminalHeader button { min-height: 44px; min-width: 44px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--text-dim); }
+#compactSessionPicker { flex: 1; min-width: 0 !important; text-align: left; justify-content: flex-start !important; gap: 9px; padding: 0 6px; }
+.compact-session-tag { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.compact-session-label { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.compact-session-label strong { font-size: 14px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text); }
+.compact-session-label small { font-size: 11px; color: var(--text-dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.compact-tight .compact-session-label small { display: none; }
+#compactReading[aria-pressed="true"] { color: var(--accent) !important; background: rgba(var(--accent-rgb), .12); }
+.compact-terminal.compact-reading { --compact-dock-h: 0px !important; --compact-keys-h: 0px !important; }
+.compact-terminal.compact-reading #dock, .compact-terminal.compact-reading #globalKeys { display: none !important; }
+.compact-terminal.compact-reading #compactTerminalHeader #compactResumeInput {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  height: 44px; padding: 0 14px; border-radius: 12px; color: var(--accent);
+  background: rgba(var(--accent-rgb), .12); font-size: 13px;
+}
+.compact-terminal.compact-reading #compactReading { display: none; }
+.compact-dialog {
+  position: fixed; inset: auto 0; bottom: max(0px, calc(100dvh - var(--compact-vp-top, 0px) - var(--compact-vp-h, 100dvh)));
+  width: min(100%, 560px); max-width: 100%;
+  max-height: calc(var(--compact-vp-h, 100dvh) - 8px); margin: auto auto 0;
+  overflow-y: auto; padding: 12px 16px; border: 1px solid var(--glass-border);
+  border-radius: 16px 16px 0 0; color: var(--text); background: var(--bg-grad);
+  font: 14px/1.4 var(--font-ui); z-index: 250;
+}
+.compact-dialog::backdrop { background: rgba(var(--scrim-rgb), .55); }
+.compact-dialog__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.compact-dialog__header strong { font-size: 16px; }
+.compact-dialog button { min-height: 44px; min-width: 44px; color: inherit; }
+.compact-dialog__close { display: grid; place-items: center; }
+.compact-dialog__sessions { display: grid; gap: 4px; }
+.compact-dialog__session { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; padding: 8px 10px; border: 1px solid transparent; border-radius: 10px; }
+.compact-dialog__session[aria-current="true"] { border-color: var(--glass-border); background: rgba(var(--accent-rgb), .12); }
+.compact-dialog__session strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.compact-dialog__session small { color: var(--text-dim); font-size: 11px; }
+.compact-dialog__add, .compact-dialog__action { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 0 8px; border-top: 1px solid var(--glass-border); }
+.compact-dialog__add { color: var(--accent) !important; margin-top: 8px; }
+.compact-font-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; }
+.compact-font-row > div { display: flex; align-items: center; gap: 8px; }
+.compact-font-row button { border: 1px solid var(--glass-border); border-radius: 8px; }
+.compact-name-form { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.compact-name-form input { min-width: 0; width: 0; flex: 1; height: 44px; padding: 0 10px; border-radius: 8px; background: rgba(var(--well-rgb), var(--well-a)); border: 1px solid var(--glass-border); color: var(--text); font: 16px var(--font-ui); }
+.compact-name-form button { padding: 0 10px; color: var(--accent); }
+.compact-dialog__nav { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 8px 0; }
+.compact-dialog__nav button { text-align: left; padding: 0 10px; border-radius: 8px; background: rgba(var(--overlay-rgb), .05); }
+.compact-dialog button:focus-visible, #compactTerminalHeader button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.compact-terminal .overview-grid { grid-auto-rows: 110px; }
+.compact-terminal .sheet-panel { max-height: calc(var(--compact-vp-h, 100dvh) - 12px); overflow-y: auto; }
+.compact-terminal #toasts { bottom: auto; top: calc(var(--compact-vp-top, 0px) + var(--compact-vp-h, 100dvh) - var(--compact-dock-h) - 54px); max-width: calc(100% - 24px); }
+.compact-terminal .toast { white-space: normal; }

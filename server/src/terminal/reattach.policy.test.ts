@@ -63,3 +63,12 @@ test('CLEAR_SEQUENCE leert Schirm, Historie und Attribute', () => {
   assert.ok(CLEAR_SEQUENCE.includes('\x1b[0m'), 'SGR zurücksetzen');
   assert.ok(CLEAR_SEQUENCE.includes('\x1b[H'), 'Cursor nach Hause');
 });
+
+// Kaltstart der App: ihr Terminal ist leer. Bei fester Breite und ohne verpasste
+// Ausgabe schickte der Server sonst NICHTS — die Karte blieb leer bis auf das,
+// was die TUI von selbst neu malte (Screenshots 05.11. 18:17, "Google ads").
+test('leerer Client (fresh) -> immer Snapshot, auch ohne verpasste Ausgabe und bei gleicher Breite', () => {
+  assert.equal(wantsSnapshot(50, 50, 0, false, true), true);
+  assert.equal(wantsSnapshot(50, undefined, 0, false, true), true);
+  assert.equal(wantsSnapshot(50, 50, 0, false, false), false, 'Client mit Inhalt bleibt unangetastet');
+});

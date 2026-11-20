@@ -126,3 +126,302 @@
 ### Offene Fragen
 - Wie verhält sich der conversational Onboarding-Flow in der Praxis? Findet die AI den richtigen Moment für den CONFIG-Block?
 - Server-Update auf Produktiv-Server steht noch aus
+
+
+## 2026-10-26 — Fold-Splitscreen nach Freigabe umgesetzt
+
+- Ausgangspunkt: Bei aufgeklapptem Fold mit Video oben und Tastatur blieb im TMS-Terminal zu wenig lesbare Ausgabe. Nutzer hat den über Localhost/Tailscale bereitgestellten interaktiven Mockup mit "ja passt" freigegeben.
+- Neue kompakte Season-2-Ansicht für kurze Fenster; bestehende PTY, Eingabe, Sondertasten und Recorder werden weiterverwendet. Sitzungswechsler, Lesefokus und Schriftgrößenwahl sind im schmalen Kopf zugänglich.
+- Viewport- und Inhaltsgrößen werden beobachtet; stabile PTY-Resizes berücksichtigen jetzt auch schrumpfende Höhen. Entwürfe werden je Sitzung einschließlich des bereits gesendeten Textstands gespeichert und ohne erneute Eingabe wiederhergestellt.
+- Der native HTML-Build bettet die neuen CSS-/JS-Dateien ein. 108 Tests bestanden, 2 Browser-Tests übersprungen; acht generierte Inline-Skripte syntaktisch gültig.
+- Visuelle Prüfung auf dem echten Fold mit Samsung-Tastatur steht aus. Keine GitHub-Veröffentlichung, kein Push, keine automatische Installation auf dem Handy.
+
+### Build-Abschluss dieser Sitzung
+- Quellcode ins separate Repository übernommen und Dateihashes verglichen; `git diff --check` sauber. Testlauf auch direkt im Zielrepository: 108 bestanden, 2 Browser-Tests übersprungen. Eingebettetes HTML mit acht Skripten syntaktisch geprüft.
+- Kein APK-Artefakt: Gradle wartet schon in der React-Native-Konfiguration. Node 22 behebt das erste CLI-Import-Hängen, nicht das anschließende `cli config`-Hängen. Thread-/Prozessdiagnose zeigt blockiertes synchrones Lesen lokaler Abhängigkeiten; Einzel-Lesetests gelingen. Ursache nicht abschließend geklärt. Auch TypeScript-Gesamtprüfung blieb ohne Ausgabe hängen.
+- Eigene Build-/TypeScript-Prozesse beendet. Kein `deploy.sh`, kein pauschales Beenden von Gradle-/Node-Prozessen, keine Installation, kein Release. Die lokale Implementierung ist gespeichert; APK und Fold-Gerätetest bleiben offen.
+
+
+## 2026-10-26 — Veröffentlichung des Fold-Updates angefordert
+
+- Nutzer hat Commit, Push und Release ausdrücklich freigegeben, damit die App das Update anbietet. Zielversion v1.123.7, Android-versionCode 22307 (app.json und build.gradle synchronisiert).
+- Vorhandenen GitHub-Release-Workflow gefunden: Er umgeht das bereits dokumentierte lokale Headless-Metro-Problem und nutzt den bestehenden Signaturschlüssel aus Repository-Secrets. Letzter erfolgreicher Release: v1.123.6 am 22.10.2026.
+- Workflow ergänzt um WebView-Build und Regressionstests vor dem APK-Build; Release-Text beschreibt das Fold-Update. Keine neuen Berechtigungen, Schlüssel oder Runner-Dienste nötig.
+- Nächste Prüfung: Tag-Build erfolgreich, APK mit korrekter Paketkennung/Version/Signatur, öffentlicher Latest-Release-Endpunkt für den In-App-Updater. Gerätetest mit echter Samsung-Tastatur bleibt anschließend erforderlich.
+
+### CI-Korrektur für v1.123.8
+- v1.123.7: Feature-Commit `b16ceaf` und Tag erfolgreich gepusht. Die neue Teststufe stoppte korrekt vor Signierung/Veröffentlichung: prayer-counter/term-text benutzten absolute Mac-Pfade; tab-identity importiert TypeScript direkt, was Node 20 nicht unterstützt.
+- Pfade relativ zur Testdatei gemacht und Node 22 mit explizitem Type-Stripping für die Tests ergänzt. Android/Metro bleibt auf dem zuletzt erfolgreichen Node 20. Keine Tests deaktiviert.
+- Neues Release-Ziel v1.123.8 / code 22308; der bereits gepushte, fehlgeschlagene Tag v1.123.7 bleibt unverändert.
+
+### Release abgeschlossen
+- v1.123.8 / Android code 22308 erfolgreich veröffentlicht: https://github.com/Kashino17/tms-terminal/releases/tag/v1.123.8. Feature-Commit `b16ceaf`, CI-Korrektur/Release-Commit `0cb0c5c`, Tag v1.123.8. Branch und Tag gepusht.
+- GitHub-Lauf 40306140012: WebView-Build und alle 108 ausführbaren Tests erfolgreich (2 Browser-Checks übersprungen), Android-Build/Signierung und Veröffentlichung erfolgreich.
+- Veröffentlichte APK (104537152 Bytes) heruntergeladen: Paket `com.tms.terminal`, v1.123.8/code 22308, arm64; Zertifikat identisch zur installierbaren Vorgängerversion v1.123.6. SHA-256: `2c6853be0ff72cbe55cfe3d0816ec96af70dc0f5f581135d7627624463dd8a11`.
+- Öffentlichen Latest-Release-Endpunkt ohne Anmeldung geprüft; die App findet die neue APK über ihren vorhandenen Updater. Einstieg: Einstellungen → Nach Updates suchen. Keine direkte Installation auf dem Gerät vorgenommen.
+- Git-Push hing mit Delta-Packung; der erfolgreiche Aufruf verwendet temporär `pack.window=0`, `pack.threads=1`, HTTP/1.1 und `gh auth git-credential`, ohne globale Git-Konfiguration zu ändern.
+
+## 2026-10-28 — Diagnose Verbindung bei Bildschirm-Aus und Ruhezustand
+
+- Nutzer meldet Verbindungsabbrüche bei ausgeschaltetem Bildschirm bzw. MacBook-Ruhezustand ohne Netzteil und möchte keinen zusätzlichen Energieverbrauch.
+- Nur Diagnose, keine Änderungen an App, Server, Tailscale oder Energieeinstellungen, kein neuer Release. Ursache am Gerät nicht reproduziert.
+- Aktuelle read-only-Abfrage: Netzbetrieb; pmset AC sleep=0, displaysleep=10, womp=1. Ausgelesene letzte Ereignisse zeigen Display-Aus/Ein; daraus kein Nachweis eines System-Sleep-Abbruchs. Akku-Schlafverhalten nicht verifiziert.
+- Installierte Tailscale.app laut Info.plist: 1.94.1. Offizielles Changelog nennt in 1.98.8 Korrekturen für Verbindungen nach OS-Wake; aktueller Changelog-Stand 1.104.2. Update ist ein sinnvoller Ansatz, aber keine bewiesene Ursache des konkreten Abbruchs. Quelle: https://tailscale.com/changelog
+- Aktueller TMS-Code hält getrennte PTYs ohne Idle-TTL; automatische Wiederverbindung und AppState-Vordergrundbehandlung bestehen bereits. WebSocket-Retries laufen bis maximal 5 Sekunden Abstand; ein expliziter Handshake-Timeout fehlt. Verbesserungsansatz: begrenzter Verbindungsaufbau, verlässliche Wiederaufnahme und langsamere Versuche bei längerem Offline-Zustand statt zusätzlicher Wake-Locks.
+- Technische Grenze: Display-Aus und System-Schlaf unterscheiden. Normaler System-Schlaf unterbricht interaktive Terminal-Ausführung; automatisches Wiederverbinden kann erst nach Wake/Netzrückkehr helfen. Durchgehende Arbeit erfordert einen wachen Rechner und kann gegenüber Schlaf nicht ohne Mehrverbrauch versprochen werden. Empfohlen: bestehendes Energiesparen erhalten und Wiederaufnahme verbessern; bei gewünschtem Live-Betrieb nur während tatsächlicher Nutzung wachhalten, als expliziter Energie-Kompromiss.
+
+## 2026-11-05 — Terminal-Darstellung: Breite, Dopplungen, OpenCode/Windows, Links
+
+- Analyse + Plan-Seite mit Fragen: https://claude.ai/artifact/CRvLBa2xfpSYR9svMNvCrh (Antworten in db `answers`).
+- Ursache „zerhackt“: bridge.js `measureCell` zählte die Stapel-Verkleinerung mit → Karten hinter der aktiven bekamen 42/46/50 statt 39 Spalten, jeder Wisch = SIGWINCH. Live per `stty` auf den PTYs bewiesen.
+- Ursache „doppelt“: Zeilen-Ratsche war in v1.123.7 entfernt → Tastatur drückte PTY auf 13 Zeilen, Claudes Live-Bereich höher → Ink lässt Kopien stehen. E2E (echte Seite + echter Claude Code): 1 → 14 Köpfe; mit Ratsche 1, 0 Resizes.
+- Feste Breite 50 Spalten (Schrift folgt Kartenbreite, 10–20 px) + kompakter Handy-Rand (6 px statt 32 px). Schriftregler entfallen.
+- OpenCode/Windows: ConPTY schluckt Maus-DECSET; Prozessname unter Windows nie ermittelt (pgrep/ps) und `opencode.exe` nicht erkannt → Fix: Get-CimInstance (tiefster Nachfahre), neue Nachricht `terminal:process` bei Alt-Screen-Start, isMouseTui strippt Pfad/.exe.
+- Windows-Server: `tms-terminal update` brauchte bash → scheiterte immer. Jetzt bin/update-runner.js (Node); doctor prüft Fernzugriff (Encoder, ddagrab, Sitzung, Probeaufnahme); ffmpeg Baseline/-bf 0. Windows-PC offline → nicht live getestet; erstes Update dort manuell.
+- Links: Rand-Regel aus Nachbarzeilen (alter Verlauf mit anderer Breite) + Aufzählungszeichen nie Fortsetzung.
+- Releases: v1.123.9, v1.124.0, v1.124.1, v1.124.2 (alle CI grün, latest = v1.124.2). Server-Commit f88aa3e gepusht (Windows).
+- v1.124.3: Verlauf nach App-Neustart — App meldet `fresh` (leeres Terminal), Server schickt dann immer das Vollbild.
+
+## 2026-11-05 (abends) — Verlauf nach Server-Neustart, Box-Reste, Akku
+
+- Server-Neustart (21:42/21:52, mit Aufpasser-Skript ~/.tms-terminal/restart-guard.sh) — alle Claude-Sitzungen liefen im Wächter weiter.
+- „Verlauf weg“ nach Neustart: neuer Server legte für übernommene Terminals einen LEEREN Spiegel an; das nächste Vollbild ersetzte den App-Verlauf. Fix `e6805d7`: Spiegel werden beim Herunterfahren gesichert und beim Übernehmen eingespeist; Spiegel ohne Vorgeschichte schicken nur an leere Clients ein Vollbild.
+- „Dopplungen“: Server-Spiegel selbst enthielt die Reste → nicht App. Ursache belegt mit echtem Claude Code: Unteragenten-Bestätigungen zeigen ganze Befehle (bei 50 Spalten 100–160 Zeilen); Box höher als PTY (31) → Reste. 31 Zeilen → Reste, 200 → keine.
+- Fix v1.125.0 (`32a3d27`): virtuelle Höhe 200 Zeilen, Karte schneidet Leerzeilen ab, liest nur geänderte Zeilen neu (xterm-interne Meldung); Server-`screen()` endet beim Inhalt (Auto-Approve).
+- Wärme-Fund: versteckte xterm-Renderer bauten bei jedem Rollen alle Zeilen neu (Auswahl-Logik, am Pause-Schalter vorbei) — stillgelegt. Messung (CPU 4× gedrosselt, 10 Terminals Dauerausgabe): 47 → 37 ms Arbeit/s; Fehlerfall: 10 Reste/196 falsche Zeilen → 0/0.
+- Tests: Server 495/495, App 121 bestanden; CI-Lauf 42039586986 grün, v1.125.0 = latest.
+
+## 2026-11-05 (spät) — Windows, Dateien-Gerätewechsel
+
+- Windows-PC zunächst offline; Analyse: node-pty nutzt System-ConPTY (useConptyDll=false) → alternativer Bildschirm wird nicht weitergegeben. Folgen: vim/less mit 200 Zeilen (seit v1.125.0), OpenCode-Maus erst nach Neuverbindung. Fix v1.125.1 (`51ace4c`): ProcessWatch (win32, 4 s Drossel + nachlaufende Prüfung, geteilte PowerShell-Tabelle 1,5 s), App-Namensliste FULLSCREEN_TUIS; Mac meldet auch das Ende einer Vollbild-TUI. Nachgestellt (1049 entfernt): 200 → 32 → 200.
+- Mac-Server-Neustart 22:52: Verlaufssicherung live bestätigt. Log-Meldung präzisiert (`81fdb2f`).
+- Windows später erreichbar (5 ms), aber kein Server auf 8767; SSH-Notizen lesen vom Auto-Mode blockiert → Nutzer soll `tms-terminal doctor` ausführen oder Benutzer/Schlüssel nennen.
+- Dateien: Windows-Pfad nach Gerätewechsel am Mac → HTTP 400 (belegt), Ansicht hing dauerhaft. Fix v1.125.2 (`625b8e1`): Reset auf ~ bei Serverwechsel (Leiste + Vollbild), Rückfall auf ~ bei 400/403/404, Windows-Pfade (filePaths.ts + TMS-TEST-EXPORT fsPath, 3 Tests).
+
+
+## 2026-11-07 — Alle Geräte in einer Ansicht (v1.126.0)
+
+- Nutzer: mit 2 Geräten ständig zwischen Übersicht und Terminals wechseln = Arbeitsfluss kaputt. Erste 3 Redesign-Varianten (Werkbank/Leitstand/Räume) abgelehnt; Fragen gestellt → Konzept: EINE Buchstaben-Leiste mit Terminals beider Geräte, Fernzugriff aus der Insel mit nahtlosem MAC/WIN-Wechsel, Liquid-Deck-Optik bleibt, Stapel/Liste/Übersicht-Knöpfe raus. Mockups per Tailscale (:8510) gezeigt, freigegeben ("bring es live").
+- Umsetzung `f65ad9b`: RN verbindet neben dem Hauptserver jedes erreichbare Gerät (Peers), sessionId→Server-Routing, create-FIFO pro Server, Seite meldet `terminal:restored` pro Karte; Leiste nach Gerät gruppiert, Insel "+" mit Geräte-Wahl + Fernzugriff, `TMSRemote.switchTo`.
+- Geprüft: tsc 0 Fehler, 125/127 Tests (2 Browser übersprungen), HTML-Diff nur eigene Änderungen, Browser-Simulation mit 2 Geräten (Gruppen, Routing, Create auf WIN, Fernzugriff-Wechsel) und 1 Gerät (unverändert). Echter Gerätetest steht aus.
+
+## 2026-11-07 nachts — Diktat-Streaming (v1.127.0)
+
+- Nutzer: Wispr Flow als Vorbild; unsere Transkription langsam, bricht ab („Zeitüberschreitung“), sperrt danach. Gemessen: Modell NICHT schuld (4 min = 10,6 s large-v3 / 3,8 s turbo). Ursachen im Code: Upload erst nach Stopp als 5-MB-Nachricht, `send()` verwirft still bei getrenntem Socket + Datei schon gelöscht, Ergebnis an alten Socket, Mikro-Sperre in processing, Sidecar-Stau, Rewriter schnitt bei 512 Tokens ab, leise Sprache als Stille weggeschnitten.
+- Umsetzung (Design+Plan, TDD): Streaming-Upload während Aufnahme, Byte-Offset-Protokoll mit resume/Neu-Upload, Vorab-Transkription, ✕ gibt frei, Fallback für alte Server, Ende-/Dauer-Logs. Opus-Review: 1 Critical (Offset-Rennen) + 7 Important behoben.
+- Leise Sprache: Normalisierung NACH dem Stille-Schnitt; adaptiver Schnitt verworfen (Raumrauschen → „Vielen Dank.“). 0,5-%-Pegel geht weiter verloren (wie vorher).
+- Parallel-Job hatte v1.126.0 genommen → rebased, als v1.127.0 released. Server-Neustart steht aus (Nutzer).
+- Nachtrag v1.127.1 (`b9cd2f3`): Dateien-Leiste/Explorer folgen dem Gerät des vorderen Terminals (term:active); Fingerabdruck pro Gerät (sudo → Gerät der Sitzung, Fernzugriff → angezeigtes Gerät, Windows → Hinweis). tsc 0, 125 Tests grün, Browser-Simulation bestätigt die Meldungen.
+
+## 2026-11-07 früh — Diktat-Bubble (v1.128.0)
+
+- Teil 2 nach Wispr-Vorbild: Bedienungshilfe + Overlay in allen Apps, Tippen = Aufnahme, ✓ = einfügen (nur in die App, in der ✓ gedrückt wurde), sonst Zwischenablage, Halten = 15 min schlafen. Server: schlanke `?role=dictation`-Verbindung (normale Verbindungen übernehmen `currentWs`).
+- Kotlin-Logik pure + JUnit (33 Tests), Test-Server `server/scripts/dictation-test-server.ts` (Port 8799, TEST_AUDIO/DELAY_MS) für Emulator-E2E. Emulator bekommt keinen Host-Mikroton → echte Mikro-Prüfung erst am Fold.
+- Opus-Review: Critical = gleichnamiges `var origRenderSettings` im Bridge-IIFE → Season 2 startete nicht; neuer Browser-Test `mobile/scripts/webview-bubble.test.mjs` (TMS_VIZ_PW). 8 Important behoben.
+- Parallel-Job hatte v1.127.1 → rebased, liquidDeckHtml neu gebaut, Diff = nur Bridge-Block.
+
+## 2026-11-07 — Bubble v1.129.0 (Redesign, direktes Einfügen)
+
+- Nutzer: alles landete in der Zwischenablage, in TMS selbst nie eingefügt; UI hässlich, beim Abschicken „verschwindet kurz nach rechts“; Bubble nur mit Tastatur.
+- Ursache TMS: bei Web-Inhalten liefert findFocus den FrameLayout statt des Eingabeknotens → Baumsuche. Einfügen jetzt per SET_TEXT ohne Zwischenablage; Zwischenablage nur bei Tastatur zu / kein Feld / App-Wechsel. Sichtbar nur mit IME-Fenster.
+- Neues Design (BubbleView gezeichnet, Kreis↔Pille-Morph, Bogen beim Transkribieren, Häkchen/Ablage-Symbol, Schütteln bei Fehler). Springen = Android-Move-Animation bei wandernder linker Fensterkante → zwei feste Fenster mit Übergabe. Per Screenrecord-Frames verifiziert.
+
+
+## 2026-11-07/08 — Bubble: dauerhaft aktiv + Akku (v1.129.1, v1.129.2)
+
+- Bubble verschwand nach längerem Hintergrund trotz Samsung „Nie schlafende Apps“. Emulator (Stock-Android) rebindet nach kill -9 in 1 s → Samsung-Verhalten; Wispr-Doku bestätigt („disconnect Accessibility while Settings still shows it enabled“). Nutzer lehnt adb/Wireless-Debugging ab → nach Wispr-Vorbild gebaut: `BubbleKeepAliveService` (FGS specialUse, START_STICKY, Wächter „getrennt – tippen“).
+- Danach Akku leer in Minuten. Messung (Release v1.129.0 im Emulator): A11y-Bindung hielt App-Prozess auf adj 100 → nie eingefroren, RenderThread zeichnete im Hintergrund. Fix: Bubble + Keep-Alive in `:bubble`-Prozess (MainApplication ohne RN-Init dort), Prefs nach Besitzer getrennt (MODE_MULTI_PROCESS), Feldsuche erst nach billigen Checks. 1,83 s → 0,09 s CPU/min.
+- v1.129.2: Benachrichtigung fehlte (keine POST_NOTIFICATIONS-Abfrage in Season 2) → Zeile „Hintergrund-Schutz“ + TMS startet Keep-Alive bei jedem Öffnen. Nutzer: klappt, Benachrichtigung sichtbar. Akku-Beobachtung läuft.
+
+## 2026-11-08 — Bubble-Stopp erkennen + Diagnose (v1.129.3)
+- Bubble weg trotz Schalter an; Emulator: `am stop-app` (= „Stopp“ in Aktive Apps) → Dienst „crashed“, kein Rebind, auch nicht beim App-Öffnen; nur Schalter aus/ein (Nutzer bestätigt).
+- Erkennung via gebundene Dienste, Hinweis/Benachrichtigung führen zum Schalter, „Letzter Abbruch“ aus ApplicationExitInfo.
+- Feld-Erkennung robuster (Nachprüfen + Cache leeren); CPU-Mehrkosten im Rauschen.
+
+## 2026-11-08 — Bubble-Anzeige-Fix (v1.129.4)
+- v1.129.3: Bubble einmal sichtbar, danach nie wieder (Status gebunden/an). clearCache() in Nachprüfung entfernt; „Letzte Prüfung“ in Einstellungen (Entscheidung + Sekunde).
+- Emulator: nach Update kann „Bound + Crashed“ entstehen → An aber unsichtbar, Toggle hilft (nicht sicher die Fold-Ursache).
+
+## 2026-11-08 — Bubble-Erkennung neu (v1.129.5)
+- Nutzer: Bubble erscheint oft erst nach 2–3× Öffnen, „Pflaster statt Ursache“. Erkennung umgebaut: Android-Eingabesitzung (Passwort aus inputType) statt Feldsuche im App-Baum; Cursor-Bewegung als Auslöser.
+- „Protokoll kopieren“ für Fehlersuche am Fold. Emulator-Tests ok; alter Code dort ebenfalls ok → Wirkung am Fold offen.
+
+## 2026-11-08 — Bubble v1.129.6
+- Fold-Protokoll ausgewertet: Feld immer erkannt, Ausfall = Tastatur nicht in Fensterliste gesehen + keine spätere Fenstermeldung. Fix: bei aktivem Feld ~10 s jede Sekunde nachschauen, Accessibility-Cache aus, Protokoll „Tastatur meldet sich“. Released ohne Emulator-Test (Mac überlastet), Nutzer testet am Handy.
+
+## 2026-11-08 — Bubble v1.129.7
+- Protokoll v1.129.6: Erkennung ok („sichtbar“), aber Bubble nicht auf dem Schirm. Ursache im Overlay: Position nur einmal berechnet (Fold innen→außen = außerhalb), verlorenes Fenster nicht neu angelegt. Fix + Protokoll-Zeile „Bubble bei x,y“. Released ohne Emulator-Test (Mac überlastet).
+
+## 2026-11-08 — Bubble v1.129.8
+- Protokoll v1.129.7: Position jetzt ok; Restausfälle ohne jedes Tastatur-Signal, Nutzer bestätigt Tastatur war offen. Suche auf allen Displays + Fensterliste im Protokoll bei Ausfall. Emulator 5/5.
+
+## 2026-11-08 — Bubble v1.129.9
+- Protokoll + Screenshots: Bubble-Fenster da, aber Einblend-Animation (alpha 0→1) lief am Samsung nicht an → durchsichtig. Jetzt sofort sichtbar, Animation nur Deko, Ausblenden per Timer. Emulator ok auch ohne Animationen.
+
+## 2026-11-09 — Fernzugriff v1.129.10
+- Flackern MAC/WIN beim Wechsel: Handler hingen an globaler `ws`; später onclose der alten Verbindung nullte die neue, Neuversuch + verwaiste Ströme in einem Dekoder. Fix Socket-Identität, remoteWantId, RN schickt id. Test webview-remote-switch.test.mjs (vorher 3/3 rot, jetzt grün).
+- Windows-Delay: Zeiger nur im Video, relative SendInput mit Beschleunigung, PowerShell-Schleife → cursor-helper.ps1 + draw_mouse=0, exaktes rel, C#-Run-Loop, scale korrekt. C# per dotnet LangVersion 5 geprüft. Windows-PC offline, nicht live getestet.
+
+## 2026-11-09 — Fernzugriff v1.129.11
+- Windows-Standbild: Verwerfen + kein Vollbild auf Anfrage + keine Live-Bitrate. Fix: größeres Budget/keine Vollbild-Verwürfe/App-Rückstand 8, Bitrate via zweitem ffmpeg (nahtlose Übergabe, Fake-ffmpeg-Prozesstest), Statuszeile zeigt Verwürfe.
+
+## 2026-11-09 — Fernzugriff v1.130.0
+- Mac-Sperrhinweis/Touch ID blieben auf WIN (Sperrzustand nie zurückgesetzt) → pro Verbindung, `unlock` in remote:started.
+- Neu: Ton aufs Handy + Verdunkeln (Details Commit bb93c7d). Mac live geprüft (Ton-Pakete, Helligkeit 0/zurück), Windows nur kompiliert + Fake-Prozess-Tests; ffmpeg-Prüfphase-Falle (5 s ohne Ton) gefunden und behoben.
+
+## 2026-11-09 — v1.130.1 + Update-Prüfung
+- Windows-Features gingen nicht: Server dort alt; Update lief unsichtbar → afd5b60 (Vordergrund, stash, Stempel, /health build, version-Befehl).
+- Hinweis-Spam: Sitzung lief nach Verlassen weiter → suspend beim Verlassen, Hinweis einmalig, Toast-Umbruch. Tests (alt rot, neu grün).
+
+## 2026-11-10 — Windows virtueller Bildschirm + Fernzugriff bleibt (v1.131.0)
+- Maus auf Windows tot: Backtick `r im Add-Type-Here-String → CR → C#-Compile-Fehler; Fix + Lint-Test; windowsHide überall (Konsolenfenster).
+- Windows „Bildschirm aus“ = Virtual Display Driver (SYSTEM-Task schaltet, User darf nur auslösen), Probelauf auf PC ok, eingebaut; 2. Start scheiterte → „ffmpeg fehlt“ war Fehltext (capture_unavailable) → capture_failed + Log + Wiederholungen + `display restore`.
+- Mac-Umbau abgeraten (bereits exakt 2:1 Retina), stattdessen Auto 1728.
+- Fernzugriff bleibt bis zum Schließen (Server-Ruhe/Übernahme, remote:view, Insel-Punkt). Tests: Server 572, WebView 12 grün.
+
+## 2026-11-10 — Fernzugriff-Redesign (v1.132.0)
+- Mockup mit Nutzer: Bild = Trackpad, eine Leiste, Menü am Geräte-Chip; Runde 2: Pad-Fläche raus, Füllen/Ganz statt Leerraum, alles matt statt Glas.
+- Live: bridge.js entschlackt (−233 Zeilen alter Zoom/Layout/Zeiger), neuer WebView-Test v2 (Fläche gefüllt, Gesten → Eingaben, Tastatur verkleinert nicht); Test fand „Füllen schrumpft bei Tastatur“ → behoben. Alle Mobile-Tests grün.
+- Nachgelegt v1.133.0: Dateien senden/holen im Fernzugriff (Upload-Endpunkt, Explorer aufs Fernzugriff-Gerät inkl. iCloud Drive). Test fand Private-Network-Vorabfrage → Kopf + OPTIONS vor Auth.
+
+## 2026-11-10 — Bund: kein Hauptserver (v1.134.0, Push offen)
+- Ursache Dateien/Upload aufs falsche Gerät: alles hing an servers[0]; Umbau auf Geräte-Routing nach Terminal vorne.
+- Mockup mit Nutzer über mehrere Runden (Leiste minimal, Desk-Layout, Karten mit Griff), dann Spec + Plan + 12 Tasks inline.
+- E2E der echten Seite fand: Bund-Demo-Knopf warf in der App (brach setServers ab). Review (Opus): 6 Important (Browser-Bridge 2. Gerät, Holen, Desk-+, Diktat-caps, Filter, Desk-Status) + 3 hochgestufte Minors — alle mit Test rot→grün behoben.
+- Push/Tag vom Auto-Modus blockiert → Nutzer muss freigeben.
+
+## 2026-11-10 — Ohne Insel (v1.135.0) + Windows-Zwischenablage
+- v1.134.0 nach Freigabe gepusht, CI grün. Windows-Server per SSH + geplante Aufgabe aktualisiert (npm-Link über SSH kaputt → node cli.js direkt).
+- Windows-Zwischenablage gebaut, C# mit dotnet (LangVersion 5) auf dem Mac kompiliert, auf dem PC end-to-end getestet.
+- Mockup 5 Varianten ohne Insel; Fehler: unsichtbares V5-Menü fing Tipps auf ⋮ ab → Menü oben links; Mockup-Leiste → schwebender Knopf. Nutzer wählt V3 (⋮-Menü) → eingebaut, E2E 14/14.
+
+## 2026-11-10 — v1.136.0 Korrekturen
+- Ursache Snippets eingefroren / Explorer springt auf / Galerie startet erneut: bridge.openToolSheet merkte Bund-Karten als `openTool`, jedes setTool der App rief origOpenTool → __bundTool erneut (Snippets: Endlosschleife tool:open↔setTool). Fix: Bund-Karten vor dem Merken abfangen.
+- Bilder wieder alte Karte (Kamera + Galerie), ⋮-Menü zweistufig (Geräte untereinander).
+- Windows-Papierkorb: DeleteFile auch für Ordner → DeleteDirectory, Pfad per Env; Sammel-Löschen meldet Fehlschläge. Auf dem PC echt geprüft.
+
+## 2026-11-10 — v1.137.0 Puls-Ring
+- Läuft ein Fernzugriff (body.remote-alive), pulsiert ein sanfter grüner Ring um ⋮ (nicht Splitscreen); im Menü schimmert „Fernzugriff“, aufgeklappt das laufende Gerät.
+
+## 2026-11-10 — v1.139.0 In-App-Updater
+- v1.138.0-Build scheiterte: paralleler Job hatte index.html geändert (uncommittet beim Build, committet nach dem Tag) → liquidDeckHtml.ts passte nicht zum Tag. Lehre: vor dem Tag `node scripts/build-season2-html.js && git diff --exit-code liquidDeckHtml.ts`.
+- Updater: sucht Start/15 min/App-zurück, lädt APK in den Cache (expo-file-system), öffnet Installer (REQUEST_INSTALL_PACKAGES); matte Leiste statt Glas-Pille. Puls einmalig + Fernzugriff im Menü beenden mit drin.
+
+## 2026-11-10 — Explorer: Vorschau/Senden/Teilen (in v1.139.0)
+- Ursache leere Vorschau: Seite läuft als https://tms.local, Chromium Local Network Access sperrt img/video/XHR an Tailscale 100.x. Liste ging, weil RN sie lädt. Toasts lagen hinter dem Explorer (z 100 < 300) → Knöpfe wirkten tot.
+- Fix 0a0f3d3: fileTransfer.ts — Vorschau nativ (Bild data:-URL, Video/PDF Android-Betrachter), Upload in Base64-Stücken über RN (`/files/upload?up&part&enc=b64`, GET `?caps=1`), #toasts z 400. Tests mit App-Ursprung (page.route https://tms.local).
+- Kam mit v1.139.0 (Tag vom parallelen Job) raus, CI grün. Server-Teil braucht `tms-terminal update` auf Mac + Windows.
+
+## 2026-11-10 — v1.140.0 Fernzugriff-Beenden echt
+- Bug: ⋮-Menü-✕ beendete nichts am Rechner, UI sagte „beendet“. Ursache: Stopp ging über frische 2. Verbindung; Server beendete darüber nur die *ruhende* Sitzung — die laufende gehörte der pausierten Bildverbindung (remote:view false, nicht geparkt). Client markierte nach 0,8 s blind als beendet. Alter E2E-Test hatte __closeRemoteDevice gestubbt → Fehler verdeckt.
+- Fix 1d5061f: Server `live`-Register (remote:stop von irgendwo beendet laufende/ruhende Sitzung, bestätigt immer); Menü → TMSRemote.closeDevice (Stopp über eigene ws, kein Reconnect, Bestätigung über frische ws, Ring erst mit remote:stopped weg, sonst ehrliche Meldung). Beide Server auf 8496966.
+
+## 2026-11-10 — v1.141.0 Dateien holen: Umlaute + HEIC
+- Gerätetest: Vorschau/Teilen/Laden → HTTP 400 bei „Görfidan Rückseite.PNG“. Ursache Server: Dateiname roh in Content-Disposition; macOS-NFD (o+U+0308) bzw. ı sind kein Latin-1 → Node wirft „Invalid character in header content“, catch → 400. Fix e88910d `disposition.util.ts` (RFC 6266 filename*=UTF-8''), auch ZIP. Braucht `tms-terminal update` Mac + Windows.
+- HEIC/HEIF öffnet im Android-Betrachter (Seite schickt kind 'heic' → nativer Intent-Pfad), ff0cc18.
+
+## 2026-11-10 — v1.142.0 Einstellungen neu + Installieren mit Rückmeldung
+- Einstellungen = settings.js/settings.css (liquid-deck, im Build eingebunden): Startseite mit Suche, Bubble-Schnellzugriff, Kategorien (Symbol + Zustand), Unterseiten, Fold zwei Spalten. Ersetzt Bridge-Einschübe (Bubble-Gruppe, „Oberfläche“). Daten: TMSBridge.setSettings/bubbleStatus, prayerMeta, cloudAccounts; Änderungen settings:set + bestehende adhan:/bubble:-Nachrichten.
+- Nur was in Season 2 wirkt. NICHT übernommen (wirken nur im klassischen Terminal): Terminal-Theme, Externe Tastatur, Inaktivitäts-Push, Deploy-Alerts/Polling. Hintergrund-Verbindung jetzt auch in S2 (ConnectionService beim Start).
+- Neu nativ: Bubble 15 Min. pausieren aus der App (BubbleConfig.snoozeReq in App-Prefs, effectiveSnooze wie wake).
+- Installieren: Zustand 'installing' + Ladekreis, Sperre gegen Mehrfach-Installer, Rückkehr ohne Install → Hinweis (AppState).
+- Paralleler Job hatte v1.141.0 (Dateien/HEIC) in derselben Arbeitskopie veröffentlicht → mein Bump lief ins Leere; vor Tag immer `git ls-remote --tags origin vX` + app.json-Version prüfen.
+
+## 2026-11-10 — v1.143.0 Installer + v1.144.0 Gebetsruf nativ
+- v1.143.0: Installer am Emulator belegt — NEW_TASK versteckte InstallStart hinter TMS, expo-intent-launcher blockierte Folgestarts (ActivityAlreadyStarted). Fix ApkInstallerModule (startActivity aus Activity, Erlaubnis „Apps installieren“ zuerst).
+- v1.144.0 Gebetsruf: Zeiten auf dem Handy (adhan-java 1.2.1), Land aus Zeitzone → Methode (assets/prayer_methods.json), JAKIM auf e-Solat kalibriert (Fajr/Isha 18° + 2 Min.; ±2 Min. ganzes Jahr), MUIS/Kemenag amtlich, Rest Aladhan ±1. Alarm-Kette nativ (setAlarmClock, Boot/TZ/Update). AdhanRingService: gesperrt Vollbild, entsperrt Overlay über allem; Stumm/Laut/Sperr-/Lautstärketaste. Einstellungen: Methode automatisch, nächster Azān, Erlaubnis-Checkliste.
+- Emulator-Probe 1.144.0: KL-Zeiten = amtlich ±1 Min., Alarm als Wecker (exakt), Overlay bleibt nach Home, Lautstärke/Sperrtaste = Stumm, Laut spielt USAGE_ALARM, Alarm übersteht Neustart. Nicht testbar im Emulator: echter Sperrbildschirm mit PIN, GPS-Einspeisung (Ort per Picker gesetzt).
+
+## 2026-11-10 — v1.145.0 Flackern beim Terminalwechsel
+- Gemessen statt geraten: Emulator + zwei isolierte Test-Server (8790/8795, eigenes HOME), 6 Terminals mit Dauerausgabe. Seiten-JS unauffällig (keine Long Tasks); Last auf RenderThread/GPU (50–57 % bei Wechseln). screenrecord-Montage zeigt eckige Blöcke auf Dock/Punkten/Gerätelinie.
+- Ursache: backdrop-filter auf ALLEN Stapelkarten, die beim Wechsel gleichzeitig federn. Fix: Glas nur auf `.stack-card.is-active` (Ruhebild identisch). 150→280 Bilder je 5 Wechsel, App-Antwort 201→139 ms, Artefakte weg. Aufgeklappte Desk-Ansicht hatte schon kein Glas.
+- Lokal mit Playwright schlagen terminal-create/webview-bubble schon vorher fehl, webview-prayer hängt — CI (ohne Playwright) grün.
+
+## 2026-11-10 — v1.145.1 Rückzug + Karten-Schalter
+- Nutzer: seit v1.145.0 flackert es am Fold DAUERND (auch ohne Bedienung) — schlimmer als vorher. Emulator zeigte das Gegenteil → Emulator-Grafik ist kein Beleg fürs Gerät.
+- v1.145.1: Standard wieder Glas auf allen Karten (v1.144). Neu Darstellung › Terminal-Karten: Glas / Glas nur vorne / Matt (deckend, kein backdrop-filter), sofort wirksam, localStorage. Offen: Nutzer wählt am Fold die ruhige Variante → wird Standard.
+
+## 2026-11-10 — v1.146.0 Dauerzeichnen (endlose Statuspunkt-Animation)
+- Nutzer nach v1.145.1: flackert weiter; Screenshot zeigt den Bereich: offene Tastenleiste + Punkte + Eingabezeile.
+- Belegt per gfxinfo: endlos pulsierender „LÄUFT“-Punkt hält das Zeichnen wach (99 statt 0 Bilder/6 s), solange ein Terminal arbeitet → alle Glasflächen werden mit Bildrate neu gerechnet. Fix: Zustandspunkte pulsieren 3×; Punktleiste nur bei Änderung neu. Falsche Fährte: Spinner-Titel im Server-Log gehen nicht an die App.
+- Offen: Bestätigung am Fold; Karten-Schalter (Glas/nur vorne/Matt) danach entscheiden oder entfernen.
+
+## 2026-11-11 — v1.146.1 Tastenleiste + v1.147.0 Sparmodus
+- v1.146.1: Fold per WLAN-Debugging gekoppelt; screenrecord zeigte: bei jedem Terminalwechsel Tastenleiste 4–5 Bilder leer (applyKeysPanelVisibility baute sie pro Wechsel neu). Leiste bleibt stehen, Tasten fragen das Terminal vorne ab. Nutzer: Flackern weg. WebView-Debugging an (CDP am Gerät).
+- v1.147.0 nach Messung am Fold (batterystats: TMS 903/2862 mAh, ~250 mAh im Hintergrund): Bubble-Zeichen-Uhr nur bei Bewegung; rec-bounce nur bei Aufnahme (Compositor 7→1 %); Arbeitsfläche matt Standard (Bildzeit 21–26 → 12–15 ms); client:attention + ruhige Pings/keine Health-Runden im Hintergrund; Dauer-Wake-Lock weg (nur noch bei Fernzugriff-Ton).
+- Server-Pacer (8fb580c) fertig + E2E gemessen, aber NICHT deployt (Mac/Windows Build + Neustart offen). Fernzugriff geparkt: Rechner nimmt weiter auf — offen.
+
+## 2026-11-11 — Diktat-Bubble 2.0: Planseite (noch kein Code)
+- Wunsch: Aufbereitung wie Wispr Flow (Prompt, E-Mail, WhatsApp, Stil lernen), Ziel Stopp→Text < 0,7 s.
+- Gemessen: 508 Diktate in 4 Tagen, Median 32 s; nur 16 % ≤ 0,7 s (letztes 60-s-Stück wird erst nach Stopp transkribiert). „KI-Prompt“ nie benutzt; dessen Modell (Llama 3.2 3B) verliert bei 534 Wörtern 48 % und beantwortet kurze Aufträge. Qwen3.6-35B-A3B verlustfrei, aber 89 tok/s.
+- Planseite mit Rückmelde-UI: `mockups/diktat-plan/` (node serve.js 3096, Tailscale :8541, Antworten in feedback.json). Offen: Antworten des Nutzers, dann Spec.
+
+## 2026-11-11 — v1.148.0 gehaltener Fernzugriff ruht
+- Pacer-Deploy vom Nutzer (fbbcdaa); Fold: 266 → 37 Ausgabe-Nachrichten/20 s, Bildzeit 12 ms.
+- Fernzugriff: `setPaused` (Mac-Helfer pause/resume, Windows ffmpeg beenden/neu starten), unsichtbar kein Status/Zeiger, Ping 25 s; App gibt Dekoder frei. Mac E2E: 133 Bilder/6 s → 0, erstes Bild nach Rückkehr 43 ms. Update baut den Mac-Helfer künftig mit. Server-Deploy (e2b44a6) offen; Windows nur mit Fake-ffmpeg getestet.
+- Rückmeldung v1: kein Umformulieren (KI-Prompt, Gegliedert, Nachricht, E-Mail, App-Stile raus). Umfang jetzt: Tempo, Wörterbuch (lernt automatisch, UI zum Hineinarbeiten), Denkpausen „...“, Flüstermodus; Einstellungsseite v1 durchgefallen (Glas, keine Struktur).
+- Planseite v2 + neue Seite „Diktat & Sprache“ (matt, Reiter Wörterbuch · Diktat · Bubble). Aufräumen pro Stück gemessen: 0,62 s Median, kein Inhaltsverlust, aber „...“ wird teils verschluckt → Pausen mechanisch. Offen: Rückmeldung v2.
+- Rückmeldung v2: alles bestätigt; Aufräumen + „Letzte Diktate“ weg, alle Einstellungen matt. Spec `docs/superpowers/specs/2026-11-11-diktat-bubble-2-design.md` (uncommittet), Freigabe über `:8541/spec.html`. Nächster Schritt nach Freigabe: Bauplan, dann Tempo Server-Teil.
+
+## 2026-11-11 — v1.149.0 Tiefenanalyse Energie/Tempo
+- Fold im Hintergrund passiv gemessen: CPU ~0, aber 14 MB/h in 30-s-Bündeln → Pacer hält jetzt ohne Zeitgeber, >64 KB = Sitzung abgeben (Snapshot bei Rückkehr). E2E 40 s: 0 Nachrichten.
+- Ping nach Bedarf (live 3 s nur bei sichtbarem Ping-Wert, sonst 12 s, unsichtbar 60 s, ausgerichtet). Zeichnen mit führender Flanke: Echo 85 → 47 ms. xterm-Verwaltung der unsichtbaren Emulatoren aus: 33 rAF/s → 0.
+- Server-Deploy offen (Fernzugriff-Pause e2b44a6 + Hintergrund ohne Daten). Fold-ADB weg (Mobilfunk).
+- Spec freigegeben („passt“). Tempo-Teil gebaut im Worktree `~/Developer/tms-terminal-diktat` (Branch feat/diktat-tempo, 8 Commits, NICHT gemergt/deployt): Pausen-Schnitt 8–28 s mit Satzpausen-Vorrang, inkrementelles ADTS-Dekodieren, Vorauseilen, Zeit-Statistik, Upload-Takt 500 ms. Messung (Sprachausgabe-Aufnahmen 12 s–6 min): Stopp→Text 0,5–0,67 s nur Server (vorher bis 2,9 s), 0–15 ms mit Vorauseilen; Wortfehler unverändert. Erkenntnis: Schnitt an kurzen Atempausen verdreifacht Wortfehler → nur an Satzpausen schneiden.
+- Offen: Abschluss-Review, Merge nach feat/fernzugriff, Server-Neustart, App-Release, Messung am Fold (dictation-stats.json), Akku-Gegenprobe Bubble.
+- Abschluss-Review Tempo-Branch: 2 kritische Textverluste (Nachsatz nach Denkpause verworfen; Dekodier-Fehlversuch fror Ton ein) + 3 wichtige Befunde, alle per Test nachgestellt und behoben (cd4921c, 539 Tests). Nachmessung: Wortfehler wie vorher, Stopp→Text ~0,6 s nur Server, ~0 ms mit Vorauseilen. Wartet auf Freigabe: Merge nach feat/fernzugriff + Server-Neustart, danach App-Release und Messung am Fold.
+- Diktat-Tempo Server-Teil in feat/fernzugriff eingespielt (Fast-Forward auf fc12d74, lokal, NICHT gepusht): Pausen-Schnitt, inkrementelles Dekodieren, Vorauseilen, dictation-stats.json. 573 Tests grün, Probe-Build ok. Upload-Takt der App bleibt 2 s (602fc50 revert) — 500 ms liegt auf Branch feat/diktat-tempo (2b44aa6) und kommt mit dem App-Release nach der Messung. Offen: `tms-terminal update` durch Nutzer, dann Log prüfen (`[dictation] … done — … rest N.Ns`).
+
+## 2026-11-11 — v1.150.0 Antwort lesen + Aufgabe statt LÄUFT/BEREIT
+- Mockup `mockups/lesemodus-v1` bestätigt („passt“), eingebaut. Kartenkopf: Ordner · Zustand · Aufgabe (Titel des KI-Werkzeugs, Server `terminal/activity.ts` + `websocket/activity.feed.ts`, nur echte Wechsel, im Hintergrund nichts). Buch-Knopf → Lesemodus (`server/src/reader/`, Seite `liquid-deck/reader.js`), Vorlesen über Handy-Sprachausgabe (`SpeechModule.kt`).
+- Ursache gefunden: Server vererbte Claude-Sitzungskennzeichen an alle Terminals → interaktive Claude-Sitzungen in TMS speicherten keinen Verlauf (kein /resume). Fix `scrubInheritedSession`; wirkt für Terminals, die nach dem Server-Update geöffnet werden.
+- E2E am Testserver mit echter Claude-Sitzung: 21 Titel → 2 Meldungen, Hintergrund 0, Antwort wortgleich gelesen.
+- Offen: Server-Update Mac + Windows (enthält auch den Diktat-Tempo-Serverteil der Parallel-Sitzung), Prüfung am Fold, Windows mit echter Claude-Sitzung ungetestet. Vorbestehend rot (nur mit Playwright): terminal-create, webview-bubble, webview-prayer hängt.
+- Nutzerwunsch: Vorlesen mit Rems Stimme, Satz für Satz gestreamt. Referenz noch da; alter F5-Weg kaputt; Qwen3-TTS 1.7B klont ~3× Echtzeit. Hörprobe :8546/rem/. Noch nicht gebaut.
+
+## 2026-11-11 — v1.151.0 Vorlesen mit Rems Stimme
+- Nutzer: Hörprobe „identisch, perfekt“. Mac erzeugt Satz für Satz (voice_sidecar.py, Qwen3-TTS-Klon aus voice_24k_15s.wav), schickt MP3-Stücke sofort; App spielt der Reihe nach, 3 Sätze Vorlauf, Rückfall Handy-Stimme.
+- Emulator + Testserver geprüft: erstes Stück 2,3 s kalt, sechs Absätze nacheinander mit Markierung, „fertig“ nach 25 s; Anhalten stoppt sofort; Mac weg → Handy-Stimme übernimmt. v1.150.0 ebenfalls im Emulator geprüft.
+- Offen: Server-Update Mac + Windows; am Fold hören (Lautstärke, Übergänge zwischen Sätzen) — nur der Nutzer kann das beurteilen.
+
+## 2026-11-11 — v1.152.0 Season 1 ausgebaut
+- Frage des Nutzers zum Vorlesen: Mac speichert nichts (nur RAM), Handy löscht jedes Stück nach dem Abspielen; Text = Claudes eigener Verlauf (30 Tage). Neu: Aufräumen liegengebliebener Stücke beim App-Start.
+- Klassische Oberfläche entfernt: 69 Dateien / ~25.400 Zeilen, Navigator nur noch SeasonTwo + AddServer + PinSetup, Einstellungs-Schalter weg, 6 Pakete deinstalliert. Stores/Dienste nur der alten Ansicht mit entfernt (Autopilot, Keyword-Alerts, Orbs, Hydra, Supabase, Credentials …).
+- Lokaler Build geht wieder (Live-Tree außerhalb iCloud): Metro-Bündel + `assembleRelease` in 1 min 11 s. Geprüft auf geklonter Emulator-Kopie (Original-Emulatoren zeigten HIKARI, nicht angefasst) gegen Testserver :8793: Update über v1.151.0 behält Server, AddServer/PinSetup öffnen, Terminal + Befehl ok.
+- Befund: Push-Meldungen in Season 2 ohne Funktion — `client:register_token` schickte nur der alte TerminalScreen; Mac-Server hat zudem kein firebase-service-account.json. Nicht angefasst, Nutzer entscheidet.
+- Nutzer entschied: Altdaten löschen, Push später, committen + releasen. Einmaliges Löschen gebaut (`legacyCleanup.core.mjs`, ausdrückliche Schlüsselliste, Test hält jeden noch benutzten Schlüssel dagegen); auf Emulator-Kopie: 14 Alt-Einträge + Ton-Reste weg, 7 benutzte bleiben.
+- Commits 16a1189 (Vorlese-Reste), e117575 (Ausbau + Altdaten), 3c0ea34 (Release), Tag v1.152.0 lokal. Offen: `git push origin v1.152.0` — der Sitzungs-Modus hat den Push gesperrt; danach CI + Prüfung am Fold.
+- Tempo live gemessen nach Server-Update: 11 Diktate, Mitte 0,46 s (vorher 1,5 s), 73 % ≤ 0,7 s; Nutzer zufrieden → kein weiterer Tempo-Ausbau (App-Takt 500 ms entfällt).
+- Wörterbuch + neue Einstellungsseite gebaut im Worktree (Branch feat/diktat-woerterbuch, a483f47, ungemergt): dictionary.json auf dem Diktat-Rechner, dict:*-Nachrichten, Reiter Wörterbuch · Diktat · Bubble, alle Einstellungen matt, KI-Prompt/Rewriter entfernt. Review: 6 wichtige Befunde behoben. Wartet auf Freigabe für Merge + `tms-terminal update` + App-Release.
+
+## 2026-11-11 — v1.153.0 Diktat-Wörterbuch + neue Einstellungen
+- v1.152.0 (Season 1 ausgebaut) abgeschlossen: Branch + Tag gepusht, CI grün. Nutzer: „niemand sonst arbeitet in Fernzugriff, abschließen, pushen, releasen“.
+- Wörterbuch-Branch mit dem Season-1-Ausbau zusammengeführt (SettingsScreen.tsx entfällt, Seite neu gebaut), per Fast-Forward in feat/fernzugriff. Server 620 Tests, Seite 13 + 34, Durchreiche 6, tsc beide sauber, lokaler `assembleRelease` ok.
+- Neu in der App: Einstellungen › Diktat & Sprache mit Reitern Wörterbuch · Diktat · Bubble, alle Einstellungen matt, KI-Prompt weg. Server: `~/.tms-terminal/dictionary.json`, `dict:*`-Nachrichten, Whisper-Prompt aus dem Wörterbuch, Rewriter entfernt. **Braucht `tms-terminal update` am Mac.**
+- Offen: Prüfung am Fold (Tastatur im Wörterbuch-Feld, Reiter-Leiste); danach eigene Pläne für Denkpausen „...“, Lernen aus Korrekturen, Flüstermodus.
+
+## 2026-11-11 — v1.154.0 Videos über die Bilder-Karte
+- Nutzerwunsch: Videos wie Bilder hochladen (Mac + Windows), Pfad in die Eingabe, bis 200 MB.
+- Befund: App konnte Videos seit v1.61.0 auswählen und senden, der Rechner antwortete aber auf JEDEN Video-Upload mit 400 „No file received“ — `/upload/media` antwortete bei busboy-`finish`, bevor die Datei geschrieben und umbenannt war, und löschte sie. Kein Log im Multipart-Weg → nie aufgefallen (kein einziges Video in ~/Desktop/Screenshots).
+- Server: `receiveMedia` antwortet erst nach Schreiben + Umbenennen; jede Video-Art (`video/*`); Fehler werden geloggt; abgebrochene Verbindung hinterlässt keine halbe Datei. Grenze bleibt 500 MB. 7 neue Tests (Server gesamt 628).
+- App: Video per XHR-Multipart mit Prozent-Fortschritt in der Karte („2 von 3 · 43 %“), Bildschirm bleibt während des Uploads an, Cache-Kopie der Auswahl wird gelöscht, Größe von der Datei gelesen (Android liefert `filesize`, nicht `fileSize` — Prüfung griff nie), Teilerfolg statt Abbruch der ganzen Auswahl, Meldung Bild/Video/Dateien, Hinweis „Rechner-Software zu alt“ bei altem Server. 10 neue Tests (App 191 + 6 übersprungen).
+- Geprüft: echter Handler mit 200-MB-Datei per curl (byte-identisch); Emulator-Kopie + Testserver :8793: Galerie → 2 Videos (27 KB, 200 MB in 21 s) + 1 Foto → 3 Pfade in der Eingabe, Karte zu, Cache leer.
+- Nutzer gab frei: Commits dd278fc (Fix) + 1cbe16d (Release), Tag v1.154.0 gepusht, CI grün (Lauf 42939821190), latest = v1.154.0 mit APK.
+- Mac-Server per `tms-terminal update` auf 1cbe16d (09:33), 7 Terminals liefen im Wächter weiter; echter Video-Upload gegen :8767 → 200, Datei identisch.
+- Offen: Windows-PC war offline (100.80.72.101) → dort `tms-terminal update`, bis dahin meldet die App „Rechner-Software zu alt für Videos“. Prüfung am Fold (echte Galerie, großes Video über Tailscale) durch den Nutzer.
+
+## 2026-11-11 — v1.155.0 Favoriten-Ordner im Datei-Explorer
+- Nutzerwunsch: Ordner favorisieren, Leiste oben, ein Tipp springt hin, langes Drücken mit Optionen (cd dorthin usw.).
+- Gebaut im Bund-Explorer (`bund.js`): Zeile Chips unter dem Pfad, Stern merkt/entfernt den aktuellen Ordner, Ordner-Menü in der Liste hat „Als Favorit merken“. Langes Drücken auf einen Chip: Öffnen, cd dorthin, Pfad einfügen, Pfad kopieren, Favorit umbenennen (nur der Chip-Name), Nach links/rechts, Favorit entfernen.
+- Eigene Entscheidungen: Favoriten pro Gerät (Mac-Pfade gelten am Windows-PC nicht), höchstens 30 je Gerät, Leiste im Auswahlmodus ausgeblendet, alte Favoriten der früheren Dateien-Karte (`tms-fav-paths`) nicht übernommen.
+- Logik in `mockups/season2/liquid-deck/fav-dirs.js` (rein, 14 Tests), vor bund.js geladen und vom Build eingebettet. Speicher: Handy, durableStorage `tms-bund-fav-dirs`; Seite führt die Liste, App bewahrt sie nur auf (`files:favsLoad` / `files:favsSave`, `TMSBridge.setFileFavs`). Kein Server-Update nötig.
+- 6 neue Browser-Tests in webview-bund (40 grün); veralteter Bilder-Test an den Fortschrittstext aus v1.154.0 angepasst.
+- Emulator-Kopie + Testserver :8793: zwei Ordner gemerkt, App beendet und neu gestartet → beide Chips wieder da; langes Drücken per echter Berührung öffnet das Menü ohne zu springen; „cd dorthin“ führt `cd '<pfad>'` im Terminal aus, Explorer schließt. Am Fold noch nicht geprüft.
+- Nutzer gab frei: Commits ad06ef7 (Feature) + d4dd5ca (Release), Tag v1.155.0 gepusht, CI grün (Lauf 42989687076), latest = v1.155.0 mit APK. Offen: Prüfung am Fold (auch aufgeklappt).
+
+## 2026-11-13 — DeX-Monitor per Kabel fürs iPad (v1.157.0)
+- iloader-Login scheiterte (Apple-ID zeitweise gesperrt) → iPad-App über Xcode + devicectl installiert.
+- Geminis Ansatz (USB-Tethering) trägt nicht: iPad nimmt das Netz vom Fold nicht an. Stattdessen Fold als USB-Host + usbmux (wie Smart Switch/Duet), am Gerät bewiesen.
+- Bild-Server repariert: Paketname/UID (scrcpy-FakeContext), InputManagerGlobal, Klicks brauchen BUTTON_PRESS, WS-Länge >64 KB war kaputt (int-Shift), Port-Übergabe Standby→freigeschaltet.
+- iPad: WebView-Herkunft http://localhost (https blockte ws://), native Tastatur/Hover/Scroll, Ton als PCM + audioSession 'playback' (Stummmodus), Lebenszeichen über Relais statt HTTP (Neustart 1×/min weg), Relayout gegen schwarze Balken.
+- Echtes Samsung-DeX per Systemcode-Analyse geprüft: auf virtuellen Bildschirmen auf diesem Gerät abgeschaltet. Fenstermodus gebaut, auf Wunsch wieder entfernt.

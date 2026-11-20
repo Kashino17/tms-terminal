@@ -1,7 +1,19 @@
 import { create } from 'zustand';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { durableStorage as AsyncStorage } from '../services/durableStorage';
 
 const STORAGE_KEY = 'tms:notes';
+/** Bund: eine Notizliste fürs ganze Handy statt einer pro Server. */
+export const BUND_NOTES_KEY = 'bund';
+
+/** Einmalig alle Server-Listen zu einer zusammenführen (neueste zuerst, ohne doppelte Texte). */
+function mergeIntoBund(notes: Record<string, NoteItem[]>): Record<string, NoteItem[]> {
+  if (notes[BUND_NOTES_KEY]) return notes;
+  const seen = new Set<string>();
+  const merged = Object.values(notes).flat()
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .filter((n) => (seen.has(n.text) ? false : (seen.add(n.text), true)));
+  return { ...notes, [BUND_NOTES_KEY]: merged };
+}
 
 export interface NoteItem {
   id: string;
@@ -36,8 +48,9 @@ export const useNotesStore = create<NotesState>((set, get) => ({
     if (get().loaded) return;
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
-      if (raw) set({ notes: JSON.parse(raw), loaded: true });
-      else set({ loaded: true });
+      const notes = mergeIntoBund(raw ? JSON.parse(raw) : {});
+      set({ notes, loaded: true });
+      if (!raw || !JSON.parse(raw)[BUND_NOTES_KEY]) persist(notes);
     } catch {
       set({ loaded: true });
     }

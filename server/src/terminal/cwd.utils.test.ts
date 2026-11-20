@@ -1,6 +1,32 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeCwd } from './cwd.utils';
+import { normalizeCwd, pickForegroundFromTable } from './cwd.utils';
+
+// Windows process table rows as "pid,parentPid,name" (Get-CimInstance Win32_Process).
+test('pickForegroundFromTable: npm-installed OpenCode on Windows → the deepest descendant', () => {
+  const table = [
+    '100,1,OpenConsole.exe',
+    '200,100,pwsh.exe',          // the TMS shell
+    '300,200,node.exe',          // npm launcher
+    '400,300,opencode.exe',      // the real TUI
+    '500,1,explorer.exe',
+  ].join('\r\n');
+  assert.equal(pickForegroundFromTable(table, 200), 'opencode.exe');
+});
+
+test('pickForegroundFromTable: idle shell → its own name', () => {
+  assert.equal(pickForegroundFromTable('200,100,pwsh.exe\r\n500,1,explorer.exe', 200), 'pwsh.exe');
+});
+
+test('pickForegroundFromTable: console helpers are not the foreground program', () => {
+  const table = '200,100,pwsh.exe\r\n210,200,conhost.exe\r\n220,200,claude.exe';
+  assert.equal(pickForegroundFromTable(table, 200), 'claude.exe');
+});
+
+test('pickForegroundFromTable: garbage and unknown pids → null', () => {
+  assert.equal(pickForegroundFromTable('', 200), null);
+  assert.equal(pickForegroundFromTable('x,y,z\r\n1,0,System', 200), null);
+});
 
 const HOME = '/Users/ayysir';
 

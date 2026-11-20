@@ -175,3 +175,18 @@ test('Fingerabdruck ändert sich bei einer anderen Frage', () => {
 test('leerer Bildschirm → none', () => {
   assert.equal(classifyScreen(screen(['', '', ''], 0, 0)).kind, 'none');
 });
+
+test('sudo-Passwortabfrage am Zeilenende → sudo, keine Auto-Approve-Taste', () => {
+  const cls1 = classifyScreen(screen([
+    '$ sudo launchctl kickstart -k system/com.apple.openssh',
+    'Password:',
+  ], 1, 9));
+  assert.equal(cls1.kind, 'sudo');
+  assert.equal(cls1.key, null);
+
+  const cls2 = classifyScreen(screen([
+    '[sudo] password for ayysir: ',
+  ], 0, 28));
+  assert.equal(cls2.kind, 'sudo');
+  assert.equal(cls2.key, null);
+});

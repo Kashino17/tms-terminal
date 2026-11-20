@@ -7,31 +7,50 @@
  *
  *   Dateien    HTTP /files/list on the server (walkable)
  *   Prozesse   WebSocket system:snapshot
- *   Watcher    WebSocket watcher:list / watcher:update
  *   Ports      the saved port forwards; a tap opens one in the in-app browser
- *   Snippets   the same AsyncStorage snippets the classic panel uses
- *   SQL        the statements detected in terminal output (sqlStore)
+ *   Snippets   own empty list on the phone (durableStorage 'tms-bund-snippets')
  *   Notizen    notesStore (global) + per-terminal notes/todos (season2 store)
  *   Screens.   camera / gallery -> upload to the server -> the path goes into
  *              the terminal, which is the only reason to take one
  *   Gebete     real prayer times for the current location
  */
+import { parentDir, joinDir } from './filePaths';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { uploadMediaFile } from './fileTransfer';
+import { MAX_VIDEO_BYTES, uploadSummary } from './mediaUpload';
 import type { WebSocketService } from '../../services/websocket.service';
 import { usePortForwardingStore } from '../../store/portForwardingStore';
-import { useNotesStore } from '../../store/notesStore';
-import { useSQLStore } from '../../store/sqlStore';
-import { useNotesStore as useS2NotesStore } from '../store/notesStore';
+// Serverseitige Notizen (klassischer Store) und die Notizen des HTML-Sheets je
+// Karte (eigener Store) sind zwei verschiedene Sachen. Vorher hiessen beide
+// `useNotesStore` — der Import musste Alias nehmen, und wer die Zeile las, sah
+// nicht, dass zwei Notizspeicher gemeint waren.
+import { useNotesStore, BUND_NOTES_KEY } from '../../store/notesStore';
+import { durableStorage } from '../../services/durableStorage';
+import { useS2NotesStore } from '../store/s2NotesStore';
 import { Linking } from 'react-native';
 import { useFavPathsStore } from '../../store/favPathsStore';
-import { fetchPrayerTimes, getCurrentLocation } from '../../services/prayer.service';
+import {
+  fetchPrayerTimes, getCurrentLocation, getChosenLocation, PRAYER_NAMES, type PrayerTimes,
+} from '../../services/prayer.service';
+import { adhanStatus, adhanPermsForPage } from '../../services/adhanNative';
+import { usePrayerStore, prayerMethodName } from '../../store/prayerStore';
+import { readAdhanSettings, canScheduleExactAdhan } from '../../services/adhan.service';
 
 type Call = (fn: string, ...args: unknown[]) => void;
 
-const SNIPPETS_KEY = 'tms:snippets';
+/** Eigener Name, damit das Diktat (hält den Bildschirm ebenfalls wach) nicht mit freigegeben wird. */
+const UPLOAD_AWAKE_TAG = 'tms-upload';
+
+// Bund: eigene Snippet-Liste auf dem Handy (durableStorage, überlebt Updates).
+const SNIPPETS_KEY = 'tms-bund-snippets';
+type BundSnippet = { id: string; name: string; cmd: string };
+const readSnippets = async (): Promise<BundSnippet[]> => {
+  try { const raw = await durableStorage.getItem(SNIPPETS_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
+};
+const writeSnippets = (l: BundSnippet[]) => durableStorage.setItem(SNIPPETS_KEY, JSON.stringify(l)).catch(() => {});
 
 interface Args {
   ready: boolean;
@@ -41,6 +60,8 @@ interface Args {
   token: string | null;
   /** sessionId of the terminal the sheets act on. */
   activeSessionId?: string;
+  /** Wird mit den geholten Zeiten gefuellt — der Testknopf braucht sie draussen. */
+  prayerTimesRef?: React.MutableRefObject<PrayerTimes | null>;
 }
 
 function humanSize(bytes: number): string {
@@ -50,7 +71,12 @@ function humanSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function useSheetBridges({ ready, call, wsService, server, token, activeSessionId }: Args) {
+export function useSheetBridges({
+  ready, call, wsService, server, token, activeSessionId, prayerTimesRef,
+}: Args) {
+  // Mitlesen, damit ein Methoden- oder Ortswechsel die Zeiten neu laedt.
+  const method = usePrayerStore((s) => s.method);
+  const chosenLocation = usePrayerStore((s) => s.location);
   /** Directory the Dateien sheet is currently showing. */
   const cwd = useRef('~');
   /** Which sheet is open — so an async reply knows whether it is still wanted. */
@@ -58,14 +84,23 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
   /** Screenshots uploaded this session: server path + a thumbnail URL. */
   const [shots, setShots] = useState<Array<{ path: string; url: string; isVideo?: boolean }>>([]);
 
-  const listFiles = useCallback(async (path: string) => {
+  const listFiles = useCallback(async (path: string): Promise<void> => {
     if (!server || !token) return;
     try {
       const r = await fetch(
         `http://${server.host}:${server.port}/files/list?path=${encodeURIComponent(path)}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        // Gemerkter Ordner gilt hier nicht (anderes Gerät, gelöscht, Windows-
+        // Pfad am Mac …) → einmal auf den Home-Ordner zurückfallen, statt für
+        // immer mit HTTP 400 hängen zu bleiben.
+        if (path !== '~' && (r.status === 400 || r.status === 404 || r.status === 403)) {
+          cwd.current = '~';
+          return listFiles('~');
+        }
+        throw new Error(`HTTP ${r.status}`);
+      }
       const data = await r.json();
       cwd.current = data.path;
       call('setTool', 'files',
@@ -82,6 +117,17 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
     }
   }, [server, token, call]);
 
+  // Gerätewechsel: der Ordner des alten Geräts gilt hier nicht. Zurück auf den
+  // Home-Ordner — und ist die Dateien-Leiste offen, sofort neu laden.
+  const serverKey = server ? `${server.id}@${server.host}:${server.port}` : '';
+  const lastServerKey = useRef(serverKey);
+  useEffect(() => {
+    if (lastServerKey.current === serverKey) return;
+    lastServerKey.current = serverKey;
+    cwd.current = '~';
+    if (openSheet.current === 'files' && serverKey) void listFiles('~');
+  }, [serverKey, listFiles]);
+
   /** Server path → a URL the page can put in an <img>. */
   const downloadUrl = useCallback((path: string) => (
     server && token
@@ -89,8 +135,11 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
       : ''
   ), [server, token]);
 
-  /** Pick an image, upload it, and remember where it landed. */
-  const captureShot = useCallback(async (source: 'camera' | 'library') => {
+  /** Pick photos or videos, upload them, and remember where they landed. */
+  // Ziel (Gerät + Karte) steht beim Antippen fest: `server`/`token` sind in
+  // dieser Closure eingefroren, und die Pfade gehen in genau die Karte, von der
+  // aus gestartet wurde — auch wenn währenddessen das Terminal gewechselt wird.
+  const captureShot = useCallback(async (source: 'camera' | 'library', cardId: string | null) => {
     if (!server || !token) return;
     try {
       const perm = source === 'camera'
@@ -113,73 +162,97 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
 
       const uploaded: Array<{ path: string; url: string; isVideo?: boolean }> = [];
       const total = result.assets.length;
-      call('uploadProgress', 0, total);
-      for (const asset of result.assets) {
-        const isVideo = asset.type === 'video';
-        if (isVideo && (asset.fileSize ?? 0) > 500 * 1024 * 1024) {
-          call('toast', 'Video übersprungen: größer als 500 MB');
-          continue;
+      const counts = { images: 0, videos: 0, failed: 0, tooBig: 0, firstError: '' };
+      const base = `http://${server.host}:${server.port}`;
+      let done = 0;
+      call('uploadProgress', 0, total, server.id, 0);
+      // Ein großes Video braucht Minuten. Geht der Bildschirm dabei aus, legt
+      // Android die App schlafen und der Upload reißt ab.
+      await activateKeepAwakeAsync(UPLOAD_AWAKE_TAG).catch(() => {});
+      try {
+        for (const asset of result.assets) {
+          const isVideo = asset.type === 'video';
+          try {
+            let json: any;
+            if (isVideo) {
+              // Größe von der Datei selbst lesen: Android liefert sie als
+              // `filesize`, die Typen sagen `fileSize` — das Feld war immer leer.
+              const info = await FileSystem.getInfoAsync(asset.uri);
+              const bytes = info.exists && 'size' in info ? info.size ?? 0 : 0;
+              if (bytes > MAX_VIDEO_BYTES) { counts.tooBig++; continue; }
+              // Multipart: die Datei wird nativ von der Platte gestreamt. Als
+              // Base64 durch die JS-Brücke wäre bei 200 MB Schluss.
+              let lastPct = -1;
+              json = await uploadMediaFile(`${base}/upload/media`, token, {
+                uri: asset.uri,
+                name: asset.fileName ?? `video-${Date.now()}.mp4`,
+                type: asset.mimeType ?? 'video/mp4',
+              }, (frac) => {
+                // Nicht jedes Paket an die Seite melden — alle 2 % reicht.
+                const pct = Math.floor(frac * 100);
+                if (pct >= lastPct + 2) { lastPct = pct; call('uploadProgress', done, total, server.id, frac); }
+              });
+            } else {
+              const data = asset.base64
+                ?? (await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
+              const r = await fetch(`${base}/upload/screenshot`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                  filename: asset.fileName ?? `screenshot-${uploaded.length}.jpg`,
+                  data,
+                  mimeType: asset.mimeType ?? 'image/jpeg',
+                }),
+              });
+              json = await r.json();
+              if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
+            }
+            uploaded.push({ path: json.path, url: isVideo ? '' : downloadUrl(json.path), isVideo });
+            if (isVideo) counts.videos++; else counts.images++;
+          } catch (e: any) {
+            // Eine Datei scheitert — die anderen gehen trotzdem durch.
+            counts.failed++;
+            if (!counts.firstError) counts.firstError = e?.message ?? 'Upload fehlgeschlagen';
+          } finally {
+            done++;
+            // Die Auswahl legt von jeder Datei eine Kopie im App-Cache an (bei
+            // einem Video die volle Größe). Nach dem Senden weg damit.
+            if (FileSystem.cacheDirectory && asset.uri.startsWith(FileSystem.cacheDirectory)) {
+              FileSystem.deleteAsync(asset.uri, { idempotent: true }).catch(() => {});
+            }
+            if (done < total) call('uploadProgress', done, total, server.id, 0); // 3 von 12 …
+          }
         }
-        let json: any;
-        if (isVideo) {
-          // Multipart wie im klassischen Panel — 500 MB als Base64 wären das
-          // Ende der JS-Brücke. Der Server (/upload/media) kann genau 500 MB.
-          const form = new FormData();
-          form.append('file', {
-            uri: asset.uri,
-            name: asset.fileName ?? `video-${Date.now()}.mp4`,
-            type: asset.mimeType ?? 'video/mp4',
-          } as unknown as Blob);
-          const r = await fetch(`http://${server.host}:${server.port}/upload/media`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-            body: form,
-          });
-          json = await r.json();
-          if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
-        } else {
-          const data = asset.base64
-            ?? (await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 }));
-          const r = await fetch(`http://${server.host}:${server.port}/upload/screenshot`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({
-              filename: asset.fileName ?? `screenshot-${uploaded.length}.jpg`,
-              data,
-              mimeType: asset.mimeType ?? 'image/jpeg',
-            }),
-          });
-          json = await r.json();
-          if (!r.ok || !json.path) throw new Error(json.error ?? `HTTP ${r.status}`);
-        }
-        uploaded.push({ path: json.path, url: isVideo ? '' : downloadUrl(json.path), isVideo });
-        call('uploadProgress', uploaded.length, total); // 3 von 12 …
+      } finally {
+        deactivateKeepAwake(UPLOAD_AWAKE_TAG).catch(() => {});
+      }
+
+      if (!uploaded.length) {
+        call('uploadProgress', 1, 1); // Fortschritt wieder ausblenden
+        call('setTool', 'screenshots', shots); // Karte zurück auf Kamera/Galerie
+        call('toast', uploadSummary(counts));
+        return;
       }
       const next = [...uploaded.reverse(), ...shots];
       setShots(next);
-      // Ein Bild hochzuladen hat nur einen Zweck: die KI soll es ansehen. Also
-      // landet der Serverpfad sofort im Terminal — still (null), die Meldung
-      // kommt gleich gebündelt.
-      call('insertIntoTerminal', next.slice(0, uploaded.length).map((s) => s.path).join(' '), null);
+      // Ein Bild oder Video hochzuladen hat nur einen Zweck: die KI soll es
+      // ansehen. Also landet der Serverpfad sofort im Terminal — still (null),
+      // die Meldung kommt gleich gebündelt.
+      const paths = next.slice(0, uploaded.length).map((s) => s.path).join(' ');
+      if (cardId) call('insertIntoCard', cardId, paths, null);
+      else call('insertIntoTerminal', paths, null);
       // Und KEIN setTool: die Galerie soll sich hinterher nicht wieder
       // aufklappen. Liste still nachführen, Sheet zu, kurz bestätigen.
-      const n = uploaded.length;
-      call('uploadFinished', next,
-        n > 1 ? `${n} Bilder hochgeladen und eingefügt` : 'Bild hochgeladen und eingefügt');
+      call('uploadFinished', next, uploadSummary(counts));
     } catch (e: any) {
       call('uploadProgress', 1, 1); // Fortschritt wieder ausblenden
-      call('toast', `Screenshot: ${e?.message ?? 'Upload fehlgeschlagen'}`);
+      call('toast', `Upload: ${e?.message ?? 'fehlgeschlagen'}`);
     }
   }, [server, token, shots, downloadUrl, call]);
 
   const pushSnippets = useCallback(async () => {
-    const raw = await AsyncStorage.getItem(SNIPPETS_KEY);
-    const list: Array<{ id: string; text: string }> = raw ? JSON.parse(raw) : [];
-    call('setTool', 'snippets', list.map((sn) => ({
-      id: sn.id,
-      label: sn.text.split('\n')[0].slice(0, 40),
-      cmd: sn.text,
-    })));
+    const list = await readSnippets();
+    call('setTool', 'snippets', list.map((sn) => ({ id: sn.id, label: sn.name, cmd: sn.cmd })));
   }, [call]);
 
   const openTool = useCallback(async (tool: string) => {
@@ -192,10 +265,6 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
 
       case 'processes':
         wsService?.send({ type: 'system:snapshot' });
-        break;
-
-      case 'watchers':
-        wsService?.send({ type: 'watcher:list' });
         break;
 
       case 'ports': {
@@ -212,25 +281,13 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         await pushSnippets();
         break;
 
-      case 'sql': {
-        const entries = activeSessionId ? useSQLStore.getState().entries[activeSessionId] ?? [] : [];
-        call('setTool', 'sql', {
-          statements: entries.map((e) => ({
-            sql: e.sql,
-            time: new Date(e.detectedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
-          })),
-        });
-        break;
-      }
-
       case 'screenshots':
         call('setTool', 'screenshots', shots);
         break;
 
       case 'notes': {
-        if (!server) break;
         await useNotesStore.getState().load();
-        const items = useNotesStore.getState().getItems(server.id);
+        const items = useNotesStore.getState().getItems(BUND_NOTES_KEY);
         call('setTool', 'notes', items.map((n) => ({
           title: '',
           body: n.text,
@@ -249,35 +306,70 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         call('setTool', 'processes', (m.payload?.processes ?? []).map((p: any) => ({
           pid: p.pid, name: p.name, cpu: p.cpu, mem: Math.round(p.mem),
         })));
-      } else if (m?.type === 'watcher:list' && openSheet.current === 'watchers') {
-        call('setTool', 'watchers', (m.payload?.watchers ?? []).map((w: any) => ({
-          id: w.id,
-          pattern: w.config?.pattern ?? w.label,
-          session: w.type,
-          hits: w.hits ?? 0,
-          active: !!w.enabled,
-        })));
       }
     });
   }, [wsService, ready, call]);
 
-  /** Real prayer times, once — the island and the Gebete screen both read them. */
+  /**
+   * Gebetszeiten fuer die Insel, den Gebetszeiten-Screen und die Einstellungen.
+   *
+   * Laeuft bei jedem Wechsel der Berechnungsmethode und des Ortes mit, nicht nur
+   * einmal beim Start — sonst blieb nach dem Umschalten die alte Methode stehen.
+   *
+   * `meta` ist zusaetzlich zur Liste: Ort, Datum, Hijri, Methode, Adhan-Schalter
+   * und Berechtigungen. Ohne meta zeigt die Seite weiter nur Liste und Countdown.
+   */
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
     (async () => {
-      const loc = await getCurrentLocation().catch(() => null);
+      // Von Hand gewaehlter Ort vor GPS: der Nutzer soll auch ohne Standort
+      // Gebetszeiten sehen (und den Adhan einstellen) koennen.
+      // getCurrentLocation() gibt einen gespeicherten Ort von selbst zurueck; wir
+      // brauchen aber auch das Label, um es anzuzeigen.
+      const chosen = await getChosenLocation();
+      const gps = chosen ? null : await getCurrentLocation().catch(() => null);
+      const loc = chosen ?? gps;
       if (!loc || cancelled) return;
-      const data = await fetchPrayerTimes(loc.latitude, loc.longitude).catch(() => null);
+      const label = chosen
+        ? chosen.label
+        : [gps?.city, gps?.country].filter(Boolean).join(', ') || 'GPS';
+
+      const data = await fetchPrayerTimes(loc.latitude, loc.longitude, method).catch(() => null);
       if (!data || cancelled) return;
-      const t = data.timings;
-      call('setPrayer', [
-        { name: 'Fajr', time: t.Fajr }, { name: 'Dhuhr', time: t.Dhuhr }, { name: 'Asr', time: t.Asr },
-        { name: 'Maghrib', time: t.Maghrib }, { name: 'Isha', time: t.Isha },
-      ].map((p) => ({ ...p, time: p.time.slice(0, 5) })));
+
+      const keys = ['Fajr', 'Sunrise', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'] as const;
+      const times = keys
+        .filter((k) => data.timings[k])
+        .map((k) => ({
+          name: PRAYER_NAMES[k].de,
+          de: PRAYER_NAMES[k].de,
+          ar: PRAYER_NAMES[k].ar,
+          emoji: PRAYER_NAMES[k].emoji,
+          time: data.timings[k],
+        }));
+
+      const adhan = await readAdhanSettings();
+      const st = await adhanStatus().catch(() => null);
+      if (cancelled) return;
+      // Der Testknopf in der Seite braucht die naechste Uhrzeit, um daraus einen
+      // Alarm zu stellen. Hier ablegen, damit onMessage() sie hat.
+      if (prayerTimesRef) prayerTimesRef.current = data.timings;
+      call('setPrayer', times, {
+        location: { label, lat: loc.latitude, lon: loc.longitude },
+        date: {
+          readable: data.date.readable,
+          hijri: `${data.date.hijri.day}. ${data.date.hijri.month.en} ${data.date.hijri.year}`,
+        },
+        // Mit Rechenkern: Methode automatisch nach Land, Stand vom Handy.
+        method: st ? { id: 'auto', name: st.method, auto: true, country: st.country } : { id: method, name: prayerMethodName(method) },
+        adhan: { enabled: adhan.enabled, wecker: adhan.wecker, selected: adhan.selected },
+        perms: st ? adhanPermsForPage(st) : { notifications: true, exactAlarms: adhan.exactAlarms },
+        next: st && st.nextAt ? { name: st.nextName, at: st.nextAt, exact: st.nextExact } : null,
+      });
     })();
     return () => { cancelled = true; };
-  }, [ready, call]);
+  }, [ready, call, method, chosenLocation]);
 
   /** Everything the sheets post back. Returns true when it handled the message. */
   const handle = useCallback((type: string, payload: any): boolean => {
@@ -327,7 +419,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
             const r = await fetch(`http://${server.host}:${server.port}/files/mkdir`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-              body: JSON.stringify({ path: `${cwd.current.replace(/\/$/, '')}/${payload.name}` }),
+              body: JSON.stringify({ path: joinDir(cwd.current, String(payload.name)) }),
             });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             call('toast', 'Ordner angelegt');
@@ -356,10 +448,21 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
 
       case 'snippet:add': {
         (async () => {
-          const raw = await AsyncStorage.getItem(SNIPPETS_KEY);
-          const list: Array<{ id: string; text: string }> = raw ? JSON.parse(raw) : [];
-          list.unshift({ id: `s-${Date.now()}`, text: String(payload.text) });
-          await AsyncStorage.setItem(SNIPPETS_KEY, JSON.stringify(list));
+          const cmd = String(payload.cmd ?? payload.text ?? '').trim();
+          if (!cmd) return;
+          const list = await readSnippets();
+          list.unshift({ id: `s-${Date.now()}`, name: String(payload.name ?? '').trim() || cmd.split('\n')[0].slice(0, 40), cmd });
+          await writeSnippets(list);
+          pushSnippets();
+        })();
+        return true;
+      }
+
+      case 'snippet:edit': {
+        (async () => {
+          const list = await readSnippets();
+          await writeSnippets(list.map((sn) => (sn.id === payload.id
+            ? { ...sn, name: String(payload.name ?? sn.name), cmd: String(payload.cmd ?? sn.cmd) } : sn)));
           pushSnippets();
         })();
         return true;
@@ -367,25 +470,16 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
 
       case 'snippet:delete': {
         (async () => {
-          const raw = await AsyncStorage.getItem(SNIPPETS_KEY);
-          const list: Array<{ id: string; text: string }> = raw ? JSON.parse(raw) : [];
-          await AsyncStorage.setItem(SNIPPETS_KEY, JSON.stringify(list.filter((sn) => sn.id !== payload.id)));
+          await writeSnippets((await readSnippets()).filter((sn) => sn.id !== payload.id));
           pushSnippets();
         })();
         return true;
       }
 
-      case 'watcher:delete':
-        wsService?.send({ type: 'watcher:delete', payload: { id: payload.id } });
-        setTimeout(() => wsService?.send({ type: 'watcher:list' }), 300);
-        return true;
-
       case 'files:cd': {
         const name = String(payload.name ?? '');
         const base = cwd.current;
-        const next = name === '..'
-          ? base.replace(/\/[^/]+\/?$/, '') || '/'
-          : `${base.replace(/\/$/, '')}/${name.replace(/\/$/, '')}`;
+        const next = name === '..' ? parentDir(base) : joinDir(base, name);
         listFiles(next);
         return true;
       }
@@ -395,7 +489,7 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         return true;
 
       case 'shot:capture':
-        captureShot(payload.source === 'camera' ? 'camera' : 'library');
+        captureShot(payload.source === 'camera' ? 'camera' : 'library', payload.cardId ? String(payload.cardId) : null);
         return true;
 
       case 'shot:delete': {
@@ -422,9 +516,6 @@ export function useSheetBridges({ ready, call, wsService, server, token, activeS
         return true;
       }
 
-      case 'watcher:toggle':
-        wsService?.send({ type: 'watcher:update', payload: { id: payload.id, enabled: !!payload.on } });
-        return true;
 
       case 'notes:sync':
         useS2NotesStore.setState((s) => ({

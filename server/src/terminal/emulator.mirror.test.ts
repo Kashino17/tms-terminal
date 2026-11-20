@@ -11,6 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Terminal } from '@xterm/headless';
+import { classifyScreen } from '../notifications/prompt.classifier';
 import { SessionMirror } from './emulator.mirror';
 
 /** Ink-artiger Live-Region-Maler: N Zeilen Frame, dann cursor-up N + repaint. */
@@ -102,10 +103,10 @@ test('screen() liefert die sichtbaren Zeilen und die Cursorposition', async () =
 
   const s = m.screen();
   assert.equal(s.cols, 20);
-  assert.equal(s.rows.length, 5);
+  // Leerzeilen unter dem Inhalt fallen weg (virtuelle Höhe der App).
+  assert.equal(s.rows.length, 2);
   assert.equal(s.rows[0], 'Hallo');
   assert.equal(s.rows[1], 'Welt');
-  assert.equal(s.rows[2], '');
   assert.equal(s.cursorY, 0, 'zwei Zeilen hoch von Zeile 2');
   assert.equal(s.cursorX, 3);
 });
@@ -127,4 +128,53 @@ test('Snapshot enthält Scrollback-Historie, nicht nur das Vollbild', async () =
   const snap = mirror.serializeNow();
   assert.ok(snap.includes('historie-10'), 'aus dem Sichtfeld gescrollte Zeilen sind im Snapshot');
   assert.ok(snap.includes('historie-39'), 'die letzte Zeile ist im Snapshot');
+});
+
+test('altScreen meldet den Vollbild-Modus einer TUI (OpenCode, vim) — und das Ende', async () => {
+  const m = new SessionMirror(50, 20);
+  assert.equal(m.altScreen, false);
+  m.feed('\x1b[?1049h\x1b[Hopencode');
+  await m.flushed();
+  assert.equal(m.altScreen, true);
+  m.feed('\x1b[?1049l');
+  await m.flushed();
+  assert.equal(m.altScreen, false);
+});
+
+// ── Virtuelle Höhe (2026-11-05): die App gibt der PTY 200 Zeilen ───────────
+// Claude malt seine Bestätigungs-Box dann oben, darunter liegen ~170 Leerzeilen.
+// Die Prompt-Erkennung liest „die letzten Zeilen" — sie darf nicht in der Leere
+// landen, sonst drückt Auto-Approve nie mehr Enter.
+test('screen() endet beim Inhalt, nicht in den Leerzeilen der virtuellen Höhe', async () => {
+  const m = new SessionMirror(50, 200);
+  const box = [
+    '──────────────────────────────────────────────────',
+    ' Bash command · from the general-purpose agent',
+    ' touch /private/var/tmp/x.txt',
+    '',
+    ' Do you want to proceed?',
+    ' ❯ 1. Yes',
+    '   2. Yes, and don\'t ask again for touch commands',
+    '   3. No',
+    '',
+    ' Esc to cancel · Tab to amend',
+  ];
+  m.feed(box.join('\r\n'));
+  m.feed('\x1b[5;1H'); // Cursor steht in der Box (wie bei Claude)
+  await m.flushed();
+  const s = m.screen();
+  assert.equal(s.rows.length, box.length, 'keine 190 Leerzeilen am Ende');
+  assert.equal(s.rows[s.rows.length - 1], ' Esc to cancel · Tab to amend');
+  const cls = classifyScreen(s);
+  assert.equal(cls.kind, 'permission');
+  assert.equal(cls.key, '\r');
+});
+
+test('screen() kürzt nie über den Cursor hinaus', async () => {
+  const m = new SessionMirror(20, 50);
+  m.feed('a\r\n\r\n\r\n\r\n'); // Cursor 4 Zeilen tiefer auf leerer Zeile
+  await m.flushed();
+  const s = m.screen();
+  assert.equal(s.cursorY, 4);
+  assert.equal(s.rows.length, 5);
 });

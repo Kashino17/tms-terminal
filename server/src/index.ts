@@ -1,4 +1,5 @@
 import * as http from 'http';
+import { RUNNING_BUILD, STARTED_AT } from './utils/build-info';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -7,6 +8,7 @@ import { handleAuthRequest } from './auth/auth.controller';
 import { handleOpenUrl } from './browserbridge/open-url.handler';
 import { handleFileList, handleFileRead, handleFileDownload, handleMkdir, handleMove, handleTrash, handleRename } from './files/file.handler';
 import { handleFileZip } from './files/zip.handler';
+import { handleFileUpload } from './files/upload.handler';
 import { handlePdfjsAsset } from './files/pdfjs.handler';
 import { handleUploadRequest, handleDrawingUpload } from './upload/upload.handler';
 import { validateToken } from './auth/jwt.service';
@@ -15,14 +17,17 @@ import { isPasswordSet } from './auth/password.service';
 import { logger } from './utils/logger';
 import { getPlatform, getDefaultShell } from './utils/platform';
 import { fcmService } from './notifications/fcm.service';
-import { watcherService } from './watchers/watcher.service';
 import { globalManager } from './terminal/terminal.manager';
+import { voiceAvailable, shutdownVoice } from './voice/engine';
+import { saveMirrorStates, takeMirrorStates } from './terminal/mirror.store';
 import { Snapshotter, setActiveSnapshotter } from './terminal/restore/snapshotter';
 import { restoreTerminals } from './terminal/restore/restore';
 import { consumeSnapshot } from './terminal/restore/snapshot.store';
-import { shutdown as shutdownWhisper, prewarm as prewarmWhisper } from './audio/whisper-sidecar';
-import { shutdown as shutdownRewriter, prewarm as prewarmRewriter } from './audio/prompt-rewriter-sidecar';
-import { managerService } from './websocket/ws.handler';
+import { PtyDaemonClient } from './terminal/ptyd/client';
+import { usePtyKeeper } from './terminal/terminal.factory';
+import { titleStore } from './terminal/titles';
+import { clipboardHub } from './clipboard';
+import { shutdown as shutdownWhisper, prewarm as prewarmWhisper, dictationAvailable } from './audio/whisper-sidecar';
 import { isAutoApprove, setAutoApprove } from './websocket/auto.approve.state';
 
 // ── Global error handlers ────────────────────────────────────────────
@@ -63,18 +68,60 @@ async function main(): Promise<void> {
   // Initialize FCM push notifications (optional — skips gracefully if not configured)
   fcmService.init();
 
-  // Initialize watchers (file/process/keyword monitors with push notifications)
-  watcherService.init();
+  // Terminal-Waechter (ptyd): haelt die Terminals ausserhalb dieses Prozesses,
+  // damit ein Neustart, ein Update oder ein Absturz des Servers sie NICHT mehr
+  // beendet. Was dort weiterlief, wird hier einfach uebernommen — kein
+  // Wiederherstellen, kein `claude --resume`: Claude hat nichts gemerkt.
+  // Windows bleibt beim direkten Weg.
+  let keeper: PtyDaemonClient | null = null;
+  const adoptedIds = new Set<string>();
+  if (getPlatform() !== 'win32') {
+    // Unix-Socket-Pfade sind auf macOS auf 104 Zeichen begrenzt (sonst EINVAL
+    // beim listen). Bei einem ungewoehnlich langen Home-Pfad nach /tmp
+    // ausweichen — der Socket selbst ist ohnehin nur fuer uns lesbar (0600).
+    const preferred = path.join(config.configDir, 'ptyd.sock');
+    const socketPath = preferred.length <= 100
+      ? preferred
+      : path.join('/tmp', `tms-ptyd-${process.getuid?.() ?? 'u'}.sock`);
+    keeper = await PtyDaemonClient.start(
+      socketPath,
+      require.resolve('./terminal/ptyd/daemon'),
+      path.join(config.configDir, 'ptyd.log'),
+    );
+    if (keeper) {
+      usePtyKeeper(keeper);
+      // Verlauf jedes Terminals vom vorigen Server — sonst startet jeder Spiegel
+      // leer und das nächste Vollbild nimmt der App ihren ganzen Verlauf.
+      let mirrorStates: ReturnType<typeof takeMirrorStates> = {};
+      try { mirrorStates = takeMirrorStates(config.configDir); } catch { /* ohne Verlauf weiter */ }
+      for (const t of keeper.adopted) {
+        try {
+          globalManager.adoptSession(t.id, t.pty, t.cols, t.rows, mirrorStates[t.id]);
+          adoptedIds.add(t.id);
+        } catch (e) {
+          logger.warn(`Terminal-Waechter: ${t.id} nicht uebernommen — ${(e as Error).message}`);
+        }
+      }
+      logger.info(`Terminal-Waechter (pid ${keeper.daemonPid}): ${adoptedIds.size} laufende(s) Terminal(s) uebernommen`);
+    } else {
+      logger.warn('Terminal-Waechter nicht erreichbar — Terminals haengen direkt am Server und sterben mit einem Neustart');
+    }
+  }
 
-  // Auto-start Manager Agent in headless mode.
-  // The Manager runs autonomously (heartbeat, task tracking, AI calls).
-  // When a client connects, callbacks get wired up for UI streaming.
-  // Until then, messages are buffered and flushed on first connect.
-  // Terminals aus der letzten Aufnahme zurueckholen. Laeuft vor dem Manager,
-  // damit dessen erste Uebersicht die Terminals schon kennt.
+  // Terminals aus der letzten Aufnahme zurueckholen — nur noch die, die NICHT
+  // im Waechter weiterliefen (z. B. nach einem Neustart des Macs). Laeuft vor
+  // dem Manager, damit dessen erste Uebersicht die Terminals schon kennt.
   const restoreResult = await restoreTerminals({
     now: () => Date.now(),
-    takeSnapshot: () => consumeSnapshot(),
+    takeSnapshot: () => {
+      const snap = consumeSnapshot();
+      if (!snap) return snap;
+      // Uebernommene Terminals behalten ihren Auto-Approve-Schalter.
+      for (const e of snap.entries) {
+        if (adoptedIds.has(e.id)) setAutoApprove(e.id, e.autoApprove ?? true);
+      }
+      return { ...snap, entries: snap.entries.filter((e) => !adoptedIds.has(e.id)) };
+    },
     // Sendet KEIN Signal — prueft nur, ob der Prozess existiert.
     isPidAlive: (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } },
     createSession: (entry, onOutput) => {
@@ -95,10 +142,10 @@ async function main(): Promise<void> {
     maxSessions: 50,
   });
 
-  if (!managerService.isEnabled()) {
-    managerService.start();
-    logger.info('Manager: auto-started in headless mode (no client needed)');
-  }
+  // Titel von Terminals, die es nach Waechter-Uebernahme und Wiederherstellung
+  // nicht mehr gibt, sind Ballast.
+  titleStore.prune(new Set(globalManager.listSessions().map((x) => x.id)));
+  clipboardHub.start(); // gemeinsame Zwischenablage: Kopien am Mac landen im Verlauf
   if (restoreResult.restored.length > 0) {
     const parts = [`${restoreResult.restored.length} Terminal(s) nach dem Neustart wiederhergestellt.`];
     if (restoreResult.resumed.length > 0) {
@@ -115,7 +162,7 @@ async function main(): Promise<void> {
     if (restoreResult.failed.length > 0) {
       parts.push(`${restoreResult.failed.length} liess(en) sich nicht wiederherstellen.`);
     }
-    managerService.pushSystemNotice(`\u267b\ufe0f ${parts.join(' ')}`, `restore:${Date.now()}`);
+    logger.info(parts.join(' '));
   }
 
   // Ab jetzt laufend mitschreiben — auch ein Absturz soll abgedeckt sein,
@@ -127,7 +174,7 @@ async function main(): Promise<void> {
       listSessions: () => globalManager.listSessions().map(sess => ({
         id: sess.id, pid: sess.pty.pid, cols: sess.cols, rows: sess.rows, cwd: sess.cwd,
       })),
-      labelFor: (id) => managerService.getSessionList().find(x => x.sessionId === id)?.label,
+      labelFor: (id) => titleStore.all()[id],
       autoApproveFor: (id) => isAutoApprove(id),
     },
   });
@@ -158,64 +205,12 @@ async function main(): Promise<void> {
       handleUploadRequest(req, res);
     } else if (req.url === '/upload/drawing') {
       handleDrawingUpload(req, res);
-    } else if (req.url?.startsWith('/generated-images/')) {
-      // Serve generated images (JWT-protected)
-      const authHeader = req.headers['authorization'] ?? '';
-      let token = authHeader.replace(/^Bearer\s+/i, '');
-      if (!token) {
-        try {
-          const u = new URL(req.url, 'http://localhost');
-          token = u.searchParams.get('token') ?? '';
-        } catch {}
-      }
-      if (!token || !validateToken(token)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized' }));
-        return;
-      }
-      const filename = decodeURIComponent(req.url.replace('/generated-images/', '').split('?')[0]);
-      // Prevent path traversal
-      if (filename.includes('..') || filename.includes('/')) {
-        res.writeHead(400); res.end('Bad request'); return;
-      }
-      const filePath = path.join(os.homedir(), 'Desktop', 'Image Generations', filename);
-      if (!fs.existsSync(filePath)) {
-        res.writeHead(404); res.end('Not found'); return;
-      }
-      const ext = path.extname(filename).toLowerCase();
-      const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'application/octet-stream';
-      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=86400' });
-      fs.createReadStream(filePath).pipe(res);
-    } else if (req.url?.startsWith('/generated-presentations/')) {
-      // Serve generated presentations (JWT-protected)
-      const authHeader = req.headers['authorization'] ?? '';
-      let token = authHeader.replace(/^Bearer\s+/i, '');
-      if (!token) {
-        try {
-          const u = new URL(req.url, 'http://localhost');
-          token = u.searchParams.get('token') ?? '';
-        } catch {}
-      }
-      if (!token || !validateToken(token)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized' }));
-        return;
-      }
-      const filename = decodeURIComponent(req.url.replace('/generated-presentations/', '').split('?')[0]);
-      // Prevent path traversal
-      if (filename.includes('..') || filename.includes('/')) {
-        res.writeHead(400); res.end('Bad request'); return;
-      }
-      const filePath = path.join(__dirname, '..', 'generated-presentations', filename);
-      if (!fs.existsSync(filePath)) {
-        res.writeHead(404); res.end('Not found'); return;
-      }
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
-      fs.createReadStream(filePath).pipe(res);
     } else if (req.url?.startsWith('/files/')) {
       // pdf.js viewer assets are public statics — the PDF itself still needs
       // the token via /files/download.
       if (req.url.startsWith('/files/pdfjs/')) { handlePdfjsAsset(req, res); return; }
+      // CORS-Vorabfrage fuer den Upload kommt ohne Token — vor der Pruefung beantworten.
+      if (req.method === 'OPTIONS' && req.url.startsWith('/files/upload')) { handleFileUpload(req, res); return; }
       // JWT-protected file browser endpoints
       // Accept token from Authorization header OR ?token= query param (for Image/download URLs)
       const authHeader = req.headers['authorization'] ?? '';
@@ -239,10 +234,14 @@ async function main(): Promise<void> {
       else if (req.url.startsWith('/files/trash') && req.method === 'POST')  handleTrash(req, res);
       else if (req.url.startsWith('/files/rename') && req.method === 'POST') handleRename(req, res);
       else if (req.url.startsWith('/files/zip'))      handleFileZip(req, res);
+      else if (req.url.startsWith('/files/upload'))   handleFileUpload(req, res);
       else { res.writeHead(404); res.end('Not found'); }
     } else if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', platform: getPlatform() }));
+      // build/startedAt: which code this server really runs — `tms-terminal
+      // version` (and a look from another machine) can tell a finished update
+      // from one that stopped halfway.
+      res.end(JSON.stringify({ status: 'ok', platform: getPlatform(), build: RUNNING_BUILD, startedAt: STARTED_AT, caps: [...(dictationAvailable() ? ['dictation'] : []), ...(voiceAvailable() ? ['speech'] : [])] }));
     } else {
       res.writeHead(404);
       res.end('Not found');
@@ -259,34 +258,58 @@ async function main(): Promise<void> {
     // Warm both audio sidecars in the background so the first dictation after
     // a server restart never pays the model-load (or iCloud re-download) cost.
     void prewarmWhisper();
-    void prewarmRewriter();
   });
 
   // Graceful shutdown
+  let shuttingDown = false;
   const shutdown = (): void => {
+    // Ein zweites Signal (stop schickt evtl. nach) darf die Verlaufs-Sicherung
+    // nicht mit einer leeren überschreiben.
+    if (shuttingDown) return;
+    shuttingDown = true;
     const forceExit = setTimeout(() => { logger.warn('Forced exit after timeout'); process.exit(1); }, 5000);
     forceExit.unref();
     logger.info('Shutting down...');
-    watcherService.shutdown();
+    void titleStore.flush();
+    clipboardHub.stop();
     shutdownWhisper();
-    shutdownRewriter();
+    shutdownVoice();
 
-    // Letzte, exakte Aufnahme — danach sind die PTYs weg.
+    // Letzte, exakte Aufnahme — fuer den Fall, dass auch der Waechter nicht
+    // ueberlebt (Neustart des Macs).
     snapshotter.stop();
     void snapshotter.captureNow();
 
-    // Close all terminal sessions
-    globalManager.closeAllSessions();
+    // Mit Waechter: loslassen, NICHT beenden — die Terminals laufen weiter und
+    // der naechste Server uebernimmt sie. Ohne Waechter sind die PTYs unsere
+    // Kinder und muessen sauber beendet werden.
+    void (async () => {
+      if (keeper) {
+        // Erst den Verlauf jedes Terminals für den nächsten Server sichern —
+        // die Terminals laufen weiter, ihre Spiegel aber sterben mit uns.
+        try {
+          const states = await globalManager.exportMirrorStates();
+          saveMirrorStates(config.configDir, states);
+          logger.info(`Verlauf von ${Object.keys(states).length} Terminal(s) gesichert`);
+        } catch (e) {
+          logger.warn(`Verlauf nicht gesichert: ${(e as Error).message}`);
+        }
+        globalManager.releaseAllSessions();
+        keeper.release();
+      } else {
+        globalManager.closeAllSessions();
+      }
 
-    // Close all WebSocket connections
-    for (const client of wss.clients) {
-      client.close(1001, 'Server shutting down');
-    }
+      // Close all WebSocket connections
+      for (const client of wss.clients) {
+        client.close(1001, 'Server shutting down');
+      }
 
-    server.close(() => {
-      logger.info('Server closed');
-      process.exit(0);
-    });
+      server.close(() => {
+        logger.info('Server closed');
+        process.exit(0);
+      });
+    })();
   };
 
   process.on('SIGINT', shutdown);

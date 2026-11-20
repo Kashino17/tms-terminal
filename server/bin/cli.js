@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const net = require('net');
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 const ROOT = path.resolve(__dirname, '..');
@@ -13,6 +14,38 @@ const DIST_INDEX = path.join(ROOT, 'dist', 'server', 'src', 'index.js');
 const DIST_SETUP = path.join(ROOT, 'dist', 'server', 'src', 'setup.js');
 const DIST_DIR = path.join(ROOT, 'dist');
 const TSBUILDINFO = path.join(ROOT, '.tsbuildinfo');
+const LOG_DIR = path.join(CONFIG_DIR, 'logs');
+const SERVER_LOG = path.join(LOG_DIR, 'server.log');
+const KEEPER_LOG = path.join(CONFIG_DIR, 'ptyd.log');
+const UPDATE_LOG = path.join(CONFIG_DIR, 'update.log');
+const TITLES_FILE = path.join(CONFIG_DIR, 'titles.json');
+const LOG_ROTATE_BYTES = 20 * 1024 * 1024;
+
+// Same rule as server/src/index.ts: Unix socket paths are limited to 104
+// characters on macOS — an unusually long home directory falls back to /tmp.
+const KEEPER_SOCK = (() => {
+  const preferred = path.join(CONFIG_DIR, 'ptyd.sock');
+  return preferred.length <= 100 ? preferred : path.join('/tmp', `tms-ptyd-${process.getuid ? process.getuid() : 'u'}.sock`);
+})();
+
+// ── Output helpers ───────────────────────────────────────────────────────────
+const TTY = process.stdout.isTTY;
+const paint = (code) => (s) => (TTY ? `\x1b[${code}m${s}\x1b[0m` : String(s));
+const c = { green: paint(32), red: paint(31), yellow: paint(33), blue: paint(34), gray: paint(90), bold: paint(1) };
+const ok = (msg) => console.log(`${c.green('✓')}  ${msg}`);
+const bad = (msg) => console.log(`${c.red('✗')}  ${msg}`);
+const warn = (msg) => console.log(`${c.yellow('!')}  ${msg}`);
+const info = (msg) => console.log(`${c.blue('⟳')}  ${msg}`);
+const hint = (msg) => console.log(c.gray(`   ${msg}`));
+
+const argv = process.argv.slice(2);
+const command = argv[0] && !argv[0].startsWith('-') ? argv[0] : (argv.includes('-h') || argv.includes('--help') ? 'help' : argv.includes('-v') || argv.includes('--version') ? 'version' : 'start');
+const rest = argv[0] === command ? argv.slice(1) : argv;
+const has = (...names) => names.some((n) => rest.includes(n));
+function optValue(name, fallback) {
+  const i = rest.indexOf(name);
+  return i >= 0 && rest[i + 1] ? rest[i + 1] : fallback;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function getPort() {
@@ -22,46 +55,67 @@ function getPort() {
   } catch { return 8767; }
 }
 
+function listenerPids(port) {
+  if (os.platform() === 'win32') {
+    // Kein lsof. netstat -ano: lauschende Sockets erkennt man an der leeren
+    // Gegenadresse — NICHT am Zustandswort, das ist übersetzt ("ABHÖREN").
+    try {
+      const out = execSync('netstat -ano -p tcp', { encoding: 'utf8', windowsHide: true });
+      return parseWinListeners(out, port);
+    } catch { return []; }
+  }
+  try {
+    return execSync(`lsof -ti tcp:${port} -sTCP:LISTEN 2>/dev/null`, { encoding: 'utf8' })
+      .trim().split('\n').map((p) => parseInt(p, 10)).filter((n) => n > 0);
+  } catch { return []; }
+}
+
+function parseWinListeners(netstat, port) {
+  const re = new RegExp(`^\\s*TCP\\s+\\S+:${port}\\s+(?:0\\.0\\.0\\.0:0|\\[::\\]:0)\\s+\\S+\\s+(\\d+)\\s*$`);
+  const pids = new Set();
+  for (const line of netstat.split(/\r?\n/)) {
+    const m = re.exec(line);
+    if (m && +m[1] > 0) pids.add(+m[1]);
+  }
+  return [...pids];
+}
+
+/** Synchron kurz warten — `sleep` gibt es unter Windows nicht. */
+function pause(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+
 /** Kill whatever is listening on the server port (PID file OR lsof fallback). */
 function stopExisting() {
+  let stopped = false;
   // 1. Try PID file
   const pid = readPid();
   if (pid && isRunning(pid)) {
-    try { process.kill(pid, 'SIGTERM'); } catch {}
+    try { process.kill(pid, 'SIGTERM'); stopped = true; } catch {}
     cleanPid();
   }
 
-  // 2. Fallback: kill whatever holds the port (handles orphaned processes)
+  // 2. Fallback: kill whatever LISTENS on the port (handles orphaned servers).
+  //    Only the listener: terminals now outlive the server (terminal keeper,
+  //    server/src/terminal/ptyd), and a program in one of them with an open
+  //    connection TO the server must not be killed by a restart.
   const port = getPort();
-  try {
-    const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' }).trim();
-    if (pids) {
-      pids.split('\n').forEach((p) => {
-        const n = parseInt(p, 10);
-        if (n > 0) try { process.kill(n, 'SIGTERM'); } catch {}
-      });
-    }
-  } catch {} // lsof not found or no process — fine
-
-  // 3. Wait up to 2s for the port to be released
-  const deadline = Date.now() + 2000;
-  while (Date.now() < deadline) {
-    try {
-      execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' });
-      // Still occupied — wait a bit
-      execSync('sleep 0.2');
-    } catch {
-      break; // Port is free
-    }
+  for (const n of listenerPids(port)) {
+    try { process.kill(n, 'SIGTERM'); stopped = true; } catch {}
   }
+
+  // 3. Wait up to 5s for the port to be released (graceful shutdown saves state first)
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && listenerPids(port).length > 0) {
+    pause(200);
+  }
+  return stopped;
 }
 
 function ensureBuilt() {
   if (!fs.existsSync(DIST_INDEX)) {
-    console.log('\x1b[34m⟳\x1b[0m  Building TMS Terminal...');
+    info('Baue TMS Terminal...');
     // Ensure dependencies are installed first
     if (!fs.existsSync(path.join(ROOT, 'node_modules'))) {
-      console.log('\x1b[34m⟳\x1b[0m  Installing dependencies...');
+      info('Installiere Abhängigkeiten...');
       execSync('npm install', { cwd: ROOT, stdio: 'inherit' });
     }
     // dist is missing here, so force a real emit: a stale .tsbuildinfo would
@@ -72,14 +126,226 @@ function ensureBuilt() {
     try {
       execSync('npx tsc', { cwd: ROOT, stdio: 'inherit' });
     } catch {
-      console.error('\x1b[31m✗\x1b[0m  Build failed.');
+      bad('Build fehlgeschlagen.');
       process.exit(1);
     }
     if (!fs.existsSync(DIST_INDEX)) {
-      console.error('\x1b[31m✗\x1b[0m  Build produced no output (' + DIST_INDEX + ').');
+      bad('Build hat keine Ausgabe erzeugt (' + DIST_INDEX + ').');
       process.exit(1);
     }
+    stampBuild();
   }
+}
+
+/** Stand des gebauten Codes neben den Build legen (siehe update-runner.js). */
+function stampBuild(dir = DIST_DIR) {
+  try { require('./update-runner.js').writeBuildInfo(ROOT, dir); } catch { /* ohne Stempel geht es auch */ }
+}
+
+function readStamp(dir = DIST_DIR) {
+  try { return JSON.parse(fs.readFileSync(path.join(dir, 'build-info.json'), 'utf8')); } catch { return null; }
+}
+
+/** /health des laufenden Servers — sagt, welchen Code er WIRKLICH ausführt. */
+function fetchHealth(port, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    const req = require('http').get({ host: '127.0.0.1', port, path: '/health', timeout: timeoutMs }, (res) => {
+      let body = '';
+      res.on('data', (d) => { body += d; });
+      res.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } });
+    });
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+  });
+}
+
+function gitOut(args, timeout = 4000) {
+  try { return execSync(`git ${args}`, { cwd: ROOT, encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); }
+  catch { return ''; }
+}
+
+/**
+ * Quelltext, Build, laufender Server und GitHub nebeneinander — und ein
+ * klares Urteil. Gibt true zurück, wenn alles auf dem neuesten Stand läuft.
+ */
+async function versionReport() {
+  const branch = gitOut('rev-parse --abbrev-ref HEAD');
+  const src = gitOut('rev-parse --short HEAD');
+  const srcSubject = gitOut('log -1 --format=%s');
+  const srcDate = gitOut('log -1 --format=%cd --date=format:%d.%m.%Y\ %H:%M');
+  const built = readStamp();
+  const port = getPort();
+  const health = serverPid() || listenerPids(port).length ? await fetchHealth(port) : null;
+  const remoteLine = branch ? gitOut(`ls-remote origin refs/heads/${branch}`, 10000) : '';
+  const remote = remoteLine ? remoteLine.split(/\s+/)[0].slice(0, src.length || 7) : '';
+
+  console.log(`\n${c.bold('TMS Terminal')} ${c.gray(`· ${os.platform()}`)}\n`);
+  console.log(`   Quelltext:  ${src ? `${branch} @ ${src}` : '?'} ${c.gray(srcSubject ? `— ${srcSubject}${srcDate ? ` (${srcDate})` : ''}` : '')}`);
+  console.log(`   Gebaut:     ${built ? `${built.short} ${c.gray(`am ${new Date(built.builtAt).toLocaleString('de-DE')}`)}` : c.gray('ohne Stand-Stempel (vor dieser Version gebaut)')}`);
+  let running = '';
+  if (health && health.build && health.build.short) {
+    running = health.build.short;
+    console.log(`   Läuft:      ${running} ${c.gray(`seit ${new Date(health.startedAt).toLocaleString('de-DE')}`)}`);
+  } else if (health) {
+    console.log(`   Läuft:      ${c.yellow('alter Server — meldet seinen Stand noch nicht')}`);
+  } else {
+    console.log(`   Läuft:      ${c.gray('Server läuft nicht')}`);
+  }
+  console.log(`   GitHub:     ${remote ? remote : c.gray('nicht erreichbar')}`);
+  console.log('');
+
+  const problems = [];
+  if (remote && src && remote !== src) problems.push(`Der Quelltext ist nicht der neueste (GitHub: ${remote}) — tms-terminal update`);
+  if (src && built && built.short !== src) problems.push('Der Build ist älter als der Quelltext — das letzte Update hat nicht fertig gebaut (tms-terminal logs update)');
+  if (health && !running) problems.push('Der laufende Server ist von vor dieser Version — tms-terminal restart (oder update)');
+  else if (running && src && running !== src) problems.push(`Der Server läuft noch mit ${running} — tms-terminal restart`);
+  if (!problems.length && running) { ok('Alles auf dem neuesten Stand — der Server läuft mit dem aktuellen Code.'); return true; }
+  if (!problems.length) { ok('Quelltext und Build sind aktuell.'); return true; }
+  for (const p of problems) bad(p);
+  return false;
+}
+
+// ── Virtueller Bildschirm (Windows) ─────────────────────────────────────────
+// „Bildschirm aus“ im Fernzugriff: Windows zeichnet auf einen unsichtbaren
+// Monitor, das Laptop-Display ist wirklich aus. Der Treiber braucht EINMAL
+// Administratorrechte (display-setup.ps1); im Betrieb schaltet der Server ihn
+// als normaler Nutzer über eine Windows-Aufgabe (display-helper.ps1).
+const WIN_HELPERS = path.join(ROOT, 'src', 'remote', 'helpers', 'win');
+const DISPLAY_MARKER = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'TMS Terminal', 'display-installed.txt');
+const DISPLAY_DECLINED = path.join(CONFIG_DIR, 'display-declined');
+const DISPLAY_SETUP_LOG = path.join(CONFIG_DIR, 'display-setup.log');
+
+function displayInstalled() { return fs.existsSync(DISPLAY_MARKER); }
+
+/** PowerShell, die genau diesen Text ausführt (EncodedCommand: keine Anführungszeichen-Fallen). */
+function psEncoded(script, timeout) {
+  return require('child_process').spawnSync('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { encoding: 'utf8', windowsHide: true, timeout });
+}
+
+/** Führt display-setup.ps1 mit Administratorrechten aus (ein UAC-Klick). */
+function displaySetup(mode, fromUpdate) {
+  ensureConfigDir();
+  try { fs.writeFileSync(DISPLAY_SETUP_LOG, ''); } catch {}
+  const script = path.join(WIN_HELPERS, 'display-setup.ps1');
+  const args = `-NoProfile -ExecutionPolicy Bypass -File "${script}" ${mode === 'install' ? '-Install' : '-Uninstall'} -Log "${DISPLAY_SETUP_LOG}"`;
+  info(mode === 'install' ? 'Richte den virtuellen Bildschirm ein.' : 'Entferne den virtuellen Bildschirm.');
+  hint('Windows fragt gleich EINMAL nach Administratorrechten — bitte „Ja“ klicken.');
+  const r = psEncoded(
+    `try { $p = Start-Process -FilePath powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList '${args.replace(/'/g, "''")}'; exit $p.ExitCode } catch { exit 1223 }`,
+    10 * 60_000);
+  let text = '';
+  try { text = fs.readFileSync(DISPLAY_SETUP_LOG, 'utf8'); } catch {}
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\[[^\]]+\]\s*(.*)$/.exec(line);
+    if (m && !m[1].startsWith('ERGEBNIS')) console.log(`   ${m[1]}`);
+  }
+  if (r.status === 1223) {
+    warn('Abgebrochen — keine Administratorrechte erteilt. Nichts wurde verändert.');
+    if (fromUpdate) { try { fs.writeFileSync(DISPLAY_DECLINED, new Date().toISOString()); } catch {} }
+    hint('Später jederzeit: tms-terminal display install');
+    return false;
+  }
+  if (r.status === 0 && /ERGEBNIS: OK/.test(text)) {
+    try { fs.rmSync(DISPLAY_DECLINED, { force: true }); } catch {}
+    ok(mode === 'install' ? 'Virtueller Bildschirm eingerichtet.' : 'Virtueller Bildschirm entfernt.');
+    if (mode === 'install') hint('Probelauf: tms-terminal display test');
+    return true;
+  }
+  const m = /ERGEBNIS: FEHLER (.*)/.exec(text);
+  bad(m ? m[1] : `Einrichtung fehlgeschlagen (Code ${r.status}${r.error ? `, ${r.error.message}` : ''})`);
+  hint(`Protokoll: ${DISPLAY_SETUP_LOG}`);
+  return false;
+}
+
+function displayHelperArgs(extra) {
+  return ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(WIN_HELPERS, 'display-helper.ps1'), ...extra];
+}
+
+/** Alle Anzeigegeräte (für die Diagnose), als Textzeilen. */
+function displayDevices() {
+  const r = require('child_process').spawnSync('powershell.exe', displayHelperArgs(['-List']), { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+  const out = [];
+  for (const line of String(r.stdout || '').split(/\r?\n/)) {
+    try {
+      const o = JSON.parse(line.trim());
+      if (o.device) out.push(`${o.device.virtual ? '★' : '·'} ${o.device.name}  ${o.device.string}  [${o.device.flags & 1 ? 'aktiv' : 'aus'}${o.device.flags & 4 ? ', Haupt' : ''}]  ${o.device.mode}  ${o.device.id}`);
+      else if (o.monitor) out.push(`     Monitor: ${o.monitor.string}  ${o.monitor.id}`);
+    } catch {}
+  }
+  return out;
+}
+
+/**
+ * Probelauf: Laptop-Display ~10 s aus, virtueller Bildschirm an, ein Bild mit
+ * ffmpeg greifen, dann alles zurück. Die Ausgabe ist die Diagnose, die zeigt,
+ * ob der Fernzugriff damit funktionieren wird.
+ */
+async function displayTest() {
+  if (!displayInstalled()) { bad('Der virtuelle Bildschirm ist nicht eingerichtet.'); hint('tms-terminal display install'); return false; }
+  info('Probelauf: Das Laptop-Display geht gleich für etwa 10 Sekunden AUS');
+  hint('und kommt danach von selbst zurück. Nichts anfassen.');
+  pause(1500);
+  const child = spawn('powershell.exe', displayHelperArgs(['-Width', '1920', '-Height', '1200', '-MaxSeconds', '45']),
+    { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  let errText = '';
+  child.stderr.on('data', (b) => { errText += b; });
+  const result = await new Promise((resolve) => {
+    let buf = '';
+    const timer = setTimeout(() => resolve(null), 40_000);
+    child.stdout.on('data', (b) => {
+      buf += b;
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop();
+      for (const l of lines) {
+        try { const o = JSON.parse(l.trim()); if (o.ready || o.error) { clearTimeout(timer); resolve(o); return; } } catch {}
+      }
+    });
+    child.on('exit', () => { clearTimeout(timer); resolve(null); });
+  });
+  const report = [];
+  let good = false;
+  if (result && result.ready) {
+    report.push(`Umschalten: OK — ${result.ready.width}x${result.ready.height}${result.ready.sized ? '' : ' (Wunschgröße 1920x1200 NICHT gesetzt)'} auf ${result.ready.name}`);
+    report.push('Anzeigegeräte währenddessen:', ...displayDevices().map((l) => '  ' + l));
+    for (const idx of [0, 1]) {
+      const r = require('child_process').spawnSync('ffmpeg',
+        ['-hide_banner', '-loglevel', 'verbose', '-f', 'lavfi', '-i', `ddagrab=output_idx=${idx}:framerate=5`, '-frames:v', '1', '-f', 'null', '-'],
+        { encoding: 'utf8', windowsHide: true, timeout: 15_000 });
+      const lines = String(r.stderr || '').split(/\r?\n/).filter((l) => /ddagrab|Stream #0|Output|rror|fail/i.test(l)).slice(0, 8);
+      const size = /,\s(\d{3,5})x(\d{3,5})[,\s]/.exec(String(r.stderr || ''));
+      if (idx === 0 && r.status === 0 && size) good = true;
+      report.push(`ffmpeg Ausgang ${idx}: ${r.status === 0 ? 'Bild bekommen' : `Fehler (Code ${r.status})`}${size ? ` ${size[1]}x${size[2]}` : ''}`);
+      for (const l of lines) report.push('  ' + l.trim().slice(0, 160));
+    }
+  } else {
+    report.push(`Umschalten: FEHLGESCHLAGEN — ${result && result.error ? result.error.message : 'keine Antwort vom Helfer'}`);
+    if (errText.trim()) report.push(...errText.trim().split(/\r?\n/).slice(0, 12).map((l) => '  ' + l));
+  }
+  try { child.stdin.end(); } catch {}
+  await new Promise((resolve) => { const t = setTimeout(resolve, 20_000); child.on('exit', () => { clearTimeout(t); resolve(); }); if (child.exitCode !== null) { clearTimeout(t); resolve(); } });
+  pause(1500);
+  report.push('Anzeigegeräte danach:', ...displayDevices().map((l) => '  ' + l));
+  console.log('');
+  for (const l of report) console.log(`   ${l}`);
+  console.log('');
+  if (good) ok('Probelauf erfolgreich — das Laptop-Display war aus, das Bild kam vom virtuellen Bildschirm.');
+  else bad('Probelauf nicht erfolgreich — bitte die ganze Ausgabe oben kopieren und schicken.');
+  return good;
+}
+
+function displayStatus() {
+  if (!displayInstalled()) {
+    warn('Virtueller Bildschirm: nicht eingerichtet');
+    hint('Einrichten (einmal Admin-Klick): tms-terminal display install');
+    return;
+  }
+  let version = '';
+  try { version = fs.readFileSync(DISPLAY_MARKER, 'utf8').trim(); } catch {}
+  ok(`Virtueller Bildschirm: eingerichtet (Treiber ${version})`);
+  for (const l of displayDevices()) hint(l);
+  hint('Probelauf: tms-terminal display test · Entfernen: tms-terminal display uninstall');
 }
 
 function ensureConfigDir() {
@@ -114,10 +380,190 @@ function cleanPid() {
   try { fs.unlinkSync(PID_FILE); } catch {}
 }
 
-// ── Commands ─────────────────────────────────────────────────────────────────
-const command = process.argv[2] || 'start';
+/** The server's pid if it runs (PID file, else whoever listens on the port). */
+function serverPid() {
+  const pid = readPid();
+  if (pid && isRunning(pid)) return pid;
+  const l = listenerPids(getPort());
+  return l.length ? l[0] : null;
+}
 
-switch (command) {
+function elapsed(pid) {
+  try {
+    // ps etime: [[DD-]HH:]MM:SS
+    const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(execSync(`ps -o etime= -p ${pid}`, { encoding: 'utf8' }).trim());
+    if (!m) return '?';
+    const secs = ((+m[1] || 0) * 86400) + ((+m[2] || 0) * 3600) + (+m[3] * 60) + (+m[4]);
+    return fmtAge(secs * 1000);
+  } catch { return '?'; }
+}
+
+function fmtAge(ms) {
+  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d ? `${d} T ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
+}
+
+function fmtBytes(n) {
+  return n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n > 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+}
+
+function version() {
+  let v = '?';
+  try { v = require(path.join(ROOT, 'package.json')).version; } catch {}
+  let git = '';
+  try {
+    const opts = { cwd: ROOT, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] };
+    const br = execSync('git rev-parse --abbrev-ref HEAD', opts).trim();
+    const sha = execSync('git rev-parse --short HEAD', opts).trim();
+    git = `${br} @ ${sha}`;
+  } catch {}
+  return { v, git };
+}
+
+function rotateLog(file) {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    if (fs.statSync(file).size > LOG_ROTATE_BYTES) fs.renameSync(file, file + '.1');
+  } catch {}
+}
+
+function stripAnsi(s) { return s.replace(/\x1b\[[0-9;]*m/g, ''); }
+
+function waitForPort(port, ms) {
+  const deadline = Date.now() + ms;
+  return new Promise((resolve) => {
+    const tick = () => {
+      if (listenerPids(port).length) return resolve(true);
+      if (Date.now() > deadline) return resolve(false);
+      setTimeout(tick, 250);
+    };
+    tick();
+  });
+}
+
+function confirm(question) {
+  if (has('-y', '--yes')) return Promise.resolve(true);
+  if (!process.stdin.isTTY) {
+    bad('Keine Rückfrage möglich (kein Terminal) — mit --yes bestätigen.');
+    return Promise.resolve(false);
+  }
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => rl.question(`${question} [j/N] `, (a) => { rl.close(); resolve(/^(j|ja|y|yes)$/i.test(a.trim())); }));
+}
+
+// ── Terminal keeper (ptyd) ───────────────────────────────────────────────────
+/** One-shot status from the keeper — never attaches, so a running server stays connected. */
+function keeperInfo() {
+  return new Promise((resolve) => {
+    let done = false, buf = '';
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    const sock = net.createConnection(KEEPER_SOCK);
+    sock.setEncoding('utf8');
+    sock.on('connect', () => sock.write('{"t":"info"}\n'));
+    sock.on('data', (d) => {
+      buf += d;
+      const line = buf.split('\n')[0];
+      try { const m = JSON.parse(line); if (m.t === 'info') { finish(m); sock.destroy(); } } catch {}
+    });
+    sock.on('error', () => finish(null));
+    sock.on('close', () => finish(null));
+    setTimeout(() => { finish(null); sock.destroy(); }, 1500);
+  });
+}
+
+function keeperPidsByName() {
+  try {
+    return execSync('pgrep -f "terminal/ptyd/daemon"', { encoding: 'utf8' }).trim().split('\n').map((x) => parseInt(x, 10)).filter((n) => n > 0);
+  } catch { return []; }
+}
+
+/** Process table once: pid → {ppid, comm}. */
+function processTable() {
+  const map = new Map();
+  try {
+    for (const line of execSync('ps -A -o pid=,ppid=,comm=', { encoding: 'utf8' }).split('\n')) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+      if (m) map.set(Number(m[1]), { ppid: Number(m[2]), comm: path.basename(m[3].trim()) });
+    }
+  } catch {}
+  return map;
+}
+
+function cwdsOf(pids) {
+  const out = {};
+  if (!pids.length) return out;
+  try {
+    const txt = execSync(`lsof -a -d cwd -p ${pids.join(',')} -Fpn 2>/dev/null`, { encoding: 'utf8' });
+    let cur = null;
+    for (const l of txt.split('\n')) {
+      if (l[0] === 'p') cur = Number(l.slice(1));
+      else if (l[0] === 'n' && cur) out[cur] = l.slice(1);
+    }
+  } catch {}
+  return out;
+}
+
+function readTitles() {
+  try { return JSON.parse(fs.readFileSync(TITLES_FILE, 'utf8')); } catch { return {}; }
+}
+
+function printTerminals(ki) {
+  if (!ki.sessions.length) { hint('keine Terminals'); return; }
+  const titles = readTitles();
+  const ps = processTable();
+  const cwds = cwdsOf(ki.sessions.map((s) => s.pid).filter(Boolean));
+  const home = os.homedir();
+  for (const s of ki.sessions) {
+    const kids = [...ps].filter(([, p]) => p.ppid === s.pid).map(([, p]) => p.comm).filter((x) => !/^(zsh|bash|sh|-zsh)$/.test(x));
+    const title = titles[s.id] || c.gray('(ohne Titel)');
+    const cwd = (cwds[s.pid] || '').replace(home, '~');
+    const what = kids.length ? c.blue(kids.join(', ')) : c.gray('Shell');
+    console.log(`   ${c.bold(title)}  ${what}  ${c.gray(cwd)}`);
+    console.log(c.gray(`      ${s.id.slice(0, 8)} · pid ${s.pid} · ${s.cols}×${s.rows}${s.buffered ? ` · ${fmtBytes(s.buffered)} gepuffert` : ''}`));
+  }
+}
+
+async function stopKeeper() {
+  const ki = await keeperInfo();
+  const pids = ki ? [ki.pid] : keeperPidsByName();
+  if (!pids.length) { hint('Der Wächter läuft nicht.'); return true; }
+  const n = ki ? ki.sessions.length : null;
+  const what = n === null ? 'alle Terminals' : n === 1 ? '1 Terminal' : `${n} Terminals`;
+  warn(`Das beendet den Wächter und damit ${what} — samt allem, was darin läuft (z. B. Claude).`);
+  if (!(await confirm('Wirklich beenden?'))) { hint('Abgebrochen, nichts beendet.'); return false; }
+  for (const p of pids) { try { process.kill(p, 'SIGTERM'); } catch {} }
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && pids.some(isRunning)) await new Promise((r) => setTimeout(r, 150));
+  if (pids.some(isRunning)) { bad('Der Wächter reagiert nicht — erzwinge das Ende.'); for (const p of pids) { try { process.kill(p, 'SIGKILL'); } catch {} } }
+  ok(`Wächter beendet (${what}).`);
+  return true;
+}
+
+function tailFile(file, lines, follow, clean) {
+  if (!fs.existsSync(file)) { bad(`Log gibt es (noch) nicht: ${file}`); return false; }
+  const txt = fs.readFileSync(file, 'utf8');
+  let out = txt.split('\n');
+  if (out[out.length - 1] === '') out.pop();
+  out = out.slice(-lines);
+  process.stdout.write((clean ? out.map(stripAnsi) : out).join('\n') + '\n');
+  if (!follow) return true;
+  let pos = fs.statSync(file).size;
+  fs.watchFile(file, { interval: 400 }, (cur) => {
+    if (cur.size < pos) pos = 0; // rotiert
+    if (cur.size === pos) return;
+    const fd = fs.openSync(file, 'r');
+    const b = Buffer.alloc(cur.size - pos);
+    fs.readSync(fd, b, 0, b.length, pos);
+    fs.closeSync(fd);
+    pos = cur.size;
+    process.stdout.write(clean ? stripAnsi(b.toString('utf8')) : b.toString('utf8'));
+  });
+  return true;
+}
+
+// ── Commands ─────────────────────────────────────────────────────────────────
+async function main() {
+  switch (command) {
 
   // ── tms-terminal setup ──────────────────────────────────────────────────
   case 'setup': {
@@ -132,21 +578,47 @@ switch (command) {
 
   // ── tms-terminal (start) ────────────────────────────────────────────────
   case 'start': {
+    const background = has('-d', '--background', '--detach');
     // Kill anything still holding the port (stale PID, orphaned process, etc.)
+    if (serverPid()) info('Ein laufender Server wird ersetzt (Terminals laufen im Wächter weiter).');
     stopExisting();
 
     ensureBuilt();
+    rotateLog(SERVER_LOG);
 
+    if (background) {
+      const out = fs.openSync(SERVER_LOG, 'a');
+      const child = spawn('node', [DIST_INDEX], { detached: true, stdio: ['ignore', out, out], cwd: ROOT });
+      child.unref();
+      fs.closeSync(out);
+      writePid(child.pid);
+      const port = getPort();
+      if (await waitForPort(port, 20000)) {
+        ok(`Server läuft im Hintergrund (PID ${child.pid}, Port ${port}).`);
+        hint(`Log: tms-terminal logs -f`);
+        process.exit(0);
+      }
+      bad('Der Server ist nicht hochgekommen.');
+      hint('Letzte Log-Zeilen:');
+      tailFile(SERVER_LOG, 15, false, true);
+      process.exit(1);
+    }
+
+    // Vordergrund: Ausgabe wie gewohnt im Fenster UND in die Log-Datei — so
+    // lässt sich später nachlesen, was passiert ist (tms-terminal logs).
+    const log = fs.createWriteStream(SERVER_LOG, { flags: 'a' });
     const child = spawn('node', [DIST_INDEX], {
-      stdio: 'inherit',
+      stdio: ['inherit', 'pipe', 'pipe'],
       cwd: ROOT,
     });
+    child.stdout.on('data', (d) => { process.stdout.write(d); log.write(d); });
+    child.stderr.on('data', (d) => { process.stderr.write(d); log.write(d); });
 
     writePid(child.pid);
 
     child.on('exit', (code) => {
       cleanPid();
-      process.exit(code ?? 0);
+      log.end(() => process.exit(code ?? 0));
     });
 
     // Forward signals so Ctrl+C stops the server gracefully
@@ -155,22 +627,225 @@ switch (command) {
     break;
   }
 
+  // ── tms-terminal restart ────────────────────────────────────────────────
+  case 'restart': {
+    // Geht auch aus einem Terminal der App heraus: die Terminals gehören dem
+    // Wächter, nicht dem Server — dieser Befehl überlebt also den Neustart.
+    info('Starte den Server neu (Terminals laufen weiter)...');
+    stopExisting();
+    const out = fs.openSync(path.join(os.tmpdir(), `tms-restart-${process.pid}.log`), 'w');
+    const child = spawn(process.execPath, [__filename, 'start', '--background'], { detached: true, stdio: ['ignore', out, out] });
+    child.unref();
+    fs.closeSync(out);
+    const port = getPort();
+    if (await waitForPort(port, 25000)) {
+      ok(`Server läuft wieder (Port ${port}).`);
+      process.exit(0);
+    }
+    bad('Der Server ist nicht wieder hochgekommen — siehe: tms-terminal logs');
+    process.exit(1);
+  }
+
   // ── tms-terminal stop ───────────────────────────────────────────────────
   case 'stop': {
-    stopExisting();
-    console.log('\x1b[32m✓\x1b[0m  TMS Terminal stopped.');
+    const all = has('-a', '--all');
+    const was = stopExisting();
+    if (was) ok('Server gestoppt.'); else hint('Der Server lief nicht.');
+    if (all) { if (!(await stopKeeper())) process.exit(1); }
+    else {
+      const ki = await keeperInfo();
+      if (ki && ki.sessions.length) hint(`${ki.sessions.length} Terminal(s) laufen im Wächter weiter. Alles beenden: tms-terminal stop --all`);
+    }
     break;
   }
 
   // ── tms-terminal status ─────────────────────────────────────────────────
   case 'status': {
-    const pid = readPid();
-    if (pid && isRunning(pid)) {
-      console.log(`\x1b[32m●\x1b[0m  TMS Terminal is running (PID ${pid}).`);
+    const pid = serverPid();
+    const port = getPort();
+    // Alte Update-Skripte suchen "is running" in dieser Ausgabe — die Zeile
+    // bleibt fuer umgeleitete Ausgabe erhalten, sonst rollte ein Update von
+    // einer aelteren Version faelschlich zurueck.
+    if (!TTY) console.log(pid ? `TMS Terminal is running (PID ${pid}).` : 'TMS Terminal is not running.');
+    if (has('-q', '--quiet')) process.exit(pid ? 0 : 1);
+
+    const { v, git } = version();
+    console.log(`\n${c.bold('TMS Terminal')} ${c.gray(`v${v}${git ? ' · ' + git : ''}`)}\n`);
+    if (pid) {
+      const listening = listenerPids(port).length > 0;
+      console.log(`${c.green('●')}  Server läuft ${c.gray(`· PID ${pid} · seit ${elapsed(pid)} · Port ${port}${listening ? '' : ' (lauscht NICHT)'}`)}`);
     } else {
-      console.log('\x1b[90m●  TMS Terminal is not running.\x1b[0m');
-      if (pid) cleanPid();
+      console.log(`${c.gray('●')}  Server läuft nicht ${c.gray('· starten: tms-terminal')}`);
     }
+    const ki = await keeperInfo();
+    if (ki) {
+      console.log(`${c.green('●')}  Wächter läuft ${c.gray(`· PID ${ki.pid} · seit ${fmtAge(Date.now() - ki.startedAt)} · ${ki.sessions.length} Terminal(s)${ki.serverAttached ? '' : ' · kein Server verbunden'}`)}`);
+      if (!has('--short')) printTerminals(ki);
+    } else if (keeperPidsByName().length) {
+      console.log(`${c.yellow('●')}  Wächter läuft ${c.gray('· älterer Stand ohne Auskunft')}`);
+    } else {
+      console.log(`${c.gray('●')}  Wächter läuft nicht ${c.gray('· startet mit dem Server')}`);
+    }
+    try {
+      const st = fs.statSync(SERVER_LOG);
+      console.log(c.gray(`\n   Log: ${SERVER_LOG.replace(os.homedir(), '~')} (${fmtBytes(st.size)}) — tms-terminal logs -f`));
+    } catch {}
+    console.log('');
+    process.exit(pid ? 0 : 1);
+  }
+
+  // ── tms-terminal terminals ──────────────────────────────────────────────
+  case 'terminals':
+  case 'ls': {
+    const ki = await keeperInfo();
+    if (!ki) { bad('Der Wächter läuft nicht (oder antwortet nicht).'); process.exit(1); }
+    console.log(`\n${c.bold(`${ki.sessions.length} Terminal(s)`)} ${c.gray(`im Wächter (PID ${ki.pid})`)}\n`);
+    printTerminals(ki);
+    console.log('');
+    break;
+  }
+
+  // ── tms-terminal keeper [status|stop|logs] ──────────────────────────────
+  case 'keeper':
+  case 'waechter':
+  case 'wächter': {
+    const sub = rest.find((a) => !a.startsWith('-')) || 'status';
+    if (sub === 'stop') { const done = await stopKeeper(); process.exit(done ? 0 : 1); }
+    if (sub === 'logs' || sub === 'log') { tailFile(KEEPER_LOG, parseInt(optValue('-n', '60'), 10) || 60, has('-f', '--follow'), !TTY); break; }
+    if (sub !== 'status') { bad(`Unbekannt: keeper ${sub}`); hint('keeper status | keeper stop | keeper logs [-f]'); process.exit(2); }
+    const ki = await keeperInfo();
+    if (!ki) {
+      const byName = keeperPidsByName();
+      if (byName.length) warn(`Wächter läuft (PID ${byName.join(', ')}), gibt aber keine Auskunft (älterer Stand).`);
+      else console.log(`${c.gray('●')}  Wächter läuft nicht — er startet mit dem Server (tms-terminal).`);
+      break;
+    }
+    console.log(`\n${c.green('●')}  Wächter läuft ${c.gray(`· PID ${ki.pid} · seit ${fmtAge(Date.now() - ki.startedAt)} · Protokoll v${ki.v}`)}`);
+    console.log(`   Server ${ki.serverAttached ? c.green('verbunden') : c.yellow('nicht verbunden')} · Socket ${c.gray(KEEPER_SOCK.replace(os.homedir(), '~'))}\n`);
+    printTerminals(ki);
+    console.log(c.gray(`\n   Herunterfahren (beendet alle Terminals): tms-terminal keeper stop\n`));
+    break;
+  }
+
+  // ── tms-terminal logs [server|keeper|update] [-f] [-n N] ────────────────
+  case 'logs':
+  case 'log': {
+    const which = rest.find((a) => !a.startsWith('-') && !/^\d+$/.test(a)) || 'server';
+    const file = { server: SERVER_LOG, keeper: KEEPER_LOG, waechter: KEEPER_LOG, update: UPDATE_LOG }[which];
+    if (!file) { bad(`Unbekanntes Log: ${which}`); hint('logs [server|keeper|update] [-f] [-n 200]'); process.exit(2); }
+    const n = parseInt(optValue('-n', '100'), 10) || 100;
+    if (!tailFile(file, n, has('-f', '--follow'), !TTY)) {
+      if (which === 'server') hint('Das Log entsteht ab dem nächsten Start mit dieser Version (tms-terminal).');
+      process.exit(1);
+    }
+    break;
+  }
+
+  // ── tms-terminal doctor / debug ─────────────────────────────────────────
+  case 'doctor':
+  case 'debug': {
+    const { v, git } = version();
+    console.log(`\n${c.bold('TMS Terminal — Selbsttest')} ${c.gray(`v${v}${git ? ' · ' + git : ''} · Node ${process.version} · ${os.platform()} ${os.release()}`)}\n`);
+    let problems = 0;
+    const check = (good, msg, fix) => { if (good) ok(msg); else { bad(msg); if (fix) hint(fix); problems++; } };
+    const note = (msg, sub) => { warn(msg); if (sub) hint(sub); };
+
+    // Build
+    const built = fs.existsSync(DIST_INDEX);
+    check(built, built ? 'Build vorhanden' : 'Build fehlt', 'tms-terminal rebuild');
+    if (built && fs.existsSync(TSBUILDINFO)) {
+      const srcNewer = (() => { try { return execSync(`find src -name '*.ts' -newer "${DIST_INDEX}" | head -1`, { cwd: ROOT, encoding: 'utf8' }).trim(); } catch { return ''; } })();
+      if (srcNewer) note('Quelltext ist neuer als der Build', `z. B. ${srcNewer} — neu bauen: tms-terminal rebuild`);
+    }
+    // Config
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'config.json'), 'utf8')); } catch {}
+    check(!!cfg.passwordHash, cfg.passwordHash ? 'Passwort eingerichtet' : 'Kein Passwort eingerichtet', 'tms-terminal setup');
+    check(!!cfg.jwtSecret, cfg.jwtSecret ? 'Anmelde-Schlüssel vorhanden' : 'Anmelde-Schlüssel fehlt', 'tms-terminal setup');
+    // Server + Port
+    const port = getPort();
+    const pid = serverPid();
+    check(!!pid, pid ? `Server läuft (PID ${pid}, seit ${elapsed(pid)})` : 'Server läuft nicht', 'starten: tms-terminal');
+    if (pid) {
+      const health = await new Promise((resolve) => {
+        const req = require('http').get({ host: '127.0.0.1', port, path: '/health', timeout: 3000 }, (res) => { resolve(res.statusCode); res.resume(); });
+        req.on('error', () => resolve(0));
+        req.on('timeout', () => { req.destroy(); resolve(0); });
+      });
+      check(health === 200, health === 200 ? `Port ${port} antwortet (/health)` : `Port ${port} antwortet nicht (/health: ${health || 'keine Antwort'})`, 'Log ansehen: tms-terminal logs');
+    }
+    // Keeper
+    const ki = await keeperInfo();
+    if (ki) ok(`Wächter läuft (PID ${ki.pid}, ${ki.sessions.length} Terminal(s)${ki.serverAttached ? ', Server verbunden' : ', KEIN Server verbunden'})`);
+    else if (keeperPidsByName().length) note('Wächter läuft, antwortet aber nicht auf Auskunft (älterer Stand)');
+    else if (os.platform() !== 'win32') note('Wächter läuft nicht', 'startet automatisch mit dem Server');
+    // Remote helper (macOS)
+    if (os.platform() === 'darwin') {
+      const helper = path.join(ROOT, 'bin', 'tms-remote-helper');
+      check(fs.existsSync(helper), fs.existsSync(helper) ? 'Fernzugriff-Helfer gebaut' : 'Fernzugriff-Helfer fehlt', `bash ${path.join(ROOT, 'src/remote/helpers/mac/build.sh')}`);
+      if (fs.existsSync(helper)) hint('Freigaben (Bildschirmaufnahme, Bedienungshilfen) prüft erst eine echte Sitzung.');
+    }
+    if (os.platform() === 'win32') {
+      let ff = '';
+      try { ff = execSync('ffmpeg -version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n')[0]; } catch {}
+      const major = parseInt((/ffmpeg version (\d+)/.exec(ff) || [])[1] || '0', 10);
+      check(major >= 6, ff ? `ffmpeg ${major}` : 'ffmpeg fehlt', 'Fernzugriff braucht ffmpeg >= 6 (ddagrab): winget install Gyan.FFmpeg — danach neues Terminal + Server neu starten');
+      if (major >= 6) {
+        const ffq = (args) => { try { return execFileSync('ffmpeg', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 15000 }); } catch { return ''; } };
+        const enc = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'libx264'].filter((e) => ffq(['-hide_banner', '-encoders']).includes(e));
+        check(enc.length > 0, enc.length ? `H.264-Encoder: ${enc.join(', ')}` : 'Kein H.264-Encoder in ffmpeg', 'vollständigen Build installieren: winget install Gyan.FFmpeg');
+        const dda = ffq(['-hide_banner', '-filters']).includes('ddagrab');
+        check(dda, dda ? 'Desktop-Abgriff ddagrab vorhanden' : 'ffmpeg ohne ddagrab', 'vollständigen Build installieren: winget install Gyan.FFmpeg');
+        // Ein Dienst (Sitzung 0) hat keinen Desktop — ddagrab liefert dort nichts.
+        const sess = process.env.SESSIONNAME || '';
+        check(!!sess, sess ? `Desktop-Sitzung: ${sess}` : 'Keine Desktop-Sitzung (läuft der Server als Dienst?)', 'Server als angemeldeter Nutzer starten: tms-terminal');
+        if (dda && enc.length) {
+          // Echte Probeaufnahme: ein Bild vom Desktop. Scheitert sie, scheitert der Fernzugriff genauso.
+          const probe = require('child_process').spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'ddagrab=output_idx=0:framerate=5', '-frames:v', '1', '-f', 'null', '-'], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
+          const fine = probe.status === 0;
+          check(fine, fine ? 'Probeaufnahme vom Desktop klappt' : `Probeaufnahme scheitert: ${(probe.stderr || probe.error?.message || '').trim().split('\n').pop()?.slice(0, 160) || 'ohne Meldung'}`, 'Bildschirm entsperrt und an? Grafiktreiber aktuell? Remote-Desktop-Sitzung statt Konsole?');
+        }
+      }
+      const ps1 = path.join(ROOT, 'src', 'remote', 'helpers', 'win', 'input-helper.ps1');
+      check(fs.existsSync(ps1), fs.existsSync(ps1) ? 'Eingabe-Helfer vorhanden' : 'Eingabe-Helfer fehlt', `erwartet: ${ps1}`);
+    }
+    // Tailscale
+    try {
+      const ts = JSON.parse(execFileSync('tailscale', ['status', '--json'], { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] }));
+      const self = ts.Self || {};
+      ok(`Tailscale: ${self.HostName || '?'} (${(self.TailscaleIPs || [])[0] || '?'})`);
+      for (const p of Object.values(ts.Peer || {})) {
+        if (!p.Online) continue;
+        const direct = p.CurAddr && p.CurAddr !== '';
+        const via = direct ? `direkt (${p.CurAddr})` : p.PeerRelay ? `Peer-Relay ${p.PeerRelay}` : p.Relay ? `über Relais ${p.Relay} — langsamer` : 'noch keine Verbindung';
+        (direct ? ok : warn)(`   ${p.HostName}: ${via}`);
+      }
+    } catch {
+      note('Tailscale nicht gefunden oder nicht erreichbar', 'ohne Tailnet geht der Zugriff von unterwegs nicht');
+    }
+    // Logs
+    for (const [name, file] of [['Server', SERVER_LOG], ['Wächter', KEEPER_LOG], ['Update', UPDATE_LOG]]) {
+      try { const st = fs.statSync(file); hint(`${name}-Log: ${file.replace(os.homedir(), '~')} (${fmtBytes(st.size)}, ${new Date(st.mtimeMs).toLocaleString('de-DE')})`); } catch {}
+    }
+
+    if (command === 'debug') {
+      // Zum Weitergeben: die letzten Auffaelligkeiten aus den Logs.
+      for (const [name, file] of [['Server', SERVER_LOG], ['Wächter', KEEPER_LOG], ['Update', UPDATE_LOG]]) {
+        if (!fs.existsSync(file)) continue;
+        const lines = stripAnsi(fs.readFileSync(file, 'utf8')).split('\n');
+        const hits = lines.filter((l) => /\b(WARN|ERROR|Error|Fehler|ABBRUCH|beendet|crash)/.test(l) && !/notification skipped/.test(l)).slice(-15);
+        console.log(`\n${c.bold(`Letzte Auffälligkeiten — ${name}`)}`);
+        if (hits.length) hits.forEach((l) => console.log(c.gray('   ' + l.slice(0, 200)))); else hint('keine');
+      }
+    }
+    console.log(problems ? `\n${c.red(`${problems} Problem(e) gefunden.`)}\n` : `\n${c.green('Alles in Ordnung.')}\n`);
+    process.exit(problems ? 1 : 0);
+  }
+
+  // ── tms-terminal version ────────────────────────────────────────────────
+  case 'version': {
+    const good = await versionReport();
+    if (!good) process.exit(1);
     break;
   }
 
@@ -181,34 +856,40 @@ switch (command) {
     if (uPid && isRunning(uPid)) {
       try { process.kill(uPid, 'SIGTERM'); } catch {}
       cleanPid();
-      console.log('\x1b[32m✓\x1b[0m  Server stopped.');
+      ok('Server gestoppt.');
+    }
+    // Der Wächter haelt Terminals — ohne Konfigurationsordner waere er verwaist.
+    if ((await keeperInfo()) || keeperPidsByName().length) {
+      if (!(await stopKeeper())) { hint('Deinstallation abgebrochen.'); process.exit(1); }
     }
 
     // Remove config directory (~/.tms-terminal)
     if (fs.existsSync(CONFIG_DIR)) {
       fs.rmSync(CONFIG_DIR, { recursive: true, force: true });
-      console.log('\x1b[32m✓\x1b[0m  Config removed (~/.tms-terminal)');
+      ok('Konfiguration entfernt (~/.tms-terminal)');
     }
 
     // Unlink global binary
     try {
       execSync('npm uninstall -g tms-terminal', { stdio: 'inherit' });
-      console.log('\x1b[32m✓\x1b[0m  Global command removed.');
+      ok('Globaler Befehl entfernt.');
     } catch {}
 
-    console.log('\x1b[32m✓\x1b[0m  TMS Terminal fully uninstalled.');
-    console.log('\x1b[90m   To also remove the source code: rm -rf ' + ROOT + '\x1b[0m');
+    ok('TMS Terminal vollständig deinstalliert.');
+    hint('Auch den Quelltext löschen: rm -rf ' + ROOT);
     break;
   }
 
   // ── tms-terminal rebuild ────────────────────────────────────────────────
   case 'rebuild': {
-    console.log('\x1b[34m⟳\x1b[0m  Rebuilding TMS Terminal...');
+    info('Baue TMS Terminal neu...');
     try {
       execSync('npm run build', { cwd: ROOT, stdio: 'inherit' });
-      console.log('\x1b[32m✓\x1b[0m  Build complete.');
+      stampBuild();
+      ok('Build fertig.');
+      if (serverPid()) hint('Aktiv wird er nach einem Neustart: tms-terminal restart');
     } catch {
-      console.error('\x1b[31m✗\x1b[0m  Build failed.');
+      bad('Build fehlgeschlagen.');
       process.exit(1);
     }
     break;
@@ -216,16 +897,81 @@ switch (command) {
 
   // ── tms-terminal update ────────────────────────────────────────────────
   case 'update': {
-    console.log('\x1b[34m⟳\x1b[0m  Updating TMS Terminal...');
+    info('Aktualisiere TMS Terminal...');
 
     // Write a self-contained update script that survives server/PTY death.
     // This is critical for remote updates (e.g., from the mobile app's terminal):
     // when the server stops, the PTY dies, but the detached script keeps running.
-    const UPDATE_LOG = path.join(CONFIG_DIR, 'update.log');
     const UPDATE_SCRIPT = path.join(CONFIG_DIR, 'update.sh');
     const CLI_PATH = path.join(ROOT, 'bin', 'cli.js');
 
     ensureConfigDir();
+
+    // Windows: kein bash — derselbe Ablauf läuft als losgelöstes Node-Skript
+    // (bin/update-runner.js). Vorher scheiterte das Update dort immer.
+    if (os.platform() === 'win32') {
+      const paths = {
+        root: ROOT, cli: CLI_PATH, log: UPDATE_LOG,
+        dist: DIST_DIR, newDist: path.join(ROOT, 'dist.new'), oldDist: path.join(ROOT, 'dist.old'),
+        newIndex: path.join(ROOT, 'dist.new', 'server', 'src', 'index.js'),
+        tsbuildinfo: TSBUILDINFO, newTsbuildinfo: path.join(ROOT, '.tsbuildinfo.new'),
+      };
+      const PATHS_FILE = path.join(CONFIG_DIR, 'update-paths.json');
+      fs.writeFileSync(PATHS_FILE, JSON.stringify(paths, null, 2));
+      if (process.env.TMS_UPDATE_DRY_RUN || has('--dry-run')) {
+        warn(`Trockenlauf — nichts ausgeführt. Pfade: ${PATHS_FILE}`);
+        break;
+      }
+      info('Update läuft...');
+      hint('Der Server bleibt an, bis der neue Stand fertig gebaut ist —');
+      hint('dann kurzer Neustart. Scheitert etwas, läuft er unverändert weiter.');
+      hint('Unter Windows enden dabei die offenen Terminals (kein Wächter) — läuft');
+      hint('dieser Befehl in einem TMS-Terminal, bricht die Anzeige dort ab; danach: tms-terminal version');
+      const child = spawn(process.execPath, [path.join(ROOT, 'bin', 'update-runner.js'), PATHS_FILE], {
+        detached: true, stdio: 'ignore', cwd: ROOT, windowsHide: true,
+      });
+      child.on('error', (e) => bad(`Update konnte nicht starten: ${e.message}`));
+      child.unref();
+      // Früher endete der Befehl hier nach einer halben Sekunde, und ob das
+      // Update klappte, stand nur in einer Datei — ein Abbruch blieb unbemerkt.
+      // Jetzt: mitlesen, bis der Ablauf fertig ist, und das Ergebnis sagen.
+      const runnerAlive = () => { try { process.kill(child.pid, 0); return true; } catch { return false; } };
+      let shown = 0;
+      const deadline = Date.now() + 15 * 60_000;
+      pause(400);
+      for (;;) {
+        let text = '';
+        try { text = fs.readFileSync(UPDATE_LOG, 'utf8'); } catch {}
+        if (text.length > shown) {
+          for (const line of text.slice(shown).split(/\r?\n/)) {
+            const m = /^\[[^\]]+\]\s*(.*)$/.exec(line);
+            if (m) console.log(`   ${m[1]}`);
+          }
+          shown = text.length;
+        }
+        if (!runnerAlive() || Date.now() > deadline) break;
+        pause(500);
+      }
+      let finalLog = '';
+      try { finalLog = fs.readFileSync(UPDATE_LOG, 'utf8'); } catch {}
+      console.log('');
+      if (/ERGEBNIS: Update fertig/.test(finalLog)) {
+        ok('Update fertig.');
+        await versionReport();
+        // Neu seit dem virtuellen Bildschirm: einmal einrichten (ein UAC-Klick).
+        // Der NEUE Stand führt das aus — diese Datei hier ist noch die alte.
+        if (!displayInstalled() && !fs.existsSync(DISPLAY_DECLINED)) {
+          console.log('');
+          info('Neu: „Bildschirm aus“ im Fernzugriff schaltet das Display wirklich ab');
+          hint('und das Handy bekommt ein schärferes Bild (virtueller Bildschirm).');
+          require('child_process').spawnSync(process.execPath, [CLI_PATH, 'display', 'install', '--from-update'], { stdio: 'inherit' });
+        }
+        process.exit(0);
+      }
+      bad(/ERGEBNIS:/.test(finalLog) ? 'Update NICHT übernommen — Grund siehe oben.' : 'Update-Ablauf ohne Ergebnis beendet.');
+      hint(`Ganzes Protokoll: tms-terminal logs update   (${UPDATE_LOG})`);
+      process.exit(1);
+    }
 
     // Der Server laeuft weiter, solange noch irgendetwas schiefgehen kann.
     // Frueher war es umgekehrt: erst stoppen, dann pullen und bauen — scheiterte
@@ -236,6 +982,7 @@ switch (command) {
     // Jetzt: pullen, installieren und NEBEN dem laufenden dist bauen. Erst wenn
     // der neue Stand fertig und der Einstiegspunkt da ist, wird getauscht — und
     // kommt der neue Server nicht hoch, wird das alte dist zurueckgerollt.
+    // Die Terminals selbst laufen im Waechter und ueberstehen den Tausch.
     const NEW_DIST = path.join(ROOT, 'dist.new');
     const NEW_TSBUILDINFO = path.join(ROOT, '.tsbuildinfo.new');
     const NEW_INDEX = path.join(NEW_DIST, 'server', 'src', 'index.js');
@@ -268,6 +1015,16 @@ if [ ! -f "${NEW_INDEX}" ]; then
   exit 1
 fi
 
+# Der Fernzugriff-Helfer (macOS) ist ein eigenes Programm: ohne diesen Schritt
+# blieb er nach einem Update auf dem alten Stand, egal was sich an ihm geaendert
+# hat. Darf scheitern (dann bleibt der bisherige Helfer) und baut nur, wenn sich
+# sein Quelltext geaendert hat.
+if [ "$(uname)" = "Darwin" ]; then
+  echo "[$(date)] Pruefe Fernzugriff-Helfer..."
+  bash "${path.join(ROOT, 'src', 'remote', 'helpers', 'mac', 'build.sh')}" || echo "[$(date)] Helfer-Build fehlgeschlagen — der bisherige Helfer bleibt."
+fi
+
+node -e "require('${path.join(ROOT, 'bin', 'update-runner.js').replace(/\\/g, '/')}').writeBuildInfo('${ROOT.replace(/\\/g, '/')}', '${NEW_DIST.replace(/\\/g, '/')}')" || true
 VERSION=$(node -e "console.log(require('./package.json').version)" 2>/dev/null || echo "?")
 echo "[$(date)] v$VERSION ist fertig gebaut. Erst JETZT wird der Server angefasst."
 
@@ -281,18 +1038,17 @@ mv "${DIST_DIR}" "${OLD_DIST}" 2>/dev/null || true
 mv "${NEW_DIST}" "${DIST_DIR}" || {
   echo "[$(date)] Tausch fehlgeschlagen — rolle zurueck."
   mv "${OLD_DIST}" "${DIST_DIR}" 2>/dev/null || true
-  nohup node "${CLI_PATH}" start >> "${UPDATE_LOG}" 2>&1 &
+  node "${CLI_PATH}" start --background
   exit 1
 }
 mv -f "${NEW_TSBUILDINFO}" "${TSBUILDINFO}" 2>/dev/null || true
 
 echo "[$(date)] Starte Server..."
-nohup node "${CLI_PATH}" start >> "${UPDATE_LOG}" 2>&1 &
-sleep 4
+node "${CLI_PATH}" start --background
 
 # ── Phase 3: kommt er wirklich hoch? Sonst zurueck auf den alten Stand. ──
 
-if node "${CLI_PATH}" status | grep -q "is running"; then
+if node "${CLI_PATH}" status --quiet; then
   echo "[$(date)] Server laeuft wieder (v$VERSION). Update fertig."
   rm -rf "${OLD_DIST}"
 else
@@ -300,10 +1056,9 @@ else
   node "${CLI_PATH}" stop 2>/dev/null || true
   rm -rf "${DIST_DIR}"
   mv "${OLD_DIST}" "${DIST_DIR}" 2>/dev/null || true
-  nohup node "${CLI_PATH}" start >> "${UPDATE_LOG}" 2>&1 &
-  sleep 4
-  node "${CLI_PATH}" status
-  echo "[$(date)] Zurueckgerollt. Der Fehler steht weiter oben in diesem Log."
+  node "${CLI_PATH}" start --background
+  node "${CLI_PATH}" status --short
+  echo "[$(date)] Zurueckgerollt. Der Fehler steht im Server-Log (tms-terminal logs)."
   exit 1
 fi
 `;
@@ -312,15 +1067,16 @@ fi
 
     // Trockenlauf: schreibt das Skript, führt es aber nicht aus. Damit lässt sich
     // nachsehen (und prüfen), was ein Update tun WÜRDE, ohne den Server anzufassen.
-    if (process.env.TMS_UPDATE_DRY_RUN) {
-      console.log(`\x1b[33m⟳\x1b[0m  Trockenlauf — Skript geschrieben, nicht ausgeführt:\n   ${UPDATE_SCRIPT}`);
+    if (process.env.TMS_UPDATE_DRY_RUN || has('--dry-run')) {
+      warn(`Trockenlauf — Skript geschrieben, nicht ausgeführt:\n   ${UPDATE_SCRIPT}`);
       break;
     }
 
-    console.log('\x1b[34m⟳\x1b[0m  Update läuft im Hintergrund...');
-    console.log('\x1b[90m   Der Server bleibt an, bis der neue Stand fertig gebaut ist —\x1b[0m');
-    console.log('\x1b[90m   dann kurzer Neustart. Scheitert etwas, läuft er unverändert weiter.\x1b[0m');
-    console.log(`\x1b[90m   Log: ${UPDATE_LOG}\x1b[0m`);
+    info('Update läuft im Hintergrund...');
+    hint('Der Server bleibt an, bis der neue Stand fertig gebaut ist —');
+    hint('dann kurzer Neustart. Scheitert etwas, läuft er unverändert weiter.');
+    hint('Deine Terminals laufen im Wächter weiter.');
+    hint('Verlauf: tms-terminal logs update -f');
 
     // Spawn fully detached — survives PTY death, server stop, everything
     const child = spawn('bash', [UPDATE_SCRIPT], {
@@ -336,24 +1092,152 @@ fi
   }
 
   // ── help ────────────────────────────────────────────────────────────────
+  // ── tms-terminal display ── virtueller Bildschirm (Windows) ────────────
+  case 'display':
+  case 'bildschirm': {
+    if (os.platform() !== 'win32') {
+      warn('Der virtuelle Bildschirm gibt es bisher nur für Windows.');
+      break;
+    }
+    const sub = rest[0] || 'status';
+    if (sub === 'install' || sub === 'uninstall') process.exit(displaySetup(sub, has('--from-update')) ? 0 : 1);
+    if (sub === 'test') process.exit((await displayTest()) ? 0 : 1);
+    if (sub === 'restore') {
+      // Notweg: Laptop-Display zurück, virtueller Bildschirm aus.
+      const r = require('child_process').spawnSync('powershell.exe', displayHelperArgs(['-Restore']), { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+      if (r.status === 0) ok('Bildschirme zurückgestellt.'); else bad(`Zurückstellen fehlgeschlagen (Code ${r.status})`);
+      for (const l of displayDevices()) hint(l);
+      process.exit(r.status === 0 ? 0 : 1);
+    }
+    displayStatus();
+    break;
+  }
+
+  // ── tms-terminal dex ── Fold-Bildschirm fürs iPad freischalten ────────
+  // Startet den DeX-Server der Fold-App mit Shell-Rechten (app_process, UID 2000).
+  // Nur so darf er den virtuellen Bildschirm anlegen, Eingaben einspeisen und
+  // die USB-Rolle umschalten. Hält bis zum Neustart des Handys.
+  case 'dex': {
+    process.exit(dexUnlock(rest[0]) ? 0 : 1);
+    break;
+  }
+
+  case 'help': {
+    printHelp();
+    break;
+  }
+
   default:
-    console.log(`
-\x1b[1mTMS Terminal\x1b[0m – Remote Terminal Server
+    bad(`Unbekannter Befehl: ${command}`);
+    printHelp();
+    process.exit(2);
+  }
+}
 
-\x1b[1mUsage:\x1b[0m
-  tms-terminal              Start the server
-  tms-terminal setup        Configure password & port
-  tms-terminal stop         Stop the running server
-  tms-terminal status       Check if server is running
-  tms-terminal update       Pull, rebuild alongside, then swap + restart
-                            (server stays up until the new build is proven;
-                             rolls back if it fails to come up)
-  tms-terminal rebuild      Recompile TypeScript
-  tms-terminal uninstall    Remove everything (config, global command)
+function findAdb() {
+  const candidates = [
+    process.env.ANDROID_HOME && path.join(process.env.ANDROID_HOME, 'platform-tools', 'adb'),
+    path.join(os.homedir(), 'Library', 'Android', 'sdk', 'platform-tools', 'adb'),
+    path.join(os.homedir(), 'AppData', 'Local', 'Android', 'Sdk', 'platform-tools', 'adb.exe'),
+  ].filter(Boolean);
+  for (const p of candidates) if (fs.existsSync(p)) return p;
+  try { execFileSync(os.platform() === 'win32' ? 'where' : 'which', ['adb'], { stdio: 'ignore' }); return 'adb'; } catch { return null; }
+}
 
-\x1b[1mInstall:\x1b[0m
-  npm install && npm link   Install globally from source
-  tms-terminal setup        First-time configuration
-  tms-terminal              Start serving
+/** Unlocks the Fold's DeX server via adb. `target` = serial or ip:port (wireless debugging). */
+function dexUnlock(target) {
+  const adb = findAdb();
+  if (!adb) { bad('adb nicht gefunden (Android platform-tools installieren).'); return false; }
+  const run = (args, timeout = 20000) => require('child_process').spawnSync(adb, args, { encoding: 'utf8', timeout, windowsHide: true });
+
+  if (target && target.includes(':')) {
+    const r = run(['connect', target]);
+    info((r.stdout || r.stderr || '').trim());
+  }
+  let serial = target;
+  if (!serial) {
+    const list = (run(['devices']).stdout || '').split('\n').slice(1)
+      .map((l) => l.trim().split(/\s+/)).filter((p) => p[1] === 'device' && !p[0].startsWith('emulator-'));
+    if (list.length === 0) {
+      bad('Kein Handy per adb erreichbar.');
+      hint('Am Fold: Entwickleroptionen › WLAN-Debugging › „IP-Adresse & Port“ ablesen, dann:');
+      hint('  tms-terminal dex <ip>:<port>');
+      return false;
+    }
+    if (list.length > 1) hint(`Mehrere Geräte, nehme ${list[0][0]} (anderes: tms-terminal dex <serial>)`);
+    serial = list[0][0];
+  }
+
+  const script = [
+    'P=$(pm path com.tms.terminal | head -1 | cut -d: -f2)',
+    '[ -z "$P" ] && { echo "TMS_NOAPP"; exit 3; }',
+    // Match the program name, not just the text: this very shell's args contain the class name too.
+    'for p in $(ps -A -o PID,ARGS | awk \'$2=="app_process" && /DeXShellServer/ {print $1}\'); do kill $p; done',
+    'sleep 0.5',
+    // setsid: own session/process group, so restarting adbd (wireless debugging toggled, Wi-Fi
+    // change) does not take the server down with the shell that started it.
+    'S=$(command -v setsid >/dev/null 2>&1 && echo setsid)',
+    'CLASSPATH="$P" $S nohup app_process / com.tms.terminal.dex.DeXShellServer --port 8768 > /data/local/tmp/tms-dex.log 2>&1 < /dev/null &',
+    'for i in 1 2 3 4 5 6 7 8; do sleep 0.5; S=$(curl -s -m 1 http://127.0.0.1:8768/dex/status); case "$S" in *\'"privileged":true\'*) echo "TMS_OK $S"; exit 0;; esac; done',
+    'echo "TMS_FAIL"; tail -5 /data/local/tmp/tms-dex.log',
+  ].join('\n');
+  info(`Schalte den DeX-Bildschirm auf ${serial} frei …`);
+  const r = run(['-s', serial, 'shell', script], 30000);
+  const out = `${r.stdout || ''}${r.stderr || ''}`;
+  if (out.includes('TMS_OK')) {
+    ok('DeX-Bildschirm freigeschaltet. iPad per USB-C anstecken, TMS Terminal auf dem iPad öffnen.');
+    hint('Gilt bis zum nächsten Neustart des Handys.');
+    return true;
+  }
+  if (out.includes('TMS_NOAPP')) { bad('TMS Terminal ist auf dem Gerät nicht installiert.'); return false; }
+  bad('Freischalten fehlgeschlagen:');
+  for (const l of out.trim().split('\n').slice(-6)) hint(l);
+  return false;
+}
+
+function printHelp() {
+  const b = c.bold, g = c.gray;
+  console.log(`
+${b('TMS Terminal')} ${g('– Terminal-Server für die TMS-App')}
+
+${b('Server')}
+  tms-terminal                 Server starten (Ausgabe im Fenster + Log-Datei)
+  tms-terminal start -d        Server im Hintergrund starten
+  tms-terminal restart         Server neu starten (im Hintergrund) — geht auch
+                               aus der App heraus, die Terminals laufen weiter
+  tms-terminal stop            Server anhalten — die Terminals laufen weiter
+  tms-terminal stop --all      Server UND alle Terminals beenden (fragt nach)
+  tms-terminal status          Server, Wächter und alle Terminals auf einen Blick
+
+${b('Terminals & Wächter')}
+  tms-terminal terminals       Laufende Terminals (Titel, Programm, Ordner)
+  tms-terminal keeper          Zustand des Wächters, der die Terminals hält
+  tms-terminal keeper stop     Wächter herunterfahren — beendet ALLE Terminals
+  tms-terminal keeper logs     Log des Wächters (-f zum Mitlesen)
+
+${b('Fehlersuche')}
+  tms-terminal logs            Server-Log, letzte 100 Zeilen
+      -f                         live mitlesen      -n 300   mehr Zeilen
+      keeper | update            Log des Wächters bzw. des letzten Updates
+  tms-terminal doctor          Selbsttest: Build, Konfiguration, Port, Wächter,
+                               Fernzugriff-Helfer, Tailscale-Verbindungen
+  tms-terminal debug           Selbsttest + letzte Warnungen/Fehler aus den Logs
+
+${b('Einrichtung & Pflege')}
+  tms-terminal setup           Passwort und Port einrichten
+  tms-terminal update          Neuen Stand holen, daneben bauen, tauschen
+                               (bei Fehlern läuft der alte Server weiter)
+  tms-terminal rebuild         TypeScript neu übersetzen
+  tms-terminal version         Version und Git-Stand
+  tms-terminal display         Windows: virtueller Bildschirm für „Bildschirm aus“
+      install | test | restore   einrichten (einmal Admin-Klick), Probelauf,
+      uninstall                  Notweg: Laptop-Display zurück · entfernen
+  tms-terminal dex [ip:port]   Fold: Bildschirm fürs iPad (USB-C) freischalten —
+                               per adb/WLAN-Debugging, einmal nach jedem Neustart
+  tms-terminal uninstall       Alles entfernen (Konfiguration, globaler Befehl)
+
+${g('Rückfragen überspringen: --yes · Dateien: ~/.tms-terminal/')}
 `);
 }
+
+main().catch((e) => { bad(e && e.message ? e.message : String(e)); process.exit(1); });

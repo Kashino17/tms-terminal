@@ -1,3 +1,4 @@
+import { contentDisposition } from './disposition.util';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
@@ -58,10 +59,10 @@ export async function handleFileZip(req: http.IncomingMessage, res: http.ServerR
     if (total > MAX_ZIP_BYTES) return err(res, 413, 'Zu groß (> 4 GB) — bitte einzeln laden');
 
     const zipName = (resolved.length === 1
-      ? `tms-${path.basename(resolved[0])}` : 'tms-auswahl').replace(/"/g, '') + '.zip';
+      ? `tms-${path.basename(resolved[0])}` : 'tms-auswahl') + '.zip';
     res.writeHead(200, {
       'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="${zipName}"`,
+      'Content-Disposition': contentDisposition('attachment', zipName),
     });
 
     const archive = archiver('zip', { zlib: { level: 6 } });

@@ -4,7 +4,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { handleFileDownload, handleRename, handleFileRead } from './file.handler';
+import { handleFileDownload, handleRename, handleFileRead, resolvePath } from './file.handler';
 
 let server: http.Server;
 let base = '';
@@ -97,4 +97,49 @@ test('read: 3-MB-Textdatei ist jetzt erlaubt', async () => {
   fs.writeFileSync(big, 'a'.repeat(3 * 1024 * 1024));
   const r = await fetch(`${base}/files/read?path=${encodeURIComponent(big)}`);
   assert.strictEqual(r.status, 200);
+});
+
+// ── Bund: große Dateien gekürzt statt abgelehnt; ~\ unter Windows ──
+test('resolvePath: ~\\Desktop (Windows-Schreibweise) liegt im Home', () => {
+  assert.strictEqual(resolvePath('~\\Desktop'), path.join(os.homedir(), 'Desktop'));
+});
+
+test('/files/read: 6-MB-Text mit max → 200, gekürzt', async () => {
+  const p = path.join(dir, 'big.txt');
+  fs.writeFileSync(p, 'a'.repeat(6 * 1024 * 1024));
+  const r = await fetch(`${base}/files/read?path=${encodeURIComponent(p)}&max=524288`);
+  assert.strictEqual(r.status, 200);
+  const d: any = await r.json();
+  assert.strictEqual(d.content.length, 524288);
+  assert.strictEqual(d.truncated, true);
+  assert.strictEqual(d.size, 6 * 1024 * 1024);
+});
+
+test('/files/read: ohne max → Standard 512 KB statt Ablehnung', async () => {
+  const p = path.join(dir, 'big.txt');
+  const r = await fetch(`${base}/files/read?path=${encodeURIComponent(p)}`);
+  assert.strictEqual(r.status, 200);
+  const d: any = await r.json();
+  assert.strictEqual(d.content.length, 524288);
+  assert.strictEqual(d.truncated, true);
+});
+
+test('/files/read: kleine Datei → nicht gekürzt', async () => {
+  const p = path.join(dir, 'small.md');
+  fs.writeFileSync(p, '# Hallo\n');
+  const d: any = await (await fetch(`${base}/files/read?path=${encodeURIComponent(p)}`)).json();
+  assert.strictEqual(d.content, '# Hallo\n');
+  assert.strictEqual(d.truncated, false);
+});
+
+test('Download: Umlaute/NFD/ı im Namen → 200 + RFC-5987-Dateiname statt 400', async () => {
+  const name = 'Görfıdan Rückseite "x".PNG'.normalize('NFD');
+  fs.writeFileSync(path.join(dir, name), 'img');
+  const r = await fetch(`${base}/files/download?path=${encodeURIComponent(path.join(dir, name))}`);
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(await r.text(), 'img');
+  const cd = r.headers.get('content-disposition') ?? '';
+  assert.match(cd, /^inline; filename="[\x20-\x7e]+"; filename\*=UTF-8''/);
+  const star = decodeURIComponent(cd.split("filename*=UTF-8''")[1]);
+  assert.strictEqual(star, name.normalize('NFC'));
 });

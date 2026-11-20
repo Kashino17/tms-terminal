@@ -46,6 +46,40 @@ export function getShellArgs(): string[] {
 
 const SENSITIVE_VARS = ['JWT_SECRET', 'TMS_PASSWORD', 'FIREBASE_PRIVATE_KEY'];
 
+/**
+ * Variables Claude Code sets for the processes of ONE running session. If the
+ * server is started from a terminal where Claude Code runs (`tms-terminal
+ * update` typed inside a Claude session), it inherits them — and used to hand
+ * them on to every terminal it opened. A Claude session started there then
+ * took itself for a child of that other session: "Transcript saving is off —
+ * inherited CLAUDE…", no conversation history, no /resume. Proven on the Mac:
+ * Claude processes in TMS terminals carried CLAUDE_CODE_CHILD_SESSION=1 and
+ * the session ID of an unrelated session.
+ *
+ * Only session-scoped markers are listed — what a user configures on purpose
+ * (CLAUDE_CONFIG_DIR, CLAUDE_CODE_USE_BEDROCK, ANTHROPIC_API_KEY …) stays.
+ */
+const INHERITED_SESSION_VARS = new Set([
+  'CLAUDECODE',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_SESSION_ATTENDED',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_EXECPATH',
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_CODE_SSE_PORT',
+  'CLAUDE_PID',
+  'CLAUDE_EFFORT',
+]);
+
+/** A copy of `env` without the markers of someone else's Claude session. */
+export function scrubInheritedSession(env: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) if (!INHERITED_SESSION_VARS.has(k)) out[k] = v;
+  return out;
+}
+
 let cachedEnv: Record<string, string> | null = null;
 
 export function getTermEnv(): Record<string, string> {
@@ -56,7 +90,7 @@ export function getTermEnv(): Record<string, string> {
     Object.entries(process.env).filter(([key, v]) => v !== undefined && !SENSITIVE_VARS.includes(key))
   ) as Record<string, string>;
   const env: Record<string, string> = {
-    ...filtered,
+    ...scrubInheritedSession(filtered),
     COLORTERM: 'truecolor',
     // Force Claude Code's CLASSIC (scrollback) renderer instead of the new
     // "fullscreen" mode that draws into the terminal's alternate screen buffer

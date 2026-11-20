@@ -69,6 +69,11 @@ const PROMPT_PATTERNS = [
   // ── docker ──
   /are you sure you want to remove/i,
 
+  // ── sudo / SSH / Keychain password prompts ──
+  /\[sudo\]\s*password\s+for\s+[^:]+:\s*$/im,
+  /^Password:\s*$/im,
+  /Enter passphrase for [^:]+:\s*$/im,
+
   // inquirer-style: "Question? ›" or "Question? [choices]"
   /\?\s*(›|\[|\()/,
 ];
@@ -184,6 +189,14 @@ function hashTail(s: string): string {
   return h.toString(36);
 }
 
+/** Hash the prompt tail AFTER stripping status footers so TUI status-bar/timer
+ *  redraws underneath a waiting prompt do not change the hash and spam re-fires. */
+function hashPromptWindow(s: string): string {
+  if (!s) return '0';
+  const stripped = stripStatusFooter(s.split('\n')).join('\n');
+  return hashTail(lastLines(stripped, PROMPT_TAIL_LINES));
+}
+
 /** Prompt callback. `context.window` is the cleaned text the match was found in,
  *  so the caller can decide which keystroke approves it (e.g. Enter vs 'y').
  *  `context.reason` unterscheidet einen wartenden Prompt von der Meldung
@@ -265,10 +278,11 @@ export class PromptDetector {
         // Bestätigungsmuster (oder ein Commit-/Log-Text enthält es), ist das
         // kein Prompt — und wurde früher trotzdem als einer gemeldet.
         const matched = matchPrompt(fastWindow) ?? matchPrompt(cleanChunk);
-        if (matched && this._shouldFire(sessionId, hashTail(fastWindow))) {
+        const fastSig = hashPromptWindow(fastWindow);
+        if (matched && this._shouldFire(sessionId, fastSig)) {
           console.log(`[PromptDetector] PROMPT (fast) in ${sessionId.slice(0, 8)}: ${matched}`);
           const snippet = this._extractSnippet(fastWindow);
-          this.lastFiredHash.set(sessionId, hashTail(fastWindow));
+          this.lastFiredHash.set(sessionId, fastSig);
           this.lastFiredAt.set(sessionId, this.now());
           this.callbacks.get(sessionId)?.(snippet, { window: fastWindow, reason: 'prompt' });
         }
@@ -344,7 +358,7 @@ export class PromptDetector {
    *  to verify the prompt is still sitting unchanged on screen: any new output
    *  (answer echo, box teardown, fresh content) changes the hash. */
   tailHash(sessionId: string): string {
-    return hashTail(this.fastTail.get(sessionId) ?? '');
+    return hashPromptWindow(this.fastTail.get(sessionId) ?? '');
   }
 
   noteApproved(sessionId: string): void {
@@ -380,7 +394,7 @@ export class PromptDetector {
     // Dedup prompts on the SAME window the fast-path hashes, so the two paths
     // agree on "same screen" even though they slice different lengths (a large
     // box would otherwise hash differently here and get re-notified).
-    const promptSig = hashTail(this.fastTail.get(sessionId) ?? tail);
+    const promptSig = hashPromptWindow(this.fastTail.get(sessionId) ?? tail);
 
     // Check 1: Interactive prompt patterns. Shares the fast-path's dedup gate
     // (_shouldFire) so the silence fallback never double-fires a prompt the

@@ -3,13 +3,25 @@ import { getDefaultShell, getShellArgs, getTermEnv, getPlatform } from '../utils
 import { logger } from '../utils/logger';
 import * as os from 'os';
 import * as fs from 'fs';
+import type { PtyLike } from './terminal.types';
+import type { PtyDaemonClient } from './ptyd/client';
+
+/**
+ * When set, new terminals are created inside the terminal keeper daemon
+ * (ptyd/daemon.ts) instead of as children of this server process — so a
+ * server restart no longer kills them. Unset (Windows, or the daemon could
+ * not be reached): the old direct node-pty path.
+ */
+let keeper: PtyDaemonClient | null = null;
+export function usePtyKeeper(client: PtyDaemonClient | null): void { keeper = client; }
 
 export function createPty(
   cols: number,
   rows: number,
   extraEnv: Record<string, string> = {},
   cwd?: string,
-): pty.IPty {
+  id?: string,
+): PtyLike {
   const shell = getDefaultShell();
   const args = getShellArgs();
   // extraEnv carries per-session vars (e.g. TMS_SESSION_ID) that the cached,
@@ -40,5 +52,10 @@ export function createPty(
     opts.name = 'xterm-256color';
   }
 
+  if (keeper?.connected && id && !isWin) {
+    const cleanEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(env)) if (typeof v === 'string') cleanEnv[k] = v;
+    return keeper.spawn(id, { file: shell, args, cwd: opts.cwd as string, env: cleanEnv, cols, rows });
+  }
   return pty.spawn(shell, args, opts);
 }

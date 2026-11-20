@@ -38,6 +38,18 @@ const MIRROR_SCROLLBACK = 1500;
 /** So viele Historie-Zeilen wandern maximal ins Snapshot. */
 const SNAPSHOT_SCROLLBACK = 1000;
 
+/** Gesicherter Spiegel (Bildschirm + Historie) — überlebt so einen Server-Neustart. */
+export interface MirrorState {
+  cols: number;
+  rows: number;
+  /** serializeNow()-Ausgabe, gültig für genau cols×rows. */
+  data: string;
+  /** Schon dieser Spiegel kannte nicht die ganze Vergangenheit. */
+  partial?: boolean;
+  /** Der Fenstertitel, den das Programm zuletzt gesetzt hat (steckt nicht in `data`). */
+  title?: string;
+}
+
 export class SessionMirror {
   private term: Terminal;
   private serializer: SerializeAddon;
@@ -51,7 +63,20 @@ export class SessionMirror {
     });
     this.serializer = new SerializeAddon();
     this.term.loadAddon(this.serializer);
+    this.term.onTitleChange((title) => {
+      this.lastTitle = title;
+      this.titleListener?.(title);
+    });
   }
+
+  private lastTitle = '';
+  private titleListener: ((title: string) => void) | null = null;
+  /** Der Fenstertitel (OSC 0/2), den das Programm im Terminal zuletzt gesetzt hat. */
+  get title(): string { return this.lastTitle; }
+  /** Titel aus einem gesicherten Zustand übernehmen (löst keine Meldung aus). */
+  seedTitle(title: string): void { this.lastTitle = title; }
+  /** Meldet jede Titeländerung — KI-Werkzeuge schreiben dort, woran sie arbeiten (activity.ts). */
+  onTitle(listener: (title: string) => void): void { this.titleListener = listener; }
 
   /** Denselben Byte-Strom füttern, der auch zum Client geht (Reihenfolge zählt). */
   feed(data: string): void {
@@ -65,7 +90,14 @@ export class SessionMirror {
   }
 
   get cols(): number { return this.term.cols; }
+  /** Läuft gerade ein Vollbild-Programm (alternativer Bildschirm, z. B. OpenCode, vim)? */
+  get altScreen(): boolean { return this.term.buffer.active.type === 'alternate'; }
+  /** Hat das Programm Bracketed Paste eingeschaltet (DECSET 2004)? Siehe paste.policy.ts. */
+  get bracketedPasteMode(): boolean { return this.term.modes.bracketedPasteMode; }
   get rows(): number { return this.term.rows; }
+  /** Hält der Spiegel so viel Verlauf, wie ein Snapshot überhaupt mitnimmt?
+   *  Dann ist eine fehlende Vorgeschichte egal — sie wäre ohnehin abgeschnitten. */
+  get historyFull(): boolean { return this.term.buffer.normal.length >= SNAPSHOT_SCROLLBACK + this.term.rows; }
 
   /**
    * Wartet den Parser-Rückstand ab (write ist asynchron): ein leeres write
@@ -108,6 +140,13 @@ export class SessionMirror {
       const line = buf.getLine(buf.viewportY + y);
       rows.push(line ? line.translateToString(true) : '');
     }
+    // Die App gibt der PTY eine virtuelle Höhe (200 Zeilen, siehe bridge.js) —
+    // darunter liegen oft 170 Leerzeilen, die kein Mensch sieht. Wer „die
+    // letzten N Zeilen" liest (Prompt-Erkennung, Auto-Approve), muss beim
+    // Inhaltsende landen, nicht in der Leere. Nie über den Cursor hinaus kürzen.
+    let n = rows.length;
+    while (n > buf.cursorY + 1 && rows[n - 1] === '') n--;
+    rows.length = n;
     return { rows, cursorX: buf.cursorX, cursorY: buf.cursorY, cols: this.term.cols };
   }
 

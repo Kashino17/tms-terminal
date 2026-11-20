@@ -1,0 +1,102 @@
+/* ==========================================================
+   Fold-Ansichten — siehe fold.js.
+   Leitlinie: die Zugeklappt-Optik überall. Karte mit Farbkante,
+   Terminal-Punkte unter der Karte, schwebende Eingabe-Pille.
+   Keine Seitenleiste, keine Steuerleiste oben.
+   ========================================================== */
+
+/* Breite Fenster zeigten früher rechts eine Vorschau-Spalte und keine
+   Punkte — beides gilt in keiner Fold-Form mehr. */
+body.fv-two .rail, body.fv-split .rail { display: none !important; }
+body.fv-two #termSwitcher:not([hidden]),
+body.fv-split #termSwitcher:not([hidden]) { display: flex !important; }
+
+/* ────────── Aufgeklappt (ganz oder untereinander geteilt): zwei Karten, eine hat den Fokus ────────── */
+/* Jede Karte zeigt (wie zugeklappt) 50 feste Spalten — jedes Pixel Breite
+   ist Schriftgröße, darum schmale Ränder wie zugeklappt. */
+body.fv-two section[data-screen="terminals"] { padding-left: 8px; padding-right: 8px; }
+body.fv-two section[data-screen="terminals"] .workspace { padding: 0; }
+body.fv-two .stack-card .card-header { padding: 8px 10px 6px; }
+body.fv-two .stack-card .card-body { margin: 0 2px 2px; padding: 6px; }
+body.fv-two .stack-card {
+  width: calc(50% - 6px); max-width: none; inset: 0 auto 0 0; margin: 0;
+  transition: transform 460ms var(--spring), opacity 340ms var(--ease-out), box-shadow 340ms var(--ease-out);
+}
+/* Fokus: die aktive Karte trägt ihre Farbe als feinen Ring und Schein. */
+body.fv-two .stack-card.fv-focus {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--tag, var(--accent)) 58%, transparent),
+              0 18px 40px -28px color-mix(in srgb, var(--tag, var(--accent)) 55%, transparent);
+}
+/* Nur ein Terminal: es bekommt die ganze Breite. */
+body.fv-two .stack.fv-single .stack-card { width: 100%; }
+body.fv-two .stack-card.fv-side { cursor: pointer; }
+body.fv-two .stack-card.fv-side::after {
+  content: "Tippen für Fokus"; position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6;
+  padding: 5px 12px; border-radius: 999px; font: 600 11.5px var(--font-ui); color: var(--text);
+  background: rgba(var(--well-rgb), .9); border: 1px solid var(--glass-border); pointer-events: none;
+  opacity: 0; animation: fvHint 3.2s 600ms var(--ease-out) 1 both;
+}
+@keyframes fvHint { 0% { opacity: 0; transform: translate(-50%, 6px); } 12%, 80% { opacity: .95; transform: translate(-50%, 0); } 100% { opacity: 0; } }
+/* Eingabe + Tastenleiste liegen ruhig über die volle Breite beider Karten —
+   wohin sie schreiben, zeigt der Schein in der Farbe der Karte mit Fokus. */
+body.fv-two #dock,
+body.fv-two .keys-panel--global,
+body.fv-two .term-switcher { width: var(--fv-dock-w, calc(100vw - 16px)); max-width: none; }
+body.fv-two #dock {
+  border-color: color-mix(in srgb, var(--fv-tag, var(--accent)) 55%, var(--glass-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fv-tag, var(--accent)) 40%, transparent),
+              0 0 26px -6px color-mix(in srgb, var(--fv-tag, var(--accent)) 55%, transparent);
+  transition: border-color 380ms var(--ease-out), box-shadow 380ms var(--ease-out), transform 340ms var(--spring);
+}
+body.fv-two #dock .term-input-row__prompt { color: var(--fv-tag, var(--accent)); transition: color 380ms var(--ease-out); }
+/* Fokuswechsel: der Schein der Eingabe atmet einmal kurz auf. */
+@keyframes fvDockPulse {
+  0% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--fv-tag) 40%, transparent), 0 0 26px -6px color-mix(in srgb, var(--fv-tag) 55%, transparent); }
+  35% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--fv-tag) 75%, transparent), 0 0 38px -2px color-mix(in srgb, var(--fv-tag) 70%, transparent); }
+  100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--fv-tag) 40%, transparent), 0 0 26px -6px color-mix(in srgb, var(--fv-tag) 55%, transparent); }
+}
+body.fv-two #dock.fv-pulse { animation: fvDockPulse 620ms var(--ease-out) 1; }
+
+/* ────────── Geteilt (untereinander): die Zugeklappt-Ansicht, gestrafft ────────── */
+/* Oben nichts als die Karte — kein Kopf über der Karte. */
+body.fv-split { --top-space: calc(var(--safe-top) + 6px); --bottom-space: calc(var(--safe-bottom) + var(--dock-h) + 14px); }
+body.fv-split section[data-screen="terminals"] { padding-left: 8px; padding-right: 8px; }
+body.fv-split section[data-screen="terminals"] .workspace { padding: 0; }
+
+/* Der Kartenkopf wird eine Zeile: Name · Aufgabe … ⋮ */
+body.fv-split .stack-card .card-header { padding: 6px 8px 4px 14px; gap: 6px; }
+body.fv-split .stack-card .card-name-wrap { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+body.fv-split .stack-card .card-name { flex: none; width: var(--fv-name-w, auto); max-width: 60%; font-size: 14px; }
+body.fv-split .stack-card .card-desc { flex: 1 1 0; margin: 0; font-size: 11.5px; }
+body.fv-split .stack-card .card-menu-btn { width: 32px; height: 32px; }
+body.fv-split-closed .stack-card .card-body { margin: 0 3px 3px; padding: 8px 12px; }
+
+/* Punkte und Eingabe rücken enger zusammen. */
+body.fv-split.has-switcher .stack { bottom: 36px; }
+body.fv-split.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 8px + 30px); }
+body.fv-split #dock { bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); }
+body.fv-split .keys-panel--global { bottom: calc(env(safe-area-inset-bottom, 0px) + 8px + var(--dock-h, 62px)); }
+body.fv-split .term-switcher { bottom: calc(env(safe-area-inset-bottom, 0px) + 8px + var(--dock-h, 62px)); }
+body.fv-split.keys-open .term-switcher { bottom: calc(env(safe-area-inset-bottom, 0px) + 8px + var(--dock-h, 62px) + var(--keys-h, 90px) + 10px); }
+
+/* Tastatur offen: nur Karte + Eingabe — Kopf und Punkte machen Platz. */
+body.fv-kb .stack-card .card-header,
+body.fv-kb #termSwitcher:not([hidden]) { display: none !important; }
+body.fv-kb.has-switcher .stack { bottom: 4px; }
+body.fv-kb.keys-open.has-switcher .stack { bottom: calc(var(--keys-h, 100px) + 8px); }
+
+/* ────────── Split aufgeklappt: Sprechen ist der Normalfall ────────── */
+#fvKbBtn { display: none; }
+body.fv-split-open #dock #fvKbBtn {
+  display: flex; width: auto; height: 40px; padding: 0 14px 0 12px; gap: 7px; border-radius: 999px;
+  font: 600 13px var(--font-ui); color: var(--text-dim); background: rgba(var(--overlay-rgb), .07);
+}
+body.fv-split-open #dock #fvKbBtn .fvkb-arrow { transition: transform 260ms var(--spring); transform-origin: 12px 3px; }
+body.fv-split-open #dock #fvKbBtn[aria-pressed="true"] { color: var(--accent); background: rgba(var(--accent-rgb), .16); }
+body.fv-split-open #dock #fvKbBtn[aria-pressed="true"] .fvkb-arrow { transform: scaleY(-1); }
+/* Das Mikro ist die Hauptaktion: größer und im Akzent. */
+body.fv-split-open #dock #dockMicBtn {
+  width: 48px; height: 40px; border-radius: 999px; color: var(--accent); background: rgba(var(--accent-rgb), .2);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .35);
+}
+body.fv-split-open:not(.fv-kb) #dockInput { caret-color: var(--accent); }
