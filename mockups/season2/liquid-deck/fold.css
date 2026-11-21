@@ -22,10 +22,10 @@ body.fv-two .stack-card {
   width: calc(50% - 6px); max-width: none; inset: 0 auto 0 0; margin: 0;
   transition: transform 460ms var(--spring), opacity 340ms var(--ease-out), box-shadow 340ms var(--ease-out);
 }
-/* Fokus: die aktive Karte trägt ihre Farbe als feinen Ring und Schein. */
+/* Fokus: die aktive Karte trägt ihre Farbe nur als feine Linie — kein Schein.
+   Die App liegt im Split oft unter einem Video und soll kein Licht ziehen. */
 body.fv-two .stack-card.fv-focus {
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--tag, var(--accent)) 58%, transparent),
-              0 18px 40px -28px color-mix(in srgb, var(--tag, var(--accent)) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tag, var(--accent)) 26%, transparent);
 }
 /* Nur ein Terminal: es bekommt die ganze Breite. */
 body.fv-two .stack.fv-single .stack-card { width: 100%; }
@@ -38,22 +38,20 @@ body.fv-two .stack-card.fv-side::after {
 }
 @keyframes fvHint { 0% { opacity: 0; transform: translate(-50%, 6px); } 12%, 80% { opacity: .95; transform: translate(-50%, 0); } 100% { opacity: 0; } }
 /* Eingabe + Tastenleiste liegen ruhig über die volle Breite beider Karten —
-   wohin sie schreiben, zeigt der Schein in der Farbe der Karte mit Fokus. */
+   wohin sie schreiben, zeigen der Rand (ein Hauch der Kartenfarbe) und das
+   farbige Prompt-Zeichen. Bewusst ohne Ring und Lichthof. */
 body.fv-two #dock,
 body.fv-two .keys-panel--global,
 body.fv-two .term-switcher { width: var(--fv-dock-w, calc(100vw - 16px)); max-width: none; }
 body.fv-two #dock {
-  border-color: color-mix(in srgb, var(--fv-tag, var(--accent)) 55%, var(--glass-border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fv-tag, var(--accent)) 40%, transparent),
-              0 0 26px -6px color-mix(in srgb, var(--fv-tag, var(--accent)) 55%, transparent);
-  transition: border-color 380ms var(--ease-out), box-shadow 380ms var(--ease-out), transform 340ms var(--spring);
+  border-color: color-mix(in srgb, var(--fv-tag, var(--accent)) 24%, var(--glass-border));
+  transition: border-color 380ms var(--ease-out), transform 340ms var(--spring);
 }
 body.fv-two #dock .term-input-row__prompt { color: var(--fv-tag, var(--accent)); transition: color 380ms var(--ease-out); }
-/* Fokuswechsel: der Schein der Eingabe atmet einmal kurz auf. */
+/* Fokuswechsel: nur der Rand hebt sich einmal kurz. */
 @keyframes fvDockPulse {
-  0% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--fv-tag) 40%, transparent), 0 0 26px -6px color-mix(in srgb, var(--fv-tag) 55%, transparent); }
-  35% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--fv-tag) 75%, transparent), 0 0 38px -2px color-mix(in srgb, var(--fv-tag) 70%, transparent); }
-  100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--fv-tag) 40%, transparent), 0 0 26px -6px color-mix(in srgb, var(--fv-tag) 55%, transparent); }
+  0%, 100% { border-color: color-mix(in srgb, var(--fv-tag) 24%, var(--glass-border)); }
+  35% { border-color: color-mix(in srgb, var(--fv-tag) 55%, var(--glass-border)); }
 }
 body.fv-two #dock.fv-pulse { animation: fvDockPulse 620ms var(--ease-out) 1; }
 
