@@ -30,6 +30,7 @@
     slots: [null, null],   // aufgeklappt: welche Sitzung links / rechts liegt
     focus: 0,              // aufgeklappt: welche Karte die Eingabe bekommt
     kbOn: false,           // Split aufgeklappt: Tastatur gerade freigegeben
+    dim: load('tms-fold-dim') === '1',   // Split: App abgedunkelt (gemerkte Wahl)
   };
   window.__fold = fv;
 
@@ -85,9 +86,14 @@
     body.classList.toggle('fv-split-open', m === 'split-open');
     body.classList.toggle('fv-split-closed', m === 'split-closed');
     body.classList.toggle('fv-kb', m !== 'closed' && keyboardUp());
+    // Abgedunkelt wird nur im Split — überall sonst ist die App normal hell.
+    body.classList.toggle('fv-dim', fv.dim && (m === 'split-open' || m === 'split-closed'));
+    syncDimBtn();
     applyKeyboardLock();
     if (window.TMSCompact) window.TMSCompact.sync();
     if (changed) relayout(); else placeDock();
+    // Im Split kommt der Mond-Knopf in die Zeile — der Platzhalter muss neu passen.
+    if (changed && input && typeof fitDockPlaceholder === 'function') fitDockPlaceholder(input);
   }
 
   function relayout() {
@@ -305,6 +311,33 @@
     if (typeof toast === 'function') toast('Tastatur gesperrt – 🎤 sprechen oder „Tastatur“ tippen');
   });
 
+  // ── Split: Abdunkeln ───────────────────────────────────────────────────
+  // Oben läuft oft ein Video, unten wird gearbeitet. Der Mond-Knopf legt einen
+  // schwarzen Schleier über die ganze App. Bewusst eine eigene Ebene und kein
+  // filter auf der Seite: die Ebene wird nur darübergelegt, ein Filter müsste
+  // bei jeder Terminal-Ausgabe alles neu durchrechnen (Wärme am Fold).
+  const dimBtn = document.createElement('button');
+  dimBtn.id = 'fvDimBtn';
+  dimBtn.className = 'term-input-btn';
+  dimBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+  if (mic && mic.parentNode) mic.parentNode.insertBefore(dimBtn, mic);
+  const veil = document.createElement('div');
+  veil.id = 'fvDim';
+  veil.setAttribute('aria-hidden', 'true');
+  body.appendChild(veil);
+  function syncDimBtn() {
+    dimBtn.setAttribute('aria-pressed', String(fv.dim));
+    dimBtn.setAttribute('aria-label', fv.dim ? 'Wieder hell' : 'Abdunkeln');
+  }
+  function setDim(on) {
+    fv.dim = !!on;
+    // Merken ist Beiwerk: geht der Speicher nicht, gilt die Wahl für die Sitzung.
+    try { if (fv.dim) localStorage.setItem('tms-fold-dim', '1'); else localStorage.removeItem('tms-fold-dim'); } catch (_) {}
+    apply();
+  }
+  dimBtn.addEventListener('pointerdown', e => e.preventDefault()); // Fokus nicht klauen
+  dimBtn.addEventListener('click', () => setDim(!fv.dim));
+
   // ── Anstoßen ───────────────────────────────────────────────────────────
   let raf = 0;
   function schedule() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; apply(); }); }
@@ -318,7 +351,7 @@
 
   window.TMSFold = {
     setForce(m) { fv.force = MODES.includes(m) ? m : ''; try { localStorage.setItem('tms-fold-force', fv.force); } catch (_) {} fv.mode = ''; apply(); },
-    detect, apply,
+    setDim, detect, apply,
   };
   apply();
 })();

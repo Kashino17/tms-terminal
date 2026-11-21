@@ -98,3 +98,18 @@ body.fv-split-open #dock #dockMicBtn {
   box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .35);
 }
 body.fv-split-open:not(.fv-kb) #dockInput { caret-color: var(--accent); }
+
+/* ────────── Split: Abdunkeln ────────── */
+/* Der Mond-Knopf sitzt nur im Split in der Eingabezeile. */
+#fvDimBtn { display: none; }
+body.fv-split #dock #fvDimBtn { display: flex; }
+body.fv-split-open #dock #fvDimBtn { width: 40px; height: 40px; }
+#fvDimBtn[aria-pressed="true"] { color: var(--accent); background: rgba(var(--accent-rgb), .16); }
+#fvDimBtn[aria-pressed="true"] svg { fill: currentColor; }
+/* Der Schleier liegt über allem (auch Menüs und Hinweisen) und fängt keinen
+   Tipp ab. Stärke an einer Stelle: --fv-dim-a (0 = aus, 1 = schwarz). */
+#fvDim {
+  position: fixed; inset: 0; z-index: 2147483000; background: #000; opacity: 0;
+  pointer-events: none; transition: opacity 260ms var(--ease-out);
+}
+body.fv-dim #fvDim { opacity: var(--fv-dim-a, .65); }
