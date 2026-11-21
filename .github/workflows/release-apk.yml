@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Aufgeklappt: Die Tastatur oeffnet sich nur noch, wenn du selbst in die Eingabezeile tippst - nicht beim Tippen aufs Terminal und nicht, wenn ein Diktat (Zeile oder Bubble) eingefuegt wird. Zugeklappt bleibt alles wie bisher. Auch aufgeklappt im geteilten Bildschirm (untereinander) stehen jetzt zwei Terminals nebeneinander. Hinweis: Vor dem Update Play Protect kurz pausieren." \
+            --notes "Split (oben Video, unten TMS): Neuer Mond-Knopf in der Eingabezeile - ein Tipp dunkelt die ganze App deutlich ab, damit das Video im Fokus steht; ein zweiter Tipp hellt wieder auf. Die Wahl bleibt gemerkt, ausserhalb des Splits ist die App immer normal hell. Ausserdem: Der farbige Schein um Terminal-Karte und Eingabezeile ist viel dezenter - nur noch eine feine Linie statt Lichthof." \
             --latest
