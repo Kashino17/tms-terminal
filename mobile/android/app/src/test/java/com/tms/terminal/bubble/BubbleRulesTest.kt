@@ -142,4 +142,17 @@ class BubbleRulesTest {
         assertTrue(BubbleRules.needsFrameClock(recording = false, processing = false, spinAlpha = 0.4f))
         assertFalse(BubbleRules.needsFrameClock(recording = false, processing = false, spinAlpha = 0.005f))
     }
+
+    // TMS Keyboard hat ein eigenes Mikrofon — dann keine zweite Diktat-Bubble darüber.
+    @Test fun tmsKeyboardIsRecognised() {
+        assertTrue(BubbleRules.isTmsKeyboard("com.tms.keyboard/helium314.keyboard.latin.LatinIME"))
+        assertFalse(BubbleRules.isTmsKeyboard("com.samsung.android.honeyboard/.service.HoneyBoardService"))
+        assertFalse(BubbleRules.isTmsKeyboard(null))
+    }
+    @Test fun tmsKeyboardHidesIdleBubble() = assertFalse(BubbleRules.shouldShow(
+        editable = true, password = false, ownWindow = false, busy = false, snoozedUntil = 0L, now = 1L,
+        enabled = true, keyboardVisible = true, tmsKeyboard = true))
+    @Test fun tmsKeyboardNeverCutsARunningDictation() = assertTrue(BubbleRules.shouldShow(
+        editable = true, password = false, ownWindow = false, busy = true, snoozedUntil = 0L, now = 1L,
+        enabled = true, keyboardVisible = true, tmsKeyboard = true))
 }

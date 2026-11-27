@@ -244,6 +244,10 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         val snoozedUntil = config.snoozedUntil
         val enabled = config.enabled
         val keyboard = try { TextInserter.keyboardVisible(this) } catch (_: Exception) { false }
+        // TMS Keyboard has its own mic: no second dictation button on top of it
+        val tmsKeyboard = BubbleRules.isTmsKeyboard(try {
+            android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD)
+        } catch (_: Exception) { null })
         val needField = !busy && config.isConfigured && enabled && now >= snoozedUntil && keyboard
         // Keyboard open = the user is typing. Only a password field keeps the bubble away;
         // that comes from the system's input session (Android 13+). Older Android: the
@@ -253,14 +257,14 @@ class DictationBubbleService : AccessibilityService(), BubbleOverlay.Callbacks {
         val show = (busy || config.isConfigured) && BubbleRules.shouldShow(
             editable, password = false, ownWindow = false, busy = busy,
             snoozedUntil = snoozedUntil, now = now, enabled = enabled,
-            keyboardVisible = keyboard)
+            keyboardVisible = keyboard, tmsKeyboard = tmsKeyboard)
         if (com.tms.terminal.BuildConfig.DEBUG) Log.d(TAG, "eval a=$settleAttempt kb=$keyboard field=$editable input=$inputActive/$inputPackage pw=$inputPassword show=$show")
         record(BubbleRules.why(busy, config.isConfigured, enabled, now < snoozedUntil, keyboard, editable, show,
-            password = inputSignal && inputActive && inputPassword), now)
+            password = inputSignal && inputActive && inputPassword, tmsKeyboard = tmsKeyboard), now)
         if (!show) {
             overlay.show(BubbleOverlay.Mode.HIDDEN)
             // Only worth another look when nothing but keyboard/field kept it hidden.
-            if (!busy && config.isConfigured && enabled && now >= snoozedUntil) scheduleSettle(keyboard)
+            if (!busy && !tmsKeyboard && config.isConfigured && enabled && now >= snoozedUntil) scheduleSettle(keyboard)
             return
         }
         overlay.show(when (state) {

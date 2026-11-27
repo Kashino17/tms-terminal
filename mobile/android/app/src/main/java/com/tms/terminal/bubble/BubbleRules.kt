@@ -7,8 +7,10 @@ object BubbleRules {
     fun shouldShow(
         editable: Boolean, password: Boolean, ownWindow: Boolean, busy: Boolean,
         snoozedUntil: Long, now: Long, enabled: Boolean, keyboardVisible: Boolean,
+        tmsKeyboard: Boolean = false,
     ): Boolean {
         if (busy) return true               // recording / transcribing: never vanish mid-dictation
+        if (tmsKeyboard) return false       // TMS Keyboard has its own mic — no second one on top
         if (!enabled) return false
         if (now < snoozedUntil) return false
         if (!keyboardVisible) return false  // only while the virtual keyboard is open
@@ -16,6 +18,9 @@ object BubbleRules {
     }
 
     fun snoozeUntil(now: Long): Long = now + SNOOZE_MS
+
+    /** Settings.Secure.DEFAULT_INPUT_METHOD, e.g. "com.tms.keyboard/helium314.keyboard.latin.LatinIME". */
+    fun isTmsKeyboard(currentImeId: String?): Boolean = currentImeId?.startsWith("com.tms.keyboard/") == true
 
     /**
      * Does the bubble need its per-frame clock? Only while something actually
@@ -41,9 +46,11 @@ object BubbleRules {
 
     /** The last show/hide decision in words — shown in TMS settings to diagnose on the phone. */
     fun why(busy: Boolean, configured: Boolean, enabled: Boolean, snoozed: Boolean,
-            keyboard: Boolean, field: Boolean, shown: Boolean, password: Boolean = false): String = when {
+            keyboard: Boolean, field: Boolean, shown: Boolean, password: Boolean = false,
+            tmsKeyboard: Boolean = false): String = when {
         busy -> "Aufnahme läuft"
         shown -> "sichtbar"
+        tmsKeyboard -> "TMS Keyboard aktiv (eigenes Mikrofon)"
         !configured -> "nicht eingerichtet (kein Server)"
         !enabled -> "in TMS ausgeschaltet"
         snoozed -> "schläft"

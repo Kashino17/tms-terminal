@@ -37,7 +37,15 @@
       <action android:name="android.intent.action.TTS_SERVICE"/>
     </intent>
   </queries>
+  <!-- TMS Keyboard reads the dictation server settings; only apps signed with the TMS key -->
+  <permission android:name="com.tms.permission.DICTATION_CONFIG" android:protectionLevel="signature"/>
   <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="true" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/data_extraction_rules" android:theme="@style/AppTheme" android:usesCleartextTraffic="true">
+    <provider
+      android:name=".bubble.DictationConfigProvider"
+      android:authorities="${applicationId}.dictationconfig"
+      android:exported="true"
+      android:readPermission="com.tms.permission.DICTATION_CONFIG"
+      android:writePermission="com.tms.permission.DICTATION_CONFIG"/>
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
     <meta-data android:name="expo.modules.updates.EXPO_SDK_VERSION" android:value="50.0.0"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
