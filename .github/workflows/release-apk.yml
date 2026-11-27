@@ -90,5 +90,5 @@ jobs:
           gh release create "$TAG" \
             "TMS-Terminal-v${{ steps.ver.outputs.version }}.apk" \
             --title "TMS Terminal $TAG" \
-            --notes "Split (oben Video, unten TMS): Neuer Mond-Knopf in der Eingabezeile - ein Tipp dunkelt die ganze App deutlich ab, damit das Video im Fokus steht; ein zweiter Tipp hellt wieder auf. Die Wahl bleibt gemerkt, ausserhalb des Splits ist die App immer normal hell. Ausserdem: Der farbige Schein um Terminal-Karte und Eingabezeile ist viel dezenter - nur noch eine feine Linie statt Lichthof." \
+            --notes "TMS Keyboard: Die neue TMS-Tastatur kann jetzt ueber TMS diktieren - sie liest die Server-Verbindung direkt aus TMS Terminal (nur Apps mit derselben TMS-Signatur duerfen das). Solange TMS Keyboard die aktive Tastatur ist, blendet sich die Diktat-Bubble aus, weil die Tastatur ihr eigenes Mikrofon hat; ein laufendes Diktat wird dabei nie abgebrochen." \
             --latest
